@@ -58,7 +58,7 @@ export function createConversationPublicationRepository(database: DatabaseSync) 
         if (row.kind === 'message' && (row.role === 'user' || row.role === 'assistant')) {
           const content = JSON.parse(row.contentJson!)
           const references = row.role === 'user' ? readPublicMessageReferences(content) : []
-          return [publicConversationMaterialSchema.parse({ ...source, kind: 'message', messageId: row.messageId, role: row.role, text: readPublicMessageText(content, row.role), ...(references.length ? { references } : {}) })]
+          return [publicConversationMaterialSchema.parse({ ...source, kind: 'message', messageId: row.messageId, role: row.role, text: readPublicMessageText(content, row.role, row.messageId ?? undefined), ...(references.length ? { references } : {}) })]
         }
         if (!row.outputJson)
           return []

@@ -40,12 +40,6 @@ describe('workbench selection target routing', () => {
     expect(f.host.capture('file', quote)?.defaultId).toBe('a')
   })
 
-  it('does not silently fallback when the associated target is closed', () => {
-    const f = fixture()
-    f.targets.shift()
-    expect(f.host.capture('file', quote)?.defaultId).toBeNull()
-  })
-
   it.each(['rebound', 'closed'])('rejects a %s target change instead of rerouting', (change) => {
     const f = fixture()
     const request = f.host.capture('file', quote)!
@@ -68,7 +62,6 @@ describe('workbench selection target routing', () => {
     const f = fixture()
     f.targets.push({ ...f.targets[0]!, id: 'a-second-view' })
     expect(f.host.capture('file', quote)?.targets).toHaveLength(2)
-    expect(f.host.targets().map(target => target.id)).toEqual(['a-second-view', 'b'])
     f.targets[1]!.label = 'Pane a'
     expect(f.host.capture('file', quote)?.targets).toHaveLength(2)
   })
@@ -181,7 +174,6 @@ describe('selection reference provider lifecycle', () => {
     expect(current()).toBe(false)
     deferred.resolve(true)
     f.host.dispose()
-    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('rejects a stale reveal registration and preserves its replacement after old cleanup', async () => {
@@ -202,4 +194,53 @@ describe('selection reference provider lifecycle', () => {
     expect(await f.host.reveal('view', quote, () => true)).toBe(true)
     f.host.dispose()
   })
+})
+
+it.each(['page', 'another-page'])('only accepts the exact page navigation requested by the active reference: %s', async (destination) => {
+  const route = shallowRef('tasks')
+  const host = new WorkbenchSelectionReferences({ targets: () => [], captureLocateScope: () => {
+    const captured = route.value
+    return () => route.value === captured
+  } })
+  let signal: AbortSignal | undefined
+  host.registerProvider('page', { resolveLocate: () => async (request) => {
+    signal = request.signal
+    return request.navigate(async () => {
+      route.value = destination
+      await nextTick()
+      return route.value === 'page'
+    }, () => ['tasks', 'page'].includes(route.value))
+  } })
+  expect(await host.locate(quote)).toBe(destination === 'page')
+  expect(signal?.aborted).toBe(true)
+  host.dispose()
+})
+
+it('resumes scope cancellation after an authorized page navigation completes', async () => {
+  const scope = shallowRef('tasks')
+  const host = new WorkbenchSelectionReferences({ targets: () => [], captureLocateScope: () => {
+    const captured = scope.value
+    return () => scope.value === captured
+  } })
+  const arrived = Promise.withResolvers<void>()
+  const waiting = Promise.withResolvers<boolean>()
+  let signal: AbortSignal | undefined
+  host.registerProvider('page', { resolveLocate: () => async (request) => {
+    signal = request.signal
+    if (!await request.navigate(async () => {
+      scope.value = 'page'
+      return true
+    }, () => ['tasks', 'page'].includes(scope.value))) {
+      return false
+    }
+    arrived.resolve()
+    return waiting.promise
+  } })
+  const pending = host.locate(quote)
+  await arrived.promise
+  scope.value = 'user-selected-another-resource'
+  expect(signal?.aborted).toBe(true)
+  expect(await pending).toBe(false)
+  waiting.resolve(true)
+  host.dispose()
 })

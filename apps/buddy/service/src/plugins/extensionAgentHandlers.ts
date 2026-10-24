@@ -3,6 +3,7 @@ import type { ExtensionActionCause } from '../../../shared/extensions/extensionA
 import type { ExtensionAgentMethod } from '../../../shared/extensions/extensionAgentCapabilities'
 import type { JsonValue } from '../../../shared/workbench/workbenchState'
 import { extensionAgentCapabilities } from '../../../shared/extensions/extensionAgentCapabilities'
+import { extensionJsonSchema } from '../../../shared/extensions/extensionApi'
 
 export interface ExtensionInvocationScope {
   conversationId: string
@@ -24,6 +25,6 @@ export function extensionAgentHandler<K extends ExtensionAgentMethod>(method: K,
   return async (input: unknown, context: ExtensionCapabilityContext): Promise<JsonValue> => {
     const contract = extensionAgentCapabilities[method]
     const params = contract.input.parse(input) as z.output<(typeof extensionAgentCapabilities)[K]['input']>
-    return contract.output.parse(await execute(params, context))
+    return extensionJsonSchema.parse(contract.output.parse(await execute(params, context)))
   }
 }

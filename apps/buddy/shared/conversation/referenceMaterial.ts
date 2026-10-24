@@ -1,6 +1,6 @@
 import type { ReadonlyJsonArray, ReadonlyJsonValue } from '../workbench/workbenchState'
 import { z } from 'zod'
-import { copyEventSnapshot } from '../events/eventSnapshot'
+import { copyEventSnapshot } from '../events/eventSnapshot.ts'
 
 function isJsonArray(value: ReadonlyJsonValue): value is ReadonlyJsonArray {
   return Array.isArray(value)

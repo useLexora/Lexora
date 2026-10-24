@@ -52,7 +52,7 @@ export interface NavigationContribution {
 }
 /** API 4: contributes.skills; path points to a packaged Skill directory's SKILL.md. */
 export interface SkillContribution { id: string, path: string }
-export interface Resource { readonly id: string, readonly name: string }
+export interface Resource { readonly id: string, readonly name: string, readonly sourceId?: string }
 export interface ResourceTransferOptions { name?: string, signal?: AbortSignal }
 export interface ResourceApi {
   readText: (resource: Resource) => Promise<string>
@@ -109,7 +109,24 @@ export interface TaskTitle {
   title: string | null
   titleSource: 'legacy' | 'manual' | 'fallback' | 'generated'
 }
+export interface AgentReferenceSummary { referenceId: string, sourceMessageId: string, title: string, excerpt: string }
+export interface AgentReference {
+  referenceId: string
+  sourceMessageId: string
+  title: string
+  text: string
+  textLength: number
+  textDigest: string
+  offset: number
+  nextOffset: number | null
+  locator: ReferenceLocator | null
+  scope: { taskId: string, branchId: string }
+}
 export interface AgentToolContext {
+  readonly references: {
+    list: () => Promise<{ items: AgentReferenceSummary[], truncated: boolean }>
+    resolve: (referenceId: string, options?: { sourceMessageId?: string, offset?: number, limit?: number }) => Promise<AgentReference>
+  }
   readonly signal: AbortSignal
   readonly task: {
     get: () => Promise<TaskTitle>
@@ -127,7 +144,7 @@ export interface TaskActionEvents {
   'task:input:committed': { readonly conversationId: string, readonly branchId: string, readonly runId: string, readonly messageId: string, readonly commitId: string }
   'task:turn:completed': { readonly conversationId: string, readonly branchId: string, readonly runId: string, readonly triggeringMessageId: string, readonly completedAt: string }
 }
-export interface AgentActionContext extends AgentToolContext {
+export interface AgentActionContext extends Omit<AgentToolContext, 'references'> {
   readonly cause: EventMessage<TaskActionEvents> | Readonly<{ type: 'user' }>
 }
 export interface AgentActionResult { status: 'completed' | 'skipped', message?: string }
@@ -261,7 +278,7 @@ export interface ReferenceReveal {
   readonly locator: ReferenceLocator | null
 }
 export type ReferenceInput
-  = | { kind: 'content', title: string, text: string, locator?: ReferenceLocator }
+  = | { kind: 'content', title: string, text: string, locator?: ReferenceLocator, source?: 'view' }
     | { kind: 'resource', resource: { id: string } }
 export interface ViewContext {
   readonly clipboard: {

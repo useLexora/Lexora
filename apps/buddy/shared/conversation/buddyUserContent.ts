@@ -9,8 +9,8 @@ import { referenceLocatorSchema, referenceViewSourceSchema, sameReferenceJson } 
 export const buddyResourceIdSchema = z.string().regex(/^[A-Z0-9][\w-]{0,127}$/i)
 
 export const BUDDY_QUOTE_COUNT_LIMIT = 16
-export const BUDDY_QUOTE_TEXT_LIMIT = 32_768
-export const BUDDY_QUOTE_TOTAL_TEXT_LIMIT = 131_072
+export const BUDDY_QUOTE_TEXT_LIMIT = 262_144
+export const BUDDY_QUOTE_TOTAL_TEXT_LIMIT = 1_048_576
 export function buddyQuoteSnapshotLength(quote: { text: string, element?: unknown, locator?: unknown }): number {
   return quote.text.length + (quote.element ? JSON.stringify(quote.element).length : 0) + (quote.locator ? JSON.stringify(quote.locator).length : 0)
 }
@@ -89,13 +89,13 @@ export const buddyBrowserQuoteSchema = z.object({
   text: z.string().min(1).max(BUDDY_QUOTE_TEXT_LIMIT).refine(text => text.trim().length > 0),
   source: browserSelectionSourceSchema,
   element: browserElementSnapshotSchema,
-}).strict().refine(quote => buddyQuoteSnapshotLength(quote) <= BUDDY_QUOTE_TEXT_LIMIT, 'Element snapshot exceeds quote limit').readonly()
+}).strict().readonly()
 export const buddyViewQuoteSchema = z.object({
   id: buddyResourceIdSchema,
   text: z.string().min(1).max(BUDDY_QUOTE_TEXT_LIMIT).refine(text => text.trim().length > 0),
   source: referenceViewSourceSchema,
   locator: referenceLocatorSchema.optional(),
-}).strict().refine(quote => buddyQuoteSnapshotLength(quote) <= BUDDY_QUOTE_TEXT_LIMIT, 'Reference snapshot exceeds quote limit').readonly()
+}).strict().readonly()
 export type BuddyViewQuote = z.infer<typeof buddyViewQuoteSchema>
 export const buddyResourceQuoteSchema = z.union([buddyTextQuoteSchema, buddyBrowserQuoteSchema, buddyViewQuoteSchema])
 export function isBuddyViewQuote(quote: BuddyResourceQuote): quote is BuddyViewQuote {
@@ -157,7 +157,7 @@ export const buddyUserContentV1Schema = z.object({
 }).strict().refine(content => content.body.every(paragraph => paragraph.content.every(node =>
   (node.type !== 'session_ref' || content.sessionReferences?.some(reference => reference.id === node.sessionId))
   && (node.type !== 'quote_ref' || (node.quoteKind === 'message' ? content.quotes : content.resourceQuotes)?.some(quote => quote.id === node.quoteId)),
-)), 'Missing input material metadata').refine(content => (content.quotes?.length ?? 0) + (content.resourceQuotes?.length ?? 0) <= BUDDY_QUOTE_COUNT_LIMIT, 'Too many quotes').refine(content => !content.resourceQuotes?.length || [...content.quotes ?? [], ...content.resourceQuotes ?? []]
+)), 'Missing input material metadata').refine(content => (content.quotes?.length ?? 0) + (content.resourceQuotes?.length ?? 0) <= BUDDY_QUOTE_COUNT_LIMIT, 'Too many quotes').refine(content => [...content.quotes ?? [], ...content.resourceQuotes ?? []]
   .reduce((total, quote) => total + buddyQuoteSnapshotLength(quote), 0) <= BUDDY_QUOTE_TOTAL_TEXT_LIMIT, 'Quoted text exceeds total limit').readonly()
 
 export type BuddyUserContentV1 = z.infer<typeof buddyUserContentV1Schema>
@@ -184,7 +184,13 @@ export function bindResourceAttachments(resources: readonly BuddyUserMessageReso
   return bound
 }
 
+export const buddyUserMessageMaterialProjectionSchema = z.object({
+  deferredReferences: z.boolean(),
+  deferredResourceIds: z.array(buddyResourceIdSchema).max(16),
+}).strict()
+
 export const buddyUserMessageContentV1Schema = z.object({
+  materialProjection: buddyUserMessageMaterialProjectionSchema.optional(),
   resourceSnapshots: z.array(buddyUserMessageResourceSnapshotSchema).readonly(),
   userContent: buddyUserContentV1Schema,
 }).strict().superRefine((message, context) => {
@@ -207,6 +213,10 @@ export const buddyUserMessageContentV1Schema = z.object({
         path: ['resourceSnapshots'],
       })
     }
+  }
+  const deferredIds = message.materialProjection?.deferredResourceIds ?? []
+  if (new Set(deferredIds).size !== deferredIds.length || deferredIds.some(id => !message.resourceSnapshots.some(resource => resource.resourceId === id && resource.attachmentId))) {
+    context.addIssue({ code: 'custom', message: 'Invalid deferred material binding', path: ['materialProjection'] })
   }
   const contentResourceIdSet = new Set(contentResourceIds)
   for (const resourceId of snapshotResourceIds) {

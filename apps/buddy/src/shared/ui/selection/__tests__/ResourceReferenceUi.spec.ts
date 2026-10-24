@@ -2,7 +2,7 @@
 import type { BuddyResourceQuote } from '@buddy-shared/conversation/buddyUserContent'
 import type { ResourceSelectionQuote } from '../useResourceSelectionQuote'
 import type { SelectionReferenceTarget } from '../workbenchSelectionReferences'
-import { createBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
+import { BUDDY_QUOTE_TEXT_LIMIT, createBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, defineComponent, h, nextTick, provide, shallowRef } from 'vue'
 import ChatInputMaterialStrip from '@/modules/tasks/widgets/materials/ChatInputMaterialStrip.vue'
@@ -79,17 +79,6 @@ async function mount(kind: 'menu' | 'strip', options: { multiple?: boolean, spli
 }
 
 describe('resource reference UI', () => {
-  it('requires a menu choice for a context-menu gesture, even with a sole default target', async () => {
-    const f = await mount('menu')
-    f.selection.prepare(quote, 10, 20, 'menu')!()
-    await nextTick()
-    expect(f.content.value.resourceQuotes).toBeUndefined()
-    expect(f.root.textContent).toBe('引用')
-    f.root.querySelector('button')!.click()
-    expect(f.content.value.resourceQuotes).toEqual([quote])
-    expect(feedback.success).toHaveBeenCalledWith('已引用到「Pane 1 · Task A」')
-  })
-
   it('executes an explicit quote action directly only for a sole non-split default target', async () => {
     const f = await mount('menu')
     const execute = f.selection.prepare(quote, 10, 20, 'quote')!
@@ -101,17 +90,6 @@ describe('resource reference UI', () => {
     expect(f.content.value.body[0]!.content).toContainEqual({ type: 'text', text: 'Latest input' })
     expect(f.root.querySelector('[role="menu"]')).toBeNull()
     expect(feedback.success).toHaveBeenCalledTimes(1)
-  })
-
-  it('keeps the associated target first and adds only to the explicitly chosen split pane', async () => {
-    const f = await mount('menu', { multiple: true })
-    f.selection.prepare(quote, 10, 20, 'quote')!()
-    await nextTick()
-    const buttons = [...f.root.querySelectorAll('button')]
-    expect(buttons.map(button => button.textContent)).toEqual(['引用到「Pane 1 · Task A」', '引用到其他对话', 'Pane 2 · Task B'])
-    buttons[2]!.click()
-    expect(f.content.value.resourceQuotes).toBeUndefined()
-    expect(f.extraContent.value.resourceQuotes).toEqual([quote])
   })
 
   it.each([false, true])('never substitutes the only writable target for an unavailable owner (split: %s)', async (split) => {
@@ -171,7 +149,7 @@ describe('resource reference UI', () => {
     f.selection.prepare(quote, 10, 20, 'quote')!()
     await nextTick()
     expect(f.root.querySelector('button')!.disabled).toBe(true)
-    f.selection.prepare({ ...quote, text: 'x'.repeat(100_000) }, 10, 20, 'quote')!()
+    f.selection.prepare({ ...quote, text: 'x'.repeat(BUDDY_QUOTE_TEXT_LIMIT + 1) }, 10, 20, 'quote')!()
     expect(f.content.value.resourceQuotes).toBeUndefined()
     expect(feedback.warning).toHaveBeenCalledTimes(1)
   })

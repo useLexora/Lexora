@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { MAX_BUDDY_MESSAGE_TEXT_LENGTH } from '../../../shared/conversation/buddyMessageContent'
-import { resourceQuoteText } from '../../../shared/conversation/buddyResourceQuoteText'
+import { projectBuddyQuoteText } from '../../../shared/conversation/buddyResourceQuoteText'
 import { getBuddyUserContentResourceIds, readBuddyUserMessageContent } from '../../../shared/conversation/buddyUserContent'
 import { projectBuddyUserText, sessionReferenceText } from '../../../shared/conversation/buddyUserReferenceText'
 
@@ -35,7 +35,7 @@ export const publicConversationMaterialSchema = z.discriminatedUnion('kind', [
 
 export type PublicConversationMaterial = z.infer<typeof publicConversationMaterialSchema>
 
-export function readPublicMessageText(content: unknown, role: 'user' | 'assistant'): string {
+export function readPublicMessageText(content: unknown, role: 'user' | 'assistant', messageId?: string): string {
   if (typeof content === 'string')
     return content.slice(0, MAX_BUDDY_MESSAGE_TEXT_LENGTH)
   if (!content || typeof content !== 'object')
@@ -44,8 +44,7 @@ export function readPublicMessageText(content: unknown, role: 'user' | 'assistan
     const structured = readBuddyUserMessageContent(content)
     if (structured) {
       const text = [projectBuddyUserText(structured.userContent), sessionReferenceText(structured.userContent)].filter(Boolean).join('\n')
-      const quotes = structured.userContent.quotes?.map(quote => quote.text) ?? []
-      return [text, ...quotes, resourceQuoteText(structured.userContent.resourceQuotes)].filter(Boolean).join('\n\n').slice(0, MAX_BUDDY_MESSAGE_TEXT_LENGTH)
+      return [text, projectBuddyQuoteText(structured.userContent, { sourceMessageId: messageId })].filter(Boolean).join('\n\n').slice(0, MAX_BUDDY_MESSAGE_TEXT_LENGTH)
     }
   }
   const text = (content as { text?: unknown }).text

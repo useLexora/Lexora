@@ -2,12 +2,14 @@ import type { ExtensionApi, ExtensionStatus, ExtensionWorkbenchEvent } from '@bu
 import type { Ref } from 'vue'
 import type { TaskWorkspacePool } from './TaskWorkspacePool'
 import type { ExtensionViews } from '@/modules/extensions'
-import type { SelectionReferenceRequest, WorkbenchSelectionReferences } from '@/shared/ui/selection/workbenchSelectionReferences'
+import type { ReferenceTargetChoice } from '@/shared/ui/selection/useReferenceTargetPicker'
+import type { SelectionReferenceNavigate, SelectionReferenceRequest, WorkbenchSelectionReferences } from '@/shared/ui/selection/workbenchSelectionReferences'
 import type { WorkbenchController } from '@/workbench/services/WorkbenchController'
 import type { WorkbenchPersistence } from '@/workbench/services/WorkbenchPersistence'
 import { isBuddyViewQuote } from '@buddy-shared/conversation/buddyUserContent'
 import { extensionReferenceTargetSchema } from '@buddy-shared/extensions/extensionReferences'
 import { nextTick, onScopeDispose, watch } from 'vue'
+import { copyReferenceClipboard } from '@/shared/ui/selection/referenceClipboard'
 import { receiveReferenceMaterial } from './receiveReferenceMaterial'
 
 export function useExtensionReferences(options: {
@@ -18,7 +20,12 @@ export function useExtensionReferences(options: {
   api: ExtensionApi
   views: ExtensionViews
   installed: Readonly<Ref<ExtensionStatus[]>>
-  chooseTarget: (scope: Omit<SelectionReferenceRequest, 'quote'>, title: string, signal: AbortSignal) => Promise<string | null>
+  writeClipboard?: (text: string, html?: string) => Promise<void>
+  chooseTarget: (scope: Omit<SelectionReferenceRequest, 'quote'>, title: string, signal: AbortSignal, allowClipboard: boolean) => Promise<ReferenceTargetChoice | null>
+  prepareNewTaskInput: (sourceViewId: string, prepare: (viewId: string) => Promise<boolean>, signal: AbortSignal) => Promise<boolean>
+  showTarget: (viewId: string) => Promise<void>
+  showPage: (extensionId: string, navigate: SelectionReferenceNavigate) => Promise<boolean>
+  notifySuccess: (result: { kind: 'view', title: string } | { kind: 'new-task' | 'clipboard' }) => void
 }) {
   const { references, controller, views, api } = options
   const pending = new Set<string>()
@@ -38,13 +45,27 @@ export function useExtensionReferences(options: {
     resolveLocate(quote) {
       if (!isBuddyViewQuote(quote) || !quote.source.provider.startsWith('extension:'))
         return null
-      return async ({ current, signal }) => {
+      return async ({ current, signal, navigate }) => {
         const target = extensionReferenceTargetSchema.parse(quote.source.target)
         if (quote.source.provider !== `extension:${target.extensionId}`)
           return false
         const descriptor = options.installed.value.find(item => item.manifest.id === target.extensionId && item.enabled && item.compatible)?.manifest.contributes.views.find(view => view.id === target.viewType)
         if (!descriptor)
           return false
+        if (descriptor.location === 'page') {
+          if (target.source)
+            return false
+          await api.prepareReferenceOpening(target)
+          if (!current() || !await options.showPage(target.extensionId, navigate) || !current())
+            return false
+          const page = await waitForPage(target.extensionId, target.viewType, current)
+          const session = page?.session
+          if (!page || !session || !current())
+            return false
+          await api.prepareReferenceOpening({ ...target, reuse: { id: session.id, generation: session.generation, token: session.token } })
+          return current() && page.session === session && views.surfaces.get(session.id) === page
+            && views.revealReference(session.id, { referenceId: quote.id, text: quote.text, locator: quote.locator ?? null }, signal)
+        }
         const identity = JSON.stringify(target)
         const existing = Object.values(controller.layout.views).find(view => view.resource.scheme === 'extension' && view.resource.data.extensionId === target.extensionId && view.resource.data.viewType === target.viewType && view.state.referenceTarget === identity)
         const session = existing ? views.surfaces.get(existing.id)?.session : null
@@ -74,6 +95,28 @@ export function useExtensionReferences(options: {
       }
     },
   }))
+
+  function waitForPage(extensionId: string, viewType: string, current: () => boolean): Promise<ReturnType<typeof views.surfaces.get> | null> {
+    return new Promise((resolve) => {
+      let stop: (() => void) | undefined
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const finish = (page: ReturnType<typeof views.surfaces.get> | null) => {
+        clearTimeout(timer)
+        stop?.()
+        resolve(page)
+      }
+      const check = () => {
+        const page = [...views.surfaces.values()].find(surface => surface.input.extensionId === extensionId && surface.input.viewType === viewType && !surface.input.placementId && surface.visible)
+        if (!current() || lifetime.signal.aborted || page?.error)
+          finish(null)
+        else if (page?.ready && page.eligible && page.session)
+          finish(page)
+      }
+      timer = setTimeout(finish, 10000, null)
+      stop = watch(() => [current(), ...[...views.surfaces.values()].map(surface => [surface.input.extensionId, surface.input.viewType, surface.visible, surface.ready, surface.eligible, surface.session, surface.error])], check, { flush: 'post' })
+      check()
+    })
+  }
 
   function waitForView(id: string, resourceId: string | null, current: () => boolean): Promise<boolean> {
     return new Promise((resolve) => {
@@ -112,21 +155,60 @@ export function useExtensionReferences(options: {
       if (!scope)
         return false
       pending.add(event.viewId)
+      const abort = new AbortController()
+      const stop = watch(current, valid => !valid && abort.abort(), { flush: 'sync' })
       try {
         const material = event.material
         const title = material.kind === 'quote' ? material.quote.source.title : material.kind === 'file' ? material.name : views.surfaces.get(event.viewId)?.input.resource?.name ?? ''
-        const targetId = await options.chooseTarget(scope, title, AbortSignal.any([signal, lifetime.signal]))
-        if (!targetId || !current())
+        const choice = await options.chooseTarget(scope, title, AbortSignal.any([signal, lifetime.signal, abort.signal]), material.kind === 'quote' && !!options.writeClipboard)
+        if (!choice || !current())
           return false
-        const accepted = await receiveReferenceMaterial({ ...options, scope, targetId, material, current })
-        if (accepted && material.kind === 'quote') {
-          const view = controller.layout.views[event.viewId]
-          if (view)
-            controller.updateView(view.id, { state: { ...view.state, referenceTarget: JSON.stringify(material.quote.source.target) } })
+        if (choice.kind === 'clipboard') {
+          if (material.kind !== 'quote')
+            return false
+          if (!options.writeClipboard || !current())
+            return false
+          await copyReferenceClipboard(material.quote, options.writeClipboard)
+          if (!current())
+            return false
+          options.notifySuccess({ kind: 'clipboard' })
+          return true
         }
+        const receive = async (targetId: string, opened: boolean) => {
+          const target = references.targets().find(target => target.id === targetId)
+          const targetScope = opened && !scope.targets.some(target => target.id === targetId) && target
+            ? { ...scope, targets: [...scope.targets, { id: target.id, identity: target.identity, label: target.label }] }
+            : scope
+          const persisted = await receiveReferenceMaterial({ ...options, scope: targetScope, targetId, material, current })
+          const captured = targetScope.targets.find(target => target.id === targetId)
+          const accepted = persisted && current() && references.captureSource(scope.viewId)?.identity === scope.sourceIdentity
+            && !!captured && references.targets().some(target => target.id === targetId && target.identity === captured.identity)
+          if (accepted) {
+            stop()
+            if (material.kind === 'quote') {
+              const view = controller.layout.views[event.viewId]
+              if (view)
+                controller.updateView(view.id, { state: { ...view.state, referenceTarget: JSON.stringify(material.quote.source.target) } })
+            }
+          }
+          return accepted
+        }
+        if (choice.kind === 'view') {
+          const accepted = await receive(choice.id, false)
+          if (accepted) {
+            await options.showTarget(choice.id)
+            const target = scope.targets.find(target => target.id === choice.id)!
+            options.notifySuccess({ kind: 'view', title: target.pane?.title ?? target.label })
+          }
+          return accepted
+        }
+        const accepted = await options.prepareNewTaskInput(event.viewId, id => receive(id, true), AbortSignal.any([signal, lifetime.signal, abort.signal]))
+        if (accepted)
+          options.notifySuccess({ kind: 'new-task' })
         return accepted
       }
       finally {
+        stop()
         pending.delete(event.viewId)
       }
     },

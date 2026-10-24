@@ -4,7 +4,7 @@ import type {
 } from '../../../shared/conversation/modelSelection'
 import type { ProviderExecutionModelResolver } from './ProviderExecutionModelResolver'
 import type { ProviderService } from './ProviderService'
-import { getModelFileInputMimeTypes } from './modelCapabilities'
+import { getModelFileInputMimeTypes, supportsModelToolCalls } from './modelCapabilities'
 import {
   ProviderAuthenticationRequiredError,
   ProviderValidationError,
@@ -23,6 +23,7 @@ export interface ResolvedInteractiveModelSelection extends InteractiveModelSelec
   input: Array<'text' | 'image'>
   fileInputMimeTypes: ReturnType<typeof getModelFileInputMimeTypes>
   maxTokens: number
+  toolCall?: boolean
 }
 
 export interface RuntimeModelProvider extends Pick<ProviderService, 'getDefaultModel'> {
@@ -60,6 +61,7 @@ export async function resolveInteractiveModelSelection(
     input: model.input,
     fileInputMimeTypes: getModelFileInputMimeTypes(model),
     maxTokens: model.maxTokens,
+    toolCall: supportsModelToolCalls(model),
     serviceTier,
   }
 }

@@ -1,5 +1,6 @@
 import type { ToolCallEvent } from '@earendil-works/pi-coding-agent'
 import type { BuddySettings } from '../../../../shared/buddies/buddySettings'
+import type { BuddyUserMessageContentV1 } from '../../../../shared/conversation/buddyUserContent'
 import type { BuddyServiceTier } from '../../../../shared/conversation/modelSelection'
 import type { ApplicationDiagnosticReporter } from '../../../../shared/diagnostics/applicationDiagnostic'
 import type { BuddyApprovalPolicy } from '../../../../shared/permissions/approvalPolicy'
@@ -47,6 +48,7 @@ import { createModelSwitchExtension } from './modelSwitchExtension'
 import { createToolPolicyExtension } from './toolPolicyExtension'
 
 export interface BuddySessionExtensionServices {
+  getInputProjection?: (conversationId: string, messageId: string) => Pick<BuddyUserMessageContentV1, 'materialProjection' | 'resourceSnapshots'> | null
   networkPermissions?: NetworkPermissionsStore
   delegation?: Pick<ExecutionDelegationService, 'execute' | 'pending' | 'assertShellExecutionAllowed'>
   followUp?: (runId: string, signal: AbortSignal) => Promise<void>

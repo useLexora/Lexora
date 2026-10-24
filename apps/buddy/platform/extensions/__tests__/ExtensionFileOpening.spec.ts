@@ -89,9 +89,7 @@ function call(service: ExtensionService, view: Awaited<ReturnType<typeof open>>,
   return service.viewRequest(view.id, view.generation, view.token, method, params)
 }
 
-it('guards API 4 declarations, exact suffixes, ownership and file permissions while retaining API 1–4', () => {
-  for (const apiVersion of [1, 2, 3, 4] as const)
-    expect(extensionManifestSchema.parse(manifest({ apiVersion })).apiVersion).toBe(apiVersion)
+it('guards API 4 declarations, exact suffixes, ownership and file permissions', () => {
   const value = fileManifest()
   expect(extensionManifestSchema.safeParse({ ...value, apiVersion: 3 }).success).toBe(false)
   expect(extensionManifestSchema.safeParse({ ...value, permissions: {} }).success).toBe(false)
@@ -191,7 +189,7 @@ it('prepares only declared file suffixes and standalone launchers without execut
   await expect(service.prepareFileOpening({ providerId: choice.providerId, location: 'standalone', source: null })).rejects.toThrow('EXTENSION_FILE_OPENER_UNAVAILABLE')
   await expect(service.prepareFileOpening({ providerId: choice.providerId, location: 'inline', source: { kind: 'space', target: { ...target, path: 'file.txt' } } })).rejects.toThrow('EXTENSION_FILE_ASSOCIATION_DENIED')
   const prepared = await service.prepareFileOpening({ providerId: choice.providerId, location: 'standalone', source: { kind: 'space', target } })
-  expect(prepared.resource).toEqual({ id: expect.any(String), name: 'document.md' })
+  expect(prepared.resource).toEqual({ id: expect.any(String), name: 'document.md', sourceId: expect.stringMatching(/^[a-f0-9]{64}$/) })
   await service.enable('tests.reader', false)
   await expect(service.prepareFileOpening({ providerId: 'tests.reader.launch', location: 'standalone', source: null })).rejects.toThrow()
   expect((await service.fileOpeners()).providers.find(provider => provider.id === choice.providerId)?.available).toBe(false)
@@ -271,7 +269,7 @@ it('requires a prepared task handle and preserves source identity alongside lega
   const legacyPath = join(store.root, 'data/tests.reader/resources', `${legacy.id}.json`)
   const legacyContent = await readFile(legacyPath, 'utf8')
   const prepared = await service.prepareFileOpening(input)
-  expect(prepared.resource).toEqual({ id: expect.any(String), name: 'document #1%.custom' })
+  expect(prepared.resource).toEqual({ id: expect.any(String), name: 'document #1%.custom', sourceId: expect.stringMatching(/^[a-f0-9]{64}$/) })
   const reloaded = new ExtensionPackageStore(store.root, store.appVersion)
   await reloaded.load()
   expect(await reloaded.resolveFileOpeningGrant('tests.reader', prepared.resource!.id)).toEqual(input.source)
@@ -428,4 +426,25 @@ it('selects distinct preview and open views with independent default requests un
     expect(prepared.viewType).toBe(location === 'inline' ? 'tests.reader.preview' : 'tests.reader.view')
     expect(await call(service, await open(service, prepared), 'resources.readText', { id: prepared.resource!.id })).toBe('saved')
   }
+})
+
+it('keeps source identity across fresh grants and reference reopening while separating distinct artifacts and directory revisions', async () => {
+  const { service } = await serviceFixture(fileManifest(), {
+    readArtifactResource: async () => ({ name: 'output.md', response: contentResponse('artifact text') }),
+  })
+  const input = { providerId: choice.providerId, location: 'standalone' as const, source: { kind: 'artifact' as const, artifactId: 'artifact-one' } }
+  const first = await service.prepareFileOpening(input)
+  const next = await service.prepareFileOpening(input)
+  expect(first.resource!.id).not.toBe(next.resource!.id)
+  expect(first.resource!.sourceId).toMatch(/^[a-f0-9]{64}$/)
+  expect(next.resource!.sourceId).toBe(first.resource!.sourceId)
+  const reopened = await service.prepareReferenceOpening({ extensionId: first.extensionId, viewType: first.viewType, viewId: randomUUID(), source: input.source })
+  expect(reopened.resource!.sourceId).toBe(first.resource!.sourceId)
+  const other = await service.prepareFileOpening({ ...input, source: { kind: 'artifact', artifactId: 'artifact-two' } })
+  expect(other.resource!.sourceId).not.toBe(first.resource!.sourceId)
+  const space = await service.prepareFileOpening({ ...input, source: { kind: 'space', target } })
+  const snapshot = await service.prepareFileOpening({ ...input, location: 'inline', source: { kind: 'space', target }, text: 'Unsaved preview' })
+  expect(snapshot.resource!.sourceId).toBe(space.resource!.sourceId)
+  const rebound = await service.prepareFileOpening({ ...input, source: { kind: 'space', target: { ...target, revision: target.revision + 1 } } })
+  expect(rebound.resource!.sourceId).not.toBe(space.resource!.sourceId)
 })

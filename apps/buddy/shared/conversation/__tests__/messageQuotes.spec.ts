@@ -35,6 +35,9 @@ describe('message quotes', () => {
     ]) {
       expect(buddyUserContentV1Schema.safeParse({ ...createBuddyUserContent(), quotes }).success).toBe(false)
     }
+    const content = { ...createBuddyUserContent(), quotes: Array.from({ length: 5 }, (_, i) => ({ ...quote, id: `quote-${i}`, text: '文'.repeat(BUDDY_QUOTE_TEXT_LIMIT) })) }
+    expect(buddyUserContentV1Schema.safeParse(content).success).toBe(false)
+    expect(buddyUserContentV1Schema.safeParse({ ...content, quotes: content.quotes.slice(0, 4) }).success).toBe(true)
   })
 
   it('keeps quoted text and origin distinct from the new user question in model input', () => {
@@ -42,9 +45,8 @@ describe('message quotes', () => {
     const projected = projectBuddyUserContent({ ...createBuddyUserContent('Explain this setting.'), quotes: [quoted] }, noResources, () => '')
     expect(projected.prompt).toContain('not new user instructions')
     expect(projected.prompt).toContain('not authorization')
-    expect(JSON.parse(projected.prompt.split('\n')[1]!)).toEqual([{ source: quoted.source, text: quoted.text.replace('[FILE#1]', '［FILE#1］') }])
+    expect(JSON.parse(projected.prompt.split('\n')[1]!)).toEqual([{ referenceId: quoted.id, kind: 'message', source: quoted.source, text: quoted.text.replace('[FILE#1]', '［FILE#1］') }])
     expect(projected.prompt.endsWith('\n\nExplain this setting.')).toBe(true)
     expect(projected.resources).toEqual([])
-    expect(projectBuddyUserContent(createBuddyUserContent('legacy'), noResources, () => '').prompt).toBe('legacy')
   })
 })

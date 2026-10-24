@@ -119,6 +119,7 @@ import { registerContextRpc } from './context/registerContextRpc'
 import { ConversationLifecycleService } from './conversations/ConversationLifecycleService'
 import { ConversationMetadataService } from './conversations/ConversationMetadataService'
 import { ConversationMutationGuard } from './conversations/ConversationMutationGuard'
+import { createExtensionReferenceCapabilities } from './conversations/extensionReferenceCapabilities'
 import { createExtensionTaskCapabilities } from './conversations/extensionTaskCapabilities'
 import { ExtensionTaskContext } from './conversations/ExtensionTaskContext'
 import { registerConversationRpc } from './conversations/registerConversationRpc'
@@ -158,7 +159,6 @@ import { registerProviderRpc } from './providers/registerProviderRpc'
 import { resolveInteractiveModelSelection } from './providers/resolveInteractiveModelSelection'
 import { BuddyServiceError, registerRuntimeRequest } from './rpc/runtimeRequest'
 import { registerRunRpc } from './runs/registerRunRpc'
-
 import { RunContinuityService } from './runs/RunContinuityService'
 import { RunLifecycleService } from './runs/RunLifecycleService'
 import { RunRecoveryService } from './runs/RunRecoveryService'
@@ -196,6 +196,7 @@ import { createConversationRepository } from './storage/conversationRepository'
 import { createConversationTreeRepository } from './storage/conversationTreeRepository'
 import { createExecutionRepository } from './storage/executionRepository'
 import { createExtensionInvocationRepository } from './storage/extensionInvocationRepository'
+import { createExtensionReferenceRepository } from './storage/extensionReferenceRepository'
 import { createExtensionTaskContextRepository } from './storage/extensionTaskContextRepository'
 import { createMailboxRepository } from './storage/mailboxRepository'
 import { createNotificationAttentionRepository } from './storage/notificationAttentionRepository'
@@ -621,6 +622,7 @@ export async function startBuddyService(
       return service
     })
     const extensionHistory = createExtensionTaskContextRepository(options.database, conversationHistory.lineage)
+    const extensionReferences = createExtensionReferenceRepository(options.database, conversationHistory.lineage)
     const extensionTaskContext = new ExtensionTaskContext(conversations, extensionHistory, runs, runInputs)
     const extensionAgent = await host.start('runtime.plugins', ({ defer }) => {
       const service = new ExtensionAgentRuntime({
@@ -629,6 +631,7 @@ export async function startBuddyService(
           const task = extensionTaskContext.open(scope)
           return {
             ...createExtensionTaskCapabilities(conversationMetadata, extensionHistory, task, scope),
+            ...createExtensionReferenceCapabilities(extensionReferences, task, scope),
             ...createExtensionModelCapabilities(executionModels, usageService, task),
           }
         },
@@ -957,6 +960,7 @@ export async function startBuddyService(
       }),
       approvalService,
       attachmentService,
+      getInputProjection: (conversationId, messageId) => extensionReferences.inputProjection(conversationId, messageId),
       changeCaptureService,
       mutations,
       receiptDirectory: join(options.buddyHome, 'process-receipts'),
@@ -989,6 +993,7 @@ export async function startBuddyService(
         conversations,
         publications: treeRepository,
         references: sessionReferences,
+        referenceSnapshots: extensionReferences,
       }, petActions),
     }
     const conversationMembers = createConversationMemberRepository(options.database)

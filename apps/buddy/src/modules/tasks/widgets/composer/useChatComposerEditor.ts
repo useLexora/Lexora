@@ -1,6 +1,7 @@
 import type { JSONContent } from '@tiptap/core'
 import type { ChatComposerEditorOptions } from './typing'
 import { resolveBuddyQuoteReference } from '@buddy-shared/conversation/buddyInputMaterial'
+import { appendBuddyResourceQuote } from '@buddy-shared/conversation/buddyUserContent'
 import Placeholder from '@tiptap/extension-placeholder'
 import { NodeSelection } from '@tiptap/pm/state'
 import StarterKit from '@tiptap/starter-kit'
@@ -8,8 +9,9 @@ import { useEditor } from '@tiptap/vue-3'
 import { computed, shallowRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { chatComposerDocumentToUserContent, createChatComposerContentFromText, findChatComposerTrigger, getChatComposerResourceIds, serializeChatComposerContent, shouldSubmitChatComposerKey } from '@/modules/prompt-input'
-import { CHAT_COMPOSER_CLIPBOARD_TYPE, ChatComposerActorReference, ChatComposerDocument, ChatComposerPromptDirective, ChatComposerQuoteReference, ChatComposerResourceClipboard, ChatComposerResourceReference, ChatComposerSessionReference, moveChatComposerResourceSelection, replaceChatComposerDocument } from '@/modules/prompt-input/ui'
+import { CHAT_COMPOSER_CLIPBOARD_TYPE, ChatComposerActorReference, ChatComposerDocument, ChatComposerPromptDirective, ChatComposerQuoteReference, ChatComposerResourceClipboard, ChatComposerResourceReference, ChatComposerSessionReference, dispatchComposerEdit, moveChatComposerResourceSelection, replaceChatComposerDocument } from '@/modules/prompt-input/ui'
 import { resolveFileIcon } from '@/shared/ui/file-icon'
+import { readReferenceClipboard } from '@/shared/ui/selection/referenceClipboard'
 import { getChatImageLabels } from '../../model/attachments/chatAttachmentView'
 import { shouldAttachPastedText } from '../../model/composer/pastedText'
 import { inputMaterialLabel } from '../../model/materials/inputMaterialView'
@@ -22,6 +24,11 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
   const resourceById = computed(() => new Map(options.resources.value.map(entry => [entry.resource.resourceId, entry.resource])))
   const imageLabels = computed(() => getChatImageLabels(getChatComposerResourceIds(contentJSON.value)
     .flatMap(id => resourceById.value.get(id) ?? [])))
+  const quotePasteLimitReached = shallowRef(false)
+  const quotePasteLimitMessage = computed(() => quotePasteLimitReached.value ? t('desktop.chat.quoteLimit') : null)
+  watch(options.draftId, () => {
+    quotePasteLimitReached.value = false
+  }, { flush: 'sync' })
   let isComposing = false
   let isHydrating = false
 
@@ -108,6 +115,7 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
     onFocus: refreshActiveTrigger,
     onSelectionUpdate: refreshActiveTrigger,
     onUpdate: ({ editor }) => {
+      quotePasteLimitReached.value = false
       const nextContent = normalizeComposerContent(editor.getJSON())
       contentJSON.value = nextContent
       refreshActiveTrigger()
@@ -221,6 +229,28 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
   }
 
   function handleEditorPaste(event: ClipboardEvent) {
+    quotePasteLimitReached.value = false
+    const reference = readReferenceClipboard(event.clipboardData?.getData('text/html') ?? '')
+    if (reference && editor.value && !editor.value.isDestroyed && editor.value.isEditable) {
+      const content = chatComposerDocumentToUserContent(editor.value.getJSON())
+      const appended = appendBuddyResourceQuote(content, reference)
+      if (appended.result === 'added') {
+        event.preventDefault()
+        dispatchComposerEdit(editor.value, editor.value.state.tr
+          .setDocAttribute('resourceQuotes', appended.content.resourceQuotes)
+          .replaceSelectionWith(editor.value.schema.nodes.chatQuoteReference!.create({ quoteId: reference.id, quoteKind: 'resource' })))
+        return true
+      }
+      if (appended.result === 'limit') {
+        event.preventDefault()
+        quotePasteLimitReached.value = true
+        return true
+      }
+      if (appended.result === 'duplicate') {
+        event.preventDefault()
+        return true
+      }
+    }
     const clipboardText = event.clipboardData?.getData('text/plain')
     if (clipboardText) {
       const parsed = parseSessionReferenceClipboard(clipboardText)
@@ -263,7 +293,7 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
     ))
   }
 
-  return { contentJSON, editor, imageLabels, serializedContent }
+  return { contentJSON, editor, imageLabels, serializedContent, quotePasteLimitMessage }
 }
 
 function resolveComposerContent(

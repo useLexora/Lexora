@@ -133,7 +133,23 @@ onScopeDispose(() => {
 })
 useProvideWorkbenchUi({ anchors, panes: paneRegistry, controlRenderer: DesktopExtensionControl, slotRenderer: DesktopExtensionSlot, menuRenderer: DesktopExtensionMenu })
 const ui = useExtensionUiContributions(extensions.installed, workbench.controller.configuration)
-const extensionReferences = useExtensionReferences({ references: workbench.selectionReferences, controller: workbench.controller, persistence: workbench.persistence, pool: workbench.pool, api: api.extensions, views: extensionViews, installed: extensions.installed, chooseTarget: useReferenceTargetPicker(() => stores.applicationSettings.language.value) })
+const extensionReferences = useExtensionReferences({
+  references: workbench.selectionReferences,
+  controller: workbench.controller,
+  persistence: workbench.persistence,
+  pool: workbench.pool,
+  api: api.extensions,
+  views: extensionViews,
+  installed: extensions.installed,
+  writeClipboard: api.clipboard.writeText,
+  chooseTarget: useReferenceTargetPicker(() => stores.applicationSettings.language.value),
+  prepareNewTaskInput: workbench.prepareNewTaskInput,
+  showTarget: workbench.showTaskInput,
+  showPage: workbench.showReferencePage,
+  notifySuccess: result => message.success(result.kind === 'view'
+    ? translateBuddy(stores.applicationSettings.language.value, 'desktop.chat.quoteAddedToTarget', { title: result.title })
+    : translateBuddy(stores.applicationSettings.language.value, result.kind === 'clipboard' ? 'desktop.chat.quoteCopied' : 'desktop.chat.quoteAddedToNewTask')),
+})
 useExtensionContributions({ controller: workbench.controller, renderers: workbench.renderers, persistence: workbench.persistence, installed: extensions.installed, api: api.extensions, views: extensionViews, ui, ready: () => workbench.initialized, receiveReference: extensionReferences.receive })
 useProvideExtensionContext({ settingsLocation: settingsRegistry.extensionLocation, authoring: { author: computed(() => stores.applicationSettings.config.value?.desktop.pluginAuthor ?? ''), save: author => stores.applicationSettings.updateSettings({ desktop: { pluginAuthor: author } }) }, state: extensions, views: extensionViews, themeColors: desktopTheme.extensionColors, themeRevision: desktopTheme.revision, anchors, ui, workbench: pages.context, language: stores.applicationSettings.language, isDark: desktopTheme.isDark, startCreation: prompt => workbench.startTaskWithSkill('plugin-creator', prompt), endInteraction: id => workbench.controller.interactions.end(id), focusView: (id) => {
   workbench.controller.focus(id)

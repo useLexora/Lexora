@@ -22,7 +22,7 @@ import type { ExtensionPackage, ExtensionPackageStore } from './ExtensionPackage
 import type { ExtensionResourceUpload } from './ExtensionResourceUpload'
 import type { ExtensionConfigurationApplication, ExtensionServiceChange, ExtensionServiceFact, ExtensionServiceSnapshot } from './ExtensionServiceEvents'
 import { Buffer } from 'node:buffer'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
 import { z } from 'zod'
 import { BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT } from '../../shared/conversation/attachmentPolicy'
@@ -892,6 +892,7 @@ export class ExtensionService {
     else {
       resource = await this.store.grantFileOpening(provider.extensionId, input.source, name, () => this.#assertCurrent(running))
     }
+    resource = { ...resource, sourceId: createHash('sha256').update(JSON.stringify([provider.extensionId, input.source])).digest('hex') }
     return { extensionId: provider.extensionId, viewType: binding.view, resource }
   }
 
@@ -899,8 +900,12 @@ export class ExtensionService {
     const input = extensionReferenceOpeningSchema.parse(raw)
     const running = await this.#activate(input.extensionId)
     const view = running.package.manifest.contributes.views.find(view => view.id === input.viewType)
-    if (!view || view.location !== 'context')
+    if (!view || (view.location !== 'context' && !(view.location === 'page' && running.package.manifest.contributes.navigation?.view === view.id)))
       throw new Error('EXTENSION_REFERENCE_UNAVAILABLE')
+    if (view.location === 'page' && input.source)
+      throw new Error('EXTENSION_RESOURCE_DENIED')
+    if (!input.source && view.resource === 'selected-file')
+      throw new Error('EXTENSION_RESOURCE_REQUIRED')
     if (input.reuse) {
       const reuse = input.reuse
       const current = this.#views.get(reuse.id)
@@ -910,29 +915,29 @@ export class ExtensionService {
       if (!valid() || !current)
         throw new Error('EXTENSION_REFERENCE_UNAVAILABLE')
       const resource = current.input.resource
-      const source = resource ? await this.#resource(running, resource.id) : null
-      if (!sameReferenceJson(source, input.source))
-        throw new Error('EXTENSION_RESOURCE_DENIED')
-      if (resource) {
-        const response = await this.#selectedResponse(running, resource.id, current.abort.signal)
-        await response.body?.cancel()
+      if (input.source) {
+        const source = resource ? await this.#resource(running, resource.id) : null
+        if (!sameReferenceJson(source, input.source))
+          throw new Error('EXTENSION_RESOURCE_DENIED')
+        if (resource) {
+          const response = await this.#selectedResponse(running, resource.id, current.abort.signal)
+          await response.body?.cancel()
+        }
       }
       this.#assertCurrent(running)
       if (!valid())
         throw new Error('EXTENSION_REFERENCE_UNAVAILABLE')
       return { extensionId: input.extensionId, viewType: view.id, resource }
     }
-    if (!input.source) {
-      if (view.resource === 'selected-file')
-        throw new Error('EXTENSION_RESOURCE_REQUIRED')
+    if (!input.source)
       return { extensionId: input.extensionId, viewType: view.id, resource: null }
-    }
     if (view.resource === 'none' || running.package.manifest.permissions.selectedResource !== 'read')
       throw new Error('EXTENSION_RESOURCE_DENIED')
     const { name, response } = await this.#sourceResponse(input.source, running.abort.signal)
     await response.body?.cancel()
     this.#assertCurrent(running)
-    const resource = await this.store.grantFileOpening(input.extensionId, input.source, name, () => this.#assertCurrent(running))
+    const granted = await this.store.grantFileOpening(input.extensionId, input.source, name, () => this.#assertCurrent(running))
+    const resource = { ...granted, sourceId: createHash('sha256').update(JSON.stringify([input.extensionId, input.source])).digest('hex') }
     this.#assertCurrent(running)
     return { extensionId: input.extensionId, viewType: view.id, resource }
   }
@@ -1169,7 +1174,7 @@ export class ExtensionService {
     else if (method === 'references.add') {
       if (view.running.package.manifest.apiVersion < 4 || !view.running.package.manifest.permissions.references)
         throw new Error('EXTENSION_REFERENCES_DENIED')
-      if (contribution.location !== 'context' || (placement && placement.kind !== 'view'))
+      if (!['context', 'page'].includes(contribution.location) || (placement && placement.kind !== 'view'))
         throw new Error('EXTENSION_METHOD_DENIED')
       const input = extensionReferenceInputSchema.parse(params)
       const material = await this.#referenceMaterial(view, input)
@@ -1896,8 +1901,10 @@ export class ExtensionService {
     const selected = view.input.resource
     const signal = AbortSignal.any([view.abort.signal, running.abort.signal])
     if (input.kind === 'content') {
+      if (input.source === 'view' && !running.package.manifest.contributes.views.some(contribution => contribution.id === view.input.viewType && contribution.resource !== 'selected-file'))
+        throw new Error('EXTENSION_RESOURCE_REQUIRED')
       let source: ExtensionFileOpeningSource | null = null
-      if (selected) {
+      if (selected && input.source !== 'view') {
         const response = await this.#selectedResponse(running, selected.id, signal)
         await response.body?.cancel()
         source = await this.#resource(running, selected.id)

@@ -43,6 +43,7 @@ export function createDesktopSelectionReferences(options: BuiltinSelectionRefere
           identity: JSON.stringify([workspace.composer.draftId.value, workspace.composer.editorKey.value, workspace.composer.target.value, task.session.navigationVersion()]),
           scope: workspace.session.activeConversationId.value ? `task:${workspace.session.activeConversationId.value}` : `draft:${workspace.composer.draftId.value}`,
           label: translateBuddy(options.language.value, 'desktop.chat.quoteTargetPane', { index: index + 1, title }),
+          pane: { index: index + 1, title },
           read: () => chatComposerDocumentToUserContent(workspace.composer.composerContent.value),
           write: content => workspace.composer.updateComposerContent(buddyUserContentToText(content), userContentToChatComposerDocument(content)),
         }]

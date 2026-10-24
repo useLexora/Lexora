@@ -1,7 +1,7 @@
 import type { BuddyViewQuote } from '../conversation/buddyUserContent'
 import type { BuddyComposerSource } from '../conversation/composerResource'
 import { z } from 'zod'
-import { BUDDY_QUOTE_TEXT_LIMIT, buddyQuoteSnapshotLength } from '../conversation/buddyUserContent'
+import { BUDDY_QUOTE_TEXT_LIMIT } from '../conversation/buddyUserContent'
 import { referenceLocatorSchema } from '../conversation/referenceMaterial'
 import { extensionFileOpeningSourceSchema } from './extensionFileOpening'
 import { extensionIdSchema } from './extensionManifest'
@@ -9,10 +9,11 @@ import { extensionIdSchema } from './extensionManifest'
 export const extensionReferenceInputSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('content'),
+    source: z.literal('view').optional(),
     title: z.string().trim().min(1).max(512),
     text: z.string().min(1).max(BUDDY_QUOTE_TEXT_LIMIT).refine(text => text.trim().length > 0),
     locator: referenceLocatorSchema.optional(),
-  }).strict().refine(input => buddyQuoteSnapshotLength(input) <= BUDDY_QUOTE_TEXT_LIMIT, 'Reference snapshot exceeds quote limit'),
+  }).strict(),
   z.object({
     kind: z.literal('resource'),
     resource: z.object({ id: z.string().uuid() }).strict(),

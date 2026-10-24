@@ -21,7 +21,7 @@ function fixture() {
   let list = async () => descriptors
   let unavailable = false
   let invoke: (input: unknown, signal?: AbortSignal) => Promise<unknown> = async () => null
-  const handlers: ExtensionAgentHandlers = { 'task.messages': async () => [], 'task.get': async () => null, 'task.rename': async () => null, 'models.generateText': async () => null }
+  const handlers: ExtensionAgentHandlers = { 'task.messages': async () => [], 'task.get': async () => null, 'task.rename': async () => null, 'models.generateText': async () => null, 'references.list': async () => ({ items: [], truncated: false }), 'references.resolve': async () => null }
   const rpc: RuntimeRpcPeerContract = {
     notify() {},
     close() {},

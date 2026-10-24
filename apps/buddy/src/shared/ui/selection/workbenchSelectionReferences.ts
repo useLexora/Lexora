@@ -8,6 +8,7 @@ export interface SelectionReferenceTarget {
   identity: string
   scope: string
   label: string
+  pane?: { index: number, title: string }
   read: () => BuddyUserContentV1
   write: (content: BuddyUserContentV1) => void
 }
@@ -16,15 +17,18 @@ export interface SelectionReferenceRequest {
   viewId: string
   sourceIdentity: string
   quote: BuddyResourceQuote
-  targets: readonly Pick<SelectionReferenceTarget, 'id' | 'identity' | 'label'>[]
+  targets: readonly Pick<SelectionReferenceTarget, 'id' | 'identity' | 'label' | 'pane'>[]
   defaultId: string | null
   isSplit: boolean
 }
 export type SelectionReferenceResult = 'added' | 'duplicate' | 'limit' | 'unavailable'
 
+export type SelectionReferenceNavigate = (action: () => Promise<boolean>, current: () => boolean) => Promise<boolean>
+
 export interface SelectionReferenceLocateRequest {
   signal: AbortSignal
   current: () => boolean
+  navigate: SelectionReferenceNavigate
   reveal: (id: string, quote: BuddyTextQuote, current?: () => boolean) => Promise<boolean>
 }
 export type SelectionReferenceLocateHandler = (request: SelectionReferenceLocateRequest) => Promise<boolean>
@@ -131,7 +135,7 @@ export class WorkbenchSelectionReferences {
     return {
       viewId,
       sourceIdentity: source.identity,
-      targets: targets.map(({ id, identity, label }) => ({ id, identity, label })),
+      targets: targets.map(({ id, identity, label, pane }) => ({ id, identity, label, pane })),
       defaultId: preferred?.id ?? null,
       isSplit: this.options.isSplit?.() ?? targets.length > 1,
     }
@@ -186,8 +190,9 @@ export class WorkbenchSelectionReferences {
     }
     this.#pending = pending
     const timer = setTimeout(pending.cancel, 10_000)
+    const navigating = shallowRef<(() => boolean)>()
     const current = () => active.value && this.#available() && this.#operation.value === operation
-      && this.#providers.get(registration.owner) === registration && scopeCurrent()
+      && this.#providers.get(registration.owner) === registration && (navigating.value ? navigating.value() : scopeCurrent())
     const stop = watch(current, valid => !valid && pending.cancel(), { flush: 'sync' })
     try {
       if (!current())
@@ -195,6 +200,18 @@ export class WorkbenchSelectionReferences {
       const result = handler({
         signal: abort.signal,
         current,
+        navigate: async (action, expected) => {
+          if (!current() || navigating.value)
+            return false
+          navigating.value = expected
+          try {
+            if (!await action() || !current())
+              return false
+            scopeCurrent = this.options.captureLocateScope?.() ?? (() => true)
+            return true
+          }
+          finally { navigating.value = undefined }
+        },
         reveal: (id, quote, sourceCurrent) => this.reveal(id, quote, () => current() && (sourceCurrent?.() ?? true)),
       })
       return await Promise.race([result.then(value => value && current()), cancelled.promise])

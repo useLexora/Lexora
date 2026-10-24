@@ -42,18 +42,13 @@ async function fixture(overrides: Partial<ExtensionServicePorts> = {}, value: Ex
   cleanups.push(() => rm(f.root, { recursive: true, force: true }))
   await f.store.install((await reviewPackage(f.root, f.store, value)).token)
   const events: Extract<ExtensionWorkbenchEvent, { kind: 'reference' }>[] = []
-  const commands: string[] = []
   let authorized = true
   const assertAuthorized = () => {
     if (!authorized)
       throw new Error('EXTENSION_RESOURCE_DENIED')
   }
   const service = new ExtensionService(f.store, {
-    createHost: () => ({ call: async (method) => {
-      if (method === 'command')
-        commands.push(method)
-      return null
-    }, dispose: async () => {}, devtools: () => {} }),
+    createHost: () => ({ call: async () => null, dispose: async () => {}, devtools: () => {} }),
     createView: () => ({ token: randomUUID(), url: 'lexora-extension://fixture/__view.html', dispose: () => {} }),
     workbench: async (event) => {
       if (event.kind === 'reference') {
@@ -82,7 +77,7 @@ async function fixture(overrides: Partial<ExtensionServicePorts> = {}, value: Ex
   cleanups.push(() => service.dispose())
   const open = (resource: ExtensionResource | null = null, extra: Partial<ExtensionViewInput> = {}) => service.openView({ extensionId, viewType, resource, viewId: randomUUID(), state: {}, stateVersion: 1, ...extra })
   const call = (view: ExtensionViewSession, input: unknown = content) => service.viewRequest(view.id, view.generation, view.token, 'references.add', input)
-  return { ...f, service, events, commands, open, call, revoke: () => {
+  return { ...f, service, events, open, call, revoke: () => {
     authorized = false
   } }
 }
@@ -137,13 +132,12 @@ it('keeps separate no-file source instances distinct without trusting plugin-sup
   await expect(f.call(first, { ...content, viewId: second.id })).rejects.toThrow('EXTENSION_INVALID_ARGUMENT')
 })
 
-it('requires the API 4 references permission and interactive context views', async () => {
+it('requires the API 4 references permission and rejects non-interactive placements', async () => {
   const denied = await fixture({}, referenceManifest(false))
   await expect(denied.call(await denied.open())).rejects.toThrow('EXTENSION_REFERENCES_DENIED')
   expect(denied.events).toEqual([])
   const f = await fixture()
   for (const extra of [
-    { viewType: 'tests.reader.page' },
     { viewType: 'tests.reader.empty', placementId: 'tests.reader.decoration' },
     { viewType: 'tests.reader.empty', placementId: 'tests.reader.slot' },
   ]) {
@@ -171,7 +165,7 @@ it('keeps ordinary Space references but copies unsaved selected and artifact byt
   expect(f.events).toHaveLength(3)
 })
 
-it('rejects another view selected handle while copying only authorized local or private resources', async () => {
+it('rejects another view selected handle and copies local resources only while authorized', async () => {
   const f = await fixture()
   const selected = await f.service.prepareReferenceOpening(referenceTarget)
   await f.open(selected.resource)
@@ -185,9 +179,6 @@ it('rejects another view selected handle while copying only authorized local or 
   expect(JSON.stringify(f.events)).not.toContain(f.root)
   await f.store.resources.revoke(extensionId, local!.id, () => {})
   await expect(f.call(other, { kind: 'resource', resource: { id: local!.id } })).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
-  const owned = await f.store.resources.import(extensionId, 'owned.txt', 'text/plain', new Response('private bytes'), new AbortController().signal, () => {})
-  expect(await f.call(other, { kind: 'resource', resource: { id: owned.id } })).toBe(true)
-  expect(f.events.at(-1)?.material).toMatchObject({ kind: 'file', name: 'owned.txt', base64: Buffer.from('private bytes').toString('base64') })
 })
 
 it('allows private snapshots without granting local file access', async () => {
@@ -199,6 +190,7 @@ it('allows private snapshots without granting local file access', async () => {
   await expect(f.call(view, { kind: 'resource', resource: { id: local!.id } })).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
   const owned = await f.store.resources.import(extensionId, 'owned.txt', 'text/plain', new Response('private'), new AbortController().signal, () => {})
   expect(await f.call(view, { kind: 'resource', resource: { id: owned.id } })).toBe(true)
+  expect(f.events.at(-1)?.material).toMatchObject({ kind: 'file', name: 'owned.txt', base64: Buffer.from('private').toString('base64') })
 })
 
 it('bounds attachment snapshot bytes and does not publish an oversized resource', async () => {
@@ -262,6 +254,28 @@ it.each(['close', 'disable'] as const)('invalidates a renderer reply after %s wi
   await rejected
 })
 
+it('accepts a registered page selection, reopens its source and rejects a revoked page session', async () => {
+  const value = referenceManifest()
+  value.contributes.navigation = { title: 'Reader', view: 'tests.reader.page', showHeader: true }
+  const f = await fixture({}, value)
+  const view = await f.open(null, { viewType: 'tests.reader.page' })
+  expect(await f.call(view)).toBe(true)
+  expect(f.events[0]).toMatchObject({ kind: 'reference', viewId: view.id, material: {
+    kind: 'quote',
+    quote: { text: content.text, source: { provider: 'extension:tests.reader', target: { extensionId, viewId: view.id, viewType: 'tests.reader.page', source: null } } },
+  } })
+  const pageTarget = { ...referenceTarget, viewId: view.id, viewType: 'tests.reader.page', source: null }
+  expect(await f.service.prepareReferenceOpening(pageTarget)).toEqual({ extensionId, viewType: 'tests.reader.page', resource: null })
+  const reuse = { id: view.id, generation: view.generation, token: view.token }
+  expect(await f.service.prepareReferenceOpening({ ...pageTarget, reuse })).toEqual({ extensionId, viewType: 'tests.reader.page', resource: null })
+  await expect(f.service.prepareReferenceOpening({ ...pageTarget, source: referenceTarget.source })).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
+  f.service.closeView(view.id, view.generation, view.token)
+  await expect(f.call(view)).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
+  await expect(f.service.prepareReferenceOpening({ ...pageTarget, reuse })).rejects.toThrow('EXTENSION_REFERENCE_UNAVAILABLE')
+  const denied = await fixture({}, referenceManifest(false))
+  await expect(denied.call(await denied.open(null, { viewType: 'tests.reader.page' }))).rejects.toThrow('EXTENSION_REFERENCES_DENIED')
+})
+
 it('prepares only compatible owned context views, reissues handles and rechecks source authorization', async () => {
   const f = await fixture()
   const first = await f.service.prepareReferenceOpening(referenceTarget)
@@ -274,7 +288,6 @@ it('prepares only compatible owned context views, reissues handles and rechecks 
   await expect(f.service.prepareReferenceOpening({ ...referenceTarget, viewType: 'tests.reader.empty' })).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
   f.revoke()
   await expect(f.service.prepareReferenceOpening(referenceTarget)).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
-  expect(f.commands).toEqual([])
   await f.service.enable(extensionId, false)
   await expect(f.service.prepareReferenceOpening({ ...referenceTarget, source: null })).rejects.toThrow()
   await f.service.enable(extensionId, true)
@@ -315,4 +328,37 @@ it('rejects a reused view closed while its authorization is being rechecked', as
   f.service.closeView(view.id, view.generation, view.token)
   read.resolve()
   await rejected
+})
+
+it('detaches explicit view content from the imported resource without restoring its file authorization', async () => {
+  const f = await fixture()
+  const prepared = await f.service.prepareReferenceOpening(referenceTarget)
+  const view = await f.open(prepared.resource)
+  expect(await f.call(view)).toBe(true)
+  expect(f.events.at(-1)?.material).toMatchObject({ kind: 'quote', quote: { source: { target: { source: referenceTarget.source } } } })
+  f.revoke()
+  await expect(f.call(view)).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
+  expect(await f.call(view, { ...content, source: 'view', locator: { version: 1, data: { documentId: 'private-document-b' } } })).toBe(true)
+  const material = f.events.at(-1)!.material
+  if (material.kind !== 'quote')
+    throw new Error('Expected quote')
+  expect(material.quote).toMatchObject({ source: { target: { extensionId, viewType, viewId: view.id, source: null } }, locator: { data: { documentId: 'private-document-b' } } })
+  const target = material.quote.source.target as ExtensionReferenceTarget
+  expect(await f.service.prepareReferenceOpening({ ...target, reuse: { id: view.id, generation: view.generation, token: view.token } })).toEqual(prepared)
+  await expect(f.service.viewRequest(view.id, view.generation, view.token, 'resources.readText', { id: prepared.resource!.id })).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
+  f.service.closeView(view.id, view.generation, view.token)
+  const reopened = await f.service.prepareReferenceOpening(target)
+  expect(reopened).toEqual({ extensionId, viewType, resource: null })
+  const restored = await f.open(reopened.resource)
+  expect(await f.call(restored, { ...content, source: 'view' })).toBe(true)
+})
+
+it('allows explicit view provenance only when the view can reopen without a selected file', async () => {
+  const f = await fixture()
+  expect(await f.call(await f.open(null, { viewType: 'tests.reader.empty' }), { ...content, source: 'view' })).toBe(true)
+  const prepared = await f.service.prepareReferenceOpening({ ...referenceTarget, viewType: 'tests.reader.required' })
+  const required = await f.open(prepared.resource, { viewType: prepared.viewType })
+  await expect(f.call(required, { ...content, source: 'view' })).rejects.toThrow('EXTENSION_RESOURCE_REQUIRED')
+  expect(await f.call(required)).toBe(true)
+  await expect(f.service.prepareReferenceOpening({ ...referenceTarget, viewType: prepared.viewType, source: null, reuse: { id: required.id, generation: required.generation, token: required.token } })).rejects.toThrow('EXTENSION_RESOURCE_REQUIRED')
 })

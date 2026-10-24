@@ -4,6 +4,7 @@ import type {
   BuddyUserMessageResourceSnapshot,
 } from '../../../shared/conversation/buddyUserContent'
 import type { BuddyComposerDraftScope } from '../../../shared/conversation/composerDraft'
+import type { InputMaterialProjectionState } from '../../../shared/conversation/inputMaterialProjection'
 import type { BuddyThinkingLevel } from '../../../shared/conversation/modelSelection'
 import type { SkillReference } from '../../../shared/skills/skillApi'
 import type { BuddyAgentRunner } from '../agent/execution/BuddyAgentRunner'
@@ -59,8 +60,11 @@ import {
   buddyUserMessageContentV1Schema,
   getBuddyUserContentActorReferences,
   getResourceAttachmentIds,
+  readBuddyUserMessageContent,
 } from '../../../shared/conversation/buddyUserContent'
+import { inputMaterialInlineBytes } from '../../../shared/conversation/inputMaterialProjection'
 import { isBuddyThinkingLevel } from '../../../shared/conversation/modelSelection'
+import { canReadReferenceSnapshots } from '../conversations/referenceSnapshotToolContract'
 import { resolveGrantedPath } from '../directories/resolveGrantedPath'
 import { getModelFileInputMimeTypes } from '../providers/modelCapabilities'
 import { resolveInteractiveModelSelection } from '../providers/resolveInteractiveModelSelection'
@@ -135,7 +139,7 @@ interface TurnModelSelection extends Omit<InteractiveModelSelection, 'reasoning'
 
 interface PrepareTurnMaterializationInput {
   actorId: string
-  composer?: { content: BuddyUserContentV1, resourceIds: readonly string[], resources?: readonly BuddyUserMessageResourceSnapshot[] }
+  composer?: { content: BuddyUserContentV1, resourceIds: readonly string[], resources?: readonly BuddyUserMessageResourceSnapshot[], sourceMessageId?: string, quoteReadAvailable?: boolean }
   attachmentIds: readonly string[]
   content: string
   contextItems: readonly ChatContextItem[]
@@ -254,6 +258,7 @@ export class ChatTurnService {
       if ((!content && draft.content.sessionReferences?.length) || (!content && resourceInputs.length === 0 && !draft.content.quotes?.length && !draft.content.resourceQuotes?.length))
         throw new BuddyServiceError('VALIDATION_FAILED')
       const attachmentIds = getResourceAttachmentIds(resourceInputs)
+      const userMessageId = randomUUID()
 
       const {
         attachmentPrompt,
@@ -266,6 +271,8 @@ export class ChatTurnService {
         actorId: buddyId,
         attachmentIds,
         composer: {
+          sourceMessageId: userMessageId,
+          quoteReadAvailable: selectedModel.toolCall !== false && canReadReferenceSnapshots(resolvedActor.definition.settings.tools),
           content: { ...draft.content, sessionReferences },
           resourceIds: resourceInputs.map(resource => resource.resourceId),
           resources: resourceInputs,
@@ -282,7 +289,6 @@ export class ChatTurnService {
         preparedSelection: selectedModel,
       })
       const runId = randomUUID()
-      const userMessageId = randomUUID()
       stagedAttachments = combinePreparedAttachments(await this.#options.attachments.prepareMessageAttachments({
         attachmentIds,
         conversationId,
@@ -327,6 +333,7 @@ export class ChatTurnService {
         userMessageContent: createPersistedUserMessageContent(
           { ...draft.content, ...(sessionReferences.length ? { sessionReferences } : { sessionReferences: undefined }) },
           bindResourceAttachments(resourceInputs, persistedAttachmentIds),
+          attachmentPrompt.materialProjection,
         ),
         userMessageId,
       }
@@ -347,6 +354,11 @@ export class ChatTurnService {
       throw new BuddyServiceError('BUDDY_CONFLICT')
     const resolved = await this.#options.definitions.resolve({ buddyId, kind: 'actor', conversationId: conversation.id, requestedModel: input.modelOverride ?? null })
     const selection = resolved.selection
+    const projection = readBuddyUserMessageContent(input.userMessageContent)?.materialProjection
+    if ((projection?.deferredReferences || projection?.deferredResourceIds.length)
+      && (selection.toolCall === false || !canReadReferenceSnapshots(resolved.definition.settings.tools))) {
+      throw new BuddyServiceError('MODEL_INPUT_UNSUPPORTED')
+    }
     return {
       ...input,
       expectedActorModelSelection: resolved.memberModelSelection,
@@ -439,7 +451,9 @@ export class ChatTurnService {
       if (!replay && ((!content && draft?.content.sessionReferences?.length) || (!content && resourceInputs.length === 0 && !draft?.content.quotes?.length && !draft?.content.resourceQuotes?.length)))
         throw new BuddyServiceError('VALIDATION_FAILED')
       const attachmentIds = getResourceAttachmentIds(resourceInputs)
+      const userMessageId = randomUUID()
       const {
+        attachmentPrompt,
         prompt,
         replayInput,
         reviewRequested,
@@ -450,7 +464,7 @@ export class ChatTurnService {
         actorId: buddyId,
         attachmentIds,
         composer: draft
-          ? { content: { ...draft.content, sessionReferences }, resourceIds: resourceInputs.map(resource => resource.resourceId), resources: resourceInputs }
+          ? { content: { ...draft.content, sessionReferences }, resourceIds: resourceInputs.map(resource => resource.resourceId), resources: resourceInputs, sourceMessageId: userMessageId, quoteReadAvailable: selectedModel?.toolCall !== false && !!resolvedActor && canReadReferenceSnapshots(resolvedActor.definition.settings.tools) }
           : undefined,
         content: '',
         contextItems: [],
@@ -464,7 +478,6 @@ export class ChatTurnService {
         preparedSelection: selectedModel,
       })
       const runId = randomUUID()
-      const userMessageId = randomUUID()
       stagedAttachments = replay
         ? null
         : combinePreparedAttachments(await this.#options.attachments.prepareMessageAttachments({
@@ -521,6 +534,7 @@ export class ChatTurnService {
               userMessageContent: createPersistedUserMessageContent(
                 { ...draft!.content, ...(sessionReferences.length ? { sessionReferences } : { sessionReferences: undefined }) },
                 persistedResourceSnapshots,
+                attachmentPrompt.materialProjection,
               ),
               userMessageId,
             })
@@ -683,11 +697,16 @@ export class ChatTurnService {
 
   async #prepareTurnMaterialization(input: PrepareTurnMaterializationInput) {
     const replayInput = input.replay ? this.#requireRunInput(input.replay.run.id) : null
+    const selection = input.preparedSelection ?? await this.#resolveSelection(
+      input.replay?.run ?? null,
+      replayInput,
+      input.requestedModel,
+    )
     const directives = !replayInput && input.composer
       ? await materializeComposerDirectives(input.composer.content, input.space, this.#options.skills)
       : null
     const composer = directives && input.composer
-      ? { ...input.composer, resolveDirective: directives.resolveDirective }
+      ? { ...input.composer, inlineBytes: inputMaterialInlineBytes(selection), resolveDirective: directives.resolveDirective }
       : undefined
     const legacyContext = !replayInput && !composer
       ? await materializeContextItems(input.contextItems, input.space, this.#options.skills)
@@ -695,13 +714,19 @@ export class ChatTurnService {
     const contextItems = replayInput?.contextItems ?? directives?.contextItems ?? legacyContext?.contextItems ?? input.contextItems
     if (replayInput)
       await this.#validateSkillItems(input.space?.id ?? null, contextItems)
-    const attachmentPrompt = await this.#options.attachments.preparePrompt(
-      replayInput?.attachmentIds ?? input.attachmentIds,
-      replayInput ? '' : input.content,
-      input.conversationId,
-      replayInput ? null : input.draftId,
-      composer,
-    )
+    const attachmentPrompt = replayInput
+      ? {
+          prompt: '',
+          records: this.#options.attachments.getInputMetadata(replayInput.attachmentIds, input.conversationId),
+          materialProjection: undefined,
+        }
+      : await this.#options.attachments.preparePrompt(
+          input.attachmentIds,
+          input.content,
+          input.conversationId,
+          input.draftId,
+          composer,
+        )
     const context = replayInput
       ? ''
       : [
@@ -712,11 +737,6 @@ export class ChatTurnService {
     const prompt = replayInput?.prompt
       ?? [attachmentPrompt.prompt, context].filter(Boolean).join(PROMPT_SECTION_SEPARATOR)
     assertPromptSize(prompt)
-    const selection = input.preparedSelection ?? await this.#resolveSelection(
-      input.replay?.run ?? null,
-      replayInput,
-      input.requestedModel,
-    )
     await this.#options.inputValidation.validate({
       actorId: input.replay?.run.buddyId ?? input.actorId,
       conversationId: input.conversationId,
@@ -863,9 +883,11 @@ function createEditUserMessageFingerprint(input: EditChatUserMessageInput): stri
 function createPersistedUserMessageContent(
   userContent: BuddyUserContentV1,
   resourceSnapshots: readonly BuddyUserMessageResourceSnapshot[],
+  materialProjection?: InputMaterialProjectionState,
 ) {
   return buddyUserMessageContentV1Schema.parse({
     resourceSnapshots: [...resourceSnapshots],
+    ...(materialProjection?.deferredReferences || materialProjection?.deferredResourceIds.length ? { materialProjection } : {}),
     userContent,
   })
 }

@@ -36,7 +36,7 @@ export function useChatComposer(options: UseChatComposerOptions) {
 
   const resourceById = computed(() => new Map(options.resources.value.map(entry => [entry.resource.resourceId, entry])))
   const query = useChatComposerSuggestions(options, selectSuggestion, getImageLabel)
-  const { editor, contentJSON, imageLabels, serializedContent } = useChatComposerEditor({
+  const { editor, contentJSON, imageLabels, serializedContent, quotePasteLimitMessage } = useChatComposerEditor({
     pasteTextAsAttachment: options.pasteTextAsAttachment,
     composerContent: options.composerContent,
     draft: options.draft,
@@ -378,6 +378,7 @@ export function useChatComposer(options: UseChatComposerOptions) {
   }
 
   return {
+    quotePasteLimitMessage,
     materials,
     removeMaterial,
     activeSuggestionIndex: query.activeSuggestionIndex,

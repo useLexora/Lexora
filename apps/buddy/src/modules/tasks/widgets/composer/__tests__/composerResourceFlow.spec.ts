@@ -4,15 +4,13 @@ import type { BuddyComposerResource } from '@buddy-shared/conversation/composerR
 import type { JSONContent } from '@tiptap/core'
 import { File as NodeFile } from 'node:buffer'
 import { BUDDY_ATTACHMENT_COUNT_LIMIT, getAttachmentKind } from '@buddy-shared/conversation/attachmentPolicy'
-import { appendBuddyResourceQuote } from '@buddy-shared/conversation/buddyUserContent'
+import { appendBuddyResourceQuote, BUDDY_QUOTE_TEXT_LIMIT } from '@buddy-shared/conversation/buddyUserContent'
 import { Emitter } from '@buddy-shared/events/Emitter'
 import { deferred } from '@buddy-tests/deferred'
-import { NodeSelection, TextSelection } from '@tiptap/pm/state'
 import { EditorContent } from '@tiptap/vue-3'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, defineComponent, h, nextTick, shallowRef } from 'vue'
 import { chatComposerDocumentToUserContent, getChatComposerResourceIds, pruneChatComposerResources, userContentToChatComposerDocument } from '@/modules/prompt-input'
-import { moveChatComposerResourceSelection } from '@/modules/prompt-input/ui'
 import { useComposerResources } from '../../../state/composer/useComposerResources'
 import ChatInputMaterialStrip from '../../materials/ChatInputMaterialStrip.vue'
 import { useChatComposer } from '../useChatComposer'
@@ -340,18 +338,9 @@ describe('composer resource flow', () => {
     expect(flow.resources.resources.value).toEqual([])
   })
 
-  it('keeps identical excerpts from distinct positions while deduplicating the same selection', async () => {
+  it('keeps selection identity and deduplication through inline reuse, removal, undo and a restored panel-only draft', async () => {
     const flow = await mountFlow()
-    const quote = { id: 'first', text: 'Repeat', textOffset: 0, source: { conversationId: 'conversation-1', branchId: 'branch-1', messageId: 'message-1', role: 'assistant' as const, runId: 'run-1' } }
-    expect(flow.composer.addQuote(quote)).toBe('added')
-    expect(flow.composer.addQuote({ ...quote, id: 'second', textOffset: 20 })).toBe('added')
-    expect(flow.composer.addQuote({ ...quote, id: 'duplicate' })).toBe('duplicate')
-    expect(flow.composer.quotes.value.map(item => item.textOffset)).toEqual([0, 20])
-  })
-
-  it('keeps quote identity through inline reuse, removal, undo and a restored panel-only draft', async () => {
-    const flow = await mountFlow()
-    const quote = { id: 'quoted', text: 'Frozen reply', source: { conversationId: 'conversation-1', branchId: 'branch-1', messageId: 'message-1', role: 'assistant' as const, runId: 'run-1' } }
+    const quote = { id: 'quoted', text: 'Frozen reply', textOffset: 0, source: { conversationId: 'conversation-1', branchId: 'branch-1', messageId: 'message-1', role: 'assistant' as const, runId: 'run-1' } }
     flow.editor.commands.insertContent('Keep all my text')
     flow.editor.commands.setTextSelection({ from: 1, to: 5 })
     expect(flow.composer.addQuote(quote)).toBe('added')
@@ -383,6 +372,9 @@ describe('composer resource flow', () => {
     expect(flow.editor.view.dom.querySelectorAll('[data-type="chat-quote-reference"]')).toHaveLength(0)
     expect(flow.composer.materials.value).toHaveLength(1)
     expect(flow.records.size).toBe(0)
+    expect(flow.composer.addQuote({ ...quote, id: 'second', textOffset: 20 })).toBe('added')
+    expect(flow.composer.addQuote({ ...quote, id: 'duplicate' })).toBe('duplicate')
+    expect(flow.composer.quotes.value).toEqual([quote, { ...quote, id: 'second', textOffset: 20 }])
   })
 
   it('undoes an externally added resource excerpt together with its inline placement without losing the previous draft', async () => {
@@ -414,7 +406,7 @@ describe('composer resource flow', () => {
     expect(flow.editor.getJSON()).toEqual(document)
     flow.composer.removeQuote('quote-0')
     const afterRemoval = flow.editor.getJSON()
-    expect(flow.composer.addQuote({ id: 'oversized', source, text: 'a'.repeat(32_769) })).toBe('limit')
+    expect(flow.composer.addQuote({ id: 'oversized', source, text: 'a'.repeat(BUDDY_QUOTE_TEXT_LIMIT + 1) })).toBe('limit')
     expect(flow.editor.getJSON()).toEqual(afterRemoval)
     expect(flow.records.size).toBe(0)
   })
@@ -512,26 +504,6 @@ describe('composer resource flow', () => {
     flow.content.value = userContentToChatComposerDocument(saved)
     await nextTick()
     expect(labels()).toEqual(['[Image #1]', '[Image #2]', '[Image #3]', '[Image #1]'])
-  })
-
-  it('selects an adjacent inline resource with the arrow key', async () => {
-    const flow = await mountFlow()
-    flow.editor.commands.insertContent([
-      { attrs: { resourceId: 'resource-1' }, type: 'chatResourceReference' },
-      { text: ' ', type: 'text' },
-    ])
-    let resourcePosition = -1
-    flow.editor.state.doc.descendants((node, position) => {
-      if (node.type.name === 'chatResourceReference')
-        resourcePosition = position
-    })
-    flow.editor.view.dispatch(flow.editor.state.tr.setSelection(
-      TextSelection.create(flow.editor.state.doc, resourcePosition + 1),
-    ))
-
-    expect(moveChatComposerResourceSelection(flow.editor, -1)).toBe(true)
-    await nextTick()
-    expect(flow.editor.state.selection).toBeInstanceOf(NodeSelection)
   })
 
   it('removes a card and all inline appearances in one undoable edit while deleting an inline occurrence retains independent attachments', async () => {

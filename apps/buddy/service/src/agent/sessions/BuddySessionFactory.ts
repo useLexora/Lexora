@@ -11,6 +11,8 @@ import type { BuddyConversationTree } from './tree/BuddyConversationTree'
 import { ApplicationEvents } from '../../../../shared/observability/ApplicationEvents'
 import { isExecutionProfileWithin } from '../../../../shared/permissions/executionProfile'
 import { AttachmentToolWorkspace } from '../../attachments/AttachmentToolWorkspace'
+import { canReadReferenceSnapshots } from '../../conversations/referenceSnapshotToolContract'
+import { supportsModelToolCalls } from '../../providers/modelCapabilities'
 import { BuddyAgentRunError } from '../../runs/runError'
 import { createBuddySessionExtensions } from '../extensions/createBuddySessionExtensions'
 import { createBuddySession } from './createBuddySession'
@@ -211,7 +213,14 @@ export class BuddySessionFactory {
           blueprint.conversationId,
         ),
         materializeInput: async (input, images) => {
-          const resources = await this.#options.services.attachmentService.materializeInputResources(input, blueprint.conversationId, inputWorkspace)
+          const message = this.#options.services.getInputProjection?.(blueprint.conversationId, input.messageId)
+          const projection = message?.materialProjection
+          if (run.purpose !== 'conversation.compaction' && (projection?.deferredReferences || projection?.deferredResourceIds.length)
+            && (!session.session.model || !supportsModelToolCalls(session.session.model)
+              || !canReadReferenceSnapshots(blueprint.actor?.settings.tools ?? { mode: 'all' }))) {
+            throw new Error('MODEL_INPUT_UNSUPPORTED')
+          }
+          const resources = await this.#options.services.attachmentService.materializeInputResources(input, blueprint.conversationId, inputWorkspace, message)
           return [
             { text: input.prompt, type: 'text' as const },
             ...resources ? [{ text: resources, type: 'text' as const }] : [],

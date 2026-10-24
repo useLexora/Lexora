@@ -149,7 +149,7 @@ export function createReusableBuddySession(
       pendingSteering.delete(input.messageId)
     }
   })
-  const requestInputs = new WeakMap<Context['messages'], { failed: boolean, documents: Map<string, AttachmentFileInput> }>()
+  const requestInputs = new WeakMap<Context['messages'], { failed: boolean, failureCode?: string, documents: Map<string, AttachmentFileInput> }>()
   function enqueueInput(mode: 'steer' | 'followUp', prepare: () => BuddyInputReferenceV1, skills: readonly SkillReference[] = []) {
     if (!options.runContext.current || options.runContext.current.signal.aborted || finishingTurn)
       return false
@@ -187,7 +187,7 @@ export function createReusableBuddySession(
     })
   }
   session.agent.convertToLlm = async (messages) => {
-    const request = { failed: options.inputReferences.pending !== null, documents: new Map<string, AttachmentFileInput>() }
+    const request = { failed: options.inputReferences.pending !== null, failureCode: undefined as string | undefined, documents: new Map<string, AttachmentFileInput>() }
     const materialized = []
     const projected = new Map<string, BuddyInputReferenceV1>()
     const preparedImages = new Map<string, PreparedAttachmentImage | null>()
@@ -271,8 +271,10 @@ export function createReusableBuddySession(
         })
         materialized.push({ content: [...content, ...documentBlocks], role: 'user' as const, timestamp: message.timestamp })
       }
-      catch {
+      catch (error) {
         request.failed = true
+        if (error instanceof Error && error.message === 'MODEL_INPUT_UNSUPPORTED')
+          request.failureCode = error.message
       }
     }
     const converted = await convertToLlm(materialized)
@@ -282,7 +284,7 @@ export function createReusableBuddySession(
   session.agent.streamFunction = (model, context, streamOptions) => {
     const request = requestInputs.get(context.messages)
     if (request?.failed)
-      return createInputMaterializationFailure(model)
+      return createInputMaterializationFailure(model, request.failureCode)
     if (request && [...request.documents.values()].some(file => !supportsModelFileInput(model, file.mimeType)))
       return createInputMaterializationFailure(model, 'MODEL_INPUT_UNSUPPORTED')
     const requestContext = supportsModelToolCalls(model)

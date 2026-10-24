@@ -11,6 +11,7 @@ import type { useProvideFileOpening } from '@/modules/files'
 import type { TaskIndexController } from '@/modules/tasks'
 import type { TaskResourcePanel } from '@/modules/tasks/contracts'
 import type { ChatReadingPositions } from '@/modules/tasks/ui'
+import type { SelectionReferenceNavigate } from '@/shared/ui/selection/workbenchSelectionReferences'
 import type { CommandContext, DropPosition, ResourceRef, SplitDirection, WorkbenchView } from '@/workbench/common/workbench'
 import type { ViewCloseDecision } from '@/workbench/services/WorkbenchController'
 import { buddyUserContentToText, getBuddyUserContentResourceIds, hasBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
@@ -21,6 +22,7 @@ import { NButton, useDialog } from 'naive-ui'
 import { computed, h, onScopeDispose, shallowReactive, shallowRef } from 'vue'
 import { fileOpeningHandler } from '@/modules/files'
 import { userContentToChatComposerDocument } from '@/modules/prompt-input'
+import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import { TextModelPool } from '@/workbench/browser/TextModelPool'
 import { ViewRendererRegistry } from '@/workbench/browser/ViewRendererRegistry'
 import { panes, resourceKey } from '@/workbench/common/workbench'
@@ -164,6 +166,43 @@ export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: s
     const { spaceId = null, paneId = center(), direction } = destination
     return activateTask({ scheme: 'draft', id: crypto.randomUUID(), data: { spaceId } }, labels().newTask, { paneId, direction })
   }
+  async function prepareNewTaskInput(sourceViewId: string, prepare: (viewId: string) => Promise<boolean>, signal: AbortSignal): Promise<boolean> {
+    let accepted = false
+    const resource: ResourceRef = { scheme: 'draft', id: crypto.randomUUID(), data: { spaceId: null } }
+    await activateTask(resource, labels().newTask, {
+      signal,
+      direction: controller.owner(sourceViewId) ? 'right' : undefined,
+      prepareInput: async (id) => {
+        accepted = await prepare(id)
+        return accepted
+      },
+    })
+    return accepted
+  }
+  async function showTaskInput(id: string): Promise<void> {
+    const view = controller.layout.views[id]
+    if (!view || !pool.peek(view.resource))
+      return
+    controller.focus(id)
+    await router.push('/tasks')
+  }
+  async function showReferencePage(extensionId: string, navigate: SelectionReferenceNavigate): Promise<boolean> {
+    const location = desktopRouteLocations.extensionPage(extensionId)
+    const target = router.resolve(location).fullPath
+    const origin = router.currentRoute.value.fullPath
+    const valid = shallowRef(true)
+    const stop = router.beforeEach((to) => {
+      if (to.fullPath !== target)
+        valid.value = false
+    })
+    try {
+      return await navigate(async () => {
+        await router.push(location)
+        return router.currentRoute.value.fullPath === target
+      }, () => valid.value && [origin, target].includes(router.currentRoute.value.fullPath))
+    }
+    finally { stop() }
+  }
   function taskDestination(context: CommandContext) {
     const pane = context.pane ?? controller.pane(center())
     const view = pane?.view ? controller.layout.views[pane.view] : undefined
@@ -287,7 +326,9 @@ export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: s
     })
   }
 
-  async function activateTask(resource: ResourceRef, title: string, destination: { paneId?: string, direction?: SplitDirection, move?: boolean, signal?: AbortSignal, initialContent?: BuddyUserContentV1 } = {}) {
+  async function activateTask(resource: ResourceRef, title: string, destination: { paneId?: string, direction?: SplitDirection, move?: boolean, signal?: AbortSignal, initialContent?: BuddyUserContentV1, prepareInput?: (viewId: string) => Promise<boolean> } = {}) {
+    if (destination.signal?.aborted)
+      return
     const targetPaneId = destination.paneId ?? center()
     const targetPane = controller.pane(targetPaneId)
     const currentViewId = targetPane?.view
@@ -299,7 +340,7 @@ export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: s
     )
 
     if (!destination.direction && !isExistingTask && currentView && currentView.resource.scheme === 'draft') {
-      if (resource.scheme === 'draft' && !destination.initialContent) {
+      if (resource.scheme === 'draft' && !destination.initialContent && !destination.prepareInput) {
         const currentSpaceId = (currentView.resource.data.spaceId as string | null) ?? null
         const targetSpaceId = (resource.data.spaceId as string | null) ?? null
         if (currentSpaceId === targetSpaceId) {
@@ -309,7 +350,7 @@ export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: s
         }
       }
       if (await isDraftDirty(currentView)) {
-        if (destination.initialContent)
+        if (destination.initialContent || destination.prepareInput)
           return activateTask(resource, title, { ...destination, direction: 'right' })
         const action = await promptUnsentDraftAction()
         if (action === 'cancel') {
@@ -327,7 +368,8 @@ export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: s
     const version = routeVersion
     let id: string | null = null
     try {
-      await router.push('/tasks')
+      if (!destination.prepareInput)
+        await router.push('/tasks')
       if (destination.signal?.aborted || version !== routeVersion)
         return
       id = await controller.open(resource, title, { paneId: targetPaneId, ...destination })
@@ -336,11 +378,18 @@ export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: s
       if (currentView)
         confirmedDraftCloses.delete(currentView.id)
     }
-    if (!id || destination.signal?.aborted || version !== routeVersion)
+    if (!id || (!destination.prepareInput && (destination.signal?.aborted || version !== routeVersion)))
       return
+    let prepared = !destination.prepareInput
     try {
       const task = await pool.open(resource)
       if (!destination.signal?.aborted && controller.layout.views[id] && version === routeVersion) {
+        if (destination.prepareInput) {
+          prepared = await destination.prepareInput(id)
+          if (!prepared)
+            return
+          await router.push('/tasks')
+        }
         if (destination.initialContent) {
           task.workspace.composer.updateComposerContent(buddyUserContentToText(destination.initialContent), userContentToChatComposerDocument(destination.initialContent))
           await task.flushDrafts()
@@ -350,6 +399,16 @@ export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: s
     catch (error) {
       if (controller.layout.views[id])
         options.onError(error)
+    }
+    finally {
+      if (!prepared && !isExistingTask && controller.layout.views[id]) {
+        const view = controller.layout.views[id]!
+        if (view.resource.scheme !== 'draft' || !await isDraftDirty(view)) {
+          await controller.close(id)
+          if (version === routeVersion && currentView && controller.layout.views[currentView.id])
+            controller.focus(currentView.id)
+        }
+      }
     }
   }
   function dropResource(resource: ResourceRef, paneId: string, position: DropPosition) {
@@ -657,7 +716,7 @@ export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: s
     return saved
   }
   const selectionReferences = createDesktopSelectionReferences({ controller, pool, language, openFile: (target, current) => createFile(target, undefined, current), browser: api.browser, resources: options.resources, ready: () => initialized.value, independent: () => stores.applicationSettings.config.value?.desktop.contextPanelMode === 'independent', locateFile: target => api.localChat.spaces.readFile(target), navigationVersion: () => navigationVersion })
-  return { selectionReferences, api, renderers, fileOperations, fileToolbarTargets, fileView, closeContextFiles, readingPositions, discardTask, prepareTaskDeletion, activeTask, activeTaskId, backupError, controller, copies, models, pool, persistence, initialize, flush, dispose, openTask, newTask, startTaskWithSkill, openFile, dropResource, language, get initialized() {
+  return { selectionReferences, api, renderers, fileOperations, fileToolbarTargets, fileView, closeContextFiles, readingPositions, discardTask, prepareTaskDeletion, activeTask, activeTaskId, backupError, controller, copies, models, pool, persistence, initialize, flush, dispose, openTask, newTask, prepareNewTaskInput, showTaskInput, showReferencePage, startTaskWithSkill, openFile, dropResource, language, get initialized() {
     return initialized.value
   }, get navigationVersion() {
     return navigationVersion

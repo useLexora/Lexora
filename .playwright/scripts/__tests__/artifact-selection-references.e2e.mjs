@@ -94,11 +94,20 @@ test('built-in artifact previews quote Markdown and source text to one selected 
     expect(sent).not.toContain('export const answer = 999')
     const userMessage = requests.at(-1).messages.findLast(message => message.role === 'user')
     const userText = typeof userMessage.content === 'string' ? userMessage.content : userMessage.content.filter(part => part.type === 'text').map(part => part.text).join('\n')
-    expect(userText).toContain('"title":"code.ts"')
-    expect(userText).toContain('"format":"source"')
-    for (const field of ['kind', 'artifactId', 'conversationId', 'runId', 'updatedAt', 'spaceId', 'directoryId', 'revision', 'id', 'textOffset'])
-      expect(userText).not.toContain(`"${field}":`)
-    expect(sent).toContain('not access grants')
+    const snapshots = userText.split('\n').flatMap((line) => {
+      try {
+        const value = JSON.parse(line)
+        return Array.isArray(value) ? value : []
+      }
+      catch { return [] }
+    })
+    expect(snapshots).toHaveLength(1)
+    const [snapshot] = snapshots
+    const stored = latestUserInput(instance.home)
+    const [quote] = stored.content.userContent.resourceQuotes
+    expect(snapshot).toMatchObject({ referenceId: quote.id, sourceMessageId: stored.id, kind: 'resource', text: quote.text, range: quote.range })
+    expect(snapshot.source).toEqual({ title: 'code.ts', path: quote.source.path, format: 'source' })
+    expect(quote.source).toMatchObject({ kind: 'artifact', artifactId: expect.any(String), conversationId: expect.any(String), runId: expect.any(String) })
     await expect(cards).toHaveCount(2)
   })
 })
@@ -107,6 +116,20 @@ function completedRuns(home) {
   const database = new DatabaseSync(path.join(home, 'buddy/buddy.sqlite3'), { readOnly: true })
   try {
     return database.prepare('SELECT COUNT(*) AS count FROM runs WHERE status = ?').get('completed').count
+  }
+  finally {
+    database.close()
+  }
+}
+
+function latestUserInput(home) {
+  const database = new DatabaseSync(path.join(home, 'buddy/buddy.sqlite3'), { readOnly: true })
+  try {
+    const message = database.prepare(`SELECT messages.id, messages.content_json FROM runs
+      JOIN messages ON messages.id = runs.triggering_message_id
+      WHERE runs.status = 'completed' AND messages.role = 'user'
+      ORDER BY runs.started_at DESC, runs.id DESC LIMIT 1`).get()
+    return { id: message.id, content: JSON.parse(message.content_json) }
   }
   finally {
     database.close()

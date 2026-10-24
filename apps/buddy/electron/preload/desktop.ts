@@ -124,9 +124,9 @@ export function createDesktopApi(): Pick<LexoraDesktopApi, 'app' | 'clipboard' |
     }),
     clipboard: Object.freeze({
       getFilePath: (file: File) => webUtils.getPathForFile(file),
-      writeText: (text: string) => ipcRenderer.invoke(
+      writeText: (text: string, html?: string) => ipcRenderer.invoke(
         DESKTOP_IPC_CHANNELS.clipboardWriteText,
-        { text },
+        { text, ...(html === undefined ? {} : { html }) },
       ),
     }),
     commands: Object.freeze({

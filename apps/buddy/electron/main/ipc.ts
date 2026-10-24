@@ -5,7 +5,7 @@ import type { DesktopUpdateCapabilities } from '../shared/desktopUpdates'
 import type { LexoraConfigStore } from './config/LexoraConfigStore'
 import type { ExecuteDesktopCommand } from './desktopCommands'
 import process from 'node:process'
-import { app, clipboard, ipcMain } from 'electron'
+import { app, clipboard, ClipboardItem, ipcMain } from 'electron'
 import { currentPlatform } from '../../platform/currentPlatform'
 import { sandboxEnvironmentStatusSchema, sandboxSetupResultSchema } from '../../shared/permissions/shellSandbox'
 import { describeBuddyCapabilities } from '../../shared/platform'
@@ -68,10 +68,12 @@ export function registerDesktopIpc(options: RegisterDesktopIpcOptions): void {
     }
   })
 
-  ipcMain.handle(DESKTOP_IPC_CHANNELS.clipboardWriteText, (event, input: unknown) => {
+  ipcMain.handle(DESKTOP_IPC_CHANNELS.clipboardWriteText, async (event, input: unknown) => {
     assertTrustedSender(event, options.getWindow())
-    const { text } = clipboardWriteTextInputSchema.parse(input)
-    clipboard.writeText(text)
+    const { text, html } = clipboardWriteTextInputSchema.parse(input)
+    if (html === undefined)
+      await clipboard.writeText(text)
+    else await clipboard.write([new ClipboardItem({ 'text/plain': text, 'text/html': html })])
   })
 
   ipcMain.handle(DESKTOP_IPC_CHANNELS.commandExecute, async (event, commandId: unknown) => {

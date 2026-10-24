@@ -59,6 +59,7 @@ export const feedbackIssueInputSchema = z.object({
 
 export const clipboardWriteTextInputSchema = z.object({
   text: z.string(),
+  html: z.string().max(4 * 1024 * 1024).optional(),
 }).strict()
 
 export const releasePageInputSchema = z.object({

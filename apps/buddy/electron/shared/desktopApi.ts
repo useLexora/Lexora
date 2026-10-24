@@ -273,7 +273,7 @@ export interface LexoraDesktopApi {
   browser: DesktopBrowserApi
   clipboard: {
     getFilePath: (file: File) => string
-    writeText: (text: string) => Promise<void>
+    writeText: (text: string, html?: string) => Promise<void>
   }
   commands: {
     execute: (commandId: DesktopCommandId) => Promise<void>

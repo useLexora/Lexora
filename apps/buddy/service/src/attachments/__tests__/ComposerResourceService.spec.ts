@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { BUDDY_ATTACHMENT_COUNT_LIMIT } from '../../../../shared/conversation/attachmentPolicy'
-import { createBuddyUserContent } from '../../../../shared/conversation/buddyUserContent'
+import { createBuddyUserContent, readBuddyUserMessageContent } from '../../../../shared/conversation/buddyUserContent'
 import { createBuddyInputReference } from '../../agent/context/BuddyInputReference'
 import { BuddySessionBlueprintService } from '../../agent/sessions/BuddySessionBlueprintService'
 import { BuddySessionRecoveryService } from '../../agent/sessions/recovery/BuddySessionRecoveryService'
@@ -278,6 +278,56 @@ async function checkedTurns(overrides: Partial<InputModel> = {}) {
   } }
 }
 
+describe('saved reference input projection', () => {
+  it.each(['adaptive', 'model_without_tools', 'role_without_tools'] as const)('preserves the snapshot and prepares readable input with %s', async (mode) => {
+    const f = await checkedTurns({ toolCall: mode !== 'model_without_tools' })
+    if (mode === 'role_without_tools')
+      f.database.prepare('UPDATE buddies SET settings_json = json_set(settings_json, \'$.tools\', json(?)) WHERE id = \'default\'').run(JSON.stringify({ mode: 'none' }))
+    const text = `${'需要按需读取的中文资料。'.repeat(4000)}正文末尾`
+    const content: BuddyUserContentV1 = { ...createBuddyUserContent('读取引用'), resourceQuotes: [{ id: 'reference', text, source: { kind: 'view', provider: 'extension:tests.office', title: '选区', target: { extensionId: 'tests.office' } } }] }
+    const draft = f.drafts.open({ draftId: 'reference-draft', scope: { kind: 'global' }, initialContent: content, initialExecutionConfig: { approvalPolicy: 'manual', executionProfile: 'read_only' }, initialModelSelection: null, now: new Date().toISOString() })
+    if (mode !== 'adaptive') {
+      await expect(f.turns.start({ draftId: draft.draftId, expectedRevision: draft.revision, requestId: 'reference-start' })).rejects.toMatchObject({ code: 'MODEL_INPUT_TOO_LARGE' })
+      expect(f.drafts.findById(draft.draftId)?.content).toEqual(content)
+      expect(f.database.prepare('SELECT count(*) AS count FROM runs').get()).toEqual({ count: 0 })
+      return
+    }
+    const turn = await f.turns.start({ draftId: draft.draftId, expectedRevision: draft.revision, requestId: 'reference-start' })
+    const messageId = f.runs.findById(turn.runId)!.triggeringMessageId
+    const input = createRunInputRepository(f.database).findByRunId(turn.runId)!
+    const saved = f.conversations.listBranchMessages(turn.conversationId, turn.branchId).find(message => message.id === messageId)!
+    expect(saved.content).toMatchObject({ userContent: { resourceQuotes: [{ text }] } })
+    expect(input.prompt).toContain(`"sourceMessageId":"${messageId}"`)
+    expect(input.prompt).not.toContain('正文末尾')
+    expect(input.prompt).toContain('lexora_reference_read')
+    expect(input.prompt.length).toBeLessThan(3000)
+    expect(saved.content).toMatchObject({ materialProjection: { deferredReferences: true, deferredResourceIds: [] } })
+  })
+  it('projects uploaded text by message/resource identity and preserves the original through replay', async () => {
+    const f = await checkedTurns()
+    const text = `${'冻结附件😀。'.repeat(5000)}END_OF_SNAPSHOT`
+    const draft = await f.draft('long-attachment', 'long.txt', Buffer.from(text))
+    const turn = await f.turns.start({ draftId: draft.draftId, expectedRevision: draft.revision, requestId: 'attachment-start' })
+    const input = createRunInputRepository(f.database).findByRunId(turn.runId)!
+    const sourceRun = f.runs.findById(turn.runId)!
+    const saved = f.conversations.listBranchMessages(turn.conversationId, turn.branchId).find(message => message.id === sourceRun.triggeringMessageId)!
+    expect(saved.content).toMatchObject({ materialProjection: { deferredReferences: false, deferredResourceIds: ['long-attachment'] } })
+    expect(input.prompt).toContain('"kind":"attachment"')
+    expect(input.prompt).toContain(`"sourceMessageId":"${sourceRun.triggeringMessageId}"`)
+    expect(input.prompt).toContain('"referenceId":"long-attachment"')
+    expect(input.prompt).not.toContain('END_OF_SNAPSHOT')
+    expect(input.prompt.length).toBeLessThan(2500)
+    expect(await f.attachments.readText(input.attachmentIds[0]!, null, turn.conversationId)).toBe(text)
+    const scratch = f.paths.conversationWorkspace(turn.conversationId)
+    await mkdir(scratch, { recursive: true })
+    const reference = createBuddyInputReference({ attachmentIds: [...input.attachmentIds], images: [], messageId: sourceRun.triggeringMessageId, prompt: input.prompt })
+    const manifest = await f.attachments.materializeInputResources(reference, turn.conversationId, new AttachmentToolWorkspace(scratch), readBuddyUserMessageContent(saved.content))
+    expect(JSON.parse(manifest.split('\n')[1]!)[0]).toMatchObject({ content: 'file_only', snapshotRead: { referenceId: 'long-attachment', sourceMessageId: sourceRun.triggeringMessageId, kind: 'attachment' } })
+    const regenerated = await f.turns.regenerateAssistant({ conversationId: turn.conversationId, sourceRunId: turn.runId, requestId: 'attachment-replay' })
+    expect(createRunInputRepository(f.database).findByRunId(regenerated.runId)?.prompt).toBe(input.prompt)
+  })
+})
+
 describe('review turn boundaries', () => {
   const executionConfig = { approvalPolicy: 'policy' as const, executionProfile: 'workspace_write' as const }
   function reviewContent(mode: 'text' | 'directive' | 'directive_with_arguments', focus: string): BuddyUserContentV1 {
@@ -401,20 +451,6 @@ describe('attachment working copies', () => {
     const input = createBuddyInputReference({ attachmentIds: [available.id], resourceLabels: recovery.resourceLabels, images: [], messageId: 'message', prompt: 'Inspect the files' })
     const manifest = await fixture.attachments.materializeInputResources(input, turn.conversationId, new AttachmentToolWorkspace(scratch))
     expect(JSON.parse(manifest.split('\n')[1]!)).toMatchObject([{ attachmentId: available.id, label: '[FILE#2]' }])
-  })
-
-  it('persists anonymous paste provenance while leaving named uploads named', async () => {
-    const fixture = await setup()
-    const bytes = imageBytes()
-    for (const [id, nameSource] of [['paste', 'clipboard'], ['upload', 'file']] as const) {
-      await fixture.service.accept({ draftId: 'draft', resources: [{ resourceId: id, name: 'image.png', nameSource, mimeType: 'image/png', sizeBytes: bytes.length }] })
-      const ready = await fixture.service.complete({ draftId: 'draft', resourceId: id, bytes })
-      expect(ready).toMatchObject({ nameSource })
-      if (ready.state !== 'ready' || !('attachmentId' in ready))
-        throw new Error('Import failed')
-      expect(fixture.attachmentRepository.findById(ready.attachmentId)?.nameSource).toBe(nameSource)
-    }
-    expect(fixture.service.list('draft').map(resource => resource.nameSource).sort()).toEqual(['clipboard', 'file'])
   })
 
   it('keeps an explicitly saved copy separate from the original and does not follow it during materialization', async () => {

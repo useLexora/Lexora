@@ -3,6 +3,11 @@ import { BUDDY_MEDIA_EXTENSIONS } from './attachmentFormats'
 export const BUDDY_ATTACHMENT_COUNT_LIMIT = 16
 export const BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT = 32 * 1024 * 1024
 export const BUDDY_TEXT_ATTACHMENT_BYTES_LIMIT = 1024 * 1024
+export const BUDDY_TEXT_ATTACHMENT_MIME_TYPES: readonly string[] = ['application/json', 'application/toml', 'application/xml', 'application/yaml', 'image/svg+xml']
+
+export function isTextAttachmentMimeType(mimeType: string): boolean {
+  return mimeType.startsWith('text/') || BUDDY_TEXT_ATTACHMENT_MIME_TYPES.includes(mimeType)
+}
 
 export const BUDDY_IMAGE_ATTACHMENT_EXTENSIONS = [
   'gif',

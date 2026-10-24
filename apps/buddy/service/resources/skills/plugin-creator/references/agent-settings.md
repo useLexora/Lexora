@@ -1,6 +1,6 @@
 # Agent 工具、任务动作与设置
 
-这些是 API 3 的增量能力。先查询当前宿主的 `runtime` 能力目录，确认所需的 `agent.tools`、`agent.actions`、`agent.models`、`agent.task`、`agent.taskMessages` 或 `settings` 可用，再声明对应的最低 `engines.lexora`。相同 API 版本的旧宿主不一定提供全部增量能力。
+这些是 API 3 的增量能力。先查询当前宿主的 `runtime` 能力目录，确认所需的 `agent.tools`、`agent.actions`、`agent.models`、`agent.task`、`agent.taskMessages`、`agent.references` 或 `settings` 可用，再声明对应的最低 `engines.lexora`。相同 API 版本的旧宿主不一定提供全部增量能力。
 
 ## 设置
 
@@ -91,3 +91,11 @@ context.agent.registerAction(`${context.extension.id}.inspect`, async (invocatio
 `permissions.taskMessages: true` 单独开放 `task.messages()`，返回当前任务可见分支的有界 `{role:'user'|'assistant',text}` 数组，最多 16 条、每条最多 1500 字符。当前保留首条用户输入与最近文本；不包含工具输出、隐藏分支、附件正文或隐式文件读取。仅在任务消息确实是功能输入时申请此权限，不因需要标题就申请。
 
 以上接口均绑定原任务，不接受任意任务 ID，也不提供任意字段或数据库写入。宿主和其他插件仍可通过各自授权入口修改同一任务，过期结果不能覆盖新状态。
+
+## 工具中的用户引用
+
+声明 `permissions.references: true` 后，工具回调可用 `invocation.references.list()` 获取 `{items:[{referenceId,sourceMessageId,title,excerpt}],truncated}`。列表最多保留最近 100 条本插件消息引用快照，excerpt 最长 512 字符；引用来自当前运行已经提交的用户输入及同一可见分支的历史用户输入，因此对话压缩不影响引用身份。不同任务、隐藏分支、其他插件、助手与工具生成的引用不在范围内。未发送草稿和当前运行尚未接受的新输入不授予资格。任务动作不提供该 API。
+
+`invocation.references.resolve(referenceId, {sourceMessageId?,offset?,limit?})` 返回 `{referenceId,sourceMessageId,title,text,textLength,textDigest,offset,nextOffset,locator,scope:{taskId,branchId}}`，locator 为插件原始定位信息或 null。`text` 为 UTF-16 单元分页，不切断代理对；起点落在代理对中间时拒绝读取，默认 offset 为 0，limit 默认为 32768、最大 32768；nextOffset 为 null 表示已到末尾。textLength 是完整快照长度，textDigest 是完整原文 UTF-8 字节的 SHA-256，不是当前页摘要。长引用按需读取；定位验证可使用完整快照摘要与长度，不要把第一页误当全文。sourceMessageId 指向携带这份引用快照的用户消息，referenceId 是宿主生成的引用 ID，不是消息里的引用序号。将两者一起保留并传给 resolve；同一个 referenceId 可出现在多条消息中。旧调用省略 sourceMessageId 时，仅在所有匹配快照完全相同时兼容，否则返回 EXTENSION_REFERENCE_AMBIGUOUS，须从列表选择精确消息身份。已知的历史 ID 即使不在最近 100 条列表中也可解析。引用本身不授予读取任意文件或修改文档的能力。任务结束、取消、输入或分支变更后，旧调用失效。
+
+插件应只向模型返回适量文字、referenceId 和 sourceMessageId，将 locator 留在插件内处理。编辑前重新解析引用，核对目标文档、会话和版本，使用现有视图消息与命令回执完成操作；不要按当前焦点选择目标，也不要把复制来的文本当作新的引用授权。新能力通过当前宿主的 runtime 目录确认，并按实际宿主版本声明兼容范围。

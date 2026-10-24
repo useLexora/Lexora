@@ -5,19 +5,24 @@ import type { LocalRuntimeModelOption } from '@buddy-shared/providers/providerAp
 import type { ComposerResourceView } from '../../../state/composer/typing'
 import type { ChatComposerContextOptions, ChatComposerSessionScope, ChatComposerSubmitPayload, ChatPromptContextOption } from '@/modules/prompt-input'
 import type { WorkbenchCommandPort } from '@/shared/ui/contributions/workbenchCommands'
+import { resourceQuoteText } from '@buddy-shared/conversation/buddyResourceQuoteText'
 import { deferred } from '@buddy-tests/deferred'
 import { EditorContent } from '@tiptap/vue-3'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, defineComponent, h, nextTick, shallowRef } from 'vue'
 import { chatComposerDocumentToUserContent, createChatComposerContentFromText, getChatComposerResourceIds } from '@/modules/prompt-input'
 import { replaceChatComposerDocument } from '@/modules/prompt-input/editor/chatComposerResourceEditing'
 import { insertChatComposerResources, insertChatComposerSessionReferences } from '@/modules/prompt-input/ui'
 import { useProvideWorkbenchCommands } from '@/shared/ui/contributions/workbenchCommands'
+import { copyReferenceClipboard } from '@/shared/ui/selection/referenceClipboard'
 import { CONVERSATION_STATUS_PANEL_KEY } from '../../../state/runs/conversationStatusPanel'
 import { useChatComposer } from '../useChatComposer'
 
 const cleanups: (() => void)[] = []
-afterEach(() => cleanups.splice(0).forEach(cleanup => cleanup()))
+afterEach(() => {
+  cleanups.splice(0).forEach(cleanup => cleanup())
+  vi.restoreAllMocks()
+})
 
 function fileOption(name: string): ChatPromptContextOption {
   return {
@@ -123,6 +128,92 @@ async function mountComposer(options: {
 }
 
 describe('chat composer editing', () => {
+  it('pastes a host-copied snapshot into the current task without changing another draft or leaking its locator into the prompt', async () => {
+    const first = await mountComposer()
+    first.editor.commands.insertContent('First task draft')
+    const quote = { id: crypto.randomUUID(), text: 'Selected paragraph', source: { kind: 'view' as const, title: 'Report.pdf', provider: 'extension:tests.office', target: { extensionId: 'tests.office', viewId: crypto.randomUUID(), viewType: 'tests.office.editor', source: null } }, locator: { version: 1, data: { documentId: 'opaque-private-document', page: 2 } } }
+    const copying = deferred<void>()
+    let copied = { text: '', html: '' }
+    const pending = copyReferenceClipboard(quote, async (text, html) => {
+      copied = { text, html: html! }
+      await copying.promise
+    })
+    const current = await mountComposer()
+    current.draftId.value = 'draft-2'
+    current.editor.commands.insertContent('Second task draft ')
+    copying.resolve()
+    await pending
+    function paste() {
+      const event = new Event('paste', { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'clipboardData', { value: { getData: (format: string) => format === 'text/html' ? copied.html : copied.text } })
+      current.editor.view.dom.dispatchEvent(event)
+      return event
+    }
+    expect(paste().defaultPrevented).toBe(true)
+    expect(first.editor.getText()).toBe('First task draft')
+    expect(current.editor.getText()).toContain('Second task draft')
+    const content = chatComposerDocumentToUserContent(current.editor.getJSON())
+    expect(content.resourceQuotes).toEqual([quote])
+    expect(content.body.flatMap(paragraph => paragraph.content).filter(node => node.type === 'quote_ref')).toEqual([{ type: 'quote_ref', quoteKind: 'resource', quoteId: quote.id }])
+    const prompt = resourceQuoteText(content.resourceQuotes)
+    expect(prompt).toContain('Selected paragraph')
+    expect(prompt).not.toContain('opaque-private-document')
+    expect(prompt).not.toContain(quote.id)
+    expect(paste().defaultPrevented).toBe(true)
+    expect(chatComposerDocumentToUserContent(current.editor.getJSON()).resourceQuotes).toHaveLength(1)
+    expect(first.sentPayloads).toEqual([])
+    expect(current.sentPayloads).toEqual([])
+  })
+
+  it('keeps pasted references separate from adjacent typing through undo and redo', async () => {
+    const flow = await mountComposer()
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now())
+    flow.editor.commands.insertContent('Before ')
+    const before = flow.editor.getJSON()
+    const quote = { id: crypto.randomUUID(), text: 'Selected paragraph', source: { kind: 'view' as const, title: 'Report', provider: 'extension:tests.office', target: null } }
+    let clipboard = { text: '', html: '' }
+    await copyReferenceClipboard(quote, async (text, html) => {
+      clipboard = { text, html: html! }
+    })
+    const event = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', { value: { getData: (format: string) => format === 'text/html' ? clipboard.html : clipboard.text } })
+    flow.editor.view.dom.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
+    const pasted = flow.editor.getJSON()
+    expect(chatComposerDocumentToUserContent(pasted).resourceQuotes).toEqual([quote])
+    flow.editor.commands.insertContent(' after')
+    const typed = flow.editor.getJSON()
+
+    expect(flow.editor.commands.undo()).toBe(true)
+    expect(flow.editor.getJSON()).toEqual(pasted)
+    expect(flow.editor.commands.undo()).toBe(true)
+    expect(flow.editor.getJSON()).toEqual(before)
+    expect(chatComposerDocumentToUserContent(flow.editor.getJSON()).resourceQuotes ?? []).toEqual([])
+    expect(flow.editor.commands.redo()).toBe(true)
+    expect(flow.editor.getJSON()).toEqual(pasted)
+    expect(flow.editor.commands.redo()).toBe(true)
+    expect(flow.editor.getJSON()).toEqual(typed)
+  })
+
+  it('consumes an over-limit reference paste and shows the existing quota message without inserting plain text', async () => {
+    const flow = await mountComposer()
+    const quotes = Array.from({ length: 16 }, (_, index) => ({ id: crypto.randomUUID(), text: `Snapshot ${index}`, source: { kind: 'view' as const, title: 'Report', provider: 'extension:tests.office', target: null } }))
+    replaceChatComposerDocument(flow.editor, { version: 1, body: [{ type: 'paragraph', content: [{ type: 'text', text: 'Keep draft' }] }], panelResourceIds: [], resourceQuotes: quotes })
+    const before = flow.editor.getJSON()
+    let clipboard = { text: '', html: '' }
+    await copyReferenceClipboard({ ...quotes[0]!, id: crypto.randomUUID(), text: 'Must not degrade to plain text' }, async (text, html) => {
+      clipboard = { text, html: html! }
+    })
+    const event = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', { value: { getData: (format: string) => format === 'text/html' ? clipboard.html : clipboard.text } })
+    flow.editor.view.dom.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
+    expect(flow.editor.getJSON()).toEqual(before)
+    expect(flow.composer.quotePasteLimitMessage.value).toContain('每条消息最多 16 条引用')
+    flow.draftId.value = 'another-draft'
+    expect(flow.composer.quotePasteLimitMessage.value).toBeNull()
+  })
+
   it('keeps two plugin skills with the same invocation bound to their selected sources', async () => {
     const skills = ['publisher-one.tables', 'publisher-two.tables'].map(id => ({
       ...skillOption('tables:review', `${id} instructions`),
@@ -717,7 +808,7 @@ it('does not restore a failed command over newer input', async () => {
   expect(flow.sent).toEqual([])
 })
 
-it('offers every same-name command and preserves arguments after leading paragraphs and spaces', async () => {
+it('offers every same-name command and preserves arguments after leading paragraphs, hard breaks and spaces', async () => {
   const prefix = ' \n\n  '
   const executions: { id: string, args: string }[] = []
   const commands = localCommands(async (id, args) => {
@@ -726,7 +817,9 @@ it('offers every same-name command and preserves arguments after leading paragra
   })
   commands.entries.value = Array.from({ length: 10 }, (_, index) => ({ id: `author${index}.game.start`, name: 'game:start', title: `Game ${index}` }))
   const flow = await mountComposer({ commands })
-  flow.editor.commands.setContent(createChatComposerContentFromText(`${prefix}/game:start level=2`))
+  const initial = createChatComposerContentFromText(`${prefix}/game:start level=2`)
+  initial.content!.at(-1)!.content!.unshift({ type: 'hardBreak' })
+  flow.editor.commands.setContent(initial)
   const before = flow.editor.getJSON()
   flow.composer.submit()
   await nextTick()
@@ -739,6 +832,7 @@ it('offers every same-name command and preserves arguments after leading paragra
   expect(body.slice(0, -1)).toEqual(chatComposerDocumentToUserContent(before).body.slice(0, -1))
   const leadingSpace = prefix.split('\n').at(-1)!
   expect(body.at(-1)!.content).toEqual([
+    { type: 'hard_break' },
     ...leadingSpace ? [{ type: 'text', text: leadingSpace }] : [],
     { type: 'prompt_directive', directive: 'slash_command', commandMode: 'action', commandId: 'author9.game.start', value: '/game:start' },
     { type: 'text', text: '  level=2' },
@@ -746,40 +840,6 @@ it('offers every same-name command and preserves arguments after leading paragra
   flow.composer.submit()
   await nextTick()
   expect(executions).toEqual([{ id: 'author9.game.start', args: 'level=2' }])
-  expect(flow.sent).toEqual([])
-  expect(commands.errors).toEqual([])
-})
-
-it('preserves leading hard breaks when disambiguating a local command', async () => {
-  const executions: { id: string, args: string }[] = []
-  const commands = localCommands(async (id, args) => {
-    executions.push({ id, args })
-    return null
-  })
-  commands.entries.value.push({ id: 'other.game.start', name: 'game:start', title: 'Another game' })
-  const flow = await mountComposer({ commands })
-  flow.editor.commands.setContent({ type: 'doc', content: [{ type: 'paragraph', content: [
-    { type: 'hardBreak' },
-    { type: 'text', text: '  ' },
-    { type: 'hardBreak' },
-    { type: 'text', text: '/game:start level=2' },
-  ] }] })
-  const before = flow.editor.getJSON()
-  flow.composer.submit()
-  await nextTick()
-  expect(flow.editor.getJSON()).toEqual(before)
-  flow.composer.selectSuggestion(flow.composer.suggestions.value[1]!.option)
-  expect(chatComposerDocumentToUserContent(flow.editor.getJSON()).body[0]!.content).toEqual([
-    { type: 'hard_break' },
-    { type: 'text', text: '  ' },
-    { type: 'hard_break' },
-    { type: 'prompt_directive', directive: 'slash_command', commandMode: 'action', commandId: 'other.game.start', value: '/game:start' },
-    { type: 'text', text: '  level=2' },
-  ])
-  expect(executions).toEqual([])
-  flow.composer.submit()
-  await nextTick()
-  expect(executions).toEqual([{ id: 'other.game.start', args: 'level=2' }])
   expect(flow.sent).toEqual([])
   expect(commands.errors).toEqual([])
 })

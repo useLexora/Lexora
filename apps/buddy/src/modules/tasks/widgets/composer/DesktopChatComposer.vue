@@ -65,6 +65,7 @@ const {
   sessionScope,
   loadContextOptions,
   modelInputIssue,
+  quotePasteLimitMessage,
   materials,
   removeMaterial,
   pastedText,
@@ -298,7 +299,7 @@ function captureDraft(): WorkbenchMenuSelection {
         :is-stopping="isStopping"
         :is-sending="isSending"
         :is-local-command="isLocalCommand"
-        :issue-message="modelInputIssueMessage"
+        :issue-message="quotePasteLimitMessage ?? modelInputIssueMessage"
         @submit="submit"
         @stop="emit('stop')"
       />

@@ -4,6 +4,7 @@ import type { BuddyFeatureId, BuddyPlatform } from '../../shared/platform'
 import type { RuntimeRpcPeerContract } from '../../shared/runtime/rpcPeer'
 import type { BuddyCapability, BuddyCapabilityContext, BuddyCapabilityFactory } from './agent/extensions/BuddyCapability'
 import type { ArtifactService } from './artifacts/ArtifactService'
+import type { AttachmentService } from './attachments/AttachmentService'
 import type { CreateAutomationToolOptions } from './automations/createAutomationTool'
 import type { BrowserCapabilityHost } from './browser/BrowserCapabilityService'
 import type { BuddiesService } from './buddies/BuddiesService'
@@ -15,6 +16,7 @@ import type { ImageTransformService } from './images/ImageTransformService'
 import type { PetActionService } from './pet/PetActionService'
 import type { PluginAuthoringService } from './plugins/PluginAuthoringService'
 import type { SkillAuthoringServices } from './skills/skillAuthoringCapability'
+import type { ExtensionReferenceRepository } from './storage/extensionReferenceRepository'
 import type { SessionReferenceRepository } from './storage/sessionReferenceRepository'
 import type { WebCapabilityService } from './web/WebCapabilityService'
 import { createOutputPresentationCapability } from './artifacts/outputPresentationExtension'
@@ -23,6 +25,7 @@ import { createBrowserCapability } from './browser/browserExtension'
 import { createBuddiesCapability } from './buddies/buddiesExtension'
 import { createMcpCapability } from './connectors/mcp/mcpExtension'
 import { createMcpResultWriter } from './connectors/mcp/McpResultStore'
+import { createReferenceSnapshotCapability } from './conversations/referenceSnapshotExtension'
 import { createSessionReferenceCapability } from './conversations/sessionReferenceExtension'
 import { createImageGenerationCapability } from './images/imageGenerationExtension'
 import { ImageGenerationService } from './images/ImageGenerationService'
@@ -44,7 +47,7 @@ export interface BuddyCapabilityServices {
   pluginBuilder: PluginAuthoringService
   skillAuthoring: Omit<SkillAuthoringServices, 'conversations'>
   artifactService: ImageGenerationServiceOptions['artifactService'] & Pick<ArtifactService, 'presentOutputs'> & SessionReferenceServices['artifacts']
-  attachmentService: ImageGenerationServiceOptions['attachmentService'] & SessionReferenceServices['attachments']
+  attachmentService: ImageGenerationServiceOptions['attachmentService'] & SessionReferenceServices['attachments'] & Pick<AttachmentService, 'getInputMetadata' | 'readText'>
   automationService: CreateAutomationToolOptions['service']
   browserHost: BrowserCapabilityHost
   presentBrowser: (source: ContextPanelSource) => Promise<void>
@@ -55,6 +58,7 @@ export interface BuddyCapabilityServices {
   conversations: SessionReferenceServices['conversations']
   publications: SessionReferenceServices['publications']
   references: SessionReferenceRepository
+  referenceSnapshots: ExtensionReferenceRepository
 }
 
 export function createBuddyCapabilityFactory(
@@ -105,6 +109,7 @@ export function createBuddyCapabilityFactory(
       createImageTransformCapability({ ...context, service: services.imageTransformService }),
       createOutputPresentationCapability({ ...context, artifactService: services.artifactService }),
       createSessionReferenceCapability({ conversationId: context.conversationId, getRunId: context.getRunId, conversations: services.conversations, attachments: services.attachmentService, artifacts: services.artifactService, publications: services.publications, references: services.references }),
+      createReferenceSnapshotCapability({ ...context, references: services.referenceSnapshots, attachments: services.attachmentService }),
       ...supported.map(create => create(context)),
     ]
     try {

@@ -40,15 +40,16 @@ export const EXTENSION_IPC = {
   hostReply: 'lexora:extensions:host-reply',
 } as const
 export const extensionJsonSchema = z.json().refine(value => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 262144, 'Extension data is too large')
+const referenceTransportSchema = z.json().refine(value => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 2 * 1024 * 1024, 'Reference data is too large')
 export function parseExtensionRequestParams(method: string, params: unknown): JsonValue {
   if (method === 'clipboard.write')
     return extensionClipboardWriteSchema.parse(params)
   if (method === 'references.add')
-    return extensionJsonSchema.parse(extensionReferenceInputSchema.parse(params))
+    return referenceTransportSchema.parse(extensionReferenceInputSchema.parse(params))
   return (method === 'themes.request' ? themeTransportSchema : extensionJsonSchema).parse(params)
 }
 
-export const extensionResourceSchema = z.object({ id: z.string().uuid(), name: z.string().max(512) }).strict()
+export const extensionResourceSchema = z.object({ id: z.string().uuid(), name: z.string().max(512), sourceId: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict()
 export const extensionViewInputSchema = z.object({
   viewId: z.string().uuid(),
   extensionId: extensionIdSchema,
