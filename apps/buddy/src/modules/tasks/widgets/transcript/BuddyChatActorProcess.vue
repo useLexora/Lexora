@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
-import type { ChatAgentTurnNode } from '../../model/transcript/chatAgentTurn'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { ChevronDown16Regular, ChevronRight16Regular } from '@vicons/fluent'
 import { NButton, NSpin } from 'naive-ui'
@@ -9,23 +8,31 @@ import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import { useExecutionTree } from '../../state/runs/chatExecutionContext'
 import { useExecutionDetail } from '../../state/runs/useExecutionDetail'
 import BuddyExecutionInputs from '../executions/BuddyExecutionInputs.vue'
+import BuddyExecutionProcess from '../executions/BuddyExecutionProcess.vue'
 import { executionLabels } from '../executions/executionLabels'
-import BuddyChatAgentTurnFlow from './BuddyChatAgentTurnFlow.vue'
 import BuddyChatTokenUsage from './BuddyChatTokenUsage.vue'
 import BuddyChatTurnChanges from './BuddyChatTurnChanges.vue'
 import BuddyChatTurnOutputs from './BuddyChatTurnOutputs.vue'
 
 const props = defineProps<{ runId: string, language: BuddyLocale }>()
 const emit = defineEmits<{ openArtifact: [artifact: LocalArtifact], openChanges: [id: string] }>()
-const expanded = shallowRef(false)
+const localExpanded = shallowRef(false)
 const tree = useExecutionTree()
 const target = computed(() => {
   const record = tree?.groups.value.byRun.get(props.runId)
   return record && tree ? tree.target(record) : null
 })
+const expanded = computed({
+  get: () => target.value && tree ? tree.isProcessExpanded(target.value) : localExpanded.value,
+  set: (value: boolean) => {
+    if (target.value && tree)
+      tree.setProcessExpanded(target.value, value)
+    else
+      localExpanded.value = value
+  },
+})
 const state = useExecutionDetail(target, expanded)
 const labels = computed(() => executionLabels(props.language))
-const nodes = computed(() => state.rows.value.flatMap<ChatAgentTurnNode>(row => row.kind === 'agent-turn' ? row.turn.nodes.filter(node => node.kind !== 'text') : row.kind === 'activity-flow' ? row.nodes : []))
 </script>
 
 <template>
@@ -43,7 +50,7 @@ const nodes = computed(() => state.rows.value.flatMap<ChatAgentTurnNode>(row => 
           {{ labels.reload }}
         </NButton>
       </p>
-      <BuddyChatAgentTurnFlow v-if="nodes.length" :nodes="nodes" :language="language" :failure-detail-text="null" />
+      <BuddyExecutionProcess :rows="state.rows.value" :language="language" />
       <BuddyChatTokenUsage v-if="state.detail.value?.usage" :usage="state.detail.value.usage" :language="language" />
       <template v-if="state.detail.value">
         <BuddyChatTurnOutputs v-if="state.detail.value.artifacts.length" :artifacts="state.detail.value.artifacts" :language="language" @open-artifact="emit('openArtifact', $event)" />

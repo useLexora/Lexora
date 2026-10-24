@@ -243,7 +243,8 @@ export function createExecutionRepository(database: DatabaseSync) {
         else {
           threadId = threads.createNpc(caller.run.conversationId, snapshot.id, input.run.startedAt).id
         }
-        const run = runs.create({ ...input.run, actorSnapshot: snapshot, status: 'queued', piSessionFile: null, rootRunId: root.run.id, parentRunId: caller.run.id, executionKind: snapshot.kind === 'npc' ? 'npc_child' : 'actor_child', threadId, generation: 0 })
+        const piSessionFile = snapshot.kind === 'actor' ? threads.findPreviousSession(threadId, input.run.branchId) : null
+        const run = runs.create({ ...input.run, actorSnapshot: snapshot, status: 'queued', piSessionFile, rootRunId: root.run.id, parentRunId: caller.run.id, executionKind: snapshot.kind === 'npc' ? 'npc_child' : 'actor_child', threadId, generation: 0 })
         database.prepare(`UPDATE execution_state SET request_key = ?, request_hash = ?,
           admitted_root_generation = ?, admitted_parent_generation = ?, result_mailbox_id = ?, file_access_ceiling = ? WHERE run_id = ?`)
           .run(requestKey, input.requestHash, root.run.generation, caller.run.generation, input.resultMailboxId, ceiling ? 'read_only' : null, run.id)

@@ -13,7 +13,7 @@ import { createComposerDraftCommitter } from './commitComposerDraft'
 import { freezeConversationMemberModel } from './conversationMemberRepository'
 import { CONVERSATION_CURRENT_MODEL_SELECTION_SQL } from './conversationRecord'
 import { withTransaction } from './database'
-import { actorThreadId } from './threadBindingRepository'
+import { actorThreadId, createThreadBindingRepository } from './threadBindingRepository'
 
 export function resolveTurnExecutionProfile(input: { executionProfile: BuddyExecutionProfile, runExecutionProfile?: BuddyExecutionProfile }): BuddyExecutionProfile {
   const profile = input.runExecutionProfile ?? input.executionProfile
@@ -196,6 +196,7 @@ export interface TurnRequestRepository {
 }
 
 export function createTurnRequestRepository(database: DatabaseSync): TurnRequestRepository {
+  const threads = createThreadBindingRepository(database)
   const insertTreeSource = database.prepare('INSERT INTO run_tree_sources (run_id, source_run_id, position) VALUES (?, ?, ?)')
   const findFollowupSource = database.prepare(`
     SELECT messages.id FROM messages INNER JOIN runs ON runs.id = messages.run_id
@@ -305,14 +306,6 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
     INSERT INTO messages (
       id, conversation_id, branch_id, run_id, role, content_json, created_at
     ) VALUES (?, ?, ?, NULL, 'user', ?, ?)
-  `)
-  const findPreviousSession = database.prepare(`
-    SELECT pi_session_file FROM runs
-    WHERE thread_id = ? AND branch_id = ?
-      AND status IN ('completed', 'failed', 'cancelled')
-      AND pi_session_file IS NOT NULL
-    ORDER BY started_at DESC, id DESC
-    LIMIT 1
   `)
   const insertRun = database.prepare(`
     INSERT INTO runs (
@@ -563,10 +556,10 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           insertForkBranch.run(input.branchId, input.conversationId, input.followup.parentBranchId, input.followup.sourceMessageId, input.createdAt)
           activateBranch.run(input.branchId, input.createdAt, input.conversationId)
         }
-        const previous = findPreviousSession.get(
+        const previous = threads.findPreviousSession(
           actorThreadId(input.conversationId, buddyId),
           input.branchId,
-        ) as { pi_session_file: string } | undefined
+        )
         insertMessage.run(
           input.userMessageId,
           input.conversationId,
@@ -588,7 +581,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           input.model,
           input.modelParameters?.contextWindow ?? null,
           input.modelParameters?.maxTokens ?? null,
-          previous?.pi_session_file ?? null,
+          previous,
           input.createdAt,
           input.approvalPolicy,
           resolveTurnExecutionProfile(input),

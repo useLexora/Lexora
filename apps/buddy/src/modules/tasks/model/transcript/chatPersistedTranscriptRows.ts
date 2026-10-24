@@ -11,7 +11,7 @@ import type {
   ChatTranscriptTurnOutputs,
 } from './chatTranscriptTypes'
 import { projectConversationCompactionState } from './chatConversationTimeline'
-import { isVisibleChatMessage } from './chatMessageContent'
+import { getChatMessagePhase, isVisibleChatMessage } from './chatMessageContent'
 import { projectChatTurnExtensionActions } from './chatTranscriptActivities'
 import { interleaveChatTranscriptSegments } from './chatTranscriptSegments'
 
@@ -99,7 +99,7 @@ export function projectPersistedChatTranscriptRows(
     if (!isVisibleChatMessage(item) && turnOutputs === null && turnChanges === null)
       continue
     const row: ChatTranscriptMessageRow = {
-      ...(item.role === 'assistant' && item.runId && turnsByRunId.has(item.runId) && !ownsResult ? { isIntermediate: true as const } : {}),
+      ...(item.role === 'assistant' && !ownsResult && (getChatMessagePhase(item) === 'commentary' || (item.runId && turnsByRunId.has(item.runId))) ? { isIntermediate: true as const } : {}),
       key: `message:${item.id}`,
       kind: 'message',
       message: item,

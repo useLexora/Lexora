@@ -35,7 +35,7 @@ export function useExecutionDetail(target: Readonly<Ref<ExecutionTarget | null>>
       timelineItems: projections.flatMap(projection => projection.streamingMessages.map(item => ({ ...item.message, kind: 'message' as const }))),
       outputs: [],
       changeSets: [],
-    }).rows.map(row => row.kind === 'message' && !events.value.some(event => event.type === 'message.completed' && event.payload.messageId === row.message.id) ? { ...row, streaming: true } : row)
+    }).rows.map(row => row.kind === 'message' && !events.value.some(event => event.type === 'message.completed' && event.payload.messageId === row.message.id) ? { ...row, streaming: true as const } : row)
   })
 
   async function refresh() {

@@ -1,4 +1,5 @@
 import type { LocalMessage } from '@buddy-shared/conversation/conversationApi'
+import type { BuddyAssistantTextPhase } from '@buddy-shared/runs/assistantTextPhase'
 
 import { readBuddyInterruptedMessageContent } from '@buddy-shared/conversation/buddyMessageContent'
 import { buddyUserContentToText, getBuddyUserContentResourceIds, readBuddyUserMessageContent } from '@buddy-shared/conversation/buddyUserContent'
@@ -21,6 +22,13 @@ export function getChatMessageInterruption(
     return null
   const content = readBuddyInterruptedMessageContent(message.content)
   return content ? { truncated: content.truncated } : null
+}
+
+export function getChatMessagePhase(message: LocalMessage): BuddyAssistantTextPhase | null {
+  if (message.role !== 'assistant' || !message.content || typeof message.content !== 'object' || Array.isArray(message.content))
+    return null
+  const phase = (message.content as Record<string, unknown>).phase
+  return phase === 'commentary' || phase === 'final_answer' ? phase : null
 }
 
 export function getChatMessageText(message: LocalMessage): string {

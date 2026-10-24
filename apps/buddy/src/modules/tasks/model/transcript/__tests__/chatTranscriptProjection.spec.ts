@@ -15,6 +15,18 @@ import {
 } from '../chatTranscriptProjection'
 
 describe('chat transcript projection', () => {
+  it('retains the phase of public actor messages without adding children to ordinary runs', () => {
+    const commentary = { ...message('actor-commentary', 'assistant'), runId: 'actor', content: { text: 'Checking the animation', phase: 'commentary' } }
+    const final = { ...message('actor-final', 'assistant'), runId: 'actor', content: { text: 'Animation ready', phase: 'final_answer' } }
+    const rows = projectChatTranscript({ outputs: [], runs: [], timelineItems: [commentary, final] }).rows
+    expect(rows).toMatchObject([
+      { kind: 'message', message: { id: commentary.id }, isIntermediate: true, showActions: false },
+      { kind: 'message', message: { id: final.id } },
+    ])
+    expect(rows[1]).not.toHaveProperty('isIntermediate')
+    expect(rows.every(row => !('resultRunId' in row))).toBe(true)
+  })
+
   it('keeps legacy retry attempts chronological when run snapshots arrive newest first', () => {
     const user = message('retry-question', 'user')
     const cancelled = { ...localRun('old-run', user.id, 'cancelled'), completedAt: '2026-08-20T00:00:03.000Z' }

@@ -2,7 +2,7 @@ import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { ExecutionTarget, LocalExecution } from '@buddy-shared/executions/executionPresentationApi'
 import type { InjectionKey, Ref } from 'vue'
 import type { useChatExecutionTree } from './useChatExecutionTree'
-import { computed, inject, provide } from 'vue'
+import { computed, inject, provide, shallowReactive } from 'vue'
 
 import { executionDisplayName } from '../../model/executions/executionDisplayName'
 
@@ -26,7 +26,17 @@ export function useExecutionEnvironment() {
 
 export function provideExecutionTree(tree: ReturnType<typeof useChatExecutionTree>) {
   const environment = useExecutionEnvironment()
+  const expandedProcesses = shallowReactive(new Set<string>())
+  const processKey = (target: ExecutionTarget) => JSON.stringify([target.conversationId, target.branchId, target.rootRunId, target.runId])
   const context = {
+    isProcessExpanded: (target: ExecutionTarget) => expandedProcesses.has(processKey(target)),
+    setProcessExpanded: (target: ExecutionTarget, expanded: boolean) => {
+      const key = processKey(target)
+      if (expanded)
+        expandedProcesses.add(key)
+      else
+        expandedProcesses.delete(key)
+    },
     ...tree,
     selectedRunId: computed(() => {
       const selected = environment?.selectedTarget.value

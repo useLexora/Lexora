@@ -95,6 +95,17 @@ export function createConversationTimelineRepository(
   branches: ConversationBranchLineage,
 ): ConversationTimelineRepository {
   const findMessage = database.prepare('SELECT * FROM messages WHERE id = ?')
+  const findMessagePhase = database.prepare(`
+    SELECT json_extract(events.payload_json, '$.phase') AS phase,
+      json_extract(events.payload_json, '$.stopReason') AS stopReason
+    FROM conversation_publications publications
+    INNER JOIN run_events events ON events.run_id = publications.run_id
+      AND events.sequence = publications.source_sequence
+    WHERE publications.message_id = ? AND publications.run_id = ?
+      AND events.event_type = 'message.completed'
+      AND json_extract(events.payload_json, '$.messageId') = publications.message_id
+  `)
+
   const findCompactionRun = database.prepare(`
     SELECT * FROM runs
     WHERE id = ? AND purpose = 'conversation.compaction'
@@ -326,7 +337,18 @@ export function createConversationTimelineRepository(
         hasMore = true
       }
       return {
-        items: selected.map(toTimelineItem),
+        items: selected.map((row) => {
+          const item = toTimelineItem(row)
+          if (item.kind !== 'message' || item.role !== 'assistant' || !item.runId
+            || !item.content || typeof item.content !== 'object' || Array.isArray(item.content)) {
+            return item
+          }
+          const source = findMessagePhase.get(item.id, item.runId) as { phase: unknown, stopReason: unknown } | undefined
+          const phase = source?.phase ?? (source?.stopReason === 'tool_use' ? 'commentary' : null)
+          return phase === 'commentary' || phase === 'final_answer'
+            ? { ...item, content: { ...item.content, phase } }
+            : item
+        }),
         nextBefore: hasMore && selected[0]
           ? toTimelineBoundary(selected[0])
           : null,

@@ -28,6 +28,35 @@ describe('execution admission and fences', () => {
     expect(f.conversations.findMember('conversation', 'default')?.modelSelection).toBeNull()
   })
 
+  it.each(['completed', 'failed', 'cancelled'] as const)('resumes the same actor journal after a %s delegation', (status) => {
+    const f = fixture()
+    const first = f.executions.admitChild(f.child('first', f.actor.id)).execution
+    expect(first.run.piSessionFile).toBeNull()
+    f.runs.bindSession('first', '/fixture/reviewer.jsonl')
+    f.runs.reconcileTerminal('first', status, executionNow, status === 'failed' ? 'REQUEST_FAILED' : null)
+    f.database.prepare('UPDATE execution_state SET phase = \'closed\' WHERE run_id = ?').run('first')
+    const second = f.executions.admitChild(f.child('second', f.actor.id)).execution
+    expect(second.run.threadId).toBe(first.run.threadId)
+    expect(second.run.piSessionFile).toBe('/fixture/reviewer.jsonl')
+  })
+
+  it('does not reuse another branch or NPC journal when admitting a child', () => {
+    const f = fixture()
+    const actor = f.executions.admitChild(f.child('actor', f.actor.id)).execution
+    f.runs.bindSession('actor', '/fixture/other-branch.jsonl')
+    f.runs.reconcileTerminal('actor', 'completed', executionNow, null)
+    f.database.prepare('UPDATE execution_state SET phase = \'closed\' WHERE run_id = ?').run('actor')
+    f.database.prepare('INSERT INTO conversation_branches (id, conversation_id, created_at) VALUES (\'other-branch\', \'conversation\', ?)').run(executionNow)
+    f.database.prepare('UPDATE runs SET branch_id = ? WHERE id = ?').run('other-branch', actor.run.id)
+    expect(f.executions.admitChild(f.child('actor-again', f.actor.id)).execution.run.piSessionFile).toBeNull()
+    const first = f.executions.admitChild(f.child('npc-first')).execution
+    f.runs.bindSession(first.run.id, '/fixture/npc.jsonl')
+    f.runs.reconcileTerminal(first.run.id, 'completed', executionNow, null)
+    const second = f.executions.admitChild(f.child('npc-second')).execution
+    expect(second.run.threadId).not.toBe(first.run.threadId)
+    expect(second.run.piSessionFile).toBeNull()
+  })
+
   it('rechecks the team switch at admission and preserves accepted children when collaboration is disabled', () => {
     const f = fixture()
     const pending = f.child('rejected')

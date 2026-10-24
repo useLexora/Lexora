@@ -81,7 +81,7 @@ export function presentChatTranscript(rows: readonly ChatTranscriptRow[], execut
     if (row.kind !== 'message' || !row.message.runId)
       continue
     const execution = executions?.byRun.get(row.message.runId)
-    if (execution?.kind === 'actor_child' && execution.toolCount > 0)
+    if (execution?.kind === 'actor_child' && (execution.toolCount > 0 || execution.status === 'failed' || execution.cleanup === 'degraded'))
       actorMessages.set(row.message.runId, row)
   }
   for (const [runId, row] of actorMessages)

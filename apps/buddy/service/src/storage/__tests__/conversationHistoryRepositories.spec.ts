@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { RunEventProjector } from '../../events/RunEventProjector'
 import { createConversationRepository } from '../conversationRepository'
 import { openBuddyDatabase } from '../database'
 import { createRunRepository } from '../runRepository'
@@ -14,6 +15,36 @@ afterEach(() => {
 })
 
 describe('conversation history repositories', () => {
+  it('reads actor message phases through their public source without rewriting historical messages', () => {
+    const f = createExecutionStorageFixture()
+    databases.push(f.database)
+    f.conversations.createMessage({ id: 'goal', conversationId: 'conversation', branchId: 'branch', runId: null, role: 'user', content: { text: 'Work together' }, createdAt: '2026-10-12T00:00:00.000Z' })
+    f.executions.admitChild(f.child('actor', f.actor.id))
+    f.executions.admitChild(f.child('private'))
+    const projector = new RunEventProjector(f.database)
+    for (const runId of ['actor', 'private']) {
+      projector.project([
+        { runId, sequence: 1, type: 'message.completed', createdAt: '2026-10-12T00:00:01.000Z', payload: { messageId: `${runId}-comment`, role: 'assistant', phase: 'commentary', content: { text: 'Checking' }, stopReason: 'completed' } },
+        { runId, sequence: 2, type: 'message.completed', createdAt: '2026-10-12T00:00:02.000Z', payload: { messageId: `${runId}-tool`, role: 'assistant', content: { text: 'Reading' }, stopReason: 'tool_use' } },
+        { runId, sequence: 3, type: 'message.completed', createdAt: '2026-10-12T00:00:03.000Z', payload: { messageId: `${runId}-final`, role: 'assistant', phase: 'final_answer', content: { text: 'Ready' }, stopReason: 'completed' } },
+      ])
+    }
+    const stored = f.database.prepare('SELECT * FROM messages ORDER BY id').all()
+    expect(stored.every(row => !JSON.parse(String(row.content_json)).phase)).toBe(true)
+    const page = f.conversations.listTimelinePage('conversation', 'branch', { limit: 100 })
+    expect(page.items.map(item => item.id)).toEqual(['goal', 'actor-comment', 'actor-tool', 'actor-final'])
+    expect(page.items.flatMap(item => item.kind === 'message' && item.role === 'assistant' ? [item.content] : [])).toEqual([
+      { text: 'Checking', phase: 'commentary' },
+      { text: 'Reading', phase: 'commentary' },
+      { text: 'Ready', phase: 'final_answer' },
+    ])
+    expect(f.database.prepare('SELECT * FROM messages ORDER BY id').all()).toEqual(stored)
+    f.database.prepare('UPDATE conversation_publications SET source_sequence = 3 WHERE message_id = ?').run('actor-comment')
+    expect(f.conversations.listTimelinePage('conversation', 'branch', { limit: 100 }).items.find(item => item.id === 'actor-comment')).toMatchObject({ content: { text: 'Checking' } })
+    const mismatched = f.conversations.listTimelinePage('conversation', 'branch', { limit: 100 }).items.find(item => item.id === 'actor-comment')
+    expect(mismatched?.kind === 'message' ? mismatched.content : null).toEqual({ text: 'Checking' })
+  })
+
   it('rolls back conversation creation when its root branch cannot be inserted', () => {
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     databases.push(database)

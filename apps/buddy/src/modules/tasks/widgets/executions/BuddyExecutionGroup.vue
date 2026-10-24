@@ -94,7 +94,7 @@ async function stop(runId: string) {
 async function open(runId: string) {
   const record = nodes.value.find(node => node.execution.runId === runId)?.execution
   if (record) {
-    if (record.kind !== 'npc_child') {
+    if (record.kind === 'root' || record.kind === 'maintenance') {
       return
     }
     try {

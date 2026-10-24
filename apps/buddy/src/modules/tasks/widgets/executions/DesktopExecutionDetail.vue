@@ -7,16 +7,12 @@ import { NButton, NInput, NSpin } from 'naive-ui'
 import { computed, shallowRef, watch } from 'vue'
 import { executionDisplayName } from '../../model/executions/executionDisplayName'
 import { useExecutionDetail } from '../../state/runs/useExecutionDetail'
-import BuddyChatAgentTurn from '../transcript/BuddyChatAgentTurn.vue'
-import BuddyChatAgentTurnFlow from '../transcript/BuddyChatAgentTurnFlow.vue'
-import BuddyChatCompactionRow from '../transcript/BuddyChatCompactionRow.vue'
-import BuddyChatMessageBody from '../transcript/BuddyChatMessageBody.vue'
 import BuddyChatTokenUsage from '../transcript/BuddyChatTokenUsage.vue'
 import BuddyChatTurnChanges from '../transcript/BuddyChatTurnChanges.vue'
 import BuddyChatTurnOutputs from '../transcript/BuddyChatTurnOutputs.vue'
 import { provideChatBuddyIdentity } from '../transcript/chatBuddyIdentity'
-import { useChatContent } from '../transcript/chatContentContext'
 import BuddyExecutionInputs from './BuddyExecutionInputs.vue'
+import BuddyExecutionProcess from './BuddyExecutionProcess.vue'
 import BuddyExecutionQuestion from './BuddyExecutionQuestion.vue'
 import BuddyExecutionStatus from './BuddyExecutionStatus.vue'
 import { executionLabels } from './executionLabels'
@@ -32,7 +28,6 @@ const labels = computed(() => executionLabels(props.language, execution.value?.e
 const supplementLabels = computed(() => execution.value?.kind === 'actor_child'
   ? { title: labels.value.actorSupplement, placeholder: labels.value.actorSupplementPlaceholder, send: labels.value.actorSend }
   : { title: labels.value.supplement, placeholder: labels.value.supplementPlaceholder, send: labels.value.send })
-const content = useChatContent()
 const draft = shallowRef('')
 const sending = shallowRef(false)
 const stopping = shallowRef(false)
@@ -138,17 +133,11 @@ async function answer(questionId: string, text: string) {
           </p>
           <span v-for="resource in execution.affectedResources" :key="resource.kind === 'host' ? 'host' : resource.path" class="min-w-0 [overflow-wrap:anywhere]">{{ resource.kind === 'host' ? labels.host : resource.path }}</span>
         </div>
-        <div class="grid grid-cols-1 min-w-0 gap-[var(--buddy-chat-gap-block)]" data-testid="execution-process">
-          <template v-for="row in state.rows.value" :key="row.key">
-            <BuddyChatMessageBody v-if="row.kind === 'message'" :message="row.message" :language="language" :final="!row.streaming" :turn-outputs="row.turnOutputs" :turn-changes="row.turnChanges" :write-clipboard-text="content.writeClipboardText" />
-            <BuddyChatAgentTurn v-else-if="row.kind === 'agent-turn'" :turn="row.turn" :language="language" :show-identity="false" :show-outcome="row.showOutcome" />
-            <BuddyChatAgentTurnFlow v-else-if="row.kind === 'activity-flow'" :nodes="row.nodes" :failure-detail-text="null" :language="language" />
-            <BuddyChatCompactionRow v-else-if="row.kind === 'compaction'" :node="row.compaction" :language="language" />
-          </template>
-          <p v-if="!state.rows.value.length" class="m-0 text-muted text-[12px]">
+        <BuddyExecutionProcess :rows="state.rows.value" :language="language">
+          <p class="m-0 text-muted text-[12px]">
             {{ labels.processEmpty }}
           </p>
-        </div>
+        </BuddyExecutionProcess>
         <BuddyChatTokenUsage v-if="detail.usage" :usage="detail.usage" :language="language" />
         <BuddyChatTurnOutputs v-if="detail.artifacts.length" :artifacts="detail.artifacts" :language="language" @open-artifact="emit('openArtifact', $event)" />
         <BuddyChatTurnChanges v-if="detail.changes" :change-set="detail.changes" :language="language" @open-changes="emit('openChanges', $event)" />

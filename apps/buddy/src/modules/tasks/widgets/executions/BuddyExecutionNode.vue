@@ -15,6 +15,7 @@ const labels = computed(() => executionLabels(props.language, props.execution.er
 const identity = useBuddyIdentity(computed(() => props.execution.buddyId))
 const root = computed(() => props.execution.kind === 'root')
 const actor = computed(() => props.execution.kind !== 'npc_child')
+const openable = computed(() => !root.value)
 const isStopping = computed(() => props.execution.phase !== 'closed' && (props.stopping || props.execution.stopping))
 const phase = computed(() => {
   const status = isStopping.value ? labels.value.stopping : props.execution.waitingFor ? executionStatus(props.execution, props.language, props.now) : executionPhaseLabel(props.execution, props.language, props.now)
@@ -43,12 +44,12 @@ function open(event: MouseEvent) {
 <template>
   <article
     class="execution-node relative grid h-full w-full min-w-0 content-center gap-1 p-[10px] border-1 border-solid border-border rounded-micro bg-raised select-none"
-    :class="[{ 'selected': selected && !actor, 'openable': !actor, root, 'buddy-border-beam': busy }, tone]"
+    :class="[{ 'selected': selected && openable, openable, root, 'buddy-border-beam': busy }, tone]"
     :data-execution-kind="execution.kind"
     :data-execution-id="execution.runId" :data-execution-status="execution.status" :data-execution-phase="execution.phase"
-    :data-selected="selected && !actor"
+    :data-selected="selected && openable"
   >
-    <component :is="actor ? 'div' : 'button'" :type="actor ? undefined : 'button'" :data-testid="actor ? 'execution-actor-status' : 'execution-node-open'" :aria-pressed="actor ? undefined : selected" class="grid w-full min-w-0 gap-1 p-0 border-0 rounded-micro bg-transparent text-left cursor-grab active:cursor-grabbing" :class="{ 'execution-node__open': !actor }" @pointerdown="pointerDown" @click="!actor && open($event)">
+    <component :is="openable ? 'button' : 'div'" :type="openable ? 'button' : undefined" :data-testid="openable ? 'execution-node-open' : 'execution-actor-status'" :aria-pressed="openable ? selected : undefined" class="grid w-full min-w-0 gap-1 p-0 border-0 rounded-micro bg-transparent text-left cursor-grab active:cursor-grabbing" :class="{ 'execution-node__open': openable }" @pointerdown="pointerDown" @click="openable && open($event)">
       <span class="flex min-w-0 items-center gap-[6px]">
         <BuddyAvatar :buddy-id="execution.buddyId" :src="identity?.avatar" class="size-5 flex-none" />
         <strong class="flex min-w-0 flex-1 items-center gap-1 text-fg text-[13px] font-600">

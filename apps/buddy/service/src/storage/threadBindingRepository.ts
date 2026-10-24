@@ -20,6 +20,14 @@ export function actorThreadId(conversationId: string, actorId: string): string {
 }
 
 export function createThreadBindingRepository(database: DatabaseSync) {
+  const previousSession = database.prepare(`
+    SELECT pi_session_file FROM runs
+    WHERE thread_id = ? AND branch_id = ?
+      AND status IN ('completed', 'failed', 'cancelled')
+      AND pi_session_file IS NOT NULL
+    ORDER BY started_at DESC, id DESC
+    LIMIT 1
+  `)
   function find(id: string): ExecutionThreadRecord | null {
     return database.prepare('SELECT id, conversation_id AS conversationId, actor_id AS actorId, kind, created_at AS createdAt FROM execution_threads WHERE id = ?')
       .get(id) as unknown as ExecutionThreadRecord | undefined ?? null
@@ -27,6 +35,10 @@ export function createThreadBindingRepository(database: DatabaseSync) {
 
   return {
     find,
+    findPreviousSession(threadId: string, branchId: string): string | null {
+      const previous = previousSession.get(threadId, branchId) as { pi_session_file: string } | undefined
+      return previous?.pi_session_file ?? null
+    },
     ensureActor(conversationId: string, actorId: string, createdAt: string): ExecutionThreadRecord {
       if (!database.prepare('SELECT 1 FROM conversation_members WHERE conversation_id = ? AND actor_id = ?').get(conversationId, actorId))
         throw new Error('Actor thread requires conversation membership')
