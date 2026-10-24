@@ -119,6 +119,10 @@ describe('saved reference access', () => {
     while (offset !== null) {
       const page = access.read({ sourceMessageId: input.id, referenceId: 'long', kind: 'resource', offset, limit: 16000 })
       expect(page.totalLength).toBe(text.length)
+      expect(page.text.length).toBe(page.range.end - offset)
+      expect(page.text).toBe(text.slice(offset, page.range.end))
+      expect(page.nextOffset).toBe(page.complete ? null : offset + page.text.length)
+      expect(new TextEncoder().encode(JSON.stringify(page.text)).byteLength).toBeLessThanOrEqual(32 * 1024)
       result += page.text
       offset = page.nextOffset
     }

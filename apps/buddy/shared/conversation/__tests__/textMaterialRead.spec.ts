@@ -31,6 +31,25 @@ describe('text material pages', () => {
     expect(restored).toBe(text)
   })
 
+  it.each([
+    '原始😀快照\n'.repeat(8000),
+    '\u0001\n\t\\"😀字\uD800x\uDC00'.repeat(5000),
+  ])('preserves contiguous pages at the production text and JSON byte limits', (text) => {
+    let offset: number | null = 0
+    let restored = ''
+    while (offset !== null) {
+      const page = readTextMaterialPage(text, { offset, limit: 16000, maxBytes: 32768, maxJsonBytes: 32768 })
+      expect(page.text.length).toBe(page.range.end - offset)
+      expect(page.text).toBe(text.slice(offset, page.range.end))
+      expect(page.nextOffset).toBe(page.complete ? null : offset + page.text.length)
+      expect(new TextEncoder().encode(page.text).byteLength).toBeLessThanOrEqual(32768)
+      expect(new TextEncoder().encode(JSON.stringify(page.text)).byteLength).toBeLessThanOrEqual(32768)
+      restored += page.text
+      offset = page.nextOffset
+    }
+    expect(restored).toBe(text)
+  })
+
   it('does not return broken characters or a continuation that cannot make progress', () => {
     expect(readTextMaterialPage('a😀b', { limit: 2 })).toMatchObject({ text: 'a', nextOffset: 1 })
     expect(() => readTextMaterialPage('a😀b', { offset: 2 })).toThrow('TEXT_READ_OFFSET_INSIDE_SURROGATE_PAIR')

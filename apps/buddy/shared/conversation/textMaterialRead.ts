@@ -31,25 +31,23 @@ export function readTextMaterialPage(text: string, options: TextMaterialReadOpti
   if (!isTextMaterialBoundary(text, end))
     end -= 1
   if (options.maxBytes !== undefined || options.maxJsonBytes !== undefined) {
-    let bytes = 0
-    let jsonBytes = 2
-    let position = offset
-    while (position < end) {
-      const point = text.codePointAt(position)!
-      const length = point > 0xFFFF ? 2 : 1
-      const size = point <= 0x7F ? 1 : point <= 0x7FF ? 2 : point <= 0xFFFF ? 3 : 4
-      const jsonSize = point < 0x20
-        ? [8, 9, 10, 12, 13].includes(point) ? 2 : 6
-        : point === 0x22 || point === 0x5C ? 2 : point >= 0xD800 && point <= 0xDFFF ? 6 : size
-      if (bytes + size > (options.maxBytes ?? Number.MAX_SAFE_INTEGER)
-        || jsonBytes + jsonSize > (options.maxJsonBytes ?? Number.MAX_SAFE_INTEGER)) {
-        break
+    const encoder = new TextEncoder()
+    let start = offset
+    while (start < end) {
+      let middle = start + Math.ceil((end - start) / 2)
+      if (!isTextMaterialBoundary(text, middle))
+        middle += 1
+      const candidate = text.slice(offset, middle)
+      if ((options.maxBytes === undefined || encoder.encode(candidate).byteLength <= options.maxBytes)
+        && (options.maxJsonBytes === undefined || encoder.encode(JSON.stringify(candidate)).byteLength <= options.maxJsonBytes)) {
+        start = middle
       }
-      bytes += size
-      jsonBytes += jsonSize
-      position += length
+      else {
+        end = middle - 1
+        if (!isTextMaterialBoundary(text, end))
+          end -= 1
+      }
     }
-    end = position
   }
   if (end === offset && offset < text.length)
     throw new Error('TEXT_READ_LIMIT_TOO_SMALL_FOR_CHARACTER')
