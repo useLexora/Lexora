@@ -32,6 +32,8 @@ export const spaceSchema = z.object({
   primaryDirectory: spacePrimaryDirectorySchema.nullable(),
   revokedAt: nullableTimestampSchema,
   updatedAt: timestampSchema,
+  // The space's own working folder, only present while it has no primary directory.
+  workspaceDirectory: spaceDirectorySchema.nullable().optional(),
 }).strict().refine(space => (
   space.additionalDirectories.length + Number(Boolean(space.primaryDirectory)) <= 32
 ), { path: ['additionalDirectories'] })
@@ -63,10 +65,20 @@ export type LocalSpace = DeepReadonly<z.infer<typeof spaceSchema>>
 
 export type LocalSpaceAdditionalDirectory = DeepReadonly<z.infer<typeof spaceDirectorySchema>>
 
+const SPACE_WORKSPACE_DIRECTORY_PREFIX = 'workspace:'
+
+export function spaceWorkspaceDirectoryId(spaceId: string): string {
+  return `${SPACE_WORKSPACE_DIRECTORY_PREFIX}${spaceId}`
+}
+
+export function isSpaceWorkspaceDirectoryId(directoryId: string): boolean {
+  return directoryId.startsWith(SPACE_WORKSPACE_DIRECTORY_PREFIX)
+}
+
 export function getActiveSpaceDirectories(space: LocalSpace | null | undefined): readonly LocalSpaceAdditionalDirectory[] {
   if (!space || space.revokedAt)
     return []
-  return [space.primaryDirectory, ...space.additionalDirectories]
+  return [space.primaryDirectory, ...space.additionalDirectories, space.workspaceDirectory]
     .filter((directory): directory is LocalSpaceAdditionalDirectory => Boolean(directory && !directory.revokedAt))
 }
 

@@ -1,6 +1,7 @@
 import type { LocalSpaceDirectoryPage, LocalSpaceFilePreview, SpaceDirectoryRequest, SpaceFileMutation, SpaceFileOperation, SpaceFilesChange, SpaceFileTarget, SpaceSaveDocument, SpaceSaveResult, SpaceTextDocument } from '../../../shared/spaces/spaceFileApi'
 import type { FileAction, NativeFileEngine, NativeFileOperation } from '../files/NativeFileEngine'
 import type { SpaceRepository } from '../storage/spaceRepository'
+import type { SpaceWorkspaceDirectories } from './SpaceWorkspaceDirectories'
 import { Buffer } from 'node:buffer'
 import { realpath, stat } from 'node:fs/promises'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
@@ -8,6 +9,7 @@ import { BoundedFileReadError } from '../../../platform/filesystem/boundedFile'
 import { Emitter } from '../../../shared/events/Emitter'
 import { FILE_IMAGE_PREVIEW_MAX_BYTES } from '../../../shared/files/filePreview'
 import { spaceFileMediaUrl } from '../../../shared/files/mediaPreview'
+import { isSpaceWorkspaceDirectoryId } from '../../../shared/spaces/spaceApi'
 import { GrantedPathError, resolveGrantedPath } from '../directories/resolveGrantedPath'
 import { readFilePreview } from '../files/readFilePreview'
 import { resolveMediaPreview } from '../files/resolveMediaPreview'
@@ -17,9 +19,12 @@ import { requireActiveSpace } from './requireActiveSpace'
 
 export type SpaceFileChange = SpaceFilesChange
 
+const INTERNAL_WORKSPACE_ENTRIES: ReadonlySet<string> = new Set(['.attachments'])
+
 export class SpaceFileService {
   readonly #spaces: Pick<SpaceRepository, 'findById'>
   readonly #engine: NativeFileEngine
+  readonly #workspaces: SpaceWorkspaceDirectories | undefined
   readonly #changes = new Emitter<SpaceFileChange>(() => console.error('SPACE_FILE_OBSERVER_FAILED'))
   readonly onDidChange = this.#changes.event
   readonly #roots = new Map<string, SpaceFileTarget>()
@@ -29,9 +34,10 @@ export class SpaceFileService {
   #revision = 0
   #disposed = false
 
-  constructor(spaces: Pick<SpaceRepository, 'findById'>, engine: NativeFileEngine) {
+  constructor(spaces: Pick<SpaceRepository, 'findById'>, engine: NativeFileEngine, workspaces?: SpaceWorkspaceDirectories) {
     this.#spaces = spaces
     this.#engine = engine
+    this.#workspaces = workspaces
     this.#subscription = engine.onDidChange((event) => {
       if (event.event === 'changed') {
         for (const key of event.roots) {
@@ -54,7 +60,9 @@ export class SpaceFileService {
     this.requireDirectory(input)
     const directory = this.requireDirectory(input)
     const sensitive = createSensitivePathMatcher()
-    return { ...result, entries: result.entries.filter(entry => !sensitive.matches(resolve(directory.canonicalRoot, entry.path))) }
+    // The space's own folder also holds the app's attachment copies, which are not the user's files.
+    const internal = isSpaceWorkspaceDirectoryId(directory.id) ? INTERNAL_WORKSPACE_ENTRIES : null
+    return { ...result, entries: result.entries.filter(entry => !internal?.has(entry.path) && !sensitive.matches(resolve(directory.canonicalRoot, entry.path))) }
   }
 
   async read(input: SpaceFileTarget): Promise<LocalSpaceFilePreview> {
@@ -235,7 +243,9 @@ export class SpaceFileService {
 
   private requireDirectory(input: SpaceFileTarget) {
     const space = requireActiveSpace(this.#spaces.findById(input.spaceId))
-    const directory = [space.primaryDirectory, ...space.additionalDirectories].find(directory => directory?.id === input.directoryId)
+    // A workspace id carries its space id, so another space's id never resolves to this space's folder.
+    const workspace = isSpaceWorkspaceDirectoryId(input.directoryId) ? this.#workspaces?.get(space) ?? null : null
+    const directory = [space.primaryDirectory, ...space.additionalDirectories, workspace].find(directory => directory?.id === input.directoryId)
     if (!directory || directory.revision !== input.revision || directory.revokedAt)
       throw new BuddyServiceError('VALIDATION_FAILED')
     return directory

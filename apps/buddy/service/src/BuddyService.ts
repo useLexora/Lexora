@@ -176,6 +176,7 @@ import { SpaceDependents } from './spaces/SpaceDependents'
 import { matchesSpaceExecutionContext } from './spaces/spaceExecutionContext'
 import { SpaceFileService } from './spaces/SpaceFileService'
 import { SpaceService } from './spaces/SpaceService'
+import { SpaceWorkspaceDirectories } from './spaces/SpaceWorkspaceDirectories'
 import { createApprovalRepository } from './storage/approvalRepository'
 import { createArtifactRepository } from './storage/artifactRepository'
 import { createAttachmentRepository } from './storage/attachmentRepository'
@@ -249,6 +250,7 @@ export async function startBuddyService(
   const stopLifecycleDiagnostics = options.lifecycle ? () => {} : observeLifecycleDiagnostics(host.lifecycle, events)
   try {
     const paths = new BuddyDataPaths(options.buddyHome)
+    const spaceWorkspaces = new SpaceWorkspaceDirectories(spaceId => paths.spaceWorkspace(spaceId))
     const agentDirectory = join(options.buddyHome, 'agent')
     await host.step('runtime.filesystem', async () => {
       if (currentPlatform.shell === 'powershell')
@@ -371,7 +373,7 @@ export async function startBuddyService(
     })
     const fileResources = new FileResourceCoordinator(fileEngine)
     const spaceFiles = await host.start('runtime.space_files', ({ defer }) => {
-      const service = new SpaceFileService(spacesRepository, fileEngine)
+      const service = new SpaceFileService(spacesRepository, fileEngine, spaceWorkspaces)
       const notices = service.onDidChange(event => options.rpc.notify(spaceFilesChanged.method, event))
       const revoked = spaceService.onDidCommit(event => service.revoke(event.revokedDirectoryIds))
       defer(() => {
@@ -1634,6 +1636,7 @@ export async function startBuddyService(
         registerSpaceRpc({
           rpc: options.rpc,
           service: spaceService,
+          workspaces: spaceWorkspaces,
         }),
       )
       register(registerSpaceFileRpc(options.rpc, spaceFiles))

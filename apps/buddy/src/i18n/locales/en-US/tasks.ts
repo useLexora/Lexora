@@ -144,6 +144,7 @@ export default {
   'desktop.context.files': 'Files',
   'desktop.context.selectFileSpace': 'Select space',
   'desktop.context.noFileSpaces': 'No spaces have a working directory',
+  'desktop.context.defaultFolder': 'Default folder',
   'desktop.context.addTab': 'New tab',
   'desktop.context.fileRevealFailed': 'Could not reveal this file',
   'desktop.context.revealFile': 'Open containing folder',

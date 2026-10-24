@@ -81,6 +81,15 @@ describe('tool file preview targets', () => {
     expect(resolveChatToolFileTarget({ ...current, primaryDirectory: { ...current.primaryDirectory!, revokedAt: '2026-09-10T00:00:00Z' } }, 'main.ts')).toBeNull()
     expect(resolveChatToolFileTarget({ ...current, primaryDirectory: { ...current.primaryDirectory!, revision: 3 } }, 'main.ts')?.revision).toBe(3)
   })
+
+  it('resolves paths against the space default folder when there is no primary directory', () => {
+    const { primaryDirectory } = space('/data/spaces/space/workspace')
+    const folderless = { ...space('/unused'), primaryDirectory: null, workspaceDirectory: { ...primaryDirectory!, id: 'workspace:space', revision: 1 } }
+    expect(resolveChatToolFileTarget(folderless, 'docs/report.md')).toEqual({ spaceId: 'space', directoryId: 'workspace:space', revision: 1, path: 'docs/report.md' })
+    expect(resolveChatToolFileTarget(folderless, '/data/spaces/space/workspace/docs/report.md')).toMatchObject({ directoryId: 'workspace:space', path: 'docs/report.md' })
+    expect(resolveChatToolFileTarget(folderless, '/data/spaces/other/workspace/report.md')).toBeNull()
+    expect(resolveChatToolFileTarget({ ...folderless, workspaceDirectory: { ...folderless.workspaceDirectory, revokedAt: '2026-09-10T00:00:00Z' } }, 'report.md')).toBeNull()
+  })
 })
 
 describe('tool diff presentation', () => {

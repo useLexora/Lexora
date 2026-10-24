@@ -41,7 +41,8 @@ export function resolveChatArtifactTarget(artifacts: readonly LocalArtifact[], p
 export function resolveChatToolFileTarget(space: LocalSpace | null, path: string): SpaceFileTarget | null {
   if (!space || space.revokedAt || !path || path.includes('\0'))
     return null
-  let directory: LocalSpaceAdditionalDirectory | null = space.primaryDirectory
+  // Relative paths are relative to where the agent works: the primary directory, or the space's own folder without one.
+  let directory: LocalSpaceAdditionalDirectory | null = space.primaryDirectory ?? space.workspaceDirectory ?? null
   let relative = cleanChatToolFilePath(path).replaceAll('\\', '/')
   if (relative.startsWith('/') || /^[a-z]:/i.test(relative)) {
     const candidates = getActiveSpaceDirectories(space).flatMap(directory =>

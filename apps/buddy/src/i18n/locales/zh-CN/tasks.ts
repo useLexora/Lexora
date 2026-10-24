@@ -142,6 +142,7 @@ export default {
   'desktop.context.files': '文件',
   'desktop.context.selectFileSpace': '选择空间',
   'desktop.context.noFileSpaces': '暂无绑定工作目录的空间',
+  'desktop.context.defaultFolder': '默认文件夹',
   'desktop.context.addTab': '新建标签页',
   'desktop.context.fileRevealFailed': '无法打开文件所在目录',
   'desktop.context.revealFile': '打开所在目录',

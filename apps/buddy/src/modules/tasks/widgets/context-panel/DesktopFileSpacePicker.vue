@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { getActiveSpaceDirectories } from '@buddy-shared/spaces/spaceApi'
+import { getActiveSpaceDirectories, isSpaceWorkspaceDirectoryId } from '@buddy-shared/spaces/spaceApi'
 import { NModal } from 'naive-ui'
 import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
@@ -44,7 +44,7 @@ function select(spaceId: string, directoryId: string) {
         <DesktopSpaceIcon :icon="space.icon" :icon-color="space.iconColor" :size="20" />
         <span class="grid min-w-0 gap-[0.2rem] [overflow-wrap:anywhere]">
           <span>{{ space.name }}</span>
-          <span class="text-muted text-[0.75rem]">{{ directory.root }}</span>
+          <span class="text-muted text-[0.75rem]">{{ isSpaceWorkspaceDirectoryId(directory.id) ? t('desktop.context.defaultFolder') : directory.root }}</span>
         </span>
       </button>
       <div v-if="!directories.length" class="py-4 px-3 text-muted">
