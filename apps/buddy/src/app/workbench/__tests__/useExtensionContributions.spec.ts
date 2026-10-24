@@ -413,3 +413,30 @@ it.each(['slot', 'control'] as const)('acknowledges %s activation with a request
   expect(f.replies.get(invalid.requestId)).toBeNull()
   expect(provider().enabled).toBe(true)
 })
+
+it('persists document metadata only for its bound view and restores it independently of plugin state', async () => {
+  const f = setup()
+  withLauncher(f)
+  f.ready.value = true
+  const viewId = (await f.controller.open({ scheme: 'extension', id: 'document', data: { extensionId: f.status.manifest.id, viewType: 'tests.music.player', resource: null } }, 'Player', { viewType: 'tests.music.player', state: { version: 1, value: { documentId: 'document' } } }))!
+  const session = { id: viewId, extensionId: f.status.manifest.id, generation: f.status.generation!, token: crypto.randomUUID(), url: '' }
+  f.views.surfaces.set(viewId, { session } as NonNullable<ReturnType<typeof f.views.surfaces.get>>)
+  const send = (title: string, dirty: boolean, token = session.token) => {
+    const requestId = crypto.randomUUID()
+    f.receive({ kind: 'document-info', requestId, viewId, generation: session.generation, token, info: { title, dirty } })
+    return requestId
+  }
+  const accepted = send('季度计划.docx', true)
+  await settle()
+  expect(f.replies.get(accepted)).toBe(viewId)
+  expect(f.controller.layout.views[viewId]).toMatchObject({ title: '季度计划.docx', state: { version: 1, value: { documentId: 'document' }, documentInfo: { title: '季度计划.docx', dirty: true } } })
+  const restored = restoreWorkbenchLayout(JSON.parse(JSON.stringify(f.controller.layout)))
+  expect(restored.views[viewId]?.state.documentInfo).toEqual({ title: '季度计划.docx', dirty: true })
+  const stale = send('other view', false, crypto.randomUUID())
+  await settle()
+  expect(f.replies.get(stale)).toBeNull()
+  expect(f.controller.layout.views[viewId]?.title).toBe('季度计划.docx')
+  send('季度计划.docx', false)
+  await settle()
+  expect(f.controller.layout.views[viewId]?.state.documentInfo).toEqual({ title: '季度计划.docx', dirty: false })
+})

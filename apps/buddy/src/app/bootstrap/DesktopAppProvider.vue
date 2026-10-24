@@ -80,7 +80,7 @@ const taskIndex = useTaskIndex({
 })
 const diagnostics = createRendererDiagnostics(api.app.logs)
 const fileOpening = useProvideFileOpening(api.extensions)
-const workbench = useDesktopWorkbench({ fileOpening, buddyCatalog: buddyDirectory.catalog, api, events: diagnostics.events, stores, taskIndex, router, resources: getResources, onError: () => message.error(translateBuddy(stores.applicationSettings.language.value, 'desktop.command.failed')) })
+const workbench = useDesktopWorkbench({ beforeExtensionClose: prepareExtensionClose, fileOpening, buddyCatalog: buddyDirectory.catalog, api, events: diagnostics.events, stores, taskIndex, router, resources: getResources, onError: () => message.error(translateBuddy(stores.applicationSettings.language.value, 'desktop.command.failed')) })
 
 onScopeDispose(() => {
   void workbench.dispose().finally(() => diagnostics.dispose()).catch(() => {})
@@ -117,6 +117,9 @@ useProvideWorkbenchCommands({
   },
 })
 const extensionViews = useExtensionViews(api.extensions, extensions.installed, computed(() => pages.context.value.values))
+function prepareExtensionClose(id: string, signal?: AbortSignal) {
+  return extensionViews.prepareClosePlan(id, signal)
+}
 const pageContext = workbench.controller.contextKeys.bind()
 onScopeDispose(pageContext.dispose)
 watch(() => pages.context.value.values, values => pageContext.update(values), { immediate: true, flush: 'sync' })
@@ -259,6 +262,7 @@ const lifecycle = useDesktopLifecycle({
     await workbench.initialize()
   },
   flushSurface: workbench.flush,
+  prepareQuit: extensionViews.prepareAllClose,
   refreshSurface: workbench.pool.refresh.bind(workbench.pool),
 })
 const shortcuts = useDesktopKeybindings(workbench.controller.registry, stores.applicationSettings, () => shell.appInfo.value?.platform ?? 'linux')

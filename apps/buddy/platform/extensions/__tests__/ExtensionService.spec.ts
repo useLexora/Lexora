@@ -813,10 +813,27 @@ it('does not deliver a pending clipboard read after the view is closed', async (
   pending.resolve({ text: 'private' })
   await expect(reading).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
 })
-it('denies clipboard to decoration views despite declared clipboard permissions', async () => {
+it('acknowledges document metadata only after persistence for the requesting view session', async () => {
+  let accept = true
+  const events: unknown[] = []
+  const value = manifest({ apiVersion: 4, contributes: { views: [{ id: 'tests.reader.reader', title: 'Document', entry: 'view.js', resource: 'none' }] } })
+  const { service } = await fixture({ workbench: async (event) => {
+    events.push(event)
+    return accept && event.kind === 'document-info' ? event.viewId : null
+  } }, value)
+  const session = await service.openView({ viewId: randomUUID(), extensionId: value.id, viewType: 'tests.reader.reader', resource: null, state: {}, stateVersion: 1 })
+  const request = (info: unknown, token = session.token) => service.viewRequest(session.id, session.generation, token, 'view.setDocumentInfo', info)
+  await request({ title: '  季度计划.docx  ', dirty: true })
+  expect(events).toContainEqual({ kind: 'document-info', requestId: expect.any(String), viewId: session.id, generation: session.generation, token: session.token, info: { title: '季度计划.docx', dirty: true } })
+  await expect(request({ title: '', dirty: true })).rejects.toThrow('EXTENSION_INVALID_ARGUMENT')
+  await expect(request({ title: 'other', dirty: false }, randomUUID())).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
+  accept = false
+  await expect(request({ title: 'not acknowledged', dirty: false })).rejects.toThrow('EXTENSION_DOCUMENT_INFO_FAILED')
+})
+it('denies clipboard and document metadata to decoration views despite declared clipboard permissions', async () => {
   const value = manifest({ apiVersion: 4, permissions: { clipboardRead: true, clipboardWrite: true, windowEffects: true }, contributes: { views: [{ id: 'tests.reader.reader', title: 'Decoration', entry: 'view.js', resource: 'none', location: 'window-overlay' }] } })
   const { service } = await fixture({}, value)
   const session = await service.openView({ viewId: randomUUID(), extensionId: value.id, viewType: 'tests.reader.reader', resource: null, state: {}, stateVersion: 1 })
-  for (const [method, data] of [['clipboard.read', null], ['clipboard.write', { text: 'denied' }]] as const)
+  for (const [method, data] of [['clipboard.read', null], ['clipboard.write', { text: 'denied' }], ['view.setDocumentInfo', { title: 'denied', dirty: false }]] as const)
     await expect(service.viewRequest(session.id, session.generation, session.token, method, data)).rejects.toThrow('EXTENSION_METHOD_DENIED')
 })

@@ -38,6 +38,7 @@ import { extensionClipboardSchema, extensionClipboardWriteSchema } from '../../s
 import { ExtensionCompatibilityError, extensionCompatibilityIssue } from '../../shared/extensions/extensionCompatibility'
 import { extensionConditionInvalidationSchema } from '../../shared/extensions/extensionConditions'
 import { extensionDiagnostic, ExtensionRequestError } from '../../shared/extensions/extensionDiagnostic'
+import { extensionDocumentInfoSchema } from '../../shared/extensions/extensionDocumentInfo'
 import { extensionFileHandlerBindings } from '../../shared/extensions/extensionFileOpening'
 import { extensionCompatible, extensionManifestSchema, extensionPathSchema } from '../../shared/extensions/extensionManifest'
 import { extensionReferenceInputSchema, extensionReferenceOpeningSchema, extensionReferenceTargetSchema } from '../../shared/extensions/extensionReferences'
@@ -1148,6 +1149,15 @@ export class ExtensionService {
         await clipboard.write(view.session, data, assertCurrent)
         result = null
       }
+    }
+    else if (method === 'view.setDocumentInfo') {
+      if (contribution.location === 'window-overlay' || (placement && placement.kind !== 'view'))
+        throw new Error('EXTENSION_METHOD_DENIED')
+      const info = extensionDocumentInfoSchema.parse(params)
+      const accepted = await this.#ports.workbench({ kind: 'document-info', requestId: randomUUID(), viewId: id, generation, token, info }, AbortSignal.any([view.abort.signal, view.running.abort.signal]))
+      if (accepted !== id)
+        throw new Error('EXTENSION_DOCUMENT_INFO_FAILED')
+      result = null
     }
     else if (method === 'themes.request') {
       result = await this.#themeRequest(view.running, `${view.running.package.manifest.id}:${generation}:${id}`, params, () => {

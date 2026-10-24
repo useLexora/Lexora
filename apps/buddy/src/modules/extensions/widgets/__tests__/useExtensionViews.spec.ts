@@ -34,7 +34,54 @@ function setup() {
   return { context, views, scope, installed, status, input, requests, closed, session, show }
 }
 
-it('defers an ineligible view and retains its session and state across page changes', async () => {
+it('prepares all view sessions concurrently and revalidates already-saved document metadata', async () => {
+  const f = setup()
+  f.show()
+  const first = f.session()
+  f.requests[0]!.resolve(first)
+  await Promise.resolve()
+  const otherInput = { ...f.input, viewId: crypto.randomUUID() }
+  f.show(otherInput)
+  const second = { ...f.session(), id: otherInput.viewId }
+  f.requests[1]!.resolve(second)
+  await Promise.resolve()
+  const one = f.views.surfaces.get(first.id)!
+  const two = f.views.surfaces.get(second.id)!
+  one.ready = true
+  two.ready = true
+  const pending = new Map<string, ReturnType<typeof deferred<boolean>>>()
+  f.views.onBeforeClose((session) => {
+    const gate = deferred<boolean>()
+    pending.set(session.id, gate)
+    return gate.promise
+  })
+  const closing = f.views.prepareAllClose()
+  expect([...pending.keys()]).toEqual([first.id, second.id])
+  one.documentInfo = { title: 'Saved', dirty: false }
+  pending.get(first.id)!.resolve(true)
+  await Promise.resolve()
+  one.documentInfo = { title: 'New edit', dirty: true }
+  pending.get(second.id)!.resolve(true)
+  const plan = await closing
+  expect(plan && plan.validate()).toBe(false)
+  expect(f.views.surfaces.size).toBe(2)
+})
+
+it('rejects a saved session that is replaced before the close commits', async () => {
+  const f = setup()
+  f.show()
+  f.requests[0]!.resolve(f.session())
+  await Promise.resolve()
+  const surface = f.views.surfaces.get(f.input.viewId)!
+  surface.ready = true
+  f.views.onBeforeClose(async () => true)
+  const plan = await f.views.prepareClosePlan(f.input.viewId)
+  expect(plan && plan.validate()).toBe(true)
+  surface.session = f.session()
+  expect(plan && plan.validate()).toBe(false)
+})
+
+it('defers an ineligible view and retains its session across state, page and status changes', async () => {
   const f = setup()
   f.status.manifest.contributes.views.push({ id: f.input.viewType, title: 'Scoped', entry: 'ui.js', resource: 'none', location: 'context', stateVersion: 1, when: { 'page.id': ['lexora.tasks', 'future.canvas'] } })
   f.context.value = { 'page.id': 'lexora.settings' }
@@ -46,6 +93,7 @@ it('defers an ineligible view and retains its session and state across page chan
   f.requests[0]!.resolve(session)
   await Promise.resolve()
   f.show({ ...f.input, state: { cursor: 42 } })
+  f.installed.value = [{ ...f.status }]
   f.context.value = { 'page.id': 'lexora.settings' }
   expect(f.views.surfaces.get(f.input.viewId)).toMatchObject({ eligible: false, session, input: { state: { cursor: 42 } } })
   f.context.value = { 'page.id': 'future.canvas' }
@@ -66,18 +114,6 @@ it('discards a late open from an obsolete view definition without replacing the 
   await Promise.resolve()
   expect(fixture.views.surfaces.get(fixture.input.viewId)?.session).toEqual(current)
   expect(fixture.closed).toEqual([old.token])
-})
-
-it('does not reopen a view for saved state, layout changes or unrelated status refreshes', async () => {
-  const fixture = setup()
-  fixture.show()
-  const session = fixture.session()
-  fixture.requests[0]!.resolve(session)
-  await Promise.resolve()
-  fixture.show({ ...fixture.input, state: { volume: 0.37 } })
-  fixture.installed.value = [{ ...fixture.status }]
-  expect(fixture.requests).toHaveLength(1)
-  expect(fixture.views.surfaces.get(fixture.input.viewId)?.session).toEqual(session)
 })
 
 it('keeps a failed view stopped until its host generation changes', async () => {

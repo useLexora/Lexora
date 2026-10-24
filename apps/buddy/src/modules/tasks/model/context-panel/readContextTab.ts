@@ -14,7 +14,7 @@ const tabSchema = z.discriminatedUnion('kind', [
   base.extend({ kind: z.literal('files'), target: spaceFileTargetSchema, treeTarget: z.object({ path: z.string().max(4096), kind: z.enum(['file', 'directory']) }).optional(), rootName: z.string() }),
   base.extend({ kind: z.literal('artifact'), artifact: artifactSchema, label: z.string(), viewMode: z.enum(['preview', 'source']), providerId: z.string().optional() }),
   base.extend({ kind: z.literal('changes'), branchId: identity.nullable(), revision: z.string(), changeSet: changeSetSummarySchema.nullable(), conversationId: identity }),
-  base.extend({ kind: z.literal('view'), viewId: identity, label: z.string() }),
+  base.extend({ kind: z.literal('view'), viewId: identity, label: z.string(), dirty: z.boolean().optional() }),
 ])
 
 export function readContextTab(value: unknown): TaskContextTab | null {
