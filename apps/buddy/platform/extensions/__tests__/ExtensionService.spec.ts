@@ -1,5 +1,6 @@
 import type { ApplicationDiagnostic } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { ExtensionHostFailure } from '../../../shared/extensions/extensionDiagnostic'
+import type { ExtensionLocalFile } from '../../../shared/extensions/extensionResources'
 import type { JsonValue } from '../../../shared/workbench/workbenchState'
 import type { ExtensionServicePorts } from '../ExtensionService'
 import { Buffer } from 'node:buffer'
@@ -11,6 +12,8 @@ import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { afterEach, expect, it, vi } from 'vitest'
 import { applicationDiagnosticSchema } from '../../../shared/diagnostics/applicationDiagnostic'
 import { extensionInspectionSchema } from '../../../shared/extensions/extensionAuthoring'
+import { createExtensionResourceClient } from '../../../shared/extensions/extensionResourceClient'
+import { EXTENSION_CREATED_FILES_LIMIT } from '../../../shared/extensions/extensionResources'
 import { DEFAULT_THEME_PREFERENCE } from '../../../shared/theme/themePreferences'
 import { ThemeService } from '../../themes/ThemeService'
 import { ExtensionService } from '../ExtensionService'
@@ -695,4 +698,71 @@ it('revalidates download redirects and cancels work owned by a closed view witho
   f.service.closeView(view.id, view.generation, view.token)
   await rejected
   expect(await f.store.resources.list('tests.reader', false)).toEqual([])
+})
+
+it('creates private files through the SDK without export permission and isolates uploads by view and generation', async () => {
+  const value = manifest({ apiVersion: 4, id: 'tests.generated', permissions: {}, contributes: { views: [{ id: 'tests.generated.page', title: 'Files', entry: 'view.js', resource: 'none' }] } })
+  const f = await fixture({}, value)
+  const input = { viewId: randomUUID(), extensionId: value.id, viewType: 'tests.generated.page', resource: null, state: null, stateVersion: 1 }
+  const owner = await f.service.openView(input)
+  const other = await f.service.openView({ ...input, viewId: randomUUID() })
+  const request = (method: string, params: JsonValue = null) => f.service.viewRequest(owner.id, owner.generation, owner.token, method, params)
+  const resources = createExtensionResourceClient(request)
+  const bytes = new Uint8Array(240 * 1024).map((_, index) => index % 251)
+  const file = await resources.createFile({ name: 'draft.bin', data: bytes })
+  expect(file.size).toBe(bytes.length)
+  const read = await resources.readBytes(file, { offset: 190 * 1024 })
+  expect(read.data).toEqual(bytes.subarray(190 * 1024))
+  const id = await request('resources.beginCreate', { name: 'partial.bin', size: 4 })
+  await expect(f.service.viewRequest(other.id, other.generation, other.token, 'resources.commitSave', { id })).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
+  await expect(f.hosts[0]!.broker('resources.commitSave', { id })).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
+  await request('resources.writeChunk', { id, offset: 0, base64: 'bmV3IQ==' })
+  f.service.closeView(owner.id, owner.generation, owner.token)
+  await expect(request('resources.commitSave', { id })).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
+  await f.service.enable(value.id, false)
+  expect(await f.store.resources.list(value.id, false)).toEqual([file])
+  await expect(f.hosts[0]!.broker('resources.beginCreate', { name: 'late.bin', size: 0 })).rejects.toThrow('EXTENSION_HOST_STOPPED')
+  expect(await readdir(join(f.root, 'extensions', 'data', value.id, 'files'))).toHaveLength(1)
+})
+
+it('keeps generated copies charged after releasing their source with all permissions disabled', async () => {
+  const value = manifest({ apiVersion: 4, permissions: {}, contributes: { commands: [{ id: 'tests.reader.open', title: 'Open' }] } })
+  const f = await fixture({}, value)
+  await f.service.execute(value.id, 'tests.reader.open', null)
+  const request = (method: string, params: JsonValue = null) => f.hosts[0]!.broker(method, params)
+  const resources = createExtensionResourceClient(request)
+  const original = await resources.createFile({ name: 'draft.txt', data: new Blob(['draft'], { type: 'text/plain;charset=utf-8' }) })
+  const copy = await resources.importFile(original)
+  await resources.release(original)
+  expect(await resources.readText(copy)).toBe('draft')
+  expect(copy.mimeType).toBe('text/plain')
+  const path = join(f.root, 'extensions', 'data', value.id, 'owned-resources.json')
+  const [owned] = JSON.parse(await readFile(path, 'utf8')) as Array<{ resource: ExtensionLocalFile, key: string, generated?: true }>
+  await writeFile(path, JSON.stringify(Array.from({ length: EXTENSION_CREATED_FILES_LIMIT - 1 }, (_, index) => index ? { ...owned, resource: { ...copy, id: randomUUID() } } : owned)))
+  const pending = await request('resources.beginCreate', { name: 'pending.txt', size: 0 })
+  await expect(resources.importFile(copy)).rejects.toThrow('EXTENSION_RESOURCE_STORAGE_LIMIT')
+  await request('resources.cancelSave', { id: pending })
+  const results = await Promise.allSettled([resources.importFile(copy), resources.importFile(copy)])
+  expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1)
+  expect(results.find(result => result.status === 'rejected')).toMatchObject({ reason: new Error('EXTENSION_RESOURCE_STORAGE_LIMIT') })
+  await expect(resources.createFile({ name: 'overflow.txt', data: new Uint8Array() })).rejects.toThrow('EXTENSION_RESOURCE_STORAGE_LIMIT')
+  expect(await f.store.resources.list(value.id, false)).toHaveLength(EXTENSION_CREATED_FILES_LIMIT)
+})
+
+it('preserves an explicit MIME override through the SDK and validates direct host uploads', async () => {
+  const value = manifest({ apiVersion: 4, permissions: {}, contributes: { commands: [{ id: 'tests.reader.open', title: 'Open' }] } })
+  const f = await fixture({}, value)
+  await f.service.execute(value.id, 'tests.reader.open', null)
+  const request = (method: string, params: JsonValue = null) => f.hosts[0]!.broker(method, params)
+  const resources = createExtensionResourceClient(request)
+  const file = await resources.createFile({ name: 'draft', data: new Blob(['中文'], { type: 'text/plain' }), mimeType: 'Application/JSON; charset="utf-8"' })
+  expect(file.mimeType).toBe('application/json')
+  expect(await resources.readText(file)).toBe('中文')
+  const response = await f.store.resources.response(value.id, file.id, new Request('https://resource.invalid'), new AbortController().signal, false)
+  expect(response.headers.get('content-type')).toBe('application/json')
+  expect(await response.text()).toBe('中文')
+  const direct = await request('resources.beginCreate', { name: 'direct.txt', size: 0, mimeType: 'Text/Plain; charset=utf-8' })
+  expect(await request('resources.commitSave', { id: direct })).toMatchObject({ mimeType: 'text/plain', size: 0 })
+  await expect(request('resources.beginCreate', { name: 'bad.txt', size: 0, mimeType: 'text/plain; charset=utf-8\r\nInjected: value' })).rejects.toThrow('EXTENSION_INVALID_ARGUMENT')
+  expect(await resources.listFiles()).toHaveLength(2)
 })

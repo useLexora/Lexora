@@ -1,5 +1,5 @@
 import type { BigIntStats } from 'node:fs'
-import type { ExtensionDirectoryScan, ExtensionLocalDirectory, ExtensionLocalFile } from '../../shared/extensions/extensionResources'
+import type { ExtensionDirectoryScan, ExtensionLocalDirectory, ExtensionLocalFile, ExtensionResourceCreate } from '../../shared/extensions/extensionResources'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
@@ -7,11 +7,12 @@ import { lstat, open, opendir, realpath } from 'node:fs/promises'
 import { basename, extname, join, relative } from 'node:path'
 import { z } from 'zod'
 import { extensionIdSchema } from '../../shared/extensions/extensionManifest'
-import { extensionLocalDirectorySchema, extensionLocalFileSchema, extensionResourceMimeType } from '../../shared/extensions/extensionResources'
+import { EXTENSION_CREATED_FILES_LIMIT, EXTENSION_CREATED_STORAGE_LIMIT, extensionLocalDirectorySchema, extensionLocalFileSchema, extensionResourceCreateSchema, extensionResourceMimeType } from '../../shared/extensions/extensionResources'
 import { FileAssetStore } from '../filesystem/FileAssetStore'
 import { containsCanonicalPath } from '../filesystem/filePaths'
 import { fileResponse } from '../filesystem/fileResponse'
 import { readExtensionJson, writeExtensionJson } from './extensionFiles'
+import { ExtensionResourceUpload } from './ExtensionResourceUpload'
 
 const grantSchema = z.object({
   resource: extensionLocalFileSchema,
@@ -20,7 +21,7 @@ const grantSchema = z.object({
   directoryId: z.string().uuid().optional(),
 }).strict()
 type Grant = z.infer<typeof grantSchema>
-const ownedSchema = z.array(z.object({ resource: extensionLocalFileSchema, key: z.string().regex(/^[a-f0-9]{64}$/) }).strict())
+const ownedSchema = z.array(z.object({ resource: extensionLocalFileSchema, key: z.string().regex(/^[a-f0-9]{64}$/), generated: z.literal(true).optional() }).strict())
 type Owned = z.infer<typeof ownedSchema>
 const grantsSchema = z.array(grantSchema).max(1000)
 const directorySchema = z.object({ resource: extensionLocalDirectorySchema, path: z.string().min(1).max(32768), device: z.string(), inode: z.string() }).strict()
@@ -34,6 +35,7 @@ export class ExtensionResourceStore {
   readonly #root: string
   readonly #writes = new Map<string, Promise<unknown>>()
   readonly #imports = new Map<string, number>()
+  readonly #creating = new Map<string, Map<string, number>>()
   readonly #streams = new Map<string, Set<AbortController>>()
   constructor(root: string) { this.#root = root }
 
@@ -195,7 +197,67 @@ export class ExtensionResourceStore {
     return response.text()
   }
 
-  async import(id: string, name: string, mimeType: string, response: Response, signal: AbortSignal, assertCurrent: () => void): Promise<ExtensionLocalFile> {
+  async create(id: string, input: ExtensionResourceCreate, signal: AbortSignal, assertCurrent: () => void): Promise<ExtensionResourceUpload> {
+    const { name, mimeType, size } = extensionResourceCreateSchema.parse(input)
+    const reservation = randomUUID()
+    await this.#mutate(id, async () => {
+      signal.throwIfAborted()
+      assertCurrent()
+      const creating = this.#creating.get(id) ?? new Map<string, number>()
+      this.#assertCreationBudget(id, size, await this.#owned(id))
+      creating.set(reservation, size)
+      this.#creating.set(id, creating)
+    })
+    const upload = new ExtensionResourceUpload(size, async (body, transferSignal) => {
+      try {
+        return await this.import(id, name, mimeType, new Response(body), AbortSignal.any([signal, transferSignal]), assertCurrent, true)
+      }
+      finally {
+        await this.#mutate(id, async () => {
+          const creating = this.#creating.get(id)!
+          creating.delete(reservation)
+          if (!creating.size)
+            this.#creating.delete(id)
+        })
+      }
+    }, () => {
+      signal.throwIfAborted()
+      assertCurrent()
+    })
+    const abort = () => {
+      void upload.dispose()
+    }
+    signal.addEventListener('abort', abort, { once: true })
+    void upload.finished.finally(() => signal.removeEventListener('abort', abort)).catch(() => {})
+    if (signal.aborted)
+      abort()
+    return upload
+  }
+
+  copy(id: string, resourceId: string, name: string | undefined, assertCurrent: () => void): Promise<ExtensionLocalFile | null> {
+    return this.#mutate(id, async () => {
+      assertCurrent()
+      const owned = await this.#owned(id)
+      const source = owned.find(item => item.resource.id === resourceId)
+      if (!source)
+        return null
+      if (source.generated)
+        this.#assertCreationBudget(id, source.resource.size, owned)
+      const resource = extensionLocalFileSchema.parse({ ...source.resource, id: randomUUID(), name: name ?? source.resource.name })
+      await writeExtensionJson(this.#ownedPath(id), [...owned, { ...source, resource }], assertCurrent)
+      return resource
+    })
+  }
+
+  #assertCreationBudget(id: string, size: number, owned: Owned): void {
+    const creating = this.#creating.get(id) ?? new Map<string, number>()
+    const generated = owned.filter(item => item.generated)
+    const reserved = [...creating.values()].reduce((sum, value) => sum + value, 0)
+    if (creating.size >= 2 || generated.length + creating.size >= EXTENSION_CREATED_FILES_LIMIT || generated.reduce((sum, item) => sum + item.resource.size, reserved + size) > EXTENSION_CREATED_STORAGE_LIMIT)
+      throw new Error('EXTENSION_RESOURCE_STORAGE_LIMIT')
+  }
+
+  async import(id: string, name: string, mimeType: string, response: Response, signal: AbortSignal, assertCurrent: () => void, generated = false): Promise<ExtensionLocalFile> {
     if (!response.ok || !response.body)
       throw new Error('EXTENSION_RESOURCE_DOWNLOAD_FAILED')
     const files = this.#files(id)
@@ -212,7 +274,7 @@ export class ExtensionResourceStore {
       return await this.#mutate(id, async () => {
         const owned = await this.#owned(id)
         const resource = { ...draft, size: asset.size }
-        await writeExtensionJson(this.#ownedPath(id), [...owned, { resource, key: asset.key }], current)
+        await writeExtensionJson(this.#ownedPath(id), [...owned, { resource, key: asset.key, ...(generated ? { generated: true } : {}) }], current)
         return resource
       })
     }

@@ -18,6 +18,7 @@ import type { JsonValue } from '../../shared/workbench/workbenchState'
 import type { ThemeService } from '../themes/ThemeService'
 import type { ExtensionCompiler } from './compileExtensionSource'
 import type { ExtensionPackage, ExtensionPackageStore } from './ExtensionPackageStore'
+import type { ExtensionResourceUpload } from './ExtensionResourceUpload'
 import type { ExtensionConfigurationApplication, ExtensionServiceChange, ExtensionServiceFact, ExtensionServiceSnapshot } from './ExtensionServiceEvents'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
@@ -38,7 +39,7 @@ import { extensionDiagnostic, ExtensionRequestError } from '../../shared/extensi
 import { extensionFileHandlerBindings } from '../../shared/extensions/extensionFileOpening'
 import { extensionCompatible, extensionManifestSchema, extensionPathSchema } from '../../shared/extensions/extensionManifest'
 import { extensionReferenceInputSchema, extensionReferenceOpeningSchema, extensionReferenceTargetSchema } from '../../shared/extensions/extensionReferences'
-import { extensionDirectoryScanSchema, extensionResourceSelectionSchema } from '../../shared/extensions/extensionResources'
+import { extensionDirectoryScanSchema, extensionResourceCreateSchema, extensionResourceSelectionSchema } from '../../shared/extensions/extensionResources'
 import { extensionNotificationSchema, extensionScheduleIdSchema, extensionScheduleInputSchema } from '../../shared/extensions/extensionSchedule'
 import { extensionConfigurationAppliedSchema, resolveExtensionConfiguration, validateExtensionSetting } from '../../shared/extensions/extensionSettings'
 import { extensionSkillRoots } from '../../shared/extensions/extensionSkills'
@@ -130,6 +131,8 @@ export class ExtensionService {
   readonly #views = new Map<string, RunningView>()
   readonly #diagnostics = new Map<string, Pick<ExtensionStatus, 'error' | 'activationMs' | 'logs'>>()
   readonly #downloads = new Map<string, { running: RunningExtension, owner: string, abort: AbortController }>()
+  readonly #uploadCreations = new Set<{ running: RunningExtension, owner: string, promise: Promise<ExtensionResourceUpload> }>()
+  readonly #uploads = new Map<string, { running: RunningExtension, owner: string, upload: ExtensionResourceUpload }>()
   readonly #notificationTimes = new Map<string, number>()
   readonly #interactions = new Map<string, { running: RunningExtension, title: string, abort: AbortController }>()
   readonly #agentInvocations = new Map<string, { running: RunningExtension, signal: AbortSignal, abort: AbortController }>()
@@ -1188,6 +1191,9 @@ export class ExtensionService {
       this.#log(view.input.extensionId, 'view.failed', failure.success ? failure.data.code : 'EXTENSION_VIEW_FAILED')
       result = null
     }
+    else if (method === 'resources.beginCreate' || (['resources.writeChunk', 'resources.commitSave', 'resources.cancelSave'].includes(method) && params && typeof params === 'object' && !Array.isArray(params) && typeof params.id === 'string' && this.#uploads.has(params.id))) {
+      result = await this.#broker(view.running, method, params, view.abort.signal, view.session.id)
+    }
     else if (['resources.beginSave', 'resources.writeChunk', 'resources.commitSave', 'resources.cancelSave'].includes(method)) {
       if (!view.running.package.manifest.permissions.resourceExport || placement?.kind === 'decoration' || contribution.location === 'window-overlay')
         throw new Error('EXTENSION_RESOURCE_EXPORT_DENIED')
@@ -1641,6 +1647,43 @@ export class ExtensionService {
           }
         }
       }
+      else if (method === 'resources.beginCreate') {
+        const input = extensionResourceCreateSchema.parse(params)
+        const signal = AbortSignal.any([running.abort.signal, lifetime])
+        const creation = { running, owner, promise: this.store.resources.create(id, input, signal, () => this.#assertCurrent(running)) }
+        this.#uploadCreations.add(creation)
+        try {
+          const upload = await creation.promise
+          this.#uploads.set(upload.id, { running, owner, upload })
+          void upload.finished.finally(() => this.#uploads.delete(upload.id)).catch(() => {})
+          result = upload.id
+        }
+        finally { this.#uploadCreations.delete(creation) }
+      }
+      else if (['resources.writeChunk', 'resources.commitSave', 'resources.cancelSave'].includes(method)) {
+        const input = z.object({ id: z.string().uuid(), offset: z.number().int().min(0).optional(), base64: z.string().max(128 * 1024).regex(/^(?:[A-Z0-9+/]{4})*(?:[A-Z0-9+/]{2}==|[A-Z0-9+/]{3}=)?$/i).optional() }).strict().parse(params)
+        const entry = this.#uploads.get(input.id)
+        if (!entry)
+          throw new Error('EXTENSION_RESOURCE_WRITE_EXPIRED')
+        if (entry.running !== running || entry.owner !== owner)
+          throw new Error('EXTENSION_RESOURCE_DENIED')
+        if (method === 'resources.writeChunk') {
+          if (input.offset === undefined || input.base64 === undefined)
+            throw new Error('EXTENSION_RESOURCE_WRITE_RANGE')
+          await entry.upload.append(input.offset, input.base64)
+          result = null
+        }
+        else if (method === 'resources.commitSave') {
+          try {
+            result = { ...await entry.upload.commit() }
+          }
+          finally { await entry.upload.dispose() }
+        }
+        else {
+          await entry.upload.dispose()
+          result = null
+        }
+      }
       else if (method === 'resources.readText') {
         const { id: resource } = z.object({ id: z.string().uuid() }).strict().parse(params)
         const allowLocal = running.package.manifest.permissions.localResources
@@ -1679,19 +1722,22 @@ export class ExtensionService {
         }
         let response: Response | undefined
         try {
-          if (method === 'network.download') {
-            if (!input.url || input.resourceId)
-              throw new Error('EXTENSION_INVALID_ARGUMENT')
-            response = await this.#networkResponse(running, input.url, signal)
+          if (method === 'network.download' && (!input.url || input.resourceId))
+            throw new Error('EXTENSION_INVALID_ARGUMENT')
+          if (method === 'resources.importFile' && (!input.resourceId || input.url))
+            throw new Error('EXTENSION_RESOURCE_UNAVAILABLE')
+          const copied = input.resourceId ? await this.store.resources.copy(id, input.resourceId, input.name, guard) : null
+          if (copied) {
+            result = copied
           }
           else {
-            if (!input.resourceId || input.url)
-              throw new Error('EXTENSION_RESOURCE_UNAVAILABLE')
-            response = await this.#fileResponse(running, { resourceId: input.resourceId }, guard, signal)
+            response = input.url
+              ? await this.#networkResponse(running, input.url, signal)
+              : await this.#fileResponse(running, { resourceId: input.resourceId! }, guard, signal)
+            const name = input.name ?? (input.url ? decodeURIComponent(new URL(input.url).pathname.split('/').at(-1) || 'download') : 'resource')
+            const mimeType = response.headers.get('content-type')?.split(';')[0]?.trim() || 'application/octet-stream'
+            result = await this.store.resources.import(id, name.slice(0, 255), mimeType, response, signal, guard)
           }
-          const name = input.name ?? (input.url ? decodeURIComponent(new URL(input.url).pathname.split('/').at(-1) || 'download') : 'resource')
-          const mimeType = response.headers.get('content-type')?.split(';')[0]?.trim() || 'application/octet-stream'
-          result = await this.store.resources.import(id, name.slice(0, 255), mimeType, response, signal, guard)
         }
         finally {
           this.#downloads.delete(input.id)
@@ -2029,6 +2075,7 @@ export class ExtensionService {
     if (running.inFlight)
       this.#retired.add(running)
     running.abort.abort()
+    await this.#cancelUploads(running)
     for (const [resourceId, snapshot] of this.#fileSnapshots) {
       if (snapshot.running === running)
         this.#fileSnapshots.delete(resourceId)
@@ -2103,6 +2150,14 @@ export class ExtensionService {
     return task
   }
 
+  async #cancelUploads(running: RunningExtension, owner?: string): Promise<void> {
+    const matches = (entry: { running: RunningExtension, owner: string }) => entry.running === running && (owner === undefined || entry.owner === owner)
+    await Promise.all([
+      ...[...this.#uploadCreations].filter(matches).map(entry => entry.promise.then(upload => upload.dispose(), () => {})),
+      ...[...this.#uploads.values()].filter(matches).map(entry => entry.upload.dispose()),
+    ])
+  }
+
   #closeView(view: RunningView, retainResource?: string): void {
     if (this.#views.get(view.input.viewId) !== view)
       return
@@ -2112,7 +2167,7 @@ export class ExtensionService {
       this.#fileSnapshots.delete(resourceId)
     this.#ports.themes?.releaseOwner(`${view.running.package.manifest.id}:${view.running.generation}:${view.input.viewId}`)
     view.abort.abort()
-    const cleanups: Promise<void>[] = []
+    const cleanups: Promise<void>[] = [this.#cancelUploads(view.running, view.session.id)]
     try {
       view.dispose()
     }

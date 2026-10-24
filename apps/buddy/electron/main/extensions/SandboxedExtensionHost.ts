@@ -10,6 +10,7 @@ import { BrowserWindow, session } from 'electron'
 import { z } from 'zod'
 import { EXTENSION_IPC, extensionError, extensionJsonSchema } from '../../../shared/extensions/extensionApi'
 import { ExtensionRequestError } from '../../../shared/extensions/extensionDiagnostic'
+import { waitsForExtensionIo } from '../../../shared/extensions/extensionRequestLifecycle'
 
 interface Pending { method: string, resolve: (value: JsonValue) => void, reject: (error: Error) => void, timer?: ReturnType<typeof setTimeout>, timeout: number, expire: () => void, cleanup: () => void }
 const replySchema = z.object({ id: z.string().uuid(), ok: z.boolean(), value: extensionJsonSchema }).strict()
@@ -85,7 +86,7 @@ export class SandboxedExtensionHost implements ExtensionHost {
       }
       if (!this.#started || typeof method !== 'string' || method.length > 80)
         throw new Error('EXTENSION_METHOD_DENIED')
-      const io = ['network.get', 'network.download', 'resources.importFile', 'themes.request'].includes(method)
+      const io = waitsForExtensionIo(method)
       if (io && this.#io++ === 0) {
         for (const pending of this.#pending.values())
           clearTimeout(pending.timer)

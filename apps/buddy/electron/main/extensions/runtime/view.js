@@ -1,4 +1,5 @@
-import { createExtensionNetworkClient, createExtensionResourceClient } from '../../../../shared/extensions/extensionResourceClient'
+import { waitsForExtensionIo } from '../../../../shared/extensions/extensionRequestLifecycle'
+import { createExtensionNetworkClient, createExtensionResourceClient, writeExtensionResource } from '../../../../shared/extensions/extensionResourceClient'
 import { createExtensionWorkers } from '../../../../shared/extensions/extensionWorkers'
 import { createThemeClient } from '../../../../shared/theme/themeClient'
 import { ExtensionReferenceReveal } from './ExtensionReferenceReveal'
@@ -25,7 +26,7 @@ function request(method, params = null) {
     if (pending.size >= 64)
       return reject(new Error('EXTENSION_REQUEST_LIMIT'))
     const id = crypto.randomUUID()
-    const longRunning = ['network.get', 'network.download', 'resources.importFile', 'themes.request', 'commands.execute', 'references.add'].includes(method)
+    const longRunning = waitsForExtensionIo(method) || ['commands.execute', 'references.add'].includes(method)
     const timer = longRunning
       ? undefined
       : setTimeout(() => {
@@ -157,25 +158,7 @@ async function initialize() {
         listDirectories: () => request('resources.listDirectories'),
         scanDirectory: (directory, options = {}) => request('resources.scanDirectory', { id: directory.id, ...options }),
         revokeDirectory: directory => request('resources.revokeDirectory', { id: directory.id }),
-        saveFile: async ({ name, data }) => {
-          const blob = data instanceof Blob ? data : new Blob([data])
-          const id = await request('resources.beginSave', { name, size: blob.size })
-          if (!id)
-            return false
-          try {
-            for (let offset = 0; offset < blob.size; offset += 96 * 1024) {
-              const bytes = new Uint8Array(await blob.slice(offset, offset + 96 * 1024).arrayBuffer())
-              const base64 = btoa(Array.from(bytes, byte => String.fromCharCode(byte)).join(''))
-              await request('resources.writeChunk', { id, offset, base64 })
-            }
-            await request('resources.commitSave', { id })
-            return true
-          }
-          catch (error) {
-            await request('resources.cancelSave', { id }).catch(() => {})
-            throw error
-          }
-        },
+        saveFile: options => writeExtensionResource(request, 'resources.beginSave', options),
       },
       openExternal: url => request('links.openExternal', { url }),
       network: createExtensionNetworkClient(request),

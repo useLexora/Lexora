@@ -21,6 +21,7 @@
 | 限定生效页面或响应页面变化 | 贡献的 `when`；视图的 `workbench/onWorkbenchChange` 与 `visible/onVisibilityChange` | 按稳定页面 ID 与公开上下文匹配；离开范围隐藏而保留实例，业务暂停或继续由插件决定。未知上下文不匹配，不读取父页面 DOM |
 | 自定义浮动内容或运行时换区域 | `presentation.position: "absolute"`；`setPresentation` 更新目标及外框 CSS 布局；`mount/onMountChange` 获取局部几何 | 拖动、折叠、恢复入口等由插件自行实现。宿主不理解这些行为，只维持独立实例、投影和边界；换位置保留会话，关闭销毁 |
 | 用户选择的文件或目录 | `localResources: true`；交互视图的 `resources.pickFiles/pickDirectory` | 返回不透明句柄；任意文件格式都可读取。以 `scanDirectory` 按需筛选授权目录，`readText/readBytes/getUrl` 分别用于文本、分段二进制和受控 URL；只保存 ID，URL 按视图重新获取 |
+| 自动保存草稿或生成私有文件 | 宿主和视图的 `resources.createFile({name,data,mimeType?,signal?})` | 返回不可变的私有资源句柄；先保存新文件，再更新元数据，最后释放旧版本。无任意路径或原文件写回；能力检测及配额见 protocol.md |
 | 将编辑结果或生成内容保存到本机 | `resourceExport: true`；交互视图调用 `resources.saveFile({name,data})` | 每次弹出系统另存为窗口，用户决定目标；取消返回 false。文本先编码为 Blob 或字节。读取授权不授予原文件覆写权限；保存成功后才报告完成 |
 | 局部装饰、输入位置附近的短暂动画 | `windowEffects: true`；`kind: "decoration"` 与正式 `anchor` | 使用 `anchor/onAnchorChange` 的局部尺寸；输入活动经 `onActivity` 提供，可带局部 caret。不获取字符或全局键盘，不接收指针或焦点 |
 | 在输入所在的整个分屏内绘制装饰 | `windowEffects: true`；`kind: "decoration"`、`anchor: "workbench.pane"` | 每个分屏独立实例，画布覆盖该分屏；只接收该分屏内的对话输入活动，caret 相对分屏。绘制位置由插件决定，不受输入框边界限制；不接收指针或焦点 |

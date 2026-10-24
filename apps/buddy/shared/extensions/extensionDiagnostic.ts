@@ -28,6 +28,7 @@ const methods = new Set([
   'network.cancel',
   'links.openExternal',
   'resources.importFile',
+  'resources.beginCreate',
   'resources.release',
   'schedules.get',
   'schedules.set',

@@ -229,6 +229,10 @@ API 3 的 `contributes.menus` 将已有命令放进业务区域的「更多操�
 
 宿主和视图均可 `resources.listFiles/readBytes/readText` 读取已有资源。`resources.importFile(resource,{name?,signal?})` 将已有授权的本地文件、Space 文件或本插件私有文件复制到新的私有资源，默认保留文件名，不弹出选择窗口；不接受任意路径。声明式包内图片可直接作为主题资产的 `{packagePath}` 来源。
 
+`resources.createFile({name,data,mimeType?,signal?})` 在宿主和视图中将 `Blob | ArrayBuffer | Uint8Array` 保存为新的私有资源，返回 `{id,name,mimeType,size}`。它不弹出文件窗口，不需要 `localResources` 或 `resourceExport`，不接受路径或覆写原文件。适合文档草稿、编辑结果和版本快照；保存新资源成功后，再更新插件元数据中的 ID，最后 `release` 已不需要的旧资源。失败时保留旧 ID，不能先释放旧版本。并发编辑应由插件以文档版本检查串行更新元数据。
+
+创建资源时按块传输并原子发布，半成品不会出现在列表；关闭发起视图、停用或 signal 取消时回收未提交数据。每插件最多同时创建 2 个文件，单文件最多 256 MiB，生成资源及其私有副本合计最多 1 GiB、4096 项；外部导入和下载沿用原有规则。MIME 可包含参数，返回句柄使用规范化后的裸类型，例如 `text/plain;charset=utf-8` 保存为 `text/plain`。大数据优先传 Blob，避免字节数组转 Blob 的整份内存复制。此增量能力需先检查 `typeof context.resources.createFile === 'function'`；旧宿主提供清晰升级提示，不把文档二进制塞进有大小限制的 JSON storage。
+
 视图 `openExternal(url)` 使用系统浏览器打开已批准 origin 的 HTTPS 链接，保留 fragment。无需逐次授权，不授予文件或自定义协议访问。
 
 `network.get(url)` 适用于最多 1 MiB 的文本响应；媒体和大文件使用 `download` 后通过资源 URL 或分段接口读取。大文件不放进 JSON 或命令返回值。下载等待期间不计入宿主普通命令的响应期限；宿主失去响应、退出或用户取消仍会终止操作。

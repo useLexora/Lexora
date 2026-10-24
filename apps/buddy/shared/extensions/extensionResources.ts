@@ -2,6 +2,17 @@ import { z } from 'zod'
 
 export type ExtensionFileSource = { resourceId: string } | { packagePath: string }
 
+export const EXTENSION_CREATED_FILE_LIMIT = 256 * 1024 * 1024
+export const EXTENSION_CREATED_FILES_LIMIT = 4096
+export const EXTENSION_CREATED_STORAGE_LIMIT = 1024 * 1024 * 1024
+export const extensionResourceMimeTypeSchema = z.string().min(1).max(1024).refine(value => !/[^\t\x20-\x7E]/.test(value)).transform(value => value.split(';', 1)[0]!.trim().toLowerCase()).pipe(z.string().min(1).max(80).regex(/^[\w.+-]+\/[\w.+-]+$/))
+export const extensionResourceCreateSchema = z.object({
+  name: z.string().min(1).max(255).regex(/^[^/\\\0]+$/),
+  size: z.number().int().min(0).max(EXTENSION_CREATED_FILE_LIMIT),
+  mimeType: extensionResourceMimeTypeSchema.default('application/octet-stream'),
+}).strict()
+export type ExtensionResourceCreate = z.infer<typeof extensionResourceCreateSchema>
+
 export const extensionLocalFileSchema = z.object({
   id: z.string().uuid(),
   name: z.string().max(512),

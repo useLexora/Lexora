@@ -53,6 +53,7 @@ export interface ResourceApi {
   getUrl: (resource: Pick<LocalFile, 'id'> | { packagePath: string }) => Promise<string>
   readBytes: (resource: Pick<LocalFile, 'id'>, options?: { offset?: number, length?: number }) => Promise<{ data: Uint8Array, size: number, eof: boolean }>
   importFile: (resource: Resource, options?: ResourceTransferOptions) => Promise<LocalFile>
+  createFile: (options: { name: string, data: Blob | ArrayBuffer | Uint8Array, mimeType?: string, signal?: AbortSignal }) => Promise<LocalFile>
   release: (resource: Pick<LocalFile, 'id'>) => Promise<void>
 }
 export interface LocalFile extends Resource { readonly mimeType: string, readonly size: number, readonly relativePath?: string }
