@@ -8,12 +8,13 @@ import type {
 } from '../storage/artifactRepository'
 import type { ArtifactFileAccess } from './ArtifactFileAccess'
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { link, mkdir, open, readFile, stat, unlink, writeFile } from 'node:fs/promises'
 import {
   basename,
   dirname,
   extname,
   isAbsolute,
+  join,
   resolve,
   sep,
 } from 'node:path'
@@ -116,6 +117,58 @@ export class ArtifactService {
   registerGeneratedImages(input: GeneratedImagesInput, writeFiles?: CapturedFileWriter): Promise<ArtifactRecord[]> {
     const request = { ...copyEventSnapshot({ conversationId: input.conversationId, cwd: input.cwd, grants: input.grants, outputPath: input.outputPath, sourceArtifactId: input.sourceArtifactId }), images: input.images.map(image => ({ bytes: Uint8Array.from(image.bytes), mimeType: image.mimeType })) }
     return this.#batch(request.conversationId, 'generated', request.images.length, batch => this.#registerGeneratedImages(request, batch, writeFiles))
+  }
+
+  registerGeneratedFile(input: { conversationId: string, cwd: string, grants: readonly DirectoryGrant[], outputPath: string, bytes: Uint8Array | AsyncIterable<Uint8Array>, size?: number, assertCurrent: () => void | Promise<void> }, writeFiles?: CapturedFileWriter): Promise<ArtifactRecord> {
+    const bytes = input.bytes instanceof Uint8Array ? Uint8Array.from(input.bytes) : input.bytes
+    const size = bytes instanceof Uint8Array ? bytes.byteLength : input.size
+    if (!Number.isSafeInteger(size) || size! < 0 || size! > 64 * 1024 * 1024)
+      return Promise.reject(new ArtifactError('ARTIFACT_SIZE_LIMIT'))
+    const request = copyEventSnapshot({ conversationId: input.conversationId, cwd: input.cwd, grants: input.grants, outputPath: input.outputPath })
+    return this.#batch(request.conversationId, 'generated', 1, async (batch) => {
+      await input.assertCurrent()
+      const location = await resolveArtifactLocation(request.grants, request.outputPath, 'create')
+      if (isSensitivePath(location.relativePath))
+        throw new ArtifactError('ARTIFACT_SENSITIVE_PATH')
+      const write = async () => {
+        await input.assertCurrent()
+        await mkdir(dirname(location.canonicalPath), { mode: 0o700, recursive: true })
+        if ((await resolveArtifactLocation(request.grants, request.outputPath, 'create')).canonicalPath !== location.canonicalPath)
+          throw new ArtifactError('DIRECTORY_NOT_AUTHORIZED')
+        const temporary = join(dirname(location.canonicalPath), `${randomUUID()}.tmp`)
+        try {
+          const handle = await open(temporary, 'wx', 0o600)
+          try {
+            let written = 0
+            for await (const chunk of bytes instanceof Uint8Array ? [bytes] : bytes) {
+              written += chunk.byteLength
+              if (written > size!)
+                throw new ArtifactError('ARTIFACT_SIZE_LIMIT')
+              await handle.writeFile(chunk)
+            }
+            if (written !== size)
+              throw new ArtifactError('ARTIFACT_SIZE_LIMIT')
+            await handle.sync()
+          }
+          finally { await handle.close() }
+          await input.assertCurrent()
+          batch.stage = 'file'
+          if ((await resolveArtifactLocation(request.grants, request.outputPath, 'create')).canonicalPath !== location.canonicalPath)
+            throw new ArtifactError('DIRECTORY_NOT_AUTHORIZED')
+          await link(temporary, location.canonicalPath)
+          batch.written++
+          this.#publish(batch, 'file-written')
+        }
+        finally { await unlink(temporary).catch(() => {}) }
+      }
+      if (writeFiles)
+        await writeFiles([location.canonicalPath], write)
+      else await write()
+      await input.assertCurrent()
+      batch.stage = 'catalogue'
+      const [record] = await this.#presentOutputs({ ...request, paths: [location.canonicalPath] }, batch)
+      return record!
+    })
   }
 
   recoverLegacyRecords(records: readonly ArtifactRecord[]): Promise<number> {

@@ -57,7 +57,7 @@ describe('extension action dispatch', () => {
         signal!.addEventListener('abort', cancel, { once: true })
       })
     })
-    const runtime = new ExtensionAgentRuntime({ rpc: peer, createHandlers: () => ({ 'task.get': async () => null, 'task.messages': async () => [], 'task.rename': async () => null, 'models.generateText': async () => null, 'references.list': async () => ({ items: [], truncated: false }), 'references.resolve': async () => null }) })
+    const runtime = new ExtensionAgentRuntime({ rpc: peer, createHandlers: () => ({ 'task.scope': async () => ({ taskId: 'conversation-1', branchId: 'branch-1', runId: 'run-1' }), 'artifacts.publish': async () => null, 'results.addImage': async () => null, 'task.get': async () => null, 'task.messages': async () => [], 'task.rename': async () => null, 'models.generateText': async () => null, 'references.list': async () => ({ items: [], truncated: false }), 'references.resolve': async () => null }) })
     const service = new ExtensionActionService({ runtime, repository: createExtensionInvocationRepository(database), capture: () => ({ branchId: 'branch', sourceMessageId: null }) })
     peer.onRequest(extensionActionRpc.invoke.method, (input, signal) => service.invoke(extensionActionRpc.invoke.input.parse(input), signal))
     try {
@@ -139,7 +139,7 @@ describe('extension action dispatch', () => {
         finally { active-- }
       },
     }
-    const runtime = new ExtensionAgentRuntime({ rpc, createHandlers: () => ({ 'task.get': async () => null, 'task.messages': async () => [], 'task.rename': async () => null, 'models.generateText': async () => null, 'references.list': async () => ({ items: [], truncated: false }), 'references.resolve': async () => null }) })
+    const runtime = new ExtensionAgentRuntime({ rpc, createHandlers: () => ({ 'task.scope': async () => ({ taskId: 'conversation-1', branchId: 'branch-1', runId: 'run-1' }), 'artifacts.publish': async () => null, 'results.addImage': async () => null, 'task.get': async () => null, 'task.messages': async () => [], 'task.rename': async () => null, 'models.generateText': async () => null, 'references.list': async () => ({ items: [], truncated: false }), 'references.resolve': async () => null }) })
     const service = new ExtensionActionService({ runtime, repository: createExtensionInvocationRepository(database), capture: () => ({ branchId: 'branch', sourceMessageId: null }) })
     const errors: string[] = []
     service.onDidFail(event => errors.push(event.errorCode))

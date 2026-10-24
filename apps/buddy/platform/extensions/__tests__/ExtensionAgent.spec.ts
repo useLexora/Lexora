@@ -1,7 +1,9 @@
 import type { JsonValue } from '../../../shared/workbench/workbenchState'
 import type { ExtensionServicePorts } from '../ExtensionService'
 import { randomUUID } from 'node:crypto'
-import { rm } from 'node:fs/promises'
+import { rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { deferred } from '@buddy-tests/deferred'
 import { expect, it, vi } from 'vitest'
 import { extensionAgentInvocationSchema } from '../../../shared/extensions/extensionAgent'
 import { addedExtensionPermissions, extensionManifestSchema } from '../../../shared/extensions/extensionManifest'
@@ -281,6 +283,46 @@ it.each(['create', 'activate', 'crash'])('withdraws agent contributions and depe
     expect(await service.invokeAgent(invocation, new AbortController().signal)).toBe('completed')
   }
   finally {
+    await service.dispose()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('reads only private resources of the live invoking plugin and revokes access on return', async () => {
+  const { root, store } = await createStore()
+  const definition = configuredManifest()
+  await store.install((await reviewPackage(root, store, definition)).token)
+  const own = await store.resources.import(definition.id, 'owned.txt', 'text/plain', new Response('private bytes'), new AbortController().signal, () => {})
+  const other = await store.resources.import('tests.other', 'other.txt', 'text/plain', new Response('other plugin'), new AbortController().signal, () => {})
+  const path = join(root, 'selected.txt')
+  await writeFile(path, 'selected bytes')
+  const [selected] = await store.resources.grant(definition.id, [path], () => {})
+  const ready = deferred<void>()
+  const finish = deferred<JsonValue>()
+  const service = new ExtensionService(store, { ...ports, createHost: () => ({ call: async (method) => {
+    if (method !== 'agent.invoke')
+      return null
+    ready.resolve()
+    return finish.promise
+  }, dispose: async () => {}, devtools: () => {} }) })
+  const descriptor = (await service.agentContributions())[0]!
+  const invocationId = randomUUID()
+  const invocation = service.invokeAgent(extensionAgentInvocationSchema.parse({ extensionId: descriptor.id, revision: descriptor.revision, configurationRevision: descriptor.configurationRevision, invocationId, tool: 'tests.reader.tool', input: {} }), new AbortController().signal)
+  try {
+    await ready.promise
+    const input = { invocationId, extensionId: descriptor.id, resourceId: own.id, offset: 0, length: 64 * 1024 }
+    expect(await service.readAgentResource(input, new AbortController().signal)).toMatchObject({ resource: own, base64: 'cHJpdmF0ZSBieXRlcw==', eof: true })
+    for (const resourceId of [other.id, selected!.id])
+      await expect(service.readAgentResource({ ...input, resourceId }, new AbortController().signal)).rejects.toThrow('EXTENSION_RESOURCE_UNAVAILABLE')
+    await expect(service.readAgentResource({ ...input, extensionId: 'tests.other' }, new AbortController().signal)).rejects.toThrow('EXTENSION_AGENT_UNAVAILABLE')
+    await expect(service.readAgentResource({ ...input, length: 128 * 1024 }, new AbortController().signal)).rejects.toThrow()
+    finish.resolve(null)
+    await invocation
+    await expect(service.readAgentResource(input, new AbortController().signal)).rejects.toThrow('EXTENSION_AGENT_UNAVAILABLE')
+  }
+  finally {
+    finish.resolve(null)
+    await invocation.catch(() => {})
     await service.dispose()
     await rm(root, { recursive: true, force: true })
   }

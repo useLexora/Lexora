@@ -40,7 +40,16 @@ export function createBuddyRunOutputs(
     ?? createImageTransformRunOutput(input)
     ?? createOutputPresentRunOutput(input)
     ?? createMcpRunOutput(input)
+    ?? createPluginRunOutput(input)
   return output ? [output] : []
+}
+
+function createPluginRunOutput(input: CreateBuddyToolPresentationInput & { toolCallId: string }): BuddyRunOutputPayload | null {
+  if (!/^lexora_plugin_[a-f0-9]{16}$/.test(input.toolName))
+    return null
+  const ids = readRecord(readRecord(input.result)?.details)?.artifactIds
+  const artifactIds = Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string' && /^[a-f0-9-]{36}$/.test(id)).slice(0, 8) : []
+  return artifactIds.length ? { artifactIds, sourceToolCallId: input.toolCallId, sourceToolName: input.toolName } : null
 }
 
 export function createBuddyToolPresentation(

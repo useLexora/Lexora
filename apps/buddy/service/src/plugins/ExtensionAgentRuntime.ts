@@ -9,7 +9,6 @@ import type { ExtensionAgentChange, ExtensionAgentFact, ExtensionCapabilityProje
 import type { ExtensionAgentHandlers, ExtensionInvocationScope } from './extensionAgentHandlers'
 import { createHash, randomUUID } from 'node:crypto'
 import { defineTool } from '@earendil-works/pi-coding-agent'
-import { Type } from 'typebox'
 import { Check } from 'typebox/value'
 import { z } from 'zod'
 import { Emitter } from '../../../shared/events/Emitter'
@@ -18,7 +17,9 @@ import { extensionAgentCatalogSchema, extensionAgentDescriptorSchema, extensionA
 import { extensionAgentCapabilities } from '../../../shared/extensions/extensionAgentCapabilities'
 import { extensionJsonSchema } from '../../../shared/extensions/extensionApi'
 import { extensionIdSchema } from '../../../shared/extensions/extensionManifest'
+import { extensionToolInputSchema } from '../../../shared/extensions/extensionToolParameters'
 import { ExtensionInvocationQueue } from './ExtensionInvocationQueue'
+import { extensionToolSchema } from './extensionToolSchema'
 
 interface Invocation {
   scope: ExtensionInvocationScope
@@ -39,7 +40,7 @@ interface ExtensionAgentRuntimeOptions {
   createHandlers: (scope: ExtensionInvocationScope) => ExtensionAgentHandlers
   onObserverError?: ListenerErrorHandler
 }
-type InvocationRequest = { tool: string, input: Record<string, string | number | boolean> } | { action: string, cause: NonNullable<ExtensionInvocationScope['action']>['cause'] }
+type InvocationRequest = { tool: string, input: Record<string, JsonValue> } | { action: string, cause: NonNullable<ExtensionInvocationScope['action']>['cause'] }
 
 export class ExtensionAgentRuntime {
   readonly #options: ExtensionAgentRuntimeOptions
@@ -179,11 +180,7 @@ export class ExtensionAgentRuntime {
     const prefix = `plugin_${createHash('sha256').update(descriptor.id).digest('hex').slice(0, 12)}`
     const names = new Map(descriptor.agent.tools.map(tool => [tool.id, `lexora_plugin_${createHash('sha256').update(tool.id).digest('hex').slice(0, 16)}`]))
     const instructions = descriptor.agent.instructions.replace(/\{\{([^}]+)\}\}/g, (_match, id: string) => names.get(id) ?? id)
-    const tools = descriptor.agent.tools.map(tool => ({ ...tool, name: names.get(tool.id)!, schema: Type.Object(Object.fromEntries(Object.entries(tool.parameters.properties).map(([key, property]) => {
-      const options = { description: property.description }
-      const value = property.type === 'string' ? Type.String({ ...options, maxLength: 32768 }) : property.type === 'boolean' ? Type.Boolean(options) : Type.Number(options)
-      return [key, tool.parameters.required.includes(key) ? value : Type.Optional(value)]
-    })), { additionalProperties: false }) }))
+    const tools = descriptor.agent.tools.map(tool => ({ ...tool, name: names.get(tool.id)!, schema: extensionToolSchema(tool.parameters) }))
     return {
       resourceRevisions: [{ source: 'plugin', id: descriptor.id, revision: JSON.stringify([descriptor.revision, descriptor.configurationRevision]) }],
       disclosure: [{
@@ -193,7 +190,10 @@ export class ExtensionAgentRuntime {
         tools: tools.map(tool => ({ name: tool.name, id: tool.id, title: tool.title })),
         available: () => !context.signal.aborted && !this.#stop.signal.aborted && this.#isCurrent(descriptor),
       }],
-      classify: event => tools.some(tool => tool.name === event.toolName) ? { access: 'read', paths: [] } : null,
+      classify: (event) => {
+        const tool = tools.find(tool => tool.name === event.toolName)
+        return tool ? { access: tool.access ?? 'read', paths: [] } : null
+      },
       extension: {
         name: `lexora-${prefix}`,
         factory: (pi) => {
@@ -205,17 +205,18 @@ export class ExtensionAgentRuntime {
               description: tool.description,
               promptGuidelines: instructions ? [instructions] : [],
               parameters: tool.schema,
-              execute: async (_toolCallId, input, signal) => {
+              execute: async (toolCallId, input, signal) => {
                 const runId = context.getRunId()
-                if (!runId || !Check(tool.schema, input))
+                if (!runId || !extensionToolInputSchema.safeParse(input).success || !Check(tool.schema, input))
                   throw new Error('EXTENSION_AGENT_UNAVAILABLE')
+                const output: NonNullable<ExtensionInvocationScope['output']> = { access: tool.access ?? 'read', cwd: context.cwd, grants: context.getExecutionGrants?.(toolCallId) ?? context.grants, images: [], imageBytes: 0, artifactIds: [], writeFiles: context.createFileWriter?.({ type: 'tool_call', toolCallId, toolName: tool.name, input: input as Record<string, unknown>, signal }) }
                 try {
-                  const result = await this.invoke(inputDescriptor, { tool: tool.id, input }, { conversationId: context.conversationId, runId }, signal ?? new AbortController().signal)
-                  return { content: [{ type: 'text', text: JSON.stringify(result) }], details: { ok: true, result } }
+                  const result = await this.invoke(inputDescriptor, { tool: tool.id, input: input as Record<string, JsonValue> }, { conversationId: context.conversationId, runId, output }, signal ?? new AbortController().signal)
+                  return { content: [{ type: 'text' as const, text: JSON.stringify(result) }, ...output.images], details: { ok: true, result, artifactIds: output.artifactIds } }
                 }
                 catch (error) {
                   const code = error instanceof Error ? error.message.match(/EXTENSION_[A-Z_]+/)?.[0] : null
-                  return { content: [{ type: 'text', text: code ?? 'EXTENSION_AGENT_FAILED' }], details: { ok: false, result: null }, isError: true }
+                  return { content: [{ type: 'text', text: code ?? 'EXTENSION_AGENT_FAILED' }], details: { ok: false, result: null, artifactIds: output.artifactIds }, isError: true }
                 }
               },
             }))

@@ -148,6 +148,7 @@ import { PetActionService } from './pet/PetActionService'
 import { bindExtensionActions } from './plugins/bindExtensionActions'
 import { ExtensionActionService } from './plugins/ExtensionActionService'
 import { ExtensionAgentRuntime } from './plugins/ExtensionAgentRuntime'
+import { createExtensionResourceCapabilities } from './plugins/extensionResourceCapabilities'
 import { observeExtensionAgentDiagnostics } from './plugins/observeExtensionAgentDiagnostics'
 import { PluginAuthoringService } from './plugins/PluginAuthoringService'
 import { registerExtensionConditionRpc } from './plugins/registerExtensionConditionRpc'
@@ -632,6 +633,7 @@ export async function startBuddyService(
           return {
             ...createExtensionTaskCapabilities(conversationMetadata, extensionHistory, task, scope),
             ...createExtensionReferenceCapabilities(extensionReferences, task, scope),
+            ...createExtensionResourceCapabilities({ rpc: options.rpc, artifacts: artifactService }, task, scope),
             ...createExtensionModelCapabilities(executionModels, usageService, task),
           }
         },

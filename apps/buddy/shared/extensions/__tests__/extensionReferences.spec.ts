@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { expect, it } from 'vitest'
 import { BUDDY_QUOTE_TEXT_LIMIT } from '../../conversation/buddyUserContent'
+import { extensionToolSchema } from '../extensionAgent'
 import { extensionAgentCapabilities } from '../extensionAgentCapabilities'
 import { extensionManagementSchema, parseExtensionRequestParams } from '../extensionApi'
 import { addedExtensionPermissions, extensionManifestSchema, extensionPermissionsSchema } from '../extensionManifest'
@@ -56,7 +57,7 @@ it('keeps references opt-in, API 4-only and visible in added permission review',
     expect(extensionManifestSchema.safeParse({ ...input, apiVersion }).success).toBe(false)
 })
 
-it('scopes reference RPC to the independent references permission', () => {
+it('scopes reference RPC to the independent references permission and validates tool effects', () => {
   const disabled = extensionPermissionsSchema.parse({ agent: true, tasks: 'read', taskMessages: true })
   const enabled = extensionPermissionsSchema.parse({ agent: true, references: true })
   for (const name of ['references.list', 'references.resolve'] as const) {
@@ -67,6 +68,10 @@ it('scopes reference RPC to the independent references permission', () => {
   expect(resolve.safeParse({ referenceId: randomUUID() }).success).toBe(true)
   expect(resolve.safeParse({ referenceId: randomUUID(), taskId: 'another-task' }).success).toBe(false)
   expect(resolve.safeParse({ referenceId: '1' }).success).toBe(false)
+  const tool = { id: 'tests.office.edit', title: 'Edit', description: 'Edit a referenced selection', parameters: { type: 'object', properties: {} } }
+  expect(extensionToolSchema.parse(tool).access).toBeUndefined()
+  expect(extensionToolSchema.parse({ ...tool, access: 'write' }).access).toBe('write')
+  expect(extensionToolSchema.safeParse({ ...tool, access: 'execute' }).success).toBe(false)
 })
 
 it('accepts bounded long Unicode references without increasing ordinary plugin message budgets', () => {

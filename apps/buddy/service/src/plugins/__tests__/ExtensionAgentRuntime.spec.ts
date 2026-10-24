@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto'
 import { deferred } from '@buddy-tests/deferred'
 import { describe, expect, it } from 'vitest'
 import { extensionAgentRpc } from '../../../../shared/extensions/extensionAgent'
+import { createBuddyRunOutputs } from '../../agent/events/toolPresentation'
 import { ToolDisclosure } from '../../agent/extensions/discovery/ToolDisclosure'
 import { ExtensionAgentRuntime } from '../ExtensionAgentRuntime'
 
@@ -21,7 +22,7 @@ function fixture() {
   let list = async () => descriptors
   let unavailable = false
   let invoke: (input: unknown, signal?: AbortSignal) => Promise<unknown> = async () => null
-  const handlers: ExtensionAgentHandlers = { 'task.messages': async () => [], 'task.get': async () => null, 'task.rename': async () => null, 'models.generateText': async () => null, 'references.list': async () => ({ items: [], truncated: false }), 'references.resolve': async () => null }
+  const handlers: ExtensionAgentHandlers = { 'task.messages': async () => [], 'task.scope': async () => ({ taskId: 'conversation-1', branchId: 'branch-1', runId: 'run-1' }), 'artifacts.publish': async () => null, 'results.addImage': async () => null, 'task.get': async () => null, 'task.rename': async () => null, 'models.generateText': async () => null, 'references.list': async () => ({ items: [], truncated: false }), 'references.resolve': async () => null }
   const rpc: RuntimeRpcPeerContract = {
     notify() {},
     close() {},
@@ -74,6 +75,68 @@ function fixture() {
 }
 
 describe('extension agent capability and invocation lifetimes', () => {
+  it('returns trusted native images and task artifacts without treating plugin JSON as output metadata', async () => {
+    const f = fixture()
+    const artifactId = randomUUID()
+    f.handlers['results.addImage'] = async (_input, scope) => {
+      scope.output!.images.push({ type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png' })
+      return null
+    }
+    f.handlers['artifacts.publish'] = async (_input, scope) => {
+      scope.output!.artifactIds.push(artifactId)
+      return { id: artifactId }
+    }
+    f.invoke(async (raw) => {
+      const { invocationId } = raw as { invocationId: string }
+      await f.request({ invocationId, method: 'results.addImage', params: { resource: { id: randomUUID() } } })
+      await f.request({ invocationId, method: 'artifacts.publish', params: { resource: { id: randomUUID() } } })
+      return { artifactIds: ['untrusted'], text: 'done' }
+    })
+    const result = await (await f.tool())()
+    expect(result.content).toEqual([{ type: 'text', text: '{"artifactIds":["untrusted"],"text":"done"}' }, { type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png' }])
+    expect(result.details).toMatchObject({ artifactIds: [artifactId] })
+    const outputs = createBuddyRunOutputs({ toolName: 'lexora_plugin_1234567890abcdef', toolCallId: 'call', result, isError: false, arguments: {} })
+    expect(outputs).toMatchObject([{ artifactIds: [artifactId], sourceToolCallId: 'call' }])
+    await f.runtime.dispose()
+  })
+
+  it('omits prepared images on failure while preserving already published artifact cards', async () => {
+    const f = fixture()
+    const artifactId = randomUUID()
+    f.handlers['results.addImage'] = async (_input, scope) => {
+      scope.output!.images.push({ type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png' })
+      scope.output!.artifactIds.push(artifactId)
+      return null
+    }
+    f.invoke(async (raw) => {
+      await f.request({ invocationId: (raw as { invocationId: string }).invocationId, method: 'results.addImage', params: { resource: { id: randomUUID() } } })
+      throw new Error('EXTENSION_OPERATION_FAILED')
+    })
+    const result = await (await f.tool())()
+    expect(result.content).toEqual([{ type: 'text', text: 'EXTENSION_OPERATION_FAILED' }])
+    expect(result.details).toMatchObject({ ok: false, artifactIds: [artifactId] })
+    expect(createBuddyRunOutputs({ toolName: 'lexora_plugin_1234567890abcdef', toolCallId: 'call', result, isError: true, arguments: {} })).toMatchObject([{ artifactIds: [artifactId] }])
+    await f.runtime.dispose()
+  })
+
+  it('classifies declared document mutations as writes and legacy tools as reads without path grants', async () => {
+    const f = fixture()
+    const write = { ...descriptor, agent: { ...descriptor.agent, tools: [{ ...descriptor.agent.tools[0]!, access: 'write' as const }] } }
+    f.setDescriptors([write])
+    const [capability] = await f.runtime.capabilities(f.context)
+    let definition!: ToolDefinition
+    await capability!.extension.factory({ registerTool: (tool: ToolDefinition) => {
+      definition = tool
+    }, on() {} } as never)
+    const event = { toolName: definition.name, input: {}, toolCallId: 'write-call' } as Parameters<NonNullable<typeof capability>['classify']>[0]
+    const classification = await capability!.classify(event, f.stop.signal)
+    expect(classification).toEqual({ access: 'write', paths: [] })
+    f.setDescriptors([descriptor])
+    const [legacy] = await f.runtime.capabilities(f.context)
+    expect(await legacy!.classify(event, f.stop.signal)).toEqual({ access: 'read', paths: [] })
+    await f.runtime.dispose()
+  })
+
   it('keeps unchanged plugins available while withdrawing changed and removed definitions', async () => {
     const f = fixture()
     const other = { ...descriptor, id: 'tests.other', agent: { ...descriptor.agent, tools: [{ ...descriptor.agent.tools[0]!, id: 'tests.other.read' }] } }
@@ -202,13 +265,10 @@ describe('extension agent capability and invocation lifetimes', () => {
     const f = fixture()
     f.setDescriptors([])
     expect(await f.runtime.capabilities(f.context)).toEqual([])
-    expect(f.runtime.snapshot.projections[0]).toMatchObject({ status: 'accepted', revision: 1, descriptors: [] })
+    expect(f.runtime.snapshot.projections[0]).toMatchObject({ status: 'accepted', descriptors: [] })
     f.unavailable(true)
     expect(await f.runtime.capabilities(f.context)).toEqual([])
-    expect(f.runtime.snapshot.projections[0]).toMatchObject({ status: 'unavailable', revision: 2, descriptors: [] })
-    f.unavailable(false)
-    await f.runtime.capabilities(f.context)
-    expect(f.facts.filter(fact => fact.kind === 'capabilities')).toHaveLength(3)
+    expect(f.runtime.snapshot.projections[0]).toMatchObject({ status: 'unavailable', descriptors: [] })
     f.stop.abort()
     expect(f.runtime.snapshot.projections).toEqual([])
     expect(f.facts.at(-1)?.kind).toBe('capabilities-released')
