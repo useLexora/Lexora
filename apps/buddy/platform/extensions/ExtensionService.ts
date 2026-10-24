@@ -1,4 +1,5 @@
 import type { ExtensionAgentDescriptor, ExtensionAgentInvocation } from '../../shared/extensions/extensionAgent'
+import type { ExtensionAgentResourceRequest, ExtensionAgentResourceResponse } from '../../shared/extensions/extensionAgentResources'
 import type { ExtensionFileOpeningInput, ExtensionFileOpeningSource, ExtensionMenuInvocation, ExtensionPreparedFileOpening, ExtensionResource, ExtensionStatus, ExtensionViewInput, ExtensionViewSession, ExtensionWorkbenchEvent } from '../../shared/extensions/extensionApi'
 import type { ExtensionInspection } from '../../shared/extensions/extensionAuthoring'
 import type { ExtensionClipboardData } from '../../shared/extensions/extensionClipboard'
@@ -32,6 +33,7 @@ import { Emitter } from '../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../shared/events/eventSnapshot'
 import { extensionAgentInvocationLimits, extensionAgentRequestSchema } from '../../shared/extensions/extensionAgent'
 import { extensionAgentCapabilities } from '../../shared/extensions/extensionAgentCapabilities'
+import { EXTENSION_ARTIFACT_BYTES_LIMIT, extensionAgentResourceRequestSchema } from '../../shared/extensions/extensionAgentResources'
 import { extensionError, extensionFileOpeningInputSchema, extensionJsonSchema, extensionResourceSchema, parseExtensionRequestParams } from '../../shared/extensions/extensionApi'
 import { EXTENSION_CATALOG_URL } from '../../shared/extensions/extensionCatalog'
 import { extensionClipboardSchema, extensionClipboardWriteSchema } from '../../shared/extensions/extensionClipboard'
@@ -142,7 +144,7 @@ export class ExtensionService {
   readonly #uploads = new Map<string, { running: RunningExtension, owner: string, upload: ExtensionResourceUpload }>()
   readonly #notificationTimes = new Map<string, number>()
   readonly #interactions = new Map<string, { running: RunningExtension, title: string, abort: AbortController }>()
-  readonly #agentInvocations = new Map<string, { running: RunningExtension, signal: AbortSignal, abort: AbortController }>()
+  readonly #agentInvocations = new Map<string, { running: RunningExtension, signal: AbortSignal, abort: AbortController, access?: 'read' | 'write' }>()
   readonly #stopping = new Set<Promise<void>>()
   readonly #retired = new Set<RunningExtension>()
   readonly #viewRequests = new Set<Promise<JsonValue>>()
@@ -631,7 +633,7 @@ export class ExtensionService {
     abort.throwIfAborted()
     if (this.#agentInvocations.has(input.invocationId) || [...this.#agentInvocations.values()].filter(item => item.running === running).length >= extensionAgentInvocationLimits.concurrentPerExtension)
       throw new Error('EXTENSION_REQUEST_LIMIT')
-    this.#agentInvocations.set(input.invocationId, { running, signal: abort, abort: controller })
+    this.#agentInvocations.set(input.invocationId, { running, signal: abort, abort: controller, ...'tool' in input ? { access: current.agent.tools.find(tool => tool.id === input.tool)!.access ?? 'read' } : {} })
     const cancel = () => {
       void running.host.call('agent.cancel', { invocationId: input.invocationId }).catch(() => {})
     }
@@ -651,6 +653,27 @@ export class ExtensionService {
       abort.removeEventListener('abort', cancel)
       this.#agentInvocations.delete(input.invocationId)
     }
+  }
+
+  async readAgentResource(request: ExtensionAgentResourceRequest, signal: AbortSignal): Promise<ExtensionAgentResourceResponse> {
+    const input = extensionAgentResourceRequestSchema.parse(request)
+    const invocation = this.#agentInvocations.get(input.invocationId)
+    if (!invocation?.access || invocation.running.package.manifest.id !== input.extensionId)
+      throw new Error('EXTENSION_AGENT_UNAVAILABLE')
+    const abort = AbortSignal.any([signal, invocation.signal])
+    const assertCurrent = () => {
+      abort.throwIfAborted()
+      this.#assertCurrent(invocation.running)
+      if (this.#agentInvocations.get(input.invocationId) !== invocation)
+        throw new Error('EXTENSION_AGENT_UNAVAILABLE')
+    }
+    assertCurrent()
+    const resource = (await this.store.resources.list(input.extensionId, false)).find(resource => resource.id === input.resourceId)
+    if (!resource || resource.size > EXTENSION_ARTIFACT_BYTES_LIMIT)
+      throw new Error('EXTENSION_RESOURCE_UNAVAILABLE')
+    const bytes = await this.store.resources.readBytes(input.extensionId, resource.id, input.offset, input.length, abort, false)
+    assertCurrent()
+    return { resource, ...bytes }
   }
 
   async review(path: string, development = false) {
@@ -1645,6 +1668,8 @@ export class ExtensionService {
         if (!invocation || invocation.running !== running || !permissions.agent || !this.#ports.agentRequest)
           throw new Error('EXTENSION_AGENT_UNAVAILABLE')
         invocation.signal.throwIfAborted()
+        if (['task.scope', 'artifacts.publish', 'results.addImage'].includes(input.method) && (!invocation.access || (input.method === 'artifacts.publish' && invocation.access !== 'write')))
+          throw new Error('EXTENSION_PERMISSION_DENIED')
         const capability = extensionAgentCapabilities[input.method]
         if (!capability.permitted(permissions))
           throw new Error('EXTENSION_PERMISSION_DENIED')

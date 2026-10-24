@@ -122,7 +122,17 @@ export interface AgentReference {
   locator: ReferenceLocator | null
   scope: { taskId: string, branchId: string }
 }
+export interface AgentPublishedArtifact { id: string, name: string, mimeType: string, size: number }
 export interface AgentToolContext {
+  readonly scope: Readonly<{ taskId: string, branchId: string, runId: string }>
+  readonly artifacts: {
+    /** Publish a private file to this task. Requires a write tool. Creates an independent workspace copy and a task output card. */
+    publish: (input: { resource: Pick<LocalFile, 'id'>, name?: string }) => Promise<AgentPublishedArtifact>
+  }
+  readonly results: {
+    /** Add a private PNG/JPEG/WebP to this tool's native model image result. Await before returning the JSON result. */
+    addImage: (input: { resource: Pick<LocalFile, 'id'> }) => Promise<void>
+  }
   readonly references: {
     list: () => Promise<{ items: AgentReferenceSummary[], truncated: boolean }>
     resolve: (referenceId: string, options?: { sourceMessageId?: string, offset?: number, limit?: number }) => Promise<AgentReference>
@@ -144,7 +154,7 @@ export interface TaskActionEvents {
   'task:input:committed': { readonly conversationId: string, readonly branchId: string, readonly runId: string, readonly messageId: string, readonly commitId: string }
   'task:turn:completed': { readonly conversationId: string, readonly branchId: string, readonly runId: string, readonly triggeringMessageId: string, readonly completedAt: string }
 }
-export interface AgentActionContext extends Omit<AgentToolContext, 'references'> {
+export interface AgentActionContext extends Omit<AgentToolContext, 'references' | 'scope' | 'artifacts' | 'results'> {
   readonly cause: EventMessage<TaskActionEvents> | Readonly<{ type: 'user' }>
 }
 export interface AgentActionResult { status: 'completed' | 'skipped', message?: string }
@@ -204,7 +214,7 @@ export interface ExtensionContext {
   readonly conditions: ConditionApi
   readonly shells: { detect: () => Promise<ShellCandidate[]> }
   readonly agent: {
-    registerTool: (id: string, execute: (input: Record<string, string | number | boolean>, context: AgentToolContext) => Json | void | Promise<Json | void>) => Disposable
+    registerTool: (id: string, execute: (input: Record<string, Json>, context: AgentToolContext) => Json | void | Promise<Json | void>) => Disposable
     registerAction: (id: string, execute: (context: AgentActionContext) => AgentActionResult | Promise<AgentActionResult>) => Disposable
   }
   readonly subscriptions: { add: <T extends Disposable>(disposable: T) => T }

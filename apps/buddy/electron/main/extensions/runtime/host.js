@@ -211,7 +211,7 @@ bridge.subscribe(async ({ id, method, params }) => {
           signal: controller.signal,
           task: Object.freeze({ get: () => call('task.get'), messages: () => call('task.messages'), rename: value => call('task.rename', value) }),
           models: Object.freeze({ generateText: value => call('models.generateText', value) }),
-          ...!params.action ? { references: Object.freeze({ list: () => call('references.list'), resolve: (referenceId, options = {}) => call('references.resolve', { ...options, referenceId }) }) } : {},
+          ...!params.action ? { scope: Object.freeze(await call('task.scope')), artifacts: Object.freeze({ publish: input => call('artifacts.publish', { ...input, resource: { id: input.resource.id } }) }), results: Object.freeze({ addImage: input => call('results.addImage', { resource: { id: input.resource.id } }) }), references: Object.freeze({ list: () => call('references.list'), resolve: (referenceId, options = {}) => call('references.resolve', { ...options, referenceId }) }) } : {},
         })
         result = (params.action ? await agentActions.get(params.action)(Object.freeze({ ...invocation, cause: copyEventSnapshot(params.cause) })) : await agentTools.get(params.tool)(params.input, invocation)) ?? null
       }

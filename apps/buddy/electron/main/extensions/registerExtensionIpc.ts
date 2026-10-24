@@ -47,7 +47,7 @@ export function registerExtensionIpc(options: {
   record?: ApplicationDiagnosticReporter
   conditionRuntime?: (input: { models: boolean, task: boolean, taskId: string | null, runId: string | null }, signal: AbortSignal) => Promise<ExtensionConditionRuntime>
   agentRequest?: (input: { invocationId: string, method: string, params: JsonValue }, signal: AbortSignal) => Promise<JsonValue>
-}): { shells: { list: ExtensionService['shellContributions'] }, skills: { list: ExtensionService['skillContributions'] }, withStoppedStorage: ExtensionService['withStoppedStorage'], themesReady: Promise<void>, conditions: ExtensionService['conditions'], dispose: () => Promise<void>, reviewPackage: (path: string) => Promise<void>, inspect: (id: string) => Promise<ExtensionInspection>, agent: { list: () => Promise<ExtensionAgentDescriptor[]>, invoke: (input: ExtensionAgentInvocation, signal: AbortSignal) => Promise<JsonValue> } } {
+}): { shells: { list: ExtensionService['shellContributions'] }, skills: { list: ExtensionService['skillContributions'] }, withStoppedStorage: ExtensionService['withStoppedStorage'], themesReady: Promise<void>, conditions: ExtensionService['conditions'], dispose: () => Promise<void>, reviewPackage: (path: string) => Promise<void>, inspect: (id: string) => Promise<ExtensionInspection>, agent: { readResource: ExtensionService['readAgentResource'], list: () => Promise<ExtensionAgentDescriptor[]>, invoke: (input: ExtensionAgentInvocation, signal: AbortSignal) => Promise<JsonValue> } } {
   const store = new ExtensionPackageStore(join(options.home, 'extensions'), options.version)
   async function reviewResult(operation: () => Promise<ExtensionReview>): Promise<ExtensionReviewResult> {
     try {
@@ -361,6 +361,7 @@ export function registerExtensionIpc(options: {
     conditions: service.conditions,
     dispose,
     agent: {
+      readResource: (input, signal) => service.readAgentResource(input, signal),
       list: async () => {
         await prepared
         return service.agentContributions()

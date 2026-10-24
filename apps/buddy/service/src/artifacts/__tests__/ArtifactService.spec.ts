@@ -2,7 +2,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { DirectoryGrant } from '../../directories/resolveGrantedPath'
 import type { ArtifactEvent } from '../ArtifactService'
 import { Buffer } from 'node:buffer'
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -28,6 +28,36 @@ afterEach(async () => {
 })
 
 describe('artifactService', () => {
+  it('publishes an independent generated file and refuses revoked publication before promotion', async () => {
+    const f = await createFixture()
+    const path = join(f.workspace, 'outputs', 'document.docx')
+    const bytes = Uint8Array.of(80, 75, 3, 4)
+    const record = await f.service.registerGeneratedFile({ conversationId: 'conversation-1', cwd: f.workspace, grants: f.grants, outputPath: path, bytes, assertCurrent: () => {} })
+    bytes[0] = 0
+    expect(await readFile(record.currentPath)).toEqual(Buffer.from([80, 75, 3, 4]))
+    expect(f.repository.findById(record.id)).toMatchObject({ name: 'document.docx', conversationId: 'conversation-1', sizeBytes: 4 })
+    let checks = 0
+    const revoked = join(f.workspace, 'outputs', 'revoked.docx')
+    await expect(f.service.registerGeneratedFile({ conversationId: 'conversation-1', cwd: f.workspace, grants: f.grants, outputPath: revoked, bytes, assertCurrent: () => {
+      if (++checks === 3)
+        throw new Error('revoked')
+    } })).rejects.toMatchObject({ receipt: { outcome: 'failed', written: 0, artifactIds: [] } })
+    await expect(readFile(revoked)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(f.repository.listForConversation('conversation-1')).toHaveLength(1)
+    await expect(f.service.registerGeneratedFile({ conversationId: 'conversation-1', cwd: f.workspace, grants: f.grants, outputPath: path, bytes, assertCurrent: () => {} })).rejects.toThrow()
+    expect(await readFile(path)).toEqual(Buffer.from([80, 75, 3, 4]))
+  })
+
+  it.each([`${'a'.repeat(216)}.txt`, `${'文'.repeat(75)}.txt`])('publishes a long filename without lengthening its temporary basename: %s', async (name) => {
+    const fixture = await createFixture()
+    const outputPath = join(fixture.workspace, name)
+    const bytes = Buffer.from('Generated content')
+    const artifact = await fixture.service.registerGeneratedFile({ conversationId: 'conversation-1', cwd: fixture.workspace, grants: fixture.grants, outputPath, bytes, assertCurrent: () => {} })
+    expect(await readFile(outputPath)).toEqual(bytes)
+    expect(fixture.repository.findById(artifact.id)).toMatchObject({ currentPath: outputPath, name, sizeBytes: bytes.length })
+    expect(await readdir(fixture.workspace)).toEqual([name])
+  })
+
   it('retains historical HTML artifact access after moving into a Space without granting the old workspace to new links', async () => {
     const fixture = await createFixture()
     const paths = new BuddyDataPaths(fixture.root)
