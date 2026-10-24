@@ -2,6 +2,7 @@ import { waitsForExtensionIo } from '../../../../shared/extensions/extensionRequ
 import { createExtensionNetworkClient, createExtensionResourceClient, writeExtensionResource } from '../../../../shared/extensions/extensionResourceClient'
 import { createExtensionWorkers } from '../../../../shared/extensions/extensionWorkers'
 import { createThemeClient } from '../../../../shared/theme/themeClient'
+import { ExtensionCloseGuard } from './ExtensionCloseGuard'
 import { ExtensionReferenceReveal } from './ExtensionReferenceReveal'
 import { ExtensionViewState } from './ExtensionViewState'
 
@@ -9,6 +10,7 @@ const token = location.hostname
 const controller = new AbortController()
 const workers = createExtensionWorkers(new URL('/__package/', location.href), controller.signal, Worker)
 const pending = new Map()
+const closeGuard = new ExtensionCloseGuard((id, allowed) => parent.postMessage({ channel: 'lexora-extension', token, closeResult: { id, allowed } }, '*'))
 const references = new ExtensionReferenceReveal((id, located) => parent.postMessage({ channel: 'lexora-extension', token, referenceResult: { id, located } }, '*'))
 const state = new ExtensionViewState(() => request('events.snapshot'))
 const events = state.events
@@ -43,6 +45,14 @@ addEventListener('message', (event) => {
   const data = event.data
   if (typeof data.ping === 'string') {
     parent.postMessage({ channel: 'lexora-extension', token, pong: data.ping }, '*')
+    return
+  }
+  if (data.closeRequest && typeof data.closeRequest.id === 'string') {
+    void closeGuard.request(data.closeRequest.id)
+    return
+  }
+  if (typeof data.closeCancel === 'string') {
+    closeGuard.cancel(data.closeCancel)
     return
   }
   if (data.referenceRequest) {
@@ -83,6 +93,7 @@ addEventListener('pagehide', () => {
   pending.clear()
   state.dispose()
   references.dispose()
+  closeGuard.dispose()
 })
 async function initialize() {
   try {
@@ -107,7 +118,9 @@ async function initialize() {
     const api = Object.freeze({
       workers,
       clipboard: Object.freeze({ read: () => request('clipboard.read'), write: data => request('clipboard.write', data) }),
+      setDocumentInfo: info => request('view.setDocumentInfo', info),
       apiVersion: initial.apiVersion,
+      onBeforeClose: handler => closeGuard.register(handler),
       events,
       themes: createThemeClient(input => request('themes.request', input), listener => events.on('view:environment:changed', listener)),
       instanceId: initial.instanceId,

@@ -2,6 +2,7 @@ import type { TaskResourcePanel } from '@/modules/tasks/contracts'
 import type { WorkbenchController } from '@/workbench/services/WorkbenchController'
 import { contextPanelSourceSchema } from '@buddy-shared/context-panel/contextPanel'
 import { executionTargetSchema } from '@buddy-shared/executions/executionPresentationApi'
+import { extensionDocumentInfoSchema } from '@buddy-shared/extensions/extensionDocumentInfo'
 
 export class ContextTabProjection {
   readonly #subscriptions: (() => void)[]
@@ -27,13 +28,15 @@ export class ContextTabProjection {
     for (const view of Object.values(this.controller.layout.views)) {
       if (view.location !== 'context' || typeof view.state.contextTabId === 'string' || typeof view.state.inlineOwner === 'string')
         continue
+      const info = extensionDocumentInfoSchema.safeParse(view.state.documentInfo)
+      const dirty = info.success && info.data.dirty
       if (!resources.hasTab(view.id)) {
         const target = view.resource.scheme === 'execution' ? executionTargetSchema.safeParse(view.resource.data) : null
         const source = contextPanelSourceSchema.safeParse(view.state.contextSource)
-        resources.openView(view.id, view.title, target?.success ? { conversationId: target.data.conversationId, runId: target.data.runId } : source.success ? source.data : undefined)
+        resources.openView(view.id, view.title, target?.success ? { conversationId: target.data.conversationId, runId: target.data.runId } : source.success ? source.data : undefined, dirty)
       }
-      else if (resources.allTabs.value.some(tab => tab.id === view.id && tab.kind === 'view' && tab.label !== view.title)) {
-        resources.updateView(view.id, view.title)
+      else if (resources.allTabs.value.some(tab => tab.id === view.id && tab.kind === 'view' && (tab.label !== view.title || !!tab.dirty !== dirty))) {
+        resources.updateView(view.id, view.title, dirty)
       }
     }
     this.#select()

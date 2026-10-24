@@ -143,7 +143,7 @@ export const extensionManifestSchema = extensionMetadataSchema.extend({
     fileOpeners: z.array(legacyFileOpenerSchema).max(32).default([]),
     launchers: z.array(z.object({ id: contributionId, title: z.string().min(1).max(100), view: contributionId }).strict()).max(16).default([]),
     placements: z.array(extensionPlacementSchema).max(16).default([]),
-    navigation: z.object({ title: z.string().min(1).max(40), view: contributionId, when: workbenchConditionSchema.optional() }).strict().optional(),
+    navigation: z.object({ title: z.string().min(1).max(40), view: contributionId, showHeader: z.boolean().default(true), when: workbenchConditionSchema.optional() }).strict().optional(),
   }).transform(({ fileOpeners, ...contributes }) => ({
     ...contributes,
     fileHandlers: [...contributes.fileHandlers, ...fileOpeners.map(({ id, title, extensions, view, locations, requestDefault }) => ({
@@ -292,7 +292,12 @@ export type ExtensionManifest = z.infer<typeof extensionManifestSchema>
 export type ExtensionPermissions = z.infer<typeof extensionPermissionsSchema>
 
 export function extensionPackageManifest(manifest: ExtensionManifest) {
-  return { ...manifest, permissions: Object.fromEntries(Object.entries(manifest.permissions).filter(([key, value]) => JSON.stringify(value) !== JSON.stringify(extensionPermissionDefaults[key]))) }
+  const { navigation, ...contributes } = manifest.contributes
+  const packagedNavigation = navigation && (() => {
+    const { showHeader, ...value } = navigation
+    return showHeader === false ? { ...value, showHeader } : value
+  })()
+  return { ...manifest, contributes: { ...contributes, ...(packagedNavigation ? { navigation: packagedNavigation } : {}) }, permissions: Object.fromEntries(Object.entries(manifest.permissions).filter(([key, value]) => JSON.stringify(value) !== JSON.stringify(extensionPermissionDefaults[key]))) }
 }
 
 export function extensionCompatible(manifest: ExtensionManifest, version: string): boolean {

@@ -1,5 +1,7 @@
 import type { ExtensionApi, ExtensionStatus, ExtensionViewInput, ExtensionViewSession } from '@buddy-shared/extensions/extensionApi'
+import type { ExtensionDocumentInfo } from '@buddy-shared/extensions/extensionDocumentInfo'
 import type { ExtensionReferenceReveal } from '@buddy-shared/extensions/extensionReferences'
+import type { ClosePreparation } from '@buddy-shared/lifecycle/closePreparation'
 import type { WorkbenchContextValues } from '@buddy-shared/workbench/workbenchContext'
 import type { WorkbenchHitRegion } from '@buddy-shared/workbench/workbenchInteraction'
 import type { JsonValue } from '@buddy-shared/workbench/workbenchState'
@@ -18,6 +20,7 @@ export interface ExtensionControlBinding {
   propose: (proposal: ControlProposal) => boolean
 }
 export interface ExtensionSurface {
+  documentInfo?: ExtensionDocumentInfo
   input: ExtensionViewInput
   element: HTMLElement
   visible: boolean
@@ -55,6 +58,7 @@ export function useExtensionViews(api: ExtensionApi, installed: Readonly<Ref<Ext
   const controlFailures = new Map<string, ControlFailure>()
   const messageListeners = new Set<(extensionId: string, generation: string, message: JsonValue) => void>()
   let referenceReveal: ReferenceReveal | undefined
+  let closeRequest: ((session: ExtensionViewSession, signal?: AbortSignal) => Promise<boolean>) | undefined
   let layout = () => {}
   const close = (session: ExtensionViewSession) => void api.closeView(session.id, session.generation, session.token).catch(() => {})
   function reset(surface: ExtensionSurface) {
@@ -66,6 +70,7 @@ export function useExtensionViews(api: ExtensionApi, installed: Readonly<Ref<Ext
     surface.ready = false
     surface.active = true
     surface.error = ''
+    delete surface.documentInfo
     surface.regions = []
   }
   async function open(surface: ExtensionSurface) {
@@ -207,6 +212,7 @@ export function useExtensionViews(api: ExtensionApi, installed: Readonly<Ref<Ext
     for (const id of surfaces.keys()) hide(id)
     messageListeners.clear()
     referenceReveal = undefined
+    closeRequest = undefined
   })
   function setRegions(id: string, generation: string, token: string, regions: WorkbenchHitRegion[]): boolean {
     const surface = surfaces.get(id)
@@ -216,7 +222,56 @@ export function useExtensionViews(api: ExtensionApi, installed: Readonly<Ref<Ext
     layout()
     return true
   }
+  async function prepareClosePlan(id: string, signal?: AbortSignal): Promise<ClosePreparation | false> {
+    if (signal?.aborted)
+      return false
+    const surface = surfaces.get(id)
+    const session = surface?.session
+    if (surface?.ready && !surface.error && session && !await closeRequest?.(session, signal))
+      return false
+    if (signal?.aborted || surfaces.get(id) !== surface || surface?.session !== session)
+      return false
+    const input = surface?.input
+    const info = surface?.documentInfo
+    const ready = surface?.ready
+    const error = surface?.error
+    return { validate: () => !signal?.aborted && surfaces.get(id) === surface && surface?.session === session
+      && surface?.input === input && surface?.documentInfo === info && surface?.ready === ready && surface?.error === error }
+  }
+  async function prepareAllClose(signal?: AbortSignal): Promise<ClosePreparation | false> {
+    const targets = [...surfaces.keys()]
+    const abort = new AbortController()
+    const lifetime = signal ? AbortSignal.any([signal, abort.signal]) : abort.signal
+    try {
+      const plans = await Promise.all(targets.map(async (id) => {
+        const plan = await prepareClosePlan(id, lifetime)
+        if (!plan)
+          abort.abort()
+        return plan
+      }))
+      if (lifetime.aborted || plans.some(plan => !plan))
+        return false
+      return { validate: () => !lifetime.aborted && surfaces.size === targets.length && plans.every(plan => plan && plan.validate()) }
+    }
+    catch {
+      abort.abort()
+      return false
+    }
+  }
   return {
+    prepareClosePlan,
+    prepareAllClose,
+    onBeforeClose(listener: (session: ExtensionViewSession, signal?: AbortSignal) => Promise<boolean>) {
+      closeRequest = listener
+      return () => {
+        if (closeRequest === listener)
+          closeRequest = undefined
+      }
+    },
+    async prepareClose(id: string, signal?: AbortSignal): Promise<boolean> {
+      const plan = await prepareClosePlan(id, signal)
+      return plan !== false && plan.validate()
+    },
     onReferenceReveal(listener: ReferenceReveal) {
       referenceReveal = listener
       return () => {

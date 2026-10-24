@@ -55,6 +55,7 @@ export const DESKTOP_IPC_CHANNELS = {
   appHidden: 'lexora:app:hidden',
   appPrepareQuit: 'lexora:app:prepare-quit',
   appPrepareQuitAck: 'lexora:app:prepare-quit-ack',
+  appCancelQuitPreparation: 'lexora:app:cancel-quit-preparation',
   browserPickElement: 'lexora:browser:pick-element',
   browserCancelElementPick: 'lexora:browser:cancel-element-pick',
   browserLocateElement: 'lexora:browser:locate-element',
@@ -258,7 +259,8 @@ export interface LexoraDesktopApi {
     getInfo: () => Promise<DesktopAppInfo>
     getSandboxStatus: () => Promise<SandboxEnvironmentStatus>
     setupSandbox: () => Promise<SandboxSetupResult>
-    onBeforeQuit: (listener: () => Promise<boolean>) => () => void
+    onBeforeQuit: (listener: (requestId: string) => Promise<boolean>) => () => void
+    onQuitPreparationCancelled: (listener: (requestId: string) => void) => () => void
     onHidden: (listener: () => void) => () => void
     onOpenTarget: (listener: (target: DesktopOpenTarget) => void) => () => void
     openFeedbackIssue: (feedback: string) => Promise<void>

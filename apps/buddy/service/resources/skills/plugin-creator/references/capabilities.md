@@ -5,6 +5,7 @@
 | 用户需要 | 清单与入口 | 状态和边界 |
 | --- | --- | --- |
 | 编辑器复制/粘贴文本和表格格式 | `permissions.clipboardRead` / `clipboardWrite`；视图 `clipboard.read/write` | 安装授权后仅前台可见且聚焦视图可用；文本与 HTML 合计 4 MiB，写入原子完成；不开放后台或浏览器剪贴板权限 |
+| 页签显示当前文档名和修改状态 | 交互视图 `setDocumentInfo({title,dirty})` | 只更新当前实例；页签随布局恢复，导航页仅当前会话；文档保存与关闭保护仍由插件负责 |
 | 随插件提供工作方法、参考资料或脚本，按需加载 | API 4；`contributes.skills`，见 [插件 Skills](skills.md) | 标准 Skill 文件；可搜索或显式 `$插件调用名:技能名` 选择，启停与更新由插件管理，不自动授予执行能力 |
 | 检测并选择已有本机命令解释器 | API 4；contributes.shells、permissions.shells、原生 settings，见 [命令解释器](shells.md) | 用户启用后供模型选择；宿主执行，插件只能 detect()，不能运行命令或写解释器路径 |
 | 由主模型主动调用插件、请求模型或修改任务标题 | API 3；contributes.agent 和 agent/models/tasks 权限，见 [Agent 与设置](agent-settings.md) | 工具入口绑定原任务与本轮模型，不导出凭据，不覆盖手动标题 |
@@ -15,7 +16,7 @@
 | 需要真实分屏布局或临时覆盖交互 | API 3；见 [交互会话](interactions.md) | 订阅布局；稀疏点击区域或独占交互；宿主提供独立退出入口 |
 | WASM 引擎、二进制解析或不阻塞界面的计算 | 后台与视图的 `workers.create`，见 [WebAssembly 与 Worker](workers.md) | 包内代码与原生浏览器 API；支持操作级取消，关闭视图不代替后台任务生命周期，不开放 Node 或真实文件系统 |
 | 执行一次动作，无需常驻页面 | 宿主 `activate` 注册 `contributes.commands` 中的命令 | 可见命令进入命令面板和已安装插件卡片的“运行命令”菜单；命令收到的 `resource` 可能为空。只供自己视图调用的命令设为 `hidden: true` |
-| 目录入口、较完整的页面或设置表单 | `contributes.navigation` 引用 `resource: "none"` 的视图 | API 2 可省略视图 `location`；页面由 `render` 绘制。需要持久配置时通过自身隐藏命令调用宿主私有存储 |
+| 目录入口、较完整的页面或设置表单 | `contributes.navigation` 引用 `resource: "none"` 的视图 | API 2 可省略视图 `location`；页面由 `render` 绘制。`navigation.showHeader` 默认 `true`，设为 `false` 可隐藏该独立页的宿主标题栏，不影响资源页签或应用框架。需要持久配置时通过自身隐藏命令调用宿主私有存储 |
 | 将自定义内容挂到页面区域 | `kind: "view"`、`target` 与 `presentation`；宿主命令调用 `placements.show/hide` | 通过能力查询选择全局、页面或分屏目标。插件渲染隔离内容，通过通用外框布局接口声明定位和尺寸。挂载口没有面板 UI 或交互 |
 | 在业务区域执行操作 | `contributes.menus` 引用已声明命令；用能力查询选目标 | 输入、消息、文件或任务操作共享一套协议；仅点击时按权限提供所选内容，分屏标识固定到发起位置 |
 | 替换或追加宿主内容 | `kind: "slot"`；按需查 [内容插槽目录](slots.md) | 按目录的单选或多选策略由用户选择提供者；不可用时回退。位置和外框归宿主，插件只绘制自己的内容 |

@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { strToU8, zipSync } from 'fflate'
 import { afterEach, describe, expect, it } from 'vitest'
 import { extensionJsonSchema } from '../../../shared/extensions/extensionApi'
-import { addedExtensionPermissions, extensionManifestSchema } from '../../../shared/extensions/extensionManifest'
+import { addedExtensionPermissions, extensionManifestSchema, extensionPackageManifest } from '../../../shared/extensions/extensionManifest'
 import { compileExtensionSource } from '../compileExtensionSource'
 import { readExtensionDirectory, unpackExtension } from '../extensionFiles'
 import { extensionActivationOrder, ExtensionPackageStore } from '../ExtensionPackageStore'
@@ -223,6 +223,16 @@ it.each([1, 2] as const)('accepts window overlays in API %s without adding local
   } })
   expect(extensionManifestSchema.parse(input).contributes.views[0]?.location).toBe('window-overlay')
   expect(extensionManifestSchema.safeParse({ ...input, permissions: {} }).success).toBe(false)
+})
+
+it.each([undefined, false])('preserves navigation header visibility %s without adding defaults to packaged manifests', (showHeader) => {
+  const navigation = { title: 'Reader', view: 'tests.reader.page', ...(showHeader === undefined ? {} : { showHeader }) }
+  const value = manifest({ apiVersion: 2, contributes: { views: [{ id: navigation.view, title: 'Reader', entry: 'view.js', resource: 'none' }], navigation } })
+  expect(value.contributes.navigation?.showHeader).toBe(showHeader ?? true)
+  const packaged = extensionPackageManifest(value)
+  expect(packaged.contributes.navigation).toEqual({ title: navigation.title, view: navigation.view, ...(showHeader === false ? { showHeader: false } : {}) })
+  expect(extensionManifestSchema.parse(packaged).contributes.navigation).toEqual(value.contributes.navigation)
+  expect(extensionManifestSchema.safeParse({ ...value, contributes: { ...value.contributes, navigation: { ...navigation, showHeader: 'false' } } }).success).toBe(false)
 })
 
 it('keeps API 1 compatible and validates UI placements and permission upgrades in API 2', async () => {

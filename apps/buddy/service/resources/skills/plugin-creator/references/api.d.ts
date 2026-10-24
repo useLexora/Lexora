@@ -43,6 +43,13 @@ export interface FileOpenerContribution {
   requestDefault?: boolean
 }
 export interface LauncherContribution { id: string, title: string, view: string }
+export interface NavigationContribution {
+  title: string
+  view: string
+  /** Show the host title bar on this navigation page. Defaults to true; does not affect resource tabs or the app frame. */
+  showHeader?: boolean
+  when?: WorkbenchCondition
+}
 /** API 4: contributes.skills; path points to a packaged Skill directory's SKILL.md. */
 export interface SkillContribution { id: string, path: string }
 export interface Resource { readonly id: string, readonly name: string }
@@ -261,6 +268,8 @@ export interface ViewContext {
     read: () => Promise<{ text?: string, html?: string }>
     write: (data: { text?: string, html?: string }) => Promise<void>
   }
+  setDocumentInfo: (info: { title: string, dirty: boolean }) => Promise<void>
+  onBeforeClose: (handler: (signal: AbortSignal) => boolean | Promise<boolean>) => Disposable
   readonly workers: WorkerApi
   readonly themes: ThemeApi
   readonly events: EventSubscriber<ViewEvents>

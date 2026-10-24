@@ -118,6 +118,46 @@ describe('workbench commit and completion', () => {
     expect(deleted).toBe(false)
   })
 
+  it.each(['close', 'replace'] as const)('accepts the exact post-save view snapshot on the first %s', async (operation) => {
+    const controller: WorkbenchController = create(async (view) => {
+      controller.updateView(view.id, { title: 'Saved', state: { documentInfo: { title: 'Saved', dirty: false }, value: { revision: 2 } } })
+      return { preparedView: controller.layout.views[view.id] }
+    })
+    const id = (await controller.open(resource, 'Draft', { state: { documentInfo: { title: 'Draft', dirty: true } } }))!
+    if (operation === 'close')
+      expect(await controller.close(id)).toMatchObject({ committed: true, status: 'closed' })
+    else
+      expect(await controller.open({ ...resource, id: 'replacement' }, 'Replacement')).toBeTruthy()
+    expect(controller.layout.views[id]).toBeUndefined()
+  })
+
+  it('rejects new edits after an accepted save while another close participant is preparing', async () => {
+    let first: string
+    const controller: WorkbenchController = create(async (view) => {
+      if (view.id === first) {
+        controller.updateView(view.id, { state: { revision: 2 } })
+        return { preparedView: controller.layout.views[view.id] }
+      }
+      controller.updateView(first, { state: { revision: 3 } })
+      return true
+    })
+    first = (await controller.open(resource, 'One'))!
+    const second = (await controller.open({ ...resource, id: 'two' }, 'Two', { direction: 'right' }))!
+    expect(await controller.closeMany([first, second])).toEqual({ committed: false, status: 'stale' })
+    expect(controller.layout.views[first]?.state).toEqual({ revision: 3 })
+    expect(controller.layout.views[second]).toBeDefined()
+  })
+
+  it('does not accept a replacement resource as a post-save state update', async () => {
+    const controller: WorkbenchController = create(async (view) => {
+      controller.updateView(view.id, { resource: { ...resource, id: 'replacement' } })
+      return { preparedView: controller.layout.views[view.id] }
+    })
+    const id = (await controller.open(resource, 'Draft'))!
+    expect(await controller.close(id)).toEqual({ committed: false, status: 'cancelled' })
+    expect(controller.layout.views[id]?.resource.id).toBe('replacement')
+  })
+
   it('keeps committed close revision stable under observer reentrancy and executes every completion', async () => {
     const warning = vi.spyOn(console, 'error').mockImplementation(() => {})
     const outcomes: unknown[] = []

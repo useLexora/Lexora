@@ -28,6 +28,7 @@ export interface OpenViewOptions {
   focus?: boolean
 }
 export interface ViewClosePlan {
+  preparedView?: WorkbenchView
   views?: readonly string[]
   validate?: () => boolean
   prepareAuxiliary?: (current: Readonly<Record<string, ReadonlyJsonValue>>) => Readonly<Record<string, ReadonlyJsonValue>>
@@ -66,7 +67,7 @@ export class WorkbenchController {
   readonly interactions = new WorkbenchInteractions()
   readonly navigation = new WorkbenchNavigation()
   readonly contextKeys = new ContextKeyService()
-  readonly #beforeClose: (view: WorkbenchView, closing?: ReadonlySet<string>) => Promise<ViewCloseDecision>
+  readonly #beforeClose: (view: WorkbenchView, closing?: ReadonlySet<string>, signal?: AbortSignal) => Promise<ViewCloseDecision>
   readonly #changes = new Emitter<WorkbenchChange>(() => console.error('WORKBENCH_OBSERVER_FAILED'))
   readonly #closeResults = new Emitter<ViewCloseResult>(() => console.error('WORKBENCH_CLOSE_OBSERVER_FAILED'))
   readonly onDidChange = this.#changes.event
@@ -86,7 +87,7 @@ export class WorkbenchController {
   #stopping = false
   #disposal: Promise<void> | undefined
 
-  constructor(registry: ContributionRegistry, beforeClose: (view: WorkbenchView, closing?: ReadonlySet<string>) => Promise<ViewCloseDecision> = async () => true, layout = createLayout()) {
+  constructor(registry: ContributionRegistry, beforeClose: (view: WorkbenchView, closing?: ReadonlySet<string>, signal?: AbortSignal) => Promise<ViewCloseDecision> = async () => true, layout = createLayout()) {
     this.#layout = copyEventSnapshot(layout)
     this.registry = registry
     this.configuration = new ConfigurationService(registry)
@@ -483,7 +484,7 @@ export class WorkbenchController {
         let preparation: Promise<ViewCloseDecision>
         this.#invokingBeforeClose = true
         try {
-          preparation = this.#beforeClose(view, targets)
+          preparation = this.#beforeClose(view, targets, signal)
         }
         finally { this.#invokingBeforeClose = false }
         const decision = await preparation
@@ -493,6 +494,15 @@ export class WorkbenchController {
         }
         if (typeof decision === 'object') {
           prepared.plans.push(decision)
+          if (decision.preparedView) {
+            const accepted = decision.preparedView
+            if (accepted.id !== id || this.#layout.views[id] !== accepted
+              || JSON.stringify({ ...accepted, title: view.title, state: view.state }) !== JSON.stringify(view)) {
+              this.#cancel(prepared)
+              return null
+            }
+            prepared.targets.set(id, accepted)
+          }
           for (const target of decision.views ?? []) targets.add(target)
         }
       }

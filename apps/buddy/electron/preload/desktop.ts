@@ -93,13 +93,14 @@ export function createDesktopApi(): Pick<LexoraDesktopApi, 'app' | 'clipboard' |
       getInfo: (): Promise<DesktopAppInfo> => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.appGetInfo),
       getSandboxStatus: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.appGetSandboxStatus),
       setupSandbox: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.appSetupSandbox),
-      onBeforeQuit: (listener: () => Promise<boolean>) => {
+      onQuitPreparationCancelled: (listener: (requestId: string) => void) => subscribe(DESKTOP_IPC_CHANNELS.appCancelQuitPreparation, (input: { requestId: string }) => listener(input.requestId)),
+      onBeforeQuit: (listener: (requestId: string) => Promise<boolean>) => {
         const handler = (_event: Electron.IpcRendererEvent, input: { requestId?: unknown }) => {
           const requestId = typeof input?.requestId === 'string' ? input.requestId : ''
           if (!requestId)
             return
           void Promise.resolve()
-            .then(() => listener())
+            .then(() => listener(requestId))
             .catch(() => false)
             .then((saved) => {
               ipcRenderer.send(DESKTOP_IPC_CHANNELS.appPrepareQuitAck, { requestId, saved })

@@ -1,6 +1,7 @@
 import type { LexoraDesktopApi } from '@buddy-electron/shared/desktopApi'
 import type { BuddyCatalog } from '@buddy-shared/buddies/buddyApi'
 import type { BuddyUserContentV1 } from '@buddy-shared/conversation/buddyUserContent'
+import type { ClosePreparation } from '@buddy-shared/lifecycle/closePreparation'
 import type { ApplicationEvents } from '@buddy-shared/observability/ApplicationEvents'
 import type { SpaceFileTarget } from '@buddy-shared/spaces/spaceFileApi'
 import type { Ref } from 'vue'
@@ -39,7 +40,7 @@ import { useTaskInputLifecycle } from './useTaskInputLifecycle'
 import { WorkbenchDiagnostics } from './WorkbenchDiagnostics'
 import { WorkbenchResourceLifetime } from './WorkbenchResourceLifetime'
 
-export function useDesktopWorkbench(options: { fileOpening?: ReturnType<typeof useProvideFileOpening>, buddyCatalog?: Readonly<Ref<BuddyCatalog | null>>, api: LexoraDesktopApi, events: ApplicationEvents, stores: DesktopStores, taskIndex: TaskIndexController, router: Router, resources: () => TaskResourcePanel, onError: (error: unknown) => void }) {
+export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: string, signal?: AbortSignal) => Promise<ClosePreparation | false>, fileOpening?: ReturnType<typeof useProvideFileOpening>, buddyCatalog?: Readonly<Ref<BuddyCatalog | null>>, api: LexoraDesktopApi, events: ApplicationEvents, stores: DesktopStores, taskIndex: TaskIndexController, router: Router, resources: () => TaskResourcePanel, onError: (error: unknown) => void }) {
   const { api, stores, router } = options
   const dialog = useDialog()
   const language = stores.applicationSettings.language
@@ -494,7 +495,7 @@ export function useDesktopWorkbench(options: { fileOpening?: ReturnType<typeof u
     }
   }
 
-  async function beforeClose(view: WorkbenchView, closing?: ReadonlySet<string>): Promise<ViewCloseDecision> {
+  async function beforeClose(view: WorkbenchView, closing?: ReadonlySet<string>, signal?: AbortSignal): Promise<ViewCloseDecision> {
     if (view.resource.scheme === 'task' && deletedTasks.has(view.resource.id))
       return true
     if (view.resource.scheme === 'draft' && !confirmedDraftCloses.has(view.id)) {
@@ -506,14 +507,22 @@ export function useDesktopWorkbench(options: { fileOpening?: ReturnType<typeof u
       }
     }
     try {
+      const extension = view.resource.scheme === 'extension' ? await options.beforeExtensionClose?.(view.id, signal) : undefined
+      if (extension === false || signal?.aborted)
+        return false
+      const preparedView = extension ? controller.layout.views[view.id] : undefined
       const decision = ['task', 'draft'].includes(view.resource.scheme) ? await inputs.prepareClose(view) : await beforeFileClose(view, closing)
-      if (!decision)
+      if (!decision || (extension && !preparedView))
         return false
       const children = Object.values(controller.layout.views).filter(child => child.state.inlineOwner === view.id).map(child => child.id)
-      if (!children.length)
+      if (!children.length && !extension)
         return decision
       const plan = typeof decision === 'object' ? decision : {}
-      return { ...plan, views: [...plan.views ?? [], ...children] }
+      return {
+        ...plan,
+        ...(extension ? { preparedView, validate: () => extension.validate() && (plan.validate?.() ?? true) } : {}),
+        views: [...plan.views ?? [], ...children],
+      }
     }
     catch (error) {
       options.onError(error)

@@ -87,11 +87,14 @@ context.references.onReveal(async ({ locator, text }, signal) => {
 
 导航页面、装饰、内容插槽和替换控件不能使用 `context.setState()`；需要持久设置时声明宿主入口和隐藏命令，以 `context.storage.get/set` 保存。多个视图使用同一设置时明确刷新时机，插件局部开关必须能在不重载视图的情况下关闭并重新启用。资源页签的 `setState` 用于保存该页签的 JSON 状态。
 
+交互视图可用 `context.setDocumentInfo({title,dirty})` 更新自己的文档名称与未保存标记。标题去除首尾空白后为 1–256 个字符。资源页签随布局持久化，导航页面只保留当前会话的信息；不会更改文件内容、授予保存权限或代替 `onBeforeClose`。插件应在打开、重命名、编辑、保存和返回管理页时同步自己的真实状态，恢复文档后再次核对标记。
+
 系统剪贴板使用独立的 `permissions.clipboardRead` 与 `permissions.clipboardWrite` 授权，默认均为 `false`。交互视图用 `context.clipboard.read()` 读取 `{text?,html?}`，用 `context.clipboard.write({text?,html?})` 原子替换这些格式；至少传一项，空字符串有效，文本与 HTML 的 UTF-8 总量最多 4 MiB。HTML 内容与属性保留，不传递图片、文件路径或其他原生格式。没有支持的格式时读取返回 `{}`；过大内容或失败操作会拒绝 Promise。
 
 剪贴板调用要求安装授权及当前前台窗口中可见、聚焦的插件 iframe；读取交付前和写入前均复验视图身份与焦点。此授权不是逐次用户手势检查：已聚焦的插件可主动调用，用户无需每次确认。失焦、隐藏、关闭或插件停用后不可调用；后台入口、Worker、装饰、内容插槽和替换控件不提供此能力。纯视图插件无需后台入口。iframe 的浏览器 `navigator.clipboard` 权限仍被禁止，编辑器应注入此 SDK 适配器；浏览器原生 `paste` 事件的 `clipboardData` 与异步剪贴板 API 是不同路径。
 
-此增量 API 应先检查 `context.clipboard`，缺失时提示升级宿主；清单兼容范围使用实际支持此能力的宿主版本。
+这两项增量 API 应先检查 `typeof context.setDocumentInfo === 'function'` 和 `context.clipboard`，缺失时提示升级宿主；清单兼容范围使用实际支持此能力的宿主版本。
+
 
 ## 文件关联与独立入口
 
@@ -206,6 +209,10 @@ context.references.onReveal(async ({ locator, text }, signal) => {
 挂载点 `id` 是升级和恢复的稳定身份，更新时不要随意改名。同一 `id` 调整挂载位置或更换视图定义后，宿主保留实例及旧状态；需要转换状态时，比较 `stateVersion` 与 `expectedStateVersion` 并调用 `setState` 保存转换结果。移除贡献或禁用插件不会清空已保存的视图状态。
 
 控件通过 `context.control.snapshot` 读取 `{revision,value,options,disabled}`，`onChange` 订阅变化。`options` 是宿主允许的值及标签；插件不获取模型或任务身份，也不直接写入业务状态。提交用户选择使用 `control.propose(value, renderedSnapshot.revision)`；宿主拒绝旧版本、不可用值、禁用或隐藏控件的请求，窗口隐藏时也不能提交。请求失败后读取最新快照重新呈现，不重试旧选择。加载失败、失去响应、禁用或缺失时恢复内置控件，保留用户样式选择。关闭再打开弹层不会重试失败控件；用户重新选择样式或重启插件后才恢复加载。
+
+`context.onBeforeClose(handler)` 注册当前视图的一个异步关闭检查，返回可释放的订阅。关闭上下文标签、替换预览、离开独立插件页、切换到另一个插件页或正常退出应用前，宿主等待 `handler(signal)`；只有明确返回 true 才继续，false、异常或 30 秒未完成都会保留原视图。可在回调中等待自动保存队列并显示插件自己的保存失败状态；确认当前最新编辑已落盘后再允许关闭；可在回调中更新 `setState` 与 `setDocumentInfo`，宿主接纳保存后的状态并在提交前复验。正常退出可同时检查多个视图，检查完成后宿主可见的文档状态或会话变化会阻止本次退出；插件仍须同步自己的编辑状态。取消检查会中止 signal，过期结果不能关闭新视图。没有注册处理器时沿用直接关闭。
+
+该检查不拦强制禁用、卸载、崩溃或系统强制终止，持续自动保存仍是恢复基础。不要依赖 iframe 的 beforeunload 或在关闭检查中打开、关闭其他工作台视图。此增量接口应先做 `typeof context.onBeforeClose === 'function'` 能力检测。
 
 组合视图可用导航页管理设置、挂载面板展示持续内容、隐藏命令连接私有存储。设置更新后的刷新时机由插件明确处理，页面之间没有隐式共享 JS 状态。
 

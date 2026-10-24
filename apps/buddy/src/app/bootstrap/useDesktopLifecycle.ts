@@ -1,4 +1,5 @@
 import type { LexoraDesktopApi } from '@buddy-electron/shared/desktopApi'
+import type { ClosePreparation } from '@buddy-shared/lifecycle/closePreparation'
 import type { useDesktopShellState } from '../shell/useDesktopShellState'
 import type { DesktopAppState } from './useDesktopAppState'
 import type { AutomationCapability } from '@/modules/automations'
@@ -16,6 +17,7 @@ interface DesktopLifecycleOptions {
   taskIndex: TaskIndexController
   prepareSurface?: () => Promise<void>
   flushSurface?: () => Promise<boolean>
+  prepareQuit?: (signal: AbortSignal) => Promise<ClosePreparation | false>
   refreshSurface?: () => Promise<void>
 }
 
@@ -144,15 +146,32 @@ export function useDesktopLifecycle(options: DesktopLifecycleOptions) {
     if (indexInitialized && !disposed)
       void Promise.resolve(options.flushSurface?.()).catch(() => undefined)
   })
-  const stopBeforeQuitListener = api.app.onBeforeQuit(async () => {
-    if (!indexInitialized)
-      return true
+  const quitRequests = new Map<string, AbortController>()
+  const stopQuitCancelListener = api.app.onQuitPreparationCancelled((id) => {
+    quitRequests.get(id)?.abort()
+  })
+  const stopBeforeQuitListener = api.app.onBeforeQuit(async (requestId) => {
+    const abort = new AbortController()
+    quitRequests.set(requestId, abort)
+    const { signal } = abort
     try {
+      if (!indexInitialized)
+        return !disposed
       await tail
-      return !disposed && (await options.flushSurface?.() ?? true)
+      if (disposed || signal.aborted)
+        return false
+      const preparation = await options.prepareQuit?.(signal)
+      if (preparation === false || disposed || signal.aborted)
+        return false
+      const flushed = await options.flushSurface?.() ?? true
+      return flushed && !disposed && !signal.aborted && (preparation?.validate() ?? true)
     }
     catch {
       return false
+    }
+    finally {
+      quitRequests.delete(requestId)
+      abort.abort()
     }
   })
 
@@ -160,6 +179,9 @@ export function useDesktopLifecycle(options: DesktopLifecycleOptions) {
     disposed = true
     stopHiddenListener()
     stopBeforeQuitListener()
+    stopQuitCancelListener()
+    for (const abort of quitRequests.values()) abort.abort()
+    quitRequests.clear()
     stopRuntimeWatch()
     resolveReady()
     automations.dispose()

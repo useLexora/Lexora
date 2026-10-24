@@ -6,6 +6,7 @@ import type { ViewLocation } from '@/workbench/common/workbench'
 import type { WorkbenchController } from '@/workbench/services/WorkbenchController'
 import type { WorkbenchPersistence } from '@/workbench/services/WorkbenchPersistence'
 import { extensionCommandNamespace } from '@buddy-shared/extensions/extensionCommands'
+import { extensionDocumentInfoSchema } from '@buddy-shared/extensions/extensionDocumentInfo'
 import { extensionFileOpeningProviders } from '@buddy-shared/extensions/extensionFileOpening'
 import { spaceFileTargetSchema } from '@buddy-shared/spaces/spaceFileApi'
 import { qualifyWorkbenchCommand } from '@buddy-shared/workbench/workbenchCommand'
@@ -98,8 +99,10 @@ export function useExtensionContributions(options: { controller: WorkbenchContro
       if (!descriptor || placement?.kind !== 'view')
         continue
       const mountInstanceId = placement.target === 'workbench.pane' ? view.mountInstanceId ?? controller.layout.activePane : undefined
-      if (view.type !== descriptor.id || view.location !== 'mount' || view.placement !== placement.id || view.title !== descriptor.title || view.mountInstanceId !== mountInstanceId) {
-        controller.rebindAuxiliary(view.id, { type: descriptor.id, placement: placement.id, title: descriptor.title, location: 'mount', mountInstanceId, resource: { ...view.resource, data: { ...view.resource.data, viewType: descriptor.id } } })
+      const info = extensionDocumentInfoSchema.safeParse(view.state.documentInfo)
+      const title = info.success ? info.data.title : descriptor.title
+      if (view.type !== descriptor.id || view.location !== 'mount' || view.placement !== placement.id || view.title !== title || view.mountInstanceId !== mountInstanceId) {
+        controller.rebindAuxiliary(view.id, { type: descriptor.id, placement: placement.id, title, location: 'mount', mountInstanceId, resource: { ...view.resource, data: { ...view.resource.data, viewType: descriptor.id } } })
       }
     }
   }
@@ -184,6 +187,23 @@ export function useExtensionContributions(options: { controller: WorkbenchContro
       }
       else if (event.kind === 'message') {
         views.broadcast(event.extensionId, event.generation, event.message)
+      }
+      else if (event.kind === 'document-info') {
+        const surface = views.surfaces.get(event.viewId)
+        const session = surface?.session
+        if (!surface || session?.generation !== event.generation || session.token !== event.token)
+          return
+        surface.documentInfo = event.info
+        const view = controller.layout.views[event.viewId]
+        if (view) {
+          if (view.resource.scheme !== 'extension')
+            return
+          controller.updateView(view.id, { title: event.info.title, state: { ...view.state, documentInfo: event.info } })
+          await persistence.flush()
+        }
+        if (signal.aborted || surface.session !== session)
+          return
+        viewId = event.viewId
       }
       else if (event.kind === 'regions') {
         if (views.setRegions(event.viewId, event.generation, event.token, event.regions))

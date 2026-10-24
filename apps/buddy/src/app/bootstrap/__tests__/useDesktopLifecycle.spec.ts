@@ -1,3 +1,4 @@
+import type { ClosePreparation } from '@buddy-shared/lifecycle/closePreparation'
 import type { RendererLifecycleReport } from '@buddy-shared/lifecycle/serviceLifecycle'
 import { deferred } from '@buddy-tests/deferred'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -17,6 +18,7 @@ describe('workspace hydration', () => {
     await Promise.resolve()
     expect(fixture.lifecycle.dataReady.value).toBe(false)
     expect(fixture.reads.value).toBe(0)
+    expect(await fixture.beforeQuit()).toBe(true)
     fixture.connect('runtime-1')
     await vi.waitFor(() => expect(fixture.reads.value).toBe(1))
     expect(fixture.lifecycle.dataReady.value).toBe(false)
@@ -49,24 +51,26 @@ describe('workspace hydration', () => {
     expect(fixture.reads.value).toBe(2)
     expect(fixture.lifecycle.state.value.generation).toBe('runtime-2')
   })
-
-  it('permits quitting before any task state has been opened', async () => {
-    const fixture = createFixture()
-    expect(await fixture.beforeQuit()).toBe(true)
-  })
 })
 
-function createFixture(options: { restore?: () => Promise<void>, failFirst?: boolean } = {}) {
+function createFixture(options: { restore?: () => Promise<void>, failFirst?: boolean, prepareQuit?: (signal: AbortSignal) => Promise<ClosePreparation | false>, flushSurface?: () => Promise<boolean> } = {}) {
   const { startup, connect, complete } = createStartupFixture()
   const reads = shallowRef(0)
-  let beforeQuit = async () => false
+  let beforeQuit = async (_requestId: string) => false
+  let cancelQuit = (_requestId: string) => {}
   complete('desktop')
   const scope = effectScope()
   const lifecycle = scope.run(() => useDesktopLifecycle({
+    prepareQuit: options.prepareQuit,
+    flushSurface: options.flushSurface,
     api: { app: {
       startup: { getState: async () => startup.state, onStateChanged: startup.onStateChange.bind(startup), reportLifecycle: async (report: RendererLifecycleReport) => { startup.acceptRenderer(report) } },
-      onBeforeQuit: (listener: () => Promise<boolean>) => {
+      onBeforeQuit: (listener: (requestId: string) => Promise<boolean>) => {
         beforeQuit = listener
+        return () => {}
+      },
+      onQuitPreparationCancelled: (listener: (requestId: string) => void) => {
+        cancelQuit = listener
         return () => {}
       },
       onHidden: () => () => {},
@@ -90,5 +94,59 @@ function createFixture(options: { restore?: () => Promise<void>, failFirst?: boo
     },
   } as unknown as Parameters<typeof useDesktopLifecycle>[0]))!
   cleanups.push(() => scope.stop())
-  return { lifecycle, reads, connect, beforeQuit: () => beforeQuit() }
+  return { lifecycle, reads, connect, beforeQuit: (id: string = crypto.randomUUID()) => beforeQuit(id), cancelQuit: (id: string) => cancelQuit(id) }
 }
+
+it('rejects a close approval invalidated while the workspace is flushing', async () => {
+  let current = true
+  const fixture = createFixture({ prepareQuit: async () => ({ validate: () => current }), flushSurface: async () => {
+    current = false
+    return true
+  } })
+  fixture.connect('runtime-1')
+  await fixture.lifecycle.ready
+  expect(await fixture.beforeQuit()).toBe(false)
+})
+
+it('cancels only the expired quit preparation and rejects its late result before flushing', async () => {
+  const pending = deferred<ClosePreparation>()
+  let lifetime: AbortSignal | undefined
+  let flushed = 0
+  const fixture = createFixture({ prepareQuit: async (signal) => {
+    lifetime = signal
+    return pending.promise
+  }, flushSurface: async () => {
+    flushed++
+    return true
+  } })
+  fixture.connect('runtime-1')
+  await fixture.lifecycle.ready
+  const first = fixture.beforeQuit('first')
+  await vi.waitFor(() => expect(lifetime).toBeDefined())
+  const oldSignal = lifetime!
+  fixture.cancelQuit('unrelated')
+  expect(oldSignal.aborted).toBe(false)
+  fixture.cancelQuit('first')
+  expect(oldSignal.aborted).toBe(true)
+  pending.resolve({ validate: () => true })
+  expect(await first).toBe(false)
+  expect(flushed).toBe(0)
+  expect(await fixture.beforeQuit('retry')).toBe(true)
+  expect(flushed).toBe(1)
+})
+
+it('keeps the app running when a document cannot save and flushes only after the close guard succeeds', async () => {
+  let saved = false
+  let flushed = false
+  const fixture = createFixture({ prepareQuit: async () => saved ? { validate: () => saved } : false, flushSurface: async () => {
+    flushed = true
+    return true
+  } })
+  fixture.connect('runtime-1')
+  await fixture.lifecycle.ready
+  expect(await fixture.beforeQuit()).toBe(false)
+  expect(flushed).toBe(false)
+  saved = true
+  expect(await fixture.beforeQuit()).toBe(true)
+  expect(flushed).toBe(true)
+})
