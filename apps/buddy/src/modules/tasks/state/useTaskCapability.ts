@@ -97,6 +97,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
   const welcomeCompanionEnabled = computed(() => (
     applicationSettings.config.value?.desktop.chat.welcomeCompanionEnabled ?? true
   ))
+  const welcomeCompanionImage = computed(() => applicationSettings.config.value?.desktop.chat.welcomeCompanionImage ?? 'lexora')
   const { t } = useBuddyI18n(language)
   const taskMarks = options.index.index.marks
   const getRunTerminationMessage = (errorCode: string | null) =>
@@ -671,6 +672,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     welcomeEnabled: readonly(welcomeEnabled),
     welcomeGreetingEnabled: readonly(welcomeGreetingEnabled),
     welcomeCompanionEnabled: readonly(welcomeCompanionEnabled),
+    welcomeCompanionImage: readonly(welcomeCompanionImage),
     restoration: {
       state: workspacePersistence.restorationState,
       conflict: workspacePersistence.restorationConflict,

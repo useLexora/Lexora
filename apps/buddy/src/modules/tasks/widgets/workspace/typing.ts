@@ -24,6 +24,8 @@ export interface ChatWorkspaceEmits {
 }
 
 export interface TaskComposerHostProps {
+  inlineMaterials?: boolean
+  welcomeLayout?: boolean
   skillScopeId?: string | null
   composer: TaskComposer
   focusReady: boolean

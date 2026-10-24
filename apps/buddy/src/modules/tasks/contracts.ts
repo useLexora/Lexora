@@ -262,6 +262,7 @@ export interface TaskChatWorkspace {
   welcomeEnabled: State<boolean>
   welcomeGreetingEnabled: State<boolean>
   welcomeCompanionEnabled: State<boolean>
+  welcomeCompanionImage: State<string>
   status: TaskStatus
   transcript: TaskTranscript
 }

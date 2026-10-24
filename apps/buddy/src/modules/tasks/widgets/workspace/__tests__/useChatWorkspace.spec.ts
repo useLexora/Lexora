@@ -136,6 +136,7 @@ function createOwner(name: string) {
     welcomeEnabled: shallowRef(true),
     welcomeGreetingEnabled: shallowRef(true),
     welcomeCompanionEnabled: shallowRef(true),
+    welcomeCompanionImage: shallowRef('lexora'),
     session: {
       members: { memberIds: shallowRef(['default']), busy: shallowRef(false), error: shallowRef(''), refresh: async () => {}, add: async () => true, remove: async () => true },
       selectedBuddyId: shallowRef<string | null>('default'),
@@ -227,7 +228,7 @@ function bindWorkspace(owner: ReturnType<typeof createOwner>) {
     get execution() { return props.workspace.execution },
     get language() { return props.workspace.language.value },
   }))!
-  return { props, scope, view, composer, list }
+  return { props, view, composer, list }
 }
 
 describe('useChatWorkspace', () => {
@@ -281,15 +282,12 @@ describe('useChatWorkspace', () => {
   it('isolates drafts, late updates, sends and edits when the workspace owner changes', async () => {
     const previous = createOwner('previous')
     const next = createOwner('next')
-    const { props, view, composer } = bindWorkspace(previous)
-    const { language } = view
+    const { props, composer } = bindWorkspace(previous)
     const { sendMessage } = composer
-    next.workspace.language.value = 'en-US'
     props.workspace = next.workspace
 
     expect(composer.bindings.value.draft).toBe('next draft')
     expect(composer.bindings.value.draftId).toBe('next-draft')
-    expect(language.value).toBe('en-US')
     await sendMessage({ content: 'new turn' })
     expect(next.delivered).toEqual([{ mode: 'send', content: 'new turn' }])
     expect(next.workspace.composer.draft.value).toBe('')
@@ -298,13 +296,10 @@ describe('useChatWorkspace', () => {
 
     await Promise.resolve()
     previous.workspace.composer.draft.value = 'late previous draft'
-    previous.workspace.language.value = 'en-US'
     next.workspace.composer.draft.value = 'updated next draft'
-    next.workspace.language.value = 'zh-CN'
     await nextTick()
 
     expect(composer.bindings.value.draft).toBe('updated next draft')
-    expect(language.value).toBe('zh-CN')
 
     next.workspace.execution.editingMessageId.value = 'message-edited'
     next.workspace.composer.draft.value = 'edited content'

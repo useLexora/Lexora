@@ -12,7 +12,7 @@ import { useComposerSubmissionFocus } from './useComposerSubmissionFocus'
 import { useTaskComposer } from './useTaskComposer'
 
 const props = defineProps<TaskComposerHostProps>()
-defineSlots<{ leadingContext?: () => unknown }>()
+defineSlots<{ leadingContext?: () => unknown, decoration?: () => unknown }>()
 const router = useRouter()
 const { chat } = useDesktopUi()
 const composerRef = useTemplateRef<InstanceType<typeof DesktopChatComposer>>('composerRef')
@@ -54,6 +54,8 @@ function manageSkills() {
     :paste-text-as-attachment="chat.pasteTextAsAttachment"
     :manage-skills="manageSkills"
     :has-queued-messages="execution.queuedMessages.value.length > 0"
+    :inline-materials="inlineMaterials"
+    :welcome-layout="welcomeLayout"
     @attach="composer.selectAttachments"
     @retry-resource="composer.retryResource"
     @dismiss-interaction="composer.dismissInteraction"
@@ -65,6 +67,9 @@ function manageSkills() {
     @update-model="composer.selectModel"
     @update-service-tier="composer.setSelectedServiceTier"
   >
+    <template #decoration>
+      <slot name="decoration" />
+    </template>
     <template #leadingContext>
       <slot name="leadingContext" />
     </template>

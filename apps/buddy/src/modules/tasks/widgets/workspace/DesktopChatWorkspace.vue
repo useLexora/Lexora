@@ -7,7 +7,6 @@ import { readBuddyUserMessageContent } from '@buddy-shared/conversation/buddyUse
 import { computed, defineAsyncComponent, nextTick, shallowRef, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopRuntimePane from '@/platform/runtime/DesktopRuntimePane.vue'
-import peekingIllustrationUrl from '@/shared/branding/welcome/assets/peeking.png'
 import WorkbenchSlot from '@/shared/ui/contributions/WorkbenchSlot.vue'
 import { useConversationNodeDetail } from '../../state/conversations/useConversationNodeDetail'
 import { provideExecutionTree } from '../../state/runs/chatExecutionContext'
@@ -18,6 +17,7 @@ import { useTaskResultRead } from '../task-index/useTaskResultRead'
 import { provideChatBuddyIdentity } from '../transcript/chatBuddyIdentity'
 import DesktopChatTranscript from '../transcript/DesktopChatTranscript.vue'
 import DesktopChatWelcome from '../welcome/DesktopChatWelcome.vue'
+import DesktopWelcomeCompanion from '../welcome/DesktopWelcomeCompanion.vue'
 import ChatSelectionQuoteMenu from './ChatSelectionQuoteMenu.vue'
 import DesktopTaskComposer from './DesktopTaskComposer.vue'
 import DesktopTaskNotices from './DesktopTaskNotices.vue'
@@ -266,21 +266,22 @@ function openDetailChanges(id: string) {
             </button>
           </div>
           <div class="desktop-chat-page__composer-wrapper relative w-full min-w-0">
-            <img
-              v-if="isEmpty && workspace.welcomeEnabled.value && workspace.welcomeCompanionEnabled.value && !hasNotice"
-              class="desktop-chat-companion-peeking pointer-events-none select-none relative block ml-auto mr-[1.5rem] -mb-[0.7rem] w-[5.25rem] h-[5.25rem] z-3 object-contain"
-              :src="peekingIllustrationUrl"
-              alt=""
-              draggable="false"
-            >
             <DesktopTaskComposer
               ref="composerRef"
               :composer="workspace.composer"
+              :inline-materials="isEmpty && viewMode !== 'canvas'"
+              :welcome-layout="isEmpty && viewMode !== 'canvas' && workspace.welcomeEnabled.value"
               :skill-scope-id="workspace.session.spaceId.value"
               :focus-ready="active && composerVisible && !isLoading && workspace.status.runtimeState.value.status === 'ready'"
               :execution="workspace.execution"
               :language="language"
             >
+              <template #decoration>
+                <DesktopWelcomeCompanion
+                  v-if="isEmpty && viewMode !== 'canvas' && workspace.welcomeEnabled.value && workspace.welcomeCompanionEnabled.value && !hasNotice"
+                  :image="workspace.welcomeCompanionImage.value"
+                />
+              </template>
               <template #leadingContext>
                 <slot name="composerLeadingContext" />
               </template>
@@ -330,7 +331,7 @@ function openDetailChanges(id: string) {
   .desktop-chat-page__composer-dock {
     flex: none;
     width: 100%;
-    padding-top: 1.25rem;
+    padding-top: 0.5rem;
     padding-bottom: 0;
   }
 }
@@ -363,13 +364,6 @@ function openDetailChanges(id: string) {
 @container task-pane (max-height: 620px) {
   .desktop-chat-page.is-empty {
     padding-bottom: 2rem;
-
-    .desktop-chat-page__composer-dock {
-      padding-top: 0.85rem;
-    }
   }
-}
-.desktop-chat-page.is-empty .desktop-chat-page__composer-dock:has(.desktop-chat-companion-peeking) {
-  padding-top: 0.5rem;
 }
 </style>

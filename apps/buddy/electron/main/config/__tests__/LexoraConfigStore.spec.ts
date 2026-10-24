@@ -1,4 +1,5 @@
 import type { LexoraConfigPatch } from '../../../shared/desktopApi'
+import { Buffer } from 'node:buffer'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
@@ -7,6 +8,9 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_BROWSER_PREFERENCES } from '../../../../shared/browser/browserPreferences'
 import { DEFAULT_TYPOGRAPHY } from '../../../../shared/typography/typographyPreferences'
 import { LexoraConfigStore } from '../LexoraConfigStore'
+
+const welcomePng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO/aU1cAAAAASUVORK5CYII='
+const welcomeGif = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
 
 async function createConfigStore(content?: string) {
   const directory = await createTemporaryDirectory('lexora-config-test-')
@@ -19,8 +23,62 @@ async function createConfigStore(content?: string) {
 }
 
 describe('lexoraConfigStore', () => {
+  it('defaults legacy welcome images and preserves selections and animated GIF bytes across partial writes and restarts', async () => {
+    const { store, configPath } = await createConfigStore('[desktop.chat]\nwelcome_companion_enabled=false\nfuture=true\n')
+    expect((await store.read()).desktop.chat).toMatchObject({ welcomeCompanionEnabled: false, welcomeCompanionImage: 'lexora', welcomeCompanionImages: [] })
+    const header = '47494638396101000100800000000000ffffff'
+    const frame = '21f904000a0000002c0000000001000100000202440100'
+    const animatedGif = `data:image/gif;base64,${Buffer.from(`${header}${frame}${frame}3b`, 'hex').toString('base64')}`
+    for (const welcomeCompanionImage of ['whale', animatedGif, 'lexora']) {
+      await store.update({ desktop: { chat: { welcomeCompanionImage } } })
+      await store.update({ desktop: { language: 'en-US', chat: { welcomeGreetingEnabled: false } } })
+      expect((await new LexoraConfigStore({ configPath }).read()).desktop.chat)
+        .toMatchObject({ welcomeCompanionImage, welcomeCompanionEnabled: false, welcomeGreetingEnabled: false })
+      expect(parse(await readFile(configPath, 'utf8'))).toMatchObject({
+        desktop: { chat: { welcome_companion_image: welcomeCompanionImage, future: true } },
+      })
+    }
+  })
+
+  it('migrates the selected custom image and deduplicates stored galleries without writing on read', async () => {
+    for (const gallery of ['', `welcome_companion_images=["${welcomeGif}", "${welcomeGif}"]\n`]) {
+      const content = `[desktop.chat]\nwelcome_companion_image="${welcomePng}"\n${gallery}future=true\n`
+      const { store, configPath } = await createConfigStore(content)
+      const images = gallery ? [welcomeGif, welcomePng] : [welcomePng]
+      expect((await store.read()).desktop.chat).toMatchObject({ welcomeCompanionImage: welcomePng, welcomeCompanionImages: images })
+      expect(await readFile(configPath, 'utf8')).toBe(content)
+      await store.update({ desktop: { chat: { welcomeCompanionImage: 'lexora' } } })
+      expect((await new LexoraConfigStore({ configPath }).read()).desktop.chat)
+        .toMatchObject({ welcomeCompanionImage: 'lexora', welcomeCompanionImages: images })
+      expect(parse(await readFile(configPath, 'utf8'))).toMatchObject({
+        desktop: { chat: { welcome_companion_image: 'lexora', welcome_companion_images: images, future: true } },
+      })
+    }
+  })
+
+  it('saves and deduplicates galleries independently while disabled and preserves them across selection and restart', async () => {
+    const { store, configPath } = await createConfigStore('[desktop.chat]\nwelcome_companion_enabled=false\n')
+    await store.update({ desktop: { chat: { welcomeCompanionImages: [welcomeGif, welcomeGif] } } })
+    expect((await new LexoraConfigStore({ configPath }).read()).desktop.chat)
+      .toMatchObject({ welcomeCompanionEnabled: false, welcomeCompanionImage: 'lexora', welcomeCompanionImages: [welcomeGif] })
+    await store.update({ desktop: { chat: { welcomeCompanionImage: welcomePng } } })
+    expect((await store.read()).desktop.chat).toMatchObject({ welcomeCompanionImage: welcomePng, welcomeCompanionImages: [welcomeGif, welcomePng] })
+    await store.update({ desktop: { chat: { welcomeCompanionImages: [welcomeGif, welcomeGif] } } })
+    expect((await store.read()).desktop.chat).toMatchObject({ welcomeCompanionImage: welcomePng, welcomeCompanionImages: [welcomeGif, welcomePng] })
+    for (const welcomeCompanionImage of ['whale', 'lexora']) {
+      await store.update({ desktop: { chat: { welcomeCompanionImage } } })
+      expect((await new LexoraConfigStore({ configPath }).read()).desktop.chat)
+        .toMatchObject({ welcomeCompanionEnabled: false, welcomeCompanionImage, welcomeCompanionImages: [welcomeGif, welcomePng] })
+    }
+    await store.update({ desktop: { chat: { welcomeCompanionImages: [welcomePng, welcomePng] } } })
+    expect((await store.read()).desktop.chat).toMatchObject({ welcomeCompanionImage: 'lexora', welcomeCompanionImages: [welcomePng] })
+    await store.update({ desktop: { chat: { welcomeCompanionImages: [] } } })
+    expect((await new LexoraConfigStore({ configPath }).read()).desktop.chat)
+      .toMatchObject({ welcomeCompanionImage: 'lexora', welcomeCompanionImages: [] })
+  })
+
   it('defaults legacy profiles and preserves independent preferences, ordered pins and unknown fields across partial writes and restart', async () => {
-    const { configPath, store } = await createConfigStore('[api]\nbase_url="https://lexora.example"\n[desktop]\nnotify_when_focused=true\nfuture_setting=true\n[desktop.chat]\nwelcome="none"\nfuture=true\n[desktop.typography]\nfuture=true\n[browser]\nfuture=true\n')
+    const { configPath, store } = await createConfigStore('[api]\nbase_url="https://lexora.example"\n[desktop]\nnotify_when_focused=true\nsidebar_collapsed=true\nfuture_setting=true\n[desktop.chat]\nwelcome="none"\nfuture=true\n[desktop.typography]\nfuture=true\n[desktop.task_sidebar]\nfuture=true\n[browser]\nfuture=true\n')
     const defaults = {
       browser: DEFAULT_BROWSER_PREFERENCES,
       runtime: { modelRetryLimit: 3 },
@@ -45,6 +103,7 @@ describe('lexoraConfigStore', () => {
       proxy: { mode: 'custom', server: 'http://127.0.0.1:7890' },
       desktop: {
         localBackupLimit: 1,
+        navigationLayout: 'immersive',
         subtaskNotificationsEnabled: false,
         updateNotificationsEnabled: false,
         featureAnnouncementsEnabled: false,
@@ -54,7 +113,7 @@ describe('lexoraConfigStore', () => {
         keybindings: { 'task.new': 'Mod+Alt+N', 'view.close': '' },
         pluginAuthor: '山雨海 · Équipe 🎨',
         profile,
-        taskSidebar: { collapsed: true, collapsedSections: ['tasks'], collapsedSpaces: ['space-a'], width: 336 },
+        taskSidebar: { collapsed: false, collapsedSections: ['tasks', 'spaces'], collapsedSpaces: ['space-a'], width: 336 },
         taskSidebarPinnedItems: [{ id: 'space-a', kind: 'space' }, { id: 'conversation-a', kind: 'conversation' }],
         contextPanelMode: 'space',
         contextPanelGlobal: true,
@@ -74,6 +133,7 @@ describe('lexoraConfigStore', () => {
       desktop: {
         ...preferences.desktop,
         localBackupLimit: 10,
+        sidebarCollapsed: true,
         notificationsEnabled: true,
         notifyWhenFocused: true,
         language: 'en-US',
@@ -94,41 +154,10 @@ describe('lexoraConfigStore', () => {
     })
     expect(parse(await readFile(configPath, 'utf8'))).toMatchObject({
       api: { base_url: 'https://lexora.example' },
-      desktop: { future_setting: true, subtask_notifications_enabled: false, chat: { future: true, paste_text_as_attachment: false }, typography: { future: true } },
+      desktop: { future_setting: true, subtask_notifications_enabled: false, sidebar_collapsed: true, navigation_layout: 'immersive', task_sidebar: { future: true }, chat: { future: true, paste_text_as_attachment: false }, typography: { future: true } },
       browser: { future: true },
     })
     expect((await stat(configPath)).mode & 0o777).toBe(0o600)
-  })
-
-  it('defaults missing navigation layout to full and preserves independent legacy sidebar preferences', async () => {
-    const { configPath, store } = await createConfigStore(`
-[desktop]
-sidebar_collapsed = true
-[[desktop.task_sidebar_pinned_items]]
-id = "space-a"
-kind = "space"
-[desktop.task_sidebar]
-collapsed = false
-collapsed_sections = ["tasks", "spaces"]
-collapsed_spaces = ["space-a"]
-width = 336
-future = true
-`)
-    const legacy = {
-      sidebarCollapsed: true,
-      taskSidebarPinnedItems: [{ id: 'space-a', kind: 'space' }],
-      taskSidebar: { collapsed: false, collapsedSections: ['tasks', 'spaces'], collapsedSpaces: ['space-a'], width: 336 },
-    }
-    expect((await store.read()).desktop).toMatchObject({ ...legacy, navigationLayout: 'full' })
-    for (const navigationLayout of ['compact', 'immersive', 'full'] as const) {
-      await store.update({ desktop: { navigationLayout } })
-      await store.update({ desktop: { language: 'en-US' } })
-      expect((await new LexoraConfigStore({ configPath }).read()).desktop)
-        .toMatchObject({ ...legacy, navigationLayout })
-      expect(parse(await readFile(configPath, 'utf8'))).toMatchObject({
-        desktop: { navigation_layout: navigationLayout, sidebar_collapsed: true, task_sidebar: { future: true } },
-      })
-    }
   })
 
   it('migrates paired and legacy themes without losing the selected appearance or custom themes', async () => {
@@ -224,9 +253,11 @@ text = "保留我的内容"
 
   it('rejects invalid patches and malformed stored configuration without overwriting previous data', async () => {
     const { configPath, store } = await createConfigStore()
-    const previous = await store.update({ desktop: { profile: { userName: 'Saved profile' } } })
+    const previous = await store.update({ desktop: { profile: { userName: 'Saved profile' }, chat: { welcomeCompanionImage: 'whale', welcomeCompanionImages: [welcomeGif] } } })
     const saved = await readFile(configPath, 'utf8')
     const invalidPatches = [
+      { desktop: { chat: { welcomeCompanionImage: 'https://example.com/image.gif' } } },
+      { desktop: { chat: { welcomeCompanionImage: 'lexora', welcomeCompanionImages: [welcomePng, 'whale'] } } },
       ...[0, 11, 1.5].map(localBackupLimit => ({ desktop: { localBackupLimit } })),
       { runtime: { modelRetryLimit: -1 } },
       { runtime: { cacheWarming: 'idle' } },
@@ -250,9 +281,12 @@ text = "保留我的内容"
       '[desktop]\nnavigation_layout="sidebar"\n',
       '[desktop.chat]\npaste_text_as_attachment="false"\n',
       '[desktop.chat]\npermission_mode="invalid"\n',
+      '[desktop.chat]\nwelcome_companion_image="https://example.com/image.gif"\n',
+      '[desktop.chat]\nwelcome_companion_images=["lexora"]\n',
     ]) {
       await writeFile(configPath, content)
       await expect(store.read()).rejects.toMatchObject({ code: 'INVALID_CONFIG' })
+      await expect(store.update({ desktop: { language: 'en-US' } })).rejects.toMatchObject({ code: 'INVALID_CONFIG' })
       expect(await readFile(configPath, 'utf8')).toBe(content)
     }
   })

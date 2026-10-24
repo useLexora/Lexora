@@ -172,6 +172,8 @@ export interface DesktopChatPreferences {
   welcomeItems: ReadonlyArray<DesktopChatWelcomeItem>
   welcomeGreetingEnabled: boolean
   welcomeCompanionEnabled: boolean
+  welcomeCompanionImage: string
+  welcomeCompanionImages: readonly string[]
 }
 
 export const DEFAULT_DESKTOP_CHAT_PREFERENCES: Readonly<DesktopChatPreferences> = {
@@ -183,6 +185,8 @@ export const DEFAULT_DESKTOP_CHAT_PREFERENCES: Readonly<DesktopChatPreferences> 
   welcomeItems: [...DEFAULT_DESKTOP_CHAT_WELCOME_ITEMS],
   welcomeGreetingEnabled: true,
   welcomeCompanionEnabled: true,
+  welcomeCompanionImage: 'lexora',
+  welcomeCompanionImages: [],
 }
 
 export interface LexoraConfig {

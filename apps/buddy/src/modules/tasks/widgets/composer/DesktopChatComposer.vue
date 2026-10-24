@@ -40,6 +40,7 @@ const emit = defineEmits<{
   updateServiceTier: [value: BuddyServiceTier | null]
 }>()
 defineSlots<{
+  decoration?: () => unknown
   leadingContext?: () => unknown
 }>()
 
@@ -176,6 +177,7 @@ function captureDraft(): WorkbenchMenuSelection {
   <DesktopChatComposerFrame
     class="desktop-chat-composer-wrap"
     single-line-toolbar
+    :welcome-layout="welcomeLayout"
     @dragover="handleFileDragover"
     @drop="handleFileDrop"
   >
@@ -184,7 +186,7 @@ function captureDraft(): WorkbenchMenuSelection {
       <ChatInputMaterialStrip
         ref="resourceStrip"
         class="desktop-chat-composer__materials"
-        :class="{ 'is-floating': !hasQueuedMessages }"
+        :class="{ 'is-floating': !inlineMaterials && !hasQueuedMessages }"
         :materials="materials"
         :language="language"
         :disabled="isSending"
@@ -193,6 +195,10 @@ function captureDraft(): WorkbenchMenuSelection {
         @retry="emit('retryResource', $event)"
         @preview-text="pastedText.open"
       />
+    </template>
+
+    <template #decoration>
+      <slot name="decoration" />
     </template>
 
     <template #overlay>

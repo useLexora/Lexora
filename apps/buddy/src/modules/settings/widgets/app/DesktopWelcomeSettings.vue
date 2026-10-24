@@ -10,12 +10,13 @@ import DesktopSegmentedControl from '@/shared/ui/segmented-control/DesktopSegmen
 import { useSettingMutation } from '../../state/useSettingMutation'
 import DesktopSettingRow from '../shared/DesktopSettingRow.vue'
 import DesktopSettingsGroup from '../shared/DesktopSettingsGroup.vue'
+import DesktopWelcomeImageSettings from './DesktopWelcomeImageSettings.vue'
 import DesktopWelcomeMessagesDialog from './DesktopWelcomeMessagesDialog.vue'
 
 const props = defineProps<ApplicationSettingsProps>()
 const { t } = useBuddyI18n(() => props.language)
 const message = useMessage()
-const { pending, save } = useSettingMutation<'enabled' | 'welcome' | 'greeting' | 'companion'>(
+const { pending, save } = useSettingMutation<'enabled' | 'welcome' | 'greeting'>(
   patch => props.updateSettings(patch),
   () => message.error(t('desktop.settings.saveFailed')),
 )
@@ -93,13 +94,7 @@ function deleteMessage(id: string) {
           @update:value="save('greeting', { desktop: { chat: { welcomeGreetingEnabled: $event } } })"
         />
       </DesktopSettingRow>
-      <DesktopSettingRow v-slot="{ controlAttrs }" :label="t('desktop.settings.welcomeCompanion')" :description="t('desktop.settings.welcomeCompanionDescription')" :disabled="disabled" toggle>
-        <NSwitch
-          v-bind="controlAttrs" :round="false" :value="preferences.welcomeCompanionEnabled"
-          :loading="pending.has('companion')" :disabled="disabled || pending.has('companion')" :aria-disabled="disabled || pending.has('companion')"
-          @update:value="save('companion', { desktop: { chat: { welcomeCompanionEnabled: $event } } })"
-        />
-      </DesktopSettingRow>
+      <DesktopWelcomeImageSettings v-bind="props" :disabled="disabled" />
     </DesktopSettingsGroup>
     <DesktopWelcomeMessagesDialog
       v-if="showMessages" v-model:draft="newText" :language="language" :items="preferences.welcomeItems" :selected-id="mode === 'fixed' ? preferences.welcome : null"

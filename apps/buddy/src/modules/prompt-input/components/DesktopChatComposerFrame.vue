@@ -5,6 +5,7 @@ withDefaults(defineProps<{
   borderRadius?: string
   expanded?: boolean
   singleLineToolbar?: boolean
+  welcomeLayout?: boolean
 }>(), {
   expanded: false,
   singleLineToolbar: false,
@@ -19,7 +20,10 @@ withDefaults(defineProps<{
       'has-single-line-toolbar': singleLineToolbar,
     }"
   >
-    <slot name="attachments" />
+    <div class="desktop-chat-composer__header relative" :class="{ 'has-welcome': welcomeLayout }">
+      <slot name="attachments" />
+      <slot name="decoration" />
+    </div>
 
     <div class="desktop-chat-composer relative w-full min-w-0 border-1 border-solid border-border-strong rounded-[10px] bg-composer text-composer-fg p-[0.7rem] shadow-soft focus-within:border-focus" :style="{ borderRadius }" data-theme-surface="input">
       <slot name="overlay" />
@@ -51,6 +55,27 @@ withDefaults(defineProps<{
   --desktop-chat-composer-editor-padding-top: 0.35rem;
   --desktop-chat-composer-editor-padding-bottom: 0.35rem;
   container: desktop-chat-composer / inline-size;
+}
+
+.desktop-chat-composer__header.has-welcome {
+  --welcome-companion-height: 4.55rem;
+  display: grid;
+  align-content: end;
+  min-height: var(--welcome-companion-height);
+  padding-right: calc(var(--welcome-companion-height) + 2.2rem);
+}
+
+@container task-pane (max-height: 620px) {
+  .desktop-chat-composer__header.has-welcome {
+    --welcome-companion-height: clamp(2rem, 12cqh, 4.55rem);
+  }
+}
+
+@container task-pane (max-height: 340px) {
+  .desktop-chat-composer__header.has-welcome {
+    min-height: 0;
+    padding-right: 0;
+  }
 }
 
 .desktop-chat-composer {

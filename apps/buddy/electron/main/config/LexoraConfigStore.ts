@@ -27,6 +27,7 @@ import { DEFAULT_DESKTOP_CHAT_PREFERENCES, DEFAULT_DESKTOP_CHAT_WELCOME_ITEMS, D
 
 import { desktopChatWelcomeItemsSchema } from '../../shared/desktopApiSchemas'
 import { isPresetWelcomeId, normalizeDesktopChatWelcomePreference } from '../../shared/desktopChatWelcome'
+import { isWelcomeCompanionImageDataUrl, welcomeCompanionImageSchema, welcomeCompanionImagesSchema } from '../../shared/welcomeCompanionImage'
 
 function migrateWelcomeItems(value: unknown): unknown {
   if (!Array.isArray(value))
@@ -84,6 +85,8 @@ const desktopConfigSchema = z.object({
     welcome_enabled: z.boolean().optional(),
     welcome_greeting_enabled: z.boolean().default(DEFAULT_DESKTOP_CHAT_PREFERENCES.welcomeGreetingEnabled),
     welcome_companion_enabled: z.boolean().default(DEFAULT_DESKTOP_CHAT_PREFERENCES.welcomeCompanionEnabled),
+    welcome_companion_image: welcomeCompanionImageSchema.default(DEFAULT_DESKTOP_CHAT_PREFERENCES.welcomeCompanionImage),
+    welcome_companion_images: welcomeCompanionImagesSchema.default([]),
   }).passthrough().prefault({}),
   context_panel_mode: z.enum(['task', 'space', 'independent']).default('task'),
   context_panel_global: z.boolean().default(false),
@@ -133,6 +136,8 @@ const desktopConfigSchema = z.object({
     welcome_enabled: DEFAULT_DESKTOP_CHAT_PREFERENCES.welcomeEnabled,
     welcome_greeting_enabled: DEFAULT_DESKTOP_CHAT_PREFERENCES.welcomeGreetingEnabled,
     welcome_companion_enabled: DEFAULT_DESKTOP_CHAT_PREFERENCES.welcomeCompanionEnabled,
+    welcome_companion_image: DEFAULT_DESKTOP_CHAT_PREFERENCES.welcomeCompanionImage,
+    welcome_companion_images: [],
   },
   context_panel_mode: 'task',
   context_panel_global: false,
@@ -382,6 +387,8 @@ function decodeConfig(value: unknown): LexoraConfig {
         welcomeEnabled: config.desktop.chat.welcome_enabled ?? config.desktop.chat.welcome !== 'none',
         welcomeGreetingEnabled: config.desktop.chat.welcome_greeting_enabled,
         welcomeCompanionEnabled: config.desktop.chat.welcome_companion_enabled,
+        welcomeCompanionImage: config.desktop.chat.welcome_companion_image,
+        welcomeCompanionImages: normalizeWelcomeCompanionImages(config.desktop.chat.welcome_companion_images, config.desktop.chat.welcome_companion_image),
       },
       contextPanelMode: config.desktop.context_panel_mode,
       contextPanelGlobal: config.desktop.context_panel_global,
@@ -455,6 +462,8 @@ function encodeConfig(config: LexoraConfig) {
         welcome_enabled: config.desktop.chat.welcomeEnabled,
         welcome_greeting_enabled: config.desktop.chat.welcomeGreetingEnabled,
         welcome_companion_enabled: config.desktop.chat.welcomeCompanionEnabled,
+        welcome_companion_image: config.desktop.chat.welcomeCompanionImage,
+        welcome_companion_images: config.desktop.chat.welcomeCompanionImages,
       },
       context_panel_mode: config.desktop.contextPanelMode,
       context_panel_global: config.desktop.contextPanelGlobal,
@@ -500,8 +509,16 @@ function encodeConfig(config: LexoraConfig) {
   }
 }
 
+function normalizeWelcomeCompanionImages(images: readonly string[], selected: string): string[] {
+  return [...new Set(isWelcomeCompanionImageDataUrl(selected) ? [...images, selected] : images)]
+}
+
 function mergeConfig(current: LexoraConfig, patch: LexoraConfigPatch): LexoraConfig {
   const welcomeItems = desktopChatWelcomeItemsSchema.parse(patch.desktop?.chat?.welcomeItems ?? current.desktop.chat.welcomeItems)
+  const welcomeCompanionImage = welcomeCompanionImageSchema.parse(patch.desktop?.chat?.welcomeCompanionImage ?? current.desktop.chat.welcomeCompanionImage)
+  const welcomeCompanionImages = welcomeCompanionImagesSchema.parse(patch.desktop?.chat?.welcomeCompanionImages === undefined
+    ? current.desktop.chat.welcomeCompanionImages
+    : patch.desktop.chat.welcomeCompanionImages)
   return {
     runtime: runtimePreferencesSchema.parse({ ...current.runtime, ...patch.runtime }),
     browser: browserPreferencesSchema.parse({ ...current.browser, ...patch.browser }),
@@ -520,6 +537,8 @@ function mergeConfig(current: LexoraConfig, patch: LexoraConfigPatch): LexoraCon
         ...current.desktop.chat,
         ...patch.desktop?.chat,
         welcomeItems,
+        welcomeCompanionImage,
+        welcomeCompanionImages: normalizeWelcomeCompanionImages(welcomeCompanionImages, welcomeCompanionImage),
         welcome: normalizeDesktopChatWelcomePreference(patch.desktop?.chat?.welcome ?? current.desktop.chat.welcome, welcomeItems),
         permissionMode: z.enum(BUDDY_PERMISSION_MODES).parse(
           patch.desktop?.chat?.permissionMode ?? current.desktop.chat.permissionMode,

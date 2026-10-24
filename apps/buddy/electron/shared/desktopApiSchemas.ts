@@ -19,6 +19,7 @@ import {
 } from './desktopApi'
 import { DESKTOP_CHAT_WELCOME_MAX_ITEMS, DESKTOP_CHAT_WELCOME_MAX_LENGTH, DESKTOP_CHAT_WELCOME_VARIANT_IDS } from './desktopChatWelcome'
 import { isLexoraReleaseUrl } from './productLinks'
+import { welcomeCompanionImageSchema, welcomeCompanionImagesSchema } from './welcomeCompanionImage'
 
 const taskSidebarPinnedItemSchema = z.discriminatedUnion('kind', [
   z.object({ id: z.string().min(1).max(128), kind: z.literal('conversation') }).strict(),
@@ -94,6 +95,8 @@ export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({
       welcomeEnabled: z.boolean().optional(),
       welcomeGreetingEnabled: z.boolean().optional(),
       welcomeCompanionEnabled: z.boolean().optional(),
+      welcomeCompanionImage: welcomeCompanionImageSchema.optional(),
+      welcomeCompanionImages: welcomeCompanionImagesSchema.optional(),
     }).strict().optional(),
     contextPanelMode: z.enum(['task', 'space', 'independent']).optional(),
     contextPanelGlobal: z.boolean().optional(),
