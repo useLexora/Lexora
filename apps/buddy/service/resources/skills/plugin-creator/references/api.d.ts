@@ -257,6 +257,10 @@ export type ReferenceInput
   = | { kind: 'content', title: string, text: string, locator?: ReferenceLocator }
     | { kind: 'resource', resource: { id: string } }
 export interface ViewContext {
+  readonly clipboard: {
+    read: () => Promise<{ text?: string, html?: string }>
+    write: (data: { text?: string, html?: string }) => Promise<void>
+  }
   readonly workers: WorkerApi
   readonly themes: ThemeApi
   readonly events: EventSubscriber<ViewEvents>

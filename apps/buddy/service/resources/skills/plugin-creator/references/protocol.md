@@ -87,6 +87,12 @@ context.references.onReveal(async ({ locator, text }, signal) => {
 
 导航页面、装饰、内容插槽和替换控件不能使用 `context.setState()`；需要持久设置时声明宿主入口和隐藏命令，以 `context.storage.get/set` 保存。多个视图使用同一设置时明确刷新时机，插件局部开关必须能在不重载视图的情况下关闭并重新启用。资源页签的 `setState` 用于保存该页签的 JSON 状态。
 
+系统剪贴板使用独立的 `permissions.clipboardRead` 与 `permissions.clipboardWrite` 授权，默认均为 `false`。交互视图用 `context.clipboard.read()` 读取 `{text?,html?}`，用 `context.clipboard.write({text?,html?})` 原子替换这些格式；至少传一项，空字符串有效，文本与 HTML 的 UTF-8 总量最多 4 MiB。HTML 内容与属性保留，不传递图片、文件路径或其他原生格式。没有支持的格式时读取返回 `{}`；过大内容或失败操作会拒绝 Promise。
+
+剪贴板调用要求安装授权及当前前台窗口中可见、聚焦的插件 iframe；读取交付前和写入前均复验视图身份与焦点。此授权不是逐次用户手势检查：已聚焦的插件可主动调用，用户无需每次确认。失焦、隐藏、关闭或插件停用后不可调用；后台入口、Worker、装饰、内容插槽和替换控件不提供此能力。纯视图插件无需后台入口。iframe 的浏览器 `navigator.clipboard` 权限仍被禁止，编辑器应注入此 SDK 适配器；浏览器原生 `paste` 事件的 `clipboardData` 与异步剪贴板 API 是不同路径。
+
+此增量 API 应先检查 `context.clipboard`，缺失时提示升级宿主；清单兼容范围使用实际支持此能力的宿主版本。
+
 ## 文件关联与独立入口
 
 使用下列新增声明时，`apiVersion` 保持 `4`，`engines.lexora` 必须以首次提供这些能力的应用版本为下限；不能仅凭旧宿主也支持 API 4 就声明兼容。应用版本和 API 版本分别约束能力可用性与协议兼容性。

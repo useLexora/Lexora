@@ -49,6 +49,8 @@ const permissions = computed(() => {
     ...(permissions.schedules ? [{ key: 'schedules', icon: Clock20Regular, title: english.value ? 'Run scheduled tasks' : '执行后台定时任务', description: english.value ? 'Continue running while Lexora is open, even when the plugin page is closed.' : 'Lexora 运行期间，关闭插件页面后仍可执行。' }] : []),
     ...(permissions.selectedResource === 'read' ? [{ key: 'selectedResource:read', icon: Document20Regular, title: labels.value.selected, description: english.value ? 'Read the content of files you select for this plugin.' : '读取你为此插件选中的文件内容。' }] : []),
     ...(permissions.selectedContent ? [{ key: 'selectedContent', icon: Document20Regular, title: english.value ? 'Read content you select' : '读取你选择的内容', description: english.value ? 'Receive the current draft or message when you invoke its action.' : '当你主动执行操作时，获取当前草稿或该条消息。' }] : []),
+    ...(permissions.clipboardRead ? [{ key: 'clipboardRead', icon: Document20Regular, title: english.value ? 'Read the system clipboard' : '读取系统剪贴板', description: english.value ? 'Read text and HTML while this plugin view is visible and focused. This permission does not require a separate click for each read.' : '插件视图在前台可见并聚焦时，可读取剪贴板的文本和 HTML；授权后每次读取不再单独确认。' }] : []),
+    ...(permissions.clipboardWrite ? [{ key: 'clipboardWrite', icon: Document20Regular, title: english.value ? 'Write to the system clipboard' : '写入系统剪贴板', description: english.value ? 'Replace clipboard text and HTML while this plugin view is visible and focused.' : '插件视图在前台可见并聚焦时，可替换系统剪贴板的文本和 HTML。' }] : []),
     ...(permissions.references ? [{ key: 'references', icon: Document20Regular, title: english.value ? 'Add references to drafts' : '向输入框添加引用', description: english.value ? 'Add content from an interactive plugin view or authorized file snapshots to a draft. This does not send messages or grant additional file access.' : '将交互视图内容或已授权文件快照添加到输入框，不会发送消息或扩大文件访问权限。' }] : []),
     ...(permissions.localResources ? [{ key: 'localResources', icon: Document20Regular, title: english.value ? 'Read files and folders you select' : '读取你选择的文件和目录', description: english.value ? 'Choose files or folders in a system dialog. The plugin can read selected files and scan selected folders until you revoke access.' : '通过系统窗口选择文件或目录；插件可读取所选文件、扫描所选目录，授权保留到你撤销。' }] : []),
     ...(permissions.themeManagement ? [{ key: 'themeManagement', icon: Document20Regular, title: english.value ? 'Manage your themes' : '管理你的主题', description: english.value ? 'Save, preview and select themes. Package themes remain read-only.' : '保存、预览和切换主题；插件包内主题保持只读。' }] : []),
@@ -62,7 +64,7 @@ function isNewPermission(key: string): boolean {
     : props.review.addedPermissions.includes(key)
 }
 const source = computed(() => props.review.development ? (english.value ? 'Development folder' : '开发目录') : props.review.source ? (english.value ? 'Lexora Marketplace' : 'Lexora 插件市场') : (english.value ? 'Local package' : '本地插件包'))
-const sharesContent = computed(() => (props.review.manifest.permissions.selectedResource === 'read' || props.review.manifest.permissions.localResources || props.review.manifest.permissions.selectedContent) && props.review.manifest.permissions.network.length > 0)
+const sharesContent = computed(() => (props.review.manifest.permissions.clipboardRead || props.review.manifest.permissions.selectedResource === 'read' || props.review.manifest.permissions.localResources || props.review.manifest.permissions.selectedContent) && props.review.manifest.permissions.network.length > 0)
 </script>
 
 <template>

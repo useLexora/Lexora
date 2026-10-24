@@ -22,6 +22,7 @@ import { EXTENSION_IPC, extensionError, extensionManagementSchema } from '../../
 import { ExtensionCompatibilityError } from '../../../shared/extensions/extensionCompatibility'
 import { assertTrustedSender } from '../ipc'
 import { compileExtension } from './compileExtension'
+import { createExtensionClipboard } from './ExtensionClipboard'
 import { ExtensionProtocol } from './ExtensionProtocol'
 import { SandboxedExtensionHost } from './SandboxedExtensionHost'
 
@@ -69,6 +70,7 @@ export function registerExtensionIpc(options: {
       event.preventDefault()
   }
   const service = new ExtensionService(store, {
+    clipboard: createExtensionClipboard(options.getWindow),
     shellsChanged: options.shellsChanged,
     skillsChanged: options.skillsChanged,
     themes: options.themes,

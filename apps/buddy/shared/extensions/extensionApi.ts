@@ -21,6 +21,7 @@ import { themeTransportSchema } from '../theme/themeApi.ts'
 import { workbenchPanesSchema } from '../workbench/workbenchInteraction'
 import { workbenchMenuSchema } from '../workbench/workbenchUi'
 import { extensionActionRpc } from './extensionActionApi'
+import { extensionClipboardWriteSchema } from './extensionClipboard'
 import { extensionFileOpeningSourceSchema } from './extensionFileOpening'
 import { extensionIdSchema } from './extensionManifest'
 import { extensionReferenceInputSchema, extensionReferenceOpeningSchema } from './extensionReferences'
@@ -39,6 +40,8 @@ export const EXTENSION_IPC = {
 } as const
 export const extensionJsonSchema = z.json().refine(value => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 262144, 'Extension data is too large')
 export function parseExtensionRequestParams(method: string, params: unknown): JsonValue {
+  if (method === 'clipboard.write')
+    return extensionClipboardWriteSchema.parse(params)
   if (method === 'references.add')
     return extensionJsonSchema.parse(extensionReferenceInputSchema.parse(params))
   return (method === 'themes.request' ? themeTransportSchema : extensionJsonSchema).parse(params)

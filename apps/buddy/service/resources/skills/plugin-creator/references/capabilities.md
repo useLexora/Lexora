@@ -4,6 +4,7 @@
 
 | 用户需要 | 清单与入口 | 状态和边界 |
 | --- | --- | --- |
+| 编辑器复制/粘贴文本和表格格式 | `permissions.clipboardRead` / `clipboardWrite`；视图 `clipboard.read/write` | 安装授权后仅前台可见且聚焦视图可用；文本与 HTML 合计 4 MiB，写入原子完成；不开放后台或浏览器剪贴板权限 |
 | 随插件提供工作方法、参考资料或脚本，按需加载 | API 4；`contributes.skills`，见 [插件 Skills](skills.md) | 标准 Skill 文件；可搜索或显式 `$插件调用名:技能名` 选择，启停与更新由插件管理，不自动授予执行能力 |
 | 检测并选择已有本机命令解释器 | API 4；contributes.shells、permissions.shells、原生 settings，见 [命令解释器](shells.md) | 用户启用后供模型选择；宿主执行，插件只能 detect()，不能运行命令或写解释器路径 |
 | 由主模型主动调用插件、请求模型或修改任务标题 | API 3；contributes.agent 和 agent/models/tasks 权限，见 [Agent 与设置](agent-settings.md) | 工具入口绑定原任务与本轮模型，不导出凭据，不覆盖手动标题 |

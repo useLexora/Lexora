@@ -106,6 +106,7 @@ async function initialize() {
     const entry = await import(`/__package/${initial.entry}`)
     const api = Object.freeze({
       workers,
+      clipboard: Object.freeze({ read: () => request('clipboard.read'), write: data => request('clipboard.write', data) }),
       apiVersion: initial.apiVersion,
       events,
       themes: createThemeClient(input => request('themes.request', input), listener => events.on('view:environment:changed', listener)),
