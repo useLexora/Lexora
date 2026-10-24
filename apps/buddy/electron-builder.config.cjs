@@ -9,6 +9,7 @@ const { OPERATING_SYSTEM } = require('./shared/platform/identifiers.ts')
 
 const target = resolveBuildTarget()
 const resources = platformResources(target)
+const packageFormat = process.env.LEXORA_BUDDY_PACKAGE_FORMAT ?? target.packageFormats[0]
 const { sourceDateEpoch } = require('./buddy.version.json')
 const { desktopName, productName: displayName } = require('./package.json')
 
@@ -27,7 +28,7 @@ const signedMacos = macosSigningMode() === 'developer-id'
 module.exports = {
   appId: desktopName,
   extraMetadata: {
-    desktopDistribution: { schemaVersion: 1, format: process.env.LEXORA_BUDDY_PACKAGE_FORMAT === 'zip' ? 'dmg' : process.env.LEXORA_BUDDY_PACKAGE_FORMAT ?? target.packageFormats[0], architecture: target.architecture, signing: target.platform === OPERATING_SYSTEM.MacOS ? (signedMacos ? 'developer-id' : 'ad-hoc') : 'none' },
+    desktopDistribution: { schemaVersion: 1, format: packageFormat === 'macos-zip' ? 'dmg' : packageFormat, architecture: target.architecture, signing: target.platform === OPERATING_SYSTEM.MacOS ? (signedMacos ? 'developer-id' : 'ad-hoc') : 'none' },
   },
   productName: 'lexora-buddy',
   asar: true,
@@ -76,7 +77,7 @@ module.exports = {
     extraResources: (target.platform === OPERATING_SYSTEM.Windows ? resources : []),
     executableName: displayName,
     icon: 'resources/icons/app-icon.png',
-    target: [{ target: 'nsis', arch: [target.architecture] }],
+    target: [{ target: packageFormat === 'windows-zip' ? 'zip' : 'nsis', arch: [target.architecture] }],
   },
   nsis: {
     include: '../../packaging/buddy/windows/installer.nsh',
@@ -192,5 +193,5 @@ module.exports = {
       'xdg-utils',
     ],
   },
-  artifactName: desktopArtifactName(target, target.packageFormats[0], macro('version')),
+  artifactName: desktopArtifactName(target, packageFormat, macro('version')),
 }

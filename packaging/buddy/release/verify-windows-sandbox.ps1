@@ -2,6 +2,7 @@ param(
   [Parameter(Mandatory)][string]$SandboxExecutable,
   [Parameter(Mandatory)][string]$AdversaryExecutable,
   [string]$InstallerExecutable,
+  [string]$ZipArchive,
   [switch]$InstallComponent
 )
 
@@ -38,9 +39,9 @@ try {
   Copy-Item -LiteralPath $adversary -Destination (Join-Path $payload 'sandbox-adversary.exe')
   Copy-Item -LiteralPath $fixture -Destination (Join-Path $payload 'shell_sandbox.windows.mjs')
   $desktopAcceptance = ''
+  $desktopVerifier = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../ci/verify-windows-install.mjs')).Path.Replace("'", "''")
   if ($InstallerExecutable) {
     Copy-Item -LiteralPath (Resolve-Path -LiteralPath $InstallerExecutable).Path -Destination (Join-Path $payload 'desktop-installer.exe')
-    $desktopVerifier = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../ci/verify-windows-install.mjs')).Path.Replace("'", "''")
     $desktopAcceptance = @"
   `$installer = Start-Process -FilePath (Join-Path `$PWD 'payload\desktop-installer.exe') -ArgumentList '/S' -Wait -PassThru
   if (`$installer.ExitCode -ne 0) {
@@ -50,6 +51,15 @@ try {
   `$installed = Join-Path `$env:LOCALAPPDATA 'Programs\Lexora Buddy'
   & `$env:ComSpec /d /c ('"payload\node.exe" "$desktopVerifier" "' + `$installed + '" --require-sandbox >> "result.log" 2>&1')
   if (`$LASTEXITCODE -ne 0) { throw "Installed standard user Desktop verification failed: `$LASTEXITCODE" }
+"@
+  }
+  if ($ZipArchive) {
+    Copy-Item -LiteralPath (Resolve-Path -LiteralPath $ZipArchive).Path -Destination (Join-Path $payload 'desktop.zip')
+    $desktopAcceptance += @"
+
+  `$archive = Join-Path `$PWD 'payload\desktop.zip'
+  & `$env:ComSpec /d /c ('"payload\node.exe" "$desktopVerifier" "' + `$archive + '" --zip --require-sandbox >> "result.log" 2>&1')
+  if (`$LASTEXITCODE -ne 0) { throw "Standard user ZIP Desktop verification failed: `$LASTEXITCODE" }
 "@
   }
   $script = @"
@@ -91,7 +101,9 @@ catch {
   $credential = [PSCredential]::new("$env:COMPUTERNAME\$userName", $password)
   $child = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -ArgumentList "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$scriptPath`"" -WorkingDirectory $directory -Credential $credential -LoadUserProfile -WindowStyle Hidden -PassThru
   $null = $child.Handle
-  if (-not $child.WaitForExit($(if ($InstallerExecutable) { 540000 } else { 360000 }))) { throw 'Windows sandbox acceptance timed out.' }
+  $timeoutMs = $(if ($InstallerExecutable) { 540000 } else { 360000 })
+  if ($ZipArchive) { $timeoutMs += 720000 }
+  if (-not $child.WaitForExit($timeoutMs)) { throw 'Windows sandbox acceptance timed out.' }
   if ($child.ExitCode -ne 0) { throw "Windows sandbox acceptance failed: $($child.ExitCode). Report: $log" }
   if (-not (Test-Path -LiteralPath $log)) { throw 'Windows sandbox acceptance did not produce a report.' }
 }

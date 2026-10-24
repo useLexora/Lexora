@@ -21,7 +21,7 @@ const packageSteps = {
   deb: ['Ubuntu deb package', 'pnpm', ['--filter', '@uselexora/lexora-buddy', 'package:deb']],
   rpm: ['Fedora RPM package', 'pnpm', ['--filter', '@uselexora/lexora-buddy', 'package:rpm']],
   pacman: ['Arch Linux package', 'pnpm', ['--filter', '@uselexora/lexora-buddy', 'package:arch']],
-  nsis: ['Windows NSIS package', 'pnpm', ['--filter', '@uselexora/lexora-buddy', 'package:windows']],
+  nsis: ['Windows NSIS and ZIP packages', 'pnpm', ['--filter', '@uselexora/lexora-buddy', 'package:windows']],
 }
 
 export function createBuddyReleasePreflightSteps(stage = 'all', targetId = `${process.platform}-${process.arch}`) {
@@ -36,7 +36,7 @@ export function createBuddyReleasePreflightSteps(stage = 'all', targetId = `${pr
   const target = stage === 'all' ? platform.packageFormats[0] : stage === 'windows' ? 'nsis' : stage
   const steps = stage === 'all'
     ? [...platformQualitySteps, packageSteps[target], ['Test workspace', 'pnpm', ['--filter', '@uselexora/lexora-buddy', 'test']]]
-    : platform.packageFormats.includes(target)
+    : platform.packageFormats.includes(target) && packageSteps[target]
       ? [packageSteps[target]]
       : undefined
 

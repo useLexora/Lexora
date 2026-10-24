@@ -147,7 +147,7 @@ pub(super) fn remember(owner: &Sid, account: &Account, grants: &[Grant]) -> io::
             return Err(io::ErrorKind::InvalidInput.into());
         }
         let principals = match grant.access {
-            Access::Read | Access::DenyRead => vec![account.sid.clone()],
+            Access::Read | Access::Traverse | Access::DenyRead => vec![account.sid.clone()],
             Access::Write => vec![
                 account.group_sid.clone(),
                 filesystem::capability(&owner, grant),
@@ -165,6 +165,9 @@ pub(super) fn remember(owner: &Sid, account: &Account, grants: &[Grant]) -> io::
             changed = true;
             let mut grant = grant.clone();
             grant.exceptions.clear();
+            if matches!(grant.access, Access::Traverse) {
+                grant.access = Access::Read;
+            }
             Root {
                 grant,
                 principals: Vec::new(),
@@ -303,6 +306,18 @@ pub(super) fn update_denials(
     reconcile(&path, update, principal, grants, cancellation)
 }
 
+fn merged_denial<'a>(grant: &Grant, others: impl Iterator<Item = &'a Grant>) -> Grant {
+    let mut merged = grant.clone();
+    for other in others {
+        for exception in &other.exceptions {
+            if !merged.exceptions.contains(exception) {
+                merged.exceptions.push(exception.clone());
+            }
+        }
+    }
+    merged
+}
+
 fn reconcile(
     path: &Path,
     update: DenialUpdate<'_>,
@@ -326,7 +341,11 @@ fn reconcile(
     } else {
         previous.roots.clone()
     };
-    desired.extend(grants.iter().map(|grant| (key(grant), grant.clone())));
+    for grant in grants {
+        let key = key(grant);
+        let merged = merged_denial(grant, desired.get(&key).into_iter());
+        desired.insert(key, merged);
+    }
     if desired.is_empty() && previous.roots.is_empty() {
         return Ok(());
     }
@@ -334,7 +353,7 @@ fn reconcile(
     intent.extend(desired.clone());
     let changed = state
         .get(&scope)
-        .is_none_or(|old| old.principal != principal_text || old.roots.keys().ne(intent.keys()));
+        .is_none_or(|old| old.principal != principal_text || old.roots != intent);
     state.insert(
         scope.to_owned(),
         DenialScope {
@@ -348,8 +367,16 @@ fn reconcile(
     for grant in grants {
         cancellation.check()?;
         let file = filesystem::open_grant(grant)?;
-        filesystem::ensure_acl(
+        let key = key(grant);
+        let effective = merged_denial(
             grant,
+            state
+                .values()
+                .filter(|entry| entry.principal == principal_text)
+                .filter_map(|entry| entry.roots.get(&key)),
+        );
+        filesystem::ensure_acl(
+            &effective,
             &file,
             principal,
             filesystem::denial_mask(grant.access)?,
@@ -359,13 +386,24 @@ fn reconcile(
     }
     for (key, grant) in &previous.roots {
         cancellation.check()?;
-        if desired.contains_key(key)
-            || state.iter().any(|(other, entry)| {
-                other != &scope
-                    && entry.principal == principal_text
-                    && entry.roots.contains_key(key)
-            })
-        {
+        if desired.contains_key(key) {
+            continue;
+        }
+        let mut remaining = state
+            .iter()
+            .filter(|(other, entry)| *other != &scope && entry.principal == principal_text)
+            .filter_map(|(_, entry)| entry.roots.get(key));
+        if let Some(shared) = remaining.next() {
+            let effective = merged_denial(shared, remaining);
+            let file = filesystem::open_grant(&effective)?;
+            filesystem::ensure_acl(
+                &effective,
+                &file,
+                principal,
+                filesystem::denial_mask(effective.access)?,
+                DENY_ACCESS,
+                cancellation,
+            )?;
             continue;
         }
         let _lock = AclLock::for_root(grant, cancellation)?;

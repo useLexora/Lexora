@@ -17,11 +17,11 @@ const repoRoot = resolve(import.meta.dirname, '../../..')
 const { values } = parseArgs({ options: { target: { type: 'string' }, format: { type: 'string' } } })
 const target = values.format
 if (!target)
-  throw new Error('Usage: package-desktop.mjs --format deb|rpm|pacman|nsis|dmg [--target <os-architecture>]')
+  throw new Error('Usage: package-desktop.mjs --format deb|rpm|pacman|nsis|windows-zip|dmg|macos-zip [--target <os-architecture>]')
 const platform = resolveBuildTarget(values.target)
 requireNativeBuildTarget(platform)
 requirePackageFormat(platform, target)
-if (['dmg', 'zip'].includes(target))
+if (['dmg', 'macos-zip'].includes(target))
   requireMacosSigningEnvironment()
 
 const errors = verifyElectronBundle()
@@ -40,7 +40,7 @@ const result = spawnSync(process.execPath, [
   '--config',
   'electron-builder.config.cjs',
   `--${platform.builderPlatform}`,
-  target,
+  ['windows-zip', 'macos-zip'].includes(target) ? 'zip' : target,
   ...(target === 'dmg' ? ['zip'] : []),
   `--${platform.architecture}`,
   '--publish',
@@ -54,15 +54,15 @@ if (result.status !== 0)
 const packagePath = join(paths.package.desktop, artifact.name)
 if (target === 'dmg')
   notarizeMacosArtifact(packagePath)
-if (target === 'nsis')
+if (['nsis', 'windows-zip'].includes(target))
   verifyDesktopDirectory(join(paths.package.desktop, platform.architecture === CPU_ARCHITECTURE.X64 ? 'win-unpacked' : `win-${platform.architecture}-unpacked`), platform.id)
-else if (['dmg', 'zip'].includes(target))
+else if (['dmg', 'macos-zip'].includes(target))
   verifyDesktopDirectory(join(paths.package.desktop, `mac-${platform.architecture}/lexora-buddy.app`), platform.id)
 else
   verifyLinuxPackage(target, packagePath, repoRoot, platform.id)
 renameSync(packagePath, artifact.path)
 if (target === 'dmg') {
-  const zip = desktopArtifact(platform, 'zip', { cwd: repoRoot })
+  const zip = desktopArtifact(platform, 'macos-zip', { cwd: repoRoot })
   renameSync(join(paths.package.desktop, zip.name), zip.path)
 }
 writeOutput(artifact.path)

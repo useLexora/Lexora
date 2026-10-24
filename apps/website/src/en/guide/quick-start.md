@@ -13,7 +13,7 @@ Visit [GitHub Releases](https://github.com/useLexora/Lexora/releases/latest) and
 
 | System | Package |
 | --- | --- |
-| Windows x64 / ARM64 | .exe for your architecture |
+| Windows x64 / ARM64 | .exe installer or no-install .zip for your architecture |
 | Ubuntu / Debian x64 / ARM64 | .deb for your architecture |
 | Fedora 43 x64 / ARM64 | .rpm for your architecture |
 | Arch Linux x64 / Arch Linux ARM aarch64 | .pkg.tar.zst |
@@ -22,6 +22,12 @@ Visit [GitHub Releases](https://github.com/useLexora/Lexora/releases/latest) and
 Choose `x64` (`amd64` for .deb, `x86_64` for .rpm) for Intel / AMD computers, or `arm64` (`aarch64` for .rpm and Arch packages) for ARM computers. The native Linux pet is optional company, not a requirement for completing tasks.
 
 Install RPMs with `sudo dnf install ./Lexora-Buddy-<version>-linux-<architecture>.rpm`. Verify a downloaded package using its Release `.sha256` file with `sha256sum -c <package-filename>.sha256`.
+
+### Windows no-install edition
+
+Download the ZIP for your architecture, extract it completely into a local folder, and run `Lexora Buddy.exe`. This edition uses your account's existing data location, including a directory you selected in Settings; it does not automatically store data beside the executable.
+
+To update, extract the new ZIP into a new folder, quit Lexora, then launch the new version. Do not overwrite a running copy. If you use launch at login, turn it off and back on in Settings after moving the program folder. Sandboxed commands still require installing the sandbox component with UAC authorization when prompted. Deleting the program folder does not remove your data or that component.
 
 ### First macOS installation
 

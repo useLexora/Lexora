@@ -26,7 +26,7 @@ export interface DesktopUpdateNotification {
 }
 
 export type DesktopUpdateDeliveryMode = 'restart' | 'open-package' | 'manual' | 'release'
-export type DesktopUpdateDeliveryReason = 'metadata-required' | 'signature-required' | 'system-package' | 'asset-unavailable' | 'distribution-unavailable' | 'installer-unavailable' | null
+export type DesktopUpdateDeliveryReason = 'metadata-required' | 'signature-required' | 'portable-package' | 'system-package' | 'asset-unavailable' | 'distribution-unavailable' | 'installer-unavailable' | null
 export type DesktopUpdateFailureKind = 'download' | 'verification' | 'storage' | 'timeout'
 
 export interface DesktopUpdateDeliveryState {

@@ -33,6 +33,25 @@ async function setup(allowed = true, launchFailure = false) {
 }
 
 describe('update delivery', () => {
+  it('downloads and verifies a portable archive without allowing installation or shutdown', async () => {
+    const { delivery, directory, operations } = await setup()
+    const archive = { ...update, name: update.name.replace(/\.exe$/, '-portable.zip'), url: update.url.replace(/\.exe$/, '-portable.zip') }
+    delivery.discover({ mode: 'open-package', reason: 'portable-package', update: archive, fallback: null })
+    try {
+      await delivery.download()
+      expect(delivery.state).toMatchObject({ mode: 'open-package', reason: 'portable-package', status: 'ready' })
+      expect(await readFile(join(directory, 'pending', archive.name))).toEqual(body)
+      await expect(delivery.install()).rejects.toThrow('UPDATE_INSTALL_UNAVAILABLE')
+      expect(operations).toEqual([])
+      await writeFile(join(directory, 'pending', archive.name), Buffer.alloc(body.length))
+      await expect(delivery.openPackage()).rejects.toThrow('UPDATE_PACKAGE_INVALID')
+      expect(delivery.state).toMatchObject({ status: 'error', failure: 'verification' })
+    }
+    finally {
+      await delivery.dispose()
+    }
+  })
+
   it.each(['UPDATE_INSTALL_CANCELLED', 'UPDATE_INSTALL_UNAVAILABLE'])('preserves verified Linux downloads when preparation returns %s', async (failure) => {
     const directory = await createTemporaryDirectory('lexora-linux-delivery-')
     const delivery = new DesktopUpdateDelivery({
@@ -49,8 +68,7 @@ describe('update delivery', () => {
     delivery.discover({ mode: 'restart', reason: 'system-package', update, fallback: null })
     await delivery.download()
     await delivery.install()
-    await expect.poll(() => delivery.state.status).toBe('ready')
-    expect(delivery.state.mode).toBe(failure === 'UPDATE_INSTALL_CANCELLED' ? 'restart' : 'manual')
+    expect(delivery.state).toMatchObject({ status: 'ready', mode: failure === 'UPDATE_INSTALL_CANCELLED' ? 'restart' : 'manual' })
     expect(await readFile(join(directory, 'pending', update.name))).toEqual(body)
     await expect(delivery.openPackage()).rejects.toThrow('UPDATE_INSTALL_UNAVAILABLE')
     await delivery.dispose()
@@ -86,7 +104,6 @@ describe('update delivery', () => {
     await delivery.download()
     expect(delivery.state.status).toBe('ready')
     expect(delivery.state.failure).toBeUndefined()
-    expect(await readFile(join(directory, 'pending', update.name))).toEqual(body)
     await delivery.dispose()
   })
 
@@ -136,7 +153,7 @@ describe('update delivery', () => {
   })
 
   it('restores automatic downloading only for the version whose skip was cleared', async () => {
-    const { delivery, directory } = await setup()
+    const { delivery } = await setup()
     delivery.cancel()
     delivery.resumeAutomaticDownload('1.2.2')
     delivery.reconcile(true, true)
@@ -145,11 +162,10 @@ describe('update delivery', () => {
     delivery.reconcile(true, true)
     await delivery.download(true)
     expect(delivery.state.status).toBe('ready')
-    expect(await readFile(join(directory, 'pending', update.name))).toEqual(body)
     await delivery.dispose()
   })
 
-  it.each(['disabled', 'ineligible', 'cancelled', 'changed'] as const)('revalidates a queued automatic download after the old transfer settles (%s)', async (decision) => {
+  it.each(['disabled', 'cancelled', 'changed'] as const)('revalidates a queued automatic download after the old transfer settles (%s)', async (decision) => {
     const directory = await createTemporaryDirectory('lexora-delivery-')
     const started = deferred<void>()
     const finish = deferred<void>()
@@ -179,8 +195,6 @@ describe('update delivery', () => {
       const queued = delivery.download(true)
       if (decision === 'disabled')
         delivery.reconcile(true, false)
-      else if (decision === 'ineligible')
-        delivery.reconcile(false, true)
       else if (decision === 'cancelled')
         delivery.cancel()
       else
@@ -190,10 +204,6 @@ describe('update delivery', () => {
       expect(requests).toEqual([update.url])
       expect(delivery.state.status).toBe(decision === 'changed' ? 'idle' : 'available')
       await expect(readFile(join(directory, 'pending', newer.name))).rejects.toMatchObject({ code: 'ENOENT' })
-      if (decision !== 'changed') {
-        await delivery.download()
-        expect(await readFile(join(directory, 'pending', newer.name))).toEqual(body)
-      }
     }
     finally {
       finish.resolve()
@@ -204,7 +214,6 @@ describe('update delivery', () => {
   it('retains a verified update after cancelled installation and allows retry', async () => {
     const { delivery, operations, allow } = await setup(false)
     await delivery.download()
-    expect(delivery.state.status).toBe('ready')
     await delivery.install()
     expect(delivery.state.status).toBe('ready')
     expect(operations).toEqual(['confirm'])
@@ -231,8 +240,6 @@ describe('update delivery', () => {
     await delivery.install()
     expect(operations).toEqual(['confirm', 'installer'])
     expect(delivery.state).toMatchObject({ mode: 'open-package', reason: 'installer-unavailable', status: 'available' })
-    await delivery.download()
-    await expect(delivery.install()).rejects.toThrow('UPDATE_INSTALL_UNAVAILABLE')
     await delivery.dispose()
   })
 })

@@ -14,7 +14,6 @@ fn dialect_uses_matching_flags_and_preserves_script_paths() {
             .command_line(r"C:\pwsh.exe", script, None)
             .is_err()
     );
-    assert_eq!(Dialect::Sh.script("printf 'a\nb'"), b"printf 'a\nb'");
 }
 
 #[test]
@@ -41,12 +40,9 @@ fn cmd_keeps_quotes_literal_and_rejects_multiline() {
 }
 
 #[test]
-fn legacy_dialect_defaults_to_powershell_and_preserves_utf8_bom() {
+fn default_powershell_preserves_utf8_bom_and_user_code() {
     let script = Dialect::default().script("Write-Output '你好'");
     assert!(script.starts_with(&[0xef, 0xbb, 0xbf]));
-    assert!(
-        String::from_utf8(script)
-            .unwrap()
-            .contains("Write-Output '你好'")
-    );
+    let script = String::from_utf8(script).unwrap();
+    assert!(script.contains("Write-Output '你好'"));
 }

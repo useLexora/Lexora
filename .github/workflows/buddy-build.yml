@@ -448,7 +448,12 @@ jobs:
           node packaging/buddy/release/targets.mjs --target "${{ matrix.target }}" --github-output "$GITHUB_OUTPUT"
           node packaging/buddy/release/artifacts.mjs --format nsis --github-output "$GITHUB_OUTPUT"
 
-      - name: Build Windows package
+      - name: Resolve Windows ZIP artifact
+        id: zip
+        shell: bash
+        run: node packaging/buddy/release/artifacts.mjs --format windows-zip --github-output "$GITHUB_OUTPUT"
+
+      - name: Build Windows packages
         run: pnpm --filter @uselexora/lexora-buddy package:windows
 
       - name: Test platform runtime
@@ -482,24 +487,31 @@ jobs:
         timeout-minutes: 3
         run: node packaging/buddy/ci/verify-windows-install.mjs "$env:BUDDY_INSTALL_DIRECTORY"
 
+      - name: Smoke Windows ZIP before sandbox setup
+        timeout-minutes: 12
+        run: node packaging/buddy/ci/verify-windows-install.mjs '${{ steps.zip.outputs.path }}' --zip
+
       - name: Build Windows sandbox acceptance fixture
         run: cargo build --locked --release --manifest-path apps/buddy/native/Cargo.toml --target-dir apps/buddy/.output/build/native --package lexora-buddy-host --example sandbox-adversary --target ${{ steps.package.outputs.rust-target }}
 
-      - name: Verify installed sandbox with a standard user
-        timeout-minutes: 12
+      - name: Verify NSIS and ZIP sandbox with a standard user
+        timeout-minutes: 24
         run: >-
           ./packaging/buddy/release/verify-windows-sandbox.ps1
           -SandboxExecutable "$env:BUDDY_INSTALL_DIRECTORY/resources/native-host/lexora-buddy-sandbox.exe"
           -AdversaryExecutable ./apps/buddy/.output/build/native/${{ steps.package.outputs.rust-target }}/release/examples/sandbox-adversary.exe
           -InstallerExecutable "${{ steps.package.outputs.path }}"
+          -ZipArchive "${{ steps.zip.outputs.path }}"
           -InstallComponent
 
-      - name: Upload verified Windows package
+      - name: Upload verified Windows packages
         if: inputs.upload-artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.package.outputs.artifact }}
-          path: ${{ steps.package.outputs.path }}
+          path: |
+            ${{ steps.package.outputs.path }}
+            ${{ steps.zip.outputs.path }}
           if-no-files-found: error
           include-hidden-files: true
           compression-level: 0

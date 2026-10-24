@@ -202,6 +202,66 @@ nativeTest.test('Windows restricted-token behavior and known limits', { skip: pr
       assert.equal(readable.exitCode, 0, JSON.stringify(readable))
       assert.equal(readable.output, 'LATE_CREDENTIAL_FIXTURE')
     })
+    await t.test('managed provider cwd uses metadata-only ancestors without exposing private siblings', async () => {
+      const buddy = join(root, 'private-buddy')
+      await mkdir(buddy)
+      const { stdout: owner } = await execFileAsync(join(process.env.ProgramFiles, 'PowerShell', '7', 'pwsh.exe'), ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '[Security.Principal.WindowsIdentity]::GetCurrent().User.Value'])
+      const ownerSid = owner.trim()
+      assert.match(ownerSid, /^S-1-5-21-(?:\d+-){3}\d+$/)
+      await setFixtureAcl(buddy, `D:P(A;OICI;FA;;;${ownerSid})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)`)
+      const managed = join(buddy, 'conversations', '中文 [managed]\'task', 'workspace')
+      const sibling = join(buddy, 'credentials')
+      await Promise.all([managed, sibling].map(path => mkdir(path, { recursive: true })))
+      const privateFile = join(sibling, 'token.txt')
+      const ancestorFile = join(dirname(managed), 'conversation.json')
+      const existing = join(managed, 'host-owned.txt')
+      await writeFile(privateFile, 'PRIVATE_SIBLING_CONTENT')
+      await writeFile(ancestorFile, 'PRIVATE_CONVERSATION_CONTENT')
+      await writeFile(existing, 'HOST_CONTENT')
+      const denied = { path: buddy, access: 'denyRead', exceptions: [managed] }
+      const ancestors = [buddy, dirname(dirname(managed)), dirname(managed)]
+      for (const permission of ['read', 'write', 'read']) {
+        const relative = `relative-${permission}.txt`
+        const command = `$r=@{cwd=$PWD.ProviderPath;processCwd=[Environment]::CurrentDirectory}; $r.ancestors=@(${ancestors.map(path => `(Get-Item -LiteralPath ${quote(path)} -Force -ErrorAction Stop).FullName`).join(',')}); foreach($target in @(@{key='private';path=${quote(privateFile)}},@{key='ancestorFile';path=${quote(ancestorFile)}})){try{$r[$target.key]=Get-Content -LiteralPath $target.path -Raw -ErrorAction Stop}catch{$r[$target.key]='denied'}}; foreach($target in @(@{key='rootListing';path=${quote(buddy)}},@{key='parentListing';path=${quote(dirname(managed))}},@{key='siblingListing';path=${quote(sibling)}})){try{$null=Get-ChildItem -LiteralPath $target.path -Force -ErrorAction Stop;$r[$target.key]='allowed'}catch{$r[$target.key]='denied'}}; try{Set-Content -LiteralPath ${quote(relative)} -Value 'RELATIVE_CONTENT' -NoNewline -ErrorAction Stop;$r.relative=Get-Content -LiteralPath ${quote(relative)} -Raw -ErrorAction Stop}catch{$r.relative='denied'}; try{Set-Content -LiteralPath 'host-owned.txt' -Value 'UPDATED' -NoNewline -ErrorAction Stop;$r.existing='allowed'}catch{$r.existing='denied'}; try{Set-Content -LiteralPath '../outside.txt' -Value 'BAD' -ErrorAction Stop;$r.outside='allowed'}catch{$r.outside='denied'}; [Console]::Out.Write(($r|ConvertTo-Json -Compress))`
+        const result = await execute({ command, workspace: managed, port: proxy.port, grants: [{ path: managed, access: permission }, denied] })
+        assert.equal(result.exitCode, 0, JSON.stringify(result))
+        const observations = JSON.parse(result.output)
+        assert.deepEqual(observations, {
+          cwd: managed,
+          processCwd: managed,
+          ancestors,
+          private: 'denied',
+          ancestorFile: 'denied',
+          rootListing: 'denied',
+          parentListing: 'denied',
+          siblingListing: 'denied',
+          relative: permission === 'write' ? 'RELATIVE_CONTENT' : 'denied',
+          existing: permission === 'write' ? 'allowed' : 'denied',
+          outside: 'denied',
+        })
+        if (permission === 'write')
+          assert.equal(await readFile(join(managed, relative), 'utf8'), 'RELATIVE_CONTENT')
+        else
+          await assert.rejects(access(join(managed, relative)), { code: 'ENOENT' })
+      }
+      assert.equal(await readFile(existing, 'utf8'), 'UPDATED')
+      assert.equal(await readFile(privateFile, 'utf8'), 'PRIVATE_SIBLING_CONTENT')
+      assert.equal(await readFile(ancestorFile, 'utf8'), 'PRIVATE_CONVERSATION_CONTENT')
+      await assert.rejects(access(join(dirname(managed), 'outside.txt')), { code: 'ENOENT' })
+    })
+    await t.test('unavailable provider cwd fails before executing the user command', async () => {
+      const blocked = join(root, 'blocked-cwd')
+      const cwd = join(blocked, 'workspace')
+      await mkdir(cwd, { recursive: true })
+      const result = await execute({
+        command: '[Console]::Out.Write(\'USER_COMMAND_EXECUTED\')',
+        workspace: cwd,
+        port: proxy.port,
+        grants: [{ path: root, access: 'read' }, { path: blocked, access: 'denyRead' }],
+      })
+      assert.notEqual(result.exitCode, 0, JSON.stringify(result))
+      assert(!result.output.includes('USER_COMMAND_EXECUTED'), JSON.stringify(result))
+    })
     await t.test('records the known ACL limit for host-owned Everyone-writable files outside current capabilities', async () => {
       const file = join(root, 'host-owned-public.txt')
       await writeFile(file, 'HOST_OWNED')
@@ -274,7 +334,6 @@ foreach($target in @(@{key='proxy';host='127.0.0.1';port=${proxy.port}},@{key='o
 [Console]::Out.Write(($r | ConvertTo-Json -Compress))
 `
       const result = await execute({ command, workspace, port: proxy.port, grants: [{ path: workspace, access: 'write' }, { path: secret, access: 'denyRead' }] })
-      await writeFile(join(root, 'report.json'), JSON.stringify(result, null, 2))
       assert.equal(result.exitCode, 0, JSON.stringify(result))
       assert.deepEqual(JSON.parse(result.output), { outside: 'OUTSIDE_PRIVATE_FIXTURE', secret: 'denied', proxy: 'connected', otherPort: 'connected', ipv6: 'connected', nonLoopback: 'denied' })
       assert.equal(await readFile(join(workspace, 'result.txt'), 'utf8'), 'WORKSPACE_WRITE_FIXTURE')
@@ -341,7 +400,6 @@ $r.read=(Get-Content -LiteralPath ${quote(join(workspace, 'roundtrip.txt'))} -Ra
 try { Remove-Item -LiteralPath ${quote(join(workspace, 'result.txt'))}; $r.removed=$true } catch { $r.removed=$false; $r.removeError=$_.Exception.Message }
 [Console]::Out.Write(($r | ConvertTo-Json -Compress))
 `, workspace, port: proxy.port, grants: [{ path: workspace, access: 'write' }, { path: secret, access: 'denyRead' }] })
-      await writeFile(join(root, 'compatibility.json'), JSON.stringify(compatibility, null, 2))
       assert.equal(compatibility.exitCode, 0, JSON.stringify(compatibility))
       const tools = JSON.parse(compatibility.output)
       assert.equal(tools.cwd?.toLowerCase(), workspace.toLowerCase(), JSON.stringify(tools))
@@ -423,7 +481,6 @@ if (process.argv[2] === 'child') {
       const adversary = join(workspace, 'sandbox-adversary.exe')
       await copyFile(adversaryExecutable, adversary)
       const attack = await execute({ command: `$info=[Diagnostics.ProcessStartInfo]::new();$info.FileName=${quote(adversary)};$info.Arguments=${quote(`"${secret}"`)};$info.UseShellExecute=$false;$info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true;$info.CreateNoWindow=$true;try {$child=[Diagnostics.Process]::Start($info);$output=$child.StandardOutput.ReadToEnd();$errors=$child.StandardError.ReadToEnd();$child.WaitForExit();$r=@{output=$output;code=$child.ExitCode;errors=$errors}}catch{$r=@{errors=$_.Exception.ToString()}};[Console]::Out.Write(($r|ConvertTo-Json -Compress))`, workspace, port: proxy.port, grants: [{ path: workspace, access: 'write' }, { path: secret, access: 'denyRead' }] })
-      await writeFile(join(root, 'token-restriction.json'), JSON.stringify(attack, null, 2))
       assert.equal(attack.exitCode, 0, JSON.stringify(attack))
       const probe = JSON.parse(attack.output)
       assert.equal(probe.code, 0, attack.output)
@@ -459,7 +516,6 @@ if (process.argv[2] === 'child') {
       })
       assert.equal(result.exitCode, 0, JSON.stringify(result))
       const probes = JSON.parse(result.output)
-      await writeFile(join(root, 'ancestor-access.json'), JSON.stringify(probes, null, 2))
       for (const path of ancestors) {
         const { queryAttributes, readAttributes, listDirectory, ...denied } = probes[path]
         t.diagnostic(`Ancestor attributes ${path}: query=${queryAttributes}, handle=${readAttributes}`)

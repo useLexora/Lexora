@@ -55,7 +55,7 @@ impl Dialect {
 
     pub(super) fn script(self, command: &str) -> Vec<u8> {
         if self == Self::Powershell {
-            format!("\u{feff}try {{ [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 }} catch {{}}\n{command}\nif (-not $?) {{ if ($LASTEXITCODE) {{ exit $LASTEXITCODE }} else {{ exit 1 }} }}\n").into_bytes()
+            format!("\u{feff}try {{ [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 }} catch {{}}\ntry {{ Microsoft.PowerShell.Management\\Set-Location -LiteralPath ([Environment]::CurrentDirectory) -ErrorAction Stop }} catch {{ [Console]::Error.WriteLine($_); exit 1 }}\n{command}\nif (-not $?) {{ if ($LASTEXITCODE) {{ exit $LASTEXITCODE }} else {{ exit 1 }} }}\n").into_bytes()
         } else {
             command.as_bytes().to_vec()
         }

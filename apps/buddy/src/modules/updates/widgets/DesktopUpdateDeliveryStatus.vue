@@ -30,7 +30,7 @@ const description = computed(() => {
   if (state.status === 'downloading')
     return state.totalBytes ? t('desktop.update.downloadProgress', { received: formatFileSize(state.downloadedBytes ?? 0), total: formatFileSize(state.totalBytes) }) : t('desktop.update.downloading')
   if (state.mode === 'open-package')
-    return t('desktop.update.manualInstallation')
+    return t(state.reason === 'portable-package' ? 'desktop.update.portableInstallation' : 'desktop.update.manualInstallation')
   if (state.mode === 'manual')
     return t(state.reason === 'installer-unavailable' ? 'desktop.update.installStepsFailed' : 'desktop.update.systemPackage')
   if (state.status === 'ready')

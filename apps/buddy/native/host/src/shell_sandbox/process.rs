@@ -63,8 +63,9 @@ pub(super) fn run() -> io::Result<i32> {
     if bytes.len() > 2 * 1024 * 1024 || bytes.last() != Some(&b'\n') {
         return Err(io::ErrorKind::InvalidInput.into());
     }
-    let request: Request = serde_json::from_slice(&bytes)?;
+    let mut request: Request = serde_json::from_slice(&bytes)?;
     validate(&request)?;
+    super::filesystem::add_traversal_grants(&mut request.grants)?;
     request.launch.validate()?;
     let (preparation, account, group, job) = at(
         "job",
@@ -217,7 +218,8 @@ pub(super) fn prepare() -> io::Result<i32> {
     if bytes.len() > 2 * 1024 * 1024 || bytes.last() != Some(&b'\n') {
         return Err(io::ErrorKind::InvalidInput.into());
     }
-    let request: Preparation = serde_json::from_slice(&bytes)?;
+    let mut request: Preparation = serde_json::from_slice(&bytes)?;
+    super::filesystem::add_traversal_grants(&mut request.grants)?;
     if request.background {
         use windows_sys::Win32::System::Threading::{
             PROCESS_MODE_BACKGROUND_BEGIN, SetPriorityClass,

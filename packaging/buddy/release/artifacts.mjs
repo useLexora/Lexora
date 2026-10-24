@@ -10,12 +10,13 @@ import { readBuddyProductMetadata } from './release-metadata.mjs'
 import { requirePackageFormat, resolveBuildTarget } from './targets.mjs'
 
 const formats = {
-  deb: { directory: 'desktop', artifact: 'lexora-buddy-ubuntu' },
-  rpm: { directory: 'rpm', artifact: 'lexora-buddy-fedora' },
-  pacman: { directory: 'arch', artifact: 'lexora-buddy-arch' },
-  nsis: { directory: 'windows', artifact: 'lexora-buddy-windows' },
-  zip: { directory: 'macos', artifact: 'lexora-buddy-macos' },
-  dmg: { directory: 'macos', artifact: 'lexora-buddy-macos' },
+  'deb': { directory: 'desktop', artifact: 'lexora-buddy-ubuntu' },
+  'rpm': { directory: 'rpm', artifact: 'lexora-buddy-fedora' },
+  'pacman': { directory: 'arch', artifact: 'lexora-buddy-arch' },
+  'nsis': { directory: 'windows', artifact: 'lexora-buddy-windows' },
+  'windows-zip': { directory: 'windows', artifact: 'lexora-buddy-windows' },
+  'macos-zip': { directory: 'macos', artifact: 'lexora-buddy-macos' },
+  'dmg': { directory: 'macos', artifact: 'lexora-buddy-macos' },
 }
 
 export const releasePackages = [
@@ -27,8 +28,10 @@ export const releasePackages = [
   { targetId: 'linux-arm64', format: 'pacman' },
   { targetId: 'win32-x64', format: 'nsis' },
   { targetId: 'win32-arm64', format: 'nsis' },
+  { targetId: 'win32-x64', format: 'windows-zip' },
+  { targetId: 'win32-arm64', format: 'windows-zip' },
   { targetId: 'darwin-arm64', format: 'dmg' },
-  { targetId: 'darwin-arm64', format: 'zip' },
+  { targetId: 'darwin-arm64', format: 'macos-zip' },
 ]
 
 export function desktopArtifactName(target, format, version) {

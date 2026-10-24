@@ -8,8 +8,8 @@ import definitions from '../../../apps/buddy/shared/platform/definitions.json' w
 
 const packaging = {
   linux: { builderPlatform: 'linux', packageFormats: ['deb', 'rpm', 'pacman'] },
-  win32: { builderPlatform: 'win', packageFormats: ['nsis'] },
-  darwin: { builderPlatform: 'mac', packageFormats: ['dmg', 'zip'], minimumSystemVersion: '15.0' },
+  win32: { builderPlatform: 'win', packageFormats: ['nsis', 'windows-zip'] },
+  darwin: { builderPlatform: 'mac', packageFormats: ['dmg', 'macos-zip'], minimumSystemVersion: '15.0' },
 }
 
 export function resolveBuildTarget(id = `${process.platform}-${process.arch}`) {

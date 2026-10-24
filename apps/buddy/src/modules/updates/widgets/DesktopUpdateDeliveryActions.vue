@@ -52,7 +52,7 @@ const verifying = computed(() => supported.value && props.delivery?.status === '
     {{ t('desktop.update.viewInstallSteps') }}
   </NButton>
   <NButton v-else-if="ready" :aria-labelledby="labelId" type="primary" :disabled="pending" @click="emit('openPackage')">
-    <span :id="labelId">{{ t('desktop.update.openPackage') }}</span>
+    <span :id="labelId">{{ t(delivery?.reason === 'portable-package' ? 'desktop.update.openArchive' : 'desktop.update.openPackage') }}</span>
   </NButton>
   <NButton v-else-if="supported" :aria-labelledby="labelId" type="primary" :loading="pending" @click="emit('download')">
     <span :id="labelId">{{ t(delivery?.status === 'error' ? 'desktop.update.retryDownload' : 'desktop.update.downloadInApp') }}</span>

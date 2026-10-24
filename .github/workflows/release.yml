@@ -211,6 +211,7 @@ jobs:
             ${{ github.workspace }}/apps/buddy/.output/artifacts/rpm/*.rpm
             ${{ github.workspace }}/apps/buddy/.output/artifacts/arch/*.pkg.tar.zst
             ${{ github.workspace }}/apps/buddy/.output/artifacts/windows/*.exe
+            ${{ github.workspace }}/apps/buddy/.output/artifacts/windows/*.zip
             ${{ github.workspace }}/apps/buddy/.output/artifacts/macos/*.dmg
             ${{ github.workspace }}/apps/buddy/.output/artifacts/macos/*.zip
             ${{ github.workspace }}/apps/buddy/.output/artifacts/**/*.sha256

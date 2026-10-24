@@ -14,7 +14,7 @@ description: "从安装 Lexora、连接模型到完成第一个任务。包含 W
 
 | 系统 | 安装包 |
 | --- | --- |
-| Windows x64 / ARM64 | 对应架构的 .exe |
+| Windows x64 / ARM64 | 对应架构的 .exe 安装版或 .zip 免安装版 |
 | Ubuntu / Debian x64 / ARM64 | 对应架构的 .deb |
 | Fedora 43 x64 / ARM64 | 对应架构的 .rpm |
 | Arch Linux x64 / Arch Linux ARM aarch64 | .pkg.tar.zst |
@@ -23,6 +23,12 @@ description: "从安装 Lexora、连接模型到完成第一个任务。包含 W
 Intel / AMD 电脑选择 `x64`（.deb 标为 `amd64`，.rpm 标为 `x86_64`），ARM 电脑选择 `arm64`（.rpm 和 Arch 包标为 `aarch64`）。Linux 的原生桌宠可作为陪伴使用，不是完成任务的前提。
 
 RPM 安装：`sudo dnf install ./Lexora-Buddy-<版本>-linux-<架构>.rpm`。Release 中的 `.sha256` 文件可用 `sha256sum -c <安装包文件名>.sha256` 校验。
+
+### Windows 免安装版
+
+下载对应架构的 ZIP，完整解压到本地目录后运行 `Lexora Buddy.exe`。免安装版沿用当前账户的数据位置，也会使用你已在设置中选择的数据目录；数据不会自动放在程序旁边。
+
+更新时将新版 ZIP 解压到新目录，退出当前 Lexora 后再启动新版，不要覆盖正在运行的程序。移动程序目录后，如使用开机启动，请在设置中重新关闭再开启。隔离命令仍需按应用提示安装沙盒组件并授权 UAC；删除程序目录不会删除用户数据或该组件。
 
 ### macOS 首次安装
 

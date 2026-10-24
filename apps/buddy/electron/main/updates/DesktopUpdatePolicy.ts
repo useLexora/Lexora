@@ -58,12 +58,14 @@ export class DesktopUpdatePolicy {
     const { format, architecture, signing } = distribution
     const fallback = selectDesktopUpdatePackage(release, version, architecture, format)
     if (format === 'dmg' && signing === 'developer-id') {
-      const zip = selectDesktopUpdatePackage(release, version, architecture, 'zip')
+      const zip = selectDesktopUpdatePackage(release, version, architecture, 'macos-zip')
       if (zip && fallback)
         return { mode: 'restart', reason: null, update: zip, fallback }
     }
     if (!fallback)
       return { mode: 'release', reason: 'asset-unavailable', update: null, fallback: null }
+    if (format === 'windows-zip')
+      return { mode: 'open-package', reason: 'portable-package', update: fallback, fallback: null }
     if (['deb', 'rpm', 'pacman'].includes(format)) {
       const failed = this.linuxInstallation.failedVersion === version
       return { mode: this.linuxInstallation.available && !failed ? 'restart' : 'manual', reason: failed ? 'installer-unavailable' : 'system-package', update: fallback, fallback: null }

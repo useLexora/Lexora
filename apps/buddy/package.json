@@ -35,7 +35,7 @@
     "package:deb": "pnpm build:desktop && node ../../packaging/buddy/release/package-desktop.mjs --format deb",
     "package:rpm": "pnpm build:desktop && node ../../packaging/buddy/release/package-desktop.mjs --format rpm",
     "package:macos": "pnpm build:desktop && node ../../packaging/buddy/release/package-desktop.mjs --format dmg",
-    "package:windows": "pnpm build:desktop && node ../../packaging/buddy/release/package-desktop.mjs --format nsis",
+    "package:windows": "pnpm build:desktop && node ../../packaging/buddy/release/package-desktop.mjs --format nsis && node ../../packaging/buddy/release/package-desktop.mjs --format windows-zip",
     "package:pet": "pnpm build:native-pet:release && node ../../packaging/buddy/release/package-pet.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

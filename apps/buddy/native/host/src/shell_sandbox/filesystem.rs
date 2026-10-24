@@ -40,7 +40,7 @@ use super::security::{
 };
 use crate::windows_security::{Sid, process_user_sid};
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct Grant {
     pub(super) path: String,
@@ -57,10 +57,11 @@ fn inherited() -> bool {
     true
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(super) enum Access {
     Read,
+    Traverse,
     Write,
     DenyRead,
     DenyWrite,
@@ -91,6 +92,51 @@ pub(super) fn capability(owner: &str, grant: &Grant) -> String {
         .map(|part| u32::from_le_bytes(*part).to_string())
         .collect();
     format!("S-1-5-21-{}", parts.join("-"))
+}
+
+const DIRECTORY_METADATA: u32 = FILE_READ_ATTRIBUTES
+    | windows_sys::Win32::Storage::FileSystem::FILE_TRAVERSE
+    | windows_sys::Win32::Storage::FileSystem::SYNCHRONIZE;
+
+pub(super) fn add_traversal_grants(grants: &mut Vec<Grant>) -> io::Result<()> {
+    let mut ancestors = std::collections::BTreeMap::new();
+    for denied in grants
+        .iter()
+        .filter(|grant| matches!(grant.access, Access::DenyRead))
+    {
+        for exception in &denied.exceptions {
+            if !super::policy::contains(&denied.path, exception)
+                || super::policy::contains(exception, &denied.path)
+                || !grants.iter().any(|grant| {
+                    matches!(grant.access, Access::Read | Access::Write)
+                        && super::policy::contains(&grant.path, exception)
+                        && super::policy::contains(exception, &grant.path)
+                })
+            {
+                return Err(io::ErrorKind::InvalidInput.into());
+            }
+            for path in Path::new(exception).ancestors().skip(1) {
+                let path = path.to_str().ok_or(io::ErrorKind::InvalidInput)?;
+                if !super::policy::contains(&denied.path, path) {
+                    break;
+                }
+                if ancestors.contains_key(&path.to_uppercase()) {
+                    continue;
+                }
+                let mut grant = inspect(path, Access::Traverse)?;
+                grant.inherit = false;
+                if !open_grant(&grant)?.metadata()?.is_dir() {
+                    return Err(io::ErrorKind::InvalidInput.into());
+                }
+                ancestors.insert(path.to_uppercase(), grant);
+                if grants.len() + ancestors.len() > 1024 {
+                    return Err(io::ErrorKind::InvalidInput.into());
+                }
+            }
+        }
+    }
+    grants.extend(ancestors.into_values());
+    Ok(())
 }
 
 pub(super) fn denial_mask(access: Access) -> io::Result<u32> {
@@ -261,6 +307,19 @@ impl Grants {
                         return Err(error);
                     }
                 }
+                Access::Traverse => {
+                    if grant.inherit || !file.metadata()?.is_dir() {
+                        return Err(io::ErrorKind::InvalidInput.into());
+                    }
+                    ensure_acl(
+                        grant,
+                        file,
+                        user,
+                        DIRECTORY_METADATA,
+                        GRANT_ACCESS,
+                        cancellation,
+                    )?;
+                }
                 Access::DenyWrite => {
                     for (root, _, cap) in &caps {
                         if super::policy::contains(&root.path, &grant.path) {
@@ -310,7 +369,8 @@ fn ensure_acl_inner(
         DENY_ACCESS, SE_FILE_OBJECT, SetSecurityInfo,
     };
     use windows_sys::Win32::Security::{
-        ACCESS_ALLOWED_ACE, ACE_HEADER, EqualSid, GetAce, INHERITED_ACE,
+        ACCESS_ALLOWED_ACE, ACE_HEADER, DeleteAce, EqualSid, GetAce, INHERIT_ONLY_ACE,
+        INHERITED_ACE,
     };
     use windows_sys::Win32::System::SystemServices::{
         ACCESS_ALLOWED_ACE_TYPE, ACCESS_DENIED_ACE_TYPE,
@@ -330,6 +390,18 @@ fn ensure_acl_inner(
     } else {
         0
     };
+    let replace_denial = mode == DENY_ACCESS && matches!(grant.access, Access::DenyRead);
+    // Descendants retain the full denial: FILE_TRAVERSE is FILE_EXECUTE on files.
+    let rules = if replace_denial && !grant.exceptions.is_empty() && file.metadata()?.is_dir() {
+        let mut rules = vec![(mask & !DIRECTORY_METADATA, 0)];
+        if grant.inherit {
+            rules.push((mask, inheritance | INHERIT_ONLY_ACE));
+        }
+        rules
+    } else {
+        vec![(mask, inheritance)]
+    };
+    let mut owned_denials = Vec::new();
     let mut descriptor = read_dacl_descriptor(file)?;
     let mut dacl = ptr::null_mut();
     let mut present = 0;
@@ -363,8 +435,19 @@ fn ensure_acl_inner(
         }
         // SAFETY: This is a simple allow/deny ACE, whose mask and SID immediately follow its header.
         let ace = unsafe { &*entry.cast::<ACCESS_ALLOWED_ACE>() };
+        if replace_denial {
+            if u32::from(header.AceFlags) & INHERITED_ACE == 0
+                // SAFETY: Both SIDs have live backing storage and this is a simple DENY ACE.
+                && unsafe { EqualSid(ptr::from_ref(&ace.SidStart).cast_mut().cast(), sid.as_ptr()) }
+                    != 0
+            {
+                owned_denials.push((index, ace.Mask, u32::from(header.AceFlags)));
+            }
+            continue;
+        }
         if !interrupted
             && u32::from(ace.Header.AceFlags) & INHERITED_ACE == 0
+            && u32::from(ace.Header.AceFlags) & INHERIT_ONLY_ACE == 0
             && (!grant.inherit || u32::from(ace.Header.AceFlags) & (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE) == inheritance)
             && ace.Mask & mask == mask
             // SAFETY: Only simple allow/deny ACEs reach this comparison; their SidStart is a complete variable-sized SID.
@@ -373,32 +456,57 @@ fn ensure_acl_inner(
             return Ok(());
         }
     }
+    if replace_denial
+        && !interrupted
+        && owned_denials.len() == rules.len()
+        && rules.iter().all(|rule| {
+            owned_denials
+                .iter()
+                .any(|(_, mask, flags)| (*mask, *flags) == *rule)
+        })
+    {
+        return Ok(());
+    }
     if !locked {
         let _lock = AclLock::for_root(grant, cancellation)?;
         return ensure_acl_inner(grant, file, sid, mask, mode, cancellation, true);
     }
-    if !grant.inherit {
+    if !grant.inherit && !replace_denial {
         let result = change_acl(file, sid, mask, mode, false);
         if interrupted && result.is_ok() {
             fs::remove_file(pending)?;
         }
         return result;
     }
-    let entry = EXPLICIT_ACCESS_W {
-        grfAccessPermissions: mask,
-        grfAccessMode: mode,
-        grfInheritance: inheritance,
-        Trustee: TRUSTEE_W {
-            TrusteeForm: TRUSTEE_IS_SID,
-            TrusteeType: TRUSTEE_IS_UNKNOWN,
-            ptstrName: sid.as_ptr().cast(),
-            ..Default::default()
-        },
-    };
+    for (index, _, _) in owned_denials.iter().rev() {
+        // SAFETY: Only this account's explicit DENY entries are replaced in memory, never removed on disk first.
+        boolean(unsafe { DeleteAce(dacl, u32::from(*index)) })?;
+    }
+    let entries: Vec<_> = rules
+        .iter()
+        .map(|(mask, inheritance)| EXPLICIT_ACCESS_W {
+            grfAccessPermissions: *mask,
+            grfAccessMode: mode,
+            grfInheritance: *inheritance,
+            Trustee: TRUSTEE_W {
+                TrusteeForm: TRUSTEE_IS_SID,
+                TrusteeType: TRUSTEE_IS_UNKNOWN,
+                ptstrName: sid.as_ptr().cast(),
+                ..Default::default()
+            },
+        })
+        .collect();
     let mut updated = ptr::null_mut();
-    // SAFETY: SID and ACL remain live; this adds only the dedicated identity's ACE.
-    check(unsafe { SetEntriesInAclW(1, &entry, dacl, &mut updated) })?;
+    // SAFETY: SID and ACL remain live; this replaces only the dedicated identity's explicit denies.
+    check(unsafe { SetEntriesInAclW(entries.len() as u32, entries.as_ptr(), dacl, &mut updated) })?;
     let _updated = LocalMemory(updated.cast());
+    if !grant.inherit {
+        let result = set_root_dacl(file, descriptor.as_mut_ptr().cast(), updated);
+        if interrupted && result.is_ok() {
+            fs::remove_file(pending)?;
+        }
+        return result;
+    }
     if !interrupted {
         File::create_new(&pending)?.sync_all()?;
     }
@@ -729,14 +837,6 @@ pub(super) fn change_acl(
     if present == 0 || dacl.is_null() {
         return Err(io::ErrorKind::PermissionDenied.into());
     }
-    let mut control = 0;
-    let mut revision = 0;
-    // SAFETY: The live descriptor backs the ACL above and retains its original inheritance flags.
-    boolean(unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) })?;
-    let mut preserved = control & (SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED);
-    if preserved & SE_DACL_AUTO_INHERITED != 0 {
-        preserved |= SE_DACL_AUTO_INHERIT_REQ;
-    }
     let entry = EXPLICIT_ACCESS_W {
         grfAccessPermissions: mask,
         grfAccessMode: mode,
@@ -756,6 +856,22 @@ pub(super) fn change_acl(
     // SAFETY: Both input ACL and SID have live backing allocations; the API returns a new ACL.
     check(unsafe { SetEntriesInAclW(1, &entry, dacl, &mut updated) })?;
     let _updated = LocalMemory(updated.cast());
+    set_root_dacl(file, descriptor, updated)
+}
+
+fn set_root_dacl(
+    file: &File,
+    descriptor: windows_sys::Win32::Security::PSECURITY_DESCRIPTOR,
+    updated: *mut windows_sys::Win32::Security::ACL,
+) -> io::Result<()> {
+    let mut control = 0;
+    let mut revision = 0;
+    // SAFETY: Callers retain the complete descriptor and updated ACL throughout this synchronous update.
+    boolean(unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) })?;
+    let mut preserved = control & (SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED);
+    if preserved & SE_DACL_AUTO_INHERITED != 0 {
+        preserved |= SE_DACL_AUTO_INHERIT_REQ;
+    }
     let mut security = SECURITY_DESCRIPTOR::default();
     // SAFETY: The absolute descriptor and updated ACL remain live for the handle-scoped synchronous update.
     unsafe {

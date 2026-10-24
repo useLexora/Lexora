@@ -40,7 +40,7 @@ async function main() {
     verifyBundleCompatibility(installed, target)
     execFileSync('codesign', ['--verify', '--deep', '--strict', '--verbose=2', installed], { stdio: 'inherit' })
     const updateDirectory = join(directory, 'update')
-    execFileSync('ditto', ['-x', '-k', desktopArtifact(target, 'zip').path, updateDirectory], { stdio: 'inherit', timeout: 120_000 })
+    execFileSync('ditto', ['-x', '-k', desktopArtifact(target, 'macos-zip').path, updateDirectory], { stdio: 'inherit', timeout: 120_000 })
     const updateBundle = join(updateDirectory, 'lexora-buddy.app')
     verifyDesktopResources(updateBundle, target.id)
     verifyBundleCompatibility(updateBundle, target)

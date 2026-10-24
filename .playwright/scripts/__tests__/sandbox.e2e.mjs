@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer'
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
-import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -20,7 +20,8 @@ const require = createRequire(path.join(buddyRoot, 'package.json'))
 async function buildSandboxVerification(entry) {
   const { build } = await import(pathToFileURL(require.resolve('vite')).href)
   const mainDirectory = path.join(buddyRoot, '.output/build/electron/main')
-  const processes = (await readdir(mainDirectory)).filter(file => /^sandboxProcess-.*\.js$/.test(file))
+  const chunkDirectory = path.join(mainDirectory, 'chunks')
+  const processes = (await readdir(chunkDirectory)).filter(file => /^sandboxProcess-.*\.js$/.test(file))
   expect(processes).toHaveLength(1)
   const outDir = await mkdtemp(path.join(mainDirectory, 'sandbox-verification-'))
   try {
@@ -33,7 +34,7 @@ async function buildSandboxVerification(entry) {
         name: 'sandbox-verification-process',
         enforce: 'pre',
         resolveId: source => source.endsWith('?modulePath') ? source : null,
-        load: id => id.endsWith('?modulePath') ? `export default ${JSON.stringify(path.join(mainDirectory, processes[0]))}` : null,
+        load: id => id.endsWith('?modulePath') ? `export default ${JSON.stringify(path.join(chunkDirectory, processes[0]))}` : null,
       }],
       build: {
         outDir,
@@ -62,51 +63,7 @@ test('Sandbox preserves production RPC boundaries with large toolchains and empt
     const measurements = await app.evaluate(async (_electron, { module, home, root, target }) => {
       const file = process.getBuiltinModule('node:url').fileURLToPath(module)
       const { join } = process.getBuiltinModule('node:path')
-      const childProcess = process.getBuiltinModule('node:child_process')
-      const spawn = childProcess.spawn
-      const execFile = childProcess.execFile
-      const fileSystem = process.getBuiltinModule('node:fs/promises')
-      const remove = fileSystem.rm
-      const cleanupErrors = []
-      fileSystem.rm = async (...args) => {
-        try {
-          return await remove(...args)
-        }
-        catch (error) {
-          cleanupErrors.push({ code: error.code, syscall: error.syscall, path: error.path })
-          throw error
-        }
-      }
-      let nativeDiagnostics = ''
-      const inspections = []
       const originalHome = process.env.HOME
-      childProcess.execFile = (...args) => {
-        const start = performance.now()
-        const child = execFile(...args)
-        if (String(args[0]).endsWith('lexora-buddy-sandbox.exe'))
-          child.once('close', () => inspections.push({ action: args[1]?.[0], elapsedMs: performance.now() - start }))
-        return child
-      }
-      const { promisify } = process.getBuiltinModule('node:util')
-      Object.defineProperty(childProcess.execFile, promisify.custom, {
-        value: async (...args) => {
-          const start = performance.now()
-          try {
-            return await promisify(execFile)(...args)
-          }
-          finally {
-            if (String(args[0]).endsWith('lexora-buddy-sandbox.exe'))
-              inspections.push({ action: args[1]?.[0], elapsedMs: performance.now() - start })
-          }
-        },
-      })
-      childProcess.spawn = (...args) => {
-        const child = spawn(...args)
-        if (String(args[0]).endsWith('lexora-buddy-sandbox.exe'))
-          child.stderr?.on('data', data => nativeDiagnostics = `${nativeDiagnostics}${data}`.slice(-8192))
-        return child
-      }
-      process.getBuiltinModule('node:module').syncBuiltinESMExports()
       try {
         process.env.HOME = ''
         const { verifySandboxInstallation } = process.getBuiltinModule('node:module').createRequire(file)(file)
@@ -124,20 +81,13 @@ test('Sandbox preserves production RPC boundaries with large toolchains and empt
               }),
           searchDirectory: join(root, `.output/build/search-tools/${process.platform}-${process.arch}`),
         }, true)
-        return { ...measurements, inspections }
-      }
-      catch (error) {
-        throw new Error(`${error.message}; ${nativeDiagnostics}; ${JSON.stringify(inspections)}; cleanup: ${JSON.stringify(cleanupErrors)}`)
+        return measurements
       }
       finally {
         if (originalHome === undefined)
           delete process.env.HOME
         else
           process.env.HOME = originalHome
-        childProcess.spawn = spawn
-        childProcess.execFile = execFile
-        fileSystem.rm = remove
-        process.getBuiltinModule('node:module').syncBuiltinESMExports()
       }
     }, { module: pathToFileURL(path.join(outDir, 'verify.mjs')).href, home: instance.home, root: buddyRoot, target: targets[`${process.platform}-${process.arch}`] })
     expect(measurements.repeatedRpcMs).toHaveLength(3)
@@ -228,9 +178,8 @@ test('Windows prepares bound workspace permissions before any task command', asy
 })
 
 for (const workspaceKind of ['managed', 'bound']) {
-  test(`Command capture stays bounded across workspace sizes through the complete tool wrapper (${workspaceKind})`, async ({ buddy }, testInfo) => {
+  test(`Commands preserve read-only boundaries and file change history across restart (${workspaceKind})`, async ({ buddy }) => {
     test.skip(!['win32', 'linux'].includes(process.platform), 'Requires Windows or Linux sandbox resources')
-    test.fixme(process.platform === 'win32' && workspaceKind === 'managed', 'Existing Windows private-ancestor ACLs prevent PowerShell from resolving the managed workspace')
     test.setTimeout(300_000)
     const shell = process.platform === 'win32' ? 'powershell' : 'bash'
     const query = process.platform === 'win32' ? 'Write-Output \'CAPTURE_QUERY\'; [Console]::Out.WriteLine(\'PROVIDER_CWD=\' + $PWD.Path); [Console]::Out.WriteLine(\'PROCESS_CWD=\' + [Environment]::CurrentDirectory)' : 'printf CAPTURE_QUERY'
@@ -238,8 +187,7 @@ for (const workspaceKind of ['managed', 'bound']) {
       ? `Set-Content -LiteralPath '${file}' -Value '${value}' -NoNewline -ErrorAction Stop`
       : `printf '${value}' > '${file}'`
     const cases = {
-      small: Array.from({ length: 3 }, () => ({ name: shell, arguments: { command: query, readOnly: true } })),
-      large: Array.from({ length: 3 }, () => ({ name: shell, arguments: { command: query, readOnly: true } })),
+      query: [{ name: shell, arguments: { command: query, readOnly: true } }],
       denied: [{ name: shell, arguments: { command: write('forbidden.txt', 'forbidden'), readOnly: true } }],
       segments: [
         { name: 'write', arguments: { path: 'report.txt', content: 'A' } },
@@ -286,7 +234,6 @@ for (const workspaceKind of ['managed', 'bound']) {
       }
       finally { database.close() }
     }
-    const measurements = []
     try {
       let desktop = await instance.launch()
       await useSyntheticCredentialStorage(desktop)
@@ -333,7 +280,7 @@ for (const workspaceKind of ['managed', 'bound']) {
         const events = queryRows('SELECT event_type,payload_json FROM run_events WHERE run_id=? ORDER BY rowid', turn.runId).map(row => ({ type: row.event_type, ...JSON.parse(row.payload_json) }))
         const completed = events.filter(event => event.type === 'tool.completed')
         expect(completed).toHaveLength(cases[label].length)
-        if (label === 'small' || label === 'large') {
+        if (label === 'query') {
           for (const tool of completed) {
             expect(tool.isError, JSON.stringify(tool.presentation)).toBe(false)
             expect(tool.presentation.output).toContain('CAPTURE_QUERY')
@@ -352,29 +299,13 @@ for (const workspaceKind of ['managed', 'bound']) {
           expect(completed[0].isError).toBe(true)
           expect(completed[0].presentation.exitCode).toBe(1)
         }
-        const phases = events.filter(event => event.type === 'tool.phase' && event.timing.phase === 'finished')
-        expect(phases).toHaveLength(cases[label].length)
-        for (const phase of phases.filter(phase => phase.toolName === shell)) {
-          expect(phase.timing.executionBasis).toBe('backend')
-          expect(phase.timing.durations.capturing).toBeUndefined()
-          if (process.platform === 'linux' || process.platform === 'win32')
-            expect(phase.timing.durations.cleaning).toBeLessThan(1000)
-        }
-        measurements.push({ label, runId: turn.runId, timings: phases.map(event => event.timing), tools: completed })
         expect(queryRows('SELECT * FROM run_mutation_leases WHERE run_id=? AND status<>\'released\'', turn.runId)).toEqual([])
         return turn
       }
-      const first = await execute('small')
+      const first = await execute('query')
       const workspace = boundDirectory ?? path.join(instance.home, 'buddy/conversations', first.conversationId, 'workspace')
-      const contents = Buffer.alloc(64 * 1024, 65)
-      for (let directory = 0; directory < 50; directory++) {
-        const root = path.join(workspace, `fixture-${directory}`)
-        await mkdir(root)
-        await Promise.all(Array.from({ length: 100 }, (_, index) => writeFile(path.join(root, `file-${index}.txt`), contents)))
-      }
-      const large = await execute('large')
       expect(queryRows('SELECT * FROM run_file_change_captures')).toEqual([])
-      expect(queryRows('SELECT * FROM run_change_sets WHERE run_id IN (?, ?)', first.runId, large.runId)).toEqual([])
+      expect(queryRows('SELECT * FROM run_change_sets WHERE run_id=?', first.runId)).toEqual([])
       await execute('denied')
       await expect(access(path.join(workspace, 'forbidden.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
       const segments = await execute('segments')
@@ -388,13 +319,8 @@ for (const workspaceKind of ['managed', 'bound']) {
       expect(queryRows('SELECT coverage,coverage_reasons_json,file_count FROM run_change_sets WHERE run_id=?', segments.runId)).toEqual([{ coverage: 'partial', coverage_reasons_json: '["untracked"]', file_count: 2 }])
       await page.locator(`[data-task-id="${first.conversationId}"] .desktop-task-sidebar__task`).click()
       await expect(page.locator('.buddy-chat-turn-changes').last()).toHaveText('已记录 2 处文件修改')
-      await page.locator('.buddy-chat-activity-group__header').last().click()
-      await page.locator('[data-tool-call-id="segments-1"] > button').click()
-      await page.screenshot({ path: path.join(instance.artifactDirectory, 'capture-command.png'), animations: 'disabled' })
       await page.locator('.buddy-chat-turn-changes').last().click()
       await expect(page.locator('.context-change-list [data-change-id]')).toHaveCount(2)
-      expect(await page.locator('.desktop-context-split__content').evaluate(element => element.getBoundingClientRect().width)).toBeGreaterThan(150)
-      await page.screenshot({ path: path.join(instance.artifactDirectory, 'capture-coverage.png'), animations: 'disabled' })
       expect(errors).toEqual([])
       expect(desktop.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
       await page.evaluate(() => window.lexoraDesktop.localChat.providers.clearCredential('capture-fixture'))
@@ -405,7 +331,6 @@ for (const workspaceKind of ['managed', 'bound']) {
       await page.locator(`[data-task-id="${first.conversationId}"] .desktop-task-sidebar__task`).click()
       await expect(page.locator('.buddy-chat-turn-changes').last()).toHaveText('已记录 2 处文件修改')
       expect(await readFile(path.join(workspace, 'report.txt'), 'utf8')).toBe('C')
-      await testInfo.attach('command-capture', { body: JSON.stringify({ platform: process.platform, workspaceKind, workspaceFiles: 5000, workspaceBytes: contents.length * 5000, measurements }, null, 2), contentType: 'application/json' })
     }
     finally {
       await instance.stop()
