@@ -13,8 +13,10 @@ function createList() {
   const revealed: string[] = []
   const revealBehaviors: Array<ScrollBehavior | undefined> = []
   const geometry = { anchorTop: 20 }
+  const anchorKeys = new Set(['visible'])
   const handle: BuddyChatMessageListHandle = {
     captureScrollAnchor: () => ({ messageId: 'visible', messageOffsetTop: geometry.anchorTop - metrics.scrollTop, metrics: { ...metrics } }),
+    hasScrollAnchor: anchor => anchorKeys.has(anchor.rowKey ?? anchor.messageId),
     highlightMessage: id => highlights.push(id),
     readScrollMetrics: () => ({ ...metrics }),
     restoreScrollAnchor: (anchor: ChatMessageScrollAnchor) => {
@@ -32,7 +34,7 @@ function createList() {
       return { ...metrics }
     },
   }
-  return { geometry, handle, highlights, metrics, revealed, revealBehaviors }
+  return { anchorKeys, geometry, handle, highlights, metrics, revealed, revealBehaviors }
 }
 
 function createViewport(loadOlderMessages: () => Promise<boolean>, initial: {
@@ -106,9 +108,11 @@ describe('chat viewport operations', () => {
     const reopened = createViewport(async () => {
       loaded += 1
       await prependHistory(reopened)
+      reopened.original.anchorKeys.add('visible')
       reopened.options.timelineItems.value = [{ id: 'oldest', kind: 'message' }, ...reopened.options.timelineItems.value]
       return true
     }, { listMounted: false, readingPositions })
+    reopened.original.anchorKeys.clear()
     reopened.options.list.value = reopened.original.handle
     for (let tick = 0; tick < 10; tick += 1)
       await nextTick()
@@ -119,6 +123,80 @@ describe('chat viewport operations', () => {
     await reopened.viewport.returnToLatest()
     reopened.scope.stop()
     expect(readingPositions.get('conversation-1:branch-1')).toBeNull()
+  })
+
+  it('restores an available anchor without reloading previously visited history', async () => {
+    const readingPositions: ChatReadingPositions = new Map()
+    const first = createViewport(async () => false, { readingPositions })
+    first.options.hasOlderMessages.value = false
+    first.options.timelineItems.value = [{ id: 'oldest', kind: 'message' }, { id: 'visible', kind: 'message' }]
+    first.original.metrics.scrollTop = 200
+    first.viewport.handleScroll(first.original.metrics)
+    first.scope.stop()
+
+    const reopened = createViewport(async () => {
+      throw new Error('Available anchors do not need another page')
+    }, { readingPositions, listMounted: false })
+    reopened.options.list.value = reopened.original.handle
+    await nextTick()
+    await nextTick()
+
+    expect(reopened.original.metrics.scrollTop).toBe(200)
+    expect(reopened.options.timelineItems.value.map(item => item.id)).toEqual(['visible'])
+    expect(reopened.viewport.isRestoringPosition.value).toBe(false)
+    expect(reopened.viewport.showReturnToLatest.value).toBe(true)
+  })
+
+  it.each(['latest', 'scroll', 'layout'] as const)('cancels position recovery on %s intent before a late page arrives', async (intent) => {
+    const pending = deferred<boolean>()
+    const readingPositions: ChatReadingPositions = new Map([['conversation-1:branch-1', {
+      messageId: 'old-target',
+      messageOffsetTop: 0,
+      metrics: { clientHeight: 400, scrollHeight: 2000, scrollTop: 100 },
+    }]])
+    const fixture = createViewport(() => pending.promise, { readingPositions, listMounted: false })
+    fixture.options.list.value = fixture.original.handle
+    await nextTick()
+    await nextTick()
+    expect(fixture.viewport.isRestoringPosition.value).toBe(true)
+    expect(fixture.original.metrics.scrollTop).toBe(600)
+
+    if (intent === 'latest') {
+      await fixture.viewport.returnToLatest()
+    }
+    else {
+      if (intent === 'scroll')
+        fixture.viewport.handleReaderScrollIntent()
+      else fixture.viewport.handleReaderLayoutIntent()
+      fixture.original.metrics.scrollTop = 450
+      fixture.viewport.handleScroll(fixture.original.metrics, { userInitiated: true })
+    }
+    expect(fixture.viewport.isRestoringPosition.value).toBe(false)
+    fixture.original.anchorKeys.add('old-target')
+    await prependHistory(fixture)
+    pending.resolve(true)
+    await nextTick()
+    await nextTick()
+    fixture.viewport.handleContentResize(fixture.original.metrics)
+
+    expect(fixture.original.metrics.scrollTop).toBe(intent === 'latest' ? 1000 : 850)
+    expect(fixture.viewport.showReturnToLatest.value).toBe(intent !== 'latest')
+    expect(fixture.viewport.isRestoringPosition.value).toBe(false)
+  })
+
+  it('keeps the latest position when the saved anchor is no longer available', async () => {
+    const readingPositions: ChatReadingPositions = new Map([['conversation-1:branch-1', {
+      messageId: 'removed',
+      messageOffsetTop: 0,
+      metrics: { clientHeight: 400, scrollHeight: 2000, scrollTop: 100 },
+    }]])
+    const fixture = createViewport(async () => false, { readingPositions, listMounted: false })
+    fixture.options.list.value = fixture.original.handle
+    for (let tick = 0; tick < 6; tick += 1)
+      await nextTick()
+    expect(fixture.original.metrics.scrollTop).toBe(600)
+    expect(fixture.viewport.isRestoringPosition.value).toBe(false)
+    expect(fixture.viewport.showReturnToLatest.value).toBe(false)
   })
 
   it('fills an initially unscrollable transcript before revealing its latest position', async () => {
@@ -159,7 +237,7 @@ describe('chat viewport operations', () => {
     expect(fixture.original.metrics.scrollTop).toBe(485)
   })
 
-  it('restores a recent task reading position before showing a remounted transcript', async () => {
+  it('restores a recent task reading position on a remounted transcript', async () => {
     const fixture = createViewport(async () => false)
     fixture.original.metrics.scrollTop = 250
     fixture.viewport.handleScroll(fixture.original.metrics)
@@ -199,6 +277,19 @@ describe('chat viewport operations', () => {
     await nextTick()
     await nextTick()
     expect(fixture.viewport.isPositioning.value).toBe(false)
+  })
+
+  it('releases position recovery when a pending notification target is cleared', async () => {
+    const pending = deferred<boolean>()
+    const fixture = createViewport(() => pending.promise, { revealMessageId: 'old-target' })
+    expect(fixture.viewport.isRestoringPosition.value).toBe(true)
+    fixture.options.revealMessageId.value = null
+    await nextTick()
+    await nextTick()
+    expect(fixture.viewport.isRestoringPosition.value).toBe(false)
+    pending.resolve(true)
+    await nextTick()
+    expect(fixture.original.revealed).toEqual([])
   })
 
   it('accepts an initial notification target and loads its history after the list becomes ready', async () => {

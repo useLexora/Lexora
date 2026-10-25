@@ -242,7 +242,7 @@ describe('useChatWorkspace', () => {
     await nextTick()
     expect(view.isLoading.value).toBe(false)
     props.viewMode = 'chat'
-    expect(view.isLoading.value).toBe(true)
+    expect(view.isLoading.value).toBe(false)
   })
 
   it('follows the tail again when the reader sends from a detached position', async () => {
@@ -251,6 +251,7 @@ describe('useChatWorkspace', () => {
     const metrics = { clientHeight: 400, scrollHeight: 1_000, scrollTop: 600 }
     list.value = {
       captureScrollAnchor: () => null,
+      hasScrollAnchor: () => false,
       highlightMessage: () => {},
       readScrollMetrics: () => ({ ...metrics }),
       restoreScrollAnchor: () => null,

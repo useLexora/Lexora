@@ -17,6 +17,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   activeMessageChange: [messageId: string | null]
   contentResize: [metrics: ChatMessageScrollMetrics]
+  readerScrollIntent: []
   returnToLatest: []
   scroll: [metrics: ChatMessageScrollMetrics, options?: { userInitiated?: boolean }]
 }>()
@@ -26,6 +27,7 @@ const content = useTemplateRef<HTMLElement>('content')
 const { handle, handleScroll } = useChatTranscriptViewport(root, content, {
   onActiveMessageChange: messageId => emit('activeMessageChange', messageId),
   onContentResize: metrics => emit('contentResize', metrics),
+  onReaderScrollIntent: () => emit('readerScrollIntent'),
   onScroll: (metrics, options) => emit('scroll', metrics, options),
 })
 defineExpose<BuddyChatTranscriptViewportHandle>(handle)

@@ -6,7 +6,6 @@ import { mergeConversationTimelinePages, timelineItemKey } from '../../model/run
 import { useChatRunProjection } from './useChatRunProjection'
 
 const TIMELINE_PAGE_SIZE = 100
-const RECENT_TIMELINE_RANGE_COUNT = 20
 const SNAPSHOT_RECONCILIATION_EVENT_TYPES = new Set([
   'approval.requested',
   'approval.resolved',
@@ -38,7 +37,6 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
     : null)
   const isLoadingConversation = computed(() => options.activeConversationId.value !== null
     && (scopeKey.value === null || settledScopeKey.value !== scopeKey.value))
-  const loadedRanges = new Map<string, string>()
   let loadedBranchId: string | null = null
   let loadedConversationId: string | null = null
   let generation = 0
@@ -130,9 +128,7 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
       let page = latest
       const refreshBoundary = projection.state.timelineItems.value.find(item => item.kind === 'extension-action' && item.status === 'running')
         ?? projection.state.timelineItems.value.at(-1)
-      const rememberedStart = refreshBoundary
-        ? timelineItemKey(refreshBoundary)
-        : loadedRanges.get(`${request.conversationId}:${request.branchId}`)
+      const rememberedStart = refreshBoundary ? timelineItemKey(refreshBoundary) : null
       while (page.nextCursor) {
         if (!rememberedStart || page.items.some(item => timelineItemKey(item) === rememberedStart))
           break
@@ -146,10 +142,8 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
           return
         page = mergeConversationTimelinePages(page, older)
       }
-      if (isCurrent(request)) {
+      if (isCurrent(request))
         projection.applySnapshot(page, approvals)
-        rememberLoadedRange(request)
-      }
     }
     catch (error) {
       if (isCurrent(request))
@@ -159,17 +153,6 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
       if (isCurrent(request))
         settledScopeKey.value = `${request.conversationId}:${request.branchId}`
     }
-  }
-
-  function rememberLoadedRange(request: ProjectionRequest) {
-    const first = projection.state.timelineItems.value[0]
-    if (!first)
-      return
-    const key = `${request.conversationId}:${request.branchId}`
-    loadedRanges.delete(key)
-    loadedRanges.set(key, timelineItemKey(first))
-    if (loadedRanges.size > RECENT_TIMELINE_RANGE_COUNT)
-      loadedRanges.delete(loadedRanges.keys().next().value!)
   }
 
   async function loadOlderMessages(): Promise<boolean> {
@@ -187,9 +170,7 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
       })
       if (!isCurrent(request) || projection.timelineCursor.value !== cursor)
         return false
-      const prepended = projection.prependPage(page)
-      rememberLoadedRange(request)
-      return prepended
+      return projection.prependPage(page)
     }
     catch (error) {
       if (isCurrent(request))
@@ -257,7 +238,6 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
     if (!isActive(turn.conversationId, turn.branchId))
       return
     invalidatePendingWork()
-    loadedRanges.delete(`${turn.conversationId}:${turn.branchId}`)
     projection.replaceTurn(turn.run, messageId, retainMessage)
     loadedConversationId = turn.conversationId
     loadedBranchId = turn.branchId
@@ -306,7 +286,6 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
       return
     disposed = true
     stopScopeWatch()
-    loadedRanges.clear()
     invalidatePendingWork()
   }
 

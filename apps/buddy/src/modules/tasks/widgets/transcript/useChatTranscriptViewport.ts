@@ -7,6 +7,7 @@ import { createChatTranscriptDomIndex } from './chatTranscriptDomIndex'
 interface TranscriptViewportEvents {
   onActiveMessageChange: (messageId: string | null) => void
   onContentResize: (metrics: ChatMessageScrollMetrics) => void
+  onReaderScrollIntent: () => void
   onScroll: (metrics: ChatMessageScrollMetrics, options: { userInitiated: boolean }) => void
 }
 
@@ -35,20 +36,25 @@ export function useChatTranscriptViewport(
   }
 
   function handleWheel() {
+    events.onReaderScrollIntent()
     markUserInteraction()
   }
 
   function handleTouchMove() {
+    events.onReaderScrollIntent()
     markUserInteraction()
   }
 
   function handleKeyDown(event: KeyboardEvent) {
     const scrollKeys = ['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', ' ']
-    if (scrollKeys.includes(event.key))
+    if (scrollKeys.includes(event.key)) {
+      events.onReaderScrollIntent()
       markUserInteraction()
+    }
   }
 
   function handlePointerDown() {
+    events.onReaderScrollIntent()
     isPointerDragging = true
     markUserInteraction()
   }
@@ -79,13 +85,20 @@ export function useChatTranscriptViewport(
     }
   }
 
+  function findScrollAnchor(anchor: ChatMessageScrollAnchor): HTMLElement | null {
+    return (anchor.rowKey ? domIndex?.findRow(anchor.rowKey) : null)
+      ?? findMessage(anchor.messageId)
+  }
+
+  function hasScrollAnchor(anchor: ChatMessageScrollAnchor): boolean {
+    return findScrollAnchor(anchor) !== null
+  }
+
   function restoreScrollAnchor(anchor: ChatMessageScrollAnchor): ChatMessageScrollMetrics | null {
     const scrollport = viewport.value
     if (!scrollport)
       return null
-    const anchorMessage = anchor.rowKey
-      ? domIndex?.findRow(anchor.rowKey)
-      : findMessage(anchor.messageId)
+    const anchorMessage = findScrollAnchor(anchor)
     if (anchorMessage) {
       const currentOffset = anchorMessage.getBoundingClientRect().top
         - scrollport.getBoundingClientRect().top
@@ -235,6 +248,7 @@ export function useChatTranscriptViewport(
 
   const handle: BuddyChatTranscriptViewportHandle = {
     captureScrollAnchor,
+    hasScrollAnchor,
     readScrollMetrics,
     restoreScrollAnchor,
     scrollBy,

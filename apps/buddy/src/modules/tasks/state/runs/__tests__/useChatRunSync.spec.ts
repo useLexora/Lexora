@@ -125,7 +125,7 @@ describe('useChatRunSync', () => {
     finally { sync.dispose() }
   })
 
-  it('restores the loaded range with fresh pages and keeps a switched task loading until the range is ready', async () => {
+  it('publishes the latest page on task return and loads older history separately', async () => {
     const activeConversationId = ref<string | null>('conversation-a')
     const activeBranchId = ref<string | null>('branch-conversation-a')
     const older = timelineMessage('older-a', 'conversation-a', activeBranchId.value!, 1)
@@ -152,12 +152,16 @@ describe('useChatRunSync', () => {
       restore = true
       activeConversationId.value = 'conversation-a'
       activeBranchId.value = 'branch-conversation-a'
-      const refreshing = sync.refreshActiveConversation()
-      await vi.waitUntil(() => vi.mocked(api.conversations.listTimeline).mock.calls.length === 5)
-      expect(sync.isLoadingConversation.value).toBe(true)
-      expect(sync.timelineItems.value).toEqual([])
+      await sync.refreshActiveConversation()
+      expect(sync.isLoadingConversation.value).toBe(false)
+      expect(sync.messages.value.map(item => item.content)).toEqual([{ text: 'updated while away' }])
+      expect(sync.hasOlderMessages.value).toBe(true)
+      const loadingOlder = sync.loadOlderMessages()
+      expect(sync.isLoadingConversation.value).toBe(false)
+      expect(sync.isLoadingOlderMessages.value).toBe(true)
+      expect(sync.timelineItems.value.map(item => item.id)).toEqual(['latest-a'])
       pending.resolve(timelinePage([older], null))
-      await refreshing
+      await loadingOlder
       expect(sync.isLoadingConversation.value).toBe(false)
       expect(sync.messages.value.map(item => item.content)).toEqual([{ text: 'older-a' }, { text: 'updated while away' }])
       expect(sync.hasOlderMessages.value).toBe(false)

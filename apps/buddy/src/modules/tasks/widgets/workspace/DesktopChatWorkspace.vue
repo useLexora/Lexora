@@ -86,7 +86,9 @@ useTaskResultRead({
   root: pageRef,
   conversationId: computed(() => props.workspace.session.activeConversationId.value),
   marks: () => props.workspace.marks,
-  disabled: computed(() => !props.active || isLoading.value || props.workspace.status.isClosing.value || props.workspace.status.runtimeState.value.status !== 'ready'),
+  disabled: computed(() => !props.active || isLoading.value
+    || (props.viewMode !== 'canvas' && (viewport.isPositioning.value || viewport.isRestoringPosition.value))
+    || props.workspace.status.isClosing.value || props.workspace.status.runtimeState.value.status !== 'ready'),
 })
 
 async function focusComposer() {
@@ -223,6 +225,7 @@ function openDetailChanges(id: string) {
           @open-artifact="emit('openArtifact', $event)"
           @open-changes="emit('openChanges', $event)"
           @reader-layout-intent="viewport.handleReaderLayoutIntent"
+          @reader-scroll-intent="viewport.handleReaderScrollIntent"
           @regenerate-assistant="workspace.execution.regenerateAssistant"
           @return-to-latest="viewport.returnToLatest"
           @select-outline-message="viewport.revealOutlineMessage"

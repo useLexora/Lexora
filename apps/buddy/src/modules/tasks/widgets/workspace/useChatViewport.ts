@@ -46,6 +46,7 @@ interface ScrollOperation {
 export function useChatViewport(options: UseChatViewportOptions) {
   const scrollState = shallowRef(createChatScrollState())
   const isPositioning = shallowRef(false)
+  const isRestoringPosition = shallowRef(false)
   const showReturnToLatest = computed(() => scrollState.value.ownership === 'detached')
   const readingPositions = options.readingPositions ?? new Map<string, ChatMessageScrollAnchor | null>()
   const scopeKey = () => `${options.activeConversationId.value}:${options.activeBranchId.value}`
@@ -66,9 +67,10 @@ export function useChatViewport(options: UseChatViewportOptions) {
     ],
     ([conversationId, branchId], [previousConversationId, previousBranchId, previousList]) => {
       const contextChanged = conversationId !== previousConversationId || branchId !== previousBranchId
-      if (!isPositioning.value && (contextChanged || previousList))
+      if (!isPositioning.value && !isRestoringPosition.value && (contextChanged || previousList))
         rememberPosition(previousList)
       operationGeneration += 1
+      isRestoringPosition.value = false
       pendingHistory = null
       pendingPage = null
       if (contextChanged)
@@ -88,7 +90,7 @@ export function useChatViewport(options: UseChatViewportOptions) {
   watch(() => options.revealMessageId.value, (messageId) => {
     operationGeneration += 1
     pendingRevealMessageId = messageId
-    if (!resumePendingReveal() && isPositioning.value)
+    if (!resumePendingReveal() && (isPositioning.value || isRestoringPosition.value))
       void scrollToTailAfterRender()
   }, { flush: 'sync', immediate: true })
   watch(() => options.isLoading.value, () => {
@@ -115,7 +117,7 @@ export function useChatViewport(options: UseChatViewportOptions) {
     })
   }, { flush: 'pre' })
   onScopeDispose(() => {
-    if (!isPositioning.value)
+    if (!isPositioning.value && !isRestoringPosition.value)
       rememberPosition(options.list.value)
     disposed = true
     operationGeneration += 1
@@ -131,9 +133,7 @@ export function useChatViewport(options: UseChatViewportOptions) {
       ? list?.captureScrollAnchor() ?? readingAnchor
       : null
     readingPositions.delete(positionedScopeKey)
-    readingPositions.set(positionedScopeKey, anchor
-      ? { ...anchor, firstLoadedItemId: options.timelineItems.value[0]?.id }
-      : null)
+    readingPositions.set(positionedScopeKey, anchor)
     if (readingPositions.size > 20)
       readingPositions.delete(readingPositions.keys().next().value!)
   }
@@ -164,18 +164,29 @@ export function useChatViewport(options: UseChatViewportOptions) {
       && operation.list === options.list.value
   }
 
+  function finishPositioning() {
+    pendingPosition = null
+    positionedScopeKey = scopeKey()
+    isPositioning.value = false
+    isRestoringPosition.value = false
+  }
+
+  function cancelPositioning() {
+    operationGeneration += 1
+    pendingRevealMessageId = null
+    finishPositioning()
+  }
+
   function handleScroll(
     metrics: ChatMessageScrollMetrics,
     scrollOptions?: ObserveChatScrollOptions,
   ) {
-    if (disposed || isPositioning.value)
+    if (disposed || (isPositioning.value && !scrollOptions?.userInitiated))
       return
     const observation = observeChatScroll(scrollState.value, metrics, scrollOptions)
     scrollState.value = observation.state
-    if (observation.movedByReader) {
-      operationGeneration += 1
-      pendingRevealMessageId = null
-    }
+    if (observation.movedByReader || (isRestoringPosition.value && scrollOptions?.userInitiated))
+      cancelPositioning()
     readingAnchor = scrollState.value.ownership === 'detached'
       ? options.list.value?.captureScrollAnchor() ?? null
       : null
@@ -206,16 +217,22 @@ export function useChatViewport(options: UseChatViewportOptions) {
       scrollState.value = recordProgrammaticChatScroll(scrollState.value, metrics)
   }
 
+  function handleReaderScrollIntent() {
+    if (disposed || (!isPositioning.value && !isRestoringPosition.value && !pendingRevealMessageId))
+      return
+    cancelPositioning()
+    readingAnchor = options.list.value?.captureScrollAnchor() ?? null
+    scrollState.value = detachChatScroll(scrollState.value)
+  }
+
   function handleReaderLayoutIntent() {
     if (disposed)
       return
     const metrics = options.list.value?.readScrollMetrics()
-    if (metrics && metrics.scrollHeight <= metrics.clientHeight)
+    if (!isRestoringPosition.value && metrics && metrics.scrollHeight <= metrics.clientHeight)
       return
-    operationGeneration += 1
-    pendingRevealMessageId = null
+    cancelPositioning()
     readingAnchor = null
-    pendingPosition = null
     scrollState.value = detachChatScroll(scrollState.value)
   }
 
@@ -232,7 +249,7 @@ export function useChatViewport(options: UseChatViewportOptions) {
     readingPositions.set(currentScope, null)
     readingPositions.set(positionedScopeKey, null)
     scrollState.value = createChatScrollState()
-    isPositioning.value = false
+    finishPositioning()
     writeTailPosition()
     void nextTick(() => {
       if (!disposed && scrollState.value.ownership === 'following')
@@ -243,9 +260,9 @@ export function useChatViewport(options: UseChatViewportOptions) {
   async function returnToLatest() {
     if (disposed)
       return
-    pendingRevealMessageId = null
+    cancelPositioning()
     readingAnchor = null
-    pendingPosition = null
+    readingPositions.set(scopeKey(), null)
     const operation = beginOperation()
     scrollState.value = beginReturningToChatTail(scrollState.value)
     await nextTick()
@@ -260,10 +277,15 @@ export function useChatViewport(options: UseChatViewportOptions) {
     await nextTick()
     while (isCurrent(operation) && !options.isLoading.value && options.hasOlderMessages.value) {
       const metrics = operation.list?.readScrollMetrics()
-      const historyStart = pendingPosition?.firstLoadedItemId
-      const needsHistory = historyStart && !options.timelineItems.value.some(item => item.id === historyStart)
-      if (!needsHistory && (!metrics || metrics.scrollHeight > metrics.clientHeight))
+      if (pendingPosition
+        ? operation.list?.hasScrollAnchor(pendingPosition)
+        : !metrics || metrics.scrollHeight > metrics.clientHeight) {
         break
+      }
+      isPositioning.value = false
+      isRestoringPosition.value = true
+      if (scrollState.value.ownership !== 'detached')
+        writeTailPosition()
       try {
         if (!await loadOlderPage())
           break
@@ -275,17 +297,15 @@ export function useChatViewport(options: UseChatViewportOptions) {
     }
     if (!isCurrent(operation) || options.isLoading.value)
       return
-    if (pendingPosition) {
+    if (pendingPosition && operation.list?.hasScrollAnchor(pendingPosition)) {
       scrollState.value = detachChatScroll(scrollState.value)
       readingAnchor = pendingPosition
-      pendingPosition = null
       restoreReadingPosition()
     }
     else if (scrollState.value.ownership !== 'detached') {
       writeTailPosition()
     }
-    positionedScopeKey = scopeKey()
-    isPositioning.value = false
+    finishPositioning()
   }
 
   function writeTailPosition() {
@@ -338,6 +358,10 @@ export function useChatViewport(options: UseChatViewportOptions) {
     let loadedHistory = false
     try {
       while (isActive() && shouldLoadOlderMessage(messageId)) {
+        if (isPositioning.value)
+          writeTailPosition()
+        isPositioning.value = false
+        isRestoringPosition.value = true
         const loaded = await loadOlderPage()
         if (!loaded)
           break
@@ -357,9 +381,7 @@ export function useChatViewport(options: UseChatViewportOptions) {
       scrollState.value = recordProgrammaticChatScroll(scrollState.value, metrics)
       readingAnchor = operation.list?.captureScrollAnchor() ?? null
     }
-    pendingPosition = null
-    positionedScopeKey = scopeKey()
-    isPositioning.value = false
+    finishPositioning()
   }
 
   function revealOutlineMessage(messageId: string) {
@@ -380,8 +402,10 @@ export function useChatViewport(options: UseChatViewportOptions) {
   return {
     handleContentResize,
     handleReaderLayoutIntent,
+    handleReaderScrollIntent,
     handleScroll,
     isPositioning,
+    isRestoringPosition,
     resetToTail,
     revealOutlineMessage,
     revealMessage,

@@ -30,6 +30,7 @@ const props = defineProps<{
   editingMessageId: string | null
   hasOlderMessages: boolean
   isLoadingOlderMessages: boolean
+  isRestoringPosition?: boolean
   language: BuddyLocale
   stoppingRunId?: string | null
   loadOutlineMessages: () => Promise<ReadonlyArray<LocalMessage>>
@@ -47,6 +48,7 @@ const emit = defineEmits<{
   openArtifact: [artifact: LocalArtifact]
   openChanges: [changeSetId: string]
   readerLayoutIntent: []
+  readerScrollIntent: []
   regenerateAssistant: [sourceRunId: string]
   returnToLatest: []
   selectOutlineMessage: [messageId: string]
@@ -95,6 +97,10 @@ function captureScrollAnchor(): ChatMessageScrollAnchor | null {
   return messageList.value?.captureScrollAnchor() ?? null
 }
 
+function hasScrollAnchor(anchor: ChatMessageScrollAnchor): boolean {
+  return messageList.value?.hasScrollAnchor(anchor) ?? false
+}
+
 function highlightMessage(messageId: string) {
   messageList.value?.highlightMessage(messageId)
 }
@@ -120,6 +126,7 @@ function scrollToTail(): ChatMessageScrollMetrics | null {
 
 defineExpose<BuddyChatMessageListHandle>({
   captureScrollAnchor,
+  hasScrollAnchor,
   highlightMessage,
   readScrollMetrics,
   restoreScrollAnchor,
@@ -139,6 +146,7 @@ defineExpose<BuddyChatMessageListHandle>({
     :editing-message-id="editingMessageId"
     :has-older-messages="hasOlderMessages"
     :is-loading-older-messages="isLoadingOlderMessages"
+    :is-restoring-position="isRestoringPosition"
     :language="language"
     :stopping-run-id="stoppingRunId"
     :outline-items="outlineItems"
@@ -153,6 +161,7 @@ defineExpose<BuddyChatMessageListHandle>({
     @prepare-outline="prepareOutline"
     @reader-layout-intent="emit('readerLayoutIntent')"
     @regenerate-assistant="emit('regenerateAssistant', $event)"
+    @reader-scroll-intent="emit('readerScrollIntent')"
     @return-to-latest="emit('returnToLatest')"
     @select-outline-message="emit('selectOutlineMessage', $event)"
     @scroll="(metrics, options) => emit('scroll', metrics, options)"

@@ -14,7 +14,7 @@ import type {
   ChatMessageScrollMetrics,
 } from './chatMessageViewport'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { NSpin } from 'naive-ui'
+import { NButton, NSpin } from 'naive-ui'
 import { computed, onBeforeUnmount, shallowRef, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { useWorkbenchAnchor } from '@/shared/ui/contributions/workbenchUiContext'
@@ -40,6 +40,7 @@ const props = defineProps<{
   editingMessageId?: string | null
   hasOlderMessages?: boolean
   isLoadingOlderMessages?: boolean
+  isRestoringPosition?: boolean
   language: BuddyLocale
   stoppingRunId?: string | null
   outlineItems: ReadonlyArray<ChatOutlineItem>
@@ -55,6 +56,7 @@ const emit = defineEmits<{
   openChanges: [changeSetId: string]
   prepareOutline: []
   readerLayoutIntent: []
+  readerScrollIntent: []
   regenerateAssistant: [sourceRunId: string]
   returnToLatest: []
   selectOutlineMessage: [messageId: string]
@@ -112,6 +114,10 @@ function captureScrollAnchor(): ChatMessageScrollAnchor | null {
   return transcriptViewport.value?.captureScrollAnchor() ?? null
 }
 
+function hasScrollAnchor(anchor: ChatMessageScrollAnchor): boolean {
+  return transcriptViewport.value?.hasScrollAnchor(anchor) ?? false
+}
+
 function restoreScrollAnchor(anchor: ChatMessageScrollAnchor): ChatMessageScrollMetrics | null {
   return transcriptViewport.value?.restoreScrollAnchor(anchor) ?? null
 }
@@ -154,6 +160,7 @@ function handleReaderLayoutIntent(event: MouseEvent) {
 
 defineExpose<BuddyChatMessageListHandle>({
   captureScrollAnchor,
+  hasScrollAnchor,
   highlightMessage,
   readScrollMetrics,
   restoreScrollAnchor,
@@ -173,12 +180,15 @@ onBeforeUnmount(clearOutlineHighlight)
     @click.capture="handleReaderLayoutIntent"
   >
     <div
-      v-if="isLoadingOlderMessages"
-      class="buddy-chat-message-list__history-status absolute z-2 top-[0.45rem] left-[50%] flex items-center gap-[0.4rem] whitespace-nowrap border-1 border-solid border-border rounded-micro bg-raised text-muted text-[0.68rem] py-1 px-[0.6rem] pointer-events-none"
+      v-if="isRestoringPosition || isLoadingOlderMessages"
+      class="buddy-chat-message-list__history-status absolute z-2 top-[0.45rem] left-[50%] flex max-w-[calc(100%_-_1rem)] items-center gap-[0.4rem] border-1 border-solid border-border rounded-micro bg-raised text-muted text-[0.68rem] py-1 px-[0.6rem]"
       role="status"
     >
       <NSpin :size="14" />
-      <span>{{ t('desktop.chat.loadingOlder') }}</span>
+      <span>{{ t(isRestoringPosition ? 'desktop.chat.restoringPosition' : 'desktop.chat.loadingOlder') }}</span>
+      <NButton v-if="isRestoringPosition" size="tiny" text @click="emit('returnToLatest')">
+        {{ t('desktop.chat.returnToLatest') }}
+      </NButton>
     </div>
     <BuddyChatOutline
       :key="`${conversationId}:${activeBranchId}`"
@@ -198,6 +208,7 @@ onBeforeUnmount(clearOutlineHighlight)
       :show-return-to-latest="showReturnToLatest ?? false"
       @active-message-change="activeOutlineMessageId = $event"
       @content-resize="emit('contentResize', $event)"
+      @reader-scroll-intent="emit('readerScrollIntent')"
       @return-to-latest="emit('returnToLatest')"
       @scroll="(metrics, options) => emit('scroll', metrics, options)"
     >

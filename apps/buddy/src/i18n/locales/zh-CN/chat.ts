@@ -261,6 +261,7 @@ export default {
   'desktop.chat.globalDescription': '任务由 Lexora Buddy 在本地管理。',
   'desktop.chat.loading': '正在加载本地任务…',
   'desktop.chat.loadingOlder': '正在加载更早消息…',
+  'desktop.chat.restoringPosition': '正在恢复阅读位置…',
   'desktop.chat.outline': '大纲',
   'desktop.chat.outlineAttachment': '附件',
   'desktop.chat.outlineInput': '输入',

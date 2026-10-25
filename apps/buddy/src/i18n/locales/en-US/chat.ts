@@ -263,6 +263,7 @@ export default {
   'desktop.chat.globalDescription': 'Tasks are managed locally by Lexora Buddy.',
   'desktop.chat.loading': 'Loading local task…',
   'desktop.chat.loadingOlder': 'Loading earlier messages…',
+  'desktop.chat.restoringPosition': 'Restoring reading position…',
   'desktop.chat.outline': 'Outline',
   'desktop.chat.outlineAttachment': 'Attachment',
   'desktop.chat.outlineInput': 'Input',
