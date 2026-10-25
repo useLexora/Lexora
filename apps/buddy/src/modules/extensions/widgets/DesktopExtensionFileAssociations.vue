@@ -47,20 +47,20 @@ function select(choices: FileOpeningReviewChoice[], checked: boolean) {
 </script>
 
 <template>
-  <section class="grid gap-3" data-testid="extension-file-associations">
+  <section class="grid gap-2.5" data-testid="extension-file-associations">
     <div>
       <h3 class="m-0 text-[13px] font-semibold text-fg leading-[1.5]">
-        {{ english ? 'Set as default opener' : '设为默认打开方式' }}
+        {{ english ? 'Default openers' : '默认打开方式' }}
       </h3>
       <p class="mt-1 mb-0 text-[12px] text-muted leading-[1.6]">
-        {{ english ? 'Unchecked items keep their current defaults. You can change them later in Settings.' : '未勾选的项目保留当前设置，之后也可在设置中更改。' }}
+        {{ english ? 'Use this plugin for checked items in Lexora. Unchecked items keep their current defaults.' : '勾选后在 Lexora 中默认使用此插件；未选项目保留原设置。' }}
       </p>
     </div>
     <NTable
       class="extension-associations-table table-fixed !overflow-visible text-[12px]"
       size="small"
-      :single-line="false"
-      :theme-overrides="{ thFontWeight: '500', thPaddingSmall: '10px 12px', tdPaddingSmall: '10px 12px' }"
+      :single-line="true"
+      :theme-overrides="{ thFontWeight: '500', thPaddingSmall: '6px 12px', tdPaddingSmall: '6px 12px' }"
     >
       <colgroup>
         <col class="w-[19%]">
@@ -100,7 +100,7 @@ function select(choices: FileOpeningReviewChoice[], checked: boolean) {
                   :checked="isChecked(choice)" :disabled="busy" :aria-disabled="busy"
                   @update:checked="select([choice], $event)"
                 >
-                  <span class="sr-only">{{ row.extension }} · {{ column.label }} · </span>{{ choice.title }}
+                  <span class="sr-only">{{ row.extension }} · {{ column.label }} · </span><span :class="{ 'sr-only': row.choices[column.location].length === 1 }">{{ choice.title }}</span>
                 </NCheckbox>
               </div>
             </template>

@@ -39,7 +39,8 @@ async function mount(value: ExtensionReview = review) {
   await nextTick()
   const content = document.querySelector<HTMLElement>('[data-testid="extension-file-associations"]')!
   const submit = () => document.querySelector<HTMLButtonElement>('[data-testid="extension-confirm-install"]')!.click()
-  return { content, submissions, submit }
+  const dialog = document.querySelector<HTMLElement>('[data-testid="extension-install-review"]')!
+  return { content, submissions, submit, dialog }
 }
 
 it('preselects requested associations and keeps existing defaults when replacements are cleared', async () => {
@@ -51,7 +52,7 @@ it('preselects requested associations and keeps existing defaults when replaceme
       contributes: { skills: [{ id: 'test.panel.review', path: 'skills/review/SKILL.md' }] },
     }),
   })
-  expect(document.querySelector('[data-testid="extension-included-skills"]')?.textContent).toContain('$panel:review')
+  expect(document.querySelector('[data-testid="extension-included-skills"] li')?.textContent?.trim()).toBe('review')
   const checkboxes = content.querySelectorAll<HTMLElement>('[role="checkbox"]')
   expect(checkboxes[0]?.getAttribute('aria-checked')).toBe('true')
   expect(checkboxes[1]?.getAttribute('aria-checked')).toBe('true')
