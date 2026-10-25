@@ -5,6 +5,7 @@ import type { ApplicationStartupState } from '../../shared/diagnostics/applicati
 import type { PerformanceDiagnosticApi } from '../../shared/diagnostics/performanceDiagnostic'
 import type { RendererDiagnosticApi } from '../../shared/diagnostics/rendererDiagnostic'
 import type { RendererLifecycleReport } from '../../shared/lifecycle/serviceLifecycle'
+import type { DesktopNotificationsApi } from '../../shared/notifications/desktopNotification'
 import type { NotificationSoundPreferences, NotificationSoundsApi } from '../../shared/notifications/notificationSound'
 import type { SandboxEnvironmentStatus, SandboxSetupResult } from '../../shared/permissions/shellSandbox'
 import type { BuddyCapabilities } from '../../shared/platform'
@@ -246,6 +247,7 @@ export interface LexoraConfigPatch {
 }
 
 export interface LexoraDesktopApi {
+  notifications: DesktopNotificationsApi
   notificationSounds: NotificationSoundsApi
   sync: import('../../shared/sync/syncApi').SyncApi
   storage: import('../../shared/storage/storageApi').StorageApi

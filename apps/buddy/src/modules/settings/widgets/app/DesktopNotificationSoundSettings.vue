@@ -16,6 +16,11 @@ const { t } = useBuddyI18n(() => props.language)
 const message = useMessage()
 const headingId = useId()
 const descriptionId = `${headingId}-description`
+const soundNameKeys = {
+  bell: 'desktop.settings.notificationSoundBell',
+  drop: 'desktop.settings.notificationSoundDrop',
+  ambient: 'desktop.settings.notificationSoundAmbient',
+} as const satisfies Record<string, BuddyI18nKey>
 const failureKeys: Record<NotificationSoundFailure, BuddyI18nKey> = {
   'save': 'desktop.settings.saveFailed',
   'preview': 'desktop.settings.notificationSoundPreviewFailed',
@@ -54,7 +59,7 @@ const options = computed(() => [
   { id: 'system', name: t('desktop.settings.notificationSoundSystem'), durationMs: 0, custom: false },
   ...BUILTIN_NOTIFICATION_SOUNDS.map(sound => ({
     ...sound,
-    name: t(sound.id === 'bell' ? 'desktop.settings.notificationSoundBell' : 'desktop.settings.notificationSoundDrop'),
+    name: t(soundNameKeys[sound.id]),
     custom: false,
   })),
   ...preferences.value.sounds.map(sound => ({ ...sound, custom: true })),
@@ -108,9 +113,6 @@ watch(volumeDisabled, (disabled) => {
           </NButton>
         </div>
         <p :id="descriptionId" class="m-0 text-[0.7rem] text-muted leading-[1.5]">
-          {{ t('desktop.settings.notificationSoundDescription') }}
-        </p>
-        <p class="m-0 text-[0.7rem] text-muted leading-[1.5]">
           {{ t('desktop.settings.notificationSoundImportHint', limits) }}
         </p>
       </header>
@@ -126,7 +128,7 @@ watch(volumeDisabled, (disabled) => {
           <NRadio class="notification-sound-choice min-w-0" :value="option.id" :disabled="selectionDisabled">
             <span class="block break-all text-[0.8rem]">{{ option.name }}</span>
             <span class="block text-[0.7rem] text-muted leading-[1.5]">
-              {{ option.id === 'system' ? t('desktop.settings.notificationSoundSystemHint') : t('desktop.settings.notificationSoundDuration', { seconds: option.durationMs / 1000 }) }}
+              {{ option.id === 'system' ? t('desktop.settings.notificationSoundSystemHint') : t('desktop.settings.notificationSoundDuration', { seconds: Math.round(option.durationMs / 100) / 10 }) }}
             </span>
           </NRadio>
           <div v-if="option.id !== 'system'" class="flex shrink-0 items-center gap-1">

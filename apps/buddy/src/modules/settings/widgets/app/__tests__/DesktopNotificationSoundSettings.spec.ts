@@ -113,14 +113,15 @@ describe('notification sound settings', () => {
     const fixture = await mount({ legacy: true })
     expect(radio(fixture.row('system')).checked).toBe(true)
     expect(fixture.row('system').querySelector('button')).toBeNull()
-    expect(fixture.row('bell').textContent).toContain('0.9 秒')
-    expect(fixture.row('drop').textContent).toContain('0.6 秒')
+    expect(fixture.row('bell').textContent).toContain('0.8 秒')
+    expect(fixture.row('drop').textContent).toContain('1.6 秒')
+    expect(fixture.row('ambient').textContent).toContain('柔和提示3.2 秒')
     expect(fixture.root.textContent).toContain('60%')
     expect(fixture.root.querySelector('[role=slider]')?.getAttribute('aria-disabled')).toBe('true')
     fixture.language.value = 'en-US'
     await nextTick()
     expect(fixture.row('system').textContent).toContain('Follow system')
-    expect(fixture.row('bell').textContent).toContain('Soft bell')
+    expect(fixture.row('bell').textContent).toContain('Simple')
     expect(button(fixture.root, 'Import sound')).toBeTruthy()
   })
 

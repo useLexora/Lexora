@@ -11,14 +11,18 @@ import type { DesktopAppInfo, DesktopOpenTarget, DesktopWindowState, LexoraConfi
 import type { DesktopCommandId } from '../shared/desktopCommands'
 import type { DesktopUpdateAction, DesktopUpdateState } from '../shared/desktopUpdates'
 import { ipcRenderer, webUtils } from 'electron'
+import { DESKTOP_NOTIFICATION_CHANNEL } from '../../shared/notifications/desktopNotification'
 import { NOTIFICATION_SOUND_CHANNEL } from '../../shared/notifications/notificationSound'
 import { STORAGE_CHANGED, STORAGE_CHANNEL } from '../../shared/storage/storageApi'
 import { SYNC_CHANGED, SYNC_CHANNEL } from '../../shared/sync/syncApi'
 import { DESKTOP_IPC_CHANNELS } from '../shared/desktopApi'
 import { subscribe } from './subscribe'
 
-export function createDesktopApi(): Pick<LexoraDesktopApi, 'app' | 'clipboard' | 'commands' | 'contextPanel' | 'notificationSounds' | 'settings' | 'storage' | 'sync' | 'window' | 'workbench'> {
+export function createDesktopApi(): Pick<LexoraDesktopApi, 'app' | 'clipboard' | 'commands' | 'contextPanel' | 'notifications' | 'notificationSounds' | 'settings' | 'storage' | 'sync' | 'window' | 'workbench'> {
   return {
+    notifications: Object.freeze({
+      test: () => ipcRenderer.invoke(DESKTOP_NOTIFICATION_CHANNEL, { action: 'test' }),
+    }),
     notificationSounds: Object.freeze({
       import: () => ipcRenderer.invoke(NOTIFICATION_SOUND_CHANNEL, { action: 'import' }),
       remove: (id: string) => ipcRenderer.invoke(NOTIFICATION_SOUND_CHANNEL, { action: 'remove', id }),

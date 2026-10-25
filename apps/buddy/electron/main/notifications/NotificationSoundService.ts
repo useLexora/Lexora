@@ -1,7 +1,8 @@
 import type { NotificationSoundPreferences } from '../../../shared/notifications/notificationSound'
 import type { NotificationAudioPlayer } from './NotificationAudioPlayer'
 import type { NotificationSoundLibrary } from './NotificationSoundLibrary'
-import { createBuiltinNotificationSound } from './builtinNotificationSounds'
+import { isBuiltinNotificationSound } from '../../../shared/notifications/notificationSound'
+import { readBuiltinNotificationSound } from './builtinNotificationSounds'
 
 export interface NotificationSoundServiceOptions {
   player: Pick<NotificationAudioPlayer, 'play' | 'stop' | 'dispose'>
@@ -35,10 +36,10 @@ export class NotificationSoundService {
     await this.#options.player.stop('preview')
   }
 
-  async playNotification(isEligible: () => boolean): Promise<void> {
+  async playNotification(isEligible: () => boolean, { throttle = true } = {}): Promise<void> {
     const { selected, volume } = this.#options.getPreferences()
     const now = this.#options.now ?? Date.now
-    if (this.#disposed || this.#notificationPending || selected === 'system' || volume === 0 || !isEligible() || now() - this.#lastNotificationAt < 2500)
+    if (this.#disposed || this.#notificationPending || selected === 'system' || volume === 0 || !isEligible() || (throttle && now() - this.#lastNotificationAt < 2500))
       return
     this.#notificationPending = true
     const version = this.#notificationVersion
@@ -71,8 +72,8 @@ export class NotificationSoundService {
   async #resolve(id: string): Promise<{ bytes: Uint8Array, mimeType: string }> {
     if (this.#disposed)
       throw new Error('NOTIFICATION_AUDIO_DISPOSED')
-    if (id === 'bell' || id === 'drop')
-      return { bytes: createBuiltinNotificationSound(id), mimeType: 'audio/wav' }
+    if (isBuiltinNotificationSound(id))
+      return { bytes: await readBuiltinNotificationSound(id), mimeType: 'audio/wav' }
     const asset = this.#options.getPreferences().sounds.find(sound => sound.id === id)
     if (!asset)
       throw new Error('NOTIFICATION_AUDIO_NOT_FOUND')

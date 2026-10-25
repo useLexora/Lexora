@@ -44,17 +44,17 @@ test('notification sounds preserve defaults, selection and volume and can previe
   await expect(panel.locator('[data-sound-id="system"] input')).toBeChecked()
   await desktop.page.getByRole('switch', { name: '系统通知', exact: true }).click()
   await expect(panel.locator('[data-sound-id="bell"] input')).toBeEnabled()
-  await panel.locator('[data-sound-id="bell"]').getByText('轻铃', { exact: true }).click()
+  await panel.locator('[data-sound-id="bell"]').getByText('简洁提示', { exact: true }).click()
   await expect.poll(() => readPreferences(desktop.page)).toEqual({ selected: 'bell', volume: 0.6, sounds: [] })
   await desktop.page.evaluate(() => window.lexoraDesktop.settings.update({ desktop: { notificationSound: { volume: 0 } } }))
-  for (const [id, durationMs] of [['bell', 900], ['drop', 600]]) {
+  for (const [id, durationMs] of [['bell', 817], ['drop', 1561], ['ambient', 3159]]) {
     expect(await desktop.page.evaluate(id => window.lexoraDesktop.notificationSounds.preview(id), id)).toEqual({ durationMs })
     await desktop.page.evaluate(() => window.lexoraDesktop.notificationSounds.stopPreview())
   }
   await desktop.page.evaluate(() => window.lexoraDesktop.settings.update({ desktop: { notificationsEnabled: false } }))
   await expect(panel.getByRole('radio').first()).toBeDisabled()
   await expect(panel.locator('[data-sound-id="drop"]').getByRole('button', { name: '试听', exact: true })).toBeEnabled()
-  expect(await desktop.page.evaluate(() => window.lexoraDesktop.notificationSounds.preview('drop'))).toEqual({ durationMs: 600 })
+  expect(await desktop.page.evaluate(() => window.lexoraDesktop.notificationSounds.preview('drop'))).toEqual({ durationMs: 1561 })
   await desktop.page.evaluate(() => window.lexoraDesktop.notificationSounds.stopPreview())
   const mainWindow = await desktop.app.browserWindow(desktop.page)
   await mainWindow.evaluate(window => window.setSize(980, 640))
@@ -121,7 +121,7 @@ test('a reloaded settings renderer cannot resume its delayed audio preview', asy
   await app.evaluate(() => globalThis.notificationAudioProbe.executeJavaScript('previewGate.resolve()'))
   await expect.poll(() => app.evaluate(() => globalThis.notificationAudioProbe.executeJavaScript('previewReleased'))).toBe(true)
   expect(await app.evaluate(() => globalThis.notificationAudioProbe.executeJavaScript('startedPreviews'))).toBe(0)
-  expect(await page.evaluate(() => window.lexoraDesktop.notificationSounds.preview('drop'))).toEqual({ durationMs: 600 })
+  expect(await page.evaluate(() => window.lexoraDesktop.notificationSounds.preview('drop'))).toEqual({ durationMs: 1561 })
   expect(await app.evaluate(() => globalThis.notificationAudioProbe.executeJavaScript('startedPreviews'))).toBe(1)
   await page.evaluate(() => window.lexoraDesktop.notificationSounds.stopPreview())
 })
@@ -164,4 +164,66 @@ test('notification audio imports validated owned copies, survives source removal
   expect(await readPreferences(desktop.page)).toEqual({ selected: 'system', volume: 0, sounds: [] })
   await expect(fs.access(path.join(instance.home, 'buddy/notification-sounds', `${id}.audio`))).rejects.toMatchObject({ code: 'ENOENT' })
   expect(desktop.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
+})
+
+test('test notifications bypass automatic suppression, preserve settings and report delivery failures', async ({ buddy }, testInfo) => {
+  testInfo.annotations.push({ type: 'coverage', description: 'Real renderer, preload, main Notification object and audio decoder; native delivery callbacks are controlled at Notification.show.' })
+  const instance = await buddy.createInstance('test-notifications')
+  const { app, page, diagnostics } = await instance.launch()
+  await openSounds(page)
+  await page.evaluate(() => window.lexoraDesktop.settings.update({ desktop: {
+    notificationsEnabled: false,
+    notifyWhenFocused: false,
+    notificationSound: { selected: 'system', volume: 0.6 },
+  } }))
+  const settings = () => page.evaluate(async () => (await window.lexoraDesktop.settings.get()).desktop)
+  const before = await settings()
+  await app.evaluate(({ Notification }) => {
+    globalThis.testNotificationTransport = { mode: 'show', delivered: [] }
+    Notification.isSupported = () => true
+    Notification.prototype.show = function () {
+      const transport = globalThis.testNotificationTransport
+      transport.delivered.push({ title: this.title, body: this.body, silent: this.silent })
+      if (transport.mode === 'throw')
+        throw new Error('Synthetic notification delivery failure')
+      this.emit(transport.mode)
+    }
+  })
+  const button = page.getByRole('button', { name: '测试通知', exact: true })
+  await expect(button).toBeEnabled()
+  await button.click()
+  await expect(page.locator('.n-message').filter({ hasText: '已发送测试通知' })).toHaveCount(1)
+  expect(await settings()).toEqual(before)
+  expect(await app.evaluate(() => globalThis.testNotificationTransport.delivered)).toEqual([{
+    title: 'Lexora · 测试通知',
+    body: '这是一条测试通知，用于确认通知横幅与提示音。',
+    silent: false,
+  }])
+  await app.evaluate(() => {
+    globalThis.testNotificationTransport.mode = 'failed'
+  })
+  await button.click()
+  await expect(page.locator('.n-message').filter({ hasText: '未能确认测试通知已送达' })).toHaveCount(1)
+  await expect(button).toBeEnabled()
+  expect(await settings()).toEqual(before)
+  await app.evaluate(({ Notification }) => {
+    Notification.isSupported = () => false
+  })
+  await button.click()
+  await expect(page.locator('.n-message').filter({ hasText: '当前系统不支持桌面通知' })).toHaveCount(1)
+  expect(await app.evaluate(() => globalThis.testNotificationTransport.delivered.length)).toBe(2)
+  await app.evaluate(({ Notification }) => {
+    Notification.isSupported = () => true
+    globalThis.testNotificationTransport.mode = 'show'
+  })
+  await page.evaluate(() => window.lexoraDesktop.settings.update({ desktop: { notificationSound: { selected: 'ambient', volume: 0.01 } } }))
+  const changed = await settings()
+  await button.click()
+  expect(await app.evaluate(() => globalThis.testNotificationTransport.delivered.at(-1).silent)).toBe(true)
+  await expect.poll(() => app.evaluate(async ({ BrowserWindow }) => {
+    const audio = BrowserWindow.getAllWindows().find(window => window.getTitle() === 'Lexora notification audio')
+    return audio ? await audio.webContents.executeJavaScript('typeof notificationAudio.start') : null
+  })).toBe('function')
+  expect(await settings()).toEqual(changed)
+  expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })

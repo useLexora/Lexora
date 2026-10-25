@@ -41,6 +41,7 @@ import { registerLocalChatIpc } from '../localChatIpc'
 import { NotificationAudioPlayer } from '../notifications/NotificationAudioPlayer'
 import { NotificationSoundLibrary } from '../notifications/NotificationSoundLibrary'
 import { NotificationSoundService } from '../notifications/NotificationSoundService'
+import { registerDesktopNotificationIpc } from '../notifications/registerDesktopNotificationIpc'
 import { registerNotificationSoundIpc } from '../notifications/registerNotificationSoundIpc'
 import { registerStorageIpc } from '../storage/registerStorageIpc'
 import { StorageBackupService } from '../storage/StorageBackupService'
@@ -217,11 +218,11 @@ export class DesktopIntegrations {
     const notifications = new DesktopNotificationService({
       createNotification(input) {
         const notification = new Notification(input)
-        return { onClick: listener => notification.on('click', listener), onShow: listener => notification.once('show', listener), show: () => notification.show() }
+        return { onClick: listener => notification.on('click', listener), onShow: listener => notification.once('show', listener), onFailed: listener => notification.once('failed', listener), show: () => notification.show() }
       },
       getSoundSelection: () => runtime.config!.desktop.notificationSound.selected,
-      playSound: (isEligible) => {
-        void sounds.playNotification(isEligible).catch((error) => {
+      playSound: (isEligible, source) => {
+        void sounds.playNotification(isEligible, { throttle: source !== 'test' }).catch((error) => {
           diagnostics.record({ scope: 'desktop', level: 'warn', event: 'notification.audio_play.failed', error })
         })
       },
@@ -231,10 +232,13 @@ export class DesktopIntegrations {
         subtaskNotificationsEnabled: runtime.config?.desktop.subtaskNotificationsEnabled ?? true,
         notifyWhenFocused: runtime.config?.desktop.notifyWhenFocused ?? false,
       }),
+      isSupported: () => Notification.isSupported(),
       isWindowFocused: () => windows.window?.isFocused() ?? false,
+      openApp: () => windows.show(),
       openTarget: target => windows.openTarget(target),
       request: service.request.bind(service),
     })
+    this.#subscriptions.push(registerDesktopNotificationIpc({ notifications, getWindow: () => windows.window }))
     this.#subscriptions.push(service.onNotification((notification) => {
       if (notification.method === providerNotifications.changed.method)
         extensions.conditions.invalidate({ inputs: ['runtime.models'] })

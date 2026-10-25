@@ -48,6 +48,8 @@ function fixture(kind: LocalExecution['kind'] = 'root') {
     questions: [],
   }
   const state = {
+    supported: true,
+    appOpened: false,
     settings: { notificationsEnabled: true, subtaskNotificationsEnabled: true, notifyWhenFocused: false },
     focused: false,
     soundSelection: 'system',
@@ -56,6 +58,7 @@ function fixture(kind: LocalExecution['kind'] = 'root') {
   const notifications: { body: string, title: string }[] = []
   const clicks: (() => void)[] = []
   const shows: (() => void)[] = []
+  const failures: (() => void)[] = []
   const played: string[] = []
   const openTarget = vi.fn()
   const request = vi.fn(async (method: string) => {
@@ -82,7 +85,7 @@ function fixture(kind: LocalExecution['kind'] = 'root') {
   })
   const service = new DesktopNotificationService({
     createNotification(input) {
-      return { onClick: listener => clicks.push(listener), onShow: listener => shows.push(listener), show: () => notifications.push(input) }
+      return { onClick: listener => clicks.push(listener), onShow: listener => shows.push(listener), onFailed: listener => failures.push(listener), show: () => notifications.push(input) }
     },
     getSoundSelection: () => state.soundSelection,
     playSound: (isEligible) => {
@@ -91,6 +94,8 @@ function fixture(kind: LocalExecution['kind'] = 'root') {
     },
     getLanguage: () => 'zh-CN',
     getSettings: () => state.settings,
+    isSupported: () => state.supported,
+    openApp: () => { state.appOpened = true },
     isWindowFocused: () => state.focused,
     openTarget,
     request,
@@ -99,10 +104,66 @@ function fixture(kind: LocalExecution['kind'] = 'root') {
     method: 'run.event',
     params: { createdAt: run.completedAt, payload: { errorCode: null }, runId: run.id, sequence, type },
   })
-  return { service, state, run, execution, request, notifications, clicks, shows, played, openTarget, event }
+  return { service, state, run, execution, request, notifications, clicks, shows, failures, played, openTarget, event }
 }
 
 describe('desktopNotificationService', () => {
+  it.each(['system', 'bell'])('sends an explicit %s test while task notifications are disabled without changing settings', async (selected) => {
+    const f = fixture()
+    f.state.soundSelection = selected
+    f.state.focused = true
+    f.state.settings = { notificationsEnabled: false, subtaskNotificationsEnabled: false, notifyWhenFocused: false }
+    const before = structuredClone(f.state.settings)
+    const result = f.service.test()
+    const duplicate = f.service.test()
+    expect(f.notifications).toEqual([{
+      title: 'Lexora · 测试通知',
+      body: '这是一条测试通知，用于确认通知横幅与提示音。',
+      ...(selected !== 'system' ? { silent: true } : {}),
+    }])
+    f.shows.forEach(show => show())
+    expect(await result).toBe('shown')
+    expect(await duplicate).toBe('shown')
+    expect(f.played).toEqual(selected === 'system' ? [] : ['bell'])
+    expect(f.state.settings).toEqual(before)
+    f.clicks[0]!()
+    expect(f.state.appOpened).toBe(true)
+  })
+
+  it('reports unsupported and failed native delivery without playing a test sound', async () => {
+    const f = fixture()
+    f.state.supported = false
+    expect(await f.service.test()).toBe('unavailable')
+    expect(f.notifications).toEqual([])
+    f.state.supported = true
+    f.state.soundSelection = 'bell'
+    const result = f.service.test()
+    f.failures[0]!()
+    expect(await result).toBe('failed')
+    f.shows.forEach(show => show())
+    expect(f.played).toEqual([])
+  })
+
+  it('times out an unacknowledged test and rejects late audio while allowing a retry', async () => {
+    vi.useFakeTimers()
+    try {
+      const f = fixture()
+      f.state.soundSelection = 'bell'
+      const result = f.service.test()
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(await result).toBe('failed')
+      f.shows.forEach(show => show())
+      expect(f.played).toEqual([])
+      const retry = f.service.test()
+      f.shows.slice(2).forEach(show => show())
+      expect(await retry).toBe('shown')
+      expect(f.played).toEqual(['bell'])
+    }
+    finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('silences native audio only for an application sound and plays once after notification display', async () => {
     const f = fixture()
     f.state.soundSelection = 'bell'

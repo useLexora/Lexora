@@ -2,7 +2,8 @@ import type { NotificationSoundPreferences } from '../../../../shared/notificati
 import type { NotificationAudioOwner } from '../NotificationAudioPlayer'
 import { Buffer } from 'node:buffer'
 import { describe, expect, it } from 'vitest'
-import { createBuiltinNotificationSound } from '../builtinNotificationSounds'
+import { BUILTIN_NOTIFICATION_SOUNDS, NOTIFICATION_SOUND_MAX_BYTES } from '../../../../shared/notifications/notificationSound'
+import { readBuiltinNotificationSound } from '../builtinNotificationSounds'
 import { NotificationSoundService } from '../NotificationSoundService'
 
 function fixture() {
@@ -19,7 +20,7 @@ function fixture() {
     library: {
       async read() {
         await state.gate
-        return createBuiltinNotificationSound('bell')
+        return readBuiltinNotificationSound('bell')
       },
     },
     player: {
@@ -38,23 +39,32 @@ function fixture() {
 }
 
 describe('notification sound playback', () => {
-  it('produces bounded PCM sounds with finite samples and matching WAV durations', () => {
-    for (const [id, duration] of [['bell', 900], ['drop', 600]] as const) {
-      const bytes = Buffer.from(createBuiltinNotificationSound(id))
+  it('loads three distinct bounded WAV recordings with matching catalog durations', async () => {
+    const recordings = new Set<string>()
+    for (const { id, durationMs } of BUILTIN_NOTIFICATION_SOUNDS) {
+      const bytes = Buffer.from(await readBuiltinNotificationSound(id))
       expect(bytes.toString('ascii', 0, 4)).toBe('RIFF')
       expect(bytes.toString('ascii', 8, 16)).toBe('WAVEfmt ')
-      expect(bytes.readUInt32LE(40)).toBe(bytes.length - 44)
-      expect((bytes.length - 44) / bytes.readUInt32LE(28) * 1000).toBe(duration)
-      expect(bytes.subarray(44).some(byte => byte !== 0)).toBe(true)
-      expect(bytes.readInt16LE(44)).toBe(0)
-      expect(Math.abs(bytes.readInt16LE(bytes.length - 2))).toBeLessThan(5)
+      expect(bytes.byteLength).toBeLessThan(NOTIFICATION_SOUND_MAX_BYTES)
+      expect(Math.ceil(bytes.readUInt32LE(40) / bytes.readUInt32LE(28) * 1000)).toBe(durationMs)
+      recordings.add(bytes.toString('base64'))
     }
+    expect(recordings.size).toBe(3)
+  })
+
+  it('lets explicit tests bypass the automatic notification cooldown', async () => {
+    const f = fixture()
+    await f.play()
+    await f.service.playNotification(() => true, { throttle: false })
+    expect(f.output).toHaveLength(2)
+    await f.play()
+    expect(f.output).toHaveLength(2)
   })
 
   it('coalesces concurrent notifications and preserves later eligible playback', async () => {
     const f = fixture()
     await Promise.all([f.play(), f.play(), f.play()])
-    expect(f.output).toEqual([{ owner: 'notification', volume: 0.6, size: 43244 }])
+    expect(f.output).toEqual([{ owner: 'notification', volume: 0.6, size: 235238 }])
     f.state.time += 2400
     await f.play()
     expect(f.output).toHaveLength(1)
@@ -75,7 +85,7 @@ describe('notification sound playback', () => {
     await f.play()
     expect(f.output).toEqual([])
     await f.service.preview('drop')
-    expect(f.output).toEqual([{ owner: 'preview', volume: 0.6, size: 28844 }])
+    expect(f.output).toEqual([{ owner: 'preview', volume: 0.6, size: 449384 }])
   })
 
   it.each(['policy', 'selection', 'settings', 'dispose'])('rejects delayed playback after %s changes', async (change) => {
@@ -106,6 +116,6 @@ describe('notification sound playback', () => {
     gate.resolve()
     expect(await old).toEqual({ durationMs: 0 })
     expect(await current).toEqual({ durationMs: 900 })
-    expect(f.output).toEqual([{ owner: 'preview', volume: 0.6, size: 28844 }])
+    expect(f.output).toEqual([{ owner: 'preview', volume: 0.6, size: 449384 }])
   })
 })

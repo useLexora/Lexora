@@ -1,0 +1,19 @@
+Material Design Sound Resources
+Copyright Google LLC
+
+Source: https://m2.material.io/design/sound/sound-resources.html
+Original distribution: https://storage.googleapis.com/material-design/downloads/material_product_sounds.zip
+Archive: https://archive.org/details/material-design-sound-resources
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+https://creativecommons.org/licenses/by/4.0/
+https://creativecommons.org/licenses/by/4.0/legalcode
+
+Unmodified WAV recordings from "02 Alerts and Notifications":
+- notification_simple-01.wav (Simple)
+- notification_decorative-01.wav (Playful)
+- notification_ambient.wav (Gentle)
+
+The archived original resource description states CC BY 4.0. The archive's
+catalog license field lists CC BY-SA 4.0; the original files are distributed
+unchanged with attribution and links to both records.
+https://creativecommons.org/licenses/by-sa/4.0/

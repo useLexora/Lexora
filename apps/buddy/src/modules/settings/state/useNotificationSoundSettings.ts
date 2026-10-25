@@ -1,6 +1,6 @@
 import type { LexoraConfig, LexoraConfigPatch, LexoraDesktopApi } from '@buddy-electron/shared/desktopApi'
 import type { DeepReadonly } from 'vue'
-import { DEFAULT_NOTIFICATION_SOUND_PREFERENCES } from '@buddy-shared/notifications/notificationSound'
+import { DEFAULT_NOTIFICATION_SOUND_PREFERENCES, isBuiltinNotificationSound } from '@buddy-shared/notifications/notificationSound'
 import { computed, onActivated, onDeactivated, onScopeDispose, readonly, shallowRef, watch } from 'vue'
 import { useSettingMutation } from './useSettingMutation'
 
@@ -148,7 +148,7 @@ export function useNotificationSoundSettings(options: {
 
   watch(() => preferences.value.sounds, (sounds) => {
     const id = previewingId.value
-    if (id && id !== 'bell' && id !== 'drop' && !sounds.some(sound => sound.id === id))
+    if (id && !isBuiltinNotificationSound(id) && !sounds.some(sound => sound.id === id))
       void stopPreview()
   })
 
