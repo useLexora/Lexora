@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, rename, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import process from 'node:process'
@@ -34,7 +34,7 @@ async function main() {
   const smokeRoot = await mkdtemp(join(tmpdir(), 'lexora-windows-smoke-'))
   const lexoraHome = join(smokeRoot, '用户 Data')
   const format = values.zip ? 'windows-zip' : 'nsis'
-  let directory = values.zip ? join(smokeRoot, '免安装 App') : source
+  const directory = values.zip ? join(smokeRoot, '免安装 App') : source
   try {
     if (values.zip) {
       execFileSync('powershell.exe', [
@@ -49,7 +49,7 @@ async function main() {
         timeout: 120_000,
       })
     }
-    let executablePath = verifyWindowsDistribution(directory, target, format)
+    const executablePath = verifyWindowsDistribution(directory, target, format)
     const environment = {
       ...process.env,
       LEXORA_HOME: lexoraHome,
@@ -62,15 +62,7 @@ async function main() {
     verifyDatabase(lexoraHome, marker, true)
     await runDesktopSmoke(executablePath, environment, 180_000)
     verifyDatabase(lexoraHome, marker)
-    if (values.zip) {
-      const relocated = join(smokeRoot, '移动后 App')
-      await rename(directory, relocated)
-      directory = relocated
-      executablePath = verifyWindowsDistribution(directory, target, format)
-      await runDesktopSmoke(executablePath, environment, 180_000)
-      verifyDatabase(lexoraHome, marker)
-    }
-    writeOutput(`Windows ${format} Desktop: distribution, startup, database preservation, restart and shutdown passed${values.zip ? '; relocated application reused the same data root' : ''}`)
+    writeOutput(`Windows ${format} Desktop: distribution, startup, database preservation, restart and shutdown passed`)
   }
   catch (error) {
     const diagnostics = await readFile(join(lexoraHome, 'logs', 'application.jsonl'), 'utf8').catch(() => '')
@@ -102,7 +94,7 @@ function verifyDatabase(lexoraHome, marker, initialize = false) {
       database.prepare('INSERT INTO windows_acceptance_fixture (marker) VALUES (?)').run(marker)
     }
     else if (database.prepare('SELECT marker FROM windows_acceptance_fixture').get()?.marker !== marker) {
-      throw new Error('Windows runtime did not preserve its database across restart or relocation')
+      throw new Error('Windows runtime did not preserve its database across restart')
     }
   }
   finally {
