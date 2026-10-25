@@ -10,10 +10,12 @@ import { shouldShowDesktopNotification } from './desktopNotificationPolicy'
 export interface DesktopNotificationInput {
   body: string
   title: string
+  silent?: boolean
 }
 
 export interface DesktopSystemNotification {
   onClick: (listener: () => void) => void
+  onShow: (listener: () => void) => void
   show: () => void
 }
 
@@ -26,6 +28,8 @@ export interface DesktopNotificationServiceOptions {
   createNotification: (input: DesktopNotificationInput) => DesktopSystemNotification
   getLanguage: () => LexoraConfig['desktop']['language']
   getSettings: () => DesktopNotificationSettings
+  getSoundSelection: () => string
+  playSound: (isEligible: () => boolean) => void
   isWindowFocused: () => boolean
   openTarget: (target: DesktopNotificationTarget) => Promise<void> | void
   request: DesktopRuntimeGateway['request']
@@ -114,7 +118,9 @@ export class DesktopNotificationService {
       const eventType = event.data.type as keyof typeof labels.task
       const title = conversation.title?.trim() || labels.untitled
       const task = execution.task.replace(/\s+/g, ' ').trim()
+      const soundSelection = this.#options.getSoundSelection()
       const systemNotification = this.#options.createNotification({
+        ...(soundSelection !== 'system' ? { silent: true } : {}),
         body: isSubtask
           ? [`${execution.buddyName} · ${labels.subtask[eventType]}`, task].filter(Boolean).join('\n')
           : labels.task[eventType],
@@ -126,6 +132,20 @@ export class DesktopNotificationService {
           runId: run.id,
         })
       })
+      if (soundSelection !== 'system') {
+        let sounded = false
+        systemNotification.onShow(() => {
+          if (sounded)
+            return
+          sounded = true
+          this.#options.playSound(() => this.#options.getSoundSelection() === soundSelection && shouldShowDesktopNotification({
+            eventType: event.data.type,
+            isSubtask,
+            isWindowFocused: this.#options.isWindowFocused(),
+            settings: this.#options.getSettings(),
+          }))
+        })
+      }
       systemNotification.show()
       this.#shownEvents.add(eventKey)
     }

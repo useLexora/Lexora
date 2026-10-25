@@ -1,5 +1,6 @@
 import type { ZodError } from 'zod'
 import type { EventSnapshot } from '../../../shared/events/eventTypes'
+import type { NotificationSoundAsset } from '../../../shared/notifications/notificationSound'
 import type { NetworkOperation } from '../../../shared/permissions/networkPermissions'
 import type { LexoraConfig, LexoraConfigPatch } from '../../shared/desktopApi'
 import { randomUUID } from 'node:crypto'
@@ -15,6 +16,7 @@ import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { extensionAuthorSchema } from '../../../shared/extensions/extensionIdentity'
 import { BUILTIN_FILE_ICON_THEME, fileIconPreferenceSchema } from '../../../shared/icons/fileIconTheme'
 import { DEFAULT_PROXY_SETTINGS, proxySettingsSchema } from '../../../shared/network/proxySettings'
+import { DEFAULT_NOTIFICATION_SOUND_PREFERENCES, notificationSoundAssetIdSchema, notificationSoundAssetSchema, notificationSoundPreferencesPatchSchema, notificationSoundPreferencesSchema } from '../../../shared/notifications/notificationSound'
 import { EMPTY_FEATURE_DISCOVERY, featureDiscoverySchema } from '../../../shared/onboarding/featureDiscovery'
 import { upsertNetworkPermission } from '../../../shared/permissions/networkPermissions'
 import { BUDDY_PERMISSION_MODES } from '../../../shared/permissions/permissionMode'
@@ -110,6 +112,7 @@ const desktopConfigSchema = z.object({
   language: z.enum(['zh-CN', 'en-US']).default('zh-CN'),
   launch_at_login: z.boolean().default(false),
   notifications_enabled: z.boolean().default(true),
+  notification_sound: notificationSoundPreferencesSchema.prefault({}),
   subtask_notifications_enabled: z.boolean().default(true),
   update_notifications_enabled: z.boolean().default(true),
   auto_download_updates: z.boolean().default(true),
@@ -150,6 +153,7 @@ const desktopConfigSchema = z.object({
   language: 'zh-CN',
   launch_at_login: false,
   notifications_enabled: true,
+  notification_sound: DEFAULT_NOTIFICATION_SOUND_PREFERENCES,
   subtask_notifications_enabled: true,
   update_notifications_enabled: true,
   auto_download_updates: true,
@@ -232,23 +236,55 @@ export class LexoraConfigStore {
 
   update(patch: LexoraConfigPatch, apply?: (config: LexoraConfig) => Promise<void> | void, assertCurrent: () => void = () => {}): Promise<LexoraConfig> {
     const input = structuredClone(patch)
-    return this.#update(() => input, apply, assertCurrent)
+    return this.#update(current => mergeConfig(current, input), apply, assertCurrent)
   }
 
   allowNetworkPermission(host: string, operation: NetworkOperation, assertCurrent: () => void): Promise<LexoraConfig> {
-    return this.#update(current => ({
+    return this.#update(current => mergeConfig(current, {
       browser: { networkPermissions: upsertNetworkPermission(current.browser.networkPermissions, host, operation) },
     }), undefined, assertCurrent)
   }
 
-  #update(patch: (current: LexoraConfig) => LexoraConfigPatch, apply: ((config: LexoraConfig) => Promise<void> | void) | undefined, assertCurrent: () => void): Promise<LexoraConfig> {
+  addNotificationSound(asset: NotificationSoundAsset, apply: (config: LexoraConfig) => Promise<void> | void): Promise<LexoraConfig> {
+    const input = notificationSoundAssetSchema.parse(asset)
+    return this.#update(current => ({
+      ...current,
+      desktop: {
+        ...current.desktop,
+        notificationSound: notificationSoundPreferencesSchema.parse({
+          ...current.desktop.notificationSound,
+          sounds: [...current.desktop.notificationSound.sounds, input],
+        }),
+      },
+    }), apply, () => {})
+  }
+
+  removeNotificationSound(id: string, apply: (config: LexoraConfig) => Promise<void> | void): Promise<LexoraConfig> {
+    const selectedId = notificationSoundAssetIdSchema.parse(id)
+    return this.#update((current) => {
+      const sound = current.desktop.notificationSound
+      return {
+        ...current,
+        desktop: {
+          ...current.desktop,
+          notificationSound: {
+            ...sound,
+            selected: sound.selected === selectedId ? 'system' : sound.selected,
+            sounds: sound.sounds.filter(asset => asset.id !== selectedId),
+          },
+        },
+      }
+    }, apply, () => {})
+  }
+
+  #update(transform: (current: LexoraConfig) => LexoraConfig, apply: ((config: LexoraConfig) => Promise<void> | void) | undefined, assertCurrent: () => void): Promise<LexoraConfig> {
     if (this.#disposing)
       return Promise.reject(new Error('CONFIG_STORE_STOPPED'))
     const operation = this.#writeQueue.then(async () => {
       assertCurrent()
       const file = await this.#readFile()
       const current = decodeConfig(file)
-      const next = mergeConfig(current, patch(current))
+      const next = transform(current)
       const groups = (Object.keys(next) as (keyof LexoraConfig)[]).filter(group => JSON.stringify(current[group]) !== JSON.stringify(next[group]))
       const operationId = randomUUID()
       const publish = (kind: Exclude<LexoraConfigChange['kind'], 'committed'>) => this.#changes.fire(copyEventSnapshot({ kind, revision: ++this.#revision, operationId, groups }))
@@ -410,6 +446,7 @@ function decodeConfig(value: unknown): LexoraConfig {
       language: config.desktop.language,
       launchAtLogin: config.desktop.launch_at_login,
       notificationsEnabled: config.desktop.notifications_enabled,
+      notificationSound: config.desktop.notification_sound,
       subtaskNotificationsEnabled: config.desktop.subtask_notifications_enabled,
       updateNotificationsEnabled: config.desktop.update_notifications_enabled,
       autoDownloadUpdates: config.desktop.auto_download_updates,
@@ -485,6 +522,7 @@ function encodeConfig(config: LexoraConfig) {
       language: config.desktop.language,
       launch_at_login: config.desktop.launchAtLogin,
       notifications_enabled: config.desktop.notificationsEnabled,
+      notification_sound: config.desktop.notificationSound,
       subtask_notifications_enabled: config.desktop.subtaskNotificationsEnabled,
       update_notifications_enabled: config.desktop.updateNotificationsEnabled,
       auto_download_updates: config.desktop.autoDownloadUpdates,
@@ -528,6 +566,10 @@ function mergeConfig(current: LexoraConfig, patch: LexoraConfigPatch): LexoraCon
       ...patch.desktop,
       featureDiscovery: featureDiscoverySchema.parse(patch.desktop?.featureDiscovery ?? current.desktop.featureDiscovery),
       localBackupLimit: localBackupLimitSchema.parse(patch.desktop?.localBackupLimit ?? current.desktop.localBackupLimit),
+      notificationSound: notificationSoundPreferencesSchema.parse({
+        ...current.desktop.notificationSound,
+        ...notificationSoundPreferencesPatchSchema.parse(patch.desktop?.notificationSound ?? {}),
+      }),
       navigationLayout: z.enum(DESKTOP_NAVIGATION_LAYOUTS).parse(patch.desktop?.navigationLayout ?? current.desktop.navigationLayout),
       fileIconTheme: fileIconPreferenceSchema.parse(patch.desktop?.fileIconTheme ?? current.desktop.fileIconTheme),
       theme: themePreferenceSchema.parse(patch.desktop?.theme ?? current.desktop.theme),

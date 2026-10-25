@@ -11,13 +11,20 @@ import type { DesktopAppInfo, DesktopOpenTarget, DesktopWindowState, LexoraConfi
 import type { DesktopCommandId } from '../shared/desktopCommands'
 import type { DesktopUpdateAction, DesktopUpdateState } from '../shared/desktopUpdates'
 import { ipcRenderer, webUtils } from 'electron'
+import { NOTIFICATION_SOUND_CHANNEL } from '../../shared/notifications/notificationSound'
 import { STORAGE_CHANGED, STORAGE_CHANNEL } from '../../shared/storage/storageApi'
 import { SYNC_CHANGED, SYNC_CHANNEL } from '../../shared/sync/syncApi'
 import { DESKTOP_IPC_CHANNELS } from '../shared/desktopApi'
 import { subscribe } from './subscribe'
 
-export function createDesktopApi(): Pick<LexoraDesktopApi, 'app' | 'clipboard' | 'commands' | 'contextPanel' | 'settings' | 'storage' | 'sync' | 'window' | 'workbench'> {
+export function createDesktopApi(): Pick<LexoraDesktopApi, 'app' | 'clipboard' | 'commands' | 'contextPanel' | 'notificationSounds' | 'settings' | 'storage' | 'sync' | 'window' | 'workbench'> {
   return {
+    notificationSounds: Object.freeze({
+      import: () => ipcRenderer.invoke(NOTIFICATION_SOUND_CHANNEL, { action: 'import' }),
+      remove: (id: string) => ipcRenderer.invoke(NOTIFICATION_SOUND_CHANNEL, { action: 'remove', id }),
+      preview: (id: string) => ipcRenderer.invoke(NOTIFICATION_SOUND_CHANNEL, { action: 'preview', id }),
+      stopPreview: () => ipcRenderer.invoke(NOTIFICATION_SOUND_CHANNEL, { action: 'stopPreview' }),
+    }),
     sync: Object.freeze({
       selectAdapter: (adapter: 'webdav' | 's3') => ipcRenderer.invoke(SYNC_CHANNEL, { action: 'selectAdapter', adapter }),
       setFrequency: (frequency: 'hourly' | 'daily' | 'weekly') => ipcRenderer.invoke(SYNC_CHANNEL, { action: 'frequency', frequency }),

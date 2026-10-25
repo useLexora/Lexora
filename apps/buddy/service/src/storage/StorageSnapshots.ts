@@ -15,6 +15,7 @@ import { snapshotManifestSchema } from '../../../shared/storage/snapshot'
 import { selectBackupDatabase } from './backupDatabase'
 import { portableSettings } from './backupSettings'
 import { openBuddyDatabase } from './database'
+import { prepareNotificationSoundBackup } from './notificationSoundBackup'
 import { sanitizeRestoredDatabase } from './restorePolicy'
 import { BUDDY_SCHEMA_VERSION } from './schema'
 
@@ -61,6 +62,7 @@ export async function createStorageSnapshot(root: string, dataId: string, signal
           return null
         throw error
       })
+      await prepareNotificationSoundBackup(join(stage, 'files', 'buddy'), text ?? '', signal)
       if (text !== null)
         await writeFile(path, portableSettings(text), { mode: 0o600, flush: true })
     }

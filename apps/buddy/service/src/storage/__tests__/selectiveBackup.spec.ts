@@ -7,9 +7,12 @@ import { join } from 'node:path'
 import process from 'node:process'
 import { parse } from 'smol-toml'
 import { afterEach, expect, it, vi } from 'vitest'
+import { LexoraConfigStore } from '../../../../electron/main/config/LexoraConfigStore'
+import { NotificationSoundLibrary } from '../../../../electron/main/notifications/NotificationSoundLibrary'
 import { resolveBuddyPrivateDirectories } from '../../../../platform/native/nativeHost'
 import { copySnapshot } from '../../../../platform/storage/copySnapshot'
 import { extractSnapshotFiles } from '../../../../platform/storage/extractSnapshotFiles'
+import { notificationSoundPath, writeNotificationSoundFile } from '../../../../platform/storage/notificationSoundFiles'
 import { writeStorageJson } from '../../../../platform/storage/storageFiles'
 import { StorageLocationStore } from '../../../../platform/storage/StorageLocationStore'
 import { restoreCredentialStage } from '../../../../platform/storage/storageOperationFiles'
@@ -47,6 +50,54 @@ async function fixture() {
   const run = () => runStorageMigration(input, signal, report)
   return { root, directory, store, database, snapshot, run }
 }
+it('restores sound settings and managed bytes without replacing current assets, and reuses remapped identities on repeat restore', async () => {
+  const source = await fixture()
+  const sourceConfig = new LexoraConfigStore({ configPath: join(source.root, 'config.toml') })
+  const sourceLibrary = new NotificationSoundLibrary({ home: join(source.root, 'buddy'), configStore: sourceConfig, applyConfig: () => {} })
+  const importedBytes = Buffer.from('trusted imported audio fixture')
+  const imported = await sourceLibrary.add(importedBytes, { name: 'Imported', mimeType: 'audio/wav', durationMs: 900 })
+  await sourceConfig.update({ desktop: { notificationSound: { selected: imported.id, volume: 0.3 } } })
+  const orphan = randomUUID()
+  await writeNotificationSoundFile(join(source.root, 'buddy'), orphan, Buffer.from('orphan'))
+  const snapshot = await source.snapshot(['settings'])
+  expect(snapshot.files.some(file => file.path === `buddy/notification-sounds/${imported.id}.audio`)).toBe(true)
+  expect(snapshot.files.some(file => file.path.includes(orphan))).toBe(false)
+  const providersOnly = await source.snapshot(['providers'])
+  expect(providersOnly.files.some(file => file.path.startsWith('buddy/notification-sounds'))).toBe(false)
+
+  const target = await fixture()
+  const targetConfig = new LexoraConfigStore({ configPath: join(target.root, 'config.toml') })
+  const targetHome = join(target.root, 'buddy')
+  const targetLibrary = new NotificationSoundLibrary({ home: targetHome, configStore: targetConfig, applyConfig: () => {} })
+  const currentBytes = Buffer.from('different current audio fixture')
+  const currentAsset = { ...imported, name: 'Current' }
+  await writeNotificationSoundFile(targetHome, imported.id, currentBytes)
+  await targetConfig.addNotificationSound(currentAsset, () => {})
+  const unrelated = await targetLibrary.add(Buffer.from('unrelated audio'), { name: 'Unrelated', mimeType: 'audio/mpeg', durationMs: 600 })
+  await targetConfig.update({ desktop: { notificationSound: { selected: unrelated.id }, profile: { deviceName: 'Current device' } } })
+  await copySnapshot(snapshotDirectory(source.root, snapshot.id), snapshotDirectory(target.root, snapshot.id), { signal, report, privateDirectoriesExecutable })
+  let selected: string | undefined
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await target.store.request('restore', target.root, [], snapshot.id, ['settings'])
+    await target.run()
+    const config = await targetConfig.read()
+    const sound = config.desktop.notificationSound
+    expect(sound.volume).toBe(0.3)
+    expect(sound.selected).not.toBe(imported.id)
+    if (selected)
+      expect(sound.selected).toBe(selected)
+    selected = sound.selected
+    expect(sound.sounds).toHaveLength(3)
+    expect(sound.sounds).toContainEqual(currentAsset)
+    expect(sound.sounds).toContainEqual(unrelated)
+    expect(sound.sounds).toContainEqual({ ...imported, id: selected })
+    expect(config.desktop.profile.deviceName).toBe('Current device')
+    expect(await targetLibrary.read(selected)).toEqual(importedBytes)
+    expect(await readFile(notificationSoundPath(targetHome, imported.id))).toEqual(currentBytes)
+    expect(await targetLibrary.read(unrelated.id)).toEqual(Buffer.from('unrelated audio'))
+  }
+})
+
 it('restores selected providers in place while retaining newer tasks, plugins, settings and unrelated providers', async () => {
   const f = await fixture()
   const db = f.database()

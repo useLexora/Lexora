@@ -6,6 +6,7 @@ import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { useSettingMutation } from '../../state/useSettingMutation'
 import DesktopSettingRow from '../shared/DesktopSettingRow.vue'
 import DesktopSettingsGroup from '../shared/DesktopSettingsGroup.vue'
+import DesktopNotificationSoundSettings from './DesktopNotificationSoundSettings.vue'
 
 type SettingField = 'notifications' | 'subtaskNotifications' | 'notifyWhenFocused'
 
@@ -34,5 +35,6 @@ const fields = computed(() => [
         <NSpin v-if="pendingFields.has(field.id)" size="small" />
       </DesktopSettingRow>
     </DesktopSettingsGroup>
+    <DesktopNotificationSoundSettings v-bind="props" :disabled="pendingFields.has('notifications')" />
   </section>
 </template>

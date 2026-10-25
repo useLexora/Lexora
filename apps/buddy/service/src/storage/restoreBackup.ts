@@ -13,6 +13,7 @@ import { backupDirectoryAllowed } from '../../../shared/storage/backupScope'
 import { mergeBackupDatabase, selectBackupDatabase } from './backupDatabase'
 import { mergeSettings } from './backupSettings'
 import { openBuddyDatabase } from './database'
+import { restoreNotificationSoundBackup } from './notificationSoundBackup'
 import { relocateDatabaseReferences, relocateProfileJournals, verifyProfileReferences } from './relocateProfileReferences'
 import { sanitizeRestoredDatabase } from './restorePolicy'
 import { snapshotDirectory, verifyStorageSnapshot } from './StorageSnapshots'
@@ -72,7 +73,7 @@ export async function prepareBackupRestore(operation: StorageOperation, stage: s
     target.close()
   }
   await relocateProfileJournals(incoming, manifest.sourceRoot, operation.target, signal)
-  await copyStorageTree(incoming, candidate, { ...options, overwrite: true, exclude: path => path === 'credentials.enc' || /^buddy\/buddy\.sqlite3(?:-|$)/.test(path) || path === 'config.toml' || path === 'device/sync.json' || /^buddy\/extensions\/(?:installed|schedules)\.json$/.test(path) })
+  await copyStorageTree(incoming, candidate, { ...options, overwrite: true, exclude: path => path === 'credentials.enc' || /^buddy\/notification-sounds(?:\/|$)/.test(path) || /^buddy\/buddy\.sqlite3(?:-|$)/.test(path) || path === 'config.toml' || path === 'device/sync.json' || /^buddy\/extensions\/(?:installed|schedules)\.json$/.test(path) })
   if (scopes.includes('settings')) {
     const text = await readFile(join(incoming, 'config.toml'), 'utf8').catch((error) => {
       if (isMissing(error))
@@ -85,7 +86,8 @@ export async function prepareBackupRestore(operation: StorageOperation, stage: s
           return ''
         throw error
       })
-      await writeFile(join(candidate, 'config.toml'), mergeSettings(current, text), { mode: 0o600, flush: true })
+      const restored = await restoreNotificationSoundBackup(join(incoming, 'buddy'), join(candidate, 'buddy'), current, text, signal)
+      await writeFile(join(candidate, 'config.toml'), mergeSettings(current, restored), { mode: 0o600, flush: true })
     }
   }
   if (scopes.includes('connections')) {

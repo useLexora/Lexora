@@ -1,3 +1,4 @@
+import type { EventSnapshot } from '../../../shared/events/eventTypes'
 import type { LexoraConfig } from '../../shared/desktopApi'
 import type { BrowserIntegration } from '../browser/BrowserIntegration'
 import type { ExecuteDesktopCommand } from '../desktopCommands'
@@ -37,6 +38,10 @@ import { registerExtensionIpc } from '../extensions/registerExtensionIpc'
 import { createFeedbackIssueUrl } from '../feedbackIssue'
 import { registerDesktopIpc } from '../ipc'
 import { registerLocalChatIpc } from '../localChatIpc'
+import { NotificationAudioPlayer } from '../notifications/NotificationAudioPlayer'
+import { NotificationSoundLibrary } from '../notifications/NotificationSoundLibrary'
+import { NotificationSoundService } from '../notifications/NotificationSoundService'
+import { registerNotificationSoundIpc } from '../notifications/registerNotificationSoundIpc'
 import { registerStorageIpc } from '../storage/registerStorageIpc'
 import { StorageBackupService } from '../storage/StorageBackupService'
 import { registerSyncIpc } from '../sync/registerSyncIpc'
@@ -191,10 +196,34 @@ export class DesktopIntegrations {
       onQuit: this.#requestQuit,
       onRestart: this.#requestRestart,
     })
+    const player = new NotificationAudioPlayer()
+    const soundLibrary = new NotificationSoundLibrary({ home: paths.buddyHome, configStore: runtime.configStore, applyConfig: config => this.applyConfig(config) })
+    const sounds = new NotificationSoundService({ player, library: soundLibrary, getPreferences: () => runtime.config!.desktop.notificationSound })
+    this.#subscriptions.push(() => sounds.dispose())
+    this.#subscriptions.push(registerNotificationSoundIpc({ player, library: soundLibrary, sounds, getWindow: () => windows.window }))
+    const soundConfiguration = (config: EventSnapshot<LexoraConfig>) => JSON.stringify([config.desktop.notificationSound, config.desktop.notificationsEnabled, config.desktop.subtaskNotificationsEnabled, config.desktop.notifyWhenFocused])
+    let soundSettings = soundConfiguration(runtime.config!)
+    this.#subscriptions.push(runtime.configStore.onDidChange((change) => {
+      if (change.kind !== 'committed')
+        return
+      const next = soundConfiguration(change.config)
+      if (next === soundSettings)
+        return
+      soundSettings = next
+      void sounds.settingsChanged().catch((error) => {
+        diagnostics.record({ scope: 'desktop', level: 'warn', event: 'notification.audio_stop.failed', error })
+      })
+    }).dispose)
     const notifications = new DesktopNotificationService({
       createNotification(input) {
         const notification = new Notification(input)
-        return { onClick: listener => notification.on('click', listener), show: () => notification.show() }
+        return { onClick: listener => notification.on('click', listener), onShow: listener => notification.once('show', listener), show: () => notification.show() }
+      },
+      getSoundSelection: () => runtime.config!.desktop.notificationSound.selected,
+      playSound: (isEligible) => {
+        void sounds.playNotification(isEligible).catch((error) => {
+          diagnostics.record({ scope: 'desktop', level: 'warn', event: 'notification.audio_play.failed', error })
+        })
       },
       getLanguage: () => runtime.language,
       getSettings: () => ({

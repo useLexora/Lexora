@@ -2,6 +2,7 @@ import type { LexoraConfigPatch } from '../../../shared/desktopApi'
 import { Buffer } from 'node:buffer'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import process from 'node:process'
 import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { parse } from 'smol-toml'
 import { describe, expect, it } from 'vitest'
@@ -157,7 +158,8 @@ describe('lexoraConfigStore', () => {
       desktop: { future_setting: true, subtask_notifications_enabled: false, sidebar_collapsed: true, navigation_layout: 'immersive', task_sidebar: { future: true }, chat: { future: true, paste_text_as_attachment: false }, typography: { future: true } },
       browser: { future: true },
     })
-    expect((await stat(configPath)).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32')
+      expect((await stat(configPath)).mode & 0o777).toBe(0o600)
   })
 
   it('migrates paired and legacy themes without losing the selected appearance or custom themes', async () => {

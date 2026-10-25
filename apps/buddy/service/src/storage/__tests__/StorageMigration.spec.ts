@@ -46,6 +46,9 @@ it('moves A to B to C to A, preserving bytes, empty directories and attachment r
   await mkdir(join(root, '.runtime', 'electron'), { recursive: true })
   await writeFile(join(root, '.runtime', 'electron', 'lockfile'), 'transient lock')
   await writeFile(join(root, 'buddy', 'drafts', 'draft', 'lockfile'), 'user file')
+  const soundId = randomUUID()
+  await mkdir(join(root, 'buddy', 'notification-sounds'))
+  await writeFile(join(root, 'buddy', 'notification-sounds', `${soundId}.audio`), 'managed sound')
   for (const target of [join(directory, 'b'), join(directory, 'c'), root]) {
     const source = (await store.read()).activeRoot
     await store.request('relocate', target)
@@ -59,6 +62,7 @@ it('moves A to B to C to A, preserving bytes, empty directories and attachment r
     expect(await readdir(join(target, 'buddy', 'empty'))).toEqual([])
     await expect(readFile(join(target, '.runtime', 'electron', 'lockfile'))).rejects.toMatchObject({ code: 'ENOENT' })
     expect(await readFile(join(target, 'buddy', 'drafts', 'draft', 'lockfile'), 'utf8')).toBe('user file')
+    expect(await readFile(join(target, 'buddy', 'notification-sounds', `${soundId}.audio`), 'utf8')).toBe('managed sound')
     const database = openBuddyDatabase({ databasePath: join(target, 'buddy', 'buddy.sqlite3') })
     expect(database.prepare('SELECT stored_path FROM attachments').get()?.stored_path).toBe(join(target, 'buddy', 'drafts', 'draft', 'hello.txt'))
     database.close()

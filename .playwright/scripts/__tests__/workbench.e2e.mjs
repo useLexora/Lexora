@@ -74,6 +74,7 @@ test('builtin working copies back up continued edits, veto closure and recover a
 test('task switching stays responsive during loading, failure and notification navigation', async ({ buddy }) => {
   const instance = await buddy.createInstance('task-switch')
   const { app, page, diagnostics } = await instance.launch()
+  await expect.poll(() => page.evaluate(async () => (await window.lexoraDesktop.localChat.runtime.getStatus()).status), { timeout: 45000 }).toBe('ready')
   await app.evaluate((_electron, databasePath) => {
     const { DatabaseSync } = process.getBuiltinModule('node:sqlite')
     const db = new DatabaseSync(databasePath)
@@ -171,6 +172,133 @@ test('task switching stays responsive during loading, failure and notification n
   await release('get:b')
   await expect.poll(() => page.evaluate(async () => (await window.lexoraDesktop.localChat.conversations.get('b')).activeBranchId)).toBe('notified-branch')
   await expect(page.locator('.desktop-chat-page')).toContainText('Notification target content')
+  expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
+})
+
+async function prepareNotificationNavigation(buddy, label) {
+  const instance = await buddy.createInstance(label)
+  const desktop = await instance.launch()
+  const window = await desktop.app.browserWindow(desktop.page)
+  await expect.poll(() => desktop.page.evaluate(async () => (await window.lexoraDesktop.localChat.runtime.getStatus()).status), { timeout: 45000 }).toBe('ready')
+  await desktop.page.evaluate(() => window.lexoraDesktop.settings.update({ desktop: { featureAnnouncementsEnabled: false } }))
+  await window.evaluate(window => window.setSize(1600, 1000))
+  await desktop.app.evaluate((_electron, databasePath) => {
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite')
+    const db = new DatabaseSync(databasePath)
+    try {
+      const now = Date.now()
+      const createdAt = new Date(now).toISOString()
+      const insertMessage = db.prepare('INSERT INTO messages (id, conversation_id, branch_id, role, content_json, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      for (const id of ['a', 'b']) {
+        db.prepare('INSERT INTO conversations (id, title, active_branch_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run(id, `Notification task ${id.toUpperCase()}`, `branch-${id}`, createdAt, createdAt)
+        db.prepare('INSERT INTO conversation_branches (id, conversation_id, created_at) VALUES (?, ?, ?)').run(`branch-${id}`, id, createdAt)
+        insertMessage.run(`message-${id}`, id, `branch-${id}`, 'user', JSON.stringify({ text: `Original content ${id.toUpperCase()}` }), createdAt)
+      }
+      db.prepare('INSERT INTO conversation_branches (id, conversation_id, created_at) VALUES (?, ?, ?)').run('notification-branch', 'b', createdAt)
+      insertMessage.run('notification-message', 'b', 'notification-branch', 'user', JSON.stringify({ text: 'The notification points to this earlier message.' }), createdAt)
+      db.prepare('INSERT INTO runs (id, conversation_id, branch_id, triggering_message_id, provider, model, purpose, status, started_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run('notification-run', 'b', 'notification-branch', 'notification-message', 'fixture', 'fixture', 'chat', 'completed', createdAt, createdAt)
+      for (let index = 1; index <= 24; index++) {
+        insertMessage.run(`later-message-${index}`, 'b', 'notification-branch', 'user', JSON.stringify({ text: `Later branch message ${index}\n\nThis later content must not replace the notification's earlier scroll target.` }), new Date(now + index * 1000).toISOString())
+      }
+    }
+    finally { db.close() }
+  }, path.join(instance.home, 'buddy/buddy.sqlite3'))
+  await desktop.page.reload()
+  return { ...desktop, instance, window }
+}
+
+function notificationTask(page, id) {
+  return page.locator(`[data-task-id="${id}"] .desktop-task-sidebar__task`)
+}
+
+function notificationPane(page, id) {
+  return page.locator('.workbench-pane').filter({ has: page.locator('.workbench-pane-title', { hasText: `Notification task ${id.toUpperCase()}` }) })
+}
+
+async function sendNotificationTarget(window) {
+  await window.evaluate(window => window.webContents.send('lexora:app:open-target', { conversationId: 'b', runId: 'notification-run' }))
+}
+
+async function expectNotificationMessage(page, pane) {
+  const message = pane.locator('[data-message-id="notification-message"]')
+  await expect(message).toContainText('The notification points to this earlier message.')
+  await expect(message).toBeInViewport()
+  await expect(pane.locator('[data-message-id="later-message-24"]')).toHaveCount(1)
+  await expect(pane.locator('[data-message-id="later-message-24"]')).not.toBeInViewport()
+  await expect.poll(() => page.evaluate(async () => (await window.lexoraDesktop.localChat.conversations.get('b')).activeBranchId)).toBe('notification-branch')
+  await expect(pane.locator('[data-message-id="message-b"]')).toHaveCount(0)
+}
+
+test('notification navigation: app:open-target focuses the original split pane without duplicating the task', async ({ buddy }) => {
+  const { page, window, diagnostics } = await prepareNotificationNavigation(buddy, 'notification-split')
+  await notificationTask(page, 'a').click()
+  const first = notificationPane(page, 'a')
+  await first.getByTestId('pane-layout-menu').click()
+  await page.locator('.n-dropdown-menu:visible').getByText('分屏', { exact: true }).hover()
+  await page.locator('.n-dropdown-menu:visible').getByText('向右分屏', { exact: true }).click()
+  await notificationTask(page, 'b').click()
+  const second = notificationPane(page, 'b')
+  await expect(second.locator('[data-message-id="message-b"]')).toContainText('Original content B')
+  const firstId = await first.getAttribute('data-pane-id')
+  const secondId = await second.getAttribute('data-pane-id')
+  const firstEditor = first.locator('.desktop-chat-composer__prosemirror')
+  await firstEditor.fill('Keep the other pane and its draft.')
+  await expect(first).toHaveClass(/is-focused/)
+  await expect(second).not.toHaveClass(/is-focused/)
+
+  await sendNotificationTarget(window)
+  await expectNotificationMessage(page, second)
+  await expect(second).toHaveClass(/is-focused/)
+  await expect(first).not.toHaveClass(/is-focused/)
+  await expect(page.locator('.workbench-pane')).toHaveCount(2)
+  await expect(first).toHaveAttribute('data-pane-id', firstId)
+  await expect(second).toHaveAttribute('data-pane-id', secondId)
+  await expect(firstEditor).toHaveText('Keep the other pane and its draft.')
+  await expect(first.locator('[data-message-id="message-a"]')).toContainText('Original content A')
+  await expect(notificationTask(page, 'b')).toHaveClass(/is-active/)
+  expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
+})
+
+test('notification navigation: app:open-target returns from settings to the existing task and run branch', async ({ buddy }) => {
+  const { page, window, diagnostics } = await prepareNotificationNavigation(buddy, 'notification-settings')
+  await notificationTask(page, 'b').click()
+  const pane = notificationPane(page, 'b')
+  await expect(pane.locator('[data-message-id="message-b"]')).toContainText('Original content B')
+  const paneId = await pane.getAttribute('data-pane-id')
+  await page.locator('.desktop-app-sidebar').getByRole('button', { name: '设置', exact: true }).click()
+  await expect(page.locator('.desktop-settings-sidebar')).toBeVisible()
+  await expect(page).toHaveURL(/#\/settings(?:\/|$)/)
+
+  await sendNotificationTarget(window)
+  await expectNotificationMessage(page, pane)
+  await expect(page).toHaveURL(/#\/tasks$/)
+  await expect(page.locator('.desktop-settings-sidebar')).toBeHidden()
+  await expect(page.locator('.workbench-pane')).toHaveCount(1)
+  await expect(pane).toHaveAttribute('data-pane-id', paneId)
+  await expect(notificationTask(page, 'b')).toHaveClass(/is-active/)
+  expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
+})
+
+test('notification navigation: app:open-target opens an unopened task while hidden and reveals its earlier run message after restore', async ({ buddy }, testInfo) => {
+  testInfo.annotations.push({ type: 'coverage', description: 'Delivers the real main-to-preload app:open-target event while BrowserWindow is hidden. Does not click a Windows toast or validate OS foreground activation.' })
+  const { page, window, diagnostics } = await prepareNotificationNavigation(buddy, 'notification-background')
+  await notificationTask(page, 'a').click()
+  await expect(notificationPane(page, 'a').locator('[data-message-id="message-a"]')).toContainText('Original content A')
+  await expect(notificationPane(page, 'b')).toHaveCount(0)
+  await window.evaluate(window => window.hide())
+  await expect.poll(() => window.evaluate(window => ({ visible: window.isVisible(), focused: window.isFocused() }))).toEqual({ visible: false, focused: false })
+
+  await sendNotificationTarget(window)
+  await expect.poll(() => page.evaluate(async () => (await window.lexoraDesktop.localChat.conversations.get('b')).activeBranchId)).toBe('notification-branch')
+  await expect(notificationTask(page, 'b')).toHaveClass(/is-active/)
+  expect(await window.evaluate(window => window.isVisible())).toBe(false)
+  await window.evaluate(window => window.showInactive())
+  await expect.poll(() => window.evaluate(window => window.isVisible())).toBe(true)
+  const pane = notificationPane(page, 'b')
+  await expectNotificationMessage(page, pane)
+  await expect(page.locator('.workbench-pane')).toHaveCount(1)
+  await expect(notificationPane(page, 'a')).toHaveCount(0)
+  await expect(notificationTask(page, 'b')).toHaveClass(/is-active/)
   expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })
 

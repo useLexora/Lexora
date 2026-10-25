@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { notificationSoundAssetIdSchema } from '../notifications/notificationSound'
 
 export const backupScopeSchema = z.enum(['tasks', 'workspaces', 'buddies', 'providers', 'connections', 'skills', 'plugins', 'automations', 'settings'])
 export type BackupScope = z.infer<typeof backupScopeSchema>
@@ -9,6 +10,9 @@ export const backupOptionsSchema = backupRequestSchema.refine(value => !value.cr
 export type BackupOptions = z.infer<typeof backupOptionsSchema>
 
 export function backupPathScope(path: string): BackupScope | null {
+  const soundId = /^buddy\/notification-sounds\/([^/]+)\.audio$/.exec(path)?.[1]
+  if (soundId && notificationSoundAssetIdSchema.safeParse(soundId).success)
+    return 'settings'
   if (path === 'config.toml' || /^buddy\/themes\/(?:user-themes\.json|assets\/[a-f0-9]{64})$/.test(path))
     return 'settings'
   if (path === 'device/sync.json')
@@ -31,7 +35,7 @@ export function backupPathAllowed(path: string, scopes: readonly BackupScope[]):
 }
 export function backupDirectoryAllowed(path: string, scopes: readonly BackupScope[]): boolean {
   return backupPathAllowed(path, scopes) || path === 'buddy'
-    || (scopes.includes('settings') && /^buddy\/themes(?:\/assets)?$/.test(path))
+    || (scopes.includes('settings') && (path === 'buddy/notification-sounds' || /^buddy\/themes(?:\/assets)?$/.test(path)))
     || (scopes.includes('connections') && path === 'device')
     || (scopes.includes('skills') && (path === 'buddy/agent' || /^buddy\/spaces(?:\/[^/]+)?$/.test(path)))
     || (scopes.includes('workspaces') && /^buddy\/(?:conversations|spaces)(?:\/[^/]+)?$/.test(path))

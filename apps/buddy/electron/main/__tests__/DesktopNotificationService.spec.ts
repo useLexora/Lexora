@@ -50,10 +50,13 @@ function fixture(kind: LocalExecution['kind'] = 'root') {
   const state = {
     settings: { notificationsEnabled: true, subtaskNotificationsEnabled: true, notifyWhenFocused: false },
     focused: false,
+    soundSelection: 'system',
     executions: [execution],
   }
   const notifications: { body: string, title: string }[] = []
   const clicks: (() => void)[] = []
+  const shows: (() => void)[] = []
+  const played: string[] = []
   const openTarget = vi.fn()
   const request = vi.fn(async (method: string) => {
     if (method === 'runs.get')
@@ -79,7 +82,12 @@ function fixture(kind: LocalExecution['kind'] = 'root') {
   })
   const service = new DesktopNotificationService({
     createNotification(input) {
-      return { onClick: listener => clicks.push(listener), show: () => notifications.push(input) }
+      return { onClick: listener => clicks.push(listener), onShow: listener => shows.push(listener), show: () => notifications.push(input) }
+    },
+    getSoundSelection: () => state.soundSelection,
+    playSound: (isEligible) => {
+      if (isEligible())
+        played.push(state.soundSelection)
     },
     getLanguage: () => 'zh-CN',
     getSettings: () => state.settings,
@@ -91,10 +99,41 @@ function fixture(kind: LocalExecution['kind'] = 'root') {
     method: 'run.event',
     params: { createdAt: run.completedAt, payload: { errorCode: null }, runId: run.id, sequence, type },
   })
-  return { service, state, run, execution, request, notifications, clicks, openTarget, event }
+  return { service, state, run, execution, request, notifications, clicks, shows, played, openTarget, event }
 }
 
 describe('desktopNotificationService', () => {
+  it('silences native audio only for an application sound and plays once after notification display', async () => {
+    const f = fixture()
+    f.state.soundSelection = 'bell'
+    await f.service.handle(f.event())
+    expect(f.notifications).toEqual([{ title: '整理发布说明', body: '任务已完成', silent: true }])
+    expect(f.played).toEqual([])
+    f.shows[0]!()
+    f.shows[0]!()
+    await f.service.handle(f.event())
+    expect(f.played).toEqual(['bell'])
+    expect(f.notifications).toHaveLength(1)
+  })
+
+  it.each(['master', 'subtask', 'focus', 'selection'])('rechecks %s before delayed sound delivery', async (change) => {
+    const f = fixture('npc_child')
+    f.state.soundSelection = 'bell'
+    await f.service.handle(f.event())
+    if (change === 'master')
+      f.state.settings.notificationsEnabled = false
+    if (change === 'subtask')
+      f.state.settings.subtaskNotificationsEnabled = false
+    if (change === 'focus')
+      f.state.focused = true
+    if (change === 'selection')
+      f.state.soundSelection = 'drop'
+    f.shows[0]!()
+    expect(f.played).toEqual([])
+    f.clicks[0]!()
+    expect(f.openTarget).toHaveBeenCalledWith({ conversationId: f.run.conversationId, runId: f.run.id })
+  })
+
   it('filters events, respects master and foreground settings, and opens a deduplicated root notification when subtasks are disabled', async () => {
     const f = fixture()
     f.state.settings.subtaskNotificationsEnabled = false
