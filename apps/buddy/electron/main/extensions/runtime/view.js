@@ -28,7 +28,7 @@ function request(method, params = null) {
     if (pending.size >= 64)
       return reject(new Error('EXTENSION_REQUEST_LIMIT'))
     const id = crypto.randomUUID()
-    const longRunning = waitsForExtensionIo(method) || ['commands.execute', 'references.add'].includes(method)
+    const longRunning = waitsForExtensionIo(method) || ['commands.execute', 'references.add', 'references.commit'].includes(method)
     const timer = longRunning
       ? undefined
       : setTimeout(() => {
@@ -162,6 +162,9 @@ async function initialize() {
       setPresentation: presentation => request('view.setPresentation', presentation),
       references: Object.freeze({
         add: input => request('references.add', input.kind === 'resource' ? { ...input, resource: { id: input.resource.id } } : input),
+        capture: input => request('references.capture', input.kind === 'resource' ? { ...input, resource: { id: input.resource.id } } : input),
+        commit: (id, choice) => request('references.commit', { id, choice }),
+        release: id => request('references.release', { id }),
         onReveal: handler => references.onReveal(handler),
       }),
       resources: {

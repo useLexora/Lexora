@@ -4,7 +4,7 @@ import type { ThemeService } from '../../../platform/themes/ThemeService'
 import type { ApplicationDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { ExtensionTaskAction, ExtensionTaskActionInput, ExtensionTaskActionResult } from '../../../shared/extensions/extensionActionApi'
 import type { ExtensionAgentCatalog, ExtensionAgentDescriptor, ExtensionAgentInvocation } from '../../../shared/extensions/extensionAgent'
-import type { ExtensionReview, ExtensionReviewResult, ExtensionWorkbenchEvent } from '../../../shared/extensions/extensionApi'
+import type { ExtensionReview, ExtensionReviewResult, ExtensionWorkbenchEvent, ExtensionWorkbenchResult } from '../../../shared/extensions/extensionApi'
 import type { ExtensionInspection } from '../../../shared/extensions/extensionAuthoring'
 import type { ExtensionConditionRuntime } from '../../../shared/extensions/extensionConditionContext'
 import type { TaskFileTarget } from '../../../shared/files/taskFileApi'
@@ -20,6 +20,7 @@ import { seedBundledThemes } from '../../../platform/themes/bundledThemes'
 import { safeDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import { EXTENSION_IPC, extensionError, extensionManagementSchema } from '../../../shared/extensions/extensionApi'
 import { ExtensionCompatibilityError } from '../../../shared/extensions/extensionCompatibility'
+import { extensionReferenceCaptureSchema } from '../../../shared/extensions/extensionReferences'
 import { assertTrustedSender } from '../ipc'
 import { compileExtension } from './compileExtension'
 import { createExtensionClipboard } from './ExtensionClipboard'
@@ -62,7 +63,7 @@ export function registerExtensionIpc(options: {
   const protocol = new ExtensionProtocol(store)
   const stopProtocol = protocol.install(session.defaultSession, 'view')
   const hosts = new Set<SandboxedExtensionHost>()
-  const replies = new Map<string, (value: string | null) => void>()
+  const replies = new Map<string, { kind: ExtensionWorkbenchEvent['kind'], finish: (result: ExtensionWorkbenchResult) => void }>()
   const bound = new Set<BrowserWindow>()
   let resourcePickerOpen = false
   const guardNavigation = (event: Electron.Event<Electron.WebContentsWillFrameNavigateEventParams>) => {
@@ -157,8 +158,8 @@ export function registerExtensionIpc(options: {
           current.webContents.send(EXTENSION_IPC.workbench, { kind: 'cancel', requestId: event.requestId } satisfies ExtensionWorkbenchEvent)
         finish(null)
       }
-      const timer = event.kind === 'reference' ? undefined : setTimeout(cancel, 10000)
-      function finish(value: string | null) {
+      const timer = event.kind === 'reference' || event.kind === 'reference-commit' ? undefined : setTimeout(cancel, 10000)
+      function finish(value: ExtensionWorkbenchResult) {
         if (settled)
           return
         settled = true
@@ -167,7 +168,7 @@ export function registerExtensionIpc(options: {
         replies.delete(event.requestId)
         resolve(value)
       }
-      replies.set(event.requestId, finish)
+      replies.set(event.requestId, { kind: event.kind, finish })
       signal.addEventListener('abort', cancel, { once: true })
       current.webContents.send(EXTENSION_IPC.workbench, event)
     }),
@@ -213,7 +214,7 @@ export function registerExtensionIpc(options: {
       current.webContents.on('render-process-gone', resetHosts)
       current.webContents.once('destroyed', () => {
         bound.delete(current)
-        for (const reply of replies.values()) reply(null)
+        for (const reply of replies.values()) reply.finish(null)
         resetHosts()
       })
     }
@@ -301,9 +302,15 @@ export function registerExtensionIpc(options: {
     const current = window()
     if (!current || current.isDestroyed() || event.sender !== current.webContents || event.senderFrame !== current.webContents.mainFrame)
       return
-    const input = z.object({ requestId: z.string().uuid(), viewId: z.string().uuid().nullable() }).strict().safeParse(raw)
-    if (input.success)
-      replies.get(input.data.requestId)?.(input.data.viewId)
+    const input = z.object({ requestId: z.string().uuid(), result: z.unknown() }).strict().safeParse(raw)
+    if (!input.success)
+      return
+    const reply = replies.get(input.data.requestId)
+    if (!reply)
+      return
+    const result = (reply.kind === 'reference-capture' ? extensionReferenceCaptureSchema : z.string().uuid()).nullable().safeParse(input.data.result)
+    if (result.success)
+      reply.finish(result.data)
   }
   ipcMain.on(EXTENSION_IPC.workbenchReply, onWorkbenchReply)
   ipcMain.handle(EXTENSION_IPC.hostRequest, async (event, method: unknown, params: unknown) => {
@@ -327,7 +334,7 @@ export function registerExtensionIpc(options: {
     }
     finally {
       for (const subscription of subscriptions) subscription.dispose()
-      for (const reply of replies.values()) reply(null)
+      for (const reply of replies.values()) reply.finish(null)
       for (const current of bound) {
         if (current.isDestroyed())
           continue

@@ -282,6 +282,13 @@ export interface ReferenceLocator {
   readonly version: number
   readonly data: ReadonlyJson
 }
+export type ReferenceChoice = { kind: 'view', id: string } | { kind: 'new-task' | 'clipboard' }
+export interface ReferenceCapture {
+  readonly id: string
+  readonly targets: readonly { readonly id: string, readonly label: string }[]
+  readonly defaultId: string | null
+  readonly clipboard: boolean
+}
 export interface ReferenceReveal {
   readonly referenceId: string
   readonly text: string
@@ -332,6 +339,9 @@ export interface ViewContext {
   openExternal: (url: string) => Promise<void>
   readonly references: {
     add: (input: ReferenceInput) => Promise<boolean>
+    capture: (input: ReferenceInput) => Promise<ReferenceCapture | null>
+    commit: (id: string, choice: ReferenceChoice) => Promise<boolean>
+    release: (id: string) => Promise<boolean>
     onReveal: (handler: (input: ReferenceReveal, signal: AbortSignal) => boolean | Promise<boolean>) => Disposable
   }
   readonly resources: LocalResourceApi

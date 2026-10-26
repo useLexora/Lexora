@@ -1,4 +1,5 @@
 import type { ExtensionApi, ExtensionStatus, ExtensionWorkbenchEvent } from '@buddy-shared/extensions/extensionApi'
+import type { ExtensionReferenceCapture, ExtensionReferenceMaterial } from '@buddy-shared/extensions/extensionReferences'
 import type { Ref } from 'vue'
 import type { TaskWorkspacePool } from './TaskWorkspacePool'
 import type { ExtensionViews } from '@/modules/extensions'
@@ -29,8 +30,19 @@ export function useExtensionReferences(options: {
 }) {
   const { references, controller, views, api } = options
   const pending = new Set<string>()
+  const captures = new Map<string, {
+    id: string
+    scope: Omit<SelectionReferenceRequest, 'quote'>
+    material: ExtensionReferenceMaterial
+    current: () => boolean
+    dispose: () => void
+  }>()
   const lifetime = new AbortController()
-  onScopeDispose(() => lifetime.abort())
+  onScopeDispose(() => {
+    lifetime.abort()
+    for (const capture of captures.values()) capture.dispose()
+    captures.clear()
+  })
   onScopeDispose(references.registerProvider('extensions', {
     captureSource(viewId) {
       const surface = views.surfaces.get(viewId)
@@ -141,26 +153,57 @@ export function useExtensionReferences(options: {
   }
 
   return {
-    async receive(event: Extract<ExtensionWorkbenchEvent, { kind: 'reference' }>, signal: AbortSignal): Promise<boolean> {
+    async receive(event: Extract<ExtensionWorkbenchEvent, { kind: 'reference' | 'reference-capture' | 'reference-commit' | 'reference-release' }>, signal: AbortSignal): Promise<boolean | ExtensionReferenceCapture | null> {
       if (pending.has(event.viewId))
-        return false
-      const current = () => {
+        return event.kind === 'reference-capture' ? null : false
+      const sourceCurrent = () => {
         const surface = views.surfaces.get(event.viewId)
-        return !signal.aborted && !lifetime.signal.aborted && !!surface?.ready && surface.visible && surface.eligible && !surface.error
+        return !lifetime.signal.aborted && !!surface?.ready && surface.visible && surface.eligible && !surface.error
           && surface.session?.generation === event.generation && surface.session.token === event.token
       }
+      const current = () => !signal.aborted && sourceCurrent()
+      const previous = captures.get(event.viewId)
+      if (event.kind === 'reference-release') {
+        if (previous?.id !== event.id || !previous.current() || !current())
+          return false
+        previous.dispose()
+        return true
+      }
       if (!current())
+        return event.kind === 'reference-capture' ? null : false
+      const captured = event.kind === 'reference-commit' ? previous : undefined
+      if (event.kind === 'reference-commit' && (!captured || captured.id !== event.id || !captured.current()))
         return false
-      const scope = references.captureScope(event.viewId)
+      const scope = captured?.scope ?? references.captureScope(event.viewId)
       if (!scope)
-        return false
+        return event.kind === 'reference-capture' ? null : false
+      const material = 'material' in event ? event.material : captured!.material
+      if (event.kind === 'reference-capture') {
+        previous?.dispose()
+        const id = crypto.randomUUID()
+        const valid = () => sourceCurrent() && references.captureSource(scope.viewId)?.identity === scope.sourceIdentity
+        let stop = () => {}
+        const dispose = () => {
+          stop()
+          if (captures.get(event.viewId)?.id === id)
+            captures.delete(event.viewId)
+        }
+        stop = watch(valid, valid => !valid && dispose(), { flush: 'sync' })
+        captures.set(event.viewId, { id, scope, material, current: valid, dispose })
+        return {
+          id,
+          targets: scope.targets.slice(0, 64).map(target => ({ id: target.id, label: target.label.slice(0, 512) })),
+          defaultId: scope.targets.length === 1 ? scope.targets[0]!.id : null,
+          clipboard: material.kind === 'quote' && !!options.writeClipboard,
+        }
+      }
+      captured?.dispose()
       pending.add(event.viewId)
       const abort = new AbortController()
       const stop = watch(current, valid => !valid && abort.abort(), { flush: 'sync' })
       try {
-        const material = event.material
         const title = material.kind === 'quote' ? material.quote.source.title : material.kind === 'file' ? material.name : views.surfaces.get(event.viewId)?.input.resource?.name ?? ''
-        const choice = await options.chooseTarget(scope, title, AbortSignal.any([signal, lifetime.signal, abort.signal]), material.kind === 'quote' && !!options.writeClipboard)
+        const choice = event.kind === 'reference-commit' ? event.choice : await options.chooseTarget(scope, title, AbortSignal.any([signal, lifetime.signal, abort.signal]), material.kind === 'quote' && !!options.writeClipboard)
         if (!choice || !current())
           return false
         if (choice.kind === 'clipboard') {

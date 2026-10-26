@@ -46,7 +46,9 @@
 
 ## 引用到对话
 
-API 4 中 `location: "context"` 的交互资源视图可声明 `permissions.references: true`，通过 `context.references.add(input)` 选择任务草稿。该视图作为独立导航入口显示或没有可用任务时，内容引用改为复制到系统剪贴板；粘贴回当前 Lexora 窗口可恢复引用卡片与定位信息，重启或换窗口后仅保留文字。`location: "page"` 的视图、装饰、插槽与替换控件不支持此能力。成功加入草稿或复制引用返回 `true`，取消返回 `false`；授权或资源失效会抛错。等待用户选择没有固定的十秒期限；关闭视图或停用插件会取消请求。此操作不会发送消息或调用模型。
+API 4 的 `context` 和 `page` 视图可声明 `permissions.references: true`，通过 `context.references.add(input)` 选择任务草稿、新建任务或复制引用。装饰、插槽与替换控件不支持此能力。成功加入草稿或复制引用返回 `true`，取消返回 `false`；授权或资源失效会抛错。等待用户选择没有固定的十秒期限；关闭视图或停用插件会取消请求。此操作不会保存源文档、发送消息或调用模型。
+
+自有内容菜单使用 `references.capture(input)` 冻结材料和当时可接收的任务草稿，返回 `{ id, targets: [{ id, label }], defaultId, clipboard }`；视图不可用时返回 `null`。唯一目标的 `defaultId` 可作为主动作，多个目标由插件在子菜单呈现，同时提供新任务及允许时的复制入口。点击后调用 `references.commit(id, { kind: 'view', id: targetId })`、`{ kind: 'new-task' }` 或 `{ kind: 'clipboard' }`。提交会等待草稿持久化，不设固定十秒期限；成功返回 `true`，失效返回 `false`，不会悄悄选择后来激活的任务。菜单关闭时调用 `references.release(id)`。每个视图只保留最近一次捕获，隐藏、关闭、替换会话或已消费后失效；插件不能持久化或跨视图复用捕获 ID。捕获不保存源文档，也不修改草稿。该交互需要 Lexora 0.17.0 或更新版本。
 
 ```ts
 await context.references.add({
@@ -94,7 +96,6 @@ context.references.onReveal(async ({ locator, text }, signal) => {
 剪贴板调用要求安装授权及当前前台窗口中可见、聚焦的插件 iframe；读取交付前和写入前均复验视图身份与焦点。此授权不是逐次用户手势检查：已聚焦的插件可主动调用，用户无需每次确认。失焦、隐藏、关闭或插件停用后不可调用；后台入口、Worker、装饰、内容插槽和替换控件不提供此能力。纯视图插件无需后台入口。iframe 的浏览器 `navigator.clipboard` 权限仍被禁止，编辑器应注入此 SDK 适配器；浏览器原生 `paste` 事件的 `clipboardData` 与异步剪贴板 API 是不同路径。
 
 这两项增量 API 应先检查 `typeof context.setDocumentInfo === 'function'` 和 `context.clipboard`，缺失时提示升级宿主；清单兼容范围使用实际支持此能力的宿主版本。
-
 
 ## 文件关联与独立入口
 
@@ -356,6 +357,5 @@ API 3 的 `contributes.iconThemes` 可贡献独立的文件与目录图标主题
 颜色来自 `context.environment`，跟随当前主题实时更新，无需重建视图。原有 `--lexora-background`、`--lexora-text`、`--lexora-muted`、`--lexora-border`、`--lexora-accent`、`--lexora-accent-solid` 保持可用；其中 `accent` 是强调文字色，`bg-accent` 使用 `accent-solid`。更多语义变量与工具类同名，如 `--lexora-accent-surface`、`--lexora-focus`。Canvas 等绘制逻辑可通过 `context.onEnvironmentChange` 响应变化。
 
 复杂效果仍可创建元素、设置样式，或引入包内 CSS：`link.href = new URL('./style.css', import.meta.url).href`。效果应柔和短暂，不遮挡正文或确认操作。CSS 只作用于插件自己的隔离页面。
-
 
 临时覆盖层、分屏布局订阅与局部点击区域见 [交互会话](interactions.md)。

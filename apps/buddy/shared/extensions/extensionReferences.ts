@@ -44,3 +44,17 @@ export type ExtensionReferenceMaterial
   = | { kind: 'quote', quote: BuddyViewQuote }
     | { kind: 'source', source: BuddyComposerSource }
     | { kind: 'file', name: string, mimeType: string, base64: string }
+
+export const extensionReferenceChoiceSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('view'), id: z.string().uuid() }).strict(),
+  z.object({ kind: z.enum(['new-task', 'clipboard']) }).strict(),
+])
+export const extensionReferenceCommitSchema = z.object({ id: z.string().uuid(), choice: extensionReferenceChoiceSchema }).strict()
+export const extensionReferenceCaptureSchema = z.object({
+  id: z.string().uuid(),
+  targets: z.array(z.object({ id: z.string().uuid(), label: z.string().max(512) }).strict()).max(64),
+  defaultId: z.string().uuid().nullable(),
+  clipboard: z.boolean(),
+}).strict()
+export type ExtensionReferenceChoice = z.infer<typeof extensionReferenceChoiceSchema>
+export type ExtensionReferenceCapture = z.infer<typeof extensionReferenceCaptureSchema>

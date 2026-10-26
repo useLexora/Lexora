@@ -27,7 +27,10 @@ function setup() {
   const api: Partial<ExtensionApi> = { endInteraction: async () => {}, onWorkbench: (listener) => {
     receive = listener
     return () => {}
-  }, replyWorkbench: (id, view) => replies.set(id, view) }
+  }, replyWorkbench: (id, view) => {
+    if (typeof view === 'string' || view === null)
+      replies.set(id, view)
+  } }
   const views = { surfaces: new Map(), proposeControl: () => false, retryControl: () => {} } as unknown as ExtensionViews
   const checkpoints: { views: typeof controller.layout.views, configuration: ReturnType<typeof controller.configuration.snapshot> }[] = []
   const persistence = { flush: async () => {}, checkpoint: async () => {
