@@ -1,6 +1,17 @@
 import type zhCN from '../zh-CN/tasks'
 
 export default {
+  'desktop.executions.work.continuation': 'Continues previous work',
+  'desktop.executions.work.isolated': 'Task materials only',
+  'desktop.executions.work.conversation': 'Shared conversation context',
+  'desktop.executions.work.criteria': 'Acceptance criteria',
+  'desktop.executions.work.evidence': 'Delivery evidence',
+  'desktop.executions.work.limitations': 'Unresolved issues',
+  'desktop.executions.work.accepted': 'Accepted',
+  'desktop.executions.work.rework': 'Changes requested',
+  'desktop.executions.work.blocked': 'Blocked',
+  'desktop.executions.work.pending': 'Awaiting verification',
+
   'desktop.fileLink.open': 'Open',
   'desktop.fileLink.openWith': 'Open with',
   'desktop.artifacts.open': 'Open artifact',

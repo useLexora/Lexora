@@ -13,6 +13,7 @@ export type RunPurpose = 'automation' | 'chat' | 'conversation.compaction'
 export type ExecutionKind = 'root' | 'actor_child' | 'npc_child' | 'maintenance'
 
 export interface RunRecord {
+  schedulingLane?: 'conversation' | 'actor'
   rootRunId: string
   parentRunId: string | null
   executionKind: ExecutionKind
@@ -41,6 +42,7 @@ export interface RunRecord {
 }
 
 export interface RunRow {
+  scheduling_lane: 'conversation' | 'actor'
   root_run_id: string
   parent_run_id: string | null
   execution_kind: ExecutionKind
@@ -77,6 +79,7 @@ export function requireRunRecord(value: unknown, id: string): RunRecord {
 
 export function toRunRecord(row: RunRow): RunRecord {
   return {
+    schedulingLane: row.scheduling_lane,
     rootRunId: row.root_run_id,
     parentRunId: row.parent_run_id,
     executionKind: row.execution_kind,

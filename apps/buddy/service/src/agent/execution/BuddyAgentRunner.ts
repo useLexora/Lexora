@@ -104,8 +104,8 @@ export class BuddyAgentRunner {
     return this.#activeRuns.steer(runId, prepare, skills)
   }
 
-  hasActiveExecution(conversationId: string): boolean {
-    return this.#activeRuns.hasActiveExecution(conversationId)
+  hasActiveExecution(conversationId: string, actorId?: string): boolean {
+    return this.#activeRuns.hasActiveExecution(conversationId, actorId)
   }
 
   get hasActiveExecutions(): boolean {

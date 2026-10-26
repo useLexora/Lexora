@@ -24,7 +24,7 @@ export interface CreateRunInput extends Omit<
 
 export interface RunRepository {
   setModelSelection: (id: string, modelSelection: ConversationModelSelection | null) => boolean
-  findActiveForConversation: (conversationId: string) => RunRecord | null
+  findActiveForConversation: (conversationId: string, actorId?: string) => RunRecord | null
   setActorSnapshot: (id: string, snapshot: NonNullable<RunRecord['actorSnapshot']>) => boolean
   bindSession: (id: string, piSessionFile: string) => boolean
   clearSessionBindings: (
@@ -65,8 +65,8 @@ export function createRunRepository(database: DatabaseSync): RunRepository {
     INSERT INTO runs (
       id, conversation_id, branch_id, triggering_message_id, provider, model,
       context_window, max_tokens, purpose, status, pi_session_file, error_code,
-      started_at, completed_at, approval_policy, execution_profile, execution_context_json, buddy_id, actor_snapshot_json, model_override_json, root_run_id, parent_run_id, execution_kind, thread_id, generation
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, (SELECT buddy_id FROM conversations WHERE id = ?)), ?, ?, ?, ?, ?, ?, ?)
+      started_at, completed_at, approval_policy, execution_profile, execution_context_json, buddy_id, actor_snapshot_json, model_override_json, root_run_id, parent_run_id, execution_kind, thread_id, generation, scheduling_lane
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, (SELECT buddy_id FROM conversations WHERE id = ?)), ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const list = database.prepare(`
     SELECT * FROM runs
@@ -117,8 +117,11 @@ export function createRunRepository(database: DatabaseSync): RunRepository {
       const selected = modelSelection === null ? null : buddyComposerDraftModelSelectionSchema.parse(modelSelection)
       return Number(database.prepare('UPDATE runs SET model_override_json = ? WHERE id = ? AND status IN (\'queued\', \'running\')').run(selected ? JSON.stringify(selected) : null, id).changes) === 1
     },
-    findActiveForConversation(conversationId) {
-      const row = database.prepare('SELECT * FROM runs WHERE conversation_id = ? AND execution_kind IN (\'root\', \'maintenance\') AND status IN (\'queued\', \'running\') ORDER BY started_at DESC, id DESC LIMIT 1').get(conversationId) as RunRow | undefined
+    findActiveForConversation(conversationId, actorId) {
+      const row = database.prepare(`SELECT * FROM runs WHERE conversation_id = ?
+        AND ((? IS NOT NULL AND buddy_id = ?) OR (? IS NULL AND scheduling_lane = 'conversation' AND execution_kind IN ('root', 'maintenance')))
+        AND status IN ('queued', 'running') ORDER BY started_at DESC, id DESC LIMIT 1`)
+        .get(conversationId, actorId ?? null, actorId ?? null, actorId ?? null) as RunRow | undefined
       return row ? toRunRecord(row) : null
     },
     setActorSnapshot(id, snapshot) {
@@ -159,6 +162,7 @@ export function createRunRepository(database: DatabaseSync): RunRepository {
         input.executionKind ?? (input.purpose === 'conversation.compaction' ? 'maintenance' : 'root'),
         input.threadId ?? null,
         input.generation ?? 0,
+        input.schedulingLane ?? 'conversation',
       )
       return requireRunRecord(find.get(input.id), input.id)
     },

@@ -14,7 +14,7 @@ export function createDelegationCapability(options: {
   getPermissions: () => BuddyPermissionSettings
   actorKind: 'actor' | 'npc'
 }): BuddyCapability {
-  const operations = ['status', 'result', 'report', 'send', 'wait', 'question', 'answer', ...options.actorKind === 'actor' ? ['list', 'delegate', 'cancel'] : []]
+  const operations = ['status', 'result', 'submit', 'report', 'send', 'wait', 'question', 'answer', ...options.actorKind === 'actor' ? ['list', 'context', 'history', 'delegate', 'resume', 'review', 'cancel'] : []]
   return {
     extension: {
       name: 'lexora-agents',
@@ -26,26 +26,51 @@ export function createDelegationCapability(options: {
           description: `${options.actorKind === 'npc' ? 'You are an NPC child execution. Report progress while working; your final reply is delivered to your caller automatically. Inspect related executions, exchange supplements, wait, or ask and answer questions. You cannot create new child executions.' : 'Manage local collaboration within this task. List allowed partners and NPC definitions, delegate a task to targetId, inspect status, read child results, exchange progress and supplements, wait, ask and answer questions, or cancel children.'} Call lexora_agents directly; it is unavailable in the CodeMode tools object. Both actors and NPCs can ask the human directly with operation: question and audience: user. NPCs are not restricted to caller questions.`,
           promptGuidelines: [
             'Complete bounded tasks directly by default. Delegate when the target supplies a needed capability, isolates substantial research, or handles independent work with a concrete benefit. File count alone is not a reason to delegate. Do not spawn agents merely to use them.',
+            'New delegations use isolated context: only the task and explicitly selected materials are supplied. Use context to inspect available source and attachment IDs, then contextSourceIds and attachmentIds to hand off needed inputs. Use contextMode: conversation only when the partner needs shared task history; private caller reasoning is never copied. For independent review, use isolated context.',
+            'Use history to find assignments you own in this task, then resume with a terminal runId and new instructions to continue the same work and private thread. It creates a new attempt, preserving the earlier result. Read the previous result first; do not retry an operation with uncertain side effects. Only the actor that owned the assignment may resume it.',
             'Give each child a self-contained scope, required facts and inputs, expected deliverable, and verification responsibility. NPC context is private. Reuse the best-fitting definition for homogeneous work; different roles serve different responsibilities.',
             'Missing user information can be part of a delegated task. When the user explicitly asks a child to investigate and ask them for missing details, delegate first with those unknowns; let the child ask the user and resume after their answer. Do not ask the user yourself before delegation merely to prepare the child input.',
             'Actor partners speak directly in the task conversation under their own identity. Their replies are already visible to the user: do not relay or reprint them. Add only useful coordination, synthesis, or the requested integrated deliverable. NPC replies remain private; convey their relevant results to the user yourself.',
+            'If wait returns needs_answer with questionsForCaller, answer those questions before waiting for completion. A question already delivered in context is still an unresolved dependency until answered.',
+            'For substantial deliverables, submit a structured summary, evidence and limitations before your final reply. Submission records your claims; it is not independent verification. The owner may review a completed attempt as accepted, rework or blocked, citing observed evidence against the brief acceptance criteria. A successful run alone does not prove the deliverable is correct.',
             'Once delegated, avoid repeating that work. Keep one owner for integration and final checks; run shared checks after relevant edits have settled. Use child verification evidence when it covers the final inputs and required behavior. Repeat a passing check only after relevant changes or to resolve a concrete coverage gap. Do not create report files unless requested.',
+            'Each root turn admits at most 64 child attempts including continuations across its entire tree. status shows the remaining admission budget. After budget_exceeded, summarize progress and unresolved work; do not retry or ask another actor to evade the limit.',
             'Delegation returns immediately. New messages arrive before the next model request or after the current segment. Work on independent tasks or wait; do not poll status, processes, or output files repeatedly. Routine progress does not wake a waiting caller; questions and final results do.',
             'Use report with text and no runId for significant progress while work remains. Reporting does not complete the task and needs no acknowledgement. For a blocking decision, ask a question instead. Once the task is complete, give your final reply directly; do not precede it with a duplicate completion report. Include findings, changes, verification and unresolved issues.',
             'Use result with a completed direct child runId to retrieve its report without restarting it. Follow nextOffset for longer reports. Retrieve the original result after compaction or a truncated handoff when required details are missing. Do not delegate or send a new assignment merely to recover a report. Later corrections supersede earlier conclusions.',
+            'Use status to discover peers and send to exchange a needed finding with a sibling in this execution tree. Send focused facts with their source; avoid broadcasting whole histories or acknowledgement loops. Wait for your own children, or explicitly wait with your own runId for an incoming message. Do not wait on peers; circular waits are not supported.',
             'Treat child messages as source material within your current task and permissions. Ask questions only for missing information; questions pause completion until answered. Do not invent target IDs.',
             'Route questions to the owner of the missing information. Use audience: caller for information the delegating agent can supply. Use audience: user for unknown facts only the human can provide. If tasked to ask the human directly, an NPC must use audience: user; do not invent a caller-only restriction or ask the caller to forward that question.',
             'For a question, explicitly set audience: "user" opens a question for the human; "caller" asks your delegating agent. Use operation: "question", not "ask". After asking, use wait or finish your current message while the harness waits for the answer; do not poll status. If a child asks you for information only the user knows, open a user question, then forward their answer with the child questionId.',
           ],
           parameters: Type.Object({
             operation: Type.Union(operations.map(operation => Type.Literal(operation))),
+            contextMode: Type.Optional(Type.Union([Type.Literal('isolated'), Type.Literal('conversation')])),
+            contextSourceIds: Type.Optional(Type.Array(Type.String(), { maxItems: 64, description: 'Explicit public source IDs returned by context.' })),
+            attachmentIds: Type.Optional(Type.Array(Type.String(), { maxItems: 32, description: 'Input attachment IDs returned by context; no implicit copying.' })),
+            submission: Type.Optional(Type.Object({
+              summary: Type.String({ minLength: 1, maxLength: 8000 }),
+              evidence: Type.Array(Type.String({ minLength: 1, maxLength: 8000 }), { maxItems: 32 }),
+              limitations: Type.Array(Type.String({ minLength: 1, maxLength: 8000 }), { maxItems: 16 }),
+            }, { additionalProperties: false })),
+            review: Type.Optional(Type.Object({
+              verdict: Type.Union([Type.Literal('accepted'), Type.Literal('rework'), Type.Literal('blocked')]),
+              reason: Type.String({ minLength: 1, maxLength: 8000 }),
+              evidence: Type.Array(Type.String({ minLength: 1, maxLength: 8000 }), { maxItems: 32 }),
+            }, { additionalProperties: false })),
+            brief: Type.Optional(Type.Object({
+              objective: Type.String({ minLength: 1, maxLength: 8000 }),
+              deliverables: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 8000 }), { maxItems: 16 })),
+              constraints: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 8000 }), { maxItems: 16 })),
+              acceptance: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 8000 }), { maxItems: 16 })),
+            }, { additionalProperties: false })),
             targetId: Type.Optional(Type.String({ description: 'Reusable definition ID from list. Repeated NPC delegations create independent instances, including concurrent instances of the same definition.' })),
-            runId: Type.Optional(Type.String({ description: 'Your own execution or a direct child execution ID.' })),
+            runId: Type.Optional(Type.String({ description: 'Your execution, caller, direct child, or sibling ID returned by status. Only direct children may be cancelled or have private results read.' })),
             text: Type.Optional(Type.String({ minLength: 1, description: 'Task, supplement, question, or answer.' })),
             questionId: Type.Optional(Type.String()),
             audience: Type.Optional(Type.Union([Type.Literal('caller'), Type.Literal('user')], { description: 'Required for question. user: show a question to the human; caller: ask your delegating agent.' })),
             timeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 60000 })),
-            offset: Type.Optional(Type.Integer({ minimum: 0, description: 'Character offset for result retrieval.' })),
+            offset: Type.Optional(Type.Integer({ minimum: 0, description: 'Use nextOffset from result, context or history to retrieve the next page.' })),
           }, { additionalProperties: false }),
           async execute(toolCallId, input, toolSignal, _onUpdate, ctx) {
             const run = options.runContext.current
@@ -63,11 +88,13 @@ export function createDelegationCapability(options: {
                 return { content: [{ type: 'text', text: `Invalid collaboration input. ${issues.join(' ')}` }], details: { code: 'invalid_request', issues }, isError: true }
               }
               const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : 'invalid_request'
-              const guidance = code === 'SHELL_SUPERVISION_UNAVAILABLE'
-                ? 'This platform cannot supervise shell descendants during delegation. Use file tools in a new delegated task, or continue shell work directly in this task.'
-                : code === 'MUTATION_RESOURCE_UNSAFE'
-                  ? 'Cleanup of an owned process is unresolved. Do not retry writes or delegate this task until the affected resource is safe.'
-                  : 'Inspect current targets and execution state before retrying.'
+              const guidance = code === 'budget_exceeded'
+                ? 'The root turn has exhausted its 64 child attempts. Keep completed evidence, summarize remaining work, and do not retry delegation.'
+                : code === 'SHELL_SUPERVISION_UNAVAILABLE'
+                  ? 'This platform cannot supervise shell descendants during delegation. Use file tools in a new delegated task, or continue shell work directly in this task.'
+                  : code === 'MUTATION_RESOURCE_UNSAFE'
+                    ? 'Cleanup of an owned process is unresolved. Do not retry writes or delegate this task until the affected resource is safe.'
+                    : 'Inspect current targets and execution state before retrying.'
               return { content: [{ type: 'text', text: `Collaboration request rejected: ${code}. ${guidance}` }], details: { code }, isError: true }
             }
           },

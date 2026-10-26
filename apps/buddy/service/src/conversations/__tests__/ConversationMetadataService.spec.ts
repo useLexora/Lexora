@@ -118,7 +118,7 @@ describe('conversation metadata ownership', () => {
     expect(f.members.find('task-1', other.id)?.modelSelection).toBeNull()
     const nextSelection = { ...selection, modelId: 'next-model' }
     await f.service.setModelSelection({ id: 'task-1', modelSelection: nextSelection })
-    expect(f.service.getModelControls('task-1')).toEqual({ current: { runId: 'run-1', actorId: 'default', modelSelection: selection }, next: { actorId: other.id, isMember: true, modelSelection: nextSelection } })
+    expect(f.service.getModelControls('task-1')).toEqual({ current: null, next: { actorId: other.id, isMember: true, modelSelection: nextSelection } })
     f.service.addMember({ id: 'task-1', buddyId: 'default' })
     f.service.setBuddy({ id: 'task-1', buddyId: 'default' })
     await f.service.setModelSelection({ id: 'task-1', modelSelection: nextSelection })

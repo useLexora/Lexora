@@ -35,6 +35,14 @@ export const publicConversationMaterialSchema = z.discriminatedUnion('kind', [
 
 export type PublicConversationMaterial = z.infer<typeof publicConversationMaterialSchema>
 
+export const PUBLIC_CONTEXT_TYPE = 'lexora.conversation.public.v1'
+
+export function hasPublicMaterialContent(material: PublicConversationMaterial): boolean {
+  return material.kind === 'message'
+    ? Boolean(material.text.trim() || material.references?.length)
+    : material.artifacts.length > 0
+}
+
 export function readPublicMessageText(content: unknown, role: 'user' | 'assistant', messageId?: string): string {
   if (typeof content === 'string')
     return content.slice(0, MAX_BUDDY_MESSAGE_TEXT_LENGTH)

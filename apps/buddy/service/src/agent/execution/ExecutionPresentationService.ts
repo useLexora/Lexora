@@ -90,6 +90,7 @@ export class ExecutionPresentationService {
     const caller = tree.find(member => member.run.id === record.run.parentRunId)
     const usage = this.#options.usage.listForRun(target.runId).filter(record => record.purpose !== 'cache_warm')
     return {
+      work: record.work,
       execution: this.#present(target, record, tree, events, this.#options.events.listToolCounts([target.runId]).get(target.runId) ?? 0),
       run: toPublicRun(record.run, record.initialInput?.reasoning ?? null),
       caller: caller ? { runId: caller.run.id, buddyName: this.#options.buddies.get(caller.run.buddyId).name, ordinal: executionOrdinal(caller, tree) } : null,

@@ -17,6 +17,30 @@ import { useTaskIndex } from '../task-index/useTaskIndex'
 import { useTaskCapability } from '../useTaskCapability'
 
 describe('useTaskCapability', () => {
+  it('binds composer stopping to the chosen actor while other active actors keep branch mutation disabled', async () => {
+    const api = createBranchingDesktopApi()
+    const main = { ...queuedRun(), id: 'main-active', branchId: 'branch-root' }
+    const peer = { ...main, id: 'peer-active', buddyId: 'peer' }
+    const timeline = await api.localChat.conversations.listTimeline({ conversationId: 'conversation-1', branchId: 'branch-root' })
+    vi.mocked(api.localChat.conversations.listTimeline).mockResolvedValue({ ...timeline, runs: [peer, main] })
+    vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
+    const scope = effectScope()
+    const chat = scope.run(() => createTestTask(api, { conversationId: 'conversation-1', branchId: 'branch-root', spaceId: null }))!
+    await chat.initialize()
+    expect(chat.workspace.execution.activeRun.value?.id).toBe(main.id)
+    const current = chat.session.activeTask.value!
+    const listeners = vi.mocked(api.localChat.conversations.onChanged).mock.calls.map(call => call[0])
+    for (const listener of listeners) listener({ ...current, buddyId: 'peer' })
+    expect(chat.workspace.execution.activeRun.value?.id).toBe(peer.id)
+    vi.mocked(api.localChat.chat.cancel).mockResolvedValue({ ...peer, status: 'cancelled' })
+    await chat.workspace.execution.cancelActiveRun()
+    expect(api.localChat.chat.cancel).toHaveBeenCalledWith(peer.id)
+    expect(chat.workspace.execution.activeRun.value).toBeNull()
+    expect(chat.workspace.execution.canMutateBranch.value).toBe(false)
+    chat.dispose()
+    scope.stop()
+  })
+
   it('updates the loaded conversation scope after a move without replacing its composer draft', async () => {
     const api = createBranchingDesktopApi()
     vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))

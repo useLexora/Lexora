@@ -184,12 +184,14 @@ export class BuddyConversationTreeCursor {
     const result = await session.navigateTree(target, { summarize: false })
     if (result.cancelled || result.aborted || this.manager.getLeafId() !== target)
       throw new BuddyAgentRunError('CONVERSATION_BINDING_MISMATCH')
-    if (run.executionKind !== 'npc_child') {
+    {
+      const work = this.#options.repository.findWork(run.id)
       await synchronizePublicContext(session, this.#options.repository, {
         conversationId: run.conversationId,
         threadId: run.threadId,
         branchId: run.branchId,
         throughSequence: this.#options.repository.getPublicSnapshot(run.id),
+        ...(work?.contextMode === 'isolated' ? { sourceIds: work.contextSourceIds } : {}),
         ...(run.purpose !== 'conversation.compaction' ? { skipMessageId: run.triggeringMessageId } : {}),
       })
     }
@@ -207,8 +209,17 @@ export class BuddyConversationTreeCursor {
 
   async resolveStart(run: RunRecord): Promise<string> {
     this.#journal.assertRun(run)
-    if (run.executionKind === 'npc_child')
-      return this.rootId
+    const work = this.#options.repository.findWork(run.id)
+    if (work?.contextMode === 'isolated' || run.executionKind === 'npc_child') {
+      if (!work?.previousRunId)
+        return this.rootId
+      const previous = this.#options.runs.findById(work.previousRunId)
+      if (!previous || previous.threadId !== run.threadId || previous.branchId !== run.branchId
+        || this.#options.isRunHistoryAvailable?.(previous.id) === false) {
+        throw new BuddyAgentRunError('SESSION_STORAGE_UNAVAILABLE')
+      }
+      return this.#checkpoint(previous.id, 'after')
+    }
     const explicit = this.#options.repository.findSource(run.id)
     const throughSequence = this.#options.repository.getPublicSnapshot(run.id)
     const materials = this.#options.repository.listPublications(run.conversationId, run.branchId, throughSequence)

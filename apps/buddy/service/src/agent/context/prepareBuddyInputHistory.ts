@@ -1,5 +1,6 @@
 import type { UserMessage } from '@earendil-works/pi-ai'
 import type { AgentSession } from '@earendil-works/pi-coding-agent'
+import { hasPublicMaterialContent, PUBLIC_CONTEXT_TYPE, publicConversationMaterialSchema } from '../../conversations/publicConversationContext'
 import { readBuddyInputReference } from './BuddyInputReference'
 import { projectReadResult } from './projectReadHistory'
 
@@ -23,6 +24,11 @@ export function prepareBuddyInputHistory(messages: readonly AgentSession['messag
   const result: AgentSession['messages'] = []
   let pendingUsers: number[] = []
   for (const message of messages) {
+    if (message.role === 'custom' && message.customType === PUBLIC_CONTEXT_TYPE) {
+      const material = publicConversationMaterialSchema.safeParse(message.details)
+      if (material.success && !hasPublicMaterialContent(material.data))
+        continue
+    }
     if (message.role === 'user')
       pendingUsers.push(result.length)
     if (message.role === 'assistant') {

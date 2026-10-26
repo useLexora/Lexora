@@ -4,12 +4,14 @@ import type { BuddyRunEvent } from '../events/BuddyRunEvent'
 import type { MessageRecord } from './conversationHistoryRepository'
 import type { RunRow } from './runRecord'
 import { createConversationPublicationRepository } from './conversationPublicationRepository'
+import { createExecutionWorkRepository } from './executionWorkRepository'
 import { toRunRecord } from './runRecord'
 
 export function createConversationTreeRepository(database: DatabaseSync) {
   const bind = database.prepare('INSERT INTO conversation_pi_trees (conversation_id, session_file, root_entry_id) VALUES (?, ?, ?) ON CONFLICT(conversation_id) DO UPDATE SET session_file = excluded.session_file, root_entry_id = excluded.root_entry_id')
   return {
     ...createConversationTreeReader(database),
+    findWork: createExecutionWorkRepository(database).find,
     ...createConversationPublicationRepository(database),
     bind: (conversationId: string, sessionFile: string, rootEntryId: string) => {
       bind.run(conversationId, sessionFile, rootEntryId)

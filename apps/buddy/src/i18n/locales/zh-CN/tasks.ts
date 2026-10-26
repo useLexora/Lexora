@@ -1,4 +1,15 @@
 export default {
+  'desktop.executions.work.continuation': '续接此前工作',
+  'desktop.executions.work.isolated': '按任务提供材料',
+  'desktop.executions.work.conversation': '引用公共对话',
+  'desktop.executions.work.criteria': '验收要求',
+  'desktop.executions.work.evidence': '交付证据',
+  'desktop.executions.work.limitations': '未解决事项',
+  'desktop.executions.work.accepted': '已核验',
+  'desktop.executions.work.rework': '需要修改',
+  'desktop.executions.work.blocked': '尚未解决',
+  'desktop.executions.work.pending': '待核验',
+
   'desktop.fileLink.open': '打开',
   'desktop.fileLink.openWith': '打开方式',
   'desktop.artifacts.open': '打开产物',

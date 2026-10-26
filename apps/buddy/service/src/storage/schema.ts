@@ -33,13 +33,15 @@ import { BUDDY_V31_MUTATION_RECOVERY_SCHEMA_SQL } from './migrations/v31Mutation
 
 import { BUDDY_V32_CHANGE_CAPTURE_SCHEMA_SQL } from './migrations/v32ChangeCapture'
 
+import { BUDDY_V33_EXECUTION_WORK_SCHEMA_SQL } from './migrations/v33ExecutionWork'
+
 export interface BuddySchemaMigration {
   foreignKeys?: 'off'
   sql: string
   version: number
 }
 
-export const BUDDY_SCHEMA_VERSION = 32 as const
+export const BUDDY_SCHEMA_VERSION = 33 as const
 
 export const BUDDY_SCHEMA_MIGRATIONS: readonly BuddySchemaMigration[] = [
   { sql: BUDDY_V1_INITIAL_SCHEMA_SQL, version: 1 },
@@ -74,4 +76,5 @@ export const BUDDY_SCHEMA_MIGRATIONS: readonly BuddySchemaMigration[] = [
   { sql: BUDDY_V30_TASK_MODELS_SCHEMA_SQL, version: 30 },
   { sql: BUDDY_V31_MUTATION_RECOVERY_SCHEMA_SQL, version: 31 },
   { sql: BUDDY_V32_CHANGE_CAPTURE_SCHEMA_SQL, version: 32 },
+  { sql: BUDDY_V33_EXECUTION_WORK_SCHEMA_SQL, version: 33 },
 ]

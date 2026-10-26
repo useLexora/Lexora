@@ -1,19 +1,25 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { ExecutionPhase } from '../../../shared/executions/executionApi'
+import type { ExecutionBrief, ExecutionContextMode, ExecutionReview, ExecutionSubmission } from '../../../shared/executions/executionWork'
+import type { ExecutionWorkRecord } from './executionWorkRepository'
 import type { RunInputRecord } from './runInputRepository'
 import type { RunRecord, RunStatus } from './runRecord'
 import type { CreateRunInput } from './runRepository'
 import { createHash } from 'node:crypto'
 import { buddySettingsSchema } from '../../../shared/buddies/buddySettings'
+import { executionReviewSchema, executionSubmissionSchema } from '../../../shared/executions/executionWork'
 import { isExecutionProfileWithin } from '../../../shared/permissions/executionProfile'
 import { buddyExecutionDefinitionSchema } from '../buddies/BuddyExecutionDefinition'
 import { freezeConversationMemberModel } from './conversationMemberRepository'
+import { createConversationPublicationRepository } from './conversationPublicationRepository'
 import { withTransaction } from './database'
+import { createExecutionWorkRepository } from './executionWorkRepository'
 import { createRunInputRepository } from './runInputRepository'
 import { createRunRepository } from './runRepository'
 import { createThreadBindingRepository } from './threadBindingRepository'
 
 export interface ExecutionStateRecord {
+  work: ExecutionWorkRecord
   run: RunRecord
   phase: ExecutionPhase
   phaseVersion: number
@@ -38,6 +44,7 @@ export interface ExecutionFence {
 
 export interface AdmitChildExecutionInput {
   callerId: string
+  work?: { previousRunId?: string, contextMode: ExecutionContextMode, contextSourceIds: readonly string[], brief?: ExecutionBrief }
   authorization: { executionProfile: RunRecord['executionProfile'], approvalPolicy: RunRecord['approvalPolicy'], fileAccessCeiling?: 'read_only' }
   expectedCallerGeneration: number
   expectedRootGeneration: number
@@ -51,8 +58,10 @@ export interface AdmitChildExecutionInput {
   initialInput: Omit<RunInputRecord, 'runId' | 'createdAt'>
 }
 
+export const MAX_CHILD_ATTEMPTS_PER_ROOT = 64
+
 export class ExecutionAdmissionError extends Error {
-  readonly code: 'conflict' | 'stale' | 'unauthorized' | 'busy' | 'pending'
+  readonly code: 'conflict' | 'stale' | 'unauthorized' | 'busy' | 'pending' | 'budget_exceeded'
 
   constructor(code: ExecutionAdmissionError['code']) {
     super(`Execution admission ${code}`)
@@ -64,6 +73,7 @@ export class ExecutionAdmissionError extends Error {
 export function hashChildAdmissionRequest(input: Omit<AdmitChildExecutionInput, 'requestHash'>): string {
   return createHash('sha256').update(JSON.stringify({
     callerId: input.callerId,
+    ...(input.work ? { work: input.work } : {}),
     authorization: input.authorization,
     conversationId: input.run.conversationId,
     branchId: input.run.branchId,
@@ -83,6 +93,8 @@ export function createExecutionRepository(database: DatabaseSync) {
   const runs = createRunRepository(database)
   const threads = createThreadBindingRepository(database)
   const inputs = createRunInputRepository(database)
+  const work = createExecutionWorkRepository(database)
+  const publications = createConversationPublicationRepository(database)
 
   function find(runId: string): ExecutionStateRecord | null {
     const run = runs.findById(runId)
@@ -91,6 +103,7 @@ export function createExecutionRepository(database: DatabaseSync) {
       return null
     const initial = inputs.findByRunId(runId)
     return {
+      work: work.find(runId)!,
       run,
       phase: row.phase as ExecutionPhase,
       phaseVersion: row.phase_version as number,
@@ -173,12 +186,73 @@ export function createExecutionRepository(database: DatabaseSync) {
     return requireRecord(record.run.id)
   }
 
+  function contextBoundary(record: ExecutionStateRecord): number {
+    const accepted = database.prepare(`SELECT MAX(publications.sequence) AS sequence FROM chat_queue queue
+      JOIN conversation_publications publications ON publications.message_id = json_extract(queue.prepared_json, '$.userMessageId')
+      WHERE queue.run_id = ? AND queue.state = 'sent'`).get(record.run.id)?.sequence
+    return Math.max(publications.getPublicSnapshot(record.run.id), Number(accepted ?? 0))
+  }
+
+  function listAttachments(runId: string): string[] {
+    const record = requireRecord(runId)
+    return (database.prepare(`SELECT DISTINCT attachment.value AS id FROM execution_work_attempts work
+      JOIN run_inputs input ON input.run_id = work.run_id, json_each(input.attachment_ids_json) attachment
+      WHERE work.work_id = ?
+      UNION SELECT attachment.value AS id FROM execution_work_attempts work
+      JOIN chat_queue queue ON queue.run_id = work.run_id, json_each(queue.prepared_json, '$.runInput.attachmentIds') attachment
+      WHERE work.work_id = ? AND queue.state = 'sent'`).all(record.work.workId, record.work.workId) as { id: string }[]).map(row => row.id)
+  }
+
   return {
     find,
+    listAttachments,
     assertCurrent(fence: ExecutionFence): ExecutionStateRecord {
       return assertFence(fence)
     },
     listTree,
+    submit(runId: string, value: ExecutionSubmission) {
+      return withTransaction(database, () => {
+        const record = requireRecord(runId)
+        assertLive(record)
+        if (!['working', 'waiting'].includes(record.phase))
+          throw new ExecutionAdmissionError('stale')
+        const submission = executionSubmissionSchema.parse(value)
+        database.prepare('UPDATE execution_work_attempts SET submission_json = ? WHERE run_id = ?').run(JSON.stringify(submission), runId)
+        return work.find(runId)!
+      })
+    },
+    review(callerId: string, runId: string, value: ExecutionReview) {
+      return withTransaction(database, () => {
+        const caller = requireRecord(callerId)
+        assertLive(caller)
+        const record = requireRecord(runId)
+        const owner = record.run.parentRunId ? requireRecord(record.run.parentRunId) : null
+        if (!owner || owner.run.buddyId !== caller.run.buddyId || caller.run.actorSnapshot?.kind !== 'actor'
+          || record.run.conversationId !== caller.run.conversationId || record.run.branchId !== caller.run.branchId) {
+          throw new ExecutionAdmissionError('unauthorized')
+        }
+        if (record.phase !== 'closed' || record.cleanupState !== 'clean' || work.successor(runId))
+          throw new ExecutionAdmissionError('stale')
+        const review = executionReviewSchema.parse(value)
+        if (review.verdict === 'accepted' && record.run.status !== 'completed')
+          throw new ExecutionAdmissionError('conflict')
+        if (record.work.review && JSON.stringify(record.work.review) !== JSON.stringify(review))
+          throw new ExecutionAdmissionError('conflict')
+        database.prepare('UPDATE execution_work_attempts SET review_json = ? WHERE run_id = ?').run(JSON.stringify(review), runId)
+        return work.find(runId)!
+      })
+    },
+    listOwnedWork(runId: string, offset = 0, limit = 64) {
+      const caller = requireRecord(runId)
+      return (database.prepare(`SELECT child.id FROM runs child JOIN runs parent ON parent.id = child.parent_run_id
+        WHERE child.conversation_id = ? AND child.branch_id = ? AND parent.buddy_id = ?
+          AND NOT EXISTS (SELECT 1 FROM execution_work_attempts next WHERE next.previous_run_id = child.id)
+        ORDER BY child.started_at DESC, child.id DESC LIMIT ? OFFSET ?`).all(caller.run.conversationId, caller.run.branchId, caller.run.buddyId, limit, offset) as { id: string }[]).map(row => requireRecord(row.id))
+    },
+    listContext(runId: string) {
+      const caller = requireRecord(runId)
+      return publications.listPublications(caller.run.conversationId, caller.run.branchId, contextBoundary(caller))
+    },
     listUnfinishedTree(rootRunId: string): ExecutionStateRecord[] {
       return listTree(rootRunId).filter(record => record.phase !== 'closed' || record.cleanupState !== 'clean')
     },
@@ -202,6 +276,8 @@ export function createExecutionRepository(database: DatabaseSync) {
           || input.run.purpose !== caller.run.purpose) {
           throw new ExecutionAdmissionError('stale')
         }
+        if (listTree(root.run.id).length - 1 >= MAX_CHILD_ATTEMPTS_PER_ROOT)
+          throw new ExecutionAdmissionError('budget_exceeded')
         const snapshot = buddyExecutionDefinitionSchema.parse(input.run.actorSnapshot)
         const target = database.prepare('SELECT kind, revision, enabled, deleted_at, settings_json FROM buddies WHERE id = ?').get(input.run.buddyId)
         if (!target || target.enabled !== 1 || target.deleted_at !== null || target.revision !== snapshot.revision
@@ -220,7 +296,9 @@ export function createExecutionRepository(database: DatabaseSync) {
             throw new ExecutionAdmissionError('unauthorized')
           }
         }
-        const ceiling = input.authorization.fileAccessCeiling === 'read_only' || chain.some(ancestor => ancestor.fileAccessCeiling === 'read_only' || ancestor.run.actorSnapshot?.settings.limits.fileAccess === 'read_only')
+        const context = input.work ?? { contextMode: snapshot.kind === 'npc' ? 'isolated' as const : 'conversation' as const, contextSourceIds: [] }
+        const previous = context.previousRunId ? requireRecord(context.previousRunId) : null
+        const ceiling = previous?.fileAccessCeiling === 'read_only' || previous?.run.executionProfile === 'read_only' || input.authorization.fileAccessCeiling === 'read_only' || chain.some(ancestor => ancestor.fileAccessCeiling === 'read_only' || ancestor.run.actorSnapshot?.settings.limits.fileAccess === 'read_only')
           || snapshot.settings.limits.fileAccess === 'read_only'
         if (!isExecutionProfileWithin(input.run.executionProfile, input.authorization.executionProfile)
           || (input.authorization.approvalPolicy === 'manual' && input.run.approvalPolicy !== 'manual')
@@ -235,16 +313,31 @@ export function createExecutionRepository(database: DatabaseSync) {
         }
         if (database.prepare('SELECT 1 FROM execution_state WHERE result_mailbox_id = ?').get(input.resultMailboxId))
           throw new ExecutionAdmissionError('conflict')
-        let threadId: string
-        if (snapshot.kind === 'actor') {
-          threadId = threads.ensureActor(caller.run.conversationId, snapshot.id, input.run.startedAt).id
+        if (previous) {
+          const owner = previous.run.parentRunId ? requireRecord(previous.run.parentRunId) : null
+          if (!owner || owner.run.buddyId !== caller.run.buddyId || previous.run.conversationId !== caller.run.conversationId
+            || previous.run.branchId !== caller.run.branchId || previous.run.buddyId !== snapshot.id
+            || previous.phase !== 'closed' || previous.cleanupState !== 'clean' || work.successor(previous.run.id)
+            || context.contextMode !== previous.work.contextMode) {
+            throw new ExecutionAdmissionError('stale')
+          }
+        }
+        const availableAttachments = new Set([...listAttachments(caller.run.id), ...(previous ? listAttachments(previous.run.id) : [])])
+        if (input.initialInput.attachmentIds.some(id => !availableAttachments.has(id)))
+          throw new ExecutionAdmissionError('unauthorized')
+        const availableSources = new Set(publications.listPublications(caller.run.conversationId, caller.run.branchId, contextBoundary(caller)).map(material => material.sourceId))
+        if (context.contextSourceIds.some(id => !availableSources.has(id)))
+          throw new ExecutionAdmissionError('unauthorized')
+        if (snapshot.kind === 'actor')
           freezeConversationMemberModel(database, caller.run.conversationId, snapshot.id, snapshot.model)
-        }
-        else {
-          threadId = threads.createNpc(caller.run.conversationId, snapshot.id, input.run.startedAt).id
-        }
-        const piSessionFile = snapshot.kind === 'actor' ? threads.findPreviousSession(threadId, input.run.branchId) : null
+        const threadId = previous?.run.threadId ?? (snapshot.kind === 'actor' && context.contextMode === 'conversation'
+          ? threads.ensureActor(caller.run.conversationId, snapshot.id, input.run.startedAt).id
+          : threads.createIsolated(caller.run.conversationId, snapshot.id, snapshot.kind, input.run.startedAt).id)
+        const piSessionFile = threads.findPreviousSession(threadId, input.run.branchId)
         const run = runs.create({ ...input.run, actorSnapshot: snapshot, status: 'queued', piSessionFile, rootRunId: root.run.id, parentRunId: caller.run.id, executionKind: snapshot.kind === 'npc' ? 'npc_child' : 'actor_child', threadId, generation: 0 })
+        work.configure(run.id, context)
+        if (context.contextSourceIds.length || context.contextMode === 'conversation')
+          database.prepare('UPDATE run_public_snapshots SET public_sequence = ? WHERE run_id = ?').run(contextBoundary(caller), run.id)
         database.prepare(`UPDATE execution_state SET request_key = ?, request_hash = ?,
           admitted_root_generation = ?, admitted_parent_generation = ?, result_mailbox_id = ?, file_access_ceiling = ? WHERE run_id = ?`)
           .run(requestKey, input.requestHash, root.run.generation, caller.run.generation, input.resultMailboxId, ceiling ? 'read_only' : null, run.id)

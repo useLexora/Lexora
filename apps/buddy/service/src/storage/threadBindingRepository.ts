@@ -47,6 +47,12 @@ export function createThreadBindingRepository(database: DatabaseSync) {
         .run(id, conversationId, actorId, createdAt)
       return find(id)!
     },
+    createIsolated(conversationId: string, actorId: string, kind: 'actor' | 'npc', createdAt: string): ExecutionThreadRecord {
+      const id = randomUUID()
+      database.prepare('INSERT INTO execution_threads (id, conversation_id, actor_id, kind, created_at) VALUES (?, ?, ?, ?, ?)')
+        .run(id, conversationId, actorId, kind, createdAt)
+      return find(id)!
+    },
     createNpc(conversationId: string, actorId: string, createdAt: string): ExecutionThreadRecord {
       const id = randomUUID()
       database.prepare('INSERT INTO execution_threads (id, conversation_id, actor_id, kind, created_at) VALUES (?, ?, ?, \'npc\', ?)')

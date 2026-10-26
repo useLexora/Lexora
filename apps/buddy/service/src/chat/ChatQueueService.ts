@@ -46,7 +46,7 @@ export class ChatQueueService {
   readonly #options: ChatQueueServiceOptions
   readonly #operations = new Map<string, Promise<void>>()
   readonly #enqueues = new Set<Promise<unknown>>()
-  readonly #cancellations = new Map<string, { conversationId: string, completion: Promise<LocalRun> }>()
+  readonly #cancellations = new Map<string, { conversationId: string, buddyId: string, completion: Promise<LocalRun> }>()
   readonly #changes: Emitter<ChatQueueChange>
   readonly #stopping = new AbortController()
   readonly onDidChange: Emitter<ChatQueueChange>['event']
@@ -74,10 +74,10 @@ export class ChatQueueService {
     return this.#options.queue.continuationScopes()
   }
 
-  pause(scope: LocalChatQueueScope): void {
+  pause(scope: LocalChatQueueScope, actorId?: string): void {
     if (this.#disposed)
       return
-    if (this.#options.queue.pause(scope.conversationId))
+    if (actorId ? this.#options.queue.pauseActor(scope, actorId) : this.#options.queue.pause(scope.conversationId))
       this.#changed('paused', scope)
   }
 
@@ -92,23 +92,23 @@ export class ChatQueueService {
     const run = this.#options.runs.findById(runId)
     if (!run)
       return this.#options.turns.cancel(runId)
-    const active = this.#options.queue.activeRun(run)
-    if (active ? active.id !== runId : this.#options.queue.latestRun(run)?.id !== runId || !this.#options.runner.hasActiveExecution(run.conversationId))
+    const active = this.#options.queue.activeRun(run, run.buddyId)
+    if (active ? active.id !== runId : this.#options.queue.latestRun(run, run.buddyId)?.id !== runId || !this.#options.runner.hasActiveExecution(run.conversationId))
       return this.#options.turns.cancel(runId)
     const cancellation = Promise.withResolvers<LocalRun>()
-    this.#cancellations.set(runId, { conversationId: run.conversationId, completion: cancellation.promise })
+    this.#cancellations.set(runId, { conversationId: run.conversationId, buddyId: run.buddyId, completion: cancellation.promise })
     void this.#cancelRun(run).then(cancellation.resolve, cancellation.reject)
     return cancellation.promise
   }
 
   async #cancelRun(run: RunRecord): Promise<LocalRun> {
     try {
-      this.pause(run)
+      this.pause(run, run.buddyId)
       return await this.#options.turns.cancel(run.id)
     }
     finally {
       try {
-        this.pause(run)
+        this.pause(run, run.buddyId)
       }
       finally {
         this.#cancellations.delete(run.id)
@@ -154,11 +154,15 @@ export class ChatQueueService {
       await stagedAttachments.rollback()
       throw error
     }
-    const latest = this.#options.queue.latestRun(result)
-    if (this.#isCancelling(result) || latest?.status === 'cancelled' || latest?.status === 'failed')
-      this.pause(result)
+    const latest = this.#options.queue.latestRun(result, prepared.buddyId)
+    if (this.#isCancelling(result, prepared.buddyId) || latest?.status === 'cancelled' || latest?.status === 'failed')
+      this.pause(result, prepared.buddyId)
     this.#changed('enqueued', result, { commitId: randomUUID(), requestId: input.requestId, queueId: result.id, draftReceipt: result.draftReceipt, ...(prepared.attachmentBindings.length ? { attachmentOwnership: { kind: 'queue', attachmentIds: prepared.attachmentBindings.map(binding => binding.id) } } : {}) })
     await stagedAttachments.commit().catch(() => undefined)
+    if (prepared.actorIds?.length === 1 && this.#options.queue.activeRun(result, prepared.buddyId)
+      && this.#options.queue.list(result).find(item => item.buddyId === prepared.buddyId)?.id === result.id) {
+      void this.steer(result).catch(() => this.pause(result, prepared.buddyId))
+    }
     return result
   }
 
@@ -172,14 +176,17 @@ export class ChatQueueService {
   }
 
   steer(target: LocalChatQueueTarget): Promise<LocalChatQueueSteerResult> {
-    const active = this.#options.queue.activeRun(target)
+    const active = this.#options.queue.activeRun(target, this.#options.queue.pending(target)?.buddyId)
     return this.#serialize(target, async () => {
-      if (this.#isCancelling(target))
+      if (this.#isCancelling(target, this.#options.queue.pending(target)?.buddyId))
         return 'unavailable'
-      if (!active)
+      if (!active) {
+        if (this.#options.queue.pending(target)?.queueRouting?.mode !== 'actor' && this.#options.queue.activeRun(target))
+          return 'incompatible'
         return await this.#dispatch(target, true) ? 'accepted' : 'unavailable'
+      }
       const pending = this.#options.queue.pending(target)
-      if (!pending || this.#options.queue.activeRun(target)?.id !== active.id)
+      if (!pending || this.#options.queue.activeRun(target, pending?.buddyId)?.id !== active.id)
         return 'unavailable'
       const input = await this.#options.turns.refreshQueuedInput(pending)
       const run = this.#options.runs.findById(active.id)
@@ -188,7 +195,7 @@ export class ChatQueueService {
       if (!this.#canFollowUp(run, input))
         return 'incompatible'
       await this.#options.turns.validatePreparedInput(input, false)
-      if (this.#disposed || this.#isCancelling(target) || this.#options.eventLog.state !== 'open' || !this.#options.queue.pending(target) || !this.#options.queue.isCurrentInput(input) || this.#options.queue.activeRun(target)?.id !== active.id)
+      if (this.#disposed || this.#isCancelling(target, this.#options.queue.pending(target)?.buddyId) || this.#options.eventLog.state !== 'open' || !this.#options.queue.pending(target) || !this.#options.queue.isCurrentInput(input) || this.#options.queue.activeRun(target, pending?.buddyId)?.id !== active.id)
         return 'unavailable'
       return this.#deliver(input, active.id, 'steer') ? 'accepted' : 'unavailable'
     }, 'unavailable')
@@ -200,9 +207,9 @@ export class ChatQueueService {
       return false
     try {
       return await this.#serialize(run, async () => {
-        if (signal.aborted || this.#isCancelling(run) || this.#options.queue.activeRun(run)?.id !== runId)
+        if (signal.aborted || this.#isCancelling(run, run.buddyId) || this.#options.queue.activeRun(run, run.buddyId)?.id !== runId)
           return false
-        const next = this.#options.queue.list(run)[0]
+        const next = this.#options.queue.list(run).find(item => item.buddyId === run.buddyId)
         if (next?.state !== 'waiting')
           return false
         const pending = this.#options.queue.pending(next)
@@ -212,10 +219,10 @@ export class ChatQueueService {
         if (!this.#canFollowUp(run, input))
           return false
         await this.#options.turns.validatePreparedInput(input)
-        if (this.#disposed || this.#isCancelling(run) || this.#options.eventLog.state !== 'open' || signal.aborted)
+        if (this.#disposed || this.#isCancelling(run, run.buddyId) || this.#options.eventLog.state !== 'open' || signal.aborted)
           return false
-        const head = this.#options.queue.list(run)[0]
-        if (this.#options.queue.activeRun(run)?.id !== runId
+        const head = this.#options.queue.list(run).find(item => item.buddyId === run.buddyId)
+        if (this.#options.queue.activeRun(run, run.buddyId)?.id !== runId
           || head?.id !== next.id || head.state !== 'waiting'
           || !this.#options.queue.pending(next) || !this.#options.queue.isCurrentInput(input)) {
           return false
@@ -225,7 +232,7 @@ export class ChatQueueService {
     }
     catch {
       if (!this.#disposed)
-        this.pause(run)
+        this.pause(run, run.buddyId)
       return false
     }
   }
@@ -269,29 +276,40 @@ export class ChatQueueService {
   reconcile(scope: LocalChatQueueScope) {
     return this.#serialize(scope, async () => {
       const current = this.#options.queue.continuationScope(scope.conversationId)
-      if (!current || !this.#canDispatch(current))
+      if (!current)
         return false
-      const latest = this.#options.queue.latestRun(current)
-      if ((latest && latest.status !== 'completed') || this.#options.runner.hasDegradedCleanup(current.conversationId)) {
+      if (this.#options.runner.hasDegradedCleanup(current.conversationId)) {
         this.pause(current)
         return false
       }
-      const next = this.#options.queue.list(current)[0]
-      return next?.state === 'waiting' ? this.#dispatch(next) : false
+      const visited = new Set<string>()
+      let dispatched = false
+      for (const next of this.#options.queue.list(current)) {
+        if (visited.has(next.buddyId))
+          continue
+        visited.add(next.buddyId)
+        if (next.state !== 'waiting')
+          continue
+        const latest = this.#options.queue.latestRun(current, next.buddyId)
+        if (latest?.status === 'failed' || latest?.status === 'cancelled') {
+          this.pause(current, next.buddyId)
+          continue
+        }
+        dispatched = await this.#dispatch(next) || dispatched
+      }
+      return dispatched
     }, false)
   }
 
   async #dispatch(target: LocalChatQueueTarget, allowPaused = false) {
-    if (!this.#canDispatch(target))
-      return false
     const pending = this.#options.queue.pending(target)
-    if (!pending)
+    if (!pending || !this.#canDispatch(pending))
       return false
     const input = await this.#options.turns.refreshQueuedInput(pending)
     await this.#options.turns.validatePreparedInput(input)
-    if (!this.#canDispatch(target) || !this.#options.queue.pending(target) || !this.#options.queue.isCurrentInput(input))
+    if (!this.#canDispatch(input) || !this.#options.queue.pending(target) || !this.#options.queue.isCurrentInput(input))
       return false
-    const head = this.#options.queue.list(target)[0]
+    const head = this.#options.queue.list(target).find(item => item.buddyId === input.buddyId)
     if (!allowPaused && (head?.id !== target.id || head.state !== 'waiting'))
       return false
     const prepared = this.#options.requests.prepare({ ...input, createdAt: new Date().toISOString() })
@@ -301,7 +319,7 @@ export class ChatQueueService {
     return true
   }
 
-  #canDispatch(scope: LocalChatQueueScope): boolean {
+  #canDispatch(scope: QueuedTurnRequestInput): boolean {
     try {
       this.#options.availability?.assertConversationWritable(scope.conversationId)
     }
@@ -310,13 +328,14 @@ export class ChatQueueService {
         throw error
       return false
     }
-    return !this.#disposed && !this.#isCancelling(scope) && !this.#options.runner.isStopping && this.#options.eventLog.state === 'open'
-      && !this.#options.queue.activeRun(scope)
-      && !this.#options.runner.hasActiveExecution(scope.conversationId)
+    return !this.#disposed && !this.#isCancelling(scope, scope.buddyId) && !this.#options.runner.isStopping && this.#options.eventLog.state === 'open'
+      && !this.#options.queue.activeRun(scope, scope.buddyId)
+      && (scope.queueRouting?.mode === 'actor' || !this.#options.queue.activeRun(scope))
+      && !this.#options.runner.hasActiveExecution(scope.conversationId, scope.buddyId)
   }
 
-  #isCancelling(scope: LocalChatQueueScope): boolean {
-    return [...this.#cancellations.values()].some(cancellation => cancellation.conversationId === scope.conversationId)
+  #isCancelling(scope: LocalChatQueueScope, actorId?: string): boolean {
+    return [...this.#cancellations.values()].some(cancellation => cancellation.conversationId === scope.conversationId && (!actorId || cancellation.buddyId === actorId))
   }
 
   #changed(kind: ChatQueueChange['kind'], scope: LocalChatQueueScope, committed?: ChatQueueChange['committed']): void {

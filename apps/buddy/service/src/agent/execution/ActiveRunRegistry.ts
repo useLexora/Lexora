@@ -67,8 +67,8 @@ export class ActiveRunRegistry {
     this.onDidSettle = this.#settled.event
   }
 
-  hasActiveExecution(conversationId: string): boolean {
-    return [...this.#executions.values()].some(execution => execution.state.identity.conversationId === conversationId)
+  hasActiveExecution(conversationId: string, actorId?: string): boolean {
+    return [...this.#executions.values()].some(execution => execution.state.identity.conversationId === conversationId && (!actorId || execution.state.identity.actorId === actorId))
   }
 
   activeRunIds(canonicalRoot: string): string[] {

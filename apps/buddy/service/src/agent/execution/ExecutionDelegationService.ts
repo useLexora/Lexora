@@ -12,14 +12,22 @@ import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { currentPlatform } from '../../../../platform/currentPlatform'
 import { MAX_BUDDY_MESSAGE_TEXT_LENGTH } from '../../../../shared/conversation/buddyMessageContent'
+import { executionBriefSchema, executionContextModeSchema, executionReviewSchema, executionSubmissionSchema, renderExecutionBrief } from '../../../../shared/executions/executionWork'
 import { resolveShellExecution } from '../../sandbox/shellExecution'
-import { ExecutionAdmissionError, executionFence, hashChildAdmissionRequest } from '../../storage/executionRepository'
+import { ExecutionAdmissionError, executionFence, hashChildAdmissionRequest, MAX_CHILD_ATTEMPTS_PER_ROOT } from '../../storage/executionRepository'
 import { getRoleToolDenial } from '../extensions/discovery/SessionToolScope'
 import { isPiShellToolName, isShellToolName } from '../extensions/piBuiltinTools'
 import { BuddySessionStorageError } from '../sessions/BuddySessionErrors'
 import { readExecutionMailboxEntries } from './executionMailboxEntries'
+import { executionResultPage } from './executionResultPage'
 
 const delegationFields = z.object({
+  attachmentIds: z.array(z.string().min(1).max(256)).max(32).optional(),
+  brief: executionBriefSchema.optional(),
+  submission: executionSubmissionSchema.optional(),
+  review: executionReviewSchema.optional(),
+  contextMode: executionContextModeSchema.optional(),
+  contextSourceIds: z.array(z.string().min(1).max(256)).max(64).optional(),
   targetId: z.string().min(1).max(256).optional(),
   runId: z.string().min(1).max(256).optional(),
   text: z.string().trim().min(1).max(MAX_BUDDY_MESSAGE_TEXT_LENGTH).optional(),
@@ -30,7 +38,7 @@ const delegationFields = z.object({
 }).strict()
 
 export const delegationInputSchema = z.discriminatedUnion('operation', [
-  delegationFields.extend({ operation: z.enum(['list', 'delegate', 'status', 'result', 'report', 'send', 'wait', 'answer', 'cancel']) }),
+  delegationFields.extend({ operation: z.enum(['list', 'context', 'history', 'delegate', 'resume', 'submit', 'review', 'status', 'result', 'report', 'send', 'wait', 'answer', 'cancel']) }),
   delegationFields.extend({
     operation: z.literal('question'),
     audience: z.enum(['caller', 'user'], { error: 'Required for question: use "user" to ask the human, or "caller" to ask the delegating agent.' }),
@@ -73,9 +81,41 @@ export class ExecutionDelegationService {
     signal.throwIfAborted()
     const source = this.#require(caller.run.runId)
     this.#options.executions.assertCurrent(executionFence(source, this.#require(source.run.rootRunId)))
+    if (input.operation === 'submit') {
+      if (!input.submission)
+        throw new ExecutionAdmissionError('conflict')
+      return this.#options.executions.submit(source.run.id, input.submission)
+    }
+    if (input.operation === 'review') {
+      if (!input.runId || !input.review)
+        throw new ExecutionAdmissionError('conflict')
+      return this.#options.executions.review(source.run.id, input.runId, input.review)
+    }
+    if (input.operation === 'history') {
+      const records = this.#options.executions.listOwnedWork(source.run.id, input.offset ?? 0, 12)
+      return { nextOffset: records.length === 12 ? (input.offset ?? 0) + 12 : null, work: records.map(record => ({
+        workId: record.work.workId,
+        runId: record.run.id,
+        actorId: record.run.buddyId,
+        status: record.run.status,
+        phase: record.phase,
+        review: record.work.review ? { verdict: record.work.review.verdict, reason: record.work.review.reason.slice(0, 160) } : null,
+        task: record.initialInput?.prompt.slice(0, 300) ?? '',
+        resumable: record.phase === 'closed' && record.cleanupState === 'clean',
+      })) }
+    }
+    if (input.operation === 'context') {
+      const materials = this.#options.executions.listContext(source.run.id).filter(material => material.kind !== 'message' || material.text.trim() || material.references?.length)
+      const offset = input.offset ?? 0
+      const attachments = this.#options.executions.listAttachments(source.run.id)
+      const page = materials.slice(offset, offset + 12)
+      return { attachmentIds: attachments.slice(offset, offset + 12), sources: page.map(material => material.kind === 'message'
+        ? { sourceId: material.sourceId, actorId: material.actorId, role: material.role, excerpt: material.text.slice(0, 240), referenceCount: material.references?.length ?? 0 }
+        : { sourceId: material.sourceId, actorId: material.actorId, artifactCount: material.artifacts.length, names: material.artifacts.slice(0, 3).map(artifact => artifact.name.slice(0, 80)) }), nextOffset: offset + 12 < Math.max(materials.length, attachments.length) ? offset + 12 : null }
+    }
     if (input.operation === 'list')
       return this.#list(caller, source, signal)
-    if (input.operation === 'delegate')
+    if (input.operation === 'delegate' || input.operation === 'resume')
       return this.#delegate(caller, source, requestKey, input, signal)
     if (input.operation === 'report' || (input.operation === 'send' && input.runId === source.run.parentRunId)) {
       if (!source.run.parentRunId || !input.text || (input.operation === 'report' && (input.runId || input.targetId)))
@@ -100,17 +140,17 @@ export class ExecutionDelegationService {
       await this.#options.coordinator.answerQuestion(source.run.id, input.questionId, input.text)
       return { questionId: input.questionId, status: 'accepted' }
     }
-    const target = input.runId ? this.#requireRelated(source, input.runId) : source
+    const target = input.runId ? input.operation === 'result' ? this.#requireOwned(source, input.runId) : this.#requireRelated(source, input.runId) : source
     if (input.operation === 'result') {
-      if (!input.runId || target.run.parentRunId !== source.run.id)
+      if (!input.runId)
         throw new ExecutionAdmissionError('unauthorized')
       const report = target.phase === 'closed' ? await this.#options.readResult(target.run.id) : null
       const offset = input.offset ?? 0
-      const end = Math.min(offset + 32000, report?.length ?? 0)
-      return { runId: target.run.id, phase: target.phase, status: target.run.status, errorCode: target.run.errorCode, result: report === null ? null : report.slice(offset, end), totalChars: report?.length ?? 0, nextOffset: report !== null && end < report.length ? end : null }
+      const { contextSourceIds: _sources, ...work } = target.work
+      return executionResultPage({ runId: target.run.id, work, phase: target.phase, status: target.run.status, errorCode: target.run.errorCode }, report, offset)
     }
     if (input.operation === 'send') {
-      if (!input.text)
+      if (!input.text || !input.runId || target.run.id === source.run.id)
         throw new ExecutionAdmissionError('conflict')
       await this.#options.coordinator.send(source.run.id, { messageId: createHash('sha256').update(JSON.stringify([source.run.id, requestKey])).digest('hex'), kind: 'supplement', targetRunId: target.run.id, targetGeneration: target.run.generation, text: input.text })
       return { runId: target.run.id, status: 'accepted' }
@@ -121,6 +161,17 @@ export class ExecutionDelegationService {
       await this.#options.coordinator.cancel(target.run.id, 'RUN_CANCELLED', this.#options.stopExecution)
     }
     if (input.operation === 'wait') {
+      if (target.run.id !== source.run.id && target.run.parentRunId !== source.run.id)
+        throw new ExecutionAdmissionError('unauthorized')
+      const questionsForCaller = this.#options.executions.listTree(source.run.rootRunId)
+        .filter(record => record.run.parentRunId === source.run.id)
+        .flatMap(record => this.#options.mailbox.listQuestions(record.run.id)
+          .flatMap(message => message.kind === 'question' && (message.audience ?? 'caller') === 'caller'
+            && message.targetRunId === source.run.id && this.#options.mailbox.findQuestion(message.questionId)?.open
+            ? [{ runId: record.run.id, questionId: message.questionId, text: message.text }]
+            : []))
+      if (questionsForCaller.length)
+        return { ...this.status(source.run.id, target.run.id, entries), waitStatus: 'needs_answer', questionsForCaller }
       const pending = this.pending(source.run.id, entries)
       const pendingResults = new Set(pending.filter(message => message.kind === 'result').map(message => message.sourceRunId))
       const targets = input.runId
@@ -158,6 +209,9 @@ export class ExecutionDelegationService {
     const target = this.#requireRelated(source, targetId)
     const summarize = (record: ExecutionStateRecord) => ({
       runId: record.run.id,
+      workId: record.work.workId,
+      previousRunId: record.work.previousRunId,
+      contextMode: record.work.contextMode,
       actorId: record.run.buddyId,
       kind: record.run.executionKind,
       parentRunId: record.run.parentRunId,
@@ -165,11 +219,13 @@ export class ExecutionDelegationService {
       status: record.run.status,
       errorCode: record.run.errorCode,
       cleanup: record.cleanupState,
-      questions: this.#options.mailbox.listQuestions(record.run.id).flatMap(question => question.kind === 'question' ? [{ questionId: question.questionId, text: question.text, audience: question.audience ?? 'caller', open: this.#options.mailbox.findQuestion(question.questionId)?.open ?? false }] : []),
+      questions: (record.run.id === source.run.id || record.run.parentRunId === source.run.id ? this.#options.mailbox.listQuestions(record.run.id) : []).flatMap(question => question.kind === 'question' ? [{ questionId: question.questionId, text: question.text, audience: question.audience ?? 'caller', open: this.#options.mailbox.findQuestion(question.questionId)?.open ?? false }] : []),
     })
     return {
       ...summarize(target),
+      budget: { childAttempts: MAX_CHILD_ATTEMPTS_PER_ROOT, remaining: Math.max(0, MAX_CHILD_ATTEMPTS_PER_ROOT - this.#options.executions.listTree(source.run.rootRunId).length + 1) },
       children: this.#options.executions.listTree(target.run.rootRunId).filter(record => record.run.parentRunId === target.run.id).map(summarize),
+      peers: this.#options.executions.listTree(source.run.rootRunId).filter(record => record.run.id !== source.run.id && record.run.parentRunId !== null && record.run.parentRunId === source.run.parentRunId).map(summarize),
       updates: this.pending(callerId, entries),
     }
   }
@@ -223,10 +279,14 @@ export class ExecutionDelegationService {
   }
 
   async #delegate(caller: DelegationCaller, source: ExecutionStateRecord, requestKey: string, input: DelegationInput, signal: AbortSignal) {
-    if (!input.targetId || !input.text || source.run.actorSnapshot?.kind !== 'actor' || !caller.run.requestModel)
+    const previous = input.operation === 'resume' && input.runId ? this.#require(input.runId) : null
+    const targetId = previous?.run.buddyId ?? input.targetId
+    if (!targetId || (!input.text && !input.brief) || source.run.actorSnapshot?.kind !== 'actor' || !caller.run.requestModel
+      || (input.operation === 'resume' && !previous)) {
       throw new ExecutionAdmissionError('unauthorized')
+    }
     const catalog = this.#catalog(source)
-    const target = [...catalog.actors, ...catalog.npcs].find(item => item.id === input.targetId)
+    const target = [...catalog.actors, ...catalog.npcs].find(item => item.id === targetId)
     if (!target)
       throw new ExecutionAdmissionError('unauthorized')
     const rootGeneration = this.#require(source.run.rootRunId).run.generation
@@ -238,10 +298,16 @@ export class ExecutionDelegationService {
     })
     signal.throwIfAborted()
     const permissions = caller.getPermissions()
-    const readOnly = source.fileAccessCeiling === 'read_only' || source.run.actorSnapshot.settings.limits.fileAccess === 'read_only' || definition.settings.limits.fileAccess === 'read_only'
+    const readOnly = previous?.fileAccessCeiling === 'read_only' || previous?.run.executionProfile === 'read_only' || source.fileAccessCeiling === 'read_only' || source.run.actorSnapshot.settings.limits.fileAccess === 'read_only' || definition.settings.limits.fileAccess === 'read_only'
     const id = randomUUID()
     const request: AdmitChildExecutionInput = {
       callerId: source.run.id,
+      work: {
+        ...(previous ? { previousRunId: previous.run.id } : {}),
+        contextMode: input.contextMode ?? previous?.work.contextMode ?? 'isolated',
+        contextSourceIds: input.contextSourceIds ?? [],
+        ...(input.brief ? { brief: input.brief } : {}),
+      },
       expectedCallerGeneration: source.run.generation,
       expectedRootGeneration: rootGeneration,
       authorization: { ...permissions, ...(readOnly ? { fileAccessCeiling: 'read_only' as const } : {}) },
@@ -263,11 +329,11 @@ export class ExecutionDelegationService {
         executionContext: source.run.executionContext,
         startedAt: new Date().toISOString(),
       },
-      initialInput: { prompt: input.text, attachmentIds: [], contextItems: [], reasoning: definition.model.reasoning, serviceTier: definition.model.serviceTier },
+      initialInput: { prompt: [input.text, input.brief ? renderExecutionBrief(input.brief) : null].filter(Boolean).join('\n\n'), attachmentIds: input.attachmentIds ?? [], contextItems: [], reasoning: definition.model.reasoning, serviceTier: definition.model.serviceTier },
     }
     request.requestHash = hashChildAdmissionRequest(request)
     const accepted = await this.#options.coordinator.admitChild(request)
-    return { runId: accepted.run.id, actorId: accepted.run.buddyId, kind: accepted.run.executionKind, status: accepted.run.status, phase: accepted.phase }
+    return { runId: accepted.run.id, workId: accepted.work.workId, previousRunId: accepted.work.previousRunId, contextMode: accepted.work.contextMode, actorId: accepted.run.buddyId, kind: accepted.run.executionKind, status: accepted.run.status, phase: accepted.phase }
   }
 
   #require(id: string): ExecutionStateRecord {
@@ -277,10 +343,22 @@ export class ExecutionDelegationService {
     return record
   }
 
+  #requireOwned(source: ExecutionStateRecord, id: string): ExecutionStateRecord {
+    const target = this.#require(id)
+    const parent = target.run.parentRunId ? this.#require(target.run.parentRunId) : null
+    if (!parent || parent.run.buddyId !== source.run.buddyId || target.run.conversationId !== source.run.conversationId
+      || target.run.branchId !== source.run.branchId || source.run.actorSnapshot?.kind !== 'actor') {
+      throw new ExecutionAdmissionError('unauthorized')
+    }
+    return target
+  }
+
   #requireRelated(source: ExecutionStateRecord, id: string): ExecutionStateRecord {
     const target = this.#require(id)
-    if (target.run.rootRunId !== source.run.rootRunId || (target.run.id !== source.run.id && target.run.parentRunId !== source.run.id))
+    if (target.run.rootRunId !== source.run.rootRunId || (target.run.id !== source.run.id && target.run.parentRunId !== source.run.id
+      && target.run.id !== source.run.parentRunId && !(source.run.parentRunId && target.run.parentRunId === source.run.parentRunId))) {
       throw new ExecutionAdmissionError('unauthorized')
+    }
     return target
   }
 }

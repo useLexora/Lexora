@@ -171,8 +171,8 @@ export class ConversationMetadataService {
 
   getModelControls(conversationId: string, actorId?: string) {
     const conversation = this.#requireActive(conversationId)
-    const run = this.#options.runs?.findActiveForConversation(conversationId)
     const nextActorId = actorId ?? conversation.buddyId
+    const run = this.#options.runs?.findActiveForConversation(conversationId, nextActorId)
     const buddy = this.#options.buddies?.get(nextActorId)
     if (buddy && (buddy.kind !== 'actor' || !buddy.enabled || buddy.deletedAt))
       throw new BuddyServiceError('BUDDY_NOT_ACTOR')
@@ -241,7 +241,7 @@ export class ConversationMetadataService {
   }
 
   #refreshActorModel(conversationId: string, actorId: string, selection: ConversationModelSelection | null): boolean {
-    const run = this.#options.runs?.findActiveForConversation(conversationId)
+    const run = this.#options.runs?.findActiveForConversation(conversationId, actorId)
     if (!run || run.buddyId !== actorId || sameSelection(this.#runModelSelection(run), selection))
       return false
     if (!this.#options.runs?.setModelSelection(run.id, selection))

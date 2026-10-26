@@ -6,7 +6,7 @@ import { useChatBranchMutations } from '@/modules/tasks/state/conversations/useC
 import { useComposerTarget } from '../composer/useComposerTarget'
 import { useChatTurnExecution } from './useChatTurnExecution'
 
-type UseChatExecutionOptions = Omit<UseChatTurnExecutionOptions, 'composerTarget'> & Omit<UseChatBranchMutationsOptions, 'isSending' | 'composerTarget'> & { drafts: ChatDrafts }
+type UseChatExecutionOptions = Omit<UseChatTurnExecutionOptions, 'composerTarget'> & Omit<UseChatBranchMutationsOptions, 'isSending' | 'composerTarget'> & { drafts: ChatDrafts, branchActiveRun?: UseChatTurnExecutionOptions['activeRun'] }
 
 export function useChatExecution(options: UseChatExecutionOptions) {
   const composerTarget = useComposerTarget({
@@ -44,7 +44,7 @@ export function useChatExecution(options: UseChatExecutionOptions) {
   const branchMutations = useChatBranchMutations({
     flushModelSelection: options.flushModelSelection,
     composerTarget,
-    activeRun: options.activeRun,
+    activeRun: options.branchActiveRun ?? options.activeRun,
     api: options.api,
     canSendDraft: options.canSendDraft,
     drafts: options.drafts,

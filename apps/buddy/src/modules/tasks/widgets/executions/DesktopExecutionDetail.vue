@@ -15,6 +15,7 @@ import BuddyExecutionInputs from './BuddyExecutionInputs.vue'
 import BuddyExecutionProcess from './BuddyExecutionProcess.vue'
 import BuddyExecutionQuestion from './BuddyExecutionQuestion.vue'
 import BuddyExecutionStatus from './BuddyExecutionStatus.vue'
+import BuddyExecutionWork from './BuddyExecutionWork.vue'
 import { executionLabels } from './executionLabels'
 
 const props = defineProps<{ target: ExecutionTarget, visible: boolean, language: BuddyLocale }>()
@@ -123,6 +124,7 @@ async function answer(questionId: string, text: string) {
             {{ execution.task }}
           </p>
         </header>
+        <BuddyExecutionWork v-if="detail.work && execution.parentRunId" :work="detail.work" :language="language" :completed="execution.status === 'completed'" />
         <BuddyExecutionQuestion v-for="question in execution.questions" :key="`${target.runId}:${question.questionId}`" :question="question" :enabled="execution.canAnswer && !!state.environment?.ready.value" :language="language" :reply="answer" />
         <p v-if="execution.waitingFor === 'approval'" class="m-0 text-warning text-[12px]" role="status">
           {{ labels.approvalHint }}

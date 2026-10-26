@@ -2,14 +2,14 @@ import type { AgentSession, SessionManager } from '@earendil-works/pi-coding-age
 import type { PublicConversationMaterial } from '../../../conversations/publicConversationContext'
 import type { ConversationTreeRepository } from '../../../storage/conversationTreeRepository'
 import { z } from 'zod'
-import { publicConversationMaterialSchema } from '../../../conversations/publicConversationContext'
+import { hasPublicMaterialContent, PUBLIC_CONTEXT_TYPE, publicConversationMaterialSchema } from '../../../conversations/publicConversationContext'
 import { BuddyAgentRunError } from '../../../runs/runError'
 import { readBuddyInputReference } from '../../context/BuddyInputReference'
 import { readExecutionMailboxEntries } from '../../execution/executionMailboxEntries'
 import { readCheckpoint } from './BuddyTreeStore'
 import { syncBuddySessionJournal } from './syncBuddySessionJournal'
 
-export const PUBLIC_CONTEXT_TYPE = 'lexora.conversation.public.v1'
+export { PUBLIC_CONTEXT_TYPE }
 export const PUBLIC_CURSOR_TYPE = 'lexora.conversation.public-cursor.v1'
 const cursorSchema = z.object({
   version: z.literal(1),
@@ -25,6 +25,7 @@ export interface PublicContextTarget {
   branchId: string
   throughSequence: number
   skipMessageId?: string
+  sourceIds?: readonly string[]
 }
 
 export function planPublicContext(manager: SessionManager, materials: readonly PublicConversationMaterial[], target: PublicContextTarget) {
@@ -57,7 +58,8 @@ export function planPublicContext(manager: SessionManager, materials: readonly P
       represented.add(material.data.sourceId)
     }
   }
-  return materials.filter(material => !represented.has(material.sourceId)
+  const selected = target.sourceIds ? new Set(target.sourceIds) : null
+  return materials.filter(material => (!selected || selected.has(material.sourceId)) && hasPublicMaterialContent(material) && !represented.has(material.sourceId)
     && !(material.kind === 'message' && (material.messageId === target.skipMessageId
       || (material.runId && (ownRuns.has(material.runId) || results.get(material.runId)?.has(material.text))))))
 }

@@ -139,9 +139,10 @@ export function createChatQueueRepository(database: DatabaseSync) {
           SELECT 1 FROM chat_queue q WHERE q.conversation_id = c.id AND q.branch_id = c.active_branch_id AND q.state IN ('waiting', 'paused')
         )`).get(conversationId) as LocalChatQueueScope | undefined ?? null
     },
-    latestRun(scope: LocalChatQueueScope) {
-      return database.prepare('SELECT id, status FROM runs WHERE conversation_id = ? AND execution_kind IN (\'root\', \'maintenance\') ORDER BY rowid DESC LIMIT 1')
-        .get(scope.conversationId) as { id: string, status: string } | undefined
+    latestRun(scope: LocalChatQueueScope, actorId?: string) {
+      return database.prepare(`SELECT id, status FROM runs WHERE conversation_id = ?
+        AND ((? IS NOT NULL AND buddy_id = ?) OR (? IS NULL AND scheduling_lane = 'conversation' AND execution_kind IN ('root', 'maintenance')))
+        ORDER BY rowid DESC LIMIT 1`).get(scope.conversationId, actorId ?? null, actorId ?? null, actorId ?? null) as { id: string, status: string } | undefined
     },
     pending(target: LocalChatQueueTarget) {
       assertScope(target)
@@ -155,8 +156,20 @@ export function createChatQueueRepository(database: DatabaseSync) {
         return false
       return Number(database.prepare('UPDATE chat_queue SET state = \'cancelled\' WHERE id = ? AND state IN (\'waiting\', \'paused\')').run(target.id).changes) === 1
     },
-    activeRun(scope: LocalChatQueueScope) {
-      return database.prepare('SELECT id, purpose, model, provider FROM runs WHERE conversation_id = ? AND execution_kind IN (\'root\', \'maintenance\') AND status IN (\'queued\', \'running\') ORDER BY started_at DESC LIMIT 1').get(scope.conversationId) as { id: string, purpose: string, model: string, provider: string } | undefined
+    activeRun(scope: LocalChatQueueScope, actorId?: string) {
+      return database.prepare(`SELECT id, purpose, model, provider FROM runs WHERE conversation_id = ?
+        AND ((? IS NOT NULL AND buddy_id = ?) OR (? IS NULL AND scheduling_lane = 'conversation' AND execution_kind IN ('root', 'maintenance')))
+        AND status IN ('queued', 'running') ORDER BY started_at DESC LIMIT 1`).get(scope.conversationId, actorId ?? null, actorId ?? null, actorId ?? null) as { id: string, purpose: string, model: string, provider: string } | undefined
+    },
+    pauseActor(scope: LocalChatQueueScope, actorId: string) {
+      return withTransaction(database, () => {
+        let changed = 0
+        for (const row of database.prepare('SELECT * FROM chat_queue WHERE conversation_id = ? AND branch_id = ? AND state = \'waiting\'').all(scope.conversationId, scope.branchId) as unknown as QueueRow[]) {
+          if (bindActor(decode(row)).buddyId === actorId)
+            changed += Number(database.prepare('UPDATE chat_queue SET state = \'paused\' WHERE id = ?').run(row.id).changes)
+        }
+        return changed
+      })
     },
     pause(conversationId?: string) {
       if (conversationId)
@@ -171,7 +184,7 @@ export function createChatQueueRepository(database: DatabaseSync) {
         if (!database.prepare('SELECT id FROM chat_queue WHERE id = ? AND state IN (\'waiting\', \'paused\')').get(input.queuedMessageId!))
           throw new BuddyServiceError('VALIDATION_FAILED')
         const run = database.prepare(`SELECT r.id, r.actor_snapshot_json FROM runs r JOIN conversations c ON c.id = r.conversation_id
-          WHERE r.id = ? AND r.conversation_id = ? AND r.branch_id = ? AND r.status = 'running' AND r.purpose = 'chat' AND r.execution_kind = 'root'
+          WHERE r.id = ? AND r.conversation_id = ? AND r.branch_id = ? AND r.status = 'running' AND r.purpose = 'chat' AND r.execution_kind IN ('root', 'actor_child')
           AND c.approval_policy = ? AND c.execution_profile = ? AND r.buddy_id = ?`).get(runId, input.conversationId, input.branchId, input.approvalPolicy, input.executionProfile, input.buddyId!)
         if (!run || runPermissionCeiling !== input.runExecutionProfile)
           throw new BuddyServiceError('VALIDATION_FAILED')

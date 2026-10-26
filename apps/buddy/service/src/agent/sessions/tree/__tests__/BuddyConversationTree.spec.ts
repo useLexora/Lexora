@@ -23,6 +23,7 @@ import { createConversationMemberRepository } from '../../../../storage/conversa
 import { createConversationRepository } from '../../../../storage/conversationRepository'
 import { createConversationTreeRepository } from '../../../../storage/conversationTreeRepository'
 import { openBuddyDatabase } from '../../../../storage/database'
+import { createExecutionWorkRepository } from '../../../../storage/executionWorkRepository'
 import { createMailboxRepository, hashExecutionMailboxMessage } from '../../../../storage/mailboxRepository'
 import { createRunInputRepository } from '../../../../storage/runInputRepository'
 import { createRunRepository } from '../../../../storage/runRepository'
@@ -41,6 +42,56 @@ afterEach(async () => {
 })
 
 describe('native conversation tree', () => {
+  it.each([
+    ['actor', 'none'],
+    ['npc', 'none'],
+    ['actor', 'selected'],
+    ['npc', 'selected'],
+    ['actor', 'conversation'],
+    ['npc', 'conversation'],
+  ] as const)('projects the admitted %s context policy %s into the actual Pi request', async (kind, policy) => {
+    const f = await createFixture()
+    const earlier = f.run('earlier', 'b0', 'q1')
+    f.publish(earlier, 'selected-material', 'SELECTED_PUBLIC_FACT_173')
+    f.complete(earlier)
+    const other = f.run('other', 'b0', 'q2')
+    f.publish(other, 'unrelated-material', 'UNRELATED_PUBLIC_FACT_981')
+    f.complete(other)
+    const parent = f.run('parent', 'b0', 'q3')
+    const child = kind === 'npc' ? f.npc(parent, 'child') : f.child(parent, 'child', f.actor('Isolated actor'))
+    createExecutionWorkRepository(f.database).configure(child.id, { contextMode: policy === 'conversation' ? 'conversation' : 'isolated', contextSourceIds: policy === 'selected' ? ['message:selected-material'] : [] })
+    f.database.prepare('UPDATE run_public_snapshots SET public_sequence = ? WHERE run_id = ?').run(f.repository.getPublicSnapshot(parent.id), child.id)
+    const opened = await f.open(child)
+    await opened.cursor.begin(opened.session.session, child.id)
+    await opened.session.session.prompt('Read only supplied task material')
+    const payload = f.requests.at(-1)!
+    expect(payload.includes('SELECTED_PUBLIC_FACT_173')).toBe(policy !== 'none')
+    expect(payload.includes('UNRELATED_PUBLIC_FACT_981')).toBe(policy === 'conversation')
+    await opened.session.shutdown('quit')
+  })
+
+  it('does not pull a later publication into a selected child admission snapshot', async () => {
+    const f = await createFixture()
+    const parent = f.run('parent', 'b0', 'q1')
+    const child = f.child(parent, 'child', f.actor('Reader'))
+    f.publish(parent, 'late', 'LATE_NOT_ADMITTED')
+    createExecutionWorkRepository(f.database).configure(child.id, { contextMode: 'isolated', contextSourceIds: ['message:late'] })
+    const opened = await f.open(child)
+    await opened.cursor.begin(opened.session.session, child.id)
+    await opened.session.session.prompt('Inspect supplied material')
+    expect(f.requests.at(-1)).not.toContain('LATE_NOT_ADMITTED')
+    await opened.session.shutdown('quit')
+  })
+
+  it('refuses to continue with another private thread instead of silently creating fresh context', async () => {
+    const f = await createFixture()
+    const parent = f.run('parent', 'b0', 'q1')
+    const first = f.npc(parent, 'first')
+    const next = f.npc(parent, 'next', first.buddyId)
+    createExecutionWorkRepository(f.database).configure(next.id, { previousRunId: first.id, contextMode: 'isolated', contextSourceIds: [] })
+    await expect(f.open(next)).rejects.toMatchObject({ code: 'SESSION_STORAGE_UNAVAILABLE' })
+  })
+
   it('skips quarantined native checkpoints and descendants without deleting private history', async () => {
     const quarantined = new Set<string>()
     const f = await createFixture(undefined, runId => !quarantined.has(runId))

@@ -24,8 +24,10 @@ import { createComposerDraftRepository } from '../../storage/composerDraftReposi
 import { createConversationMemberRepository } from '../../storage/conversationMemberRepository'
 import { createConversationRepository } from '../../storage/conversationRepository'
 import { openBuddyDatabase } from '../../storage/database'
+import { createExecutionRepository } from '../../storage/executionRepository'
 import { createRunInputRepository } from '../../storage/runInputRepository'
 import { createRunRepository } from '../../storage/runRepository'
+import { createThreadBindingRepository } from '../../storage/threadBindingRepository'
 import { createTurnRequestRepository } from '../../storage/turnRequestRepository'
 import { isReviewUserMessage } from '../buddyReviewPrompt'
 import { ChatQueueService } from '../ChatQueueService'
@@ -45,6 +47,62 @@ afterEach(async () => {
 })
 
 describe('persistent chat queue scheduling', () => {
+  it('dispatches an explicitly addressed idle actor while the ordinary root keeps running', async () => {
+    const f = fixture()
+    const actor = f.buddies.create({ name: 'Independent actor' })
+    f.conversations.addMember({ id: 'conversation', buddyId: actor.id, updatedAt: '2026-10-25T00:00:00.000Z' })
+    await f.enableDefinitions()
+    const main = f.runs.findById('run-initial')!
+    f.queue.enqueue({ ...f.input('directed'), buddyId: actor.id, actorIds: [actor.id], userMessageContent: {
+      userContent: { ...createBuddyUserContent(), body: [{ type: 'paragraph', content: [{ type: 'actor_ref', actorId: actor.id, name: actor.name }, { type: 'text', text: 'Independent request' }] }] },
+      resourceSnapshots: [],
+    } })
+    expect(await f.service.reconcile(f.scope)).toBe(true)
+    expect(f.runs.findById('run-directed')).toMatchObject({ buddyId: actor.id, schedulingLane: 'actor', status: 'queued' })
+    expect(f.runs.findById('run-initial')).toEqual(main)
+    expect(f.runs.findActiveForConversation('conversation')?.id).toBe('run-initial')
+    expect(f.runs.findActiveForConversation('conversation', actor.id)?.id).toBe('run-directed')
+  })
+
+  it('keeps each actor queue ordered without letting a busy actor block an idle peer', async () => {
+    const f = fixture()
+    const actor = f.buddies.create({ name: 'Available actor' })
+    f.conversations.addMember({ id: 'conversation', buddyId: actor.id, updatedAt: '2026-10-25T00:00:00.000Z' })
+    await f.enableDefinitions()
+    f.queue.enqueue(f.input('busy'))
+    for (const id of ['first', 'second']) {
+      f.queue.enqueue({ ...f.input(id), buddyId: actor.id, actorIds: [actor.id], userMessageContent: {
+        userContent: { ...createBuddyUserContent(), body: [{ type: 'paragraph', content: [{ type: 'actor_ref', actorId: actor.id, name: actor.name }, { type: 'text', text: id }] }] },
+        resourceSnapshots: [],
+      } })
+    }
+    expect(await f.service.reconcile(f.scope)).toBe(true)
+    expect(f.launched).toEqual(['run-first'])
+    expect(f.queue.list(f.scope).map(item => item.id)).toEqual(['busy', 'second'])
+    expect(await f.service.reconcile(f.scope)).toBe(false)
+    f.database.prepare('UPDATE runs SET status = \'completed\' WHERE id = ?').run('run-first')
+    expect(await f.service.reconcile(f.scope)).toBe(true)
+    expect(f.launched).toEqual(['run-first', 'run-second'])
+    expect(f.runs.findById('run-initial')?.status).toBe('running')
+  })
+
+  it('pauses a failed actor queue while another actor can still receive new work', async () => {
+    const f = fixture()
+    const actor = f.buddies.create({ name: 'Available actor' })
+    f.conversations.addMember({ id: 'conversation', buddyId: actor.id, updatedAt: '2026-10-25T00:00:00.000Z' })
+    await f.enableDefinitions()
+    f.queue.enqueue(f.input('failed-owner'))
+    f.database.prepare('UPDATE runs SET status = \'failed\' WHERE id = ?').run('run-initial')
+    f.releaseSlot()
+    f.queue.enqueue({ ...f.input('peer'), buddyId: actor.id, actorIds: [actor.id], userMessageContent: {
+      userContent: { ...createBuddyUserContent(), body: [{ type: 'paragraph', content: [{ type: 'actor_ref', actorId: actor.id, name: actor.name }, { type: 'text', text: 'Independent request' }] }] },
+      resourceSnapshots: [],
+    } })
+    expect(await f.service.reconcile(f.scope)).toBe(true)
+    expect(f.queue.list(f.scope)).toMatchObject([{ id: 'failed-owner', state: 'paused' }])
+    expect(f.launched).toEqual(['run-peer'])
+  })
+
   it('keeps queued input undelivered in a quarantined conversation across steer, followup and dispatch', async () => {
     const failure = new RunEventCorruptionError('historical-run')
     const f = fixture(false, {
@@ -320,6 +378,43 @@ describe('persistent chat queue scheduling', () => {
     expect(events[1]!.committed?.draftReceipt).toBeUndefined()
     expect(events[1]!.committed?.commitId).not.toBe(events[0]!.committed?.commitId)
     expect(attachments.findById('owned-attachment')).toMatchObject({ draftId: null, messageId: 'A', conversationId: 'conversation' })
+  })
+
+  it('delivers an addressed attachment to the live actor child once without consuming the caller input', async () => {
+    const f = fixture()
+    const caller = f.buddies.create({ name: 'Caller' })
+    f.conversations.addMember({ id: 'conversation', buddyId: caller.id, updatedAt: '2026-10-25T00:00:00.000Z' })
+    f.runs.create({ ...f.runs.findById('run-initial')!, id: 'caller', buddyId: caller.id, rootRunId: 'caller', threadId: createThreadBindingRepository(f.database).ensureActor('conversation', caller.id, '2026-10-25T00:00:00.000Z').id, schedulingLane: 'actor' })
+    f.database.prepare('UPDATE runs SET execution_kind = \'actor_child\', parent_run_id = \'caller\', root_run_id = \'caller\' WHERE id = \'run-initial\'').run()
+    const before = f.runs.findById('caller')
+    const attachments = createAttachmentRepository(f.database)
+    attachments.create({ id: 'directed-attachment', conversationId: null, draftId: 'draft', messageId: null, name: 'requirements.txt', mimeType: 'text/plain', sizeBytes: 12, storedPath: '/private/source.txt', createdAt: '2026-10-25T00:00:00.000Z' })
+    const prepared = { ...f.input('directed-file'), buddyId: 'default', actorIds: ['default'] }
+    prepared.runInput.attachmentIds = ['directed-attachment']
+    prepared.userMessageContent = { userContent: { ...createBuddyUserContent(), body: [{ type: 'paragraph', content: [{ type: 'actor_ref', actorId: 'default', name: 'Lexora' }, { type: 'text', text: 'Use the attached requirements' }] }] }, resourceSnapshots: [] }
+    const binding = { id: 'directed-attachment', sourceAttachmentId: 'directed-attachment', sourceDraftId: 'draft', messageId: prepared.userMessageId, storedPath: '/private/destination.txt', sourceStoredPath: '/private/source.txt', name: 'requirements.txt', sizeBytes: 12, mimeType: 'text/plain', createdAt: prepared.createdAt }
+    prepared.attachmentBindings = [binding]
+    f.turns.prepareStart = async () => ({ prepared, stagedAttachments: { validate: () => {}, bindings: [binding], commit: async () => {}, rollback: async () => {} } })
+    const executions = createExecutionRepository(f.database)
+    expect(executions.listAttachments('run-initial')).toEqual([])
+    const references: BuddyInputReferenceV1[] = []
+    f.runner.steer.mockImplementation((runId, prepare) => {
+      expect(runId).toBe('run-initial')
+      references.push(prepare())
+      return true
+    })
+    const request = { requestId: prepared.requestId, draftId: 'draft', expectedRevision: prepared.draft.expectedRevision }
+    await f.service.enqueue(request)
+    await vi.waitFor(() => expect(references).toHaveLength(1))
+    await f.service.enqueue(request)
+    expect(references).toMatchObject([{ attachmentIds: ['directed-attachment'], messageId: 'directed-file' }])
+    expect(executions.listAttachments('run-initial')).toEqual(['directed-attachment'])
+    expect(executions.listContext('run-initial').map(material => material.sourceId)).toContain('message:directed-file')
+    expect(attachments.findById('directed-attachment')).toMatchObject({ draftId: null, messageId: 'directed-file', conversationId: 'conversation' })
+    expect(f.database.prepare('SELECT run_id FROM chat_queue WHERE id = ?').get('directed-file')).toEqual({ run_id: 'run-initial' })
+    expect(f.runs.findById('caller')).toEqual(before)
+    expect(f.runs.findById('run-directed-file')).toBeNull()
+    expect(f.queue.list(f.scope)).toEqual([])
   })
 
   it('keeps persisted waiting work paused when the owner restarts', async () => {
@@ -678,7 +773,7 @@ function fixture(queuedOnStartup = false, availability?: ChatQueueServiceOptions
   const settled = new Emitter<ExecutionSettled>(() => {})
   let occupied = true
   let cleanupDegraded = false
-  const runner = { onDidSettle: settled.event, hasActiveExecution: () => occupied, hasDegradedCleanup: () => cleanupDegraded, isStopping: false, steer: vi.fn(deliver('steer')), followUp: vi.fn(deliver('followUp')) }
+  const runner = { onDidSettle: settled.event, hasActiveExecution: (_conversationId?: string, actorId?: string) => occupied && (!actorId || actorId === 'default'), hasDegradedCleanup: () => cleanupDegraded, isStopping: false, steer: vi.fn(deliver('steer')), followUp: vi.fn(deliver('followUp')) }
   const validate = vi.fn(async (_input: PrepareTurnRequestInput) => {})
   const launched: string[] = []
   const committed = new Emitter<BuddyRunEvent>(() => {})
