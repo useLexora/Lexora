@@ -1,8 +1,11 @@
 import type { LocalConversationTimelineItem } from '@buddy-shared/conversation/conversationApi'
+import type { LocalExecution } from '@buddy-shared/executions/executionPresentationApi'
 import type { LocalRun, LocalRunEvent } from '@buddy-shared/runs/runApi'
 import type { ChatRunStreamingMessage } from '../chatRunStreamingMessages'
 import { describe, expect, it } from 'vitest'
+import { projectExecutionGroups } from '../../executions/executionGroups'
 import { projectChatAgentTurn } from '../chatAgentTurn'
+import { projectChatAgentTurnActions, projectChatMessageActions } from '../chatMessageActions'
 import { projectChatRunStreamingMessages } from '../chatRunStreamingMessages'
 import { createChatTranscriptProjector, projectChatTranscript } from '../chatTranscriptProjection'
 
@@ -141,6 +144,90 @@ describe('interleaved conversation segments', () => {
     expect(continuation).not.toHaveProperty('showIdentity', false)
   })
 
+  it('keeps terminal status on the first identity of each execution, including repeated runs of the same actor', () => {
+    const execution = (runId: string, overrides: Partial<LocalExecution> = {}): LocalExecution => ({
+      runId,
+      rootRunId: run.id,
+      parentRunId: run.id,
+      buddyId: 'partner',
+      buddyName: 'Partner',
+      ordinal: 1,
+      kind: 'actor_child',
+      phase: 'closed',
+      status: 'completed',
+      startedAt: time(3),
+      completedAt: time(10),
+      updatedAt: time(10),
+      progress: null,
+      toolCount: 0,
+      usage: null,
+      stopping: false,
+      task: 'Tell a story',
+      waitingFor: null,
+      activeChildren: 0,
+      canCancel: false,
+      canAnswer: false,
+      canSend: false,
+      cleanup: 'clean',
+      errorCode: null,
+      affectedResources: [],
+      questions: [],
+      ...overrides,
+    })
+    const completed = { ...run, status: 'completed' as const, completedAt: time(30) }
+    const records = [execution(run.id, { kind: 'root', buddyId: 'caller', parentRunId: null, ordinal: null, startedAt: time(0), completedAt: time(30) }), execution('partner-first'), execution('partner-resumed', { ordinal: 2, startedAt: time(12), completedAt: time(20) })]
+    const rootContinuation: LocalRunEvent = { runId: run.id, sequence: 2, createdAt: time(25), type: 'message.completed', payload: { messageId: 'continued', role: 'assistant', phase: 'commentary', content: { text: 'Both assignments are complete.' } } }
+    const items = [message('initial', 'user', 0), { ...message('first-answer', 'assistant', 10), runId: 'partner-first' }, { ...message('continued-answer', 'assistant', 20), runId: 'partner-resumed' }]
+    const snapshot = { ...input(completed, [events[0]!, rootContinuation], items), executionGroups: projectExecutionGroups(records) }
+    const projector = createChatTranscriptProjector()
+    projector.project({ ...snapshot, runs: [run], runProjections: input(run, [events[0]!, rootContinuation], items).runProjections, executionGroups: projectExecutionGroups([{ ...records[0]!, status: 'running', phase: 'working', completedAt: null }, ...records.slice(1)]) })
+    const result = projector.project(snapshot)
+    expect(result.rows).toEqual(projectChatTranscript(snapshot).rows)
+    const statuses = result.rows.flatMap(row => (row.kind === 'message' || row.kind === 'agent-turn') && row.executionStatus
+      ? [{ runId: row.kind === 'message' ? row.message.runId : row.turn.runId, ...row.executionStatus }]
+      : [])
+    expect(statuses).toEqual([
+      { runId: run.id, status: 'completed', startedAt: time(0), completedAt: time(30) },
+      { runId: 'partner-first', status: 'completed', startedAt: time(3), completedAt: time(10) },
+      { runId: 'partner-resumed', status: 'completed', startedAt: time(12), completedAt: time(20) },
+    ])
+    expect(result.rows.find(row => row.kind === 'message' && row.message.id === 'continued-answer')).not.toHaveProperty('showIdentity', false)
+    const callerRows = result.rows.filter(row => row.kind === 'agent-turn' && row.turn.runId === run.id)
+    expect(callerRows).toHaveLength(2)
+    expect(callerRows[1]).not.toHaveProperty('executionStatus')
+    expect(result.rows.at(-1)).toMatchObject({ kind: 'turn-result' })
+    expect(result.rows.at(-1)).not.toHaveProperty('executionStatus')
+  })
+
+  it.each([false, true])('keeps a completed caller outcome after the partner answer when the caller has no final text (process: %s)', (withProcess) => {
+    const partner = { ...message('partner-final', 'assistant', 10), runId: 'partner-run' }
+    const emptyFinal = { ...message('empty-final', 'assistant', 20), content: { text: '' } }
+    const history = withProcess ? events.slice(0, 1) : []
+    const completed = { ...run, status: 'completed' as const, completedAt: time(20) }
+    const done: LocalRunEvent = { runId: run.id, sequence: 2, createdAt: time(20), type: 'message.completed', payload: { messageId: emptyFinal.id, role: 'assistant', phase: 'final_answer', content: { text: '' } } }
+    const projector = createChatTranscriptProjector()
+    const live = projector.project(input(run, history, [message('initial', 'user', 0), partner]))
+    expect(live.rows.some(row => row.kind === 'agent-turn' && row.ownsResultActions)).toBe(false)
+
+    const snapshot = input(completed, [...history, done], [message('initial', 'user', 0), partner, emptyFinal])
+    const result = projector.project(snapshot)
+    expect(result.rows).toEqual(projectChatTranscript(snapshot).rows)
+    const outcome = result.rows.at(-1)!
+    expect(outcome).toMatchObject({ kind: 'turn-result', turn: { runId: run.id, status: 'completed', nodes: [] } })
+    expect(outcome).not.toHaveProperty('showOutcome', false)
+    expect(outcome).not.toHaveProperty('showIdentity', false)
+    expect(result.rows.filter(row => row.kind === 'turn-result')).toEqual([outcome])
+    expect(result.rows.filter(row => row.kind === 'agent-turn' && !row.turn.nodes.length)).toEqual([])
+    expect(result.rows.some(row => row.kind === 'message' && row.message.id === emptyFinal.id)).toBe(false)
+    const reply = result.rows.find(row => row.kind === 'message' && row.message.id === partner.id)!
+    expect(reply).not.toHaveProperty('resultRunId')
+    expect(reply).not.toHaveProperty('showActions', false)
+    if (reply.kind !== 'message' || outcome.kind !== 'turn-result')
+      throw new Error('Missing partner answer or caller outcome')
+    expect(projectChatMessageActions(reply.message, false, !!reply.resultRunId)).toMatchObject({ showCopy: true, showTime: true, showRegenerate: false })
+    expect(projectChatAgentTurnActions(outcome.turn, false, true)).toMatchObject({ showCopy: false, showTime: true, showRegenerate: true })
+  })
+
   it('joins the returning caller output tool and final answer under one identity', () => {
     const presentation = { card: 'generic', argumentNames: [], description: null, output: null, truncated: false }
     const completed = { ...run, status: 'completed' as const, completedAt: time(30) }
@@ -175,7 +262,7 @@ describe('interleaved conversation segments', () => {
       expect(projected.rows).toEqual(projectChatTranscript(snapshot).rows)
       expect(projected.rows.map(row => row.key)).toEqual(['message:initial', 'agent-turn:run', 'message:reply'])
       expect(projected.rows[1]).toMatchObject({ turn: { status: 'completed', nodes: [{ kind: 'tool', invocation }] } })
-      expect(projected.rows[2]).toMatchObject({ showIdentity: false, resultRunId: run.id })
+      expect(projected.rows[2]).toMatchObject({ showIdentity: false, resultRunId: run.id, turnResult: { runId: run.id } })
     }
     const skipped = input(completed, [reply], [...messages, action(seconds, { trigger, status: 'skipped' })])
     const skippedRows = projector.project(skipped).rows
@@ -237,7 +324,7 @@ describe('interleaved conversation segments', () => {
     const result = projectChatTranscript(input(completed, toolEvents, [message('initial', 'user', 0), message('reply', 'assistant', 10), action(3), action(11)]))
     const nodes = result.rows.flatMap(row => row.kind === 'agent-turn' ? row.turn.nodes : [])
     expect(nodes.map(node => node.id)).toEqual(['extension-action:action-3', 'tool:read', 'tool:plugin', 'extension-action:action-11'])
-    expect(result.rows.at(-1)?.key).toBe('message:reply')
+    expect(result.rows.at(-1)).toMatchObject({ key: 'message:reply', turnResult: { runId: run.id } })
   })
 
   it('keeps the avatar before leading actions while the first reply arrives and when it is cancelled', () => {

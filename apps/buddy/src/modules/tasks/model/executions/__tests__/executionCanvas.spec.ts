@@ -13,6 +13,7 @@ function execution(runId: string, overrides: Partial<LocalExecution> = {}): Loca
     buddyName: runId,
     ordinal: 1,
     toolCount: 0,
+    usage: null,
     kind: 'npc_child',
     phase: 'working',
     status: 'running',
@@ -38,6 +39,27 @@ const root = () => execution('root', { kind: 'root', parentRunId: null, ordinal:
 const question = { questionId: 'question', text: 'Choose a color', audience: 'user' as const, open: true, answered: false }
 
 describe('execution canvas projection', () => {
+  it('totals each run once within its root, including nested actors and private attempts', () => {
+    const usage = (inputTokens: number) => ({ inputTokens, outputTokens: 2, cacheReadTokens: 3, cacheWriteTokens: 4 })
+    const actor = execution('actor', { kind: 'actor_child', usage: usage(20) })
+    const records = [
+      { ...root(), usage: usage(10) },
+      actor,
+      execution('nested', { parentRunId: 'actor', usage: usage(30) }),
+      execution('continued', { usage: usage(40), phase: 'closed', status: 'failed' }),
+      actor,
+      execution('maintenance', { kind: 'maintenance', usage: usage(1000) }),
+      execution('next-root', { kind: 'root', rootRunId: 'next-root', parentRunId: null, usage: usage(50) }),
+      execution('next-attempt', { rootRunId: 'next-root', parentRunId: 'next-root', usage: usage(60) }),
+    ]
+    const groups = projectExecutionGroups(records)
+    expect(groups.byRoot.get('root')?.usage).toEqual({ inputTokens: 100, outputTokens: 8, cacheReadTokens: 12, cacheWriteTokens: 16 })
+    expect(groups.byRoot.get('root')?.records).toHaveLength(4)
+    expect(groups.byRoot.get('next-root')?.usage).toEqual({ inputTokens: 110, outputTokens: 4, cacheReadTokens: 6, cacheWriteTokens: 8 })
+    expect(projectExecutionGroups([root()]).byRoot.get('root')?.usage).toBeNull()
+    expect(projectExecutionGroups([{ ...root(), usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 } }]).byRoot.get('root')?.usage).toEqual({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 })
+  })
+
   it('distinguishes public actor collaboration from private subtask work using execution kinds', () => {
     const records = [root(), execution('npc'), execution('actor', { kind: 'actor_child', ordinal: 2 }), execution('actor-again', { kind: 'actor_child', buddyId: 'actor', ordinal: 3, phase: 'closed', status: 'completed' })]
     const group = projectExecutionGroups(records).byRoot.get('root')!

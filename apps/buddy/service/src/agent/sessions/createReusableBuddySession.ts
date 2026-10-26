@@ -380,6 +380,7 @@ export function createReusableBuddySession(
       pendingRetryOffset = null
       options.setCodemodeEnabled?.(preferences.codemode)
       options.runContext.current = {
+        actorIdentity: input.actorIdentity ? Object.freeze({ ...input.actorIdentity }) : undefined,
         deferQueuedInputs: input.deferQueuedInputs,
         flushProjectedEvents: input.flushProjectedEvents,
         onToolExecutionAuthorized: input.onToolExecutionAuthorized,

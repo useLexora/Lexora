@@ -9,6 +9,7 @@ import type { PersistedChatTranscriptRow, PresentedChatTranscriptRow } from './c
 import type {
   ChatTranscriptMessageRow,
   ChatTranscriptTurnOutputs,
+  ChatTranscriptTurnResultRow,
 } from './chatTranscriptTypes'
 import { projectConversationCompactionState } from './chatConversationTimeline'
 import { getChatMessagePhase, isVisibleChatMessage } from './chatMessageContent'
@@ -21,7 +22,7 @@ export function projectPersistedChatTranscriptRows(
   outputs: ReadonlyArray<LocalRunOutput> = [],
   changeSets: ReadonlyArray<LocalChangeSetSummary> = [],
   includeUnanchoredTurns = false,
-): PresentedChatTranscriptRow[] {
+): Array<PresentedChatTranscriptRow | ChatTranscriptTurnResultRow> {
   const rows: PersistedChatTranscriptRow[] = []
   const turnsByTrigger = new Map<string, ChatAgentTurn[]>()
   const turnsByRunId = new Map(turns.map(turn => [turn.runId, turn]))
@@ -44,6 +45,9 @@ export function projectPersistedChatTranscriptRows(
     }
     return [item.runId]
   }))
+  const standaloneResultRunIds = new Set(turns.filter(turn => turn.status === 'completed' || (
+    (turn.status === 'failed' || turn.status === 'cancelled') && !renderedResultRunIds.has(turn.runId)
+  )).map(turn => turn.runId))
   const processMessageIds = new Set(turns.flatMap(turn => turn.processMessageIds))
   const timelineMessageIds = new Set(items.filter(item => item.kind === 'message').map(item => item.id))
   const visibleActions = items.filter(isVisibleExtensionAction)
@@ -54,14 +58,14 @@ export function projectPersistedChatTranscriptRows(
   )
   const independentActionIds = new Set(activities.independentActions.map(action => action.id))
   for (const turn of activities.turns) {
-    if (!shouldShowAgentTurn(turn))
+    if (!shouldShowAgentTurn(turn) && !standaloneResultRunIds.has(turn.runId))
       continue
     if (includeUnanchoredTurns && !timelineMessageIds.has(turn.triggeringMessageId)) {
       rows.push({
         key: `agent-turn:${turn.runId}`,
         kind: 'agent-turn',
         turn,
-        ...((turn.status === 'failed' || turn.status === 'cancelled') && !renderedResultRunIds.has(turn.runId) ? { ownsResultActions: true as const } : {}),
+        ...(standaloneResultRunIds.has(turn.runId) ? { ownsResultActions: true as const } : {}),
       })
       continue
     }
@@ -105,8 +109,11 @@ export function projectPersistedChatTranscriptRows(
       message: item,
       turnOutputs,
     }
-    if (ownsResult && item.runId)
+    if (ownsResult && item.runId) {
       row.resultRunId = item.runId
+      if (turnsByRunId.get(item.runId)?.status !== 'completed')
+        row.ownsResultActions = true
+    }
     if (turnChanges)
       row.turnChanges = turnChanges
     const turnUsage = ownsResult && item.runId
@@ -116,10 +123,7 @@ export function projectPersistedChatTranscriptRows(
       row.turnUsage = turnUsage
     rows.push(row)
     rows.push(...(turnsByTrigger.get(item.id) ?? []).map((turn) => {
-      const ownsResultActions = (
-        turn.status === 'failed'
-        || turn.status === 'cancelled'
-      ) && !renderedResultRunIds.has(turn.runId)
+      const ownsResultActions = standaloneResultRunIds.has(turn.runId)
       return {
         ...(ownsResultActions ? { ownsResultActions: true as const } : {}),
         key: `agent-turn:${turn.runId}`,
@@ -128,7 +132,14 @@ export function projectPersistedChatTranscriptRows(
       }
     }))
   }
-  return interleaveChatTranscriptSegments(rows, new Map(turns.flatMap(turn => Object.entries(turn.messageStartedAt ?? {}))))
+  return interleaveChatTranscriptSegments(rows, new Map(turns.flatMap(turn => Object.entries(turn.messageStartedAt ?? {})))).flatMap<PresentedChatTranscriptRow | ChatTranscriptTurnResultRow>((row) => {
+    if (row.kind !== 'agent-turn' || !row.ownsResultActions || row.turn.status !== 'completed')
+      return [row]
+    return [
+      ...(row.turn.nodes.length ? [{ ...row, ownsResultActions: undefined, showOutcome: false as const }] : []),
+      { key: `turn-result:${row.turn.runId}`, kind: 'turn-result', turn: row.turn },
+    ]
+  })
 }
 
 export function isVisibleExtensionAction(item: LocalConversationTimelineItem): item is ExtensionActionTimelineItem {

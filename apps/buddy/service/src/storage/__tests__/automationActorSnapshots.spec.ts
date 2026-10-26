@@ -143,16 +143,16 @@ describe('automation actor claim snapshots', () => {
     }
   })
 
-  it('keeps the first claimed actor, configuration and read-only ceiling through re-lease and binding, while the next occurrence follows the new default', () => {
+  it('keeps the first claimed identity, configuration and read-only ceiling through re-lease and binding, while the next occurrence follows the new default', () => {
     const f = fixture()
-    let actor = f.buddies.create({ name: 'Inspector' })
+    let actor = f.buddies.create({ name: 'Inspector', description: 'Original inspection role' })
     actor = f.buddies.update({ buddyId: actor.id, expectedRevision: actor.revision, settings: { ...buddySettingsSchema.parse(actor.settings), instructions: 'First claimed instructions', model: roleModel, limits: { fileAccess: 'read_only' } } })
     f.buddies.setDefault({ buddyId: actor.id, expectedCatalogRevision: f.buddies.state().revision })
     const queued = f.queue('first')
     const claimed = f.claim()[0]!
-    expect(claimed.actorSnapshot).toMatchObject({ id: actor.id, revision: actor.revision, settings: { instructions: 'First claimed instructions', model: roleModel } })
-    f.buddies.update({ buddyId: actor.id, expectedRevision: actor.revision, settings: { ...buddySettingsSchema.parse(actor.settings), instructions: 'Changed later', model: null, limits: { fileAccess: 'inherit' } } })
-    const replacement = f.buddies.create({ name: 'Replacement' })
+    expect(claimed.actorSnapshot).toMatchObject({ id: actor.id, name: 'Inspector', description: 'Original inspection role', revision: actor.revision, settings: { instructions: 'First claimed instructions', model: roleModel } })
+    f.buddies.update({ buddyId: actor.id, expectedRevision: actor.revision, name: 'Renamed inspector', description: 'Updated inspection role', settings: { ...buddySettingsSchema.parse(actor.settings), instructions: 'Changed later', model: null, limits: { fileAccess: 'inherit' } } })
+    const replacement = f.buddies.create({ name: 'Replacement', description: 'Next occurrence role' })
     f.buddies.setDefault({ buddyId: replacement.id, expectedCatalogRevision: f.buddies.state().revision })
     const reclaimed = f.claim('2026-08-24T00:03:01.000Z', 'replacement-scheduler')[0]!
     expect(reclaimed.actorSnapshot).toEqual(claimed.actorSnapshot)
@@ -179,7 +179,7 @@ describe('automation actor claim snapshots', () => {
     expect(bound.run).toMatchObject({ buddyId: actor.id, executionProfile: 'read_only', actorSnapshot: { ...claimed.actorSnapshot, model: roleModel, modelSource: 'definition' } })
     f.database.prepare('UPDATE runs SET status = \'completed\' WHERE id = ?').run(bound.run.id)
     f.queue('second')
-    expect(f.claim()[0]!.actorSnapshot?.id).toBe(replacement.id)
+    expect(f.claim()[0]!.actorSnapshot).toMatchObject({ id: replacement.id, name: 'Replacement', description: 'Next occurrence role' })
     expect(f.database.prepare('PRAGMA foreign_key_check').all()).toEqual([])
   })
 

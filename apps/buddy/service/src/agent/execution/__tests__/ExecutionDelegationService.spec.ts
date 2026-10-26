@@ -45,7 +45,8 @@ function fixture() {
     stopExecution: async () => false,
   })
   const controller = new AbortController()
-  const run: BuddyExtensionRunContext = { runId: 'root', signal: controller.signal, requestModel: { providerId: 'current-provider', modelId: 'M1', reasoning: 'high', serviceTier: null }, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {} }
+  const identity = definitions.resolveSnapshotIdentity(f.snapshot('default'))
+  const run: BuddyExtensionRunContext = { actorIdentity: { id: identity.id, name: identity.name, description: identity.description, kind: identity.kind }, runId: 'root', signal: controller.signal, requestModel: { providerId: 'current-provider', modelId: 'M1', reasoning: 'high', serviceTier: null }, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {} }
   let permissions: BuddyPermissionSettings = { approvalPolicy: 'policy', executionProfile: 'workspace_write' }
   const caller = { run, getPermissions: () => permissions }
   return { ...f, caller, controller, service, send, wait, readResult, setPermissions: (value: BuddyPermissionSettings) => {
@@ -54,6 +55,39 @@ function fixture() {
 }
 
 describe('execution delegation boundary', () => {
+  it('identifies an accepted partner separately from the other delegation targets after profile changes', async () => {
+    const f = fixture()
+    const actor = f.buddies.get(f.actor.id)
+    f.buddies.update({ buddyId: actor.id, expectedRevision: actor.revision, settings: buddySettingsSchema.parse({ ...actor.settings, model: f.caller.run.requestModel }) })
+    const accepted = await f.service.execute(f.caller, 'delegate-partner', { operation: 'delegate', targetId: f.actor.id, text: 'The user assigned the review to Reviewer.' }, f.controller.signal) as { runId: string }
+    const profile = f.buddies.get(f.actor.id)
+    f.buddies.update({ buddyId: profile.id, expectedRevision: profile.revision, name: 'Renamed partner', description: 'Updated background' })
+    const child = { ...f.caller, run: { ...f.caller.run, runId: accepted.runId, actorIdentity: { id: profile.id, name: profile.name, description: profile.description, kind: profile.kind } } }
+    const catalog = await f.service.execute(child, 'partner-list', { operation: 'list' }, f.controller.signal) as { self: unknown, actors: { id: string }[], npcs: { id: string }[] }
+    expect(catalog.self).toEqual({ id: profile.id, name: profile.name, description: profile.description, kind: 'actor', executionKind: 'actor_child' })
+    expect(catalog.actors.map(actor => actor.id)).toContain('default')
+    expect([...catalog.actors, ...catalog.npcs].map(actor => actor.id)).not.toContain(profile.id)
+  })
+
+  it('keeps the calling identity available when no delegation targets are eligible', async () => {
+    const f = fixture()
+    f.conversations.removeMember({ id: 'conversation', buddyId: f.actor.id, updatedAt: '2026-10-26T00:00:00.000Z' })
+    const actor = f.buddies.get('default')
+    f.buddies.update({ buddyId: actor.id, expectedRevision: actor.revision, settings: buddySettingsSchema.parse({ ...actor.settings, npcTeamEnabled: false }) })
+    await expect(f.service.execute(f.caller, 'empty-list', { operation: 'list' }, f.controller.signal)).resolves.toEqual({ self: { id: actor.id, name: actor.name, description: actor.description, kind: 'actor', executionKind: 'root' }, actors: [], npcs: [] })
+  })
+
+  it('keeps a legacy execution identity stable when its profile changes during the turn', async () => {
+    const f = fixture()
+    const profile = f.buddies.get('default')
+    const stored = f.runs.findById('root')!.actorSnapshot
+    expect(stored?.name).toBeUndefined()
+    f.buddies.update({ buddyId: profile.id, expectedRevision: profile.revision, name: 'New profile name', description: 'New profile background' })
+    const catalog = await f.service.execute(f.caller, 'legacy-list', { operation: 'list' }, f.controller.signal) as { self: unknown }
+    expect(catalog.self).toEqual({ id: profile.id, name: profile.name, description: profile.description, kind: profile.kind, executionKind: 'root' })
+    expect(f.runs.findById('root')!.actorSnapshot).toEqual(stored)
+  })
+
   it('revokes and restores NPC targets for an already accepted caller without removing actor partners or bindings', async () => {
     const f = fixture()
     const before = f.buddies.get('default').settings

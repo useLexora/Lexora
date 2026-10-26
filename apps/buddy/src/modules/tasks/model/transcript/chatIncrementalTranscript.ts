@@ -69,6 +69,8 @@ export function projectIncrementalChatTranscript(
       return null
     if (previous === next)
       continue
+    if (next.turn.status === 'completed')
+      return null
     if (cached.interleavedRunIds.has(next.turn.runId))
       return null
     if (

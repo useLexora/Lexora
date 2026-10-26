@@ -50,6 +50,20 @@ export class BuddyDefinitionResolver {
     return { ...captured, selection }
   }
 
+  resolveSnapshotIdentity(definition: BuddyExecutionDefinition): BuddyExecutionDefinition {
+    if (definition.name !== undefined && definition.description !== undefined)
+      return definition
+    try {
+      const profile = this.options.buddies.get(definition.id)
+      return { ...definition, name: definition.name ?? profile.name, description: definition.description ?? profile.description }
+    }
+    catch (error) {
+      if (error instanceof BuddyServiceError && error.code === 'BUDDY_NOT_FOUND')
+        return definition
+      throw error
+    }
+  }
+
   async capture(input: ResolveBuddyDefinitionInput) {
     const buddy = this.options.buddies.get(input.buddyId)
     if (buddy.deletedAt)
@@ -87,6 +101,8 @@ export class BuddyDefinitionResolver {
       version: 1,
       id: buddy.id,
       kind: buddy.kind,
+      name: buddy.name,
+      description: buddy.description,
       revision: buddy.revision,
       settings: {
         ...buddy.settings,

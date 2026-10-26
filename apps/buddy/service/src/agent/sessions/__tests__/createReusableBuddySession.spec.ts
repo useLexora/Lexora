@@ -1,4 +1,5 @@
 import type { AgentSession } from '@earendil-works/pi-coding-agent'
+import type { BuddyExtensionRunContextStore } from '../../extensions/BuddyExtensionRunContext'
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -15,6 +16,30 @@ afterEach(async () => {
 })
 
 describe('createReusableBuddySession', () => {
+  it('freezes identity per run while reusing a session across profile changes', async () => {
+    const session = createAgentSessionDouble(SessionManager.inMemory(), async () => {})
+    const runContext: BuddyExtensionRunContextStore = { current: null }
+    const reusable = createReusableBuddySession({
+      assertModelAccess: async () => ({ id: 'model-1', provider: 'anthropic' }) as never,
+      ...inputReferenceBoundary(),
+      runContext,
+      session,
+      shutdown: async () => {},
+    })
+    const actorIdentity = { id: 'actor', kind: 'actor' as const, name: 'Original name', description: 'Original background' }
+    const turn = { generation: 0, ...toolLifecycle(), contextWindow: 128_000, maxTokens: 16_384, model: 'model-1', provider: 'anthropic', signal: new AbortController().signal, actorIdentity }
+    const release = await reusable.activateTurn({ ...turn, runId: 'first' })
+    actorIdentity.name = 'New name'
+    actorIdentity.description = 'New background'
+    expect(runContext.current?.actorIdentity).toEqual({ id: 'actor', kind: 'actor', name: 'Original name', description: 'Original background' })
+    release()
+    const releaseNext = await reusable.activateTurn({ ...turn, runId: 'second' })
+    expect(runContext.current).toMatchObject({ runId: 'second', actorIdentity })
+    releaseNext()
+    expect(runContext.current).toBeNull()
+    await reusable.shutdown('quit')
+  })
+
   it('accepts steering only against the active skill snapshot before committing the input', () => {
     const session = createAgentSessionDouble(SessionManager.inMemory(), async () => {})
     Object.defineProperty(session, 'isStreaming', { value: true })
@@ -142,6 +167,7 @@ function createAgentSessionDouble(
     setThinkingLevel: vi.fn(),
     setCacheWarmingMode: vi.fn(),
     settingsManager: {
+      applyOverrides: vi.fn(),
       getCacheWarmingMode: () => 'off',
       getCompactionSettings: () => ({ enabled: true, keepRecentTokens: 1, reserveTokens: 1_000 }),
     },

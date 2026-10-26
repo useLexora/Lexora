@@ -35,6 +35,7 @@ function fixture(kind: LocalExecution['kind'] = 'root') {
     updatedAt: run.completedAt,
     progress: null,
     toolCount: 1,
+    usage: null,
     stopping: false,
     task: '检查发布产物\n  与升级路径',
     waitingFor: null,

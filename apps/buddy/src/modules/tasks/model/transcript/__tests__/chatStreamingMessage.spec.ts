@@ -131,7 +131,7 @@ describe('projectStreamingAssistantMessage', () => {
       message('message-1', 'user', 'Check the process'),
       message('message-process', 'assistant', narration),
       message('message-final', 'assistant', 'The fixture process has stopped.'),
-    ], turns).map(row => row.key)).toEqual(['message:message-1', 'agent-turn:run-1', 'message:message-final'])
+    ], turns).map(row => row.key)).toEqual(['message:message-1', 'agent-turn:run-1', 'message:message-final', 'turn-result:run-1'])
   })
 
   it('projects phase-aware commentary as process text even when the response completes normally', () => {
@@ -187,6 +187,7 @@ describe('projectStreamingAssistantMessage', () => {
       'message',
       'agent-turn',
       'message',
+      'turn-result',
     ])
   })
 

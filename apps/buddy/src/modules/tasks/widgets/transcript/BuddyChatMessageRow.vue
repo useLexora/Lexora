@@ -4,8 +4,10 @@ import type { LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
 import type { LocalMessage } from '@buddy-shared/conversation/conversationApi'
 import type { LocalRunTokenUsage } from '@buddy-shared/usage/runTokenUsage'
 
+import type { ChatAgentTurn } from '../../model/transcript/chatAgentTurn'
 import type { ChatMessageBranchNavigator } from '../../model/transcript/chatMessageBranches'
 import type { ChatTranscriptTurnOutputs } from '../../model/transcript/chatTranscriptProjection'
+import type { ChatTranscriptExecutionStatus } from '../../model/transcript/chatTranscriptTypes'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
@@ -24,17 +26,20 @@ const props = defineProps<{
   actionsDisabled: boolean
   branchNavigator: ChatMessageBranchNavigator | null
   editing: boolean
+  executionStatus?: ChatTranscriptExecutionStatus
   isIntermediate?: boolean
   showIdentity?: boolean
   showActions?: boolean
   actionMessages?: readonly LocalMessage[]
   resultRunId?: string
+  ownsResultActions?: boolean
   processRunId?: string
   language: BuddyLocale
   message: LocalMessage
   streaming?: boolean
   turnChanges?: LocalChangeSetSummary | null
   turnUsage?: LocalRunTokenUsage
+  turnResult?: ChatAgentTurn
   turnOutputs: ChatTranscriptTurnOutputs | null
 }>()
 
@@ -42,13 +47,14 @@ const emit = defineEmits<{
   activateBranch: [branchId: string]
   openArtifact: [artifact: LocalArtifact]
   openChanges: [changeSetId: string]
-  regenerate: []
+  regenerate: [runId: string]
   startEdit: []
 }>()
 
 const { t } = useBuddyI18n(() => props.language)
 const { writeClipboardText } = useChatContent()
-const actions = computed(() => projectChatMessageActions(props.message, props.actionsDisabled, !!props.resultRunId))
+const regenerationRunId = computed(() => props.turnResult?.runId ?? (props.ownsResultActions ? props.message.runId : null))
+const actions = computed(() => projectChatMessageActions(props.message, props.actionsDisabled, !!regenerationRunId.value))
 const showAssistantIdentity = computed(() => (
   props.message.role === 'assistant' && props.showIdentity !== false
 ))
@@ -88,6 +94,7 @@ const messageText = computed(() => (props.actionMessages ?? [props.message]).map
     <BuddyChatAgentIdentity
       v-if="showAssistantIdentity"
       :run-id="message.runId"
+      :execution-status="executionStatus"
       :language="language"
     />
     <span
@@ -112,15 +119,18 @@ const messageText = computed(() => (props.actionMessages ?? [props.message]).map
       :actions="actions"
       :branch-navigator="branchNavigator"
       class="buddy-chat-message__actions"
-      :class="{ 'has-usage': turnUsage }"
+      :class="{ 'has-usage': turnUsage, 'has-turn-result': turnResult }"
+      :data-turn-result-run-id="turnResult?.runId"
+      :data-task-result-run-id="turnResult?.runId"
       :copy-text="messageText"
       :created-at="message.createdAt"
       :language="language"
       :role="message.role"
       :target-key="`message-${message.id}`"
+      :regenerate-target-key="turnResult ? `run-${turnResult.runId}` : undefined"
       :usage="turnUsage"
       @activate-branch="emit('activateBranch', $event)"
-      @regenerate="emit('regenerate')"
+      @regenerate="regenerationRunId && emit('regenerate', regenerationRunId)"
       @start-edit="emit('startEdit')"
     />
   </article>
@@ -174,6 +184,12 @@ const messageText = computed(() => (props.actionMessages ?? [props.message]).map
 
   &.has-usage {
     position: static;
+  }
+
+  &.has-turn-result {
+    position: static;
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .buddy-chat-message:hover &,

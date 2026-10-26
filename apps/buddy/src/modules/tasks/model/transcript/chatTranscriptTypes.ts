@@ -10,6 +10,7 @@ import type { ChatRecoveryNotice } from './chatRunRecovery'
 import type { ChatRunTranscriptProjection } from './chatRunTranscriptProjector'
 
 export interface ChatTranscriptMessageRow {
+  executionStatus?: ChatTranscriptExecutionStatus
   endsSpeech?: true
   isIntermediate?: true
   showActions?: false
@@ -17,12 +18,14 @@ export interface ChatTranscriptMessageRow {
   processRunId?: string
   showIdentity?: false
   resultRunId?: string
+  ownsResultActions?: true
   key: string
   kind: 'message'
   message: LocalMessage
   streaming?: true
   turnChanges?: LocalChangeSetSummary
   turnUsage?: LocalRunTokenUsage
+  turnResult?: ChatAgentTurn
   turnOutputs: ChatTranscriptTurnOutputs | null
 }
 
@@ -51,6 +54,7 @@ export interface ChatTranscriptActivityFlowRow {
 }
 
 export interface ChatTranscriptAgentTurnRow {
+  executionStatus?: ChatTranscriptExecutionStatus
   endsSpeech?: true
   showIdentity?: false
   showOutcome?: false
@@ -60,9 +64,17 @@ export interface ChatTranscriptAgentTurnRow {
   turn: ChatAgentTurn
 }
 
+export type ChatTranscriptExecutionStatus = Pick<ChatAgentTurn, 'status' | 'startedAt' | 'completedAt'>
+
 export interface ChatTranscriptActivityRow {
   key: string
   kind: 'activity'
+  turn: ChatAgentTurn
+}
+
+export interface ChatTranscriptTurnResultRow {
+  key: string
+  kind: 'turn-result'
   turn: ChatAgentTurn
 }
 
@@ -79,6 +91,7 @@ export type ChatTranscriptRow
     | ChatTranscriptActivityFlowRow
     | ChatTranscriptMessageRow
     | ChatTranscriptRecoveryNoticeRow
+    | ChatTranscriptTurnResultRow
 
 export interface ChatTranscriptProjection {
   rows: ReadonlyArray<ChatTranscriptRow>

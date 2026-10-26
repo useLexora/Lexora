@@ -16,6 +16,7 @@ function execution(runId: string, overrides: Partial<LocalExecution> = {}): Loca
     buddyName: 'Partner',
     ordinal: 1,
     toolCount: 0,
+    usage: null,
     kind: 'actor_child',
     phase: 'working',
     status: 'running',

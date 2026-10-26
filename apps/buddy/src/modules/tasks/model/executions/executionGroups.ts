@@ -1,4 +1,5 @@
 import type { LocalExecution } from '@buddy-shared/executions/executionPresentationApi'
+import type { LocalRunTokenUsage } from '@buddy-shared/usage/runTokenUsage'
 
 export interface ExecutionGroup {
   root: LocalExecution
@@ -8,6 +9,7 @@ export interface ExecutionGroup {
   participantCount: number
   subtasks: readonly LocalExecution[]
   mode: 'single' | 'subtasks' | 'collaboration'
+  usage: LocalRunTokenUsage | null
 }
 
 export interface ExecutionGroups {
@@ -18,7 +20,7 @@ export interface ExecutionGroups {
 export function projectExecutionGroups(records: readonly LocalExecution[]): ExecutionGroups {
   const byRun = new Map(records.map(record => [record.runId, record]))
   const members = new Map<string, LocalExecution[]>()
-  for (const record of records) {
+  for (const record of byRun.values()) {
     if (record.kind === 'maintenance')
       continue
     const group = members.get(record.rootRunId) ?? []
@@ -41,6 +43,14 @@ export function projectExecutionGroups(records: readonly LocalExecution[]): Exec
       participantCount: new Set(actors.filter(record => record.kind === 'actor_child').map(record => record.buddyId)).size,
       subtasks,
       mode: actors.length > 1 ? 'collaboration' : subtasks.length ? 'subtasks' : 'single',
+      usage: ordered.reduce<LocalRunTokenUsage | null>((total, record) => record.usage
+        ? {
+            inputTokens: (total?.inputTokens ?? 0) + record.usage.inputTokens,
+            outputTokens: (total?.outputTokens ?? 0) + record.usage.outputTokens,
+            cacheReadTokens: (total?.cacheReadTokens ?? 0) + record.usage.cacheReadTokens,
+            cacheWriteTokens: (total?.cacheWriteTokens ?? 0) + record.usage.cacheWriteTokens,
+          }
+        : total, null),
     })
   }
   return { byRoot, byRun }

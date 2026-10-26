@@ -1,4 +1,5 @@
 import type { ExecutionAnswer, ExecutionEventsRequest, ExecutionsChanged, ExecutionScope, ExecutionSend, ExecutionTarget, LocalExecution, LocalExecutionDetail, LocalExecutionEventsPage } from '../../../../shared/executions/executionPresentationApi'
+import type { LocalRunTokenUsage } from '../../../../shared/usage/runTokenUsage'
 import type { BuddiesService } from '../../buddies/BuddiesService'
 import type { ChangeCaptureService } from '../../changes/ChangeCaptureService'
 import type { MutationCoordinator } from '../../changes/MutationCoordinator'
@@ -34,7 +35,7 @@ export interface ExecutionPresentationOptions {
   events: Pick<RunEventReader, 'read' | 'list' | 'listForRuns' | 'listToolCounts'> & Pick<RunEventObservation, 'onDidCommit'> & Partial<Pick<RunEventAvailability, 'getRecoveryFailures'>>
   artifacts: Pick<ArtifactRepository, 'listForConversation'>
   changes: Pick<ChangeCaptureService, 'listSummariesForRuns'>
-  usage: Pick<UsageRepository, 'listForRun'>
+  usage: Pick<UsageRepository, 'summarizeForRuns'>
   stopExecution: (runId: string) => Promise<boolean>
   onObserverError?: (error: unknown) => void
 }
@@ -70,11 +71,12 @@ export class ExecutionPresentationService {
 
   list(input: ExecutionScope): LocalExecution[] {
     const scope = parse(executionScopeSchema, input)
-    return this.#visibleRoots(scope).flatMap((rootId) => {
-      const tree = this.#options.executions.listTree(rootId)
+    const trees = this.#visibleRoots(scope).map(rootId => this.#options.executions.listTree(rootId))
+    const usage = this.#options.usage.summarizeForRuns(trees.flatMap(tree => tree.map(record => record.run.id)))
+    return trees.flatMap((tree) => {
       const events = this.#options.events.listForRuns(tree.map(record => record.run.id), { latestActivityOnly: true })
       const tools = this.#options.events.listToolCounts(tree.map(record => record.run.id))
-      return tree.map(record => this.#present(scope, record, tree, events.filter(event => event.runId === record.run.id), tools.get(record.run.id) ?? 0))
+      return tree.map(record => this.#present(scope, record, tree, events.filter(event => event.runId === record.run.id), tools.get(record.run.id) ?? 0, usage.get(record.run.id) ?? null))
     })
   }
 
@@ -88,10 +90,10 @@ export class ExecutionPresentationService {
     const artifacts = projectRunOutputs(events, this.#options.artifacts.listForConversation(target.conversationId))
       .flatMap(output => output.artifacts)
     const caller = tree.find(member => member.run.id === record.run.parentRunId)
-    const usage = this.#options.usage.listForRun(target.runId).filter(record => record.purpose !== 'cache_warm')
+    const usage = this.#options.usage.summarizeForRuns([target.runId]).get(target.runId) ?? null
     return {
       work: record.work,
-      execution: this.#present(target, record, tree, events, this.#options.events.listToolCounts([target.runId]).get(target.runId) ?? 0),
+      execution: this.#present(target, record, tree, events, this.#options.events.listToolCounts([target.runId]).get(target.runId) ?? 0, usage),
       run: toPublicRun(record.run, record.initialInput?.reasoning ?? null),
       caller: caller ? { runId: caller.run.id, buddyName: this.#options.buddies.get(caller.run.buddyId).name, ordinal: executionOrdinal(caller, tree) } : null,
       inputs: events.flatMap((event) => {
@@ -112,14 +114,7 @@ export class ExecutionPresentationService {
       result: result || null,
       artifacts: [...new Map(artifacts.map(artifact => [artifact.artifactId, artifact])).values()],
       changes: this.#options.changes.listSummariesForRuns([target.runId])[0] ?? null,
-      usage: usage.length
-        ? usage.reduce((total, record) => ({
-            inputTokens: total.inputTokens + record.inputTokens,
-            outputTokens: total.outputTokens + record.outputTokens,
-            cacheReadTokens: total.cacheReadTokens + record.cacheReadTokens,
-            cacheWriteTokens: total.cacheWriteTokens + record.cacheWriteTokens,
-          }), { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 })
-        : null,
+      usage,
     }
   }
 
@@ -220,7 +215,7 @@ export class ExecutionPresentationService {
     return record
   }
 
-  #present(scope: ExecutionScope, record: ExecutionStateRecord, tree: readonly ExecutionStateRecord[], events: readonly BuddyRunEvent[], toolCount: number): LocalExecution {
+  #present(scope: ExecutionScope, record: ExecutionStateRecord, tree: readonly ExecutionStateRecord[], events: readonly BuddyRunEvent[], toolCount: number, usage: LocalRunTokenUsage | null): LocalExecution {
     const { run } = record
     const quarantined = this.#options.events.getRecoveryFailures?.().some(failure => failure.runId === run.id
       || (run.id === run.rootRunId && tree.some(child => child.run.id === failure.runId))) ?? false
@@ -255,6 +250,7 @@ export class ExecutionPresentationService {
       updatedAt: events.at(-1)?.createdAt ?? run.startedAt,
       progress,
       toolCount,
+      usage,
       stopping: record.cancelRequestedAt !== null && record.phase !== 'closed',
       task: record.initialInput?.prompt.slice(0, 300) ?? '',
       waitingFor: questions.some(question => question.open) ? 'answer' : isLive(record) && this.#options.approvals.hasPending(run.id) ? 'approval' : mutations.pending ? 'resource' : record.phase === 'waiting' && activeChildren ? 'children' : null,

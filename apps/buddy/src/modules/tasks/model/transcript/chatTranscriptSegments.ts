@@ -45,8 +45,6 @@ export function interleaveChatTranscriptSegments(
       nodes.push(node)
       groups.set(position, nodes)
     }
-    if (!groups.size)
-      groups.set(trigger, [])
     const lastOtherSpeaker = timeline.findLastIndex(candidate => candidate.kind === 'message'
       && candidate.message.role === 'assistant'
       && candidate.message.runId !== row.turn.runId
@@ -65,6 +63,8 @@ export function interleaveChatTranscriptSegments(
       if (position > Math.max(...groups.keys()))
         groups.set(position, [])
     }
+    if (!groups.size)
+      groups.set(trigger, [])
     const ordered = [...groups].sort(([left], [right]) => left - right)
     ordered.forEach(([position, nodes], index) => {
       const siblings = segments.get(position) ?? []

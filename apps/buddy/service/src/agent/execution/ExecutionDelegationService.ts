@@ -249,8 +249,12 @@ export class ExecutionDelegationService {
 
   async #list(caller: DelegationCaller, source: ExecutionStateRecord, signal: AbortSignal) {
     const catalog = this.#catalog(source)
+    const identity = caller.run.actorIdentity ?? source.run.actorSnapshot ?? { id: source.run.buddyId, kind: source.run.executionKind === 'npc_child' ? 'npc' : 'actor', name: undefined, description: undefined }
+    if (identity.id !== source.run.buddyId)
+      throw new ExecutionAdmissionError('stale')
+    const self = { id: identity.id, name: identity.name, description: identity.description, kind: identity.kind, executionKind: source.run.executionKind }
     if (!catalog.actors.length && !catalog.npcs.length)
-      return catalog
+      return { self, ...catalog }
     const toolOptions = await this.#options.readToolOptions(signal)
     signal.throwIfAborted()
     const permissions = caller.getPermissions()
@@ -275,7 +279,7 @@ export class ExecutionDelegationService {
         shell: unifiedShell || tools.some(tool => tool.name === shell.dialect) ? { tool: unifiedShell ? 'lexora_shell' : shell.dialect, boundary: shell.boundary, readOnly: shell.readOnly } : null,
       }
     }
-    return { actors: catalog.actors.map(describe), npcs: catalog.npcs.map(describe) }
+    return { self, actors: catalog.actors.map(describe), npcs: catalog.npcs.map(describe) }
   }
 
   async #delegate(caller: DelegationCaller, source: ExecutionStateRecord, requestKey: string, input: DelegationInput, signal: AbortSignal) {

@@ -83,6 +83,50 @@ function seedRun(
 }
 
 describe('buddy schema', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
+  it('marks the actor identity format upgrade without rewriting legacy execution snapshots', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'buddy-actor-identity-migration-'))
+    directories.push(directory)
+    const databasePath = join(directory, 'buddy.sqlite3')
+    const previous = openMigrationFixtureDatabase(databasePath)
+    for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(migration => migration.version <= 33))
+      previous.exec(migration.sql)
+    seedRun(previous)
+    const settings = previous.prepare('SELECT settings_json FROM buddies WHERE id = ?').get('default')!.settings_json
+    const configuration = { version: 1, id: 'default', kind: 'actor', revision: 1, settings: JSON.parse(String(settings)) }
+    const actorSnapshot = JSON.stringify({ ...configuration, model: { providerId: 'fixture', modelId: 'model', reasoning: null, serviceTier: null }, modelSource: 'application' }, null, 2)
+    const automationSnapshot = JSON.stringify(configuration, null, 4)
+    previous.prepare('UPDATE runs SET actor_snapshot_json = ? WHERE id = ?').run(actorSnapshot, 'run-1')
+    previous.exec(`
+      INSERT INTO automations (
+        id, name, prompt, model_mode, schedule_kind, schedule_json, timezone,
+        status, revision, created_at, updated_at
+      ) VALUES (
+        'automation-1', 'Scheduled review', 'Review', 'default', 'once',
+        '{"kind":"once","runAt":"2026-10-27T00:00:00.000Z"}', 'UTC',
+        'paused', 1, '2026-10-26T00:00:00.000Z', '2026-10-26T00:00:00.000Z'
+      );
+    `)
+    previous.prepare(`
+      INSERT INTO automation_occurrences (
+        id, automation_id, dedupe_key, trigger_kind, scheduled_for,
+        automation_revision, execution_snapshot_json, status, queued_at, actor_snapshot_json
+      ) VALUES (?, ?, ?, 'scheduled', ?, 1, ?, 'queued', ?, ?)
+    `).run('occurrence-1', 'automation-1', 'scheduled-review', '2026-10-27T00:00:00.000Z', JSON.stringify({ actorId: 'default', executionProfile: 'workspace_write', model: { mode: 'default' }, name: 'Scheduled review', prompt: 'Review', spaceId: null }), '2026-10-26T00:00:00.000Z', automationSnapshot)
+    previous.exec('PRAGMA user_version = 33')
+    previous.close()
+
+    const migrated = openBuddyDatabase({ databasePath })
+    expect(migrated.prepare('PRAGMA user_version').get()).toEqual({ user_version: BUDDY_SCHEMA_VERSION })
+    expect(migrated.prepare('SELECT actor_snapshot_json FROM runs WHERE id = ?').get('run-1')).toEqual({ actor_snapshot_json: actorSnapshot })
+    expect(migrated.prepare('SELECT actor_snapshot_json FROM automation_occurrences WHERE id = ?').get('occurrence-1')).toEqual({ actor_snapshot_json: automationSnapshot })
+    expect(migrated.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    migrated.close()
+    const reopened = openBuddyDatabase({ databasePath })
+    databases.push(reopened)
+    expect(reopened.prepare('SELECT actor_snapshot_json FROM runs WHERE id = ?').get('run-1')).toEqual({ actor_snapshot_json: actorSnapshot })
+    expect(reopened.prepare('SELECT actor_snapshot_json FROM automation_occurrences WHERE id = ?').get('occurrence-1')).toEqual({ actor_snapshot_json: automationSnapshot })
+  })
+
   it('upgrades capture coverage without rewriting historical file snapshots or invocation identities', () => {
     const directory = mkdtempSync(join(tmpdir(), 'buddy-capture-migration-'))
     directories.push(directory)

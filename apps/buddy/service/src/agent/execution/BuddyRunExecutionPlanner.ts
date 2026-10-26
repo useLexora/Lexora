@@ -22,7 +22,7 @@ export type BuddyRunExecutionPlan
 
 export interface BuddyRunExecutionPlannerOptions {
   getFileAccessCeiling?: (runId: string) => 'read_only' | undefined
-  definitions: Pick<BuddyDefinitionResolver, 'resolve'>
+  definitions: Pick<BuddyDefinitionResolver, 'resolve' | 'resolveSnapshotIdentity'>
   attachments: Pick<AttachmentService, 'resolveInputReferences'>
   commands: Pick<CommandRequestRepository, 'findByRunId'>
   conversations: Pick<ConversationRepository, 'findById'>
@@ -62,6 +62,7 @@ export class BuddyRunExecutionPlanner {
       threadId: run.threadId,
       contextMode: run.purpose === 'conversation.compaction' ? 'compaction' : 'execution',
       actor,
+      executionKind: run.executionKind,
       approvalPolicy: run.approvalPolicy,
       branchId: run.branchId,
       conversationId: run.conversationId,

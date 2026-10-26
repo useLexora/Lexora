@@ -112,13 +112,13 @@ export function createAutomationOccurrenceCommandStore(
             let actorSnapshot = captured.actorSnapshot
             if (!actorSnapshot) {
               const actorId = captured.executionSnapshot.actorId ?? (database.prepare('SELECT default_buddy_id FROM buddy_catalog WHERE id = 1').get() as { default_buddy_id: string }).default_buddy_id
-              const actor = database.prepare('SELECT id,kind,revision,settings_json FROM buddies WHERE id = ? AND kind = \'actor\' AND enabled = 1 AND deleted_at IS NULL').get(actorId) as { id: string, kind: 'actor', revision: number, settings_json: string } | undefined
+              const actor = database.prepare('SELECT id,kind,name,description,revision,settings_json FROM buddies WHERE id = ? AND kind = \'actor\' AND enabled = 1 AND deleted_at IS NULL').get(actorId) as { id: string, kind: 'actor', name: string, description: string, revision: number, settings_json: string } | undefined
               if (!actor) {
                 if (tryFinishQueued({ id: candidate.id, finishedAt: input.now, errorCode: 'AUTOMATION_ACTOR_UNAVAILABLE', status: 'skipped' }))
                   skipped.push(occurrenceRecords.requireById(candidate.id))
                 continue
               }
-              actorSnapshot = buddyConfigurationSnapshotSchema.parse({ version: 1, id: actor.id, kind: actor.kind, revision: actor.revision, settings: JSON.parse(actor.settings_json) })
+              actorSnapshot = buddyConfigurationSnapshotSchema.parse({ version: 1, id: actor.id, kind: actor.kind, name: actor.name, description: actor.description, revision: actor.revision, settings: JSON.parse(actor.settings_json) })
             }
             if (Number(acquireLease.run(
               input.owner,

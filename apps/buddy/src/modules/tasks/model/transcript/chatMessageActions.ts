@@ -31,10 +31,10 @@ export function projectChatAgentTurnActions(
   ownsResultActions: boolean,
 ): ChatMessageActions {
   const showActions = ownsResultActions
-    && (turn.status === 'failed' || turn.status === 'cancelled')
+    && (turn.status === 'completed' || turn.status === 'failed' || turn.status === 'cancelled')
   return {
     disabled,
-    showCopy: showActions,
+    showCopy: showActions && turn.status !== 'completed',
     showEdit: false,
     showRegenerate: showActions,
     showTime: showActions,

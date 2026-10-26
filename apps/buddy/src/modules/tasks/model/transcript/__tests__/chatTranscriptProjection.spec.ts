@@ -148,7 +148,7 @@ describe('chat transcript projection', () => {
     })
   })
 
-  it('shows completed turns only when they contain process nodes', () => {
+  it('does not duplicate completed results with empty process rows', () => {
     const user = message('user-1', 'user')
     const assistant = message('assistant-1', 'assistant')
     const emptyTurn: ChatAgentTurn = {
@@ -191,6 +191,7 @@ describe('chat transcript projection', () => {
         message: assistant,
         turnOutputs: null,
       },
+      { key: 'turn-result:run-1', kind: 'turn-result', turn: emptyTurn },
     ])
     expect(projectPersistedChatTranscriptRows([user, assistant], [reasoningTurn])).toEqual([
       {
@@ -199,7 +200,7 @@ describe('chat transcript projection', () => {
         message: user,
         turnOutputs: null,
       },
-      { key: `agent-turn:${reasoningTurn.runId}`, kind: 'agent-turn', turn: reasoningTurn },
+      { key: `agent-turn:${reasoningTurn.runId}`, kind: 'agent-turn', turn: { ...reasoningTurn, nodes: reasoningTurn.nodes }, ownsResultActions: undefined, showOutcome: false },
       {
         resultRunId: 'run-1',
         key: `message:${assistant.id}`,
@@ -207,6 +208,7 @@ describe('chat transcript projection', () => {
         message: assistant,
         turnOutputs: null,
       },
+      { key: 'turn-result:run-1', kind: 'turn-result', turn: { ...reasoningTurn, nodes: [] } },
     ])
   })
 
@@ -228,6 +230,25 @@ describe('chat transcript projection', () => {
       [message('user-1', 'user'), noOpCompaction],
       [],
     ).map(row => row.kind)).toEqual(['message'])
+  })
+
+  it('updates the completed turn association while preserving the final message identity', () => {
+    const user = message('user-1', 'user')
+    const final = message('assistant-final', 'assistant')
+    const run = localRun('run-1', user.id, 'completed')
+    const turn = agentTurn(run, [], final.id)
+    const input = { outputs: [], runs: [run], timelineItems: [user, final], runProjections: [runProjection(turn)] }
+    const projector = createChatTranscriptProjector()
+    const first = projector.project(input)
+    const nextTurn = { ...turn, usage: { inputTokens: 120, outputTokens: 30, cacheReadTokens: 40, cacheWriteTokens: 0 } }
+    const next = { ...input, runProjections: [runProjection(nextTurn)] }
+    const updated = projector.project(next)
+    expect(updated.rows).toEqual(projectChatTranscript(next).rows)
+    expect(updated.rows.filter(row => row.kind === 'turn-result')).toEqual([])
+    expect(updated.rows.at(-1)).toMatchObject({ kind: 'message', message: final, turnResult: nextTurn })
+    expect(updated.rows.find(row => row.kind === 'message' && row.message.id === final.id)).not.toHaveProperty('ownsResultActions')
+    expect(first.rows.at(-1)).toMatchObject({ kind: 'message', turnResult: { usage: null } })
+    expect(updated.rows.filter(row => row.kind === 'agent-turn')).toEqual([])
   })
 
   it('keeps the same message row identity from streaming through persistence', () => {
@@ -330,7 +351,7 @@ describe('chat transcript projection', () => {
     }
 
     const rows = projectPersistedChatTranscriptRows([user, final], [turn], outputs, [changeSet])
-    expect(rows.map(row => row.key)).toEqual(['message:user-1', 'message:assistant-final'])
+    expect(rows.map(row => row.key)).toEqual(['message:user-1', 'message:assistant-final', 'turn-result:run-1'])
     expect(rows[0]).toMatchObject({ turnOutputs: null })
     expect(rows[0]).not.toHaveProperty('turnChanges')
     expect(rows[1]).toMatchObject({

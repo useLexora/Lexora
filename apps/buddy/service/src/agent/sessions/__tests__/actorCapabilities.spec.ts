@@ -1,5 +1,6 @@
 import type { Api, AssistantMessage, Model, ToolCall } from '@earendil-works/pi-ai'
 import type { BuddyExecutionDefinition } from '../../../buddies/BuddyExecutionDefinition'
+import type { ExecutionKind } from '../../../storage/runRecord'
 import type { BuddySessionExtensionServices } from '../../extensions/createBuddySessionExtensions'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -27,6 +28,41 @@ afterEach(async () => {
 })
 
 describe('actor resources in real Provider requests', () => {
+  it.each(['root', 'actor_child', 'npc_child'] as const)('supplies the accepted identity and role to %s requests and reused turns', async (executionKind) => {
+    const f = await fixture()
+    const actor = f.actor('identity-worker', [], [])
+    actor.kind = executionKind === 'npc_child' ? 'npc' : 'actor'
+    actor.name = 'Canvas'
+    actor.description = 'A specialist in visual composition.'
+    actor.settings.instructions = 'Keep the finished work concise and accessible.'
+    const opened = await f.open(actor, executionKind)
+    const [first] = await opened.turn('Canvas should prepare the requested design.')
+    expect(first?.prompt).toContain('Buddy ID: "identity-worker"')
+    expect(first?.prompt).toContain('Name: "Canvas"')
+    expect(first?.prompt).toContain(`Definition kind: ${actor.kind}`)
+    expect(first?.prompt).toContain(`Execution kind: ${executionKind}`)
+    expect(first?.prompt).toContain('Role background and responsibilities:\nA specialist in visual composition.')
+    expect(first?.prompt).toContain('Action guidelines:\nKeep the finished work concise and accessible.')
+    expect(first?.prompt).not.toContain('You are Lexora Buddy')
+    if (executionKind === 'root')
+      expect(first?.prompt).not.toContain('You have already accepted a delegated assignment.')
+    else
+      expect(first?.prompt).toContain('You have already accepted a delegated assignment.')
+    if (executionKind === 'npc_child')
+      expect(first?.prompt).toContain('Your final reply is delivered to your caller.')
+
+    actor.name = 'New name'
+    actor.description = 'New role background.'
+    const [reused] = await opened.turn('Continue the same work.')
+    expect(reused?.prompt).toBe(first?.prompt)
+    const changed = await f.open(actor, executionKind)
+    const [next] = await changed.turn('Start a newly accepted assignment.')
+    expect(next?.prompt).toContain('Name: "New name"')
+    expect(next?.prompt).toContain('New role background.')
+    expect(changed.resources.revision).not.toBe(opened.resources.revision)
+    expect(next?.names).toEqual(first?.names)
+  })
+
   it('keeps role instructions, discoverable Skills and required bodies separate across role edits', async () => {
     const f = await fixture()
     const a = f.actor('actor-a', ['alpha', 'optional'], ['alpha'])
@@ -220,9 +256,9 @@ async function fixture() {
       requiredSkills: required.map(name => skills[name].id),
     },
   })
-  const resolveResources = (definition: BuddyExecutionDefinition, contextMode: 'execution' | 'compaction' = 'execution') => resolveBuddySessionResources({ actor: definition, contextMode, additionalDirectories: [], canonicalRoot: workspace, cwd: workspace, loadDirectoryContext: false, primaryDirectory: null, spaceId: null, skills: service })
-  async function open(definition: BuddyExecutionDefinition) {
-    const resources = await resolveResources(definition)
+  const resolveResources = (definition: BuddyExecutionDefinition, contextMode: 'execution' | 'compaction' = 'execution', executionKind: ExecutionKind = definition.kind === 'npc' ? 'npc_child' : 'root') => resolveBuddySessionResources({ actor: definition, contextMode, executionKind, additionalDirectories: [], canonicalRoot: workspace, cwd: workspace, loadDirectoryContext: false, primaryDirectory: null, spaceId: null, skills: service })
+  async function open(definition: BuddyExecutionDefinition, executionKind?: ExecutionKind) {
+    const resources = await resolveResources(definition, 'execution', executionKind)
     const services: BuddySessionExtensionServices = {
       approvalService: { request: async (input) => {
         approvals.push(input.toolName)

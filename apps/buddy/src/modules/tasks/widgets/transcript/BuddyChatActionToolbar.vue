@@ -23,6 +23,7 @@ const props = defineProps<{
   language: BuddyLocale
   role: LocalMessage['role']
   targetKey: string
+  regenerateTargetKey?: string
   usage?: LocalRunTokenUsage | null
 }>()
 
@@ -102,7 +103,7 @@ async function copyContent() {
     <NTooltip v-if="actions.showRegenerate" placement="bottom">
       <template #trigger>
         <NButton
-          :data-testid="`regenerate-${targetKey}`"
+          :data-testid="`regenerate-${regenerateTargetKey ?? targetKey}`"
           :disabled="actions.disabled"
           class="buddy-icon-button"
           quaternary

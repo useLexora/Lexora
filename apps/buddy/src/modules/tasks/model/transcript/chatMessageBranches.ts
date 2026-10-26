@@ -83,12 +83,16 @@ export function projectChatMessageBranchNavigators(
 
   const messages = rows.flatMap(row => row.kind === 'message' ? [row.message] : [])
   const actionMessageIds = new Set(rows.flatMap(row => row.kind === 'message'
-    && (row.message.role === 'user' || row.resultRunId || (row.message.role === 'assistant' && !row.message.runId))
+    && (row.message.role === 'user' || row.ownsResultActions || (row.message.role === 'assistant' && !row.message.runId))
     ? [row.message.id]
     : []))
-  const actionTurns = rows.flatMap(row => (
-    row.kind === 'agent-turn' && row.ownsResultActions ? [row.turn] : []
-  ))
+  const actionTurns = rows.flatMap((row) => {
+    if (row.kind === 'message')
+      return row.turnResult ? [row.turnResult] : []
+    if (row.kind === 'turn-result' || (row.kind === 'agent-turn' && row.ownsResultActions))
+      return [row.turn]
+    return []
+  })
   const activePathIds = new Set(activePath.map(branch => branch.id))
   const navigators = new Map<string, ChatMessageBranchNavigator>()
 
@@ -132,6 +136,10 @@ function preservesBranchNavigation(
       && previous.message.role === next.message.role
       && previous.message.runId === next.message.runId
       && previous.resultRunId === next.resultRunId
+      && previous.ownsResultActions === next.ownsResultActions
+      && previous.turnResult?.runId === next.turnResult?.runId
+      && previous.turnResult?.branchId === next.turnResult?.branchId
+      && previous.turnResult?.triggeringMessageId === next.turnResult?.triggeringMessageId
   }
   if (previous.kind === 'agent-turn' && next.kind === 'agent-turn') {
     if (previous.ownsResultActions !== next.ownsResultActions)

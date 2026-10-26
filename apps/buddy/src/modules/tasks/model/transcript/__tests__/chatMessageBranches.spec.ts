@@ -2,7 +2,7 @@ import type { LocalConversationBranch, LocalConversationTimelineItem } from '@bu
 
 import type { ChatAgentTurn } from '../chatStreamingMessage'
 import { describe, expect, it } from 'vitest'
-import { projectChatMessageActions } from '../chatMessageActions'
+import { projectChatAgentTurnActions, projectChatMessageActions } from '../chatMessageActions'
 
 import {
   projectChatMessageBranchNavigators,
@@ -43,7 +43,7 @@ describe('projectChatMessageBranchNavigators', () => {
       'branch-retry',
     )
 
-    expect(actual.get('assistant-final')).toEqual({
+    expect(actual.get(turn.runId)).toEqual({
       activeBranchId: 'branch-retry',
       count: 2,
       index: 2,
@@ -51,6 +51,7 @@ describe('projectChatMessageBranchNavigators', () => {
       previousBranchId: 'branch-root',
     })
     expect(actual.has('assistant-process')).toBe(false)
+    expect(actual.has('assistant-final')).toBe(false)
   })
 
   it('keeps repeated regenerations at the same message node in one version group', () => {
@@ -84,7 +85,7 @@ describe('projectChatMessageBranchNavigators', () => {
       'branch-retry-3',
     )
 
-    expect(actual.get('assistant-4')).toEqual({
+    expect(actual.get(turn.runId)).toEqual({
       activeBranchId: 'branch-retry-3',
       count: 4,
       index: 4,
@@ -93,10 +94,11 @@ describe('projectChatMessageBranchNavigators', () => {
     })
     expect(actual.has('actor-reply')).toBe(false)
     expect(projectChatMessageActions(message('actor-reply', 'assistant', 'branch-retry-3', 'actor-run'), false, false)).toMatchObject({ showCopy: true, showTime: true, showRegenerate: false })
-    expect(projectChatMessageActions(final, false, true).showRegenerate).toBe(true)
+    expect(projectChatMessageActions(final, false, false).showRegenerate).toBe(false)
+    expect(projectChatAgentTurnActions(turn, false, true).showRegenerate).toBe(true)
   })
 
-  it.each(['failed', 'cancelled'] as const)('keeps retry navigation on a %s turn without a visible result', (status) => {
+  it.each(['completed', 'failed', 'cancelled'] as const)('keeps retry navigation on a %s turn without a visible result', (status) => {
     const user = message('user-1', 'user', 'branch-root')
     const emptyFinal = {
       ...message('assistant-empty', 'assistant', 'branch-root', `run-${status}`),
@@ -105,7 +107,7 @@ describe('projectChatMessageBranchNavigators', () => {
     const turn: ChatAgentTurn = {
       branchId: 'branch-root',
       completedAt: '2026-08-20T00:00:02.000Z',
-      finalMessageId: status === 'cancelled' ? emptyFinal.id : null,
+      finalMessageId: status === 'failed' ? null : emptyFinal.id,
       nodes: [],
       processMessageIds: [],
       usage: null,
@@ -117,7 +119,7 @@ describe('projectChatMessageBranchNavigators', () => {
       triggeringMessageId: user.id,
     }
     const actual = projectChatMessageBranchNavigators(
-      projectPersistedChatTranscriptRows(status === 'cancelled' ? [user, emptyFinal] : [user], [turn]),
+      projectPersistedChatTranscriptRows(status === 'failed' ? [user] : [user, emptyFinal], [turn]),
       [
         branch('branch-root', null, null, 1),
         branch('branch-retry', 'branch-root', user.id, 2),
@@ -132,6 +134,8 @@ describe('projectChatMessageBranchNavigators', () => {
       nextBranchId: 'branch-retry',
       previousBranchId: null,
     })
+    expect(projectChatAgentTurnActions(turn, false, true)).toEqual({ disabled: false, showCopy: status !== 'completed', showEdit: false, showRegenerate: true, showTime: true })
+    expect(projectChatAgentTurnActions(turn, false, false)).toEqual({ disabled: false, showCopy: false, showEdit: false, showRegenerate: false, showTime: false })
   })
 
   it('attaches edited user-input siblings to the edited user message', () => {

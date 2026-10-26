@@ -11,7 +11,7 @@ import { createConversationRepository } from '../../storage/conversationReposito
 import { openBuddyDatabase } from '../../storage/database'
 import { BuddiesService } from '../BuddiesService'
 import { BuddyDefinitionResolver } from '../BuddyDefinitionResolver'
-import { buddyExecutionFingerprint } from '../BuddyExecutionDefinition'
+import { buddyExecutionDefinitionSchema, buddyExecutionFingerprint } from '../BuddyExecutionDefinition'
 
 const databases: DatabaseSync[] = []
 const services: BuddiesService[] = []
@@ -156,20 +156,72 @@ describe('buddy execution definitions', () => {
       .toMatchObject({ model: configuredModel, modelSource: 'definition' })
   })
 
-  it('keeps accepted snapshots stable and excludes avatar-only changes from execution fingerprints', async () => {
+  it('keeps accepted identity snapshots stable and excludes profile changes from execution fingerprints', async () => {
     const fixture = setup()
-    const actor = fixture.repository.create({ name: 'Actor', avatar: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO/aU1cAAAAASUVORK5CYII=' })
+    const actor = fixture.repository.create({ name: 'Actor', description: 'Original description', avatar: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO/aU1cAAAAASUVORK5CYII=' })
     const original = (await fixture.resolver.resolve({ buddyId: actor.id, kind: 'actor', conversationId: null })).definition
     const snapshot = structuredClone(original)
-    await fixture.buddies.update({ buddyId: actor.id, expectedRevision: actor.revision, avatar: null })
-    const changedAvatar = (await fixture.resolver.resolve({ buddyId: actor.id, kind: 'actor', conversationId: null })).definition
-    expect(changedAvatar.revision).toBeGreaterThan(original.revision)
-    expect(buddyExecutionFingerprint(changedAvatar)).toBe(buddyExecutionFingerprint(original))
+    expect(original).toMatchObject({ name: 'Actor', description: 'Original description' })
+    await fixture.buddies.update({ buddyId: actor.id, expectedRevision: actor.revision, name: 'Renamed actor', description: 'Updated description', avatar: null })
+    const changedProfile = (await fixture.resolver.resolve({ buddyId: actor.id, kind: 'actor', conversationId: null })).definition
+    expect(changedProfile).toMatchObject({ name: 'Renamed actor', description: 'Updated description' })
+    expect(changedProfile.revision).toBeGreaterThan(original.revision)
+    expect(buddyExecutionFingerprint(changedProfile)).toBe(buddyExecutionFingerprint(original))
+    expect(fixture.resolver.resolveSnapshotIdentity(original)).toBe(original)
     await fixture.updateSettings(actor.id, { instructions: 'New execution instructions', tools: { mode: 'none' }, model: modelSelection('new-role-model') })
     const changedDefinition = (await fixture.resolver.resolve({ buddyId: actor.id, kind: 'actor', conversationId: null })).definition
     expect(changedDefinition).toMatchObject({ settings: { instructions: 'New execution instructions', tools: { mode: 'none' } }, model: modelSelection('new-role-model') })
     expect(buddyExecutionFingerprint(changedDefinition)).not.toBe(buddyExecutionFingerprint(original))
     expect(original).toEqual(snapshot)
+  })
+
+  it.each(['disabled', 'deleted'] as const)('fills only missing legacy identity fields from a %s profile without changing the accepted configuration', async (state) => {
+    const fixture = setup()
+    const actor = fixture.repository.create({ name: 'Original actor', description: 'Original description' })
+    const captured = (await fixture.resolver.resolve({ buddyId: actor.id, kind: 'actor', conversationId: null })).definition
+    const legacyInput = { ...captured }
+    delete legacyInput.name
+    delete legacyInput.description
+    const legacy = buddyExecutionDefinitionSchema.parse(legacyInput)
+    const before = structuredClone(legacy)
+    const current = await fixture.buddies.update({
+      buddyId: actor.id,
+      expectedRevision: actor.revision,
+      name: 'Current actor',
+      description: 'Current description',
+      settings: buddySettingsSchema.parse({ ...actor.settings, instructions: 'Changed after acceptance', tools: { mode: 'none' }, model: modelSelection('changed-model') }),
+    })
+    if (state === 'disabled')
+      await fixture.buddies.update({ buddyId: actor.id, expectedRevision: current.revision, enabled: false })
+    else
+      fixture.buddies.delete({ buddyId: actor.id, expectedRevision: current.revision })
+    const profile = structuredClone(fixture.buddies.get(actor.id))
+
+    expect(fixture.resolver.resolveSnapshotIdentity(legacy)).toEqual({ ...before, name: 'Current actor', description: 'Current description' })
+    expect(fixture.resolver.resolveSnapshotIdentity({ ...legacy, name: 'Frozen name' })).toEqual({ ...before, name: 'Frozen name', description: 'Current description' })
+    expect(fixture.resolver.resolveSnapshotIdentity({ ...legacy, description: '' })).toEqual({ ...before, name: 'Current actor', description: '' })
+    expect(legacy).toEqual(before)
+    expect(fixture.buddies.get(actor.id)).toEqual(profile)
+  })
+
+  it('preserves an unknown legacy identity and propagates profile lookup failures', async () => {
+    const fixture = setup()
+    const captured = (await fixture.resolver.resolve({ buddyId: 'default', kind: 'actor', conversationId: null })).definition
+    const legacyInput = { ...captured, id: 'missing-actor' }
+    delete legacyInput.name
+    delete legacyInput.description
+    const legacy = buddyExecutionDefinitionSchema.parse(legacyInput)
+    expect(fixture.resolver.resolveSnapshotIdentity(legacy)).toEqual(legacy)
+    const failure = new Error('Profile storage is unavailable')
+    const resolver = new BuddyDefinitionResolver({
+      ...fixture.resolver.options,
+      buddies: {
+        get: () => {
+          throw failure
+        },
+      },
+    })
+    expect(() => resolver.resolveSnapshotIdentity(legacy)).toThrow(failure)
   })
 
   it.each(['instructions', 'actor-disabled', 'actor-deleted', 'npc-disabled', 'npc-deleted', 'member-model'] as const)('rejects %s changes while model availability is being validated', async (change) => {

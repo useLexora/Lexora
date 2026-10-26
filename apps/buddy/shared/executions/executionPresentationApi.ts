@@ -36,6 +36,7 @@ export const executionPresentationSchema = z.object({
   updatedAt: timestampSchema,
   progress: buddyRunProgressSchema.nullable(),
   toolCount: z.number().int().nonnegative(),
+  usage: runTokenUsageSchema.nullable().default(null),
   stopping: z.boolean(),
   task: z.string().max(300),
   waitingFor: z.enum(['answer', 'approval', 'children', 'resource']).nullable(),

@@ -130,6 +130,14 @@ export class PiTurnExecutor implements RunExecutionBackend {
       timestamp: execution.timestamp,
     })
     const releaseTurn = await binding.session.activateTurn({
+      actorIdentity: input.session.actor
+        ? {
+            id: input.session.actor.id,
+            kind: input.session.actor.kind,
+            name: input.session.actor.name,
+            description: input.session.actor.description,
+          }
+        : undefined,
       contextWindow: run.contextWindow,
       generation: run.generation,
       deferQueuedInputs: true,

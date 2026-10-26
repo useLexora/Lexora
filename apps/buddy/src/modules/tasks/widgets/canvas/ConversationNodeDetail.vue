@@ -60,7 +60,7 @@ const { writeClipboardText } = useChatContent()
           <BuddyChatTokenUsage v-if="row.turnUsage && !row.streaming" :usage="row.turnUsage" :language="language" />
         </div>
         <template v-else-if="row.kind === 'agent-turn'">
-          <BuddyChatAgentTurn :turn="row.turn" :show-identity="row.showIdentity" :show-outcome="row.showOutcome" :language="language" />
+          <BuddyChatAgentTurn :turn="row.turn" :execution-status="row.executionStatus" :show-identity="row.showIdentity" :show-outcome="row.showOutcome" :language="language" />
           <BuddyChatTokenUsage v-if="row.ownsResultActions && row.turn.usage" :usage="row.turn.usage" :language="language" />
         </template>
         <BuddyChatRunActivity v-else-if="row.kind === 'activity'" :turn="row.turn" :language="language" :stopping="stoppingRunId === row.turn.runId" />

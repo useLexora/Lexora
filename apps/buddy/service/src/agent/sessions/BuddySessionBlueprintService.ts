@@ -10,6 +10,7 @@ import type {
   ConversationDirectoryGrantRecord,
   ConversationDirectoryGrantRepository,
 } from '../../storage/conversationDirectoryGrantRepository'
+import type { ExecutionKind } from '../../storage/runRecord'
 import type {
   SpaceAdditionalDirectoryBindingRecord,
   SpacePrimaryDirectoryBindingRecord,
@@ -31,6 +32,7 @@ export interface CreateConversationSessionBlueprintInput {
   threadId?: string
   contextMode?: 'execution' | 'compaction'
   actor?: BuddyExecutionDefinition
+  executionKind?: ExecutionKind
   approvalPolicy: BuddyApprovalPolicy
   branchId: string
   conversationId: string
@@ -135,6 +137,7 @@ export class BuddySessionBlueprintService {
       contextMode: input.contextMode,
       actor: input.actor,
       additionalDirectories: directories.additionalDirectories,
+      executionKind: input.executionKind,
       canonicalRoot,
       cwd: canonicalRoot,
       loadDirectoryContext: Boolean(primaryDirectory),

@@ -13,6 +13,7 @@ import { createExecutionStorageFixture, executionNow } from '../../../storage/__
 import { createApprovalRepository } from '../../../storage/approvalRepository'
 import { createArtifactRepository } from '../../../storage/artifactRepository'
 import { createComposerDraftRepository } from '../../../storage/composerDraftRepository'
+import { hashChildAdmissionRequest } from '../../../storage/executionRepository'
 import { createMailboxRepository } from '../../../storage/mailboxRepository'
 import { createUsageRepository } from '../../../storage/usageRepository'
 import { UsageService } from '../../../usage/UsageService'
@@ -68,7 +69,7 @@ async function fixture() {
     storage.database.close()
     await rm(directory, { recursive: true, force: true })
   })
-  return { ...storage, events, mailbox, mutations, coordinator, service, usageService, drafts, composerInput, inputOptions }
+  return { ...storage, events, mailbox, mutations, coordinator, service, usage, usageService, drafts, composerInput, inputOptions }
 }
 
 const scope = { conversationId: 'conversation', branchId: 'branch' }
@@ -192,8 +193,88 @@ describe('execution presentation ownership', () => {
     const detail = await f.service.detail(target)
     expect(detail.execution).toMatchObject({ runId: 'child', parentRunId: 'root' })
     expect(detail.usage).toEqual({ inputTokens: 19, outputTokens: 6, cacheReadTokens: 4, cacheWriteTokens: 2 })
+    expect(detail.execution.usage).toEqual(detail.usage)
+    expect(f.service.list(scope).find(record => record.runId === 'child')?.usage).toEqual(detail.usage)
     expect((await f.service.detail({ ...target, runId: 'root' })).usage?.inputTokens).toBe(100)
     expect((await f.service.detail({ ...target, runId: 'sibling' })).usage?.inputTokens).toBe(1000)
+  })
+
+  it('preserves exact per-run usage through nested work, continuation, replay and later roots', async () => {
+    const f = await fixture()
+    f.executions.admitChild(f.child('actor', f.actor.id))
+    f.executions.claimWorking(f.fence('actor'))
+    f.executions.admitChild(f.child('nested', f.npc.id, 'actor'))
+    f.executions.admitChild(f.child('first'))
+    function settle(runId: string) {
+      f.runs.reconcileTerminal(runId, 'completed', executionNow, null)
+      f.executions.recordCleanup(runId, 'clean', null)
+    }
+    function resume(runId: string, previousRunId: string, callerId = 'root') {
+      const input = { ...f.child(runId, f.npc.id, callerId), work: { contextMode: 'isolated' as const, contextSourceIds: [], previousRunId } }
+      return f.executions.admitChild({ ...input, requestHash: hashChildAdmissionRequest(input) }).execution
+    }
+    settle('first')
+    const second = resume('second', 'first')
+    expect(second.work?.previousRunId).toBe('first')
+
+    for (const [runId, input, purpose] of [
+      ['root', 10, 'turn'],
+      ['root', 999, 'cache_warm'],
+      ['actor', 20, 'turn'],
+      ['nested', 30, 'turn'],
+      ['first', 40, 'turn'],
+      ['second', 50, 'turn'],
+      ['second', 5, 'compaction'],
+    ] as const) {
+      const record = {
+        runId,
+        purpose,
+        sourceEntryId: `${runId}-${purpose}`,
+        createdAt: executionNow,
+        model: 'fixture',
+        provider: 'fixture',
+        usage: { input, output: 3, cacheRead: 2, cacheWrite: 1, totalTokens: input + 6, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      }
+      await f.usageService.record(record)
+      expect(await f.usageService.record(record)).toBeNull()
+    }
+    const listUsage = () => f.service.list(scope).map(({ runId, rootRunId, usage }) => ({ runId, rootRunId, usage }))
+    const before = listUsage()
+    expect(before.map(record => [record.runId, record.usage?.inputTokens])).toEqual([
+      ['root', 10],
+      ['actor', 20],
+      ['nested', 30],
+      ['first', 40],
+      ['second', 55],
+    ])
+    expect(f.usage.summarizeForRuns(['second', 'second']).get('second')).toEqual({ inputTokens: 55, outputTokens: 6, cacheReadTokens: 4, cacheWriteTokens: 2 })
+    expect(f.usage.summarizeForRuns([]).size).toBe(0)
+    expect(f.usage.summarizeForRuns(['missing']).size).toBe(0)
+    await f.events.replayAll()
+    expect(listUsage()).toEqual(before)
+
+    for (const runId of ['actor', 'nested', 'second', 'root'])
+      settle(runId)
+    f.conversations.createMessage({ id: 'next-goal', conversationId: 'conversation', branchId: 'branch', runId: null, role: 'user', content: { text: 'Continue the work' }, createdAt: executionNow })
+    f.runs.create({ ...f.runs.findById('root')!, id: 'next-root', rootRunId: 'next-root', triggeringMessageId: 'next-goal', status: 'running', completedAt: null })
+    const third = resume('third', 'second', 'next-root')
+    expect(third.run.threadId).toBe(second.run.threadId)
+    expect(third.run.rootRunId).toBe('next-root')
+    expect(listUsage().filter(record => record.rootRunId === 'next-root')).toEqual([
+      { runId: 'next-root', rootRunId: 'next-root', usage: null },
+      { runId: 'third', rootRunId: 'next-root', usage: null },
+    ])
+    await f.usageService.record({
+      runId: 'third',
+      purpose: 'turn',
+      sourceEntryId: 'third-turn',
+      createdAt: executionNow,
+      model: 'fixture',
+      provider: 'fixture',
+      usage: { input: 60, output: 3, cacheRead: 2, cacheWrite: 1, totalTokens: 66, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    })
+    expect(listUsage().filter(record => record.rootRunId === 'root')).toEqual(before)
+    expect(listUsage().filter(record => record.rootRunId === 'next-root').map(record => [record.runId, record.usage?.inputTokens])).toEqual([['next-root', undefined], ['third', 60]])
   })
   it('delivers a private user supplement once, acknowledges retries after cancellation, and rejects stale or conflicting targets', async () => {
     const f = await fixture()

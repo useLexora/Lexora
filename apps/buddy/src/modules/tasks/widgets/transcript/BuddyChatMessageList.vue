@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import type { DesktopChatOutlinePosition } from '@buddy-electron/shared/desktopApi'
 import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
-import type { LocalMessage } from '@buddy-shared/conversation/conversationApi'
 
 import type { ChatMessageBranchNavigator } from '../../model/transcript/chatMessageBranches'
 import type { ChatTranscriptDisplayRow } from '../../model/transcript/chatMessageTime'
@@ -30,6 +29,7 @@ import BuddyChatMessageRow from './BuddyChatMessageRow.vue'
 import BuddyChatOutline from './BuddyChatOutline.vue'
 import BuddyChatRunActivity from './BuddyChatRunActivity.vue'
 import BuddyChatTranscriptViewport from './BuddyChatTranscriptViewport.vue'
+import BuddyChatTurnResult from './BuddyChatTurnResult.vue'
 
 const props = defineProps<{
   activeBranchId: string
@@ -92,11 +92,6 @@ watch([() => props.conversationId, () => props.activeBranchId], () => {
   activeOutlineMessageId.value = null
   clearOutlineHighlight()
 })
-
-function regenerateMessage(message: LocalMessage) {
-  if (message.runId)
-    emit('regenerateAssistant', message.runId)
-}
 
 function recoveryNoticeLabel(
   notice: Extract<ChatTranscriptRow, { kind: 'recovery-notice' }>['notice'],
@@ -226,7 +221,7 @@ onBeforeUnmount(clearOutlineHighlight)
           v-else-if="item.kind === 'message'"
           :data-chat-row-key="item.key"
           :actions-disabled="actionsDisabled ?? false"
-          :branch-navigator="branchNavigators.get(item.message.id) ?? null"
+          :branch-navigator="branchNavigators.get(item.turnResult?.runId ?? item.message.id) ?? null"
           class="buddy-chat-transcript-row" :class="[
             { 'is-outline-highlighted': item.message.id === highlightedOutlineMessageId, 'is-speech-end': item.endsSpeech },
           ]"
@@ -236,17 +231,20 @@ onBeforeUnmount(clearOutlineHighlight)
           :action-messages="item.actionMessages"
           :process-run-id="item.processRunId"
           :result-run-id="item.resultRunId"
+          :owns-result-actions="item.ownsResultActions"
           :editing="item.message.id === editingMessageId"
+          :execution-status="item.executionStatus"
           :language="language"
           :message="item.message"
           :streaming="item.streaming === true"
           :turn-outputs="item.turnOutputs"
           :turn-changes="item.turnChanges"
-          :turn-usage="item.turnUsage"
+          :turn-result="item.turnResult"
+          :turn-usage="item.turnResult ? executionTree?.groups.value.byRoot.get(item.turnResult.runId)?.usage ?? undefined : item.ownsResultActions && item.resultRunId ? executionTree?.groups.value.byRoot.get(item.resultRunId)?.usage ?? undefined : undefined"
           @activate-branch="emit('activateBranch', $event)"
           @open-artifact="emit('openArtifact', $event)"
           @open-changes="emit('openChanges', $event)"
-          @regenerate="regenerateMessage(item.message)"
+          @regenerate="emit('regenerateAssistant', $event)"
           @start-edit="emit('editUserMessage', item.message.id)"
         >
           <template #before-actions>
@@ -259,6 +257,19 @@ onBeforeUnmount(clearOutlineHighlight)
           </template>
         </BuddyChatMessageRow>
 
+        <BuddyChatTurnResult
+          v-else-if="item.kind === 'turn-result'"
+          :data-chat-row-key="item.key"
+          :actions-disabled="actionsDisabled ?? false"
+          :branch-navigator="branchNavigators.get(item.turn.runId) ?? null"
+          class="buddy-chat-transcript-row"
+          :language="language"
+          :turn="item.turn"
+          :usage="executionTree?.groups.value.byRoot.get(item.turn.runId)?.usage ?? null"
+          @activate-branch="emit('activateBranch', $event)"
+          @regenerate="emit('regenerateAssistant', item.turn.runId)"
+        />
+
         <BuddyChatAgentTurn
           v-else-if="item.kind === 'agent-turn'"
           :data-chat-row-key="item.key"
@@ -268,6 +279,8 @@ onBeforeUnmount(clearOutlineHighlight)
           :class="{ 'is-speech-end': item.endsSpeech }"
           :language="language"
           :owns-result-actions="item.ownsResultActions === true"
+          :execution-status="item.executionStatus"
+          :result-usage="executionTree?.groups.value.byRoot.get(item.turn.runId)?.usage ?? null"
           :show-identity="item.showIdentity"
           :show-outcome="item.showOutcome"
           :turn="item.turn"
@@ -386,16 +399,9 @@ onBeforeUnmount(clearOutlineHighlight)
   padding-bottom: var(--buddy-chat-gap-turn);
 }
 
-.buddy-chat-agent-turn.buddy-chat-transcript-row:has(+ .buddy-chat-execution-group),
-.buddy-chat-message.buddy-chat-transcript-row:has(+ .buddy-chat-execution-group),
-.buddy-chat-transcript-row:has(+ .buddy-chat-execution-group) {
-  padding-bottom: var(--buddy-chat-gap-section);
-}
-
-.buddy-chat-execution-group:has(+ .buddy-chat-message:not(.is-assistant-continuation)),
-.buddy-chat-execution-group:has(+ .buddy-chat-agent-turn:not(.is-assistant-continuation)),
-.buddy-chat-execution-group:has(+ .buddy-chat-day-divider) {
-  padding-bottom: 1.5rem;
+.buddy-chat-transcript-row:has(> .buddy-chat-execution-group):has(+ .buddy-chat-message.is-assistant:not(.is-assistant-continuation)),
+.buddy-chat-transcript-row:has(> .buddy-chat-execution-group):has(+ .buddy-chat-agent-turn:not(.is-assistant-continuation)) {
+  padding-bottom: 0;
 }
 
 .buddy-chat-system-event {

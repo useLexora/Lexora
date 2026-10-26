@@ -14,7 +14,7 @@ const target = (runId: string): ExecutionTarget => ({ conversationId: 'task', br
 function detail(runId: string): LocalExecutionDetail {
   return {
     work: null,
-    execution: { runId, rootRunId: 'root', parentRunId: 'root', buddyId: 'researcher', buddyName: 'Researcher', ordinal: 1, toolCount: 0, kind: 'npc_child', phase: 'working', status: 'running', startedAt: now, completedAt: null, updatedAt: now, progress: null, stopping: false, task: 'Private task', waitingFor: null, activeChildren: 0, canCancel: true, canAnswer: false, canSend: true, cleanup: 'pending', errorCode: null, affectedResources: [], questions: [] },
+    execution: { runId, rootRunId: 'root', parentRunId: 'root', buddyId: 'researcher', buddyName: 'Researcher', ordinal: 1, toolCount: 0, usage: null, kind: 'npc_child', phase: 'working', status: 'running', startedAt: now, completedAt: null, updatedAt: now, progress: null, stopping: false, task: 'Private task', waitingFor: null, activeChildren: 0, canCancel: true, canAnswer: false, canSend: true, cleanup: 'pending', errorCode: null, affectedResources: [], questions: [] },
     run: { buddyId: 'researcher', approvalPolicy: 'policy', branchId: 'branch', completedAt: null, conversationId: 'task', errorCode: null, executionProfile: 'read_only', id: runId, modelId: 'model', providerId: 'provider', purpose: 'chat', reasoningLevel: null, startedAt: now, status: 'running', triggeringMessageId: 'goal' },
     caller: { runId: 'root', buddyName: 'Caller', ordinal: null },
     inputs: [],

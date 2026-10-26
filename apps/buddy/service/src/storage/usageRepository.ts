@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { LocalRunTokenUsage } from '../../../shared/usage/runTokenUsage'
 
 export interface UsageRecord {
   id: string
@@ -40,6 +41,7 @@ export interface UsageRepository {
   listRecent: (limit?: number) => UsageRecord[]
   listForRun: (runId: string) => UsageRecord[]
   listForConversation: (conversationId: string) => UsageRecord[]
+  summarizeForRuns: (runIds: readonly string[]) => ReadonlyMap<string, LocalRunTokenUsage>
   summarize: () => UsageTotals
 }
 
@@ -97,6 +99,14 @@ export function createUsageRepository(database: DatabaseSync): UsageRepository {
     WHERE invocations.conversation_id = ?
     ORDER BY created_at, id
   `)
+  const summarizeForRuns = database.prepare(`
+    SELECT run_id AS runId,
+      SUM(input_tokens) AS inputTokens, SUM(output_tokens) AS outputTokens,
+      SUM(cache_read_tokens) AS cacheReadTokens, SUM(cache_write_tokens) AS cacheWriteTokens
+    FROM usage_records
+    WHERE run_id IN (SELECT value FROM json_each(?)) AND purpose != 'cache_warm'
+    GROUP BY run_id
+  `)
   const summarize = database.prepare(`
     SELECT
       COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
@@ -149,6 +159,12 @@ export function createUsageRepository(database: DatabaseSync): UsageRepository {
     },
     listForConversation(conversationId) {
       return (listForConversation.all(conversationId, conversationId) as unknown as UsageRecordRow[]).map(toUsageRecord)
+    },
+    summarizeForRuns(runIds) {
+      if (!runIds.length)
+        return new Map()
+      const rows = summarizeForRuns.all(JSON.stringify(runIds)) as (LocalRunTokenUsage & { runId: string })[]
+      return new Map(rows.map(({ runId, ...usage }) => [runId, usage]))
     },
     listRecent(limit = 500) {
       return (listRecent.all(limit) as unknown as UsageRecordRow[]).map(toUsageRecord)

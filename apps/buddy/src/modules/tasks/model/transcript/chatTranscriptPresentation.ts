@@ -13,6 +13,8 @@ export function presentChatTranscript(rows: readonly ChatTranscriptRow[], execut
   let speech: ChatTranscriptMessageRow[] = []
   let speechEnd: ChatTranscriptMessageRow | ChatTranscriptAgentTurnRow | null = null
   const presented: ChatTranscriptRow[] = []
+  const identifiedRunIds = new Set<string>()
+  const turnsByRunId = new Map(rows.flatMap(row => row.kind === 'agent-turn' || row.kind === 'turn-result' ? [[row.turn.runId, row.turn] as const] : []))
   const speaker = (runId: string) => {
     const execution = executions?.byRun.get(runId)
     return execution ? `${execution.rootRunId}:${execution.buddyId}` : runId
@@ -54,7 +56,13 @@ export function presentChatTranscript(rows: readonly ChatTranscriptRow[], execut
     }
     if (precedingAssistantRunId !== runId)
       finishSpeech(true)
-    const showIdentity = currentSpeaker !== precedingSpeaker
+    const showIdentity = currentSpeaker !== precedingSpeaker || !identifiedRunIds.has(runId)
+    const execution = showIdentity && !identifiedRunIds.has(runId)
+      ? executions?.byRun.get(runId) ?? turnsByRunId.get(runId)
+      : null
+    const executionStatus = execution ? { status: execution.status, startedAt: execution.startedAt, completedAt: execution.completedAt } : undefined
+    if (showIdentity)
+      identifiedRunIds.add(runId)
     if (row.kind === 'message' && row.streaming)
       streamingContinuation = { precedingAssistantRunId }
     precedingAssistantRunId = runId
@@ -64,13 +72,13 @@ export function presentChatTranscript(rows: readonly ChatTranscriptRow[], execut
       const previous = speech.at(-1)
       if (previous)
         previous.showActions = false
-      const message = { ...row, ...(showIdentity ? {} : { showIdentity: false as const }) }
+      const message = { ...row, ...(executionStatus ? { executionStatus } : {}), ...(showIdentity ? {} : { showIdentity: false as const }) }
       speech.push(message)
       presented.push(message)
       speechEnd = message
     }
     else if (row.kind === 'agent-turn') {
-      const turn = { ...row, ...(showIdentity ? {} : { showIdentity: false as const }) }
+      const turn = { ...row, ...(executionStatus ? { executionStatus } : {}), ...(showIdentity ? {} : { showIdentity: false as const }) }
       presented.push(turn)
       speechEnd = turn
     }
@@ -87,7 +95,25 @@ export function presentChatTranscript(rows: readonly ChatTranscriptRow[], execut
   for (const [runId, row] of actorMessages)
     row.processRunId = runId
   return {
-    rows: presented,
+    rows: attachTurnResults(presented, executions),
     continuation: streamingContinuation ?? { precedingAssistantRunId },
   }
+}
+
+function attachTurnResults(rows: readonly ChatTranscriptRow[], executions?: ExecutionGroups): ChatTranscriptRow[] {
+  const combined: ChatTranscriptRow[] = []
+  for (const row of rows) {
+    const previous = combined.at(-1)
+    const messageRunId = previous?.kind === 'message' ? previous.message.runId : null
+    if (row.kind === 'turn-result' && previous?.kind === 'message' && previous.message.role === 'assistant'
+      && !previous.streaming && messageRunId && !previous.turnResult
+      && previous.message.branchId === row.turn.branchId
+      && (messageRunId === row.turn.runId || executions?.byRun.get(messageRunId)?.rootRunId === row.turn.runId)) {
+      combined[combined.length - 1] = { ...previous, showActions: undefined, turnResult: row.turn }
+    }
+    else {
+      combined.push(row)
+    }
+  }
+  return combined
 }

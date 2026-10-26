@@ -5,6 +5,7 @@ import type { BuddyPermissionSettings } from '../../../../shared/permissions/per
 import type { LocalCacheWarmingStatus } from '../../../../shared/runs/conversationStatusApi'
 import type { ToolExecutionPhaseChange } from '../../../../shared/runs/toolExecutionPhase'
 import type { SkillReference } from '../../../../shared/skills/skillApi'
+import type { BuddyExecutionIdentity } from '../../buddies/BuddyExecutionDefinition'
 import type { BuddyInputReferenceV1 } from '../context/BuddyInputReference'
 import type { BuddyContextUsageBreakdown } from '../context/contextUsageBreakdown'
 
@@ -57,6 +58,7 @@ export interface ReusableBuddySession extends BuddySessionEventSource {
 }
 
 export interface BuddySessionTurnContext extends BuddySessionModelSelection {
+  actorIdentity?: BuddyExecutionIdentity
   generation: number
   deferQueuedInputs?: boolean
   flushProjectedEvents: () => Promise<void>

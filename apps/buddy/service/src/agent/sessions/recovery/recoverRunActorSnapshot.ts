@@ -5,12 +5,12 @@ import type { RunRepository } from '../../../storage/runRepository'
 import { BuddyAgentRunError } from '../../../runs/runError'
 
 export async function recoverRunActorSnapshot(run: RunRecord, options: {
-  definitions: Pick<BuddyDefinitionResolver, 'resolve'>
+  definitions: Pick<BuddyDefinitionResolver, 'resolve' | 'resolveSnapshotIdentity'>
   runInputs: Pick<RunInputRepository, 'findByRunId'>
   runs: Pick<RunRepository, 'setActorSnapshot'>
 }) {
   if (run.actorSnapshot)
-    return run.actorSnapshot
+    return options.definitions.resolveSnapshotIdentity(run.actorSnapshot)
   if (run.purpose === 'conversation.compaction')
     return undefined
   const stored = options.runInputs.findByRunId(run.id)
