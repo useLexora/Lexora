@@ -50,9 +50,8 @@ export function useContextPanelTabs(options: {
   }
 
   function scopeTabs(scope: ContextPanelSelectionScope) {
-    if (scope === 'independent')
-      return resources.value
-    return resources.value.filter(tab => scope.startsWith('space:') ? selectionFor(tab.scope, 'space') === scope : tab.scope === scope)
+    const visible = scope === 'independent' ? resources.value : resources.value.filter(tab => scope.startsWith('space:') ? selectionFor(tab.scope, 'space') === scope : tab.scope === scope)
+    return visible.toSorted((a, b) => Number(!!b.pinned) - Number(!!a.pinned))
   }
 
   function selectedTab(scope: ContextPanelSelectionScope) {
@@ -69,7 +68,7 @@ export function useContextPanelTabs(options: {
     if (discardedScopes.has(tab.scope))
       return
     resources.value = resources.value.some(item => item.id === tab.id)
-      ? resources.value.map(item => item.id === tab.id ? tab : item)
+      ? resources.value.map(item => item.id === tab.id ? { ...tab, pinned: item.pinned } : item)
       : [...resources.value, tab]
     if (activate)
       selections.set(selectionFor(tab.scope), tab.id)
@@ -92,6 +91,11 @@ export function useContextPanelTabs(options: {
 
   function update(transform: (tab: TaskContextTab) => TaskContextTab) {
     resources.value = resources.value.map(transform)
+  }
+
+  function setPinned(id: string, pinned: boolean) {
+    if (tabs.value.some(tab => tab.id === id))
+      update(tab => tab.id === id ? { ...tab, pinned } : tab)
   }
 
   function retain(predicate: (tab: TaskContextTab) => boolean) {
@@ -130,5 +134,5 @@ export function useContextPanelTabs(options: {
     }
   }
 
-  return { snapshot, restoreSelections, activeTab: readonly(activeTab), tabs: readonly(tabs), resources: readonly(resources), scope: readonly(scope), selectionScope: readonly(selectionScope), select, put, close, update, retain, discard, discardDraft, adoptDraft }
+  return { snapshot, restoreSelections, activeTab: readonly(activeTab), tabs: readonly(tabs), resources: readonly(resources), scope: readonly(scope), selectionScope: readonly(selectionScope), select, put, close, setPinned, update, retain, discard, discardDraft, adoptDraft }
 }

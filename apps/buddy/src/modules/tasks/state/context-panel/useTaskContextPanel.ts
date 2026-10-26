@@ -201,6 +201,7 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
     discardDraft: store.discardDraft,
     addBrowser,
     closeTab: store.close,
+    setTabPinned: store.setPinned,
     discardConversation: (id: string) => store.discard(taskContextPanelScope(id)),
     hasTab,
     openArtifact,

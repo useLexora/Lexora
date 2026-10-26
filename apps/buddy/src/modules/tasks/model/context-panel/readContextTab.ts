@@ -8,7 +8,7 @@ import { z } from 'zod'
 const identity = z.string().min(1).max(256)
 const scopeSchema = z.union([z.literal('independent'), z.literal('workspace'), z.templateLiteral(['task:', z.string().min(1)]), z.templateLiteral(['draft:', z.string().min(1)])])
 const selectionSchema = z.tuple([z.union([scopeSchema, z.templateLiteral(['space:', z.string().min(1)])]), identity])
-const base = z.object({ id: identity, scope: scopeSchema, source: contextPanelSourceSchema.optional() })
+const base = z.object({ id: identity, scope: scopeSchema, source: contextPanelSourceSchema.optional(), pinned: z.boolean().optional() })
 const tabSchema = z.discriminatedUnion('kind', [
   base.extend({ kind: z.literal('browser'), conversationId: identity.nullable(), browserKey: identity.optional() }),
   base.extend({ kind: z.literal('files'), target: spaceFileTargetSchema, treeTarget: z.object({ path: z.string().max(4096), kind: z.enum(['file', 'directory']) }).optional(), rootName: z.string() }),

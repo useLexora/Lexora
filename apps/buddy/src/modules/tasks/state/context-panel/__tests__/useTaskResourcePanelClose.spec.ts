@@ -61,6 +61,61 @@ function artifact(artifactId = 'report'): LocalArtifact {
 }
 
 describe('resource panel close', () => {
+  it('keeps pins when reopening resources and restoring snapshots, and isolates bulk close to visible tabs', async () => {
+    const activeConversationId = shallowRef<string | null>('task-a')
+    const f = fixture({ activeConversationId })
+    f.panel.openView('first', 'First')
+    f.panel.openView('pinned', 'Pinned')
+    f.panel.setTabPinned('pinned', true)
+    f.panel.openView('pinned', 'Updated')
+    expect(f.panel.tabs.value.map(tab => tab.id)).toEqual(['pinned', 'first'])
+    activeConversationId.value = 'task-b'
+    f.panel.openView('hidden', 'Hidden')
+    activeConversationId.value = 'task-a'
+    const restored = fixture()
+    restored.panel.restoreSnapshot(JSON.parse(JSON.stringify(f.panel.snapshot())))
+    expect(restored.panel.tabs.value.map(tab => [tab.id, !!tab.pinned])).toEqual([['pinned', true], ['first', false]])
+    await restored.panel.closeTabs(['pinned', 'first', 'hidden'])
+    expect(restored.panel.allTabs.value.map(tab => tab.id)).toEqual(['pinned', 'hidden'])
+    expect(await restored.panel.closeTab('pinned')).toBe(true)
+    expect(restored.panel.allTabs.value.map(tab => tab.id)).toEqual(['hidden'])
+  })
+
+  it('stops a batch at a cancelled save and preserves the remaining views', async () => {
+    const f = fixture({ closeView: async id => id !== 'dirty' })
+    for (const id of ['clean', 'dirty', 'after'])
+      f.panel.openView(id, id)
+    await f.panel.closeTabs(['clean', 'dirty', 'after'])
+    expect(f.panel.tabs.value.map(tab => tab.id)).toEqual(['dirty', 'after'])
+  })
+
+  it('preserves tabs opened or pinned while a batch waits for a close', async () => {
+    const gate = deferred<boolean>()
+    const f = fixture({ closeView: () => gate.promise })
+    for (const id of ['first', 'second'])
+      f.panel.openView(id, id)
+    const closing = f.panel.closeTabs(['first', 'second'])
+    f.panel.setTabPinned('second', true)
+    f.panel.openView('new', 'New')
+    gate.resolve(true)
+    await closing
+    expect(f.panel.tabs.value.map(tab => tab.id)).toEqual(['second', 'new'])
+  })
+
+  it('stops the remaining batch after switching away and back to the scope', async () => {
+    const gate = deferred<boolean>()
+    const activeConversationId = shallowRef<string | null>('task-a')
+    const f = fixture({ activeConversationId, closeView: () => gate.promise })
+    for (const id of ['first', 'second'])
+      f.panel.openView(id, id)
+    const closing = f.panel.closeTabs(['first', 'second'])
+    activeConversationId.value = 'task-b'
+    activeConversationId.value = 'task-a'
+    gate.resolve(true)
+    await closing
+    expect(f.panel.tabs.value.map(tab => tab.id)).toEqual(['second'])
+  })
+
   it.each(['space', 'independent'] as const)('records a user close with the original source only after the last visible tab closes in %s mode', async (mode) => {
     const f = fixture({
       mode: shallowRef(mode),

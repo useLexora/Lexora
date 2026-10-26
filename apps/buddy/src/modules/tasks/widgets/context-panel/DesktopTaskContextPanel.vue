@@ -16,13 +16,15 @@ defineProps<{
 const emit = defineEmits<{
   add: [id: string]
   closeTab: [tabId: string]
+  closeTabs: [tabIds: readonly string[]]
+  pinTab: [tabId: string, pinned: boolean]
   selectTab: [tabId: string]
 }>()
 defineSlots<{ 'default'?: () => unknown, 'header-actions'?: () => unknown, 'toolbar'?: () => unknown }>()
 </script>
 
 <template>
-  <WorkbenchResourcePanel :active-tab-id="activeTabId" :tabs="tabs" :language="language" :actions="actions" @add="emit('add', $event)" @close-tab="emit('closeTab', $event)" @select-tab="emit('selectTab', $event)">
+  <WorkbenchResourcePanel :active-tab-id="activeTabId" :tabs="tabs" :language="language" :actions="actions" @add="emit('add', $event)" @close-tab="emit('closeTab', $event)" @close-tabs="emit('closeTabs', $event)" @pin-tab="(id, pinned) => emit('pinTab', id, pinned)" @select-tab="emit('selectTab', $event)">
     <template #icon="{ tab }">
       <FileIcon v-if="tab.icon === 'file'" :name="tab.fileName ?? tab.title" />
       <FolderIcon v-else-if="tab.icon === 'folder'" class="desktop-task-context-panel__folder-icon w-4 h-4 flex-none" />

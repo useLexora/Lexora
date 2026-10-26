@@ -32,18 +32,18 @@ const browserApi: DesktopBrowserApi = { ...browser, ensureSession: (conversation
 const activeTab = computed(() => props.panel.activeTab.value)
 const tabs = computed<ContextPanelTab[]>(() => props.panel.tabs.value.map((tab) => {
   if (tab.kind === 'view')
-    return { id: tab.id, title: tab.label, dirty: tab.dirty, icon: 'file' }
+    return { id: tab.id, pinned: tab.pinned, title: tab.label, dirty: tab.dirty, icon: 'file' }
   if (tab.kind === 'artifact')
-    return { id: tab.id, title: tab.artifact.name, icon: tab.artifact.kind === 'directory' ? 'folder' : 'file', fileName: tab.artifact.name }
+    return { id: tab.id, pinned: tab.pinned, title: tab.artifact.name, icon: tab.artifact.kind === 'directory' ? 'folder' : 'file', fileName: tab.artifact.name }
   if (tab.kind === 'files')
-    return { id: tab.id, title: t('desktop.context.files'), icon: 'folder' }
+    return { id: tab.id, pinned: tab.pinned, title: t('desktop.context.files'), icon: 'folder' }
   if (tab.kind === 'changes')
-    return { id: tab.id, title: t('desktop.context.changes'), icon: 'changes' }
+    return { id: tab.id, pinned: tab.pinned, title: t('desktop.context.changes'), icon: 'changes' }
   const state = props.panel.browserStates.value[tab.id]
   const title = !state || state.url === 'about:blank'
     ? t('desktop.context.browserNewTab')
     : state.title.trim() || t('desktop.context.browser')
-  return { id: tab.id, title, icon: 'browser' }
+  return { id: tab.id, pinned: tab.pinned, title, icon: 'browser' }
 }))
 async function add(id: string) {
   try {
@@ -57,7 +57,7 @@ async function add(id: string) {
 
 <template>
   <DesktopFileSpacePicker :show="panel.fileSpacePickerOpen.value" :spaces="panel.filePickerSpaces.value" :language="language" @update:show="panel.setFileSpacePickerOpen" @select="panel.openFiles" />
-  <DesktopTaskContextPanel :active-tab-id="activeTab?.id ?? null" :tabs="tabs" :language="language" :actions="actions" @add="add" @close-tab="panel.closeTab" @select-tab="panel.selectTab">
+  <DesktopTaskContextPanel :active-tab-id="activeTab?.id ?? null" :tabs="tabs" :language="language" :actions="actions" @add="add" @close-tab="panel.closeTab" @close-tabs="panel.closeTabs" @pin-tab="panel.setTabPinned" @select-tab="panel.selectTab">
     <template v-if="$slots['header-actions']" #header-actions>
       <slot name="header-actions" />
     </template>

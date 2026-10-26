@@ -152,6 +152,30 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
     return accepted.promise
   }
 
+  async function closeTabs(tabIds: readonly string[]): Promise<void> {
+    const requested = new Set(tabIds)
+    const targets = taskContext.tabs.value.filter(tab => requested.has(tab.id) && !tab.pinned)
+    let cancelled = false
+    const stop = watch(taskContext.selectionScope, () => cancelled = true, { flush: 'sync' })
+    try {
+      for (const target of targets) {
+        if (disposed || cancelled)
+          break
+        const tab = taskContext.tabs.value.find(tab => tab.id === target.id)
+        if (!tab || tab.pinned)
+          continue
+        if (!await closeTab(tab.id))
+          break
+      }
+    }
+    catch (error) {
+      options.onError(error)
+    }
+    finally {
+      stop()
+    }
+  }
+
   async function closeResource(tabId: string): Promise<boolean> {
     const tab = taskContext.allTabs.value.find(item => item.id === tabId)
     if (!tab)
@@ -350,6 +374,7 @@ export function useTaskResourcePanel(options: TaskResourcePanelOptions) {
     canPreviewFile,
     previewFile,
     closeTab,
+    closeTabs,
     discardDraft: (id: string) => {
       operation.value += 1
       interaction += 1
