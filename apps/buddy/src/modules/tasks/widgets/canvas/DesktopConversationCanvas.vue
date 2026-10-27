@@ -28,6 +28,7 @@ const nodes = computed<readonly ConversationCanvasNode[]>(() => {
   const nodes: ConversationCanvasNode[] = (tree.value?.nodes ?? []).map(node => node.runId === run?.id && run
     ? {
         ...node,
+        canFollowup: node.id !== tree.value?.headId,
         text: streaming ? conversationTreePreview(streaming, true) : node.text,
         status: run.status,
         toolCount: projection ? projection.turn.nodes.filter(item => item.kind === 'tool').length : node.toolCount,
@@ -40,7 +41,7 @@ const nodes = computed<readonly ConversationCanvasNode[]>(() => {
           usage: projection?.turn.usage ?? node.metadata?.usage ?? null,
         },
       }
-    : node)
+    : { ...node, canFollowup: node.id !== tree.value?.headId })
   if (followup.value) {
     nodes.push({
       ...followup.value,
@@ -68,7 +69,7 @@ const nodes = computed<readonly ConversationCanvasNode[]>(() => {
 async function beginFollowup(id: string) {
   const node = tree.value?.nodes.find(node => node.id === id)
   const conversationId = props.workspace.session.activeConversationId.value
-  if (!conversationId || !node?.messageId || node.kind !== 'answer' || node.status !== 'completed')
+  if (!conversationId || !node?.messageId || node.kind !== 'answer' || node.status !== 'completed' || node.id === tree.value?.headId)
     return
   if (await props.workspace.execution.beginFollowup({ kind: 'message_followup', conversationId, branchId: node.branchId, assistantMessageId: node.messageId })) {
     await nextTick()

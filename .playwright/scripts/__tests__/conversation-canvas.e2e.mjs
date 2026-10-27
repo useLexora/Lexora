@@ -4,6 +4,7 @@ import { expect, test } from '../fixtures/electron.mjs'
 async function prepare(buddy, label) {
   const instance = await buddy.createInstance(label)
   const desktop = await instance.launch()
+  await expect.poll(async () => (await desktop.page.evaluate(() => window.lexoraDesktop.localChat.runtime.getStatus())).status).toBe('ready')
   await desktop.app.evaluate(({ BrowserWindow, ipcMain }, databasePath) => {
     BrowserWindow.getAllWindows()[0].setSize(2000, 1100)
     const { DatabaseSync } = process.getBuiltinModule('node:sqlite')
@@ -72,6 +73,7 @@ test('canvas actions, zoom and node lifetimes stay scoped across split panes and
   await first.getByTestId('conversation-canvas-toggle').click()
   await expect(first.locator('.conversation-node')).toHaveCount(1)
   await first.getByTestId('pane-layout-menu').click()
+  await page.locator('.n-dropdown-menu:visible').getByText('分屏', { exact: true }).hover()
   await page.locator('.n-dropdown-menu:visible').getByText('向右分屏', { exact: true }).click()
   await task(page, 'b').click()
   const second = pane(page, 'Canvas B')

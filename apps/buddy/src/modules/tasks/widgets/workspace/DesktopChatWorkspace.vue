@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
+import type { LocalConversationTimelineItem } from '@buddy-shared/conversation/conversationApi'
 import type { LocalConversationTreeNode } from '@buddy-shared/conversation/conversationTree'
 import type { BuddyChatMessageListHandle } from '../transcript/chatMessageViewport'
 import type { ChatWorkspaceEmits, ChatWorkspaceProps } from './typing'
 import { readBuddyUserMessageContent } from '@buddy-shared/conversation/buddyUserContent'
+import { conversationTreePreview } from '@buddy-shared/conversation/conversationTreePreview'
 import { computed, defineAsyncComponent, nextTick, shallowRef, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopRuntimePane from '@/platform/runtime/DesktopRuntimePane.vue'
 import WorkbenchSlot from '@/shared/ui/contributions/WorkbenchSlot.vue'
+import { getChatMessageDisplayText } from '../../model/transcript/chatMessageContent'
 import { useConversationNodeDetail } from '../../state/conversations/useConversationNodeDetail'
 import { provideExecutionTree } from '../../state/runs/chatExecutionContext'
 import ConversationNodeDetail from '../canvas/ConversationNodeDetail.vue'
@@ -19,6 +22,7 @@ import DesktopChatTranscript from '../transcript/DesktopChatTranscript.vue'
 import DesktopChatWelcome from '../welcome/DesktopChatWelcome.vue'
 import DesktopWelcomeCompanion from '../welcome/DesktopWelcomeCompanion.vue'
 import ChatSelectionQuoteMenu from './ChatSelectionQuoteMenu.vue'
+import DesktopFollowupContext from './DesktopFollowupContext.vue'
 import DesktopTaskComposer from './DesktopTaskComposer.vue'
 import DesktopTaskNotices from './DesktopTaskNotices.vue'
 import { useChatWorkspace } from './useChatWorkspace'
@@ -60,9 +64,29 @@ const editingQuestion = computed(() => nodeDetail.target.value?.kind === 'questi
 const composerVisible = computed(() => !detailVisible.value || nodeDetail.target.value?.kind === 'answer' || editingQuestion.value)
 const followup = computed(() => {
   const target = props.workspace.composer.target.value
-  return target.kind === 'message_followup'
-    ? props.workspace.tree.data.value?.nodes.find(node => node.messageId === target.assistantMessageId) ?? null
-    : null
+  return target.kind === 'message_followup' ? target : null
+})
+const followupPreview = computed(() => {
+  const target = followup.value
+  if (!target)
+    return ''
+  const timeline: readonly LocalConversationTimelineItem[] = props.workspace.transcript.timelineItems.value
+  const message = timeline.find(item => item.kind === 'message' && item.id === target.assistantMessageId)
+  if (message?.kind === 'message') {
+    const text = getChatMessageDisplayText(message)
+    if (text.trim())
+      return conversationTreePreview(text)
+    const group = message.runId ? executionTree.groups.value.byRoot.get(message.runId) : null
+    const runIds = new Set(group?.records.map(record => record.runId) ?? [])
+    for (const item of timeline.toReversed()) {
+      if (item.kind !== 'message' || item.role !== 'assistant' || !item.runId || item.runId === message.runId || !runIds.has(item.runId))
+        continue
+      const text = getChatMessageDisplayText(item)
+      if (text.trim())
+        return conversationTreePreview(text)
+    }
+  }
+  return props.workspace.tree.data.value?.nodes.find(node => node.messageId === target.assistantMessageId)?.text ?? ''
 })
 const { t } = useBuddyI18n(() => props.workspace.language.value)
 watch(() => props.viewMode, (value) => {
@@ -96,6 +120,31 @@ async function focusComposer() {
     nodeDetail.close()
   await nextTick()
   composerRef.value?.focus()
+}
+
+async function beginFollowup(assistantMessageId: string, branchId: string) {
+  const conversationId = props.workspace.session.activeConversationId.value
+  if (conversationId && await props.workspace.execution.beginFollowup({ kind: 'message_followup', conversationId, branchId, assistantMessageId }))
+    await focusComposer()
+}
+
+async function cancelFollowup() {
+  props.workspace.execution.cancelFollowup()
+  await focusComposer()
+}
+
+async function locateFollowup() {
+  const target = followup.value
+  if (!target)
+    return
+  if (props.viewMode === 'canvas') {
+    const node = props.workspace.tree.data.value?.nodes.find(node => node.messageId === target.assistantMessageId)
+    if (node)
+      canvasRef.value?.focusNode(node.id)
+  }
+  else {
+    await viewport.revealOutlineMessage(target.assistantMessageId)
+  }
 }
 
 async function openModelSelector() {
@@ -218,6 +267,7 @@ function openDetailChanges(id: string) {
           ref="messageList"
           v-bind="transcriptBindings"
           :stopping-run-id="workspace.execution.stoppingRunId.value"
+          :followup-message-id="followup?.assistantMessageId"
           class="desktop-chat-page__messages"
           @activate-branch="workspace.transcript.activateBranch"
           @content-resize="viewport.handleContentResize"
@@ -227,6 +277,7 @@ function openDetailChanges(id: string) {
           @reader-layout-intent="viewport.handleReaderLayoutIntent"
           @reader-scroll-intent="viewport.handleReaderScrollIntent"
           @regenerate-assistant="workspace.execution.regenerateAssistant"
+          @followup-assistant="beginFollowup"
           @return-to-latest="viewport.returnToLatest"
           @select-outline-message="viewport.revealOutlineMessage"
           @scroll="(metrics, options) => viewport.handleScroll(metrics, options)"
@@ -262,12 +313,14 @@ function openDetailChanges(id: string) {
             @open-settings="emit('openSettings', $event)"
             @select-model="openModelSelector"
           />
-          <div v-if="followup" class="desktop-chat-page__followup flex min-w-0 items-center gap-[12px] py-[8px] px-[12px] border-1 border-solid border-accent-border rounded-[8px] bg-accent-subtle text-accent-on-surface text-[12px]" data-testid="canvas-followup-context">
-            <span>{{ t('desktop.canvas.composerTarget') }}<strong>{{ followup.text }}</strong></span>
-            <button type="button" :disabled="workspace.execution.isSending.value" @click="workspace.execution.cancelFollowup">
-              {{ t('desktop.canvas.cancelFollowup') }}
-            </button>
-          </div>
+          <DesktopFollowupContext
+            v-if="followup"
+            :language="language"
+            :preview="followupPreview"
+            :disabled="workspace.execution.isSending.value"
+            @cancel="cancelFollowup"
+            @locate="locateFollowup"
+          />
           <div class="desktop-chat-page__composer-wrapper relative w-full min-w-0">
             <DesktopTaskComposer
               ref="composerRef"
@@ -359,10 +412,6 @@ function openDetailChanges(id: string) {
   border-left: 1px solid var(--buddy-border-subtle);
   padding: 8px 12px 12px;
 }
-.desktop-chat-page__followup > span { min-width: 0; flex: 1; }
-.desktop-chat-page__followup strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 400; color: var(--buddy-text-secondary); }
-.desktop-chat-page__followup button { flex: none; border: 0; border-radius: 6px; padding: 5px 8px; background: transparent; color: var(--buddy-text-secondary); font-size: 11px; cursor: pointer; }
-.desktop-chat-page__followup button:hover { background: var(--buddy-state-hover); }
 
 @container task-pane (max-height: 620px) {
   .desktop-chat-page.is-empty {

@@ -134,8 +134,8 @@ describe('projectChatMessageBranchNavigators', () => {
       nextBranchId: 'branch-retry',
       previousBranchId: null,
     })
-    expect(projectChatAgentTurnActions(turn, false, true)).toEqual({ disabled: false, showCopy: status !== 'completed', showEdit: false, showRegenerate: true, showTime: true })
-    expect(projectChatAgentTurnActions(turn, false, false)).toEqual({ disabled: false, showCopy: false, showEdit: false, showRegenerate: false, showTime: false })
+    expect(projectChatAgentTurnActions(turn, false, true, true)).toEqual({ disabled: false, showCopy: status !== 'completed', showEdit: false, showFollowup: status === 'completed', showRegenerate: true, showTime: true })
+    expect(projectChatAgentTurnActions(turn, false, false)).toEqual({ disabled: false, showCopy: false, showEdit: false, showFollowup: false, showRegenerate: false, showTime: false })
   })
 
   it('attaches edited user-input siblings to the edited user message', () => {

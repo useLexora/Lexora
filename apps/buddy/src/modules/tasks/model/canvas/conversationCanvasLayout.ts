@@ -1,7 +1,10 @@
 import type { LocalConversationTreeNode } from '@buddy-shared/conversation/conversationTree'
 
 export type ConversationCanvasDirection = 'horizontal' | 'vertical'
-export type ConversationCanvasNode = Omit<LocalConversationTreeNode, 'kind'> & { kind: LocalConversationTreeNode['kind'] | 'draft' }
+export type ConversationCanvasNode = Omit<LocalConversationTreeNode, 'kind'> & {
+  kind: LocalConversationTreeNode['kind'] | 'draft'
+  canFollowup?: boolean
+}
 export interface ConversationNodePosition { x: number, y: number, width: number, height: number }
 
 export function layoutConversationCanvas(nodes: readonly ConversationCanvasNode[], direction: ConversationCanvasDirection): ReadonlyMap<string, ConversationNodePosition> {

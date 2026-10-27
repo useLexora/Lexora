@@ -24,12 +24,14 @@ const props = defineProps<{
   role: LocalMessage['role']
   targetKey: string
   regenerateTargetKey?: string
+  followingUp?: boolean
   usage?: LocalRunTokenUsage | null
 }>()
 
 const emit = defineEmits<{
   activateBranch: [branchId: string]
   regenerate: []
+  followup: []
   startEdit: []
 }>()
 
@@ -118,7 +120,27 @@ async function copyContent() {
       </template>
       {{ t('desktop.chat.regenerate') }}
     </NTooltip>
-    <div v-if="branchNavigator" class="buddy-chat-action-toolbar__branch inline-flex items-center gap-[0.05rem] ml-[0.1rem] text-muted">
+    <NTooltip v-if="actions.showFollowup" placement="bottom">
+      <template #trigger>
+        <NButton
+          :data-testid="`followup-${regenerateTargetKey ?? targetKey}`"
+          :disabled="actions.disabled"
+          :aria-pressed="followingUp === true"
+          class="buddy-icon-button buddy-chat-action-toolbar__followup-button"
+          :class="{ 'is-selected': followingUp }"
+          quaternary
+          size="tiny"
+          :aria-label="t('desktop.chat.followup')"
+          @click="emit('followup')"
+        >
+          <template #icon>
+            <DesktopIcon name="messageBranch" />
+          </template>
+        </NButton>
+      </template>
+      {{ t('desktop.chat.followup') }}
+    </NTooltip>
+    <div v-if="branchNavigator" class="buddy-chat-action-toolbar__branch inline-flex items-center gap-[0.05rem] ml-[0.1rem] text-muted" role="group" :aria-label="t('desktop.chat.branchPosition', { index: branchNavigator.index, count: branchNavigator.count })">
       <NTooltip placement="bottom">
         <template #trigger>
           <NButton
@@ -136,7 +158,12 @@ async function copyContent() {
         </template>
         {{ t('desktop.chat.previousBranch') }}
       </NTooltip>
-      <span>{{ branchNavigator.index }} / {{ branchNavigator.count }}</span>
+      <NTooltip placement="bottom">
+        <template #trigger>
+          <span class="whitespace-nowrap">{{ t('desktop.chat.branchPosition', { index: branchNavigator.index, count: branchNavigator.count }) }}</span>
+        </template>
+        {{ t('desktop.chat.branchNavigationHint') }}
+      </NTooltip>
       <NTooltip placement="bottom">
         <template #trigger>
           <NButton
@@ -208,6 +235,11 @@ async function copyContent() {
     background: var(--buddy-accent-surface);
     color: var(--buddy-accent-text);
   }
+}
+
+.buddy-chat-action-toolbar__followup-button.is-selected {
+  background: var(--buddy-accent-surface);
+  color: var(--buddy-accent-text);
 }
 
 .buddy-chat-action-toolbar__branch-button {

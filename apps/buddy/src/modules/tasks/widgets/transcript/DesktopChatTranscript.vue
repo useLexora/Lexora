@@ -12,6 +12,7 @@ import type {
   ChatMessageScrollMetrics,
 } from '@/modules/tasks/widgets/transcript/chatMessageViewport'
 import { computed, useTemplateRef } from 'vue'
+import { projectChatFollowupMessageIds } from '@/modules/tasks/model/transcript/chatMessageActions'
 import { createChatMessageBranchNavigatorProjector } from '@/modules/tasks/model/transcript/chatMessageBranches'
 import { createChatTranscriptDisplayRowProjector } from '@/modules/tasks/model/transcript/chatMessageTime'
 import { createChatRunTranscriptProjector } from '@/modules/tasks/model/transcript/chatRunTranscriptProjector'
@@ -28,6 +29,7 @@ const props = defineProps<{
   changeSets: ReadonlyArray<LocalChangeSetSummary>
   conversationId: string
   editingMessageId: string | null
+  followupMessageId?: string | null
   hasOlderMessages: boolean
   isLoadingOlderMessages: boolean
   isRestoringPosition?: boolean
@@ -50,6 +52,7 @@ const emit = defineEmits<{
   readerLayoutIntent: []
   readerScrollIntent: []
   regenerateAssistant: [sourceRunId: string]
+  followupAssistant: [assistantMessageId: string, branchId: string]
   returnToLatest: []
   selectOutlineMessage: [messageId: string]
   scroll: [metrics: ChatMessageScrollMetrics, options?: { userInitiated?: boolean }]
@@ -77,6 +80,10 @@ const transcriptProjection = computed(() => transcriptProjector.project({
   timelineItems: props.timelineItems,
 }))
 const displayRows = computed(() => displayRowProjector.project(transcriptProjection.value))
+const followupMessageIds = computed(() => projectChatFollowupMessageIds(
+  transcriptProjection.value.rows,
+  new Set(props.runs.filter(run => run.status === 'completed').map(run => run.id)),
+))
 const branchNavigators = computed(() => branchNavigatorProjector.project(
   transcriptProjection.value,
   props.branches,
@@ -144,6 +151,8 @@ defineExpose<BuddyChatMessageListHandle>({
     :conversation-id="conversationId"
     :display-rows="displayRows"
     :editing-message-id="editingMessageId"
+    :followup-message-id="followupMessageId"
+    :followup-message-ids="followupMessageIds"
     :has-older-messages="hasOlderMessages"
     :is-loading-older-messages="isLoadingOlderMessages"
     :is-restoring-position="isRestoringPosition"
@@ -161,6 +170,7 @@ defineExpose<BuddyChatMessageListHandle>({
     @prepare-outline="prepareOutline"
     @reader-layout-intent="emit('readerLayoutIntent')"
     @regenerate-assistant="emit('regenerateAssistant', $event)"
+    @followup-assistant="(messageId, branchId) => emit('followupAssistant', messageId, branchId)"
     @reader-scroll-intent="emit('readerScrollIntent')"
     @return-to-latest="emit('returnToLatest')"
     @select-outline-message="emit('selectOutlineMessage', $event)"

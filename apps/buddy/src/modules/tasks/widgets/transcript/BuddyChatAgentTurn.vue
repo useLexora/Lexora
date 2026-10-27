@@ -23,6 +23,8 @@ const props = defineProps<{
   language: BuddyLocale
   executionStatus?: ChatTranscriptExecutionStatus
   ownsResultActions?: boolean
+  followingUp?: boolean
+  canFollowup?: boolean
   resultUsage?: LocalRunTokenUsage | null
   showIdentity?: boolean
   showOutcome?: boolean
@@ -32,6 +34,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   activateBranch: [branchId: string]
   regenerate: []
+  followup: []
 }>()
 
 const { t } = useBuddyI18n(() => props.language)
@@ -65,10 +68,12 @@ const actions = computed(() => projectChatAgentTurnActions(
   props.turn,
   props.actionsDisabled ?? false,
   props.ownsResultActions ?? false,
+  props.canFollowup,
 ))
 const showActions = computed(() => props.showOutcome !== false && (
   actions.value.showCopy
   || actions.value.showRegenerate
+  || actions.value.showFollowup
   || actions.value.showTime
   || props.branchNavigator != null
 ))
@@ -107,8 +112,10 @@ const actionCopyText = computed(() => resultNoticeText.value ?? statusLabel.valu
       role="assistant"
       :target-key="`run-${turn.runId}`"
       :usage="ownsResultActions ? resultUsage : null"
+      :following-up="followingUp"
       @activate-branch="emit('activateBranch', $event)"
       @regenerate="emit('regenerate')"
+      @followup="emit('followup')"
     />
   </section>
 </template>

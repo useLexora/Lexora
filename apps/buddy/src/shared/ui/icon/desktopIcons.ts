@@ -7,6 +7,7 @@ import editFilledUrl from './assets/edit-filled.svg'
 import editUrl from './assets/edit.svg'
 import messageBranchNextUrl from './assets/message-branch-next.svg'
 import messageBranchPreviousUrl from './assets/message-branch-previous.svg'
+import messageBranchUrl from './assets/message-branch.svg'
 import messageCopiedUrl from './assets/message-copied.svg'
 import messageCopyUrl from './assets/message-copy.svg'
 import messageQueueUrl from './assets/message-queue.svg'
@@ -36,6 +37,7 @@ export const DESKTOP_ICON_URLS = {
   delete: deleteUrl,
   edit: editUrl,
   editFilled: editFilledUrl,
+  messageBranch: messageBranchUrl,
   messageBranchNext: messageBranchNextUrl,
   messageBranchPrevious: messageBranchPreviousUrl,
   messageCopied: messageCopiedUrl,

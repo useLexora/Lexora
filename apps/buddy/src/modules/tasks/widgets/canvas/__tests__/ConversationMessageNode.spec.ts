@@ -223,12 +223,13 @@ describe('conversationMessageNode header layout and actions', () => {
     expect(actions?.querySelector('[data-testid="canvas-node-retry"]')).not.toBeNull()
   })
 
-  it('renders completed node with actions in trailing and no status text', async () => {
+  it.each([true, false])('keeps retry on completed answers and respects branch availability: %s', async (canFollowup) => {
     const root = mountNode({
       direction: 'horizontal',
       canMutate: true,
       message: {
         id: 'answer:completed',
+        canFollowup,
         branchId: 'branch:1',
         parentId: 'question:1',
         kind: 'answer',
@@ -255,7 +256,7 @@ describe('conversationMessageNode header layout and actions', () => {
     expect(trailing.querySelector('.conversation-node__status')).toBeNull()
     expect(trailing.querySelector('.conversation-node__actions')).not.toBeNull()
     expect(trailing.querySelector('[data-testid="canvas-node-retry"]')).not.toBeNull()
-    expect(trailing.querySelector('[data-testid="canvas-node-followup"]')).not.toBeNull()
+    expect(trailing.querySelector('[data-testid="canvas-node-followup"]') !== null).toBe(canFollowup)
   })
 
   it('renders draft node with status in trailing and no actions', async () => {
