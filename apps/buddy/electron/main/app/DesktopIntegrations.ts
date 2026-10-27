@@ -23,6 +23,7 @@ import { EXTENSION_REVIEW_REQUEST } from '../../../shared/extensions/extensionAu
 import { extensionConditionSnapshotRpc } from '../../../shared/extensions/extensionConditionContext'
 import { extensionShellRpc } from '../../../shared/extensions/extensionShell'
 import { extensionSkillsRpc } from '../../../shared/extensions/extensionSkills'
+import { localDocumentRpc } from '../../../shared/files/localDocumentApi'
 import { taskFilesRpc } from '../../../shared/files/taskFileApi'
 import { providerNotifications } from '../../../shared/providers/providerApi'
 import { runNotifications } from '../../../shared/runs/runApi'
@@ -129,6 +130,21 @@ export class DesktopIntegrations {
     this.#subscriptions.push(() => themes.dispose())
     await themes.initialize(runtime.config!.desktop.theme, nativeTheme.shouldUseDarkColors)
     const extensions = registerExtensionIpc({
+      documents: {
+        commit: async (input, signal) => localDocumentRpc.commit.response.parse(await service.request(localDocumentRpc.commit.method, input, { signal, timeoutMs: null })),
+        query: async input => localDocumentRpc.query.response.parse(await service.request(localDocumentRpc.query.method, input, { timeoutMs: null })),
+        resolve: async (source, signal) => {
+          const location = source.kind === 'artifact'
+            ? artifactsRpc.locate.response.parse(await service.request(artifactsRpc.locate.method, { artifactId: source.artifactId }, { signal }))
+            : source.kind === 'space'
+              ? spaceFilesRpc.locate.response.parse(await service.request(spaceFilesRpc.locate.method, source.target, { signal }))
+              : taskFilesRpc.locate.response.parse(await service.request(taskFilesRpc.locate.method, source.target, { signal }))
+          if (location.kind !== 'file')
+            throw new Error('EXTENSION_DOCUMENT_UNAVAILABLE')
+          return location.path
+        },
+        reveal: async (path) => { shell.showItemInFolder(path) },
+      },
       fileIcons,
       themes,
       record: this.#environment.events.publish,

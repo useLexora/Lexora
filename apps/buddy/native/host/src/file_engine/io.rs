@@ -121,6 +121,28 @@ pub fn sync_dir(_dir: &Dir) -> Result<()> {
 }
 
 pub fn create_text(root: &Root, path: &str, text: &str, id: &str) -> Result<()> {
+    create_bytes(root, path, text.as_bytes(), id)
+}
+
+pub fn read_bytes(root: &Root, path: &str) -> Result<Vec<u8>> {
+    root.resolve(path)?;
+    root.check()?;
+    let file = open_read(&root.dir, &relative(path)?)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.len() > crate::file_writer::MAX_BINARY_BYTES as u64 {
+        return Err(Error::Unsupported);
+    }
+    let mut bytes = Vec::new();
+    file.take(crate::file_writer::MAX_BINARY_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > crate::file_writer::MAX_BINARY_BYTES {
+        return Err(Error::Unsupported);
+    }
+    root.check()?;
+    Ok(bytes)
+}
+
+pub fn create_bytes(root: &Root, path: &str, bytes: &[u8], id: &str) -> Result<()> {
     let path = relative(path)?;
     #[cfg(windows)]
     let _parents = crate::windows_fs::ParentGuard::new(&root.path.join(&path))
@@ -140,7 +162,7 @@ pub fn create_text(root: &Root, path: &str, text: &str, id: &str) -> Result<()> 
         .map_err(creation_error)?;
     (|| {
         let name = path.file_name().ok_or(Error::Invalid)?;
-        file.write_all(text.as_bytes())?;
+        file.write_all(bytes)?;
         file.sync_all()?;
         root.check()?;
         rename_new(&parent, Path::new(&temporary), &parent, Path::new(name))?;

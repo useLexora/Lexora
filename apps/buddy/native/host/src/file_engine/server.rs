@@ -34,7 +34,7 @@ impl Controls {
 }
 
 enum Input {
-    Request(Request),
+    Request(Box<Request>),
     Closed,
 }
 
@@ -73,7 +73,10 @@ pub fn serve(directory: &Path) -> Result<()> {
             } else {
                 break;
             }
-            if reader_sender.send(Input::Request(request)).is_err() {
+            if reader_sender
+                .send(Input::Request(Box::new(request)))
+                .is_err()
+            {
                 return;
             }
         }
@@ -120,6 +123,7 @@ pub fn serve(directory: &Path) -> Result<()> {
     loop {
         match receiver.recv_timeout(Duration::from_millis(250)) {
             Ok(Input::Request(request)) => {
+                let request = *request;
                 if matches!(request.command, Command::Shutdown) {
                     send(&engine.output, json!({ "id": request.id, "result": null }))?;
                     break;
@@ -417,9 +421,14 @@ impl Engine {
                 )?;
                 serde_json::to_value(record)?
             }
-            Command::Query { operation_id } => {
-                serde_json::to_value(self.journal.find(operation_id)?.map(|(_, record)| record))?
-            }
+            Command::Query {
+                operation_id,
+                request,
+            } => serde_json::to_value(operations::query(
+                &self.journal,
+                operation_id,
+                request.as_ref(),
+            )?)?,
             Command::History { root } => {
                 let root = self.roots.get(root)?;
                 serde_json::to_value(self.journal.history(&path_key(&root.path))?)?

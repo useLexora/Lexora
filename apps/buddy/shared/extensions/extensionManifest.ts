@@ -93,6 +93,7 @@ export const extensionPermissionsSchema = z.object({
   clipboardWrite: z.boolean().default(false),
   localResources: z.boolean().default(false),
   resourceExport: z.boolean().default(false),
+  fileEditing: z.boolean().default(false),
   themeManagement: z.boolean().default(false),
   network: z.array(z.string().url().max(512).refine((value) => {
     const url = new URL(value)
@@ -175,8 +176,8 @@ export const extensionManifestSchema = extensionMetadataSchema.extend({
     issue('Theme contributions and management require API 3')
   if (manifest.apiVersion < 3 && (manifest.contributes.conditions.length || agent || settings.modules.length || settings.groups.length || settings.items.length || manifest.permissions.agent || manifest.permissions.models || manifest.permissions.taskMessages || manifest.permissions.tasks !== 'none'))
     issue('Agent capabilities and settings require API 3')
-  if (manifest.apiVersion < 4 && manifest.permissions.references)
-    issue('References require API 4')
+  if (manifest.apiVersion < 4 && (manifest.permissions.references || manifest.permissions.fileEditing))
+    issue('References and file editing require API 4')
   if (manifest.apiVersion < 4 && (manifest.contributes.fileHandlers.length || manifest.contributes.launchers.length || manifest.contributes.views.some(view => view.resource === 'optional-file')))
     issue('File handlers, launchers and optional-file views require API 4')
   for (const handler of manifest.contributes.fileHandlers) {
@@ -323,6 +324,7 @@ export function addedExtensionPermissions(previous: ExtensionPermissions | undef
     ...(next.clipboardWrite && !previous?.clipboardWrite ? ['clipboardWrite'] : []),
     ...(next.localResources && !previous?.localResources ? ['localResources'] : []),
     ...(next.resourceExport && !previous?.resourceExport ? ['resourceExport'] : []),
+    ...(next.fileEditing && !previous?.fileEditing ? ['fileEditing'] : []),
     ...next.network.filter(origin => !previous?.network.includes(origin)).map(origin => `network:${origin}`),
   ]
 }

@@ -662,3 +662,52 @@ fn browsed_directories_notify_shared_roots_after_revocation() {
     let change = engine.output.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_eq!(change["roots"], json!(["second"]));
 }
+
+#[test]
+fn binary_save_checks_staged_bytes_versions_and_replays_receipts_without_writing() {
+    use sha2::{Digest, Sha256};
+    let digest = |bytes: &[u8]| format!("{:x}", Sha256::digest(bytes));
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("root");
+    let staging = directory.path().join("staging");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&staging).unwrap();
+    let original = b"PK\x00\xfforiginal";
+    let updated = b"PK\x00\xfeupdated";
+    std::fs::write(root.join("report.xlsx"), original).unwrap();
+    std::fs::write(staging.join("upload"), updated).unwrap();
+    let mut engine = Engine::new(&directory.path().join("journal"));
+    engine.register("root", &root);
+    engine.register("staging", &staging);
+    let operation = id();
+    let request = json!({"type":"mutate","request":{"operationId":operation,"root":"root","path":"report.xlsx","action":{"kind":"writeFile","stagingRoot":"staging","stagingPath":"upload","size":updated.len(),"sha256":digest(updated),"expected":digest(original)}}});
+    let saved = engine.call(request.clone());
+    assert_eq!(saved["result"]["status"], "applied");
+    assert_eq!(saved["result"]["receipt"]["etag"], digest(updated));
+    let query = json!({"type":"query","operationId":operation,"request":request["request"]});
+    assert_eq!(engine.call(query.clone())["result"]["status"], "applied");
+    let mut mismatched = query;
+    mismatched["request"]["action"]["sha256"] = json!(digest(b"different"));
+    assert_eq!(
+        engine.call(mismatched)["error"],
+        "FILE_OPERATION_ID_CONFLICT"
+    );
+    assert_eq!(std::fs::read(root.join("report.xlsx")).unwrap(), updated);
+    std::fs::write(root.join("report.xlsx"), b"external").unwrap();
+    assert_eq!(engine.call(request.clone())["result"]["status"], "applied");
+    assert_eq!(
+        std::fs::read(root.join("report.xlsx")).unwrap(),
+        b"external"
+    );
+    let mut stale = request.clone();
+    stale["request"]["operationId"] = json!(id());
+    assert_eq!(engine.call(stale)["error"], "FILE_CONFLICT");
+    std::fs::write(staging.join("upload"), b"tampered").unwrap();
+    let mut tampered = request;
+    tampered["request"]["operationId"] = json!(id());
+    assert_eq!(engine.call(tampered)["error"], "FILE_INVALID_REQUEST");
+    assert_eq!(
+        std::fs::read(root.join("report.xlsx")).unwrap(),
+        b"external"
+    );
+}

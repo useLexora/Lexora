@@ -29,7 +29,7 @@ const warning = computed(() => {
 const status = computed(() => props.item.incompatibility ? (props.language === 'en-US' ? 'Unavailable' : '暂不可用') : labels.value[props.item.state === 'failed' ? 'failedState' : props.item.state])
 const actions = computed<DropdownOption[]>(() => {
   const pluginActions: DropdownOption[] = []
-  if (props.item.manifest.permissions.localResources)
+  if (props.item.manifest.permissions.localResources || props.item.manifest.permissions.fileEditing)
     pluginActions.push({ key: 'file-access', label: props.language === 'en-US' ? 'File access' : '文件访问', props: { role: 'menuitem' }, children: [{ key: 'revoke-resources', label: props.language === 'en-US' ? 'Revoke all access' : '撤销全部授权', props: { role: 'menuitem' } }] })
   return [
     ...pluginActions,

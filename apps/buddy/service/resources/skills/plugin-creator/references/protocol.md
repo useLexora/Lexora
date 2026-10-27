@@ -145,7 +145,7 @@ context.references.onReveal(async ({ locator, text }, signal) => {
 
 旧 `fileOpeners` 声明仍受支持：其 `locations` 中的 `inline`、`standalone` 分别对应新结构的 `preview`、`open`，使用原 `view` 和 `requestDefault`。更新为新声明时保留处理器 ID，即可延续用户默认关联；同一 ID 不能同时声明在新旧数组中。
 
-关联不增加目录、路径或写入权限。句柄来自用户已授权的 Space 文件或任务产物，每次读取重新核对原授权；只能由分配到该资源的视图读取。视图可使用 `resources.readText/readBytes/getUrl(context.resource)`，受控 URL 支持 HEAD、Range，关闭后失效。内联预览可能获得未保存文本的只读内存快照（最多 2 MiB UTF-8），宿主不会写回或持久保存快照，原 Space 授权撤回后即不能继续读取；不可保存此临时句柄供重启后复用。编辑或导出仍须沿显式另存为能力。
+关联不增加目录、路径或写入权限。句柄来自用户已授权的 Space 文件或任务产物，每次读取重新核对原授权；只能由分配到该资源的视图读取。视图可使用 `resources.readText/readBytes/getUrl(context.resource)`，受控 URL 支持 HEAD、Range，关闭后失效。内联预览可能获得未保存文本的只读内存快照（最多 2 MiB UTF-8），宿主不会写回或持久保存快照，原 Space 授权撤回后即不能继续读取；不可保存此临时句柄供重启后复用。文件原件编辑需声明 fileEditing 并通过 documents.open 建立编辑会话；只读快照的导出使用 resources.saveFile。
 
 ## 权限
 
@@ -162,6 +162,7 @@ context.references.onReveal(async ({ locator, text }, signal) => {
 | `selectedResource: "read"` | 读取用户选择并明确分配的文件资源 |
 | `selectedContent: true` | API 3；用户点击插件操作时获取当前草稿或该条消息文本，不订阅输入或读取对话历史 |
 | `localResources: true` | 用户通过系统窗口选择文件或目录，视图读取文本、二进制或受控 URL |
+| `fileEditing: true` | 在交互视图中打开用户明确选择的文件，按版本保存原件及恢复草稿（API 4） |
 | `resourceExport: true` | 用户通过系统另存为窗口确认目标后，保存插件提供的字节 |
 | `network: ["https://example.com"]` | 通过宿主向列出的 HTTPS origin 发 GET 请求、下载文件或打开外链 |
 
@@ -266,6 +267,26 @@ API 3 的 `contributes.menus` 将已有命令放进业务区域的「更多操�
 授权跨重启保留；文件被移动、替换或修改后旧句柄读取失败，可重新选择或刷新已授权目录。`revokeFile(file)` 撤销单个句柄，保留的目录授权仍允许下次扫描重新发现它；`revokeDirectory(directory)` 撤销该目录及其派生句柄，其他独立授权保留。用户可从插件管理撤销全部本地资源授权，卸载也撤销。撤销、禁用及视图关闭会使相关 URL 和未完成的读取失效，不删除用户原文件。
 
 保存另行声明 `resourceExport: true`。`resources.saveFile({name,data})` 接收建议文件名和 `Blob | ArrayBuffer | Uint8Array`，弹出系统另存为窗口；取消返回 false，完整写入后返回 true，失败抛错。目标由用户决定，插件得不到路径。写入先暂存，提交时验证目标未被其他程序修改，再替换；关闭、禁用、取消或未完整提交不会覆盖原文件。读取授权不包含静默写回或目录批量写入。
+
+### 编辑内容与本地文件
+
+`Document` 表示具有编辑、保存和恢复生命周期的内容，不限定格式，也不要求已经存在磁盘文件。表格、图片、绘图或其他二进制内容都使用同一接口；格式解析和编辑由插件负责。
+
+API 4 的 `fileEditing: true` 独立于读取与导出权限。`context.documents` 仅在交互视图中可用，不向后台命令或装饰视图开放。安装时审核该能力；原文件身份由系统打开窗口或宿主文件打开入口决定，插件不能传入绝对路径。
+
+- `pick({filters?})`：选择一个文件并取得编辑句柄，取消返回 null。
+- `open(context.resource)`：仅接受当前视图由宿主传入的文件资源；Space、任务文件和任务产物都沿用当前来源授权，打开真实本地文件；每次保存重新校验来源。只读内存快照不授予原件编辑权。
+- `list()` / `resume({id})`：最近文件与恢复草稿；resume 后的句柄绑定当前视图。`writable=false` 时不能写回，另存为应建立独立身份。
+- `read(document,{recovery?,signal?})`：读取完整二进制，默认优先恢复内容；跨块版本变化会失败，不混合两份内容。原文件或目录不可用时，已保留的恢复内容仍可 resume、读取和另存为；读取原件快照继续核对来源授权。
+- `create({name,data,signal?})`：创建未命名草稿，不弹保存窗口、不写原件。
+- `backup(document,{data,signal?})`：检查 revision 后只更新恢复内容，返回新句柄；后续修改使用返回值，不能显示为已保存。
+- `save(document,{data,signal?})`：检查句柄的内容 revision、原件 version 和文件身份后写回，返回新句柄；后续修改使用返回值。冲突和提交失败保留恢复内容，失败后通过 resume 取得当前句柄；陈旧 revision 的请求被拒绝，不替换较新的恢复内容。
+- `saveAs({name,data,signal?})`：系统窗口确认新位置，返回新句柄；取消返回 null。调用者决定是否切换当前编辑器，并关闭旧句柄。
+- `status(document)`：查询外部修改；最终保存仍检查版本，不能仅依赖此提示。
+- `discardRecovery(document)` / `close(document)`：明确放弃草稿、释放当前视图会话。close 自身不弹提示、不删除草稿，插件使用 onBeforeClose 完成关闭保护。
+- `forget(document)` / `reveal(document)`：移除最近记录与授权、在系统文件管理器中定位。forget 不删除原文件，有恢复草稿或未确认保存时拒绝移除。
+
+句柄只包含 ID、名称、简短 location、version、revision、大小、writable、kind、recovery 和 openedAt，不包含路径。version 表示原件基线，未保存内容为 null；revision 表示当前内容版本。文件与未保存内容都只允许一个视图修改，关闭后可由其他视图 resume 接管。每插件最多 240 条记录、1 GiB 快照与恢复数据，单文件最多 256 MiB，每视图同时最多 2 次上传。原件修改和内部恢复必须分别提示；另存为切换绑定，保存副本与产物导出应保留原绑定和脏状态。撤销编辑授权保留恢复数据及其读取、另存为能力，再次访问原件需要重新选择授权。保存结果未知时先 resume 核对回执；未确认完成的内容继续保留为恢复副本，后续保存仍检查原件基线，不会自动重放旧操作。能力采用增量 API，发布包的 engines.lexora 必须覆盖实际支持它的宿主版本。
 
 包内静态资源使用 `new URL('./assets/file.ext', import.meta.url).href`，遵循包大小上限。音视频支持流式读取和 seek，具体解码能力取决于运行平台；复杂格式可使用包内自包含 JS 解析器。通用文件通道不等于内置任意格式解码器、原生模块或外部可执行程序支持。
 

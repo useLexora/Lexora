@@ -1,4 +1,4 @@
-use super::{WriteError, WriteRequest, check_content};
+use super::{WriteBytesRequest, WriteError, check_content};
 use crate::windows_fs;
 use std::{
     fs::{self, OpenOptions},
@@ -17,17 +17,17 @@ use windows_sys::Win32::{
     },
 };
 
-pub fn write(request: &WriteRequest) -> Result<(), WriteError> {
-    if !crate::windows_path::valid(&request.root) || !crate::windows_path::valid(&request.path) {
+pub fn write(request: &WriteBytesRequest<'_>) -> Result<(), WriteError> {
+    if !crate::windows_path::valid(request.root) || !crate::windows_path::valid(request.path) {
         return Err(WriteError::Failed);
     }
-    let path = Path::new(&request.path);
+    let path = Path::new(request.path);
     let parent = path.parent().ok_or(WriteError::Failed)?;
     let _parents = windows_fs::ParentGuard::new(path).map_err(|_| WriteError::Failed)?;
     let _root_parents =
-        windows_fs::ParentGuard::new(Path::new(&request.root)).map_err(|_| WriteError::Failed)?;
+        windows_fs::ParentGuard::new(Path::new(request.root)).map_err(|_| WriteError::Failed)?;
     let root =
-        windows_fs::open_directory(Path::new(&request.root)).map_err(|_| WriteError::Failed)?;
+        windows_fs::open_directory(Path::new(request.root)).map_err(|_| WriteError::Failed)?;
     let root_path = windows_fs::final_path(&root).map_err(|_| WriteError::Failed)?;
     let original = OpenOptions::new()
         .read(true)
@@ -49,7 +49,7 @@ pub fn write(request: &WriteRequest) -> Result<(), WriteError> {
         return Err(WriteError::Failed);
     }
     let original_identity = windows_fs::identity(&original).map_err(|_| WriteError::Failed)?;
-    check_content(&original, &request.expected)?;
+    check_content(&original, request.expected)?;
     drop(original);
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -67,7 +67,7 @@ pub fn write(request: &WriteRequest) -> Result<(), WriteError> {
         .map_err(|_| WriteError::Failed)?;
     let result = (|| {
         output
-            .write_all(request.content.as_bytes())
+            .write_all(request.content)
             .map_err(|_| WriteError::Failed)?;
         output.sync_all().map_err(|_| WriteError::Failed)?;
         drop(output);
@@ -80,7 +80,7 @@ pub fn write(request: &WriteRequest) -> Result<(), WriteError> {
         if windows_fs::identity(&current).map_err(|_| WriteError::Failed)? != original_identity {
             return Err(WriteError::Conflict);
         }
-        check_content(&current, &request.expected)?;
+        check_content(&current, request.expected)?;
         drop(current);
         let destination =
             windows_fs::extended_path(&actual_path).map_err(|_| WriteError::Failed)?;

@@ -21,6 +21,7 @@ export const nativeOperationSchema = z.object({
 export type NativeFileOperation = z.infer<typeof nativeOperationSchema>
 export type FileAction
   = { kind: 'write', text: string, expected?: string }
+    | { kind: 'writeFile', stagingRoot: string, stagingPath: string, size: number, sha256: string, expected?: string }
     | { kind: 'createFile' | 'createDirectory' | 'trash' }
     | { kind: 'rename', destination: string }
     | { kind: 'copy' | 'move', destinationRoot: string, destination: string }
@@ -129,10 +130,12 @@ export class NativeFileEngine {
     const roots = [request.root]
     if (request.action.kind === 'copy' || request.action.kind === 'move')
       roots.push(request.action.destinationRoot)
+    if (request.action.kind === 'writeFile')
+      roots.push(request.action.stagingRoot)
     return this.#request({ type: 'mutate', request }, nativeOperationSchema, roots)
   }
 
-  query(operationId: string) { return this.#request({ type: 'query', operationId }, nativeOperationSchema.nullable()) }
+  query(operationId: string, request?: NativeFileMutation) { return this.#request({ type: 'query', operationId, ...(request ? { request } : {}) }, nativeOperationSchema.nullable()) }
   history(root: string) { return this.#request({ type: 'history', root }, z.array(nativeOperationSchema), [root]) }
   protect(leaseId: string, claims: NativeFileProtection[]) { return this.#request({ type: 'protect', leaseId, claims }, z.null()) }
   acknowledge(root: string, operationId: string) { return this.#request({ type: 'acknowledge', root, operationId }, nativeOperationSchema, [root]) }

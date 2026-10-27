@@ -1,4 +1,4 @@
-use super::{WriteError, WriteRequest, check_content};
+use super::{WriteBytesRequest, WriteError, check_content};
 use rustix::fs::{AtFlags, CWD, Mode, OFlags, openat, renameat, unlinkat};
 use std::{
     fs::File,
@@ -8,9 +8,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub fn write(request: &WriteRequest) -> Result<(), WriteError> {
-    let root_path = Path::new(&request.root);
-    let path = Path::new(&request.path);
+pub fn write(request: &WriteBytesRequest<'_>) -> Result<(), WriteError> {
+    let root_path = Path::new(request.root);
+    let path = Path::new(request.path);
     if !root_path.is_absolute()
         || !path.is_absolute()
         || root_path
@@ -37,7 +37,7 @@ pub fn write(request: &WriteRequest) -> Result<(), WriteError> {
         }
     }
     let original = read_file(&parent, Path::new(name))?;
-    check_content(&original, &request.expected)?;
+    check_content(&original, request.expected)?;
     let metadata = original.metadata().map_err(|_| WriteError::Failed)?;
     if metadata.nlink() != 1 {
         return Err(WriteError::Failed);
@@ -65,11 +65,16 @@ pub fn write(request: &WriteRequest) -> Result<(), WriteError> {
     );
     let result = (|| {
         output
-            .write_all(request.content.as_bytes())
+            .write_all(request.content)
             .map_err(|_| WriteError::Failed)?;
         copy_metadata(&original, &output)?;
         output.sync_all().map_err(|_| WriteError::Failed)?;
-        check_content(&read_file(&parent, Path::new(name))?, &request.expected)?;
+        let current = read_file(&parent, Path::new(name))?;
+        let current_metadata = current.metadata().map_err(|_| WriteError::Failed)?;
+        if current_metadata.dev() != metadata.dev() || current_metadata.ino() != metadata.ino() {
+            return Err(WriteError::Conflict);
+        }
+        check_content(&current, request.expected)?;
         verify(&root, root_path)?;
         verify(&parent, path.parent().ok_or(WriteError::Failed)?)?;
         renameat(&parent, temporary.as_str(), &parent, Path::new(name))

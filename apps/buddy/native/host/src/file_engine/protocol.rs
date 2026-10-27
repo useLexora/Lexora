@@ -55,6 +55,7 @@ pub enum Command {
     },
     Query {
         operation_id: String,
+        request: Option<Mutation>,
     },
     History {
         root: String,
@@ -105,6 +106,13 @@ pub struct Mutation {
 pub enum Action {
     Write {
         text: String,
+        expected: Option<String>,
+    },
+    WriteFile {
+        staging_root: String,
+        staging_path: String,
+        size: u64,
+        sha256: String,
         expected: Option<String>,
     },
     CreateFile,

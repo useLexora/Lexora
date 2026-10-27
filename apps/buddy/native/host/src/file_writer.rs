@@ -9,6 +9,14 @@ mod windows;
 
 pub const MAX_TEXT_BYTES: usize = 1024 * 1024;
 const MAX_ENGINE_TEXT_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_BINARY_BYTES: usize = 256 * 1024 * 1024;
+
+pub struct WriteBytesRequest<'a> {
+    pub root: &'a str,
+    pub path: &'a str,
+    pub expected: &'a [u8],
+    pub content: &'a [u8],
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum WriteError {
@@ -60,6 +68,18 @@ pub fn write_large(request: &WriteRequest) -> Result<(), WriteError> {
     {
         return Err(WriteError::Failed);
     }
+    write_bytes(&WriteBytesRequest {
+        root: &request.root,
+        path: &request.path,
+        expected: request.expected.as_bytes(),
+        content: request.content.as_bytes(),
+    })
+}
+
+pub fn write_bytes(request: &WriteBytesRequest<'_>) -> Result<(), WriteError> {
+    if request.expected.len() > MAX_BINARY_BYTES || request.content.len() > MAX_BINARY_BYTES {
+        return Err(WriteError::Failed);
+    }
     #[cfg(unix)]
     return unix::write(request);
     #[cfg(windows)]
@@ -68,16 +88,16 @@ pub fn write_large(request: &WriteRequest) -> Result<(), WriteError> {
     Err(WriteError::Failed)
 }
 
-fn check_content(file: &std::fs::File, expected: &str) -> Result<(), WriteError> {
+fn check_content(file: &std::fs::File, expected: &[u8]) -> Result<(), WriteError> {
     let metadata = file.metadata().map_err(|_| WriteError::Failed)?;
-    if !metadata.is_file() || metadata.len() > MAX_ENGINE_TEXT_BYTES as u64 {
+    if !metadata.is_file() || metadata.len() > MAX_BINARY_BYTES as u64 {
         return Err(WriteError::Failed);
     }
     let mut bytes = Vec::new();
-    file.take(MAX_ENGINE_TEXT_BYTES as u64 + 1)
+    file.take(MAX_BINARY_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
         .map_err(|_| WriteError::Failed)?;
-    if bytes != expected.as_bytes() {
+    if bytes != expected {
         return Err(WriteError::Conflict);
     }
     Ok(())

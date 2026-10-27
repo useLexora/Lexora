@@ -195,7 +195,7 @@ async function receive(event: MessageEvent) {
   try {
     if (data.method === 'clipboard.read' || data.method === 'clipboard.write')
       assertClipboardFocus(frame)
-    if (['resources.pickFiles', 'resources.pickDirectory', 'resources.beginSave', 'references.add', 'references.capture', 'references.commit'].includes(data.method) && (!frame.visible || document.visibilityState !== 'visible' || !document.hasFocus()))
+    if ((['resources.pickFiles', 'resources.pickDirectory', 'resources.beginSave', 'documents.pick', 'references.add', 'references.capture', 'references.commit'].includes(data.method) || (data.method === 'documents.beginWrite' && data.params?.mode === 'saveAs')) && (!frame.visible || document.visibilityState !== 'visible' || !document.hasFocus()))
       throw new Error('EXTENSION_RESOURCE_PICKER_UNAVAILABLE')
     if (data.method === 'events.snapshot') {
       projections.refresh(frame)

@@ -16,8 +16,8 @@ import { join } from 'node:path'
 import process from 'node:process'
 import { currentPlatform } from '../../platform/currentPlatform'
 import { resolveWindowsPowerShell } from '../../platform/windows/powerShell'
-
 import { artifactsChanged } from '../../shared/artifacts/artifactApi'
+
 import { automationNotifications } from '../../shared/automation/automationApi'
 import { buddiesChanged } from '../../shared/buddies/buddyApi'
 import { changesChanged } from '../../shared/changes/changeApi'
@@ -132,6 +132,7 @@ import { DirectoryGrantService } from './directories/DirectoryGrantService'
 import { observeRunDiagnostics } from './events/observeRunDiagnostics'
 import { RunEventCorruptionError } from './events/RunEventFailure'
 import { FileResourceCoordinator } from './files/FileResourceCoordinator'
+import { LocalDocumentFileService, registerLocalDocumentRpc } from './files/LocalDocumentFileService'
 import { NativeFileEngine } from './files/NativeFileEngine'
 import { registerTaskFileRpc } from './files/registerTaskFileRpc'
 import { TaskFileAccess } from './files/TaskFileAccess'
@@ -1643,6 +1644,14 @@ export async function startBuddyService(
           service: spaceService,
         }),
       )
+      register(registerLocalDocumentRpc(options.rpc, new LocalDocumentFileService(options.buddyHome, fileEngine, async (source) => {
+        const location = source.kind === 'artifact'
+          ? await artifactService.locate(source.artifactId)
+          : source.kind === 'space' ? await spaceFiles.locate(source.target) : await taskFileService.locate(source.target)
+        if (location.kind !== 'file')
+          throw new Error('FILE_PERMISSION_REVOKED')
+        return location.path
+      })))
       register(registerSpaceFileRpc(options.rpc, spaceFiles))
       register(registerTaskFileRpc(options.rpc, taskFileService))
       register(

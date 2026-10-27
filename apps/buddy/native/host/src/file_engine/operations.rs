@@ -14,6 +14,14 @@ use std::{
 pub fn claims(roots: &Roots, request: &Mutation) -> Result<Vec<Claim>> {
     let root = roots.get(&request.root)?;
     let mut claims = vec![root.claim(&request.path, true)?];
+    if let Action::WriteFile {
+        staging_root,
+        staging_path,
+        ..
+    } = &request.action
+    {
+        claims.push(roots.get(staging_root)?.claim(staging_path, false)?);
+    }
     let target = match &request.action {
         Action::Rename { destination } => Some((root.clone(), destination)),
         Action::Copy {
@@ -36,6 +44,26 @@ pub fn claims(roots: &Roots, request: &Mutation) -> Result<Vec<Claim>> {
     Ok(claims)
 }
 
+pub fn query(
+    journal: &Journal,
+    operation_id: &str,
+    request: Option<&Mutation>,
+) -> Result<Option<Operation>> {
+    let Some((previous, record)) = journal.find(operation_id)? else {
+        return Ok(None);
+    };
+    if let Some(request) = request {
+        let mut content = request.clone();
+        content.lease_id = None;
+        if request.operation_id != operation_id
+            || previous != io::digest(&serde_json::to_vec(&content)?)
+        {
+            return Err(Error::IdConflict);
+        }
+    }
+    Ok(Some(record))
+}
+
 pub fn execute(
     roots: &Roots,
     journal: &mut Journal,
@@ -48,11 +76,10 @@ pub fn execute(
     content.lease_id = None;
     let fingerprint = io::digest(&serde_json::to_vec(&content)?);
     if let Some((previous, record)) = journal.find(&request.operation_id)? {
-        return if previous == fingerprint {
-            Ok(record)
-        } else {
-            Err(Error::IdConflict)
-        };
+        if previous != fingerprint {
+            return Err(Error::IdConflict);
+        }
+        return Ok(record);
     }
     if uuid::Uuid::parse_str(&request.operation_id).is_err() || request.path.is_empty() {
         return Err(Error::Invalid);
@@ -150,6 +177,36 @@ pub fn execute(
     } else {
         None
     };
+    let binary = if let Action::WriteFile {
+        staging_root,
+        staging_path,
+        size,
+        sha256,
+        expected,
+    } = &request.action
+    {
+        let staged = roots.get(staging_root)?;
+        io::check(&staged, cancelled)?;
+        let bytes = io::read_bytes(&staged, staging_path)?;
+        if bytes.len() as u64 != *size || io::digest(&bytes) != *sha256 {
+            return Err(Error::Invalid);
+        }
+        let previous = if existing.is_some() {
+            let previous = io::read_bytes(&root, &request.path)?;
+            if expected.as_deref() != Some(io::digest(&previous).as_str()) {
+                return Err(Error::Conflict);
+            }
+            Some(previous)
+        } else {
+            if expected.is_some() {
+                return Err(Error::Conflict);
+            }
+            None
+        };
+        Some((previous, bytes))
+    } else {
+        None
+    };
     match &request.action {
         Action::CreateFile | Action::CreateDirectory | Action::Restore { .. }
             if existing.is_some() =>
@@ -168,10 +225,14 @@ pub fn execute(
         record.receipt = Some(json!({ "sourceIdentity": identity }));
     }
     let staging = match &request.action {
-        Action::CreateFile | Action::Write { .. } if existing.is_none() => Some(sibling(
-            &request.path,
-            &format!(".lexora-{}.stage", request.operation_id),
-        )?),
+        Action::CreateFile | Action::Write { .. } | Action::WriteFile { .. }
+            if existing.is_none() =>
+        {
+            Some(sibling(
+                &request.path,
+                &format!(".lexora-{}.stage", request.operation_id),
+            )?)
+        }
         Action::Copy { .. } | Action::Move { .. } => target
             .as_ref()
             .map(|(_, destination)| {
@@ -247,6 +308,35 @@ pub fn execute(
                     io::create_text(&root, &request.path, text, &request.operation_id)?;
                 }
                 Ok(json!({ "etag": io::digest(text.as_bytes()) }))
+            }
+            Action::WriteFile {
+                staging_root,
+                sha256,
+                ..
+            } => {
+                io::check(roots.get(staging_root)?.as_ref(), cancelled)?;
+                let (previous, bytes) = binary.as_ref().ok_or(Error::Invalid)?;
+                if let Some(previous) = previous {
+                    crate::file_writer::write_bytes(&crate::file_writer::WriteBytesRequest {
+                        root: &root.path.to_string_lossy(),
+                        path: &source
+                            .components()
+                            .collect::<std::path::PathBuf>()
+                            .to_string_lossy(),
+                        expected: previous,
+                        content: bytes,
+                    })
+                    .map_err(|error| match error {
+                        crate::file_writer::WriteError::Conflict => Error::Conflict,
+                        crate::file_writer::WriteError::Failed => {
+                            Error::NotApplied(Box::new(Error::Io(std::io::Error::other(error))))
+                        }
+                        crate::file_writer::WriteError::OutcomeUnknown => Error::Recovery,
+                    })?;
+                } else {
+                    io::create_bytes(&root, &request.path, bytes, &request.operation_id)?;
+                }
+                Ok(json!({ "etag": sha256 }))
             }
             Action::CreateFile => {
                 io::create_text(&root, &request.path, "", &request.operation_id)?;

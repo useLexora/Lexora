@@ -240,5 +240,7 @@ export function extensionError(error: unknown): string {
   if (modelFailure.success)
     return modelFailure.data.data.code
   const message = error instanceof Error ? error.message : ''
+  if (['FILE_CONFLICT', 'FILE_RECOVERY_REQUIRED', 'FILE_PERMISSION_REVOKED'].includes(message))
+    return `EXTENSION_${message}`
   return /^EXTENSION_[A-Z_]+$/.test(message) ? message : 'EXTENSION_OPERATION_FAILED'
 }

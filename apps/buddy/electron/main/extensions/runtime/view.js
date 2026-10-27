@@ -1,3 +1,4 @@
+import { createExtensionDocumentClient } from '../../../../shared/extensions/extensionDocumentClient'
 import { waitsForExtensionIo } from '../../../../shared/extensions/extensionRequestLifecycle'
 import { createExtensionNetworkClient, createExtensionResourceClient, writeExtensionResource } from '../../../../shared/extensions/extensionResourceClient'
 import { createExtensionWorkers } from '../../../../shared/extensions/extensionWorkers'
@@ -167,6 +168,7 @@ async function initialize() {
         release: id => request('references.release', { id }),
         onReveal: handler => references.onReveal(handler),
       }),
+      documents: createExtensionDocumentClient(request),
       resources: {
         ...createExtensionResourceClient(request),
         pickFiles: (options = {}) => request('resources.pickFiles', options),

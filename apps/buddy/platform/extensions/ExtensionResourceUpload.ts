@@ -2,9 +2,9 @@ import type { ExtensionLocalFile } from '../../shared/extensions/extensionResour
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 
-export class ExtensionResourceUpload {
+export class ExtensionResourceUpload<T = ExtensionLocalFile> {
   readonly id = randomUUID()
-  readonly finished: Promise<ExtensionLocalFile>
+  readonly finished: Promise<T>
   readonly #writer: WritableStreamDefaultWriter<Uint8Array>
   readonly #abort = new AbortController()
   readonly #size: number
@@ -13,7 +13,7 @@ export class ExtensionResourceUpload {
   #ended = false
   #tail: Promise<unknown> = Promise.resolve()
 
-  constructor(size: number, publish: (body: ReadableStream<Uint8Array>, signal: AbortSignal) => Promise<ExtensionLocalFile>, assertCurrent: () => void) {
+  constructor(size: number, publish: (body: ReadableStream<Uint8Array>, signal: AbortSignal) => Promise<T>, assertCurrent: () => void) {
     this.#size = size
     this.#assertCurrent = assertCurrent
     const stream = new TransformStream<Uint8Array, Uint8Array>()
@@ -33,7 +33,7 @@ export class ExtensionResourceUpload {
     })
   }
 
-  commit(): Promise<ExtensionLocalFile> {
+  commit(): Promise<T> {
     return this.#enqueue(async () => {
       this.#assert()
       if (this.#written !== this.#size)

@@ -297,7 +297,39 @@ export interface ReferenceReveal {
 export type ReferenceInput
   = | { kind: 'content', title: string, text: string, locator?: ReferenceLocator, source?: 'view' }
     | { kind: 'resource', resource: { id: string } }
+/** Format-independent editable content; it may exist before a file is saved. */
+export interface EditableDocument {
+  readonly id: string
+  readonly name: string
+  readonly location: string
+  readonly version: string | null
+  readonly revision: string
+  readonly size: number
+  readonly writable: boolean
+  readonly kind: 'file' | 'draft'
+  readonly recovery: boolean
+  readonly openedAt: number
+}
+export interface DocumentBytes { data: Blob | ArrayBuffer | Uint8Array, signal?: AbortSignal }
+export interface DocumentApi {
+  pick: (options?: { filters?: { name: string, extensions: string[] }[] }) => Promise<EditableDocument | null>
+  open: (resource: Resource) => Promise<EditableDocument | null>
+  resume: (document: Pick<EditableDocument, 'id'>) => Promise<EditableDocument>
+  list: () => Promise<EditableDocument[]>
+  read: (document: Pick<EditableDocument, 'id'>, options?: { recovery?: boolean, signal?: AbortSignal }) => Promise<Uint8Array>
+  create: (options: DocumentBytes & { name: string }) => Promise<EditableDocument>
+  save: (document: EditableDocument, options: DocumentBytes) => Promise<EditableDocument>
+  saveAs: (options: DocumentBytes & { name: string }) => Promise<EditableDocument | null>
+  backup: (document: EditableDocument, options: DocumentBytes) => Promise<EditableDocument>
+  status: (document: Pick<EditableDocument, 'id'>) => Promise<{ changed: boolean }>
+  discardRecovery: (document: Pick<EditableDocument, 'id'>) => Promise<void>
+  close: (document: Pick<EditableDocument, 'id'>) => Promise<void>
+  forget: (document: Pick<EditableDocument, 'id'>) => Promise<void>
+  reveal: (document: Pick<EditableDocument, 'id'>) => Promise<void>
+}
+
 export interface ViewContext {
+  readonly documents: DocumentApi
   readonly clipboard: {
     read: () => Promise<{ text?: string, html?: string }>
     write: (data: { text?: string, html?: string }) => Promise<void>
