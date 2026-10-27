@@ -158,12 +158,7 @@ async function copyContent() {
         </template>
         {{ t('desktop.chat.previousBranch') }}
       </NTooltip>
-      <NTooltip placement="bottom">
-        <template #trigger>
-          <span class="whitespace-nowrap">{{ t('desktop.chat.branchPosition', { index: branchNavigator.index, count: branchNavigator.count }) }}</span>
-        </template>
-        {{ t('desktop.chat.branchNavigationHint') }}
-      </NTooltip>
+      <span class="whitespace-nowrap">{{ branchNavigator.index }} / {{ branchNavigator.count }}</span>
       <NTooltip placement="bottom">
         <template #trigger>
           <NButton

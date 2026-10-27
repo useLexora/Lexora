@@ -321,7 +321,6 @@ export default {
   'desktop.chat.cancelFollowup': '取消分支',
   'desktop.chat.cancelFollowupHint': '返回当前分支，保留这份追问草稿。',
   'desktop.chat.branchPosition': '分支 {index} / {count}',
-  'desktop.chat.branchNavigationHint': '切换此处之后的对话，其他分支仍会保留。',
   'desktop.chat.nextBranch': '下一条分支',
   'desktop.chat.previousBranch': '上一条分支',
   'desktop.chat.editingHistoryMessage': '正在编辑历史消息',

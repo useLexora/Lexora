@@ -323,7 +323,6 @@ export default {
   'desktop.chat.cancelFollowup': 'Cancel branch',
   'desktop.chat.cancelFollowupHint': 'Return to the current branch and keep this follow-up draft.',
   'desktop.chat.branchPosition': 'Branch {index} / {count}',
-  'desktop.chat.branchNavigationHint': 'Switch the conversation after this point. Other branches are kept.',
   'desktop.chat.nextBranch': 'Next branch',
   'desktop.chat.previousBranch': 'Previous branch',
   'desktop.chat.editingHistoryMessage': 'Editing a historical message',
