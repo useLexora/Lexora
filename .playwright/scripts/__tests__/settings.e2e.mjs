@@ -525,6 +525,7 @@ test('global model retry settings preserve finite, unlimited and disabled values
 test('MCP quick controls require execution confirmation, read caches offline and preserve credentials and policy', async ({ buddy }) => {
   const instance = await buddy.createInstance('mcp-quick-controls')
   const desktop = await instance.launch()
+  await desktop.page.evaluate(() => window.lexoraDesktop.settings.update({ runtime: { codemode: false } }))
   await useSyntheticCredentialStorage(desktop)
   const { page } = desktop
   const fixtureServer = fileURLToPath(new URL('../../../apps/buddy/service/src/connectors/mcp/__tests__/fixtures/process-contract-server.mjs', import.meta.url))

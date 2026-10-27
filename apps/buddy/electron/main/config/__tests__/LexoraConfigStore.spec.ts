@@ -82,7 +82,7 @@ describe('lexoraConfigStore', () => {
     const { configPath, store } = await createConfigStore('[api]\nbase_url="https://lexora.example"\n[desktop]\nnotify_when_focused=true\nsidebar_collapsed=true\nfuture_setting=true\n[desktop.chat]\nwelcome="none"\nfuture=true\n[desktop.typography]\nfuture=true\n[desktop.task_sidebar]\nfuture=true\n[browser]\nfuture=true\n')
     const defaults = {
       browser: DEFAULT_BROWSER_PREFERENCES,
-      runtime: { modelRetryLimit: 3 },
+      runtime: { codemode: true, modelRetryLimit: 3 },
       desktop: {
         localBackupLimit: 3,
         navigationLayout: 'full',
@@ -183,9 +183,21 @@ describe('lexoraConfigStore', () => {
     for (const modelRetryLimit of [0, 7, 'unlimited'] as const) {
       await store.update({ runtime: { modelRetryLimit } })
       await store.update({ desktop: { language: 'en-US' } })
-      expect((await new LexoraConfigStore({ configPath }).read()).runtime).toEqual({ cacheWarming: 'streaming', codemode: false, modelRetryLimit })
+      expect((await new LexoraConfigStore({ configPath }).read()).runtime).toEqual({ cacheWarming: 'streaming', codemode: true, modelRetryLimit })
     }
     expect(parse(await readFile(configPath, 'utf8'))).toMatchObject({ runtime: { future: true, model_retry_limit: 'unlimited' } })
+  })
+
+  it('defaults codemode on without overwriting an explicit choice across partial updates and restart', async () => {
+    for (const codemode of [undefined, false, true]) {
+      const content = codemode === undefined ? '[runtime]\nfuture=true\n' : `[runtime]\ncodemode=${codemode}\nfuture=true\n`
+      const { store, configPath } = await createConfigStore(content)
+      expect((await store.read()).runtime.codemode).toBe(codemode ?? true)
+      expect(await readFile(configPath, 'utf8')).toBe(content)
+      await store.update({ desktop: { language: 'en-US' } })
+      expect((await new LexoraConfigStore({ configPath }).read()).runtime.codemode).toBe(codemode ?? true)
+      expect(parse(await readFile(configPath, 'utf8'))).toMatchObject({ runtime: { codemode: codemode ?? true, future: true } })
+    }
   })
 
   it('restores active and saved preferences after an apply failure or an expired write', async () => {

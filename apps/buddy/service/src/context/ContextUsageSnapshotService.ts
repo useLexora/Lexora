@@ -16,6 +16,7 @@ import type { ComposerDraftRepository } from '../storage/composerDraftRepository
 import type { ConversationHistoryRepository } from '../storage/conversationHistoryRepository'
 import type { ConversationRepository } from '../storage/conversationRepository'
 import { SessionManager } from '@earendil-works/pi-coding-agent'
+import { DEFAULT_RUNTIME_PREFERENCES } from '../../../shared/runtime/runtimePreferences'
 import { createBuddySessionExtensions } from '../agent/extensions/createBuddySessionExtensions'
 import { createBuddyContextSnapshot } from '../agent/sessions/createBuddySession'
 import { BuddyServiceError } from '../rpc/runtimeRequest'
@@ -156,7 +157,7 @@ export class ContextUsageSnapshotService implements ContextUsageSnapshotReader {
       services: this.#options.sessionExtensionServices,
     })
     try {
-      extensions.setCodemodeEnabled(runtimePreferences?.codemode ?? false)
+      extensions.setCodemodeEnabled(runtimePreferences?.codemode ?? DEFAULT_RUNTIME_PREFERENCES.codemode)
       const identity = {
         contextWindow: selected.model.contextWindow,
         createdAt: new Date().toISOString(),

@@ -15,7 +15,7 @@ export type RuntimePreferences = z.infer<typeof runtimePreferencesSchema>
 
 export const DEFAULT_RUNTIME_PREFERENCES: RuntimePreferences = {
   cacheWarming: 'off',
-  codemode: false,
+  codemode: true,
   modelRetryLimit: DEFAULT_MODEL_RETRY_LIMIT,
 }
 

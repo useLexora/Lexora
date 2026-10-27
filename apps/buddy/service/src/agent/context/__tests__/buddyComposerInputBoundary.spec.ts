@@ -639,7 +639,7 @@ async function createFixture(options: {
   const provider = options.provider ?? 'openai'
   if (provider !== 'openai-codex')
     await modelRuntime.setRuntimeApiKey(provider, 'offline-test-only')
-  const catalogModel = modelRuntime.getModel(provider, provider === 'openai' ? 'gpt-4o-mini' : provider === 'openai-codex' ? 'gpt-5.5' : 'claude-sonnet-4-5')
+  const catalogModel = modelRuntime.getModel(provider, provider === 'openai' ? 'gpt-4o-mini' : provider === 'openai-codex' ? 'gpt-6.1-sol' : 'claude-sonnet-4-5')
   if (!catalogModel)
     throw new Error('Missing installed model fixture')
   const model = { ...catalogModel, pdfInput: true, toolCall: options.toolCall, contextWindow: options.contextWindow ?? catalogModel.contextWindow }

@@ -1,8 +1,7 @@
 diff --git a/dist/runtime/execution.d.ts b/dist/runtime/execution.d.ts
-index 283bcd150dd4f40f1b0f49446e10702d331b933e..429b241b067ef199f50521c21346d49508eed65b 100644
 --- a/dist/runtime/execution.d.ts
 +++ b/dist/runtime/execution.d.ts
-@@ -6,6 +6,7 @@ export interface VmEvents {
+@@ -6,6 +6,7 @@
      message(message: unknown): void;
      /** The VM failed or stopped outside the bridge, for example a worker exit or a remote error. */
      failure(error: CodemodeError): void;
@@ -10,7 +9,7 @@ index 283bcd150dd4f40f1b0f49446e10702d331b933e..429b241b067ef199f50521c21346d495
  }
  /** The host's handle on a running VM. */
  export interface VmChannel {
-@@ -33,6 +34,10 @@ export declare class CodemodeSandboxBase {
+@@ -33,6 +34,10 @@
      private readonly globalsByName;
      private readonly timeoutMs;
      private readonly memoryLimitBytes;
@@ -22,10 +21,9 @@ index 283bcd150dd4f40f1b0f49446e10702d331b933e..429b241b067ef199f50521c21346d495
      private readonly running;
      private closed;
 diff --git a/dist/runtime/execution.js b/dist/runtime/execution.js
-index 2702b1475bebb89bb6e5ec7d7382dac516cbdef9..41ed0368c24760783b2d81dc4a42a53e456f20f9 100644
 --- a/dist/runtime/execution.js
 +++ b/dist/runtime/execution.js
-@@ -130,6 +130,11 @@ class Execution {
+@@ -130,6 +130,11 @@
      output = [];
      calls = [];
      pending = new Map();
@@ -37,7 +35,7 @@ index 2702b1475bebb89bb6e5ec7d7382dac516cbdef9..41ed0368c24760783b2d81dc4a42a53e
      /** Whether the execution has its outcome. */
      finished = false;
      constructor(options) {
-@@ -139,6 +144,9 @@ class Execution {
+@@ -139,6 +144,9 @@
          this.executors = options.executors;
          this.control = options.control;
          this.signal = options.signal;
@@ -47,19 +45,20 @@ index 2702b1475bebb89bb6e5ec7d7382dac516cbdef9..41ed0368c24760783b2d81dc4a42a53e
          if (Number.isFinite(options.timeoutMs)) {
              this.timer = setTimeout(() => {
                  this.finish({ kind: "timeout", message: `Execution timed out after ${options.timeoutMs} ms` });
-@@ -152,8 +160,10 @@ class Execution {
+@@ -152,8 +160,10 @@
                  options.signal.addEventListener("abort", this.onAbort, { once: true });
              }
          }
 -        if (this.finished)
+-            return;
 +        if (this.finished) {
 +            this.launched.resolve();
-             return;
++            return;
 +        }
          const data = {
              code: options.code,
              tools: options.tools.map((tool) => ({
-@@ -163,16 +173,18 @@ class Execution {
+@@ -163,16 +173,18 @@
              })),
              globals: options.globals.map((global) => ({ name: global.name, spread: global.spread === true })),
              memoryLimitBytes: options.memoryLimitBytes,
@@ -80,7 +79,7 @@ index 2702b1475bebb89bb6e5ec7d7382dac516cbdef9..41ed0368c24760783b2d81dc4a42a53e
                  return;
              }
              this.channel = channel;
-@@ -180,7 +192,7 @@ class Execution {
+@@ -180,7 +192,7 @@
                  channel.post(message);
          }, (error) => {
              this.finish({ kind: "sandbox", message: errorMessage(error) });
@@ -89,7 +88,7 @@ index 2702b1475bebb89bb6e5ec7d7382dac516cbdef9..41ed0368c24760783b2d81dc4a42a53e
      }
      /** `CodemodeRun.deliver()`. */
      deliver(seq, now, id, outcome) {
-@@ -222,6 +234,7 @@ class Execution {
+@@ -222,6 +234,7 @@
              now,
              ...(properties === undefined ? {} : { properties }),
          });
@@ -97,7 +96,7 @@ index 2702b1475bebb89bb6e5ec7d7382dac516cbdef9..41ed0368c24760783b2d81dc4a42a53e
      }
      abort(message) {
          this.finish({ kind: "aborted", message });
-@@ -261,12 +274,17 @@ class Execution {
+@@ -261,12 +274,17 @@
                  this.output.push(message.item);
                  break;
              case "call":
@@ -120,7 +119,7 @@ index 2702b1475bebb89bb6e5ec7d7382dac516cbdef9..41ed0368c24760783b2d81dc4a42a53e
                  break;
              case "started":
                  this.control?.onStarted?.(message.fingerprint);
-@@ -277,11 +295,26 @@ class Execution {
+@@ -277,10 +295,25 @@
              case "done":
                  this.handleDone(message);
                  break;
@@ -131,7 +130,7 @@ index 2702b1475bebb89bb6e5ec7d7382dac516cbdef9..41ed0368c24760783b2d81dc4a42a53e
                  this.finish({ kind: "sandbox", message: message.message });
                  break;
          }
-     }
++    }
 +    dispatchCall(message) {
 +        if (this.finished)
 +            return;
@@ -143,11 +142,10 @@ index 2702b1475bebb89bb6e5ec7d7382dac516cbdef9..41ed0368c24760783b2d81dc4a42a53e
 +    drainQueued() {
 +        while (!this.finished && this.pending.size < this.maxPendingToolCalls && this.queued.length > 0)
 +            this.dispatchCall(this.queued.shift());
-+    }
+     }
      handleDone(message) {
          // Decode everything before finish(), which must not throw once it starts.
-         if (!message.ok) {
-@@ -307,7 +340,8 @@ class Execution {
+@@ -307,7 +340,8 @@
          const record = isTool ? { name, status: "cancelled", durationMs: 0 } : undefined;
          if (record)
              this.calls.push(record);
@@ -157,7 +155,7 @@ index 2702b1475bebb89bb6e5ec7d7382dac516cbdef9..41ed0368c24760783b2d81dc4a42a53e
          this.pending.set(id, pending);
          let status;
          let reply;
-@@ -324,6 +358,9 @@ class Execution {
+@@ -324,6 +358,9 @@
              reply = { type: "result", id, ok: false, payload: errorMessage(error) };
              status = "error";
          }
@@ -167,7 +165,7 @@ index 2702b1475bebb89bb6e5ec7d7382dac516cbdef9..41ed0368c24760783b2d81dc4a42a53e
          // Already cancelled by finish(): the record keeps "cancelled" and the
          // VM is gone or going.
          if (!this.pending.delete(id))
-@@ -333,6 +370,7 @@ class Execution {
+@@ -333,6 +370,7 @@
              record.durationMs = performance.now() - pending.startedAt;
          }
          this.post(reply);
@@ -175,7 +173,7 @@ index 2702b1475bebb89bb6e5ec7d7382dac516cbdef9..41ed0368c24760783b2d81dc4a42a53e
      }
      finish(error, value, writes, during) {
          if (this.finished)
-@@ -340,6 +378,9 @@ class Execution {
+@@ -340,6 +378,9 @@
          this.finished = true;
          clearTimeout(this.timer);
          this.signal?.removeEventListener("abort", this.onAbort);
@@ -185,7 +183,7 @@ index 2702b1475bebb89bb6e5ec7d7382dac516cbdef9..41ed0368c24760783b2d81dc4a42a53e
          const now = performance.now();
          for (const pending of this.pending.values()) {
              if (pending.record)
-@@ -347,7 +388,9 @@ class Execution {
+@@ -347,7 +388,9 @@
              pending.controller.abort();
          }
          this.pending.clear();
@@ -195,7 +193,7 @@ index 2702b1475bebb89bb6e5ec7d7382dac516cbdef9..41ed0368c24760783b2d81dc4a42a53e
          const ended = during === undefined ? {} : { during: { seq: during.seq, issued: during.issued } };
          const result = error
              ? { ok: false, error, output: this.output, calls: this.calls, ...ended }
-@@ -383,12 +426,23 @@ export class CodemodeSandboxBase {
+@@ -383,12 +426,23 @@
      globalsByName = new Map();
      timeoutMs;
      memoryLimitBytes;
@@ -219,7 +217,7 @@ index 2702b1475bebb89bb6e5ec7d7382dac516cbdef9..41ed0368c24760783b2d81dc4a42a53e
          this.launch = launch;
          for (const tool of options.tools ?? [])
              this.registerTool(tool);
-@@ -428,6 +482,10 @@ export class CodemodeSandboxBase {
+@@ -428,6 +482,10 @@
              timeoutMs: options.timeoutMs ?? this.timeoutMs,
              signal: options.signal,
              memoryLimitBytes: this.memoryLimitBytes,
@@ -230,7 +228,7 @@ index 2702b1475bebb89bb6e5ec7d7382dac516cbdef9..41ed0368c24760783b2d81dc4a42a53e
              store: serializeStore(options.store),
              launch: this.launch,
          });
-@@ -470,6 +528,10 @@ export class CodemodeSandboxBase {
+@@ -470,6 +528,10 @@
              timeoutMs: options.timeoutMs ?? Number.POSITIVE_INFINITY,
              signal: options.signal,
              memoryLimitBytes: this.memoryLimitBytes,
@@ -242,10 +240,9 @@ index 2702b1475bebb89bb6e5ec7d7382dac516cbdef9..41ed0368c24760783b2d81dc4a42a53e
              deterministic: { startedAt: options.startedAt, seed: options.seed },
              control: { onStarted: options.onStarted, onCall: options.onCall, onIdle: options.onIdle },
 diff --git a/dist/runtime/host.js b/dist/runtime/host.js
-index 1d9b018764576d469ee4b562afe45a709bd946a5..9eacbfb493b370e745e32806fb772add61051c9a 100644
 --- a/dist/runtime/host.js
 +++ b/dist/runtime/host.js
-@@ -22,6 +22,8 @@ function workerLauncher(options) {
+@@ -22,6 +22,8 @@
          catch (error) {
              throw new Error(`Failed to load QuickJS: ${errorMessage(error)}`);
          }
@@ -255,10 +252,9 @@ index 1d9b018764576d469ee4b562afe45a709bd946a5..9eacbfb493b370e745e32806fb772add
          const workerData = { ...data, wasm: module, interrupt };
          const releaseWorker = options.acquireWorker?.();
 diff --git a/dist/runtime/inline.js b/dist/runtime/inline.js
-index abc68348fd56063a8366276b772dd323b996c4ea..d009e7fd19e2e7e5908e218053557bdf79d46390 100644
 --- a/dist/runtime/inline.js
 +++ b/dist/runtime/inline.js
-@@ -30,7 +30,7 @@ export function inlineLauncher(wasm, interruptBudget = DEFAULT_INTERRUPT_BUDGET)
+@@ -30,7 +30,7 @@
                  return true;
              },
              post: (message) => {
@@ -268,10 +264,9 @@ index abc68348fd56063a8366276b772dd323b996c4ea..d009e7fd19e2e7e5908e218053557bdf
                  if (terminal && settled)
                      return;
 diff --git a/dist/runtime/protocol.d.ts b/dist/runtime/protocol.d.ts
-index beb194ea11ae9b51167dab05224df674b275e755..3b729e1d342c490583e4d7be4b8fd047c8b1a6fa 100644
 --- a/dist/runtime/protocol.d.ts
 +++ b/dist/runtime/protocol.d.ts
-@@ -22,6 +22,7 @@ export interface VmStartData {
+@@ -22,6 +22,7 @@
          spread: boolean;
      }[];
      memoryLimitBytes: number | undefined;
@@ -279,7 +274,7 @@ index beb194ea11ae9b51167dab05224df674b275e755..3b729e1d342c490583e4d7be4b8fd047
      /** Snapshot for `load()`: key to JSON text. */
      store: Record<string, string>;
      /**
-@@ -75,6 +76,9 @@ export type WorkerToHostMessage = {
+@@ -75,6 +76,9 @@
   | {
      type: "crash";
      message: string;
@@ -290,10 +285,9 @@ index beb194ea11ae9b51167dab05224df674b275e755..3b729e1d342c490583e4d7be4b8fd047
  /** Deterministic mode, before the script runs: what the VM is, so a replay can refuse a different one. */
   | {
 diff --git a/dist/runtime/protocol.js b/dist/runtime/protocol.js
-index ecaa749cd62ef472fc666d492c58cb448673949c..dd25a963872984426b7a27bb6991fca136537f26 100644
 --- a/dist/runtime/protocol.js
 +++ b/dist/runtime/protocol.js
-@@ -6,6 +6,7 @@ export function isWorkerToHostMessage(value) {
+@@ -6,6 +6,7 @@
          type === "output" ||
          type === "done" ||
          type === "crash" ||
@@ -302,10 +296,9 @@ index ecaa749cd62ef472fc666d492c58cb448673949c..dd25a963872984426b7a27bb6991fca1
          type === "idle");
  }
 diff --git a/dist/runtime/remote.js b/dist/runtime/remote.js
-index f243d2c1ae4e7049dfa8f4fddd775fafd6940d1e..5514293fb91b73cbc229ae890f64fc15252a71f9 100644
 --- a/dist/runtime/remote.js
 +++ b/dist/runtime/remote.js
-@@ -121,7 +121,7 @@ function remoteLauncher(remote, interruptBudget) {
+@@ -121,7 +121,7 @@
                  }
                  // Malformed messages still go to the host, which fails the execution as a broken bridge.
                  events.message(message);
@@ -315,10 +308,9 @@ index f243d2c1ae4e7049dfa8f4fddd775fafd6940d1e..5514293fb91b73cbc229ae890f64fc15
              }
          });
 diff --git a/dist/runtime/vm.js b/dist/runtime/vm.js
-index 929527b976f8dc2b344b595f0dd87ac4af1874e9..28e3d66f33aeda47ab5c65f57fa913f7a5177711 100644
 --- a/dist/runtime/vm.js
 +++ b/dist/runtime/vm.js
-@@ -120,7 +120,33 @@ function crashMessage(error) {
+@@ -120,7 +120,33 @@
      return { type: "crash", message: error instanceof Error ? `${error.name}: ${error.message}` : String(error) };
  }
  export async function startVm(options) {
@@ -353,7 +345,7 @@ index 929527b976f8dc2b344b595f0dd87ac4af1874e9..28e3d66f33aeda47ab5c65f57fa913f7
      const maxStackSize = options.maxStackSize ?? MAX_STACK_SIZE;
      const deterministic = data.deterministic;
      const clock = deterministic && {
-@@ -135,7 +161,7 @@ export async function startVm(options) {
+@@ -135,7 +161,7 @@
          // Without a guard, deep recursion overflows the wasm stack and traps instead of throwing a
          // catchable RangeError.
          maxStackSize,
@@ -362,7 +354,7 @@ index 929527b976f8dc2b344b595f0dd87ac4af1874e9..28e3d66f33aeda47ab5c65f57fa913f7
          wasi: clock ? deterministicWasi(clock) : discardOutput,
          ...(clock ? { timezoneOffset: 0, intrinsics: Intrinsics.ALL & ~Intrinsics.WEAK_REF } : {}),
      });
-@@ -149,15 +175,15 @@ export async function startVm(options) {
+@@ -149,15 +175,15 @@
      /** The result being processed, 0 during the script's first run; reported with `done`. */
      let current = 0;
      const early = new Map();
@@ -381,7 +373,7 @@ index 929527b976f8dc2b344b595f0dd87ac4af1874e9..28e3d66f33aeda47ab5c65f57fa913f7
                  return;
              try {
                  if (!clock) {
-@@ -204,11 +230,12 @@ export async function startVm(options) {
+@@ -204,11 +230,12 @@
              // A job only fails for uncatchable errors, such as an interrupt.
              if (exports.qjs_execute_pending_job() < 0)
                  throw new Error("Promise job failed");
@@ -395,7 +387,7 @@ index 929527b976f8dc2b344b595f0dd87ac4af1874e9..28e3d66f33aeda47ab5c65f57fa913f7
      try {
          // Called from the prelude with primitives only.
          const bridge = vm.newFunction("bridge", (kind, a, b, c) => {
-@@ -264,7 +291,7 @@ export async function startVm(options) {
+@@ -264,7 +291,7 @@
              const budget = options.interruptBudget ?? "none";
              post({
                  type: "started",
@@ -404,7 +396,7 @@ index 929527b976f8dc2b344b595f0dd87ac4af1874e9..28e3d66f33aeda47ab5c65f57fa913f7
              });
          }
          // The prefix shares the first line with the script so reported line numbers
-@@ -288,6 +315,11 @@ export async function startVm(options) {
+@@ -288,6 +315,11 @@
      catch (error) {
          post(crashMessage(error));
      }
@@ -418,10 +410,9 @@ index 929527b976f8dc2b344b595f0dd87ac4af1874e9..28e3d66f33aeda47ab5c65f57fa913f7
  //# sourceMappingURL=vm.js.map
 \ No newline at end of file
 diff --git a/dist/types.d.ts b/dist/types.d.ts
-index 76b5c5895fc63180193bcf7340b353a055554d82..fe98c66d49078c4d84c2d2decf0510472acf5adf 100644
 --- a/dist/types.d.ts
 +++ b/dist/types.d.ts
-@@ -105,6 +105,12 @@ export type CodemodeResult = {
+@@ -105,6 +105,12 @@
  };
  /** Options every sandbox accepts, wherever its VM runs. */
  export interface CodemodeSandboxBaseOptions {

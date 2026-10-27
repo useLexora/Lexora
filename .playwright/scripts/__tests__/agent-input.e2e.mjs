@@ -126,7 +126,7 @@ for (const dimensions of [[2, 1], [2400, 1200]]) {
   })
 }
 
-test('codemode opt-in executes native sandbox tools and stays disabled after opting out and restarting', async ({ buddy }) => {
+test('codemode defaults on, executes native sandbox tools and stays disabled after opting out and restarting', async ({ buddy }) => {
   const requests = []
   const server = createServer(async (request, response) => {
     if (request.method !== 'POST' || request.url !== '/v1/chat/completions') {
@@ -183,8 +183,7 @@ test('codemode opt-in executes native sandbox tools and stays disabled after opt
       await expect.poll(() => completedRuns(instance.home)).toBe(count)
     }
     await send('Verify the default tools.', 1)
-    expect(requests.at(-1).tools.some(tool => tool.function?.name === 'codemode')).toBe(false)
-    await desktop.page.evaluate(() => window.lexoraDesktop.settings.update({ runtime: { codemode: true } }))
+    expect(requests.at(-1).tools.some(tool => tool.function?.name === 'codemode')).toBe(true)
     await send('Run the script and inspect its file.', 2)
     const scriptResult = requests.at(-1).messages.findLast(message => message.role === 'tool' && message.content.includes('Script completed'))
     expect(scriptResult?.content).toContain('codemode verified')

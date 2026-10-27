@@ -45,6 +45,7 @@ describe('codemode runtime preference', () => {
 
   it('cannot be enabled through discovery or expose host globals', async () => {
     const fixture = await createFixture()
+    fixture.apply(false)
     await fixture.turn({ name: 'lexora_tool_search', arguments: { toolNames: ['codemode'] } })
     expect(fixture.requests.at(-1)?.names).not.toContain('codemode')
     expect(fixture.lastResult()).toContain('"notFound":["codemode"]')

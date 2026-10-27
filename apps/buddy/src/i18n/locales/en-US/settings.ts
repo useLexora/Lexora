@@ -40,7 +40,7 @@ export default {
   'desktop.settings.runtime.retryCountUnit': 'retries',
   'desktop.settings.runtime.toolExecution': 'Tool execution',
   'desktop.settings.runtime.codemode': 'Codemode tool orchestration',
-  'desktop.settings.runtime.codemodeDescription': 'When enabled, the model calls ordinary tools through code to batch queries and filter results. Off by default; changes apply to the next run. All calls still respect task permissions.',
+  'desktop.settings.runtime.codemodeDescription': 'The model calls ordinary tools through code to batch queries and filter results. On by default; changes apply to the next run. All calls still respect task permissions.',
   'desktop.settings.runtime.taskPermissions': 'Task permissions',
   'desktop.settings.runtime.defaultPermissionMode': 'New task permissions',
   'desktop.settings.runtime.defaultPermissionModeDescription': 'New tasks start with the selected permissions. Existing tasks, including unsent drafts, keep their current settings.',

@@ -1,8 +1,7 @@
 diff --git a/dist/config.js b/dist/config.js
-index 62eb303e5ca396e4107081868790506673344faa..7b5a3584fe4a6837285b990dc724c347fc267f3e 100644
 --- a/dist/config.js
 +++ b/dist/config.js
-@@ -9,8 +9,8 @@ import { stripBom } from "./utils/text.js";
+@@ -9,8 +9,8 @@
  // =============================================================================
  // Package Detection
  // =============================================================================
@@ -13,7 +12,7 @@ index 62eb303e5ca396e4107081868790506673344faa..7b5a3584fe4a6837285b990dc724c347
  /**
   * Detect if we're running as a Bun compiled binary.
   * Bun binaries have import.meta.url containing "$bunfs", "~BUN", or "%7EBUN" (Bun's virtual filesystem path)
-@@ -45,7 +45,7 @@ export function detectInstallMethod() {
+@@ -45,7 +45,7 @@
      if (isBunBinary) {
          return "bun-binary";
      }
@@ -22,7 +21,7 @@ index 62eb303e5ca396e4107081868790506673344faa..7b5a3584fe4a6837285b990dc724c347
      if (resolvedPath.includes("/pnpm/") || resolvedPath.includes("/.pnpm/")) {
          return "pnpm";
      }
-@@ -322,7 +322,7 @@ export function getPackageDir() {
+@@ -322,7 +322,7 @@
          // Bun binary: process.execPath points to the compiled executable
          return dirname(process.execPath);
      }
@@ -32,10 +31,9 @@ index 62eb303e5ca396e4107081868790506673344faa..7b5a3584fe4a6837285b990dc724c347
  /**
   * Get path to built-in themes directory (shipped with package)
 diff --git a/dist/core/agent-session.js b/dist/core/agent-session.js
-index 11ab140cd4a227d03bf247de3b0d6a7197e892e0..76028ad21f2403f19edceb8fcd47a483606fe19a 100644
 --- a/dist/core/agent-session.js
 +++ b/dist/core/agent-session.js
-@@ -320,11 +320,11 @@ export class AgentSession {
+@@ -319,11 +319,11 @@
       * happens here instead of in wrappers.
       */
      _installAgentToolHooks() {
@@ -49,7 +47,7 @@ index 11ab140cd4a227d03bf247de3b0d6a7197e892e0..76028ad21f2403f19edceb8fcd47a483
          const runner = this._extensionRunner;
          if (!runner.hasHandlers("tool_call")) {
              return undefined;
-@@ -335,6 +335,7 @@ export class AgentSession {
+@@ -334,6 +334,7 @@
                  toolName: toolCall.name,
                  toolCallId: toolCall.id,
                  ...(parentToolCallId ? { parentToolCallId } : {}),
@@ -57,7 +55,7 @@ index 11ab140cd4a227d03bf247de3b0d6a7197e892e0..76028ad21f2403f19edceb8fcd47a483
                  input: args,
              });
          }
-@@ -402,7 +403,7 @@ export class AgentSession {
+@@ -401,7 +402,7 @@
                      tools: this._getCallableTools(),
                      assistantMessage,
                      context: { messages: this.agent.state.messages, tools: this.agent.state.tools },
@@ -66,7 +64,7 @@ index 11ab140cd4a227d03bf247de3b0d6a7197e892e0..76028ad21f2403f19edceb8fcd47a483
                      afterToolCall: (context) => this._afterToolCall(context, parentId),
                      signal,
                      onUpdate,
-@@ -3009,6 +3010,8 @@ export class AgentSession {
+@@ -3038,6 +3039,8 @@
       * Context overflow errors are NOT retryable (handled by compaction instead).
       */
      _isRetryableError(message) {
@@ -76,10 +74,9 @@ index 11ab140cd4a227d03bf247de3b0d6a7197e892e0..76028ad21f2403f19edceb8fcd47a483
          if (isContextOverflow(message, (this._modelForMessage(message) ?? this.model)?.contextWindow ?? 0))
              return false;
 diff --git a/dist/core/extensions/types.d.ts b/dist/core/extensions/types.d.ts
-index 43c7ad43b394c7a9266dbcac0bee1e675b721713..d5299e8d3f61fd246fb0856534c45696a11a8b09 100644
 --- a/dist/core/extensions/types.d.ts
 +++ b/dist/core/extensions/types.d.ts
-@@ -930,6 +930,7 @@ export type InputEventResult = {
+@@ -930,6 +930,7 @@
  };
  interface ToolCallEventBase {
      type: "tool_call";
@@ -89,7 +86,6 @@ index 43c7ad43b394c7a9266dbcac0bee1e675b721713..d5299e8d3f61fd246fb0856534c45696
       * `<parent id>/<n>`; such ids never appear as tool calls or tool results in the transcript, only
 diff --git a/dist/core/tools/find-execution.js b/dist/core/tools/find-execution.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..dd03780decc4b91299340ba7c6b6742421290949
 --- /dev/null
 +++ b/dist/core/tools/find-execution.js
 @@ -0,0 +1,67 @@
@@ -161,7 +157,6 @@ index 0000000000000000000000000000000000000000..dd03780decc4b91299340ba7c6b67424
 +    };
 +}
 diff --git a/dist/core/tools/find.js b/dist/core/tools/find.js
-index a3bab76c952c2a03d6534aba80a72f7743a52b94..de47f3e210a12db7a487525a2de2380c959a2e00 100644
 --- a/dist/core/tools/find.js
 +++ b/dist/core/tools/find.js
 @@ -1,12 +1,9 @@
@@ -179,7 +174,7 @@ index a3bab76c952c2a03d6534aba80a72f7743a52b94..de47f3e210a12db7a487525a2de2380c
  /** Relativize a find result against the search root and normalize it to posix separators. */
  export function relativizeFindResultPath(resultPath, searchPath, pathModule = path) {
      const hadTrailingSeparator = resultPath.endsWith(pathModule.sep) || (pathModule.sep === "\\" && resultPath.endsWith("/"));
-@@ -26,11 +23,6 @@ export const findToolSystemPromptContribution = {
+@@ -26,11 +23,6 @@
      guidelines: [],
  };
  const DEFAULT_LIMIT = 1000;
@@ -191,7 +186,7 @@ index a3bab76c952c2a03d6534aba80a72f7743a52b94..de47f3e210a12db7a487525a2de2380c
  export function createFindToolDefinition(cwd, options) {
      const customOps = options?.operations;
      return {
-@@ -39,208 +31,8 @@ export function createFindToolDefinition(cwd, options) {
+@@ -39,208 +31,8 @@
          description: `Search for files by glob pattern. Returns matching file paths relative to the search directory. Respects .gitignore. Output is truncated to ${DEFAULT_LIMIT} results or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,
          promptSnippet: findToolSystemPromptContribution.snippet,
          parameters: findSchema,
@@ -404,7 +399,6 @@ index a3bab76c952c2a03d6534aba80a72f7743a52b94..de47f3e210a12db7a487525a2de2380c
      };
 diff --git a/dist/core/tools/grep-execution.js b/dist/core/tools/grep-execution.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..b72872c74e6c615946bc1a0ae0f791c85d160475
 --- /dev/null
 +++ b/dist/core/tools/grep-execution.js
 @@ -0,0 +1,82 @@
@@ -491,7 +485,6 @@ index 0000000000000000000000000000000000000000..b72872c74e6c615946bc1a0ae0f791c8
 +    };
 +}
 diff --git a/dist/core/tools/grep.js b/dist/core/tools/grep.js
-index d427d071582ead6e0c876121a8b67ad9fe6c45f7..d56428341dda4d1c833bee46de4e4755d5c2a5b9 100644
 --- a/dist/core/tools/grep.js
 +++ b/dist/core/tools/grep.js
 @@ -1,13 +1,9 @@
@@ -510,7 +503,7 @@ index d427d071582ead6e0c876121a8b67ad9fe6c45f7..d56428341dda4d1c833bee46de4e4755
  const grepSchema = Type.Object({
      pattern: Type.String({ description: "Search pattern (regex or literal string)" }),
      path: Type.Optional(Type.String({ description: "Directory or file to search (default: current directory)" })),
-@@ -34,214 +30,8 @@ export function createGrepToolDefinition(cwd, options) {
+@@ -34,216 +30,8 @@
          description: `Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore. Output is truncated to ${DEFAULT_LIMIT} matches or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Long lines are truncated to ${GREP_MAX_LINE_LENGTH} chars.`,
          promptSnippet: grepToolSystemPromptContribution.snippet,
          parameters: grepSchema,
@@ -570,7 +563,9 @@ index d427d071582ead6e0c876121a8b67ad9fe6c45f7..d56428341dda4d1c833bee46de4e4755
 -                            }
 -                            return lines;
 -                        };
--                        const args = ["--json", "--line-number", "--color=never", "--hidden"];
+-                        // --no-config: the tool contract (literal, glob, limit, ...) must not depend on
+-                        // ambient user config like RIPGREP_CONFIG_PATH. Users can customize via bash or extensions.
+-                        const args = ["--no-config", "--json", "--line-number", "--color=never", "--hidden"];
 -                        if (ignoreCase)
 -                            args.push("--ignore-case");
 -                        if (literal)
@@ -729,7 +724,6 @@ index d427d071582ead6e0c876121a8b67ad9fe6c45f7..d56428341dda4d1c833bee46de4e4755
      };
 diff --git a/dist/core/tools/search-process.js b/dist/core/tools/search-process.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..a8979704a0a1b9bf1052f3dd4396afb851743d3e
 --- /dev/null
 +++ b/dist/core/tools/search-process.js
 @@ -0,0 +1,74 @@
@@ -808,56 +802,9 @@ index 0000000000000000000000000000000000000000..a8979704a0a1b9bf1052f3dd4396afb8
 +    return Math.min(Math.max(1, value), maximum);
 +}
 diff --git a/dist/extensions/codemode/execute.js b/dist/extensions/codemode/execute.js
-index a193424aeda57be3286e66db3bdd7fc6be86a2a5..e6abb92515caa763fb66091011b27e02591a0187 100644
 --- a/dist/extensions/codemode/execute.js
 +++ b/dist/extensions/codemode/execute.js
-@@ -20,8 +20,44 @@ const MAX_CONCURRENT_MODEL_CALLS = 4;
-  */
- const CODEMODE_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024;
- // Shared across calls and sessions. Allow one replacement while a cancelled worker is still exiting.
--const MAX_CONCURRENT_CODEMODE_WORKERS = 2;
-+const DEFAULT_MAX_CODEMODE_WORKERS = 2;
-+function maxCodemodeWorkers() {
-+    const value = Number(process.env.PI_CODEMODE_MAX_WORKERS);
-+    return Number.isInteger(value) && value > 0 ? value : DEFAULT_MAX_CODEMODE_WORKERS;
-+}
-+const CODEMODE_WORKER_WAIT_MS = 60_000;
- let activeCodemodeWorkers = 0;
-+const codemodeWorkerWaiters = [];
-+function reserveCodemodeWorker(signal, timeoutMs) {
-+    if (signal?.aborted)
-+        return Promise.resolve("aborted");
-+    return new Promise((resolve) => {
-+        const settle = (outcome) => {
-+            clearTimeout(timer);
-+            signal?.removeEventListener("abort", onAbort);
-+            const index = codemodeWorkerWaiters.indexOf(grant);
-+            if (index >= 0)
-+                codemodeWorkerWaiters.splice(index, 1);
-+            resolve(outcome);
-+        };
-+        const grant = () => settle("reserved");
-+        const onAbort = () => settle("aborted");
-+        const timer = setTimeout(() => settle("timeout"), timeoutMs);
-+        codemodeWorkerWaiters.push(grant);
-+        signal?.addEventListener("abort", onAbort, { once: true });
-+        admitCodemodeWorkers();
-+    });
-+}
-+function admitCodemodeWorkers() {
-+    while (codemodeWorkerWaiters.length > 0 && activeCodemodeWorkers < maxCodemodeWorkers()) {
-+        activeCodemodeWorkers++;
-+        codemodeWorkerWaiters.shift()?.();
-+    }
-+}
-+function releaseCodemodeWorker() {
-+    activeCodemodeWorkers--;
-+    admitCodemodeWorkers();
-+}
- const MODEL_TYPES = new Set(["chat", "image", "classifier"]);
- function truncateText(text, maxChars) {
-     return text.length > maxChars ? `${text.slice(0, maxChars - 3)}...` : text;
-@@ -384,6 +420,13 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
+@@ -431,6 +431,13 @@
      const startedAt = performance.now();
      const { code, options: sourceOptions } = parseCodemodeSource(input.code);
      const calls = [];
@@ -871,7 +818,7 @@ index a193424aeda57be3286e66db3bdd7fc6be86a2a5..e6abb92515caa763fb66091011b27e02
      // Usage of the script's `models.*` calls. Nested tool calls report theirs through the session.
      let modelUsage;
      // Images returned by `models.generateImages()`, to notice a script that never shows them.
-@@ -395,7 +438,7 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
+@@ -442,7 +449,7 @@
          modelUsage = modelUsage ? combineUsage(modelUsage, usage) : usage;
      };
      const snapshot = () => ({ calls: calls.map((call) => ({ ...call })) });
@@ -880,7 +827,7 @@ index a193424aeda57be3286e66db3bdd7fc6be86a2a5..e6abb92515caa763fb66091011b27e02
      // Show the script as running before its first nested call, so the row's timer starts.
      publish();
      const callable = ctx ? getCodemodeCallableTools(ctx.tools) : [];
-@@ -418,49 +461,115 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
+@@ -465,18 +472,29 @@
              // Only tools from ctx.tools are callable, so ctx is set here.
              if (!ctx)
                  throw new Error("Tool calls need a session");
@@ -918,56 +865,26 @@ index a193424aeda57be3286e66db3bdd7fc6be86a2a5..e6abb92515caa763fb66091011b27e02
 -            return toScriptValue(tool, outcome);
          },
      }));
--    const sandbox = new CodemodeSandbox({
--        tools: sandboxTools,
--        globals: [
--            ...createDiscoveryGlobals(callable, samples, options),
--            ...(options.models && ctx
--                ? createModelGlobals(ctx.modelRegistry, toolCallId, calls, publish, addModelUsage, addGeneratedImages)
--                : []),
--        ],
--        timeoutMs: sourceOptions.timeoutMs ?? Number.POSITIVE_INFINITY,
--        memoryLimitBytes: CODEMODE_MEMORY_LIMIT_BYTES,
--        wasm: loadQuickJSWasm(getQuickJSWasmPath()),
--        workerUrl: getCodemodeWorkerSpecifier(),
--        acquireWorker: () => {
--            if (activeCodemodeWorkers >= MAX_CONCURRENT_CODEMODE_WORKERS) {
--                throw new Error(`Codemode worker limit reached (${MAX_CONCURRENT_CODEMODE_WORKERS} workers are still running or shutting down). Retry after they exit.`);
--            }
--            activeCodemodeWorkers++;
--            return () => {
--                activeCodemodeWorkers--;
--            };
--        },
--    });
-+    const deadline = sourceOptions.timeoutMs ?? Number.POSITIVE_INFINITY;
-+    const waitStartedAt = performance.now();
-+    const admission = await reserveCodemodeWorker(signal, Math.min(deadline, CODEMODE_WORKER_WAIT_MS));
-+    const waitedMs = performance.now() - waitStartedAt;
-+    if (admission !== "reserved") {
-+        const waited = ((performance.now() - startedAt) / 1000).toFixed(1);
-+        const reason = signal?.reason;
-+        const error = admission === "aborted"
-+            ? `Script aborted: ${reason instanceof Error ? reason.message : "Execution aborted"}`
-+            : deadline <= CODEMODE_WORKER_WAIT_MS
-+                ? `Script timed out: Execution timed out after ${deadline} ms while waiting for a free codemode worker`
-+                : `No codemode worker became free within ${CODEMODE_WORKER_WAIT_MS / 1000} seconds. All ${maxCodemodeWorkers()} workers, shared by every session in this process, are held by other scripts. Retry after they finish.`;
+     // The wait for a worker counts toward the script's deadline.
+@@ -492,12 +510,13 @@
+             : deadline <= CODEMODE_WORKER_WAIT_MS
+                 ? `Script timed out: Execution timed out after ${deadline} ms while waiting for a free codemode worker`
+                 : `No codemode worker became free within ${CODEMODE_WORKER_WAIT_MS / 1000} seconds. All ${maxCodemodeWorkers()} workers, shared by every session in this process, are held by other scripts. Retry after they finish.`;
 +        publishing = false;
-+        return {
-+            content: [
-+                { type: "text", text: `Script failed\nWall time ${waited} seconds\nOutput:\n` },
-+                { type: "text", text: `Script error:\n${error}\n\nThe script did not start.` },
-+            ],
+         return {
+             content: [
+                 { type: "text", text: `Script failed\nWall time ${waited} seconds\nOutput:\n` },
+                 { type: "text", text: `Script error:\n${error}\n\nThe script did not start.` },
+             ],
+-            details: snapshot(),
 +            details: { ...snapshot(), cleanup: { ...cleanupState } },
-+            isError: true,
-+        };
-+    }
-+    let reserved = true;
-+    let sandbox;
-     let result;
+             isError: true,
+         };
+     }
+@@ -509,6 +528,17 @@
      try {
-+        sandbox = new CodemodeSandbox({
-+            tools: sandboxTools,
+         sandbox = new CodemodeSandbox({
+             tools: sandboxTools,
 +            computeTimeoutMs: options.runtime?.computeTimeoutMs,
 +            maxPendingToolCalls: options.runtime?.maxPendingToolCalls,
 +            maxQueuedToolCalls: options.runtime?.maxQueuedToolCalls,
@@ -979,34 +896,13 @@ index a193424aeda57be3286e66db3bdd7fc6be86a2a5..e6abb92515caa763fb66091011b27e02
 +                cleanupState.worker = "pending";
 +                workerExit = exited.then(() => { cleanupState.worker = "exited"; });
 +            },
-+            globals: [
-+                ...createDiscoveryGlobals(callable, samples, options),
-+                ...(options.models && ctx
-+                    ? createModelGlobals(ctx.modelRegistry, toolCallId, calls, publish, addModelUsage, addGeneratedImages)
-+                    : []),
-+            ],
-+            timeoutMs: Math.max(1, Math.round(deadline - waitedMs)),
-+            memoryLimitBytes: CODEMODE_MEMORY_LIMIT_BYTES,
-+            wasm: loadQuickJSWasm(getQuickJSWasmPath()),
-+            workerUrl: getCodemodeWorkerSpecifier(),
-+            acquireWorker: () => {
-+                if (!reserved)
-+                    throw new Error("The script already settled");
-+                reserved = false;
-+                return releaseCodemodeWorker;
-+            },
-+        });
-         const store = ctx ? readCodemodeStore(ctx.sessionManager.getBranch()) : {};
-         result = await sandbox.execute(code, { signal, store });
+             globals: [
+                 ...createDiscoveryGlobals(callable, samples, options),
+                 ...(options.models && ctx
+@@ -537,6 +567,25 @@
+             releaseCodemodeWorker();
+         }
      }
-     finally {
--        await sandbox.close();
-+        await sandbox?.close();
-+        if (reserved) {
-+            reserved = false;
-+            releaseCodemodeWorker();
-+        }
-+    }
 +    const cleanup = toolCleanup.then(() => workerExit);
 +    let cleanupTimer;
 +    try {
@@ -1025,10 +921,11 @@ index a193424aeda57be3286e66db3bdd7fc6be86a2a5..e6abb92515caa763fb66091011b27e02
 +            output: result.output,
 +            calls: result.calls,
 +        };
-     }
++    }
      // Calls still marked running were cut off by the script ending, a timeout, or an abort.
      for (const call of calls) {
-@@ -478,8 +587,13 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
+         if (call.status === "running")
+@@ -553,8 +602,13 @@
              scriptOutput.push({ type: "text", text: valueText(result.value) });
      }
      const items = formatOutput(scriptOutput);
@@ -1043,7 +940,7 @@ index a193424aeda57be3286e66db3bdd7fc6be86a2a5..e6abb92515caa763fb66091011b27e02
      if (generatedImages > 0 && !items.some((item) => item.type === "image")) {
          items.push({
              type: "text",
-@@ -492,7 +606,7 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
+@@ -567,7 +621,7 @@
      const output = joinAdjacentText(await saveImages(truncated.items));
      const wallTime = ((performance.now() - startedAt) / 1000).toFixed(1);
      const header = `${result.ok ? "Script completed" : "Script failed"}\nWall time ${wallTime} seconds\nOutput:\n`;
@@ -1053,7 +950,6 @@ index a193424aeda57be3286e66db3bdd7fc6be86a2a5..e6abb92515caa763fb66091011b27e02
          details.fullOutputPath = truncated.fullOutputPath;
      return {
 diff --git a/dist/extensions/codemode/index.d.ts b/dist/extensions/codemode/index.d.ts
-index 7de9c24e9d7ac437265eeb911ca9c841b36dca9f..2dc7d99e01d13b33e83159270db3bc34ef95f1f2 100644
 --- a/dist/extensions/codemode/index.d.ts
 +++ b/dist/extensions/codemode/index.d.ts
 @@ -8,6 +8,7 @@
@@ -1065,10 +961,9 @@ index 7de9c24e9d7ac437265eeb911ca9c841b36dca9f..2dc7d99e01d13b33e83159270db3bc34
      mode?: CodemodeMode;
      /** Overrides the `codemode.inlineBudget` setting. */
 diff --git a/dist/extensions/codemode/index.js b/dist/extensions/codemode/index.js
-index 5c7cf3ca70024249b0bac77db4ad03687e28564a..392b918c5fdd6cb89ec21478eb1dc5f9e0359a7d 100644
 --- a/dist/extensions/codemode/index.js
 +++ b/dist/extensions/codemode/index.js
-@@ -20,6 +20,7 @@ export function createCodemodeExtension(options = {}) {
+@@ -20,6 +20,7 @@
              ...createCodemodeToolDefinition({
                  appendEntry: (customType, data) => pi.appendEntry(customType, data),
                  models: options.models ?? true,
@@ -1077,10 +972,9 @@ index 5c7cf3ca70024249b0bac77db4ad03687e28564a..392b918c5fdd6cb89ec21478eb1dc5f9
                  getToolGuidelines: () => new Map(pi.getAllTools().map((tool) => [tool.name, tool.promptGuidelines ?? []])),
                  getMode: () => options.mode ?? readMode(pi),
 diff --git a/dist/extensions/codemode/tool.d.ts b/dist/extensions/codemode/tool.d.ts
-index 342278ad8d4bd590a9886c3171b968e6fd242628..7b871bf2e6825c91d6c3f966d939af1e0ea97d28 100644
 --- a/dist/extensions/codemode/tool.d.ts
 +++ b/dist/extensions/codemode/tool.d.ts
-@@ -35,7 +35,17 @@ export interface CodemodeStoreEntryData {
+@@ -35,7 +35,17 @@
  }
  /** The part of the model registry that scripts reach through `models`. */
  export type CodemodeModelRuntime = Pick<ModelRegistry, "getModelsOfType" | "getAvailableOfType" | "getModelOfType" | "classify" | "generateImages">;
@@ -1098,7 +992,7 @@ index 342278ad8d4bd590a9886c3171b968e6fd242628..7b871bf2e6825c91d6c3f966d939af1e
      /** Namespace of a tool, for `searchTools()` ranking and its `namespace` filter. */
      getToolNamespace?: (toolName: string) => ToolNamespace | undefined;
      /** Prompt guidelines of every tool, by tool name, shown with declarations by `describeTool()` and `ALL_TOOLS`. */
-@@ -75,6 +85,7 @@ export interface CodemodeNestedCall {
+@@ -75,6 +85,7 @@
  }
  export interface CodemodeToolDetails {
      calls: CodemodeNestedCall[];
@@ -1107,10 +1001,9 @@ index 342278ad8d4bd590a9886c3171b968e6fd242628..7b871bf2e6825c91d6c3f966d939af1e
      fullOutputPath?: string;
  }
 diff --git a/dist/index.d.ts b/dist/index.d.ts
-index 3821d9f41564a68e990d233b260427d6a5681f42..b8b0b3cf5d3fbb5e7b2e67ba04644cda5401fa7b 100644
 --- a/dist/index.d.ts
 +++ b/dist/index.d.ts
-@@ -3,7 +3,7 @@ export { CONFIG_DIR_NAME, getAgentDir, getDocsPath, getExamplesPath, getPackageD
+@@ -3,7 +3,7 @@
  export { AgentSession, type AgentSessionConfig, type AgentSessionEvent, type AgentSessionEventListener, type ModelCycleResult, type ParsedSkillBlock, type PromptOptions, parseSkillBlock, type SessionStats, } from "./core/agent-session.ts";
  export { readStoredCredential } from "./core/auth-storage.ts";
  export type { CacheWarmingDecision, CacheWarmingStatus } from "./core/cache-warmer.ts";
@@ -1120,10 +1013,9 @@ index 3821d9f41564a68e990d233b260427d6a5681f42..b8b0b3cf5d3fbb5e7b2e67ba04644cda
  export type { AfterProviderResponseEvent, AgentActivityOutcome, AgentBeforeSettleEvent, AgentBeforeSettleEventResult, AgentEndEvent, AgentSettledEvent, AgentStartEvent, AgentToolResult, AgentToolUpdateCallback, AppKeybinding, AutocompleteProviderFactory, BashToolCallEvent, BeforeAgentStartCustomEvent, BeforeAgentStartEvent, BeforeAgentStartEventResult, BeforeAgentStartUserEvent, BeforeProviderHeadersEvent, BeforeProviderRequestEvent, BeforeProviderRequestEventResult, BoundaryContextPreview, BoundaryResult, BoundaryState, BuildSystemPromptOptions, CacheWarmingDecisionEvent, CacheWarmingDecisionEventResult, CompactionEntryDraft, CompactOptions, ContextEditEntryDraft, ContextEvent, ContextEventResult, ContextUsage, ContextWithSystemEvent, CustomEntryDraft, CustomMessageEntryDraft, CustomToolCallEvent, EditToolCallEvent, EntryRenderer, EntryRenderOptions, ExecOptions, ExecResult, ExecuteToolOptions, Extension, ExtensionActions, ExtensionAPI, ExtensionCommandContext, ExtensionCommandContextActions, ExtensionContext, ExtensionContextActions, ExtensionError, ExtensionEvent, ExtensionFactory, ExtensionFlag, ExtensionHandler, ExtensionRuntime, ExtensionShortcut, ExtensionToolContext, ExtensionUIContext, ExtensionUIDialogOptions, ExtensionVirtualModel, ExtensionWidgetOptions, FindToolCallEvent, GrepToolCallEvent, InlineExtension, InputEvent, InputEventResult, InputSource, KeybindingsManager, LoadExtensionsResult, LsToolCallEvent, MarkdownTransformContext, MarkdownTransformer, McpServersChangeEvent, MessageEndEvent, MessageEndEventResult, MessageRenderer, MessageRenderOptions, MessageStartEvent, MessageUpdateEvent, ModelSelectEvent, ModelSelectSource, NormalizedBuildSystemPromptOptions, PowerShellToolCallEvent, ProjectTrustContext, ProjectTrustEvent, ProjectTrustEventDecision, ProjectTrustEventResult, ProjectTrustHandler, ProviderConfig, ProviderModelConfig, ProviderStreamEvent, ReadToolCallEvent, RegisteredCommand, RegisteredTool, ResolvedCommand, ResourcesDiscoverEvent, ResourcesDiscoverResult, SessionBeforeCompactEvent, SessionBeforeCompactResult, SessionBeforeForkEvent, SessionBeforeForkResult, SessionBeforeSwitchEvent, SessionBeforeSwitchResult, SessionBeforeTreeEvent, SessionBeforeTreeResult, SessionBoundaryDraft, SessionCompactEvent, SessionCompactFailedEvent, SessionInfoChangedEvent, SessionShutdownEvent, SessionStartEvent, SessionTreeEvent, SlashCommandInfo, SlashCommandSource, SourceInfo, TerminalInputHandler, ThinkingLevelSelectEvent, ToolAnnotations, ToolCallEvent, ToolCallEventResult, ToolDefinition, ToolExecutionEndEvent, ToolExecutionMode, ToolExecutionStartEvent, ToolExecutionUpdateEvent, ToolExposure, ToolInfo, ToolLoadout, ToolLoadoutChanges, ToolNamespace, ToolRendererResolver, ToolRenderers, ToolRenderResultOptions, ToolResultEvent, ToolResultEventResult, TurnEndEvent, TurnEndEventResult, TurnStartEvent, UIPromptEndEvent, UIPromptKind, UIPromptStartEvent, UserBashEvent, UserBashEventResult, WidgetPlacement, WorkingIndicatorOptions, WriteToolCallEvent, } from "./core/extensions/index.ts";
  export { createExtensionRuntime, defineTool, discoverAndLoadExtensions, ExtensionRunner, isBashToolResult, isEditToolResult, isFindToolResult, isGrepToolResult, isLsToolResult, isPowerShellToolResult, isReadToolResult, isToolCallEventType, isWriteToolResult, wrapRegisteredTool, wrapRegisteredTools, } from "./core/extensions/index.ts";
 diff --git a/dist/index.js b/dist/index.js
-index ab5cfccc3a90939e533b9118122189507a7af326..fcbf18f19fe66d722af3000f39e60a856c429d1c 100644
 --- a/dist/index.js
 +++ b/dist/index.js
-@@ -5,7 +5,7 @@ export { CONFIG_DIR_NAME, getAgentDir, getDocsPath, getExamplesPath, getPackageD
+@@ -5,7 +5,7 @@
  export { AgentSession, parseSkillBlock, } from "./core/agent-session.js";
  export { readStoredCredential } from "./core/auth-storage.js";
  // Compaction
@@ -1133,31 +1025,29 @@ index ab5cfccc3a90939e533b9118122189507a7af326..fcbf18f19fe66d722af3000f39e60a85
  export { createExtensionRuntime, defineTool, discoverAndLoadExtensions, ExtensionRunner, isBashToolResult, isEditToolResult, isFindToolResult, isGrepToolResult, isLsToolResult, isPowerShellToolResult, isReadToolResult, isToolCallEventType, isWriteToolResult, wrapRegisteredTool, wrapRegisteredTools, } from "./core/extensions/index.js";
  export { convertToLlm } from "./core/messages.js";
 diff --git a/dist/utils/shell.js b/dist/utils/shell.js
-index e5c17aa10e917137151962f2d4f6eac7265c02c1..24d1920206852f8e97299d35ed7bb0f4ca9d98fd 100644
 --- a/dist/utils/shell.js
 +++ b/dist/utils/shell.js
 @@ -1,5 +1,5 @@
- import { existsSync } from "node:fs";
--import { delimiter, join } from "node:path";
-+import { delimiter, isAbsolute, join } from "node:path";
+ import { accessSync, constants } from "node:fs";
+-import { delimiter, join, win32 } from "node:path";
++import { delimiter, isAbsolute, join, win32 } from "node:path";
  import { spawn, spawnSync } from "child_process";
  import { getBinDir } from "../config.js";
- /**
-@@ -106,6 +106,12 @@ export function getPowerShellConfig() {
+ // Keep in sync with packages/durable/src/env/node.ts.
+@@ -124,6 +124,12 @@
      if (process.platform !== "win32") {
          throw new Error("The powershell tool is only available on Windows.");
      }
 +    const configuredShell = process.env.PI_POWERSHELL_PATH;
 +    if (configuredShell !== undefined) {
-+        if (!isAbsolute(configuredShell) || !existsSync(configuredShell))
++        if (!isAbsolute(configuredShell) || !shellPathExists(configuredShell))
 +            throw new Error("PI_POWERSHELL_PATH must point to an absolute PowerShell executable");
 +        return { shell: configuredShell, args: [...POWERSHELL_ARGS] };
 +    }
-     const shell = findExecutableOnPath("pwsh.exe") ?? findExecutableOnPath("powershell.exe");
-     if (!shell) {
-         throw new Error("No PowerShell executable found. Install PowerShell or add powershell.exe/pwsh.exe to PATH.");
+     let shell = findExecutableOnPath("pwsh.exe");
+     // Installation directories may be on any drive and need not be on PATH.
+     const programFiles = process.env.ProgramFiles;
 diff --git a/dist/utils/tools-manager.js b/dist/utils/tools-manager.js
-index 39b1f1ae3357925c68127b580340208c5d557ed9..f2747a351c5dfb83b9b25d93dffb78681e1f9022 100644
 --- a/dist/utils/tools-manager.js
 +++ b/dist/utils/tools-manager.js
 @@ -1,7 +1,7 @@
@@ -1168,8 +1058,8 @@ index 39b1f1ae3357925c68127b580340208c5d557ed9..f2747a351c5dfb83b9b25d93dffb7868
 +import { isAbsolute, join } from "path";
  import { Readable } from "stream";
  import { pipeline } from "stream/promises";
- import { APP_NAME, getBinDir } from "../config.js";
-@@ -76,6 +76,16 @@ export function getToolPath(tool) {
+ import { getBinDir, VERSION } from "../config.js";
+@@ -77,6 +77,16 @@
      const config = TOOLS[tool];
      if (!config)
          return null;
@@ -1186,42 +1076,3 @@ index 39b1f1ae3357925c68127b580340208c5d557ed9..f2747a351c5dfb83b9b25d93dffb7868
      // Check our tools directory first
      const localPath = join(TOOLS_DIR, config.binaryName + (platform() === "win32" ? ".exe" : ""));
      if (existsSync(localPath)) {
-diff --git a/docs/codemode.md b/docs/codemode.md
-index 12b41277d5f683fd44257ddaf56d3ab98b0feee4..6dd76cbad1f120fbf66ebbdea580b516cc51b08c 100644
---- a/docs/codemode.md
-+++ b/docs/codemode.md
-@@ -15,2 +15,2 @@
- - `max_output_tokens` (default 10000) limits the output. Longer output keeps its start and end, and the full text is written to a temp file whose path is included in the result. A script fails when its output passes 16777216 characters of text and base64 image data or 100000 `text()`, `image()`, and `console` calls; write large data to a file with a tool instead.
--- `timeout_ms` is a hard deadline for the whole script. It is unset by default. Image generation can take minutes, so do not set a short deadline for scripts that generate images.
-+- `timeout_ms` is a hard deadline for the whole script, including any wait for a free worker. It is unset by default. Image generation can take minutes, so do not set a short deadline for scripts that generate images.
-@@ -226,5 +226,5 @@ for (const block of result.output) {
- - A script's VM has 256 MB of memory. Running out throws `InternalError: out of memory`; filter or aggregate large data instead of accumulating it.
- - On Bun, stopping a script or reaching its deadline ends the call promptly, but a built-in that does not poll QuickJS's interrupt handler can keep computing in its worker until it returns.
--- At most two codemode workers may be alive across all sessions in one pi process. A cancelled worker occupies its slot until it exits. At capacity, new scripts fail immediately without starting another worker; retry after an existing worker exits.
-+- At most two codemode workers may be alive across all sessions in one pi process; `PI_CODEMODE_MAX_WORKERS` changes the limit. A cancelled worker occupies its slot until it exits. At capacity, new scripts wait for a free worker in arrival order. A script that gets no worker within 60 seconds, or before its `timeout_ms`, fails without running.
- - A script that waits on a promise that can never settle (no tool call pending) fails immediately, since there are no timers.
- - Scripts cannot start other `codemode` scripts.
-diff --git a/docs/environment-variables.md b/docs/environment-variables.md
-index 8a1975043c20c1b2295b90d71010d0f36d117379..828d617dd9bb5952cec6134629b730ffa3572362 100644
---- a/docs/environment-variables.md
-+++ b/docs/environment-variables.md
-@@ -84,6 +84,7 @@ These variables are read by Pi itself:
- | `PI_OFFLINE` | Disable automatic network activity, including model catalog refreshes |
- | `PI_SKIP_VERSION_CHECK` | Disable the `pi.dev` latest-version request |
- | `PI_TELEMETRY` | Override install/update telemetry and provider attribution headers: `1`/`true`/`yes` or `0`/`false`/`no` |
-+| `PI_CODEMODE_MAX_WORKERS` | Maximum codemode workers alive at once across all sessions in the process; default `2`. Each worker's script may use up to 256 MB. Raise it when one process runs several sessions, such as in-process subagents. Further scripts wait for a free worker. See [Codemode](codemode.md) |
- | `PI_CACHE_RETENTION` | Set to `long` for extended provider prompt caching where supported |
- | `PI_SHARE_VIEWER_URL` | Override the base URL used by `/share` |
- | `PI_RADIUS_GATEWAY` | Override the Radius gateway origin used by `/bug` uploads |
-diff --git a/examples/extensions/custom-provider-anthropic/package-lock.json b/examples/extensions/custom-provider-anthropic/package-lock.json
-deleted file mode 100644
-index 7a9cc69020074e9b3e2a5e0d3487c8927124fb82..0000000000000000000000000000000000000000
-diff --git a/examples/extensions/gondolin/package-lock.json b/examples/extensions/gondolin/package-lock.json
-deleted file mode 100644
-index 9ad047db2d7513c92cd204c2ccddb17799c05813..0000000000000000000000000000000000000000
-diff --git a/examples/extensions/sandbox/package-lock.json b/examples/extensions/sandbox/package-lock.json
-deleted file mode 100644
-index fbe7ec7c6885abfd3124b31e87267700226438ba..0000000000000000000000000000000000000000
-diff --git a/examples/extensions/with-deps/package-lock.json b/examples/extensions/with-deps/package-lock.json
-deleted file mode 100644
-index ba9a0ce5131a0bf8f6aa6491183740985778ffff..0000000000000000000000000000000000000000
