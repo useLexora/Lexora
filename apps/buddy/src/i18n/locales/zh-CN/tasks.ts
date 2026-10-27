@@ -203,6 +203,7 @@ export default {
   'desktop.context.collapse': '收起资源面板',
   'desktop.context.maximize': '放大',
   'desktop.context.restore': '还原',
+  'desktop.context.moreActions': '更多操作',
   'desktop.context.moveToLeft': '移到左侧',
   'desktop.context.moveToRight': '移到右侧',
   'desktop.context.empty': '当前没有打开的资源',

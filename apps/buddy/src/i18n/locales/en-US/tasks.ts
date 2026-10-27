@@ -205,6 +205,7 @@ export default {
   'desktop.context.collapse': 'Collapse resource panel',
   'desktop.context.maximize': 'Maximize',
   'desktop.context.restore': 'Restore',
+  'desktop.context.moreActions': 'More actions',
   'desktop.context.moveToLeft': 'Move to left',
   'desktop.context.moveToRight': 'Move to right',
   'desktop.context.empty': 'No resources are open',

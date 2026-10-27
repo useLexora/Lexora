@@ -71,7 +71,7 @@ function focusContext() {
       <div class="flex flex-1 min-w-0 min-h-0" data-workbench-context @focusin="focusContext" @pointerdown="focusContext">
         <DesktopTaskResourcePanel :panel="bindings.resources" :context="bindings.resourceContext" :language="language" :visible="contextVisible">
           <template #header-actions>
-            <WorkbenchResourcePanelActions :language="language" :maximized="panels.contextMaximized.value" :on-left="panels.contextOnLeft.value" :can-swap="tasksVisible" @swap="panels.swap" @toggle-maximize="panels.toggleMaximize" />
+            <WorkbenchResourcePanelActions :language="language" :maximized="panels.contextMaximized.value" :on-left="panels.contextOnLeft.value" :can-swap="tasksVisible" @swap="panels.swap" @toggle-maximize="panels.toggleMaximize" @close="bindings.resources.closePanel()" />
           </template>
           <template #view="{ viewId }">
             <WorkbenchSurface :view-id="viewId" :visible="contextVisible" />
