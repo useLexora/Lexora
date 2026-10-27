@@ -49,12 +49,56 @@ const guideGroups = [
   },
 ]
 
-function guideSidebar(locale: 'zh' | 'en') {
+const pluginGroups = [
+  {
+    zh: '开始',
+    en: 'Getting started',
+    items: [
+      { slug: '', zh: '插件开发', en: 'Plugin development' },
+      { slug: 'quick-start', zh: '第一个插件', en: 'Your first plugin' },
+    ],
+  },
+  {
+    zh: '基础',
+    en: 'Fundamentals',
+    items: [
+      { slug: 'concepts', zh: '核心概念', en: 'Core concepts' },
+      { slug: 'permissions', zh: '权限与兼容性', en: 'Permissions and compatibility' },
+    ],
+  },
+  {
+    zh: '能力指南',
+    en: 'Capabilities',
+    items: [
+      { slug: 'views', zh: '视图与交互', en: 'Views and interaction' },
+      { slug: 'files', zh: '文件与文档', en: 'Files and documents' },
+      { slug: 'references', zh: '引用与来源定位', en: 'References and source reveal' },
+      { slug: 'agent', zh: 'Agent 能力', en: 'Agent capabilities' },
+      { slug: 'settings', zh: '设置与状态', en: 'Settings and state' },
+      { slug: 'appearance', zh: '主题与外观', en: 'Themes and appearance' },
+      { slug: 'workers', zh: '依赖与计算', en: 'Dependencies and computation' },
+    ],
+  },
+  {
+    zh: '参考与交付',
+    en: 'Reference and distribution',
+    items: [
+      { slug: 'api', zh: 'API 参考', en: 'API reference' },
+      { slug: 'distribution', zh: '构建与分发', en: 'Build and distribute' },
+    ],
+  },
+]
+
+function docSidebars(locale: 'zh' | 'en') {
   const prefix = locale === 'en' ? '/en' : ''
-  return guideGroups.map(group => ({
+  const groups = (items: typeof guideGroups, section: string) => items.map(group => ({
     text: group[locale],
-    items: group.items.map(guide => ({ text: guide[locale], link: `${prefix}/guide/${guide.slug}` })),
+    items: group.items.map(page => ({ text: page[locale], link: `${prefix}/${section}/${page.slug}` })),
   }))
+  return {
+    [`${prefix}/guide/`]: groups(guideGroups, 'guide'),
+    [`${prefix}/plugins/`]: groups(pluginGroups, 'plugins'),
+  }
 }
 
 export default defineConfig({
@@ -92,9 +136,10 @@ export default defineConfig({
         nav: [
           { text: '如何工作', link: '/#workspace' },
           { text: '使用指南', link: '/guide/quick-start' },
+          { text: '插件开发', link: '/plugins/' },
           { text: '下载 Lexora', link: downloadUrl },
         ],
-        sidebar: guideSidebar('zh'),
+        sidebar: docSidebars('zh'),
         outline: { label: '本页内容', level: [2, 3] },
         docFooter: { prev: '上一篇', next: '下一篇' },
         returnToTopLabel: '回到顶部',
@@ -112,9 +157,10 @@ export default defineConfig({
         nav: [
           { text: 'How it works', link: '/en/#workspace' },
           { text: 'Guide', link: '/en/guide/quick-start' },
+          { text: 'Plugin development', link: '/en/plugins/' },
           { text: 'Get Lexora', link: downloadUrl },
         ],
-        sidebar: guideSidebar('en'),
+        sidebar: docSidebars('en'),
         outline: { label: 'On this page', level: [2, 3] },
       },
     },

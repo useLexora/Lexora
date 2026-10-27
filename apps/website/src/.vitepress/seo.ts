@@ -56,11 +56,16 @@ export function pageSeo(page: PageData, siteUrl: string): HeadConfig[] {
     ['meta', { name: 'twitter:image:alt', content: imageAlt }],
   ]
 
+  const pluginDocs = localPath.startsWith('plugins/')
+  const sectionPath = pluginDocs ? 'plugins/' : 'guide/what-is-lexora'
+  const sectionName = pluginDocs
+    ? english ? 'Plugin development' : '插件开发'
+    : english ? 'Guide' : '使用指南'
   const breadcrumbs = [
     { name: 'Lexora', item: url(english ? 'en/' : '') },
-    ...localPath === 'guide/what-is-lexora'
+    ...localPath === sectionPath
       ? []
-      : [{ name: english ? 'Guide' : '使用指南', item: url(`${english ? 'en/' : ''}guide/what-is-lexora`) }],
+      : [{ name: sectionName, item: url(`${english ? 'en/' : ''}${sectionPath}`) }],
     { name: page.title, item: canonical },
   ]
   const structuredData = home

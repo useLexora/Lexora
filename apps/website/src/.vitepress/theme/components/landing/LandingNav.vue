@@ -26,6 +26,7 @@ onMounted(() => {
         <a href="#workspace">{{ content.product }}</a>
         <a href="#plugins">{{ content.plugins }}</a>
         <a :href="withBase(english ? '/en/guide/quick-start' : '/guide/quick-start')">{{ content.guide }}</a>
+        <a :href="withBase(english ? '/en/plugins/' : '/plugins/')">{{ content.developers }}</a>
       </nav>
       <div class="nav-actions">
         <div class="display-controls">
@@ -46,6 +47,7 @@ onMounted(() => {
         <a href="#workspace">{{ content.product }}</a>
         <a href="#plugins">{{ content.plugins }}</a>
         <a :href="withBase(english ? '/en/guide/quick-start' : '/guide/quick-start')">{{ content.guide }}</a>
+        <a :href="withBase(english ? '/en/plugins/' : '/plugins/')">{{ content.developers }}</a>
         <a :href="repositoryUrl" target="_blank" rel="noreferrer">GitHub <LandingIcon name="external" /></a>
         <a :href="downloadUrl" target="_blank" rel="noreferrer">{{ content.download }} <LandingIcon name="arrow" /></a>
       </nav>
@@ -80,7 +82,7 @@ onMounted(() => {
 .skip-link { position: absolute; top: 10px; left: 16px; padding: 12px 18px; z-index: 20; background: var(--crew-gold); color: var(--crew-ink); transform: translateY(-150%); border-radius: 5px; }
 .skip-link:focus { transform: translateY(0); }
 @media (max-width: 1000px) { .nav-links { margin-left: 0; gap: 20px; } .github-link { display: none; } }
-@media (max-width: 760px) {
+@media (max-width: 1080px) {
   .site-nav { border-bottom: 1px solid #7890c54a; height: 74px; gap: 12px; }
   .brand { font-size: 27px; gap: 9px; }
   .brand > img { width: 32px; height: 32px; border-radius: 8px; }

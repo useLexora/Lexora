@@ -43,7 +43,7 @@ subscription.dispose()
 
 ## 任务动作事件
 
-任务动作通过 `contributes.agent.actions[].triggers` 声明，并由 `context.agent.registerAction` 注册。完整声明、权限与示例见 [Agent 工具、任务动作与设置](agent-settings.md)。它们不会出现在 `context.events.on` 或 `**` 订阅中；动作由宿主创建独立调用，提供只属于原任务的 `invocation.task`、`invocation.models` 与 `invocation.signal`。
+任务动作通过 `contributes.agent.actions[].triggers` 声明，并由 `context.agent.registerAction` 注册。完整声明、权限与示例见 [Agent 工具与任务动作](agent.md)。它们不会出现在 `context.events.on` 或 `**` 订阅中；动作由宿主创建独立调用，提供只属于原任务的 `invocation.task`、`invocation.models` 与 `invocation.signal`。
 
 | trigger / cause.type | cause.data | 触发时机 |
 | --- | --- | --- |
@@ -74,4 +74,4 @@ triggers 只接受表中的精确值，不支持通配符。动作不会作为�
 
 动作的源输入、分支、标题、模型选择或任务有效性发生变化时，宿主拒绝过期操作；任务手动改名、删除，以及插件配置变化、禁用或更新会撤销相关调用。检查 `invocation.signal` 并处理 `task.rename()` 的 `{applied:false}`。`cause.data` 保存触发时的事实，读取接口返回读取时的状态；不要假定异步模型完成后任务仍未变化。
 
-引用定位通过 `ViewContext.references.onReveal(handler)` 请求并确认结果，不属于事件广播，也不参与事件重放；协议与取消处理见 [引用到对话](protocol.md#引用到对话)。
+引用定位通过 `ViewContext.references.onReveal(handler)` 请求并确认结果，不属于事件广播，也不参与事件重放；协议与取消处理见 [引用到对话](references.md#引用到对话)。

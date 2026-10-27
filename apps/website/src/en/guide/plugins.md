@@ -74,3 +74,7 @@ Keep the creation task and source for future improvements or sharing. An install
 - **Missing permission or file:** inspect the plugin settings and grants, then take the specific error back to the creation task.
 
 For reusable methods or existing external services, continue with [Skills and MCP](./skills-and-mcp).
+
+## Continue developing
+
+To write source yourself or understand a generated plugin, open [Plugin development](../plugins/). Start with an installable counter panel, then explore file editing, Agent tools, themes and distribution.

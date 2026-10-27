@@ -1,57 +1,44 @@
 # 按需求选择插件能力
 
-先决定数据从哪里来、用户在哪里操作、关闭页面后是否继续运行、哪些状态需要恢复。按下表选择能力，再查 [协议](protocol.md) 的清单字段和 [API 类型](api.d.ts) 的准确签名。能力可组合，但不必全部使用。
+先决定输入来自哪里、用户在哪里操作、关闭页面后是否继续运行、哪些状态需要恢复。下表用于选路；字段、权限、限制和示例由对应专题维护，准确签名见 [API 类型](api.d.ts)。一个插件可以组合多个能力。
 
-| 用户需要 | 清单与入口 | 状态和边界 |
+## 界面与交互
+
+| 用户目标 | 选择 | 深入阅读 |
 | --- | --- | --- |
-| 编辑器复制/粘贴文本和表格格式 | `permissions.clipboardRead` / `clipboardWrite`；视图 `clipboard.read/write` | 安装授权后仅前台可见且聚焦视图可用；文本与 HTML 合计 4 MiB，写入原子完成；不开放后台或浏览器剪贴板权限 |
-| 页签显示当前文档名和修改状态 | 交互视图 `setDocumentInfo({title,dirty})` | 只更新当前实例；页签随布局恢复，导航页仅当前会话；文档保存与关闭保护仍由插件负责 |
-| 随插件提供工作方法、参考资料或脚本，按需加载 | API 4；`contributes.skills`，见 [插件 Skills](skills.md) | 标准 Skill 文件；可搜索或显式 `$插件调用名:技能名` 选择，启停与更新由插件管理，不自动授予执行能力 |
-| 检测并选择已有本机命令解释器 | API 4；contributes.shells、permissions.shells、原生 settings，见 [命令解释器](shells.md) | 用户启用后供模型选择；宿主执行，插件只能 detect()，不能运行命令或写解释器路径 |
-| 由主模型主动调用插件、请求模型或修改任务标题 | API 3；contributes.agent 和 agent/models/tasks 权限，见 [Agent 与设置](agent-settings.md) | 工具入口绑定原任务与本轮模型，不导出凭据，不覆盖手动标题 |
-| 输入提交、对话成功完成或任务菜单点击后执行 | API 3；contributes.agent.actions，见 [任务动作事件](events.md#任务动作事件) 与 [Agent 与设置](agent-settings.md) | 独立调用绑定原任务；正文需要 taskMessages 权限，标题更新由宿主保护并发修改 |
-| 在原生设置页追加模块、分组或单项 | API 3；contributes.settings，见 [Agent 与设置](agent-settings.md) | 宿主保存配置并渲染控件；插件读取 configuration，不另存设置 |
-| 对当前文件提供阅读、统计或专用展示 | `selectedResource: "read"`；`resource: "selected-file"` 的视图；宿主可见命令将收到的 `resource` 传给 `views.open`，视图用 `resources.readText(context.resource)` 读取 | 用户先打开文件，再执行插件命令。句柄不包含任意路径，每次打开是独立实例；不能枚举目录、读其他视图的文件或写回文件 |
-| 输入 `/插件名:命令` 执行插件动作 | API 3 命令声明 `slash`，并在 `activate` 注册处理函数；见 [注册命令](commands.md) | 精确匹配，包内校验注册，跨插件命名空间隔离，不请求模型 |
-| 需要真实分屏布局或临时覆盖交互 | API 3；见 [交互会话](interactions.md) | 订阅布局；稀疏点击区域或独占交互；宿主提供独立退出入口 |
-| WASM 引擎、二进制解析或不阻塞界面的计算 | 后台与视图的 `workers.create`，见 [WebAssembly 与 Worker](workers.md) | 包内代码与原生浏览器 API；支持操作级取消，关闭视图不代替后台任务生命周期，不开放 Node 或真实文件系统 |
-| 执行一次动作，无需常驻页面 | 宿主 `activate` 注册 `contributes.commands` 中的命令 | 可见命令进入命令面板和已安装插件卡片的“运行命令”菜单；命令收到的 `resource` 可能为空。只供自己视图调用的命令设为 `hidden: true` |
-| 目录入口、较完整的页面或设置表单 | `contributes.navigation` 引用 `resource: "none"` 的视图 | API 2 可省略视图 `location`；页面由 `render` 绘制。`navigation.showHeader` 默认 `true`，设为 `false` 可隐藏该独立页的宿主标题栏，不影响资源页签或应用框架。需要持久配置时通过自身隐藏命令调用宿主私有存储 |
-| 将自定义内容挂到页面区域 | `kind: "view"`、`target` 与 `presentation`；宿主命令调用 `placements.show/hide` | 通过能力查询选择全局、页面或分屏目标。插件渲染隔离内容，通过通用外框布局接口声明定位和尺寸。挂载口没有面板 UI 或交互 |
-| 在业务区域执行操作 | `contributes.menus` 引用已声明命令；用能力查询选目标 | 输入、消息、文件或任务操作共享一套协议；仅点击时按权限提供所选内容，分屏标识固定到发起位置 |
-| 替换或追加宿主内容 | `kind: "slot"`；按需查 [内容插槽目录](slots.md) | 按目录的单选或多选策略由用户选择提供者；不可用时回退。位置和外框归宿主，插件只绘制自己的内容 |
-| 限定生效页面或响应页面变化 | 贡献的 `when`；视图的 `workbench/onWorkbenchChange` 与 `visible/onVisibilityChange` | 按稳定页面 ID 与公开上下文匹配；离开范围隐藏而保留实例，业务暂停或继续由插件决定。未知上下文不匹配，不读取父页面 DOM |
-| 自定义浮动内容或运行时换区域 | `presentation.position: "absolute"`；`setPresentation` 更新目标及外框 CSS 布局；`mount/onMountChange` 获取局部几何 | 拖动、折叠、恢复入口等由插件自行实现。宿主不理解这些行为，只维持独立实例、投影和边界；换位置保留会话，关闭销毁 |
-| 用户选择的文件或目录 | `localResources: true`；交互视图的 `resources.pickFiles/pickDirectory` | 返回不透明句柄；任意文件格式都可读取。以 `scanDirectory` 按需筛选授权目录，`readText/readBytes/getUrl` 分别用于文本、分段二进制和受控 URL；只保存 ID，URL 按视图重新获取 |
-| 自动保存草稿或生成私有文件 | 宿主和视图的 `resources.createFile({name,data,mimeType?,signal?})` | 返回不可变的私有资源句柄；先保存新文件，再更新元数据，最后释放旧版本。无任意路径或原文件写回；能力检测及配额见 protocol.md |
-| 将编辑结果或生成内容保存到本机 | `resourceExport: true`；交互视图调用 `resources.saveFile({name,data})` | 每次弹出系统另存为窗口，用户决定目标；取消返回 false。文本先编码为 Blob 或字节。读取授权不授予原文件覆写权限；保存成功后才报告完成 |
-| 局部装饰、输入位置附近的短暂动画 | `windowEffects: true`；`kind: "decoration"` 与正式 `anchor` | 使用 `anchor/onAnchorChange` 的局部尺寸；输入活动经 `onActivity` 提供，可带局部 caret。不获取字符或全局键盘，不接收指针或焦点 |
-| 在输入所在的整个分屏内绘制装饰 | `windowEffects: true`；`kind: "decoration"`、`anchor: "workbench.pane"` | 每个分屏独立实例，画布覆盖该分屏；只接收该分屏内的对话输入活动，caret 相对分屏。绘制位置由插件决定，不受输入框边界限制；不接收指针或焦点 |
-| 跨分屏的主工作区、对话历史区或整个窗口背景与装饰 | 主题材质锚点或 `windowEffects: true` 的 `decoration` | 使用 `workbench.workspace`、`task.history` 或 `window`；范围见 themes.md 与 protocol.md。主题可声明静态材质，窗口 CSS 可独立调整外观，动态装饰使用隔离视图，不开放消息正文或父页面 DOM |
-| 整个 Lexora 窗口上的透明效果 | `windowEffects: true`；`resource: "none"`、`location: "window-overlay"` | API 1 和 API 2 均可用，每插件一个全窗口实例；收到无坐标的对话输入活动，不区分分屏。插件按窗口尺寸绘制，不接收指针或焦点 |
-| 改变宿主控件的操作方式 | `controls: ["model.reasoning"]`；`kind: "control"`、`target: "model.reasoning"` | 安装后由用户选择样式。读取 `control.snapshot/onChange`，以当前快照 revision 提交 `propose`；值和允许选项归宿主管理，不能自建一份业务真源 |
-| 自定义整个窗口的样式 | `windowEffects: true`；宿主 `window.styles.set/remove` | 注入普通 CSS，支持背景、边框、布局、伪元素、动画及媒体查询。稳定区域通过 `data-lexora-region` 选择；图片、字体及包内样式表使用 `resources.getUrl`，停用撤回。作者也可组合主题入口 |
-| 读取远端公开信息 | 声明实际需要的 HTTPS origins，以宿主或视图的 `network.get` 获取 | 只有 GET，不携带浏览器登录态；直接 fetch、远程图片或媒体不替代网络代理。需要其他方法、凭据或实时连接时先说明能力缺口 |
-| 关闭页面后仍定期执行插件动作 | `schedules: true`、宿主入口与已声明命令；`schedules.get/set/remove` | 定时任务归应用，最短一分钟；应用退出时暂停，错过的不补发。页面计时器只适合页面自身交互，不承担后台任务 |
-| 系统提示 | `notifications: true`；宿主 `notifications.show` | 通知受用户全局开关和限速约束，返回 false 不表示插件崩溃。按真实需要与命令、调度组合 |
+| 打开独立页面或文件标签 | `views`、`navigation`，按需要选择资源模式 | [视图](views.md) |
+| 在工作台或分屏显示面板 | `placements` 的 `view` 与 `presentation` | [挂载](views.md#正式挂载点) |
+| 替换或追加宿主内容 | `slot`、`control`，使用正式目标与真实默认回退 | [插槽](slots.md) |
+| 输入命令或点击业务菜单 | `commands`、`slash`、`menus` | [命令](commands.md) |
+| 临时覆盖交互、布局订阅 | `interactions` 与宿主布局快照 | [交互](interactions.md) |
+| 复制粘贴、显示文档名和修改状态 | 交互视图的 `clipboard`、`setDocumentInfo` | [视图](views.md#视图类型) |
+| 配色、欢迎内容、图标、窗口装饰 | 声明式主题或窗口样式、独立装饰视图 | [主题](themes.md)、[图标](file-icon-themes.md)、[样式](styles.md) |
 
-需要把选中内容或文件交给任务对话时，使用 API 4 的 `references` 权限与 `ViewContext.references`，详见 [引用到对话](protocol.md#引用到对话)。内容引用保留文字快照；可选 locator 由插件负责定位，`onReveal` 返回实际结果。整份文件使用已有资源句柄。
+## 文件与内容
 
-## 状态与模块
+| 用户目标 | 选择 | 深入阅读 |
+| --- | --- | --- |
+| 为指定后缀提供预览或编辑入口 | `fileHandlers`；无文件入口用 `launchers` | [文件关联](resources.md#文件关联与独立入口) |
+| 读取用户选择的文件、目录或远端文件 | `resources`，远端使用受控 `network` | [资源](resources.md) |
+| 生成私有二进制、导出副本 | `resources.createFile`、`saveFile` | [资源与导出](resources.md#本地资源与导出) |
+| 编辑原件、保存草稿、处理冲突与恢复 | `fileEditing` 与交互视图 `documents` | [文档编辑](documents.md) |
+| 将材料放入任务草稿、定位原文 | 视图 `references`，工具按调用资格解析引用 | [引用](references.md) |
+| 执行 WASM、解析二进制或密集计算 | 浏览器 WASM 与 `workers.create` | [Worker](workers.md) |
 
-- `activate(context)` 管理命令、私有设置、通知和定时任务；`render(context, container)` 管理自己的隔离 UI。只需要视图时不创建空宿主；需要命令时必须同时声明宿主入口和命令 ID。
-- 资源页签及普通挂载面板用 `ViewContext.state/setState` 保存该实例的筛选、阅读位置等 JSON。升级比较 `stateVersion` 与 `expectedStateVersion`，转换后再保存。导航页面、装饰、内容插槽和替换控件不支持这条持久化路径。
-- 挂载目标和外框布局通过 `setPresentation` 更新；内容样式、交互及业务状态完全由插件实现，业务状态使用 `setState` 或宿主私有存储。宿主不会依据插件数量提供面板切换或自动避让。不能用父页面 CSS 选择器或 Vue Teleport 穿透隔离。
-- 扩展级配置用宿主 `storage.get/set`。视图通过自身命令读写，不访问宿主内存；更改数据结构时增加 `dataVersion` 并提供 `migrate`。不要把一个文件的阅读位置存成覆盖所有文件的全局值。
-- 每个视图具有独立 JS 环境。宿主通过 `views.broadcast(message)` 向本插件当前 generation 的视图同步状态，视图使用 `onMessage` 订阅；首次读取仍通过自身命令获取快照。共享状态由宿主持有，视图提交局部操作，避免旧快照覆盖其他视图的更改。源码中的纯函数可通过包内相对导入复用。
-- 视图通过 `signal` 清理监听、定时器、音频和异步回写；销毁时不要再异步保存状态，正常交互中及时保存，并处理保存失败；宿主通过 `subscriptions` 释放注册，也可用 `ExtensionContext.signal` 绑定异步工作；Worker 由创建它的上下文管理生命周期。恢复视图不代表自动播放音频或重放上次用户提交。
+## Agent 与后台
 
-## 组合验收
+| 用户目标 | 选择 | 深入阅读 |
+| --- | --- | --- |
+| 让主模型主动调用插件 | `agent.tools`，声明读写类别 | [Agent](agent.md) |
+| 输入、完成事件或任务菜单触发动作 | `agent.actions` 与精确触发声明 | [动作](agent.md#任务动作)、[事件](events.md) |
+| 请求已配置模型、读取当前任务 | 本次调用的 `models` / `task`，按权限开放 | [模型与任务](agent.md#模型与任务权限) |
+| 提供可搜索的工作方法与配套资源 | `contributes.skills` | [Skills](skills.md) |
+| 原生设置与实时生效条件 | `settings`、`configuration`、`conditions` | [设置](settings.md)、[条件](conditions.md) |
+| 关闭页面后仍通知或定时执行 | 后台命令、`notifications`、`schedules` | [命令](commands.md#通知与定时命令) |
+| 检测用户已有命令解释器 | 声明式 `shells`；运行仍归宿主 | [Shell](shells.md) |
 
-验收从用户行为出发，不以采用某个样例的文件名或界面作为成功依据。例如文件阅读工具应验证两份不同文件、空内容、各自筛选状态及重开恢复；网络信息条应验证允许来源、请求失败后的状态、关闭与再次显示；自定义控件应验证当前快照、禁用或隐藏时提交被拒绝，以及故障后内置控件可用。
+## 状态归属与验收
 
-对每项需求明确已有 API 是否覆盖。只有当前宿主能力查询返回的正式位置，没有任意 DOM 插槽、父页面 DOM、静默覆写用户文件或通用 IPC；Agent 能力仅通过声明权限的受控工具或动作入口开放。核心要求超出已开放能力时先明确缺口与可实现范围，不能把样例资源或相近布局当作已经满足核心要求，也不用内部接口模拟完整实现。
+后台入口、视图、私有业务数据、声明式配置和每个标签的状态分别归各自作用域，见 [生命周期与状态](lifecycle.md)。共享状态通过自己的命令和广播同步；异步结果绑定原实例，不根据后来焦点选择目标。
 
-文件与目录图标通过 [文件图标主题](file-icon-themes.md) 提供，独立于界面配色。
-
-主题包与主题编辑器使用 [主题 API](themes.md)：一个包可声明多个主题，欢迎文字和插画可以分别覆盖；替换整个欢迎区仍使用 `task.welcome` 插槽。
+验证实际用户流程。例如阅读器检查两份文件的状态独立与重开恢复，设置检查即时生效和重启恢复，编辑器检查草稿、原件与取消，插槽检查撤回后的宿主默认内容。缺少核心能力时明确说明，不通过宿主内部接口或相近位置模拟交付。

@@ -1,5 +1,5 @@
 const zh = {
-  nav: { crew: '伙伴', product: '工作台', plugins: '插件', guide: '使用指南', download: '下载 Lexora', menu: '打开导航', close: '关闭导航', skip: '跳至正文', darkMode: '深色外观' },
+  nav: { crew: '伙伴', product: '工作台', plugins: '插件', guide: '使用指南', developers: '插件开发', download: '下载 Lexora', menu: '打开导航', close: '关闭导航', skip: '跳至正文', darkMode: '深色外观' },
   hero: {
     product: '开源的个人 AI Agent',
     title: '让文字成为工作、\n创作与生活的起点。',
@@ -76,7 +76,7 @@ const zh = {
 }
 
 const en: typeof zh = {
-  nav: { crew: 'Companions', product: 'Workspace', plugins: 'Plugins', guide: 'Guide', download: 'Download', menu: 'Open menu', close: 'Close menu', skip: 'Skip to content', darkMode: 'Dark appearance' },
+  nav: { crew: 'Companions', product: 'Workspace', plugins: 'Plugins', guide: 'Guide', developers: 'Plugin development', download: 'Download', menu: 'Open menu', close: 'Close menu', skip: 'Skip to content', darkMode: 'Dark appearance' },
   hero: {
     product: 'An open-source personal AI agent',
     title: 'From words to work,\ncreativity, and everyday life.',

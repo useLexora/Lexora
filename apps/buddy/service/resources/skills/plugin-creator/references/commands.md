@@ -30,3 +30,19 @@ export function activate(context: ExtensionContext) {
 `invocation.target` 为 `slash`，`resource` 为 null，`arguments` 为最多 8192 字符的参数字符串。命令面板调用仍提供既有资源语义且参数为空；视图调用的参数仍为 JSON。插件应按实际调用入口验证自己的参数。
 
 停止覆盖交互不能只依赖 Slash；参见 [交互会话](interactions.md) 的宿主退出机制。
+
+## 操作菜单
+
+API 3 的 `contributes.menus` 将已有命令放进业务区域的「更多操作」。先用 `lexora_plugin_capabilities({kind:"menu"})` 查询目标与输入契约，再声明 `{id,command,target,order?,when?}`。`hidden` 隐藏命令面板入口，不隐藏显式声明的菜单。
+
+命令参数中的 `invocation` 包含 `target`、`instanceId`，仅在声明 `selectedContent` 且用户点击对应操作后附带 `content`。文件菜单通过原有 `selectedResource` 权限提供 `resource` 句柄。视图调用自己的命令时 `invocation.target` 为 `view`，只附带该视图的实例标识；命令面板和定时调用的 `invocation` 为空。
+
+输入操作可返回 `{insertText:string}`。宿主在原草稿仍可编辑且内容未改变时，将结果作为纯文本插入原选择位置；更换草稿、编辑内容或关闭视图后忽略迟到结果，不自动发送。其他菜单忽略命令返回值。`when` 支持宿主公开上下文，消息菜单额外提供 `message.role`，文件菜单提供当前 `resource.scheme`；不能用条件读取未公开的数据。
+
+
+## 通知与定时命令
+
+后台提醒使用 `context.schedules.set({ id, command, enabled, intervalMinutes })`，间隔最少 1 分钟；不要用页面 setInterval 代替跨页面提醒。Lexora 退出后暂停，重启继续，错过的提醒不会补发。
+
+
+`permissions.notifications` 开放 `context.notifications.show({title,body})`。返回 false 表示没有展示通知；通知仍受应用全局开关和限速约束。
