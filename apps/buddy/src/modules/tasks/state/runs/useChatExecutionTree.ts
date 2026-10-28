@@ -1,7 +1,9 @@
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
+import type { LocalExecutionInputReceipt } from '@buddy-shared/executions/executionInputReceipt'
 import type { ExecutionTarget, LocalExecution } from '@buddy-shared/executions/executionPresentationApi'
 import type { Ref } from 'vue'
 import type { TaskExecutionTree } from '../../contracts'
+import { EXECUTION_INPUT_RUN_BATCH_SIZE } from '@buddy-shared/executions/executionInputReceipt'
 import { computed, onScopeDispose, readonly, shallowRef, watch } from 'vue'
 import { projectExecutionGroups } from '../../model/executions/executionGroups'
 
@@ -13,6 +15,7 @@ export function useChatExecutionTree(options: {
   onError: (error: unknown) => void
 }): TaskExecutionTree {
   const records = shallowRef<readonly LocalExecution[]>([])
+  const inputs = shallowRef<readonly LocalExecutionInputReceipt[]>([])
   const revision = shallowRef(0)
   const groups = computed(() => projectExecutionGroups(records.value))
   let generation = 0
@@ -44,15 +47,35 @@ export function useChatExecutionTree(options: {
     loading = true
     const request = ++generation
     const scope = { conversationId, branchId }
+    const current = () => !disposed && options.ready.value && request === generation
+      && scope.conversationId === options.conversationId.value && scope.branchId === options.branchId.value
     try {
       const value = await options.api.list(scope)
-      if (!disposed && request === generation && scope.conversationId === options.conversationId.value && scope.branchId === options.branchId.value) {
-        records.value = value
-        revision.value++
+      if (!current())
+        return
+      records.value = value
+      revision.value++
+      const runIds = value.filter(record => record.kind === 'root' || record.kind === 'actor_child').map(record => record.runId)
+      const nextInputs: LocalExecutionInputReceipt[] = []
+      for (let start = 0; start < runIds.length; start += EXECUTION_INPUT_RUN_BATCH_SIZE) {
+        const batch = runIds.slice(start, start + EXECUTION_INPUT_RUN_BATCH_SIZE)
+        let offset: number | null = 0
+        do {
+          const page = await options.api.inputs({ ...scope, runIds: batch, offset })
+          if (!current())
+            return
+          if (page.inputs.some(input => input.conversationId !== conversationId || input.branchId !== branchId || !batch.includes(input.runId))
+            || (page.nextOffset !== null && page.nextOffset <= offset)) {
+            throw new Error('Invalid execution input page')
+          }
+          nextInputs.push(...page.inputs)
+          offset = page.nextOffset
+        } while (offset !== null)
       }
+      inputs.value = nextInputs
     }
     catch (error) {
-      if (!disposed && request === generation)
+      if (current())
         options.onError(error)
     }
     finally {
@@ -72,9 +95,12 @@ export function useChatExecutionTree(options: {
       void refresh()
     }, 60)
   })
-  watch(() => [options.conversationId.value, options.branchId.value, options.ready.value], () => {
+  watch(() => [options.conversationId.value, options.branchId.value, options.ready.value] as const, (scope, previous) => {
     generation++
-    records.value = []
+    if (scope[0] !== previous?.[0] || scope[1] !== previous?.[1]) {
+      records.value = []
+      inputs.value = []
+    }
     void refresh()
   }, { immediate: true })
   onScopeDispose(() => {
@@ -94,6 +120,7 @@ export function useChatExecutionTree(options: {
   const tree = {
     groups,
     records: readonly(records),
+    inputs: readonly(inputs),
     revision: readonly(revision),
     ready: options.ready,
     conversationId: options.conversationId,

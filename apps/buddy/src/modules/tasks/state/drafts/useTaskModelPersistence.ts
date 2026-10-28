@@ -3,7 +3,7 @@ import type { LocalConversation } from '@buddy-shared/conversation/conversationA
 import type { Ref } from 'vue'
 import type { TaskModelSelection } from './typing'
 import type { useChatDrafts } from './useChatDrafts'
-import { readonly, shallowRef } from 'vue'
+import { computed, shallowReactive } from 'vue'
 
 interface TaskModelPersistenceOptions {
   target?: () => { actorId?: string }
@@ -18,84 +18,91 @@ interface TaskModelPersistenceOptions {
   selection: TaskModelSelection
 }
 
-export function useTaskModelPersistence(options: TaskModelPersistenceOptions) {
-  const isUpdating = shallowRef(false)
-  let conversationModelPersistenceRevision = 0
-  let conversationModelPersistenceQueue = Promise.resolve(true)
+type ModelPersistenceResult = { saved: true } | { saved: false, error: unknown }
 
-  function persistConversationModelSelection(
-    conversationId: string | null,
-    modelSelection: NonNullable<LocalConversation['modelSelection']> | null,
-    target?: { actorId?: string },
-  ): Promise<boolean> {
-    if (!conversationId || !modelSelection || options.persistTarget?.() === false)
-      return Promise.resolve(true)
-    const revision = ++conversationModelPersistenceRevision
+interface ModelPersistenceState {
+  pending: boolean
+  promise: Promise<ModelPersistenceResult>
+}
+
+export function useTaskModelPersistence(options: TaskModelPersistenceOptions) {
+  const persistence = shallowReactive(new Map<string, ModelPersistenceState>())
+  const currentTarget = computed(() => {
+    const conversationId = options.activeConversationId.value
+    const target = options.target?.()
+    return {
+      conversationId,
+      target: target ? { ...target } : undefined,
+      key: JSON.stringify([conversationId ? 'conversation' : 'draft', conversationId ?? options.drafts.draftId.value, target?.actorId ?? null]),
+    }
+  })
+  const isUpdating = computed(() => persistence.get(currentTarget.value.key)?.pending ?? false)
+
+  function persistModelSelection(
+    captured: typeof currentTarget.value,
+    persistDefault: Promise<boolean> = Promise.resolve(true),
+  ): Promise<ModelPersistenceResult> {
+    const { conversationId, target, key } = captured
+    const modelSelection = options.selection.currentSelection()
+    const persistConversation = options.persistTarget?.() !== false
+    options.drafts.setModelSelection(modelSelection)
     const operation = async () => {
       try {
-        const conversation = await options.api.setModelSelection(
-          conversationId,
-          modelSelection,
-          ...target ? [target] as const : [],
-        )
-        if (revision === conversationModelPersistenceRevision) {
+        const [conversationResult, defaultResult] = await Promise.allSettled([
+          conversationId && modelSelection && persistConversation
+            ? options.api.setModelSelection(conversationId, modelSelection, ...target ? [target] as const : [])
+            : Promise.resolve(null),
+          persistDefault,
+        ])
+        if (conversationResult.status === 'rejected')
+          throw conversationResult.reason
+        if (defaultResult.status === 'rejected')
+          throw defaultResult.reason
+        const conversation = conversationResult.value
+        if (conversation && key === currentTarget.value.key) {
           options.applyConversation(conversation)
           await options.onPersisted?.()
         }
-        return true
+        return { saved: true } as const
       }
       catch (error) {
-        if (revision === conversationModelPersistenceRevision)
+        if (key === currentTarget.value.key) {
           options.onError(error)
-        await options.onPersisted?.()
-        return false
+          await options.onPersisted?.()
+        }
+        return { saved: false, error } as const
       }
     }
-    conversationModelPersistenceQueue = conversationModelPersistenceQueue.then(
-      operation,
-      operation,
-    )
-    return conversationModelPersistenceQueue
+    const state: ModelPersistenceState = {
+      pending: true,
+      promise: Promise.resolve().then(operation).finally(() => {
+        persistence.set(key, { ...state, pending: false })
+      }),
+    }
+    persistence.set(key, state)
+    return state.promise
   }
 
   async function selectChatModel(value: string) {
     if (isUpdating.value || options.canUpdate?.() === false)
       return
     const selection = options.selection
-    const conversationId = options.activeConversationId.value
-    const target = options.target?.()
+    const target = currentTarget.value
     const persistDefault = selection.selectModel(value)
     if (selection.selectedModelId.value !== value) {
       await persistDefault
       return
     }
-    const modelSelection = selection.currentSelection()
-    options.drafts.setModelSelection(modelSelection)
-    isUpdating.value = true
-    try {
-      await Promise.all([persistDefault, persistConversationModelSelection(conversationId, modelSelection, target)])
-    }
-    finally {
-      isUpdating.value = false
-    }
+    await persistModelSelection(target, persistDefault)
   }
 
   async function setChatEffort(value: Parameters<TaskModelSelection['setSelectedEffort']>[0]) {
     if (isUpdating.value || options.canUpdate?.() === false)
       return
     const selection = options.selection
-    const conversationId = options.activeConversationId.value
-    const target = options.target?.()
+    const target = currentTarget.value
     const persistDefault = selection.setSelectedEffort(value)
-    const modelSelection = selection.currentSelection()
-    options.drafts.setModelSelection(modelSelection)
-    isUpdating.value = true
-    try {
-      await Promise.all([persistDefault, persistConversationModelSelection(conversationId, modelSelection, target)])
-    }
-    finally {
-      isUpdating.value = false
-    }
+    await persistModelSelection(target, persistDefault)
   }
 
   async function setChatServiceTier(
@@ -104,18 +111,21 @@ export function useTaskModelPersistence(options: TaskModelPersistenceOptions) {
     if (isUpdating.value || options.canUpdate?.() === false)
       return
     const selection = options.selection
-    const conversationId = options.activeConversationId.value
-    const target = options.target?.()
+    const target = currentTarget.value
     selection.setSelectedServiceTier(value)
-    options.drafts.setModelSelection(selection.currentSelection())
-    isUpdating.value = true
-    try {
-      await persistConversationModelSelection(conversationId, selection.currentSelection(), target)
-    }
-    finally {
-      isUpdating.value = false
-    }
+    await persistModelSelection(target)
   }
 
-  return { isUpdating: readonly(isUpdating), selectChatModel, setChatEffort, setChatServiceTier, flushModelSelection: () => conversationModelPersistenceQueue }
+  async function flushModelSelection() {
+    const { key } = currentTarget.value
+    const state = persistence.get(key)
+    if (!state)
+      return true
+    const result = await state.promise
+    if (!result.saved && key === currentTarget.value.key)
+      options.onError(result.error)
+    return result.saved
+  }
+
+  return { isUpdating, selectChatModel, setChatEffort, setChatServiceTier, flushModelSelection }
 }

@@ -1,3 +1,4 @@
+import type { ExecutionGroups } from '../executions/executionGroups'
 import type { ChatAgentTurnNode } from './chatAgentTurn'
 import type { PersistedChatTranscriptRow, PresentedChatTranscriptRow } from './chatTranscriptActivities'
 import type { ChatTranscriptAgentTurnRow } from './chatTranscriptTypes'
@@ -6,9 +7,10 @@ import { mergeChatTranscriptActivities } from './chatTranscriptActivities'
 export function interleaveChatTranscriptSegments(
   rows: readonly PersistedChatTranscriptRow[],
   messageStartedAt: ReadonlyMap<string, string>,
+  executions?: ExecutionGroups,
 ): PresentedChatTranscriptRow[] {
   const timestamp = (row: Exclude<PersistedChatTranscriptRow, ChatTranscriptAgentTurnRow>) => row.kind === 'message'
-    ? messageStartedAt.get(row.message.id) ?? row.message.createdAt
+    ? row.message.startedAt ?? messageStartedAt.get(row.message.id) ?? row.message.createdAt
     : row.kind === 'extension-action' ? row.action.createdAt : row.compaction.createdAt
   const timeline = rows.filter(row => row.kind !== 'agent-turn').sort((left, right) => timestamp(left).localeCompare(timestamp(right)))
   const positions = new Map(timeline.map((row, index) => [row.key, index]))
@@ -45,9 +47,12 @@ export function interleaveChatTranscriptSegments(
       nodes.push(node)
       groups.set(position, nodes)
     }
+    const rootRunId = executions?.byRun.get(row.turn.runId)?.rootRunId ?? row.turn.runId
     const lastOtherSpeaker = timeline.findLastIndex(candidate => candidate.kind === 'message'
       && candidate.message.role === 'assistant'
+      && candidate.message.runId
       && candidate.message.runId !== row.turn.runId
+      && (!row.ownsResultActions || (executions?.byRun.get(candidate.message.runId)?.rootRunId ?? candidate.message.runId) === rootRunId)
       && timestamp(candidate) >= row.turn.startedAt
       && (!row.turn.completedAt || timestamp(candidate) <= row.turn.completedAt))
     if (row.ownsResultActions) {

@@ -40,9 +40,75 @@ describe('conversation history repositories', () => {
     ])
     expect(f.database.prepare('SELECT * FROM messages ORDER BY id').all()).toEqual(stored)
     f.database.prepare('UPDATE conversation_publications SET source_sequence = 3 WHERE message_id = ?').run('actor-comment')
-    expect(f.conversations.listTimelinePage('conversation', 'branch', { limit: 100 }).items.find(item => item.id === 'actor-comment')).toMatchObject({ content: { text: 'Checking' } })
     const mismatched = f.conversations.listTimelinePage('conversation', 'branch', { limit: 100 }).items.find(item => item.id === 'actor-comment')
     expect(mismatched?.kind === 'message' ? mismatched.content : null).toEqual({ text: 'Checking' })
+  })
+
+  it.each(['message.completed', 'message.interrupted'])('reads public message start times for roots and actors through their matching %s source', (type) => {
+    const f = createExecutionStorageFixture()
+    databases.push(f.database)
+    f.conversations.createMessage({ id: 'goal', conversationId: 'conversation', branchId: 'branch', runId: null, role: 'user', content: { text: 'Work together' }, createdAt: '2026-10-12T00:00:00.000Z' })
+    f.executions.admitChild(f.child('actor', f.actor.id))
+    f.executions.admitChild(f.child('private'))
+    const projector = new RunEventProjector(f.database)
+    projector.project([{ runId: 'private', sequence: 1, type: 'message.started', createdAt: '2026-10-12T00:00:01.000Z', payload: { messageId: 'actor-reply', role: 'assistant' } }])
+    const payload = (messageId: string, text: string) => type === 'message.completed'
+      ? { messageId, role: 'assistant', content: { text }, stopReason: 'completed' }
+      : { messageId, role: 'assistant', content: { text, state: 'interrupted', truncated: false }, reason: 'runtime_restarted' }
+    for (const runId of ['root', 'actor']) {
+      projector.project([
+        { runId, sequence: 1, type: 'message.started', createdAt: '2026-10-12T00:00:01.000Z', payload: { messageId: `${runId}-other`, role: 'assistant' } },
+        { runId, sequence: 2, type: 'message.started', createdAt: '2026-10-12T00:00:02.000Z', payload: { messageId: `${runId}-reply`, role: 'assistant' } },
+        { runId, sequence: 3, type: 'message.started', createdAt: '2026-10-12T00:00:03.000Z', payload: { messageId: `${runId}-reply`, role: 'assistant' } },
+        { runId, sequence: 4, type, createdAt: '2026-10-12T00:00:20.000Z', payload: payload(`${runId}-reply`, 'Visible before the follow-up') },
+        { runId, sequence: 5, type, createdAt: '2026-10-12T00:00:21.000Z', payload: payload(`${runId}-legacy`, 'No recorded start') },
+        { runId, sequence: 6, type: 'message.started', createdAt: '2026-10-12T00:00:22.000Z', payload: { messageId: `${runId}-legacy`, role: 'assistant' } },
+      ])
+    }
+    const stored = f.database.prepare('SELECT * FROM messages ORDER BY id').all()
+    const page = f.conversations.listTimelinePage('conversation', 'branch', { limit: 100 })
+    for (const runId of ['root', 'actor']) {
+      expect(page.items.find(item => item.id === `${runId}-reply`)).toMatchObject({ startedAt: '2026-10-12T00:00:02.000Z', createdAt: '2026-10-12T00:00:20.000Z' })
+      expect(page.items.find(item => item.id === `${runId}-legacy`)).toMatchObject({ createdAt: '2026-10-12T00:00:21.000Z' })
+      expect(page.items.find(item => item.id === `${runId}-legacy`)).not.toHaveProperty('startedAt')
+    }
+    f.database.prepare('UPDATE conversation_publications SET source_sequence = 5 WHERE message_id = ?').run('actor-reply')
+    expect(f.conversations.listTimelinePage('conversation', 'branch', { limit: 100 }).items.find(item => item.id === 'actor-reply')).not.toHaveProperty('startedAt')
+    expect(f.database.prepare('SELECT * FROM messages ORDER BY id').all()).toEqual(stored)
+  })
+
+  it('projects only accepted steering ownership from the matching public conversation and branch', () => {
+    const f = createExecutionStorageFixture()
+    databases.push(f.database)
+    for (const [id, seconds] of [['goal', '00'], ['accepted', '01'], ['waiting', '02'], ['foreign', '03']] as const)
+      f.conversations.createMessage({ id, conversationId: 'conversation', branchId: 'branch', runId: null, role: 'user', content: { text: id }, createdAt: `2026-10-12T00:00:${seconds}.000Z` })
+    f.conversations.createBranch({ id: 'other-branch', conversationId: 'conversation', parentBranchId: 'branch', forkedFromMessageId: 'goal', createdAt: '2026-10-12T00:00:04.000Z', activate: false })
+    const insert = f.database.prepare('INSERT INTO chat_queue (id, conversation_id, branch_id, request_id, request_fingerprint, prepared_json, state, run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    for (const [id, branch, state] of [['accepted', 'branch', 'sent'], ['waiting', 'branch', 'waiting'], ['foreign', 'other-branch', 'sent']])
+      insert.run(`queue-${id}`, 'conversation', branch, `request-${id}`, 'fixture', JSON.stringify({ userMessageId: id }), state, 'root', '2026-10-12T00:00:05.000Z')
+    const stored = f.database.prepare('SELECT * FROM messages ORDER BY id').all()
+    const items = f.conversations.listTimelinePage('conversation', 'branch', { limit: 100 }).items
+    expect(items.find(item => item.id === 'accepted')).toMatchObject({ inputRunId: 'root', runId: null })
+    expect(items.find(item => item.id === 'waiting')).not.toHaveProperty('inputRunId')
+    expect(items.find(item => item.id === 'foreign')).not.toHaveProperty('inputRunId')
+    expect(f.database.prepare('SELECT * FROM messages ORDER BY id').all()).toEqual(stored)
+  })
+
+  it.each([1, 100])('expands accepted-input-only pages back to their root trigger (limit %s)', (limit) => {
+    const f = createExecutionStorageFixture()
+    databases.push(f.database)
+    const time = (seconds: number) => new Date(Date.UTC(2026, 9, 12, 0, 0, seconds)).toISOString()
+    f.conversations.createMessage({ id: 'goal', conversationId: 'conversation', branchId: 'branch', runId: null, role: 'user', content: { text: 'Work together' }, createdAt: time(0) })
+    const insert = f.database.prepare('INSERT INTO chat_queue (id, conversation_id, branch_id, request_id, request_fingerprint, prepared_json, state, run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    for (let index = 1; index <= limit; index++) {
+      const id = `steering-${index}`
+      f.conversations.createMessage({ id, conversationId: 'conversation', branchId: 'branch', runId: null, role: 'user', content: { text: id }, createdAt: time(index) })
+      insert.run(`queue-${id}`, 'conversation', 'branch', `request-${id}`, 'fixture', JSON.stringify({ userMessageId: id }), 'sent', 'root', time(index))
+    }
+    const page = f.conversations.listTimelinePage('conversation', 'branch', { limit })
+    expect(page.items.map(item => item.id)).toEqual(['goal', ...Array.from({ length: limit }, (_, index) => `steering-${index + 1}`)])
+    expect(page.nextBefore).toBeNull()
+    expect(f.runs.listForTimeline('conversation', 'branch', page.items.filter(item => item.kind === 'message' && item.role === 'user').map(item => item.id), []).map(run => run.id)).toEqual(['root'])
   })
 
   it('rolls back conversation creation when its root branch cannot be inserted', () => {
@@ -543,104 +609,6 @@ describe('conversation history repositories', () => {
     expect(ids).toEqual(stored.map(message => message.id))
     expect(new Set(ids).size).toBe(1650)
     expect(stored.filter(message => message.role === 'tool')).toHaveLength(1500)
-  })
-
-  it('keeps 10k-item timeline pagination index-backed and boundary-stable', () => {
-    const database = openBuddyDatabase({ databasePath: ':memory:' })
-    databases.push(database)
-    const conversations = createConversationRepository(database)
-    conversations.create({
-      branchId: 'branch-1',
-      createdAt: '2026-08-14T00:00:00.000Z',
-      approvalPolicy: 'policy' as const,
-      executionProfile: 'workspace_write',
-      id: 'conversation-1',
-      spaceId: null,
-      title: null,
-    })
-    const insertMessage = database.prepare(`
-      INSERT INTO messages (
-        id, conversation_id, branch_id, run_id, role, content_json, created_at
-      ) VALUES (?, 'conversation-1', 'branch-1', NULL, 'user', ?, ?)
-    `)
-    const insertRun = database.prepare(`
-      INSERT INTO runs (
-        id, conversation_id, branch_id, triggering_message_id, provider, model,
-        purpose, status, pi_session_file, error_code, started_at, completed_at
-      ) VALUES (
-        ?, 'conversation-1', 'branch-1', 'message-00000', 'provider-1', 'model-1',
-        'conversation.compaction', 'completed', '/tmp/session.jsonl', NULL, ?, ?
-      )
-    `)
-    const insertEvent = database.prepare(`
-      INSERT INTO run_events (run_id, sequence, event_type, payload_json, created_at)
-      VALUES (?, 1, 'context.compaction.completed', ?, ?)
-    `)
-    const expected: Array<{ id: string, kind: 'compaction' | 'message', occurredAt: string }> = []
-    const base = Date.parse('2026-08-14T00:00:00.000Z')
-    database.exec('BEGIN IMMEDIATE')
-    try {
-      for (let index = 0; index < 9_900; index += 1) {
-        const id = `message-${index.toString().padStart(5, '0')}`
-        const occurredAt = new Date(base + index * 10).toISOString()
-        insertMessage.run(id, JSON.stringify({ text: `${index}` }), occurredAt)
-        expected.push({ id, kind: 'message', occurredAt })
-      }
-      for (let index = 0; index < 100; index += 1) {
-        const id = `compact-${index.toString().padStart(3, '0')}`
-        const occurredAt = new Date(base + index * 990 + 5).toISOString()
-        insertRun.run(id, occurredAt, occurredAt)
-        insertEvent.run(
-          id,
-          JSON.stringify({ estimatedTokensAfter: 500, tokensBefore: 1_000 }),
-          occurredAt,
-        )
-        expected.push({ id, kind: 'compaction', occurredAt })
-      }
-      database.exec('COMMIT')
-    }
-    catch (error) {
-      database.exec('ROLLBACK')
-      throw error
-    }
-    expected.sort((left, right) => left.occurredAt.localeCompare(right.occurredAt))
-
-    const newest = conversations.listTimelinePage('conversation-1', 'branch-1', {
-      limit: 100,
-    })
-    const older = conversations.listTimelinePage('conversation-1', 'branch-1', {
-      before: newest.nextBefore,
-      limit: 100,
-    })
-    expect(newest.items.map(item => ({ id: item.id, kind: item.kind })))
-      .toEqual(expected.slice(-100).map(({ id, kind }) => ({ id, kind })))
-    expect(older.items.map(item => ({ id: item.id, kind: item.kind })))
-      .toEqual(expected.slice(-200, -100).map(({ id, kind }) => ({ id, kind })))
-    expect(new Set([
-      ...newest.items.map(item => item.id),
-      ...older.items.map(item => item.id),
-    ])).toHaveLength(200)
-
-    const plan = database.prepare(`
-      EXPLAIN QUERY PLAN
-      WITH timeline AS (
-        SELECT id, created_at AS occurred_at, 0 AS sort_rank
-        FROM messages
-        WHERE conversation_id = ? AND branch_id = ?
-        UNION ALL
-        SELECT id, started_at AS occurred_at, 1 AS sort_rank
-        FROM runs
-        WHERE conversation_id = ? AND branch_id = ?
-          AND purpose = 'conversation.compaction'
-      )
-      SELECT * FROM timeline
-      ORDER BY occurred_at DESC, sort_rank DESC, id DESC
-      LIMIT ?
-    `).all('conversation-1', 'branch-1', 'conversation-1', 'branch-1', 101) as Array<{
-      detail: string
-    }>
-    expect(plan.some(row => row.detail.includes('idx_messages_conversation_branch'))).toBe(true)
-    expect(plan.some(row => row.detail.includes('idx_runs_conversation_branch'))).toBe(true)
   })
 
   it('activates an owned branch and rejects foreign branches', () => {

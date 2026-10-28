@@ -8,6 +8,7 @@ import { createAttachmentRepository } from '../attachmentRepository'
 import { createBuddyRepository } from '../buddyRepository'
 import { createChatQueueRepository } from '../chatQueueRepository'
 import { createComposerDraftRepository } from '../composerDraftRepository'
+import { createConversationRepository } from '../conversationRepository'
 import { openBuddyDatabase } from '../database'
 import { createRunInputRepository } from '../runInputRepository'
 import { createTurnRequestRepository } from '../turnRequestRepository'
@@ -49,6 +50,74 @@ function fixture() {
 }
 
 describe('chat queue ownership and delivery', () => {
+  it('never commits next input into a running product run, including a forged pending envelope', () => {
+    const f = fixture()
+    f.queue.enqueue({ ...f.input('next'), delivery: { mode: 'next', actorId: 'default', target: { rootRunId: 'run-initial', runId: 'run-initial' } } })
+    const pending = f.queue.pending(f.target('next'))!
+    expect(() => f.queue.commitInRun(pending, 'run-initial', undefined)).toThrow(expect.objectContaining({ code: 'INPUT_DELIVERY_INCOMPATIBLE' }))
+    expect(() => f.queue.commitInRun({ ...pending, delivery: undefined }, 'run-initial', undefined)).toThrow()
+    expect(f.queue.list(f.scope)).toHaveLength(1)
+    expect(f.database.prepare('SELECT id FROM messages').all()).toEqual([{ id: 'initial' }])
+  })
+
+  it('keeps next bound across leader changes, requires clean target closure and replays its dispatch', () => {
+    const f = fixture()
+    const delivery = { mode: 'next' as const, actorId: 'default', target: { rootRunId: 'run-initial', runId: 'run-initial' } }
+    f.queue.enqueue({ ...f.input('next'), delivery })
+    const pending = f.queue.pending(f.target('next'))!
+    const other = createBuddyRepository(f.database).create({ name: 'New leader' })
+    const conversations = createConversationRepository(f.database)
+    conversations.addMember({ id: 'conversation', buddyId: other.id, updatedAt: 'now' })
+    conversations.setBuddy({ id: 'conversation', buddyId: other.id, updatedAt: 'now' })
+    expect(f.queue.isCurrentInput(pending)).toBe(true)
+    expect(f.queue.pending(f.target('next'))).toMatchObject({ buddyId: 'default', delivery })
+    expect(() => f.turns.prepare(pending)).toThrow(expect.objectContaining({ code: 'INPUT_DELIVERY_TARGET_UNAVAILABLE' }))
+    f.database.exec('UPDATE runs SET status = \'completed\'')
+    expect(() => f.turns.prepare(pending)).toThrow(expect.objectContaining({ code: 'INPUT_DELIVERY_TARGET_UNAVAILABLE' }))
+    f.database.exec('UPDATE execution_state SET cleanup_state = \'clean\'')
+    expect(f.turns.prepare(pending)).toMatchObject({ created: true, runId: 'run-next' })
+    expect(f.database.prepare('SELECT scheduling_lane, buddy_id FROM runs WHERE id = ?').get('run-next')).toEqual({ scheduling_lane: 'actor', buddy_id: 'default' })
+    expect(f.turns.prepare(pending)).toMatchObject({ created: false, runId: 'run-next' })
+  })
+
+  it('does not convert a closed current target into a new run and preserves unaccepted drafts', () => {
+    const f = fixture()
+    const delivery = { mode: 'current' as const, actorId: 'default', target: { rootRunId: 'run-initial', runId: 'run-initial' } }
+    f.queue.enqueue({ ...f.input('current'), delivery })
+    const pending = f.queue.pending(f.target('current'))!
+    f.database.exec('UPDATE runs SET status = \'completed\'; UPDATE execution_state SET cleanup_state = \'clean\'')
+    expect(() => f.turns.prepare(pending)).toThrow(expect.objectContaining({ code: 'INPUT_DELIVERY_TARGET_UNAVAILABLE' }))
+    const draft = f.drafts.findById('draft')
+    expect(() => f.queue.enqueue({ ...f.input('late'), delivery })).toThrow(expect.objectContaining({ code: 'INPUT_DELIVERY_TARGET_UNAVAILABLE' }))
+    expect(f.drafts.findById('draft')).toEqual(draft)
+    expect(f.queue.list(f.scope).map(item => item.id)).toEqual(['current'])
+    expect(f.database.prepare('SELECT id FROM messages').all()).toEqual([{ id: 'initial' }])
+  })
+
+  it('treats a null target as idle admission, never as whichever run becomes latest', () => {
+    const f = fixture()
+    const delivery = { mode: 'current' as const, actorId: 'default', target: null }
+    const draft = f.drafts.findById('draft')
+    expect(() => f.queue.enqueue({ ...f.input('busy'), delivery })).toThrow(expect.objectContaining({ code: 'INPUT_DELIVERY_TARGET_UNAVAILABLE' }))
+    expect(f.drafts.findById('draft')).toEqual(draft)
+    f.database.exec('UPDATE runs SET status = \'completed\'; UPDATE execution_state SET cleanup_state = \'clean\'')
+    f.queue.enqueue({ ...f.input('idle'), delivery })
+    f.database.exec('UPDATE runs SET status = \'running\'')
+    expect(() => f.queue.commitInRun(f.queue.pending(f.target('idle'))!, 'run-initial', undefined)).toThrow(expect.objectContaining({ code: 'INPUT_DELIVERY_INCOMPATIBLE' }))
+    expect(f.queue.list(f.scope)[0]?.delivery).toEqual(delivery)
+  })
+
+  it.each([
+    { rootRunId: 'another-root', runId: 'run-initial' },
+    { rootRunId: 'run-initial', runId: 'missing-run' },
+  ])('rejects a mismatched explicit target $runId without consuming the draft', (target) => {
+    const f = fixture()
+    const draft = f.drafts.findById('draft')
+    expect(() => f.queue.enqueue({ ...f.input('wrong'), delivery: { mode: 'current', actorId: 'default', target } })).toThrow(expect.objectContaining({ code: 'INPUT_DELIVERY_TARGET_UNAVAILABLE' }))
+    expect(f.drafts.findById('draft')).toEqual(draft)
+    expect(f.queue.list(f.scope)).toEqual([])
+  })
+
   it('rejects an input prepared before a space move without consuming its draft', () => {
     const f = fixture()
     const prepared = f.input('late')

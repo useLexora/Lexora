@@ -1,6 +1,7 @@
 import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
 import type { LocalConversationTimelineItem, LocalMessage } from '@buddy-shared/conversation/conversationApi'
+import type { LocalExecutionInputReceipt } from '@buddy-shared/executions/executionInputReceipt'
 import type { LocalRun, LocalRunEvent, LocalRunOutput } from '@buddy-shared/runs/runApi'
 import type { LocalRunTokenUsage } from '@buddy-shared/usage/runTokenUsage'
 
@@ -32,6 +33,12 @@ export interface ChatTranscriptMessageRow {
 export interface ChatTranscriptTurnOutputs {
   artifacts: ReadonlyArray<LocalArtifact>
   runId: string
+}
+
+export interface ChatTranscriptExecutionInputRow {
+  key: string
+  kind: 'execution-input'
+  input: LocalExecutionInputReceipt
 }
 
 export interface ChatTranscriptCompactionRow {
@@ -90,6 +97,7 @@ export type ChatTranscriptRow
     | ChatTranscriptCompactionRow
     | ChatTranscriptActivityFlowRow
     | ChatTranscriptMessageRow
+    | ChatTranscriptExecutionInputRow
     | ChatTranscriptRecoveryNoticeRow
     | ChatTranscriptTurnResultRow
 
@@ -114,6 +122,7 @@ export type ChatTranscriptProjectionUpdate
 
 export interface ChatTranscriptProjectionInput {
   executionGroups?: ExecutionGroups
+  executionInputs?: readonly LocalExecutionInputReceipt[]
   includeUnanchoredTurns?: boolean
   agentTurns?: ReadonlyArray<ChatAgentTurn>
   changeSets?: ReadonlyArray<LocalChangeSetSummary>

@@ -1,6 +1,7 @@
 import type { BuddyUserContentV1 } from '@buddy-shared/conversation/buddyUserContent'
+import type { BuddyInputDelivery } from '@buddy-shared/conversation/chatApi'
 import type { LocalConversation } from '@buddy-shared/conversation/conversationApi'
-import type { ExecutionTarget } from '@buddy-shared/executions/executionPresentationApi'
+import type { ExecutionTarget, LocalExecution } from '@buddy-shared/executions/executionPresentationApi'
 import type { LocalRuntimeModelOption } from '@buddy-shared/providers/providerApi'
 import type { LocalRun } from '@buddy-shared/runs/runApi'
 import { browserQuote } from '@buddy-shared/browser/__tests__/browserSelectionFixture'
@@ -47,20 +48,6 @@ describe('useChatTurnExecution cancellation ownership', () => {
     expect(f.projectedRuns.value).toEqual([terminal])
     expect(f.drafts.draft.value).toBe('next draft')
     expect(f.api.chat.steerQueued).not.toHaveBeenCalled()
-  })
-
-  it('applies cancellation to the current projection and preserves its Draft', async () => {
-    const fixture = createFixture()
-    const cancelling = fixture.execution.cancelActiveRun()
-    expect(fixture.execution.stoppingRunId.value).toBe(fixture.run.id)
-    expect(fixture.projectedRuns.value[0]?.status).toBe('running')
-    fixture.pending.resolve({ ...fixture.run, status: 'cancelled' })
-    await cancelling
-    expect(fixture.execution.stoppingRunId.value).toBeNull()
-
-    expect(fixture.projectedRuns.value).toEqual([{ ...fixture.run, status: 'cancelled' }])
-    expect(fixture.drafts.draft.value).toBe('pending input')
-    expect(fixture.error.value).toBeNull()
   })
 
   it('reports a cancellation failure only in the originating view', async () => {
@@ -127,8 +114,10 @@ describe('turn submission conflicts', () => {
     f.drafts.confirmOpen(snapshot, { content, draftId: snapshot.draftId, executionConfig: { approvalPolicy: snapshot.approvalPolicy, executionProfile: snapshot.executionProfile }, modelSelection: null, revision: 1, scope: { kind: 'conversation_branch', conversationId: 'conversation-a', branchId: 'branch-a' }, updatedAt: '2026-10-02T00:00:00.000Z' })
     f.api.chat.startTurn.mockResolvedValue({ conversationId: 'conversation-a', branchId: 'branch-a', run: { ...f.run, status: 'queued' }, draftReceipt: { draftId: snapshot.draftId, sourceRevision: 1, committedRevision: 2 } })
     expect(await f.execution.send({ content: '', userContent: content })).toBe(true)
-    expect(f.api.chat.startTurn).toHaveBeenCalledWith(expect.objectContaining({ draftId: snapshot.draftId, expectedRevision: 1 }))
+    expect(f.drafts.snapshot(key).content).toEqual(createBuddyUserContent())
+    expect(f.drafts.snapshot(key).revision).toBe(2)
   })
+
   it('keeps the confirmed review and resources when its revision changes before submission', async () => {
     const f = createFixture()
     f.projectedRuns.value = []
@@ -157,11 +146,162 @@ describe('turn submission conflicts', () => {
   })
 })
 
+describe('model selection before submission', () => {
+  function prepare(route: 'start' | 'queue' | 'mailbox' = 'queue') {
+    const f = createFixture()
+    const key = 'conversation:conversation-a:branch-a'
+    f.selectedModel.value = { modelId: 'model-b', providerId: 'provider-a' } as LocalRuntimeModelOption
+    f.drafts.setModelSelection({ modelId: 'model-b', providerId: 'provider-a', reasoning: null, serviceTier: null })
+    const snapshot = f.drafts.snapshot(key)
+    const remote = {
+      content: snapshot.content,
+      draftId: snapshot.draftId,
+      executionConfig: { approvalPolicy: snapshot.approvalPolicy, executionProfile: snapshot.executionProfile },
+      modelSelection: snapshot.modelSelection,
+      revision: 1,
+      scope: { kind: 'conversation_branch' as const, conversationId: 'conversation-a', branchId: 'branch-a' },
+      updatedAt: '2026-10-27T00:00:00.000Z',
+    }
+    f.drafts.confirmOpen(snapshot, remote)
+    const target = { conversationId: 'conversation-a', branchId: 'branch-a', rootRunId: 'run-a', runId: route === 'mailbox' ? 'partner-run' : 'run-a' }
+    f.actorInput.target.value = route === 'start' ? null : target
+    f.actorInput.mailboxTarget.value = route === 'mailbox' ? target : null
+    f.actorInput.delivery.value = { mode: 'current', actorId: route === 'mailbox' ? 'partner' : 'default', target: route === 'start' ? null : { rootRunId: target.rootRunId, runId: target.runId } }
+    if (route === 'start')
+      f.projectedRuns.value = []
+    const result = { id: 'queued', conversationId: 'conversation-a', branchId: 'branch-a', run: { ...f.run, status: 'queued' }, draftReceipt: { draftId: snapshot.draftId, sourceRevision: 1, committedRevision: 2 } }
+    f.api.chat.enqueue.mockResolvedValue(result)
+    f.api.chat.startTurn.mockResolvedValue(result)
+    f.api.executions.sendDraft.mockResolvedValue({ ...remote, revision: 2, content: createBuddyUserContent() })
+    const barrier = deferred<boolean>()
+    f.flushModelSelection.mockImplementation(() => barrier.promise)
+    return { ...f, key, remote, target, barrier }
+  }
+
+  it.each(['start', 'queue', 'mailbox'] as const)('waits for the selected model before accepting %s input', async (route) => {
+    const f = prepare(route)
+    const delivery = f.actorInput.delivery.value
+    const sending = f.execution.send('pending input')
+    await Promise.resolve()
+    expect(f.execution.isSending.value).toBe(true)
+    expect(f.drafts.draft.value).toBe('pending input')
+    expect([f.api.chat.startTurn, f.api.chat.enqueue, f.api.executions.sendDraft].flatMap(api => api.mock.calls)).toEqual([])
+    f.actorInput.delivery.value = { mode: 'current', actorId: 'other', target: { rootRunId: 'other-root', runId: 'other-run' } }
+    f.actorInput.mailboxTarget.value = null
+    f.barrier.resolve(true)
+
+    expect(await sending).toBe(true)
+    const request = (route === 'start' ? f.api.chat.startTurn : route === 'queue' ? f.api.chat.enqueue : f.api.executions.sendDraft).mock.calls[0]![0]
+    expect(request).toMatchObject({ draftId: f.remote.draftId, expectedRevision: 1, delivery })
+    if (route === 'mailbox')
+      expect(request).toMatchObject(f.target)
+    expect(f.drafts.draft.value).toBe('')
+    expect(f.execution.isSending.value).toBe(false)
+  })
+
+  it.each(['reported', 'rejected'] as const)('retains the draft and failure when model persistence is %s', async (failure) => {
+    const f = prepare()
+    f.error.value = 'Model selection could not be saved'
+    const original = f.drafts.snapshot(f.key)
+    const sending = f.execution.send('pending input')
+    if (failure === 'reported')
+      f.barrier.resolve(false)
+    else
+      f.barrier.reject(new Error(formatLocalChatPublicError({ code: 'PROVIDER_UNAVAILABLE', retryable: false })))
+
+    expect(await sending).toBe(false)
+    expect(f.drafts.snapshot(f.key)).toEqual(original)
+    expect([f.api.chat.startTurn, f.api.chat.enqueue, f.api.executions.sendDraft].flatMap(api => api.mock.calls)).toEqual([])
+    expect(f.execution.isSending.value).toBe(false)
+    expect(f.error.value).toBeTruthy()
+    if (failure === 'reported')
+      expect(f.error.value).toBe('Model selection could not be saved')
+    else
+      expect(f.error.value).not.toBe('Model selection could not be saved')
+  })
+
+  it('keeps the original task target and does not clear a new view while waiting for the model', async () => {
+    const f = prepare()
+    const sending = f.execution.send('pending input')
+    f.navigate('task')
+    f.barrier.resolve(true)
+
+    expect(await sending).toBe(true)
+    expect(f.api.chat.enqueue.mock.calls[0]![0]).toMatchObject({ draftId: f.remote.draftId, expectedRevision: 1, delivery: { actorId: 'default', target: { rootRunId: 'run-a', runId: 'run-a' } } })
+    expect(f.drafts.snapshot(f.key).content).toEqual(createBuddyUserContent())
+    expect(f.drafts.draft.value).toBe('current view input')
+    expect(f.error.value).toBe('current view status')
+  })
+
+  it('does not submit a later saved draft revision after the model wait', async () => {
+    const f = prepare()
+    const sending = f.execution.send('pending input')
+    f.drafts.updateComposerContent('new unsent input', null)
+    const newer = f.drafts.snapshot(f.key)
+    f.drafts.confirmOpen(newer, { ...f.remote, content: newer.content, revision: 2 })
+    f.barrier.resolve(true)
+
+    expect(await sending).toBe(false)
+    expect(f.api.chat.enqueue.mock.calls).toEqual([])
+    expect(f.drafts.draft.value).toBe('new unsent input')
+    expect(f.drafts.snapshot(f.key).revision).toBe(2)
+    expect(f.error.value).toBe('Draft changed')
+  })
+
+  it('submits the latest saved text when it changes after the model barrier', async () => {
+    const f = prepare()
+    const save = deferred<boolean>()
+    f.persistWorkspaceState.mockImplementation(() => save.promise)
+    const sending = f.execution.send('pending input')
+    f.barrier.resolve(true)
+    await vi.waitUntil(() => f.persistWorkspaceState.mock.calls.length > 0)
+    f.drafts.updateComposerContent('latest saved input', null)
+    const newer = f.drafts.snapshot(f.key)
+    f.drafts.confirmOpen(newer, { ...f.remote, content: newer.content, revision: 2 })
+    f.api.chat.enqueue.mockResolvedValue({ draftReceipt: { draftId: newer.draftId, sourceRevision: 2, committedRevision: 3 } })
+    save.resolve(true)
+
+    expect(await sending).toBe(true)
+    expect(f.api.chat.enqueue.mock.calls[0]![0]).toMatchObject({ draftId: newer.draftId, expectedRevision: 2, delivery: { actorId: 'default', target: { rootRunId: 'run-a', runId: 'run-a' } } })
+    expect(f.drafts.draft.value).toBe('')
+    expect(f.drafts.snapshot(f.key).revision).toBe(3)
+  })
+
+  it.each(['model', 'actor', 'permissions', 'participants'] as const)('preserves the draft when %s changes during workspace save after the model barrier', async (change) => {
+    const f = prepare()
+    const save = deferred<boolean>()
+    f.persistWorkspaceState.mockImplementation(() => save.promise)
+    const sending = f.execution.send('pending input')
+    f.barrier.resolve(true)
+    await vi.waitUntil(() => f.persistWorkspaceState.mock.calls.length > 0)
+    if (change === 'model')
+      f.drafts.setModelSelection({ ...f.remote.modelSelection!, modelId: 'model-c' })
+    else if (change === 'actor')
+      f.drafts.setUserContent({ ...createBuddyUserContent(), body: [{ type: 'paragraph', content: [{ type: 'actor_ref', actorId: 'other', name: 'Other' }, { type: 'text', text: 'new target' }] }] })
+    else if (change === 'permissions')
+      f.drafts.setPermissionSettings({ approvalPolicy: 'policy', executionProfile: 'full_access' })
+    else
+      f.drafts.setParticipants({ leaderId: 'other', actorIds: ['other'] })
+    const newer = f.drafts.snapshot(f.key)
+    f.drafts.confirmOpen(newer, { ...f.remote, content: newer.content, modelSelection: newer.modelSelection, participants: newer.participants, executionConfig: { approvalPolicy: newer.approvalPolicy, executionProfile: newer.executionProfile }, revision: 2 })
+    save.resolve(true)
+
+    expect(await sending).toBe(false)
+    expect(f.api.chat.enqueue.mock.calls).toEqual([])
+    expect(f.drafts.snapshot(f.key).content).toEqual(newer.content)
+    expect(f.drafts.snapshot(f.key).modelSelection).toEqual(newer.modelSelection)
+    expect(f.drafts.snapshot(f.key).revision).toBe(2)
+    expect(f.error.value).toBe('Draft changed')
+  })
+})
+
 describe('addressed role input', () => {
   function prepare() {
     const f = createFixture()
     f.selectedModel.value = { modelId: 'model-a', providerId: 'provider-a' } as LocalRuntimeModelOption
     f.actorInput.target.value = { conversationId: 'conversation-a', branchId: 'branch-a', rootRunId: 'run-a', runId: 'partner-run' }
+    f.actorInput.mailboxTarget.value = f.actorInput.target.value
+    f.actorInput.delivery.value = { mode: 'current', actorId: 'partner', target: { rootRunId: 'run-a', runId: 'partner-run' } }
     const content: BuddyUserContentV1 = { ...createBuddyUserContent(), body: [{ type: 'paragraph', content: [{ type: 'actor_ref', actorId: 'partner', name: 'Partner' }, { type: 'text', text: ' Continue this work' }] }] }
     f.drafts.setUserContent(content)
     const key = 'conversation:conversation-a:branch-a'
@@ -178,31 +318,72 @@ describe('addressed role input', () => {
     return { ...f, key, snapshot, content }
   }
 
-  it.each([true, false])('automatically submits the same addressed draft when the role ends while sending, root active: %s', async (active) => {
+  it.each([true, false])('retains an unavailable addressed draft without falling back to a new turn, root active: %s', async (active) => {
     const f = prepare()
     if (!active)
       f.projectedRuns.value = []
     f.api.executions.sendDraft.mockResolvedValue(null)
-    const result = { id: 'queued', conversationId: 'conversation-a', branchId: 'branch-a', run: { ...f.run, id: 'next-run', buddyId: 'partner' }, draftReceipt: { draftId: f.snapshot.draftId, sourceRevision: 1, committedRevision: 2 } }
-    const destination = active ? f.api.chat.enqueue : f.api.chat.startTurn
-    destination.mockImplementation(async () => {
-      expect(f.drafts.snapshot(f.key).content).toEqual(f.content)
-      return result
-    })
-    expect(await f.execution.send({ content: '@Partner Continue this work', userContent: f.content })).toBe(true)
-    expect(destination.mock.calls).toEqual([[expect.objectContaining({ draftId: f.snapshot.draftId, expectedRevision: 1 })]])
-    expect(f.drafts.draft.value).toBe('')
-    expect(f.error.value).toBeNull()
+    expect(await f.execution.send({ content: '@Partner Continue this work', userContent: f.content })).toBe(false)
+    expect(f.api.chat.enqueue.mock.calls).toEqual([])
+    expect(f.api.chat.startTurn.mock.calls).toEqual([])
+    expect(f.drafts.snapshot(f.key).content).toEqual(f.content)
+    expect(f.error.value).toContain('draft is kept')
   })
 
-  it('preserves the addressed draft without starting another turn when delivery acknowledgement is uncertain', async () => {
+  it('queues next-round input bound to the older child even when no root is active', async () => {
     const f = prepare()
-    f.api.executions.sendDraft.mockRejectedValue(new Error('Connection lost'))
+    f.projectedRuns.value = []
+    f.actorInput.delivery.value = { ...f.actorInput.delivery.value!, mode: 'next' }
+    f.api.chat.enqueue.mockResolvedValue({ id: 'next', conversationId: 'conversation-a', branchId: 'branch-a', draftReceipt: { draftId: f.snapshot.draftId, sourceRevision: 1, committedRevision: 2 } })
+    expect(await f.execution.send({ content: '@Partner Continue this work', userContent: f.content })).toBe(true)
+    expect(f.api.chat.enqueue.mock.calls[0]?.[0]).toMatchObject({ delivery: { mode: 'next', actorId: 'partner', target: { rootRunId: 'run-a', runId: 'partner-run' } } })
+    expect(f.api.executions.sendDraft.mock.calls).toEqual([])
+    expect(f.api.chat.startTurn.mock.calls).toEqual([])
+    expect(f.drafts.draft.value).toBe('')
+  })
+
+  it('binds a current root supplement to its original target and gives changed intent a new request id', async () => {
+    const f = prepare()
+    f.actorInput.mailboxTarget.value = null
+    f.api.chat.enqueue.mockRejectedValue(new Error('Offline'))
+    expect(await f.execution.send({ content: '@Partner Continue this work', userContent: f.content })).toBe(false)
+    const first = f.api.chat.enqueue.mock.calls[0]![0]
+    expect(first.delivery).toEqual(f.actorInput.delivery.value)
+    f.actorInput.delivery.value = { ...f.actorInput.delivery.value!, mode: 'next' }
+    expect(await f.execution.send({ content: '@Partner Continue this work', userContent: f.content })).toBe(false)
+    const second = f.api.chat.enqueue.mock.calls[1]![0]
+    expect(second.requestId).not.toBe(first.requestId)
+    expect(second.delivery.mode).toBe('next')
+    expect(f.drafts.snapshot(f.key).content).toEqual(f.content)
+  })
+
+  it('retries the accepted identity after a lost acknowledgement even if the actor has already finished', async () => {
+    const f = prepare()
+    f.api.executions.sendDraft.mockRejectedValueOnce(new Error('Connection lost'))
     expect(await f.execution.send({ content: '@Partner Continue this work', userContent: f.content })).toBe(false)
     expect(f.drafts.snapshot(f.key).content).toEqual(f.content)
     expect(f.api.chat.enqueue.mock.calls).toEqual([])
     expect(f.api.chat.startTurn.mock.calls).toEqual([])
     expect(f.error.value).toBeTruthy()
+    const first = f.api.executions.sendDraft.mock.calls[0]![0]
+    f.actorInput.target.value = null
+    f.actorInput.mailboxTarget.value = null
+    f.actorInput.delivery.value = { mode: 'current', actorId: 'partner', target: null }
+    f.projectedRuns.value = []
+    f.api.executions.sendDraft.mockResolvedValue({
+      draftId: f.snapshot.draftId,
+      revision: 2,
+      scope: { kind: 'conversation_branch', conversationId: 'conversation-a', branchId: 'branch-a' },
+      executionConfig: { approvalPolicy: f.snapshot.approvalPolicy, executionProfile: f.snapshot.executionProfile },
+      modelSelection: null,
+      content: createBuddyUserContent(),
+      updatedAt: '2026-10-13T00:01:00.000Z',
+    })
+    expect(await f.execution.send({ content: '@Partner Continue this work', userContent: f.content })).toBe(true)
+    expect(f.api.executions.sendDraft.mock.calls[1]![0]).toEqual(first)
+    expect(f.api.chat.enqueue.mock.calls).toEqual([])
+    expect(f.api.chat.startTurn.mock.calls).toEqual([])
+    expect(f.drafts.draft.value).toBe('')
   })
 })
 
@@ -236,9 +417,16 @@ function createFixture() {
     const error = shallowRef<string | null>(null)
     const pending = deferred<LocalRun>()
     const composerTarget = useComposerTarget({ drafts, conversationId: session.activeConversationId, branchId: session.activeBranchId, persist: async () => true })
-    const actorInput = { target: shallowRef<ExecutionTarget | null>(null) }
+    const actorInput = {
+      target: shallowRef<ExecutionTarget | null>(null),
+      mailboxTarget: shallowRef<ExecutionTarget | null>(null),
+      delivery: shallowRef<BuddyInputDelivery | undefined>(),
+      execution: shallowRef<LocalExecution | null>(null),
+    }
     const api = { executions: { sendDraft: vi.fn() }, chat: { listQueue: async () => [], enqueue: vi.fn(), cancelQueued: vi.fn(), steerQueued: vi.fn(), cancel: () => pending.promise, executeCommand: vi.fn(), startTurn: vi.fn() } }
     const selectedModel = shallowRef<LocalRuntimeModelOption | null>(null)
+    const flushModelSelection = vi.fn(async () => true)
+    const persistWorkspaceState = vi.fn(async () => true)
     const execution = useChatTurnExecution({
       actorInput,
       composerTarget,
@@ -250,12 +438,13 @@ function createFixture() {
       draftChangedMessage: () => 'Draft changed',
       draftScopeKey: targetKey,
       executionProfile: drafts.executionProfile,
+      flushModelSelection,
       getRunTerminationMessage: () => 'Run ended',
       isUpdatingPermissionSettings: shallowRef(false),
       language: shallowRef('en-US'),
       modelSelection: { selectedModel },
       onActionCommandRunStarted: () => {},
-      persistWorkspaceState: async () => true,
+      persistWorkspaceState,
       runSync: {
         refreshActiveConversation: async () => {},
         applyRunStart: () => {},
@@ -286,7 +475,7 @@ function createFixture() {
       drafts.updateComposerContent('current view input', null)
       error.value = 'current view status'
     }
-    return { actorInput, api, drafts, error, execution, navigate, pending, projectedRuns, run, scope, selectedModel }
+    return { actorInput, api, drafts, error, execution, flushModelSelection, navigate, pending, persistWorkspaceState, projectedRuns, run, scope, selectedModel }
   })!
 }
 

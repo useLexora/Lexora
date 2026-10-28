@@ -4,6 +4,7 @@ import type { LocalConversationTimelineItem, LocalMessage } from '@buddy-shared/
 import type { ExtensionActionTimelineItem } from '@buddy-shared/extensions/extensionActionApi'
 import type { LocalRunOutput } from '@buddy-shared/runs/runApi'
 
+import type { ExecutionGroups } from '../executions/executionGroups'
 import type { ChatAgentTurn } from './chatAgentTurn'
 import type { PersistedChatTranscriptRow, PresentedChatTranscriptRow } from './chatTranscriptActivities'
 import type {
@@ -22,6 +23,7 @@ export function projectPersistedChatTranscriptRows(
   outputs: ReadonlyArray<LocalRunOutput> = [],
   changeSets: ReadonlyArray<LocalChangeSetSummary> = [],
   includeUnanchoredTurns = false,
+  executions?: ExecutionGroups,
 ): Array<PresentedChatTranscriptRow | ChatTranscriptTurnResultRow> {
   const rows: PersistedChatTranscriptRow[] = []
   const turnsByTrigger = new Map<string, ChatAgentTurn[]>()
@@ -55,6 +57,7 @@ export function projectPersistedChatTranscriptRows(
     turns.filter(turn => includeUnanchoredTurns || timelineMessageIds.has(turn.triggeringMessageId)),
     visibleActions,
     items.filter(item => item.kind === 'message'),
+    executions,
   )
   const independentActionIds = new Set(activities.independentActions.map(action => action.id))
   for (const turn of activities.turns) {
@@ -132,7 +135,7 @@ export function projectPersistedChatTranscriptRows(
       }
     }))
   }
-  return interleaveChatTranscriptSegments(rows, new Map(turns.flatMap(turn => Object.entries(turn.messageStartedAt ?? {})))).flatMap<PresentedChatTranscriptRow | ChatTranscriptTurnResultRow>((row) => {
+  return interleaveChatTranscriptSegments(rows, new Map(turns.flatMap(turn => Object.entries(turn.messageStartedAt ?? {}))), executions).flatMap<PresentedChatTranscriptRow | ChatTranscriptTurnResultRow>((row) => {
     if (row.kind !== 'agent-turn' || !row.ownsResultActions || row.turn.status !== 'completed')
       return [row]
     return [

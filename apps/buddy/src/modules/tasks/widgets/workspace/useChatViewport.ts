@@ -183,13 +183,16 @@ export function useChatViewport(options: UseChatViewportOptions) {
   ) {
     if (disposed || (isPositioning.value && !scrollOptions?.userInitiated))
       return
+    const unchangedProgrammaticScroll = scrollOptions?.userInitiated === false
+      && metrics.scrollTop === scrollState.value.observedTop
     const observation = observeChatScroll(scrollState.value, metrics, scrollOptions)
     scrollState.value = observation.state
     if (observation.movedByReader || (isRestoringPosition.value && scrollOptions?.userInitiated))
       cancelPositioning()
-    readingAnchor = scrollState.value.ownership === 'detached'
-      ? options.list.value?.captureScrollAnchor() ?? null
-      : null
+    if (scrollState.value.ownership !== 'detached')
+      readingAnchor = null
+    else if (!unchangedProgrammaticScroll || !readingAnchor)
+      readingAnchor = options.list.value?.captureScrollAnchor() ?? null
     if (
       metrics.scrollTop <= Math.max(64, metrics.clientHeight)
       && !options.isLoading.value

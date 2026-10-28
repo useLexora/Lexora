@@ -21,13 +21,22 @@ export function projectStreamingAssistantMessage(
   events: ReadonlyArray<LocalRunEvent>,
   runs: ReadonlyArray<LocalRun>,
 ): StreamingAssistantMessage | null {
+  const latest = projectChatStreamingMessages(messages, events, runs).at(-1)
+  return latest ? { id: latest.message.id, text: latest.text } : null
+}
+
+export function projectChatStreamingMessages(
+  messages: ReadonlyArray<LocalMessage>,
+  events: ReadonlyArray<LocalRunEvent>,
+  runs: ReadonlyArray<LocalRun>,
+): ReadonlyArray<ChatRunStreamingMessage> {
   const eventsByRunId = new Map<string, LocalRunEvent[]>()
   for (const event of events) {
     const runEvents = eventsByRunId.get(event.runId) ?? []
     runEvents.push(event)
     eventsByRunId.set(event.runId, runEvents)
   }
-  const latest = selectChatStreamingMessage(
+  return selectChatStreamingMessages(
     messages,
     runs.flatMap(run => projectChatRunStreamingMessages(
       run,
@@ -35,9 +44,6 @@ export function projectStreamingAssistantMessage(
     )),
     runs,
   )
-  return latest
-    ? { id: latest.message.id, text: latest.text }
-    : null
 }
 
 export function projectChatRunStreamingMessages(
@@ -151,20 +157,29 @@ export function selectChatStreamingMessage(
   candidates: ReadonlyArray<ChatRunStreamingMessage>,
   runs: ReadonlyArray<LocalRun>,
 ): ChatRunStreamingMessage | null {
+  return selectChatStreamingMessages(messages, candidates, runs).at(-1) ?? null
+}
+
+export function selectChatStreamingMessages(
+  messages: ReadonlyArray<LocalMessage>,
+  candidates: ReadonlyArray<ChatRunStreamingMessage>,
+  runs: ReadonlyArray<LocalRun>,
+): ReadonlyArray<ChatRunStreamingMessage> {
   const persistedMessageIds = new Set(messages.map(message => message.id))
   const loadedMessageIds = new Set(persistedMessageIds)
   const runById = new Map(runs.map(run => [run.id, run]))
-  const latest = candidates.filter((candidate) => {
+  const latest = new Map<string, ChatRunStreamingMessage>()
+  for (const candidate of candidates) {
     if (persistedMessageIds.has(candidate.message.id) || !candidate.message.runId)
-      return false
+      continue
     const run = runById.get(candidate.message.runId)
-    return !!run && (
-      run.status === 'queued'
-      || run.status === 'running'
-      || loadedMessageIds.has(run.triggeringMessageId)
-    )
-  }).sort(compareRunStreamingMessages).at(-1)
-  return latest ?? null
+    if (!run || (run.status !== 'queued' && run.status !== 'running' && !loadedMessageIds.has(run.triggeringMessageId)))
+      continue
+    const previous = latest.get(run.id)
+    if (!previous || compareRunStreamingMessages(previous, candidate) < 0)
+      latest.set(run.id, candidate)
+  }
+  return [...latest.values()].sort(compareRunStreamingMessages)
 }
 
 function compareRunStreamingMessages(

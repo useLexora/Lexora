@@ -1,5 +1,6 @@
 import type { LocalMessage } from '@buddy-shared/conversation/conversationApi'
 import type { ExtensionActionTimelineItem } from '@buddy-shared/extensions/extensionActionApi'
+import type { ExecutionGroups } from '../executions/executionGroups'
 import type { ChatAgentToolNode, ChatAgentTurn } from './chatAgentTurn'
 import type { ChatTranscriptActivityFlowRow, ChatTranscriptAgentTurnRow, ChatTranscriptCompactionRow, ChatTranscriptExtensionActionRow, ChatTranscriptMessageRow } from './chatTranscriptTypes'
 
@@ -10,6 +11,7 @@ export function projectChatTurnExtensionActions(
   turns: readonly ChatAgentTurn[],
   actions: readonly ExtensionActionTimelineItem[],
   messages: readonly LocalMessage[],
+  executions?: ExecutionGroups,
 ) {
   const inputs = new Map(messages.filter(message => message.role === 'user').map(message => [message.id, message]))
   const sortedTurns = [...turns].sort((left, right) => left.startedAt.localeCompare(right.startedAt) || left.runId.localeCompare(right.runId))
@@ -19,12 +21,16 @@ export function projectChatTurnExtensionActions(
     const source = action.sourceMessageId ? inputs.get(action.sourceMessageId) : undefined
     const branchTurns = sortedTurns.filter(turn => turn.branchId === action.branchId)
     const triggeredTurns = branchTurns.filter(turn => turn.triggeringMessageId === action.sourceMessageId)
+    const acceptedRunId = source?.inputRunId
+    const acceptedRootId = acceptedRunId ? executions?.byRun.get(acceptedRunId)?.rootRunId ?? acceptedRunId : null
     const candidates = triggeredTurns.length
       ? triggeredTurns
-      : branchTurns.filter(turn => source
-        && source.branchId === turn.branchId
-        && source.createdAt >= turn.startedAt
-        && (turn.completedAt === null || source.createdAt <= turn.completedAt))
+      : acceptedRunId
+        ? branchTurns.filter(turn => turn.runId === acceptedRunId || turn.runId === acceptedRootId)
+        : branchTurns.filter(turn => source
+          && source.branchId === turn.branchId
+          && source.createdAt >= turn.startedAt
+          && (turn.completedAt === null || source.createdAt <= turn.completedAt))
     const owner = candidates.findLast(turn => turn.startedAt <= action.createdAt) ?? candidates[0]
     if (!owner) {
       independentActions.push(action)

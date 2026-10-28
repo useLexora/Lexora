@@ -11,6 +11,8 @@ import { extensionActionTimelineSchema } from '../../../shared/extensions/extens
 
 export interface ConversationTimelineMessageRecord extends MessageRecord {
   kind: 'message'
+  inputRunId?: string
+  startedAt?: string
 }
 
 export interface ConversationTimelineCompactionRecord {
@@ -95,15 +97,37 @@ export function createConversationTimelineRepository(
   branches: ConversationBranchLineage,
 ): ConversationTimelineRepository {
   const findMessage = database.prepare('SELECT * FROM messages WHERE id = ?')
-  const findMessagePhase = database.prepare(`
+  const findMessagePresentation = database.prepare(`
     SELECT json_extract(events.payload_json, '$.phase') AS phase,
-      json_extract(events.payload_json, '$.stopReason') AS stopReason
+      json_extract(events.payload_json, '$.stopReason') AS stopReason,
+      (
+        SELECT started.created_at FROM run_events started
+        WHERE started.run_id = publications.run_id
+          AND started.event_type = 'message.started'
+          AND started.sequence < events.sequence
+          AND json_extract(started.payload_json, '$.messageId') = publications.message_id
+          AND json_extract(started.payload_json, '$.role') = 'assistant'
+        ORDER BY started.sequence
+        LIMIT 1
+      ) AS startedAt
     FROM conversation_publications publications
     INNER JOIN run_events events ON events.run_id = publications.run_id
       AND events.sequence = publications.source_sequence
     WHERE publications.message_id = ? AND publications.run_id = ?
-      AND events.event_type = 'message.completed'
+      AND events.event_type IN ('message.completed', 'message.interrupted')
       AND json_extract(events.payload_json, '$.messageId') = publications.message_id
+  `)
+
+  const findInputRuns = database.prepare(`
+    SELECT messages.id AS messageId, runs.id AS runId
+    FROM chat_queue queue
+    INNER JOIN runs ON runs.id = queue.run_id AND runs.conversation_id = queue.conversation_id
+      AND runs.branch_id = queue.branch_id AND runs.execution_kind IN ('root', 'actor_child')
+    INNER JOIN messages ON messages.id = json_extract(queue.prepared_json, '$.userMessageId')
+      AND messages.conversation_id = queue.conversation_id AND messages.branch_id = queue.branch_id
+      AND messages.role = 'user'
+    WHERE queue.conversation_id = ? AND queue.state = 'sent'
+      AND messages.id IN (SELECT value FROM json_each(?))
   `)
 
   const findCompactionRun = database.prepare(`
@@ -302,13 +326,23 @@ export function createConversationTimelineRepository(
       let hasMore = initialPage.hasMore
       const segmentIndexes = new Map(segments.map((segment, index) => [segment.branchId, index]))
       const triggeringMessages = new Map<string, MessageRow>()
+      const inputRunIds = new Map<string, string>()
+      const inspectedInputs = new Set<string>()
       while (selected[0]) {
+        const inputIds = selected.filter(row => row.kind === 'message' && row.role === 'user' && !inspectedInputs.has(row.id)).map(row => row.id)
+        if (inputIds.length) {
+          for (const id of inputIds)
+            inspectedInputs.add(id)
+          for (const input of findInputRuns.all(conversationId, JSON.stringify(inputIds)) as { messageId: string, runId: string }[])
+            inputRunIds.set(input.messageId, input.runId)
+        }
         const triggeringMessage = findEarliestMissingTriggeringMessage(
           selected,
           conversationId,
           segments,
           segmentIndexes,
           triggeringMessages,
+          inputRunIds,
           findTriggeringMessageForRun,
         )
         if (!triggeringMessage)
@@ -339,15 +373,22 @@ export function createConversationTimelineRepository(
       return {
         items: selected.map((row) => {
           const item = toTimelineItem(row)
-          if (item.kind !== 'message' || item.role !== 'assistant' || !item.runId
-            || !item.content || typeof item.content !== 'object' || Array.isArray(item.content)) {
-            return item
+          if (item.kind === 'message' && item.role === 'user') {
+            const inputRunId = inputRunIds.get(item.id)
+            return inputRunId ? { ...item, inputRunId } : item
           }
-          const source = findMessagePhase.get(item.id, item.runId) as { phase: unknown, stopReason: unknown } | undefined
+          if (item.kind !== 'message' || item.role !== 'assistant' || !item.runId)
+            return item
+          const source = findMessagePresentation.get(item.id, item.runId) as { phase: unknown, stopReason: unknown, startedAt: unknown } | undefined
           const phase = source?.phase ?? (source?.stopReason === 'tool_use' ? 'commentary' : null)
-          return phase === 'commentary' || phase === 'final_answer'
-            ? { ...item, content: { ...item.content, phase } }
-            : item
+          return {
+            ...item,
+            ...(typeof source?.startedAt === 'string' ? { startedAt: source.startedAt } : {}),
+            ...(item.content && typeof item.content === 'object' && !Array.isArray(item.content)
+              && (phase === 'commentary' || phase === 'final_answer')
+              ? { content: { ...item.content, phase } }
+              : {}),
+          }
         }),
         nextBefore: hasMore && selected[0]
           ? toTimelineBoundary(selected[0])
@@ -377,6 +418,7 @@ function findEarliestMissingTriggeringMessage(
   segments: VisibleConversationBranchSegment[],
   segmentIndexes: Map<string, number>,
   triggeringMessages: Map<string, MessageRow>,
+  inputRunIds: ReadonlyMap<string, string>,
   findTriggeringMessageForRun: ReturnType<DatabaseSync['prepare']>,
 ): MessageRow | null {
   const selectedMessageIds = new Set(rows.flatMap(row => (
@@ -384,14 +426,17 @@ function findEarliestMissingTriggeringMessage(
   )))
   let earliest: MessageRow | null = null
   for (const row of rows) {
-    if (row.kind !== 'message' || !row.run_id)
+    if (row.kind !== 'message')
       continue
-    let triggeringMessage = triggeringMessages.get(row.run_id)
+    const runId = row.run_id ?? inputRunIds.get(row.id)
+    if (!runId)
+      continue
+    let triggeringMessage = triggeringMessages.get(runId)
     if (!triggeringMessage) {
-      triggeringMessage = findTriggeringMessageForRun.get(row.run_id) as MessageRow | undefined
+      triggeringMessage = findTriggeringMessageForRun.get(runId) as MessageRow | undefined
       if (!triggeringMessage)
         throw new ConversationTimelineRepositoryError('run binding is invalid')
-      triggeringMessages.set(row.run_id, triggeringMessage)
+      triggeringMessages.set(runId, triggeringMessage)
     }
     assertVisibleTriggeringMessage(triggeringMessage, conversationId, segments, segmentIndexes)
     if (selectedMessageIds.has(triggeringMessage.id))

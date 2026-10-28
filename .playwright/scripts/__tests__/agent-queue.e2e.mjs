@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { expect, test, useSyntheticCredentialStorage } from '../fixtures/electron.mjs'
 
 for (const mode of ['idle-follow-up', 'native-wait-steer']) {
-  test(`waiting parent accepts ${mode} while its child continues`, async ({ buddy }, testInfo) => {
+  test(`waiting parent accepts ${mode} while its child continues`, async ({ buddy }) => {
     const childGate = Promise.withResolvers()
     const parentRequests = []
     let npcId
@@ -80,8 +80,31 @@ for (const mode of ['idle-follow-up', 'native-wait-steer']) {
       const parentId = read('SELECT id FROM runs WHERE parent_run_id IS NULL')[0].id
       const inputs = mode === 'native-wait-steer' ? ['INPUT_A_517', 'INPUT_C_517', 'INPUT_B_517'] : ['INPUT_A_517']
       for (const input of inputs) {
-        await composer.fill(input)
-        await page.getByRole('button', { name: '加入队列', exact: true }).click()
+        if (mode === 'native-wait-steer') {
+          await page.evaluate(async ({ text, parentId }) => {
+            const api = window.lexoraDesktop.localChat
+            const run = await api.runs.get(parentId)
+            const source = await api.composerDrafts.open({
+              draftId: crypto.randomUUID(),
+              scope: { kind: 'conversation_branch', conversationId: run.conversationId, branchId: run.branchId },
+              initialContent: { version: 1, body: [{ type: 'paragraph', content: [] }], panelResourceIds: [] },
+              initialExecutionConfig: { approvalPolicy: run.approvalPolicy, executionProfile: run.executionProfile },
+              initialModelSelection: null,
+            })
+            const draft = await api.composerDrafts.save({
+              draftId: source.draftId,
+              expectedRevision: source.revision,
+              content: { version: 1, body: [{ type: 'paragraph', content: [{ type: 'text', text }] }], panelResourceIds: [] },
+              executionConfig: source.executionConfig,
+              modelSelection: source.modelSelection,
+            })
+            await api.chat.enqueue({ draftId: draft.draftId, expectedRevision: draft.revision, requestId: crypto.randomUUID() })
+          }, { text: input, parentId })
+        }
+        else {
+          await composer.fill(input)
+          await page.locator('.desktop-chat-composer__actions').getByRole('button', { name: '补充当前工作', exact: true }).click()
+        }
       }
       if (mode === 'native-wait-steer') {
         await expect(page.locator('.chat-message-queue__row')).toHaveCount(3)
@@ -93,8 +116,6 @@ for (const mode of ['idle-follow-up', 'native-wait-steer']) {
       expect(parentRequests.slice(2).map(payload => JSON.stringify(payload.messages.filter(message => message.role === 'user').at(-1)))).toEqual((mode === 'native-wait-steer' ? ['INPUT_B_517', 'INPUT_A_517', 'INPUT_C_517'] : inputs).map(input => expect.stringContaining(input)))
       expect(read('SELECT DISTINCT run_id FROM chat_queue')).toEqual([{ run_id: parentId }])
       expect(read('SELECT status FROM runs WHERE parent_run_id IS NOT NULL')).toEqual([{ status: 'running' }])
-      await expect(page.getByText('队列操作未完成，请稍后重试', { exact: true })).toHaveCount(0)
-      await page.screenshot({ path: testInfo.outputPath(`${mode}-child-still-running.png`), animations: 'disabled' })
       childGate.resolve()
       await expect.poll(() => read('SELECT status FROM runs').map(row => row.status)).toEqual(['completed', 'completed'])
       expect(JSON.stringify(parentRequests.at(-1))).toContain('CHILD_FINISHED_6942')

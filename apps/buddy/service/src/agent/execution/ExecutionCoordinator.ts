@@ -224,6 +224,62 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
     })
   }
 
+  forward(callerRunId: string, targetRunId: string, inputSourceId: string) {
+    const source = this.#require(callerRunId)
+    const target = this.#options.executions.requirePublicWork(callerRunId, targetRunId)
+    return this.#serializeRoots([source.run.rootRunId, target.run.rootRunId], async () => {
+      const current = this.#require(callerRunId)
+      const receiver = this.#options.executions.requirePublicWork(callerRunId, targetRunId)
+      const input = this.#options.executions.findAcceptedUserInput(callerRunId, inputSourceId)
+      if (!input)
+        throw new ExecutionAdmissionError('unauthorized')
+      const metadata = {
+        runId: targetRunId,
+        rootRunId: receiver.run.rootRunId,
+        workId: receiver.work.workId,
+        actorId: receiver.run.buddyId,
+        inputSourceId,
+        inputRunId: callerRunId,
+        messageId: input.messageId,
+        origin: 'user' as const,
+      }
+      const previous = this.#options.mailbox.find(input.messageId)
+      if (previous) {
+        const message = previous.message
+        if (message.kind !== 'supplement' || message.origin !== 'user' || message.purpose
+          || message.sourceRunId !== targetRunId || message.targetRunId !== targetRunId || message.text !== input.text) {
+          throw new ExecutionAdmissionError('conflict')
+        }
+        return { ...metadata, status: 'accepted' as const, replayed: true, targetGeneration: message.targetGeneration, payloadHash: message.payloadHash, deliveryState: previous.state }
+      }
+      if (this.#stopped)
+        throw new ExecutionAdmissionError('stale')
+      this.#options.executions.assertCurrent(this.#fence(current))
+      if (input.text === null)
+        return { ...metadata, status: 'unsupported_input' as const, replayed: false }
+      const chain = [receiver]
+      while (chain.at(-1)!.run.parentRunId)
+        chain.push(this.#require(chain.at(-1)!.run.parentRunId!))
+      if (chain.some(record => record.phase === 'closing' || record.phase === 'closed' || record.cancelRequestedAt
+        || !['queued', 'running'].includes(record.run.status))) {
+        return { ...metadata, status: 'closed' as const, replayed: false, phase: receiver.phase, targetStatus: receiver.run.status }
+      }
+      this.#options.executions.assertCurrent(this.#fence(receiver))
+      this.#options.availability?.assertRunExecutable(callerRunId)
+      this.#options.availability?.assertRunExecutable(targetRunId)
+      await this.#options.events.append({ runId: targetRunId, type: 'execution.mailbox.sent', payload: {
+        kind: 'supplement',
+        origin: 'user',
+        messageId: input.messageId,
+        text: input.text,
+        targetRunId,
+        targetGeneration: receiver.run.generation,
+      } })
+      const accepted = this.#options.mailbox.find(input.messageId)!
+      return { ...metadata, status: 'accepted' as const, replayed: false, targetGeneration: accepted.message.targetGeneration, payloadHash: accepted.message.payloadHash, deliveryState: accepted.state }
+    })
+  }
+
   answerQuestion(sourceRunId: string | null, questionId: string, text: string, messageId?: string): Promise<void> {
     const question = this.#options.mailbox.findQuestion(questionId)
     if (!question || question.message.kind !== 'question')
@@ -574,6 +630,14 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
   #changed(rootRunId: string): void {
     this.#revisions.set(rootRunId, this.#revision(rootRunId) + 1)
     this.#changes.fire({ rootRunId })
+  }
+
+  #serializeRoots<T>(rootRunIds: string[], operation: () => Promise<T>): Promise<T> {
+    const roots = [...new Set(rootRunIds)].sort()
+    const next = (index: number): Promise<T> => index === roots.length
+      ? operation()
+      : this.#serialize(roots[index]!, () => next(index + 1))
+    return next(0)
   }
 
   #serialize<T>(rootRunId: string, operation: () => Promise<T>): Promise<T> {

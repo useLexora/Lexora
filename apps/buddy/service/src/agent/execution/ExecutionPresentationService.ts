@@ -1,4 +1,5 @@
-import type { ExecutionAnswer, ExecutionEventsRequest, ExecutionsChanged, ExecutionScope, ExecutionSend, ExecutionTarget, LocalExecution, LocalExecutionDetail, LocalExecutionEventsPage } from '../../../../shared/executions/executionPresentationApi'
+import type { LocalExecutionInput, LocalExecutionInputsPage } from '../../../../shared/executions/executionInputReceipt'
+import type { ExecutionAnswer, ExecutionEventsRequest, ExecutionInputsRequest, ExecutionsChanged, ExecutionScope, ExecutionSend, ExecutionTarget, LocalExecution, LocalExecutionDetail, LocalExecutionEventsPage } from '../../../../shared/executions/executionPresentationApi'
 import type { LocalRunTokenUsage } from '../../../../shared/usage/runTokenUsage'
 import type { BuddiesService } from '../../buddies/BuddiesService'
 import type { ChangeCaptureService } from '../../changes/ChangeCaptureService'
@@ -9,13 +10,14 @@ import type { ApprovalRepository } from '../../storage/approvalRepository'
 import type { ArtifactRepository } from '../../storage/artifactRepository'
 import type { ConversationRepository } from '../../storage/conversationRepository'
 import type { ExecutionRepository, ExecutionStateRecord } from '../../storage/executionRepository'
-import type { MailboxRepository } from '../../storage/mailboxRepository'
+import type { ExecutionMailboxRecord, MailboxRepository } from '../../storage/mailboxRepository'
 import type { RunRepository } from '../../storage/runRepository'
 import type { UsageRepository } from '../../storage/usageRepository'
 import type { ExecutionCoordinator } from './ExecutionCoordinator'
 import { randomUUID } from 'node:crypto'
 import { Emitter } from '../../../../shared/events/Emitter'
-import { executionAnswerSchema, executionEventsRequestSchema, executionScopeSchema, executionSendSchema, executionTargetSchema } from '../../../../shared/executions/executionPresentationApi'
+import { EXECUTION_INPUT_PAGE_SIZE } from '../../../../shared/executions/executionInputReceipt'
+import { executionAnswerSchema, executionEventsRequestSchema, executionInputsRequestSchema, executionScopeSchema, executionSendSchema, executionTargetSchema } from '../../../../shared/executions/executionPresentationApi'
 import { toPublicRunEvent } from '../../../../shared/runs/publicRunEvent'
 import { buddyRunProgressSchema } from '../../../../shared/runs/runProgress'
 import { projectRunOutputs } from '../../conversations/projectRunOutputs'
@@ -27,8 +29,8 @@ export interface ExecutionPresentationOptions {
   approvals: Pick<ApprovalRepository, 'hasPending'>
   conversations: Pick<ConversationRepository, 'findById' | 'listBranches' | 'listBranchMessages'>
   runs: Pick<RunRepository, 'listForTimeline'>
-  executions: Pick<ExecutionRepository, 'find' | 'listTree'>
-  mailbox: Pick<MailboxRepository, 'find' | 'findQuestion' | 'listQuestions'>
+  executions: Pick<ExecutionRepository, 'find' | 'listTree' | 'isForwardedPublicInput'>
+  mailbox: Pick<MailboxRepository, 'find' | 'findQuestion' | 'listQuestions' | 'listInputPage'>
   buddies: Pick<BuddiesService, 'get'>
   coordinator: Pick<ExecutionCoordinator, 'onDidChange' | 'answerQuestion' | 'send' | 'cancel'>
   mutations: Pick<MutationCoordinator, 'onDidChange' | 'getRunState'>
@@ -80,6 +82,30 @@ export class ExecutionPresentationService {
     })
   }
 
+  inputs(input: ExecutionInputsRequest): LocalExecutionInputsPage {
+    const scope = parse(executionInputsRequestSchema, input)
+    const visibleRoots = new Set(this.#visibleRoots(scope))
+    const targets = new Map(scope.runIds.map((runId) => {
+      const record = this.#options.executions.find(runId)
+      if (!record || record.run.conversationId !== scope.conversationId || !visibleRoots.has(record.run.rootRunId)
+        || (record.run.executionKind !== 'root' && record.run.executionKind !== 'actor_child')) {
+        throw new BuddyServiceError('VALIDATION_FAILED')
+      }
+      return [runId, record] as const
+    }))
+    const page = this.#options.mailbox.listInputPage(scope.runIds, { offset: scope.offset, limit: EXECUTION_INPUT_PAGE_SIZE })
+    return {
+      inputs: page.records.flatMap((message) => {
+        const record = targets.get(message.message.targetRunId)
+        const input = record && this.#presentInput(record.run.id, message, message.createdAt)
+        if (!record || !input || this.#options.executions.isForwardedPublicInput(message.message))
+          return []
+        return [{ ...input, conversationId: scope.conversationId, branchId: scope.branchId, runId: record.run.id, rootRunId: record.run.rootRunId, buddyId: record.run.buddyId, buddyName: this.#options.buddies.get(record.run.buddyId).name, task: record.initialInput?.prompt.slice(0, 300) ?? '' }]
+      }),
+      nextOffset: page.hasMore ? scope.offset + page.records.length : null,
+    }
+  }
+
   async detail(input: ExecutionTarget): Promise<LocalExecutionDetail> {
     const target = parse(executionTargetSchema, input)
     this.#requireTarget(target)
@@ -100,16 +126,8 @@ export class ExecutionPresentationService {
         if (event.type !== 'execution.mailbox.sent')
           return []
         const message = this.#options.mailbox.find((event.payload as { messageId: string }).messageId)
-        if (!message || message.message.targetRunId !== target.runId)
-          return []
-        const value = message.message
-        const question = value.kind === 'answer' ? this.#options.mailbox.findQuestion(value.questionId) : null
-        const questionMessage = question && question.message.kind === 'question' ? question.message : null
-        const userInput = (value.kind === 'supplement' && value.origin === 'user')
-          || (value.kind === 'answer' && value.sourceRunId === target.runId && questionMessage?.audience === 'user')
-        if (!userInput || (value.kind !== 'supplement' && value.kind !== 'answer'))
-          return []
-        return [{ kind: value.kind, messageId: value.messageId, text: value.text, createdAt: event.createdAt, state: message.state }]
+        const input = message && this.#presentInput(target.runId, message, event.createdAt)
+        return input ? [input] : []
       }),
       result: result || null,
       artifacts: [...new Map(artifacts.map(artifact => [artifact.artifactId, artifact])).values()],
@@ -172,6 +190,21 @@ export class ExecutionPresentationService {
     for (const subscription of this.#subscriptions)
       subscription.dispose()
     this.#changes.dispose()
+  }
+
+  #presentInput(runId: string, record: ExecutionMailboxRecord, createdAt: string): LocalExecutionInput | null {
+    const value = record.message
+    const state = record.state === 'undelivered' && record.receipt ? 'accepted' : record.state
+    if (value.targetRunId !== runId || value.sourceRunId !== runId)
+      return null
+    if (value.kind === 'supplement' && value.origin === 'user')
+      return { kind: value.kind, messageId: value.messageId, text: value.text, createdAt, state }
+    if (value.kind === 'answer') {
+      const question = this.#options.mailbox.findQuestion(value.questionId)?.message
+      if (question?.kind === 'question' && question.audience === 'user' && question.sourceRunId === runId)
+        return { kind: value.kind, messageId: value.messageId, text: value.text, createdAt, state }
+    }
+    return null
   }
 
   #visibleRoots(scope: ExecutionScope): string[] {

@@ -10,6 +10,11 @@ export function useTaskComposer(props: Readonly<TaskComposerHostProps>) {
     const execution = props.execution
     return {
       isActorInput: !execution.editingMessageId.value && execution.isActorInput.value,
+      inputDelivery: !execution.editingMessageId.value && execution.inputExecution.value
+        ? {
+            answering: execution.inputExecution.value.canAnswer,
+          }
+        : undefined,
       canUpdatePermissionSettings: composer.canUpdatePermissionSettings.value,
       canSend: execution.canSend.value && !execution.isMutatingBranch.value,
       composerContent: composer.composerContent.value,
@@ -22,8 +27,8 @@ export function useTaskComposer(props: Readonly<TaskComposerHostProps>) {
       importPastedText: composer.importPastedText,
       readResourceText: composer.readResourceText,
       selectSource: composer.selectSource,
-      isRunning: Boolean(execution.activeRun.value || execution.stoppingRunId.value),
-      isStopping: Boolean(execution.stoppingRunId.value),
+      isRunning: Boolean(execution.inputExecution.value || execution.activeRun.value || execution.stoppingRunId.value),
+      isStopping: Boolean(execution.stoppingRunId.value || execution.inputExecution.value?.stopping),
       isSelectingFiles: composer.isSelectingFiles.value,
       isSending: execution.isSending.value || execution.isMutatingBranch.value,
       isUpdatingPermissionSettings: composer.isUpdatingPermissionSettings.value,

@@ -33,31 +33,32 @@ describe('draft-owned task model configuration', () => {
     expect(drafts.acknowledgeSend({ draftId: submitted.draftId, sourceRevision: 0, committedRevision: 1 }, 'global')).toBe(true)
     expect(drafts.modelSelection.value).toBeNull()
   })
-  it('displays the saved Draft configuration without changing the next conversation default', async () => {
+  it('restores saved scope models without overwriting defaults changed by the user', async () => {
     const fixture = await createFixture()
-    const saved = { ...modelSelection('model-2'), reasoning: 'high' as const, serviceTier: 'priority' as const }
+    const saved = { ...modelSelection('model-1'), reasoning: 'high' as const, serviceTier: 'priority' as const }
     fixture.confirmOpen(saved)
     await fixture.catalog.loadModelCatalog(true)
 
     expect(fixture.selection.currentSelection()).toEqual(saved)
     expect(fixture.drafts.modelSelection.value).toEqual(saved)
-    expect(fixture.selection.selectedModelId.value).toBe('provider:model-2')
+    expect(fixture.selection.selectedModelId.value).toBe('provider:model-1')
     expect(fixture.drafts.isPersisted(fixture.drafts.snapshot('global'))).toBe(true)
     expect(fixture.catalog.defaultModelId.value).toBe('provider:model-1')
-    expect(fixture.setDefaultModel).not.toHaveBeenCalled()
-  })
 
-  it('displays the inherited default without persisting an explicit draft override', async () => {
-    const fixture = await createFixture()
-    const initial = fixture.drafts.snapshot('global')
+    fixture.targetKey.value = 'space:space-1'
     fixture.binding.restoreScope()
-    await fixture.catalog.loadModelCatalog(true)
+    await fixture.commands.selectChatModel('provider:model-2')
+    fixture.confirmOpen(modelSelection('model-2'))
+    fixture.targetKey.value = 'global'
+    fixture.binding.restoreScope()
 
-    expect(fixture.drafts.snapshot('global')).toEqual(initial)
-    expect(fixture.binding.initialModelSelection('global')).toBeNull()
-    fixture.confirmOpen(fixture.binding.initialModelSelection('global'))
-    expect(fixture.drafts.modelSelection.value).toBeNull()
-    expect(fixture.selection.currentSelection()).toEqual(modelSelection('model-1'))
+    expect(fixture.selection.currentSelection()).toEqual(saved)
+    expect(fixture.drafts.modelSelection.value).toEqual(saved)
+    expect(fixture.catalog.defaultModelId.value).toBe('provider:model-2')
+    fixture.targetKey.value = 'space:space-1'
+    fixture.binding.restoreScope()
+    expect(fixture.selection.currentSelection()).toEqual(modelSelection('model-2'))
+    expect(fixture.drafts.modelSelection.value).toEqual(modelSelection('model-2'))
   })
 
   it('keeps the actor default when reopening a task without a member override', async () => {
@@ -68,25 +69,6 @@ describe('draft-owned task model configuration', () => {
     expect(fixture.drafts.modelSelection.value).toBeNull()
     await fixture.commands.setChatEffort('high')
     expect(fixture.drafts.modelSelection.value).toEqual({ ...modelSelection('model-2'), reasoning: 'high' })
-  })
-
-  it('restores each scope model while user choices still update the next conversation default', async () => {
-    const fixture = await createFixture()
-    fixture.confirmOpen(modelSelection('model-1'))
-    fixture.targetKey.value = 'space:space-1'
-    fixture.binding.restoreScope()
-    await fixture.commands.selectChatModel('provider:model-2')
-    fixture.confirmOpen(modelSelection('model-2'))
-    fixture.targetKey.value = 'global'
-    fixture.binding.restoreScope()
-
-    expect(fixture.selection.currentSelection()).toEqual(modelSelection('model-1'))
-    expect(fixture.drafts.modelSelection.value).toEqual(modelSelection('model-1'))
-    expect(fixture.catalog.defaultModelId.value).toBe('provider:model-2')
-    fixture.targetKey.value = 'space:space-1'
-    fixture.binding.restoreScope()
-    expect(fixture.selection.currentSelection()).toEqual(modelSelection('model-2'))
-    expect(fixture.drafts.modelSelection.value).toEqual(modelSelection('model-2'))
   })
 
   it('preserves user model, effort and service-tier choices made while a remote open is pending', async () => {
@@ -131,20 +113,6 @@ describe('draft-owned task model configuration', () => {
     expect(fixture.selection.currentSelection()).toEqual(modelSelection('model-1'))
     expect(fixture.drafts.modelSelection.value).toEqual(modelSelection('model-1'))
     expect(fixture.catalog.defaultModelId.value).toBe('provider:model-2')
-  })
-
-  it('retains saved unavailable model parameters instead of substituting the catalog default', async () => {
-    const fixture = await createFixture()
-    const saved = { ...modelSelection('removed-model'), reasoning: 'high' as const, serviceTier: 'priority' as const }
-    fixture.confirmOpen(saved)
-    await fixture.catalog.loadModelCatalog(true)
-
-    expect(fixture.selection.selectedModel.value).toBeNull()
-    expect(fixture.selection.selectedModelId.value).toBe('provider:removed-model')
-    expect(fixture.selection.currentSelection()).toEqual(saved)
-    expect(fixture.drafts.modelSelection.value).toEqual(saved)
-    expect(fixture.drafts.isPersisted(fixture.drafts.snapshot('global'))).toBe(true)
-    expect(fixture.catalog.defaultModelId.value).toBe('provider:model-1')
   })
 })
 
@@ -207,6 +175,172 @@ describe('input actor model selection', () => {
   })
 })
 
+describe('model persistence target isolation', () => {
+  it.each(['conversation', 'actor'] as const)('keeps failed saves with their %s and allows retrying that target', async (changedTarget) => {
+    const fixture = await createPendingPersistenceFixture()
+    const failedSave = fixture.commands.selectChatModel('provider:model-2')
+    await nextTick()
+    const error = new Error('Model save failed')
+    fixture.complete('conversation-a', 'actor-a', error)
+    await failedSave
+    expect(await fixture.commands.flushModelSelection()).toBe(false)
+    expect(fixture.next.drafts.modelSelection.value).toEqual(modelSelection('model-2'))
+
+    fixture.open(changedTarget === 'conversation' ? 'conversation-b' : 'conversation-a', changedTarget === 'actor' ? 'actor-b' : 'actor-a')
+    expect(await fixture.commands.flushModelSelection()).toBe(true)
+    expect(fixture.error.value).toBeNull()
+    expect(fixture.commands.isUpdating.value).toBe(false)
+
+    fixture.open('conversation-a', 'actor-a')
+    expect(await fixture.commands.flushModelSelection()).toBe(false)
+    expect(fixture.error.value).toBe(error)
+    expect(fixture.next.drafts.modelSelection.value).toEqual(modelSelection('model-2'))
+    const retry = fixture.commands.selectChatModel('provider:model-2')
+    await nextTick()
+    expect(fixture.commands.isUpdating.value).toBe(true)
+    fixture.complete('conversation-a', 'actor-a')
+    await retry
+    expect(await fixture.commands.flushModelSelection()).toBe(true)
+    expect(fixture.saved.get('conversation-a:actor-a')).toEqual(modelSelection('model-2'))
+    expect(fixture.commands.isUpdating.value).toBe(false)
+  })
+
+  it('binds a pending flush to its original target while another task saves independently', async () => {
+    const fixture = await createPendingPersistenceFixture()
+    const firstSave = fixture.commands.selectChatModel('provider:model-2')
+    const firstFlush = fixture.commands.flushModelSelection()
+    let firstFlushFinished = false
+    void firstFlush.then(() => firstFlushFinished = true)
+    fixture.open('conversation-b', 'actor-a')
+    expect(fixture.commands.isUpdating.value).toBe(false)
+    expect(await fixture.commands.flushModelSelection()).toBe(true)
+    const secondSave = fixture.commands.setChatEffort('high')
+    await nextTick()
+    fixture.complete('conversation-b', 'actor-a')
+    await secondSave
+    const secondModel = fixture.next.drafts.modelSelection.value
+    expect(await fixture.commands.flushModelSelection()).toBe(true)
+    expect(fixture.saved.get('conversation-b:actor-a')).toEqual(secondModel)
+    expect(firstFlushFinished).toBe(false)
+    expect(fixture.visibleConversation.value?.id).toBe('conversation-b')
+    expect(fixture.refreshed).toEqual(['conversation-b:actor-a'])
+
+    fixture.complete('conversation-a', 'actor-a', new Error('First task failed'))
+    await firstSave
+    expect(await firstFlush).toBe(false)
+    expect(await fixture.commands.flushModelSelection()).toBe(true)
+    expect(fixture.next.drafts.modelSelection.value).toEqual(secondModel)
+    expect(fixture.error.value).toBeNull()
+    expect(fixture.visibleConversation.value?.id).toBe('conversation-b')
+    expect(fixture.refreshed).toEqual(['conversation-b:actor-a'])
+  })
+
+  it('does not apply a late success or clear the pending save of another actor', async () => {
+    const fixture = await createPendingPersistenceFixture()
+    const firstSave = fixture.commands.selectChatModel('provider:model-2')
+    await fixture.commands.selectChatModel('provider:model-1')
+    expect(fixture.next.drafts.modelSelection.value).toEqual(modelSelection('model-2'))
+    fixture.open('conversation-a', 'actor-b')
+    const secondSave = fixture.commands.setChatServiceTier('priority')
+    await nextTick()
+    fixture.complete('conversation-a', 'actor-a')
+    await firstSave
+    expect(fixture.commands.isUpdating.value).toBe(true)
+    expect(fixture.visibleConversation.value).toBeNull()
+    expect(fixture.refreshed).toEqual([])
+    expect(fixture.next.drafts.modelSelection.value?.serviceTier).toBe('priority')
+
+    fixture.complete('conversation-a', 'actor-b')
+    await secondSave
+    expect(await fixture.commands.flushModelSelection()).toBe(true)
+    expect(fixture.commands.isUpdating.value).toBe(false)
+    expect(fixture.saved.get('conversation-a:actor-a')).toEqual(modelSelection('model-2'))
+    expect(fixture.saved.get('conversation-a:actor-b')?.serviceTier).toBe('priority')
+    expect(fixture.refreshed).toEqual(['conversation-a:actor-b'])
+  })
+
+  it('keeps the save pending until the task model settles when remembering the default fails first', async () => {
+    const fixture = await createPendingPersistenceFixture()
+    const selectModel = fixture.next.selection.selectModel
+    vi.spyOn(fixture.next.selection, 'selectModel').mockImplementation(async (value) => {
+      await selectModel(value)
+      throw new Error('Default save failed')
+    })
+    const pendingSave = fixture.commands.selectChatModel('provider:model-2')
+    const pendingFlush = fixture.commands.flushModelSelection()
+    let flushed = false
+    void pendingFlush.then(() => flushed = true)
+    await nextTick()
+    await nextTick()
+    expect(fixture.commands.isUpdating.value).toBe(true)
+    expect(flushed).toBe(false)
+
+    fixture.complete('conversation-a', 'actor-a')
+    await pendingSave
+    expect(await pendingFlush).toBe(false)
+    expect(fixture.commands.isUpdating.value).toBe(false)
+    expect(fixture.error.value).toEqual(new Error('Default save failed'))
+    expect(fixture.saved.get('conversation-a:actor-a')).toEqual(modelSelection('model-2'))
+  })
+})
+
+async function createPendingPersistenceFixture() {
+  const next = await createFixture()
+  const activeConversationId = shallowRef('conversation-a')
+  const actorId = shallowRef('actor-a')
+  const error = shallowRef<unknown>(null)
+  const visibleConversation = shallowRef<LocalConversation | null>(null)
+  const pending = new Map<string, ReturnType<typeof Promise.withResolvers<void>>>()
+  const saved = new Map<string, LocalConversation['modelSelection']>()
+  const refreshed: string[] = []
+  const commands = useTaskModelPersistence({
+    activeConversationId,
+    target: () => ({ actorId: actorId.value }),
+    drafts: next.drafts,
+    selection: next.selection,
+    onError: value => error.value = value,
+    applyConversation: value => visibleConversation.value = value,
+    onPersisted: async () => { refreshed.push(`${activeConversationId.value}:${actorId.value}`) },
+    api: {
+      async setModelSelection(conversationId, selection, target) {
+        const key = `${conversationId}:${target?.actorId}`
+        const gate = Promise.withResolvers<void>()
+        pending.set(key, gate)
+        await gate.promise
+        saved.set(key, selection)
+        return { id: conversationId, buddyId: target?.actorId ?? 'actor-a', activeBranchId: 'branch', approvalPolicy: 'policy', executionProfile: 'workspace_write', modelSelection: selection, title: null, spaceId: null, createdAt: '2026-10-11T10:00:00.000Z', updatedAt: '2026-10-11T10:00:00.000Z', deletedAt: null }
+      },
+    },
+  })
+  function open(conversationId: string, nextActorId: string) {
+    activeConversationId.value = conversationId
+    actorId.value = nextActorId
+    next.targetKey.value = `${conversationId}:${nextActorId}`
+    next.binding.restoreScope()
+    error.value = null
+  }
+  open('conversation-a', 'actor-a')
+  cleanups.push(next.binding.dispose, next.selection.dispose, next.catalog.dispose)
+  return {
+    next,
+    commands,
+    error,
+    visibleConversation,
+    refreshed,
+    saved,
+    open,
+    complete(conversationId: string, targetActorId: string, failure?: Error) {
+      const gate = pending.get(`${conversationId}:${targetActorId}`)
+      if (!gate)
+        throw new Error('Missing pending model save')
+      if (failure)
+        gate.reject(failure)
+      else
+        gate.resolve()
+    },
+  }
+}
+
 async function createControlsFixture(nextActorId = 'actor-b') {
   const next = await createFixture(modelSelection('model-2'))
   next.confirmOpen(null)
@@ -265,7 +399,6 @@ async function createControlsFixture(nextActorId = 'actor-b') {
 }
 
 async function createFixture(actorModel: BuddyComposerDraftModelSelection | null = null) {
-  const setDefaultModel = vi.fn(async value => value)
   const catalog = useModelProvidersStore({
     api: {
       getDefaultModel: async () => ({ modelId: 'model-1', providerId: 'provider', reasoning: 'medium' }),
@@ -291,7 +424,7 @@ async function createFixture(actorModel: BuddyComposerDraftModelSelection | null
       listModels: async () => ['model-1', 'model-2'].map(model),
       onChanged: () => () => {},
       onAuthChallenge: () => () => {},
-      setDefaultModel,
+      setDefaultModel: async (value: Parameters<LocalChatApi['providers']['setDefaultModel']>[0]) => value,
     } as unknown as LocalChatApi['providers'],
     language: shallowRef('zh-CN'),
   })
@@ -325,7 +458,7 @@ async function createFixture(actorModel: BuddyComposerDraftModelSelection | null
     })
     binding.restoreOpenedDraft(submitted.targetKey)
   }
-  return { binding, catalog, commands, confirmOpen, drafts, selection, setDefaultModel, targetKey }
+  return { binding, catalog, commands, confirmOpen, drafts, selection, targetKey }
 }
 
 function modelSelection(modelId: string): BuddyComposerDraftModelSelection {

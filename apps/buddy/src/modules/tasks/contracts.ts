@@ -8,6 +8,7 @@ import type { LocalConversation, LocalConversationBranch, LocalConversationSumma
 import type { LocalConversationTree } from '@buddy-shared/conversation/conversationTree'
 import type { BuddyServiceTier, BuddyThinkingLevel } from '@buddy-shared/conversation/modelSelection'
 import type { LocalTaskMark, LocalTaskMarkState, TaskMarkInput } from '@buddy-shared/conversation/taskMarkApi'
+import type { LocalExecutionInputReceipt } from '@buddy-shared/executions/executionInputReceipt'
 import type { ExecutionTarget, LocalExecution } from '@buddy-shared/executions/executionPresentationApi'
 import type { LocalApproval } from '@buddy-shared/permissions/approvalApi'
 import type { BuddyPermissionMode } from '@buddy-shared/permissions/permissionMode'
@@ -147,8 +148,10 @@ export interface TaskComposer {
 
 export interface TaskExecution {
   isActorInput: State<boolean>
+  inputExecution: State<LocalExecution | null>
   stoppingRunId: State<string | null>
   queuedMessages: State<readonly LocalChatQueueItem[]>
+  queueRecipientNames: State<ReadonlyMap<string, string>>
   pendingQueueActions: State<ReadonlySet<string>>
   cancelQueuedMessage: (id: string) => Promise<void>
   steerQueuedMessage: (id: string) => Promise<void>
@@ -218,6 +221,7 @@ export interface TaskConversationTree {
 export interface TaskExecutionTree {
   groups: State<ExecutionGroups>
   records: State<readonly LocalExecution[]>
+  inputs: State<readonly LocalExecutionInputReceipt[]>
   revision: State<number>
   ready: State<boolean>
   conversationId: State<string | null>

@@ -1,22 +1,25 @@
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { ParsedBuddyChatCommand } from '@buddy-shared/conversation/buddyChatCommands'
 import type { BuddyUserContentV1 } from '@buddy-shared/conversation/buddyUserContent'
-import type { LocalPromptContextItem } from '@buddy-shared/conversation/chatApi'
+import type { BuddyInputDelivery, LocalPromptContextItem } from '@buddy-shared/conversation/chatApi'
 import type { ExecutionTarget } from '@buddy-shared/executions/executionPresentationApi'
 import type { BuddyApprovalPolicy } from '@buddy-shared/permissions/approvalPolicy'
 import type { BuddyExecutionProfile } from '@buddy-shared/permissions/executionProfile'
 import type { LocalRun } from '@buddy-shared/runs/runApi'
 
+import type { ActorInputTarget } from '../composer/useActorInputTarget'
 import type { ComposerTarget } from '../composer/useComposerTarget'
 import type { ChatRunSync } from './typing'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { ChatComposerSubmitPayload } from '@/modules/prompt-input'
 import type { ChatSession } from '@/modules/tasks/state/conversations/useChatSession'
-import type { ChatDrafts, TaskModelSelection } from '@/modules/tasks/state/drafts/typing'
+import type { ChatDrafts, ChatDraftSnapshot, TaskModelSelection } from '@/modules/tasks/state/drafts/typing'
 import type { TaskIndexData } from '@/modules/tasks/state/task-index/useTaskIndexData'
 import type { RuntimeSupervisorStore } from '@/platform/runtime/useRuntimeSupervisorStore'
 import { isBuddyRunChatCommand, parseBuddyChatCommand } from '@buddy-shared/conversation/buddyChatCommands'
-import { getBuddyUserContentResourceIds } from '@buddy-shared/conversation/buddyUserContent'
+import { getBuddyUserContentActorReferences, getBuddyUserContentResourceIds } from '@buddy-shared/conversation/buddyUserContent'
+import { isExecutionTextInput } from '@buddy-shared/executions/executionComposerInput'
+import { parseLocalChatPublicError } from '@buddy-shared/runtime/localChatError'
 import { computed, onScopeDispose, readonly, shallowReactive, shallowRef, watch } from 'vue'
 import { translateBuddy } from '@/i18n/buddyI18n'
 import { createRequestIdRegistry } from '@/modules/tasks/model/requests/chatRequestIdentity'
@@ -29,7 +32,7 @@ interface ValueRef<T> {
 }
 
 export interface UseChatTurnExecutionOptions {
-  actorInput?: { target: ValueRef<ExecutionTarget | null> }
+  actorInput?: { [Key in 'target' | 'execution' | 'mailboxTarget' | 'delivery']: ValueRef<ActorInputTarget[Key]['value']> }
   getNewBuddyId?: () => string | undefined
   activeRun: ValueRef<LocalRun | null>
   approvalPolicy: ValueRef<BuddyApprovalPolicy>
@@ -54,6 +57,7 @@ export interface UseChatTurnExecutionOptions {
   draftScopeKey: ValueRef<string>
   draftChangedMessage: () => string
   executionProfile: ValueRef<BuddyExecutionProfile>
+  flushModelSelection: () => Promise<boolean>
   getRunTerminationMessage: (errorCode: string | null) => string
   isUpdatingPermissionSettings: ValueRef<boolean>
   language: ValueRef<BuddyLocale>
@@ -71,6 +75,7 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
   const queue = useChatQueue({ api: options.api.chat, session: options.session, runtime: options.runtimeSupervisor, refreshConversation: options.runSync.refreshActiveConversation, onError: error => options.setErrorMessage(resolveLocalChatErrorMessage(error, options.language.value)), onUnavailable: reason => options.setErrorMessage(translateBuddy(options.language.value, reason === 'incompatible' ? 'desktop.chat.queueIncompatible' : reason === 'unavailable' ? 'desktop.chat.queueUnavailable' : 'desktop.chat.queueActionFailed')) })
   const isSending = shallowRef(false)
   const requestIds = createRequestIdRegistry()
+  const pendingDeliveries = new Map<string, { delivery: BuddyInputDelivery, mailboxTarget: ExecutionTarget | null }>()
   const pendingCancellationWatches = new Set<() => void>()
   const pendingCancellations = shallowReactive(new Map<string, LocalRun>())
   const stoppingRunId = computed(() => {
@@ -86,6 +91,7 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
       stop()
     pendingCancellationWatches.clear()
     pendingCancellations.clear()
+    pendingDeliveries.clear()
   }, true)
   const canSend = computed(() =>
     options.runtimeSupervisor.runtimeState.value.status === 'ready'
@@ -117,49 +123,105 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
       options.setErrorMessage(options.unavailableCommandMessage())
       return false
     }
-    if (isRunCommand && (options.activeRun.value || stoppingRunId.value))
+    if (isRunCommand && (options.activeRun.value || options.actorInput?.target.value || stoppingRunId.value))
       return false
     if (isRunCommand && command)
       return executeActionCommand(command, contextItems)
 
     const buddyId = options.getNewBuddyId?.()
-    const supplementTarget = options.actorInput?.target.value
+    const inputDelivery = options.actorInput?.delivery.value
+    let delivery = inputDelivery
+      ? {
+          mode: inputDelivery.mode,
+          actorId: inputDelivery.actorId,
+          target: inputDelivery.target ? { ...inputDelivery.target } : null,
+        }
+      : undefined
+    if (delivery?.mode === 'current' && options.actorInput?.execution.value?.canAnswer && !isExecutionTextInput(currentContent)) {
+      options.setErrorMessage(translateBuddy(options.language.value, 'desktop.chat.inputDeliveryAnswerTextOnly'))
+      return false
+    }
+    let supplementTarget = delivery?.mode === 'current' ? options.actorInput?.mailboxTarget.value : null
+    let deliveryKey: string | undefined
     const sourceScopeKey = options.draftScopeKey.value
+    const submittedDraft = options.drafts.snapshot(sourceScopeKey)
+    const initialConfiguration = draftSubmissionConfiguration(submittedDraft)
+    const submittedConfiguration = draftSubmissionConfiguration({
+      ...submittedDraft,
+      approvalPolicy: options.approvalPolicy.value,
+      executionProfile: options.executionProfile.value,
+    })
     const navigationVersion = options.session.generation()
     const isSourceViewCurrent = () => options.session.isCurrent(navigationVersion)
       && options.draftScopeKey.value === sourceScopeKey
     isSending.value = true
-    options.setErrorMessage(null)
     try {
+      if (!await options.flushModelSelection() || isDisposed)
+        return false
+      const modelReadyDraft = options.drafts.snapshot(sourceScopeKey)
+      const modelReadyConfiguration = draftSubmissionConfiguration(modelReadyDraft)
+      if (
+        modelReadyDraft.draftId !== submittedDraft.draftId
+        || modelReadyDraft.editorSessionId !== submittedDraft.editorSessionId
+        || JSON.stringify(modelReadyDraft.content) !== JSON.stringify(submittedDraft.content)
+        || (modelReadyConfiguration !== initialConfiguration && modelReadyConfiguration !== submittedConfiguration)
+      ) {
+        if (isSourceViewCurrent())
+          options.setErrorMessage(options.draftChangedMessage())
+        return false
+      }
+      if (isSourceViewCurrent())
+        options.setErrorMessage(null)
       if (!await options.persistWorkspaceState())
         return false
       const confirmedDraft = options.drafts.snapshot(sourceScopeKey)
-      if (!options.drafts.isPersisted(confirmedDraft)) {
+      if (!options.drafts.isPersisted(confirmedDraft) || draftSubmissionConfiguration(confirmedDraft) !== submittedConfiguration) {
         if (isSourceViewCurrent())
           options.setErrorMessage(options.draftChangedMessage())
         return false
       }
       const expectedRevision = confirmedDraft.revision!
+      if (delivery) {
+        deliveryKey = `${confirmedDraft.draftId}:${expectedRevision}:${delivery.actorId}:${delivery.mode}`
+        const pending = pendingDeliveries.get(deliveryKey)
+        if (pending) {
+          delivery = pending.delivery
+          supplementTarget = pending.mailboxTarget
+        }
+        else {
+          pendingDeliveries.set(deliveryKey, { delivery, mailboxTarget: supplementTarget ?? null })
+        }
+      }
       if (supplementTarget) {
         if (!options.api.executions)
           throw new Error('Execution input service unavailable')
-        const remote = await options.api.executions.sendDraft({ ...supplementTarget, draftId: confirmedDraft.draftId, expectedRevision })
-        if (remote) {
-          options.drafts.confirmOpen(confirmedDraft, remote)
-          return true
+        const remote = await options.api.executions.sendDraft({ ...supplementTarget, draftId: confirmedDraft.draftId, expectedRevision, delivery })
+        if (!remote) {
+          if (deliveryKey)
+            pendingDeliveries.delete(deliveryKey)
+          if (isSourceViewCurrent())
+            options.setErrorMessage(translateBuddy(options.language.value, 'desktop.chat.inputDeliveryTargetUnavailable'))
+          return false
         }
+        if (deliveryKey)
+          pendingDeliveries.delete(deliveryKey)
+        options.drafts.confirmOpen(confirmedDraft, remote)
+        return true
       }
-      const operationKey = `turn:${confirmedDraft.draftId}:${expectedRevision}:${buddyId ?? ''}`
+      const operationKey = `turn:${confirmedDraft.draftId}:${expectedRevision}:${buddyId ?? ''}:${JSON.stringify(delivery ?? null)}`
       const requestId = requestIds.resolve(operationKey)
-      if (stoppingRunId.value || options.activeRun.value || queue.queuedMessages.value.length) {
-        const result = await options.api.chat.enqueue({ draftId: confirmedDraft.draftId, expectedRevision, requestId })
+      if (delivery?.target || stoppingRunId.value || options.activeRun.value || queue.queuedMessages.value.length) {
+        const result = await options.api.chat.enqueue({ draftId: confirmedDraft.draftId, expectedRevision, requestId, ...(delivery ? { delivery } : {}) })
         requestIds.release(operationKey)
+        if (deliveryKey)
+          pendingDeliveries.delete(deliveryKey)
         options.composerTarget.complete(result.draftReceipt, sourceScopeKey, sourceScopeKey)
         await queue.refreshQueue()
         return true
       }
       const result = await options.api.chat.startTurn({
         ...(buddyId ? { buddyId } : {}),
+        ...(delivery ? { delivery } : {}),
         draftId: confirmedDraft.draftId,
         expectedRevision,
         requestId,
@@ -167,6 +229,8 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
       if (!result.draftReceipt)
         throw new Error('Turn did not commit its Composer draft')
       requestIds.release(operationKey)
+      if (deliveryKey)
+        pendingDeliveries.delete(deliveryKey)
       const sourceViewIsCurrent = isSourceViewCurrent()
       const targetScopeKey = `conversation:${result.conversationId}:${result.branchId}`
       const source = parseDraftScopeKey(confirmedDraft.targetKey)
@@ -197,6 +261,9 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
       return true
     }
     catch (error) {
+      const code = error instanceof Error ? parseLocalChatPublicError(error.message)?.code : undefined
+      if (deliveryKey && (code === 'INPUT_DELIVERY_TARGET_UNAVAILABLE' || code === 'INPUT_DELIVERY_INCOMPATIBLE' || code === 'DRAFT_CONFLICT'))
+        pendingDeliveries.delete(deliveryKey)
       if (isSourceViewCurrent())
         setNormalizedError(error)
       return false
@@ -332,6 +399,18 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
     isSending: readonly(isSending),
     send,
   }
+}
+
+function draftSubmissionConfiguration(draft: ChatDraftSnapshot): string {
+  const model = draft.modelSelection
+  const participants = draft.participants
+  return JSON.stringify([
+    draft.approvalPolicy,
+    draft.executionProfile,
+    participants ? [participants.leaderId, participants.actorIds] : null,
+    getBuddyUserContentActorReferences(draft.content).map(actor => actor.actorId),
+    model ? [model.providerId, model.modelId, model.reasoning, model.serviceTier] : null,
+  ])
 }
 
 function createActionCommandContent(

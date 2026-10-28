@@ -1,27 +1,47 @@
 import type { BuddyUserContentV1 } from '@buddy-shared/conversation/buddyUserContent'
+import type { BuddyInputDelivery } from '@buddy-shared/conversation/chatApi'
 import type { Ref } from 'vue'
 import type { TaskExecutionTree } from '../../contracts'
 import { getBuddyUserContentActorReferences } from '@buddy-shared/conversation/buddyUserContent'
 import { isExecutionTextInput } from '@buddy-shared/executions/executionComposerInput'
 import { computed } from 'vue'
-import { projectTaskPartners } from '../../model/executions/executionGroups'
 
 export function useActorInputTarget(options: {
   content: Readonly<Ref<BuddyUserContentV1>>
   scopeKey: Readonly<Ref<string>>
+  defaultActorId?: Readonly<Ref<string | null>>
   tree: Pick<TaskExecutionTree, 'groups' | 'target'>
 }) {
-  const target = computed(() => {
-    if (!options.scopeKey.value.startsWith('conversation:') || !isExecutionTextInput(options.content.value))
+  const actors = computed(() => [...new Set(getBuddyUserContentActorReferences(options.content.value).map(actor => actor.actorId))])
+  const actorId = computed(() => actors.value.length === 1 ? actors.value[0]! : options.defaultActorId?.value ?? null)
+  const execution = computed(() => {
+    if (!options.scopeKey.value.startsWith('conversation:') || !actorId.value)
       return null
-    const actors = getBuddyUserContentActorReferences(options.content.value)
-    if (actors.length !== 1)
-      return null
-    const record = projectTaskPartners(options.tree.groups.value).byBuddy.get(actors[0]!.actorId)?.find(record =>
-      (record.kind === 'actor_child' && record.canSend)
-      || (record.kind === 'root' && record.canAnswer && record.questions.some(question => question.open && question.audience === 'user')),
+    const candidates = [...options.tree.groups.value.byRun.values()].filter(record =>
+      record.buddyId === actorId.value && (record.kind === 'root' || record.kind === 'actor_child') && record.phase !== 'closed',
     )
-    return record ? options.tree.target(record) : null
+    return candidates.length === 1 ? candidates[0]! : null
   })
-  return { target }
+  const target = computed(() => execution.value ? options.tree.target(execution.value) : null)
+  const mailboxTarget = computed(() => {
+    const record = execution.value
+    if (!record || actors.value.length > 1 || record.stopping || record.phase === 'closing' || !isExecutionTextInput(options.content.value))
+      return null
+    return (record.kind === 'actor_child' && record.canSend)
+      || (record.canAnswer && record.questions.some(question => question.open && question.audience === 'user'))
+      ? target.value
+      : null
+  })
+  const delivery = computed<BuddyInputDelivery | undefined>(() => {
+    if (!options.scopeKey.value.startsWith('conversation:') || !actorId.value)
+      return undefined
+    return {
+      mode: 'current',
+      actorId: actorId.value,
+      target: target.value ? { rootRunId: target.value.rootRunId, runId: target.value.runId } : null,
+    }
+  })
+  return { actorId, execution, target, mailboxTarget, delivery }
 }
+
+export type ActorInputTarget = ReturnType<typeof useActorInputTarget>

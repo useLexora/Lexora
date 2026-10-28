@@ -1,5 +1,4 @@
-import type { LocalConversationTimelineItem, LocalMessage } from '@buddy-shared/conversation/conversationApi'
-import type { LocalRun, LocalRunEvent } from '@buddy-shared/runs/runApi'
+import type { LocalConversationTimelineItem } from '@buddy-shared/conversation/conversationApi'
 
 import type { CachedChatTranscriptProjection } from './chatIncrementalTranscript'
 import type {
@@ -9,10 +8,12 @@ import type {
   ChatTranscriptRow,
 } from './chatTranscriptTypes'
 import { projectChatAgentTurns } from './chatAgentTurn'
+import { projectChatExecutionInputRows } from './chatExecutionInputRows'
 import { createChatTranscriptProjectionCache, projectIncrementalChatTranscript } from './chatIncrementalTranscript'
 import { projectPersistedChatTranscriptRows } from './chatPersistedTranscriptRows'
 import { projectChatRecoveryNotices, selectChatRecoveryNotices } from './chatRunRecovery'
-import { projectStreamingAssistantMessage, selectChatStreamingMessage } from './chatRunStreamingMessages'
+import { projectChatStreamingMessages, selectChatStreamingMessages } from './chatRunStreamingMessages'
+import { groupChatTranscriptRows } from './chatTranscriptGroups'
 import { presentChatTranscript } from './chatTranscriptPresentation'
 
 export { projectPersistedChatTranscriptRows } from './chatPersistedTranscriptRows'
@@ -52,13 +53,10 @@ function projectChatTranscriptState(input: ChatTranscriptProjectionInput) {
         input.runs,
       )
     : projectChatRecoveryNotices(input.timelineItems, runEvents, input.runs)
-  const streamingLocalMessage = input.runProjections
-    ? selectChatStreamingMessage(
-      messages,
-      input.runProjections.flatMap(projection => projection.streamingMessages),
-      input.runs,
-    )?.message ?? null
-    : projectLegacyStreamingLocalMessage(messages, runEvents, input.runs)
+  const streamingMessages = (input.runProjections
+    ? selectChatStreamingMessages(messages, input.runProjections.flatMap(projection => projection.streamingMessages), input.runs)
+    : projectChatStreamingMessages(messages, runEvents, input.runs)).map(candidate => candidate.message)
+  const streamingById = new Map(streamingMessages.map(message => [message.id, message]))
   const triggeringMessageIdByRunId = new Map(
     input.runs.map(run => [run.id, run.triggeringMessageId]),
   )
@@ -85,14 +83,15 @@ function projectChatTranscriptState(input: ChatTranscriptProjectionInput) {
   const noticeRunIds = new Set<string>()
   const rows: ChatTranscriptRow[] = []
   for (const row of projectPersistedChatTranscriptRows(
-    streamingLocalMessage ? [...input.timelineItems, { ...streamingLocalMessage, kind: 'message' }] : input.timelineItems,
+    streamingMessages.length ? [...input.timelineItems, ...streamingMessages.map(message => ({ ...message, kind: 'message' as const }))] : input.timelineItems,
     agentTurns,
     input.outputs,
     input.changeSets ?? [],
     input.includeUnanchoredTurns,
+    input.executionGroups,
   )) {
-    rows.push(streamingLocalMessage && row.kind === 'message' && row.message.id === streamingLocalMessage.id
-      ? { ...row, message: streamingLocalMessage, streaming: true }
+    rows.push(row.kind === 'message' && streamingById.has(row.message.id)
+      ? { ...row, message: streamingById.get(row.message.id)!, streaming: true, showActions: false }
       : row)
     if (row.kind === 'agent-turn') {
       if (!noticeRunIds.has(row.turn.runId)) {
@@ -108,16 +107,13 @@ function projectChatTranscriptState(input: ChatTranscriptProjectionInput) {
     }
   }
   const visibleRunIds = new Set(rows.flatMap(row => row.kind === 'agent-turn' ? [row.turn.runId] : []))
-  const activeAgentTurn = [...agentTurns].reverse().find(turn => visibleRunIds.has(turn.runId) && (turn.status === 'queued' || turn.status === 'running'))
-  if (activeAgentTurn) {
-    rows.push({
-      key: `activity:${activeAgentTurn.runId}`,
-      kind: 'activity',
-      turn: activeAgentTurn,
-    })
+  for (const turn of agentTurns) {
+    if (visibleRunIds.has(turn.runId) && (turn.status === 'queued' || turn.status === 'running'))
+      rows.push({ key: `activity:${turn.runId}`, kind: 'activity', turn })
   }
 
-  const presented = presentChatTranscript(rows, input.executionGroups)
+  const withInputs = input.executionInputs?.length ? projectChatExecutionInputRows(rows, input.executionInputs, agentTurns, input.executionGroups) : rows
+  const presented = presentChatTranscript(groupChatTranscriptRows(withInputs, agentTurns, input.executionGroups), input.executionGroups)
   return {
     projection: { rows: presented.rows, update: { kind: 'replace' as const } },
     continuation: presented.continuation,
@@ -153,53 +149,4 @@ export function createChatTranscriptProjector() {
       return projection
     },
   }
-}
-
-function projectLegacyStreamingLocalMessage(
-  messages: ReadonlyArray<LocalMessage>,
-  events: ReadonlyArray<LocalRunEvent>,
-  runs: ReadonlyArray<LocalRun>,
-): LocalMessage | null {
-  const streamingMessage = projectStreamingAssistantMessage(messages, events, runs)
-  return streamingMessage
-    ? projectStreamingLocalMessage(streamingMessage.id, streamingMessage.text, events, runs)
-    : null
-}
-
-function projectStreamingLocalMessage(
-  messageId: string,
-  text: string,
-  events: ReadonlyArray<LocalRunEvent>,
-  runs: ReadonlyArray<LocalRun>,
-): LocalMessage | null {
-  const sourceEvent = [...events].reverse().find(event => (
-    readMessageId(event.payload) === messageId
-  ))
-  if (!sourceEvent)
-    return null
-  const run = runs.find(item => item.id === sourceEvent.runId)
-  if (!run)
-    return null
-  const startedAt = events.find(event => (
-    event.runId === run.id
-    && event.type === 'message.started'
-    && readMessageId(event.payload) === messageId
-  ))?.createdAt ?? sourceEvent.createdAt
-  return {
-    attachments: [],
-    branchId: run.branchId,
-    content: { text },
-    conversationId: run.conversationId,
-    createdAt: startedAt,
-    id: messageId,
-    role: 'assistant',
-    runId: run.id,
-  }
-}
-
-function readMessageId(payload: unknown): string | null {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload))
-    return null
-  const messageId = (payload as Record<string, unknown>).messageId
-  return typeof messageId === 'string' ? messageId : null
 }

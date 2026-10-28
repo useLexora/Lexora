@@ -4,12 +4,14 @@ import { z } from 'zod'
 import { artifactSchema } from '../artifacts/artifactApi'
 import { changeSetSummarySchema } from '../changes/changeApi'
 import { MAX_BUDDY_MESSAGE_TEXT_LENGTH } from '../conversation/buddyMessageContent'
+import { buddyInputDeliverySchema } from '../conversation/chatApi'
 import { buddyComposerDraftDiscardSchema, buddyComposerDraftSchema } from '../conversation/composerDraft'
 import { runEventSchema, runSchema, runStatusSchema } from '../runs/runApi'
 import { buddyRunProgressSchema } from '../runs/runProgress'
 import { idSchema, timestampSchema } from '../runtime/apiValidation'
 import { runTokenUsageSchema } from '../usage/runTokenUsage'
 import { executionPhaseSchema } from './executionApi'
+import { EXECUTION_INPUT_RUN_BATCH_SIZE, executionInputSchema, executionInputsPageSchema } from './executionInputReceipt'
 import { executionWorkSchema } from './executionWork'
 
 export const executionScopeSchema = z.object({ conversationId: idSchema, branchId: idSchema }).strict()
@@ -54,7 +56,7 @@ export const executionDetailSchema = z.object({
   execution: executionPresentationSchema,
   run: runSchema,
   caller: z.object({ runId: idSchema, buddyName: z.string().min(1).max(80), ordinal: z.number().int().positive().nullable() }).strict().nullable(),
-  inputs: z.array(z.object({ kind: z.enum(['supplement', 'answer']), messageId: z.string(), text: z.string(), createdAt: timestampSchema, state: z.enum(['pending', 'accepted', 'consumed', 'undelivered']) }).strict()),
+  inputs: z.array(executionInputSchema),
   result: z.string().nullable(),
   artifacts: z.array(artifactSchema),
   changes: changeSetSummarySchema.nullable(),
@@ -64,7 +66,11 @@ export const executionSendSchema = executionTargetSchema.extend({
   messageId: z.uuid(),
   text: z.string().trim().min(1).max(MAX_BUDDY_MESSAGE_TEXT_LENGTH),
 }).strict()
-export const executionSendDraftSchema = executionTargetSchema.extend(buddyComposerDraftDiscardSchema.unwrap().shape).strict()
+export const executionSendDraftSchema = executionTargetSchema.extend({ ...buddyComposerDraftDiscardSchema.unwrap().shape, delivery: buddyInputDeliverySchema.optional() }).strict()
+export const executionInputsRequestSchema = executionScopeSchema.extend({
+  runIds: z.array(idSchema).min(1).max(EXECUTION_INPUT_RUN_BATCH_SIZE).refine(ids => new Set(ids).size === ids.length),
+  offset: z.number().int().nonnegative().default(0),
+}).strict()
 export const executionEventsRequestSchema = executionTargetSchema.extend({ afterSequence: z.number().int().nonnegative().default(0) }).strict()
 export const executionEventsPageSchema = z.object({ events: z.array(runEventSchema), nextSequence: z.number().int().nonnegative(), hasMore: z.boolean() }).strict()
 export const executionAnswerSchema = executionTargetSchema.extend({
@@ -78,6 +84,7 @@ export type ExecutionTarget = z.infer<typeof executionTargetSchema>
 export type ExecutionAnswer = z.infer<typeof executionAnswerSchema>
 export type ExecutionSend = z.infer<typeof executionSendSchema>
 export type ExecutionSendDraft = z.infer<typeof executionSendDraftSchema>
+export type ExecutionInputsRequest = z.input<typeof executionInputsRequestSchema>
 export type ExecutionEventsRequest = z.input<typeof executionEventsRequestSchema>
 export type LocalExecutionEventsPage = DeepReadonly<z.infer<typeof executionEventsPageSchema>>
 export type LocalExecution = DeepReadonly<z.infer<typeof executionPresentationSchema>>
@@ -86,6 +93,7 @@ export type LocalExecutionDetail = DeepReadonly<z.infer<typeof executionDetailSc
 export const executionPresentationRpc = {
   list: { method: 'executions.list', input: executionScopeSchema, response: z.array(executionPresentationSchema) },
   detail: { method: 'executions.detail', input: executionTargetSchema, response: executionDetailSchema },
+  inputs: { method: 'executions.inputs', input: executionInputsRequestSchema, response: executionInputsPageSchema },
   answer: { method: 'executions.answer', input: executionAnswerSchema, response: z.object({ accepted: z.boolean() }).strict() },
   send: { method: 'executions.send', input: executionSendSchema, response: z.object({ accepted: z.boolean() }).strict() },
   sendDraft: { method: 'executions.sendDraft', input: executionSendDraftSchema, response: buddyComposerDraftSchema.nullable() },

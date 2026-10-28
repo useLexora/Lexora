@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { BuddyInputDelivery } from '../../../shared/conversation/chatApi'
 import type { BuddyServiceTier, BuddyThinkingLevel } from '../../../shared/conversation/modelSelection'
 import type { BuddyApprovalPolicy } from '../../../shared/permissions/approvalPolicy'
 import type { BuddyExecutionProfile } from '../../../shared/permissions/executionProfile'
@@ -13,7 +14,62 @@ import { createComposerDraftCommitter } from './commitComposerDraft'
 import { freezeConversationMemberModel } from './conversationMemberRepository'
 import { CONVERSATION_CURRENT_MODEL_SELECTION_SQL } from './conversationRecord'
 import { withTransaction } from './database'
+import { createExecutionRepository, ExecutionAdmissionError, executionFence } from './executionRepository'
+import { createMailboxRepository } from './mailboxRepository'
 import { actorThreadId, createThreadBindingRepository } from './threadBindingRepository'
+
+export function findTurnInputDeliveryTarget(database: DatabaseSync, input: PrepareTurnRequestInput) {
+  const delivery = input.delivery
+  if (!delivery)
+    return null
+  if (input.followup || (input.buddyId && input.buddyId !== delivery.actorId))
+    throw new BuddyServiceError('INPUT_DELIVERY_INCOMPATIBLE')
+  if (!delivery.target)
+    return null
+  const executions = createExecutionRepository(database)
+  const target = executions.find(delivery.target.runId)
+  const root = executions.find(delivery.target.rootRunId)
+  if (!target || !root || target.run.rootRunId !== root.run.id || root.run.executionKind !== 'root'
+    || target.run.conversationId !== input.conversationId || root.run.conversationId !== input.conversationId
+    || target.run.branchId !== input.branchId || root.run.branchId !== input.branchId
+    || target.run.buddyId !== delivery.actorId || target.run.purpose !== 'chat'
+    || !['root', 'actor_child'].includes(target.run.executionKind)) {
+    throw new BuddyServiceError('INPUT_DELIVERY_TARGET_UNAVAILABLE')
+  }
+  return target
+}
+
+export function assertTurnInputDelivery(database: DatabaseSync, input: PrepareTurnRequestInput, boundary: 'enqueue' | 'dispatch' | 'in_run', runId?: string): void {
+  const delivery = input.delivery
+  if (!delivery)
+    return
+  const target = findTurnInputDeliveryTarget(database, input)
+  if (boundary === 'in_run' && (delivery.mode !== 'current' || !target || target.run.id !== runId))
+    throw new BuddyServiceError('INPUT_DELIVERY_INCOMPATIBLE')
+  if (boundary === 'dispatch' && delivery.mode === 'current' && target)
+    throw new BuddyServiceError('INPUT_DELIVERY_TARGET_UNAVAILABLE')
+  if (boundary === 'dispatch' && target && (target.phase !== 'closed' || target.cleanupState !== 'clean'))
+    throw new BuddyServiceError('INPUT_DELIVERY_TARGET_UNAVAILABLE')
+  if (!target && database.prepare(`SELECT 1 FROM runs r JOIN execution_state e ON e.run_id = r.id
+    WHERE r.conversation_id = ? AND r.buddy_id = ? AND (r.status IN ('queued', 'running') OR e.phase <> 'closed' OR e.cleanup_state <> 'clean') LIMIT 1`).get(input.conversationId, delivery.actorId)) {
+    throw new BuddyServiceError('INPUT_DELIVERY_TARGET_UNAVAILABLE')
+  }
+  if (target && delivery.mode === 'current') {
+    const executions = createExecutionRepository(database)
+    const root = executions.find(target.run.rootRunId)!
+    try {
+      executions.assertCurrent(executionFence(target, root))
+    }
+    catch (error) {
+      if (error instanceof ExecutionAdmissionError)
+        throw new BuddyServiceError('INPUT_DELIVERY_TARGET_UNAVAILABLE')
+      throw error
+    }
+    const mailbox = createMailboxRepository(database)
+    if (mailbox.listQuestions(target.run.id).some(question => question.kind === 'question' && question.audience === 'user' && mailbox.findQuestion(question.questionId)?.open))
+      throw new BuddyServiceError('INPUT_DELIVERY_INCOMPATIBLE')
+  }
+}
 
 export function resolveTurnExecutionProfile(input: { executionProfile: BuddyExecutionProfile, runExecutionProfile?: BuddyExecutionProfile }): BuddyExecutionProfile {
   const profile = input.runExecutionProfile ?? input.executionProfile
@@ -23,6 +79,7 @@ export function resolveTurnExecutionProfile(input: { executionProfile: BuddyExec
 }
 
 export interface PrepareTurnRequestInput {
+  delivery?: BuddyInputDelivery
   leaderId?: string
   expectedActorModelSelection?: ConversationModelSelection | null
   actorIds?: readonly string[]
@@ -230,7 +287,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
   const activateBranch = database.prepare(`
     UPDATE conversations SET active_branch_id = ?, updated_at = ? WHERE id = ?
   `)
-  const persistActor = (input: { branchId: string, queuedMessageId?: string, expectedActorModelSelection?: ConversationModelSelection | null, conversationId: string, createdAt: string, buddyId?: string, actorSnapshot?: BuddyExecutionDefinition, modelOverride?: ConversationModelSelection | null, actorIds?: readonly string[] }, selection: ConversationModelSelection) => {
+  const persistActor = (input: { delivery?: BuddyInputDelivery, branchId: string, queuedMessageId?: string, expectedActorModelSelection?: ConversationModelSelection | null, conversationId: string, createdAt: string, buddyId?: string, actorSnapshot?: BuddyExecutionDefinition, modelOverride?: ConversationModelSelection | null, actorIds?: readonly string[] }, selection: ConversationModelSelection) => {
     const current = findConversation.get(input.conversationId) as unknown as ConversationBindingRow
     const actorId = input.buddyId ?? current.buddy_id
     const buddy = database.prepare('SELECT kind, enabled, deleted_at, revision FROM buddies WHERE id = ?').get(actorId)
@@ -248,7 +305,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
       : undefined
     const queuedRouting = queued ? (JSON.parse(String(queued.prepared_json)) as { queueRouting?: { mode: string, actorId?: string } }).queueRouting : undefined
     const fixedQueuedActor = queuedRouting?.mode === 'actor' ? queuedRouting.actorId : undefined
-    const expectedActor = mentioned.length === 1 ? mentioned[0] : fixedQueuedActor ?? current.buddy_id
+    const expectedActor = mentioned.length === 1 ? mentioned[0] : input.delivery?.actorId ?? fixedQueuedActor ?? current.buddy_id
     if (actorId !== expectedActor || (input.actorSnapshot && (input.actorSnapshot.id !== actorId || input.actorSnapshot.revision !== buddy.revision)))
       throw new BuddyServiceError('BUDDY_CONFLICT')
     for (const id of input.actorSnapshot?.settings.npcTeamEnabled ? input.actorSnapshot.settings.npcIds : []) {
@@ -499,14 +556,15 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           return toRecord(existing, false)
         }
         if (input.queuedMessageId) {
-          const queued = database.prepare('SELECT id FROM chat_queue WHERE id = ? AND state IN (\'waiting\', \'paused\') AND conversation_id = ? AND branch_id = ?').get(input.queuedMessageId, input.conversationId, input.branchId)
-          if (!queued)
+          const queued = database.prepare('SELECT prepared_json FROM chat_queue WHERE id = ? AND state IN (\'waiting\', \'paused\') AND conversation_id = ? AND branch_id = ?').get(input.queuedMessageId, input.conversationId, input.branchId)
+          if (!queued || JSON.stringify((JSON.parse(String(queued.prepared_json)) as PrepareTurnRequestInput).delivery) !== JSON.stringify(input.delivery))
             throw new TurnRequestConflictError()
         }
-        const directed = input.actorIds?.length === 1 && !input.followup
+        assertTurnInputDelivery(database, input, 'dispatch')
+        const actorLane = (input.delivery !== undefined || input.actorIds?.length === 1) && !input.followup
         const conversation = findConversation.get(input.conversationId) as ConversationBindingRow | undefined
         const buddyId = input.buddyId ?? conversation?.buddy_id ?? (database.prepare('SELECT default_buddy_id FROM buddy_catalog WHERE id = 1').get() as { default_buddy_id: string }).default_buddy_id
-        if (!input.queuedMessageId && !input.followup && database.prepare(`SELECT id FROM chat_queue WHERE conversation_id = ? AND branch_id = ? AND state IN ('waiting', 'paused') AND (? = 0 OR CASE WHEN json_extract(prepared_json, '$.queueRouting.mode') = 'actor' THEN json_extract(prepared_json, '$.queueRouting.actorId') ELSE ? END = ?) LIMIT 1`).get(input.conversationId, input.branchId, directed ? 1 : 0, conversation?.buddy_id ?? buddyId, buddyId))
+        if (!input.queuedMessageId && !input.followup && database.prepare(`SELECT id FROM chat_queue WHERE conversation_id = ? AND branch_id = ? AND state IN ('waiting', 'paused') AND (? = 0 OR CASE WHEN json_extract(prepared_json, '$.queueRouting.mode') = 'actor' THEN json_extract(prepared_json, '$.queueRouting.actorId') ELSE ? END = ?) LIMIT 1`).get(input.conversationId, input.branchId, actorLane ? 1 : 0, conversation?.buddy_id ?? buddyId, buddyId))
           throw new TurnRequestConflictError()
         const buddy = database.prepare('SELECT deleted_at FROM buddies WHERE id = ?').get(buddyId)
         if (!buddy)
@@ -525,7 +583,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
               : database.prepare(`SELECT 1 FROM runs
               WHERE conversation_id = ? AND status IN ('queued', 'running')
                 AND (buddy_id = ? OR execution_kind = 'maintenance' OR (? = 0 AND execution_kind = 'root' AND scheduling_lane = 'conversation')) LIMIT 1`)
-                  .get(input.conversationId, buddyId, directed ? 1 : 0))
+                  .get(input.conversationId, buddyId, actorLane ? 1 : 0))
           ) {
             throw new TurnRequestConflictError()
           }
@@ -562,7 +620,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           insertForkBranch.run(input.branchId, input.conversationId, input.followup.parentBranchId, input.followup.sourceMessageId, input.createdAt)
           activateBranch.run(input.branchId, input.createdAt, input.conversationId)
         }
-        const actorThread = directed
+        const actorThread = (input.actorIds?.length === 1 || input.delivery?.mode === 'next') && !input.followup
           ? database.prepare(`SELECT thread_id FROM runs WHERE conversation_id = ? AND branch_id = ? AND buddy_id = ?
           AND status IN ('completed', 'failed', 'cancelled') AND pi_session_file IS NOT NULL ORDER BY rowid DESC LIMIT 1`).get(input.conversationId, input.branchId, buddyId)?.thread_id as string | undefined
           : undefined
@@ -596,7 +654,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           buddyId,
           input.actorSnapshot ? JSON.stringify(input.actorSnapshot) : null,
         )
-        database.prepare('UPDATE runs SET scheduling_lane = ?, thread_id = ? WHERE id = ?').run(directed ? 'actor' : 'conversation', threadId, input.runId)
+        database.prepare('UPDATE runs SET scheduling_lane = ?, thread_id = ? WHERE id = ?').run(actorLane ? 'actor' : 'conversation', threadId, input.runId)
         insertRunInput.run(
           input.runId,
           input.runInput.prompt,

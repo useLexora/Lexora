@@ -23,7 +23,8 @@ import type { ConversationListFilter, ConversationModelControls, ConversationTim
 import type { ConversationNodeDetailRequest, LocalConversationTree } from '../../shared/conversation/conversationTree'
 import type { LocalTaskMark, LocalTaskMarkState, TaskMarkClearInput, TaskMarkInput, TaskMarkReadInput } from '../../shared/conversation/taskMarkApi'
 import type { LocalWorkspaceSetting, LocalWorkspaceStateValue } from '../../shared/conversation/workspaceApi'
-import type { ExecutionAnswer, ExecutionEventsRequest, ExecutionsChanged, ExecutionScope, ExecutionSend, ExecutionSendDraft, ExecutionTarget, LocalExecution, LocalExecutionDetail, LocalExecutionEventsPage } from '../../shared/executions/executionPresentationApi'
+import type { LocalExecutionInputsPage } from '../../shared/executions/executionInputReceipt'
+import type { ExecutionAnswer, ExecutionEventsRequest, ExecutionInputsRequest, ExecutionsChanged, ExecutionScope, ExecutionSend, ExecutionSendDraft, ExecutionTarget, LocalExecution, LocalExecutionDetail, LocalExecutionEventsPage } from '../../shared/executions/executionPresentationApi'
 import type { DirectoryPage, FilePreview } from '../../shared/files/filePreview'
 import type { TaskFile, TaskFileLink, TaskFileTarget } from '../../shared/files/taskFileApi'
 import type { WebSettings, WebSettingsSnapshot } from '../../shared/network/webProtocol'
@@ -50,6 +51,7 @@ import type { LocalUsageSnapshot } from '../../shared/usage/usageApi'
 export const LOCAL_CHAT_IPC_CHANNELS = {
   executionsList: 'lexora:local-chat:executions:list',
   executionsDetail: 'lexora:local-chat:executions:detail',
+  executionsInputs: 'lexora:local-chat:executions:inputs',
   executionsAnswer: 'lexora:local-chat:executions:answer',
   executionsCancel: 'lexora:local-chat:executions:cancel',
   executionsEvents: 'lexora:local-chat:executions:events',
@@ -257,6 +259,7 @@ export interface LocalChatApi {
   executions: {
     list: (input: ExecutionScope) => Promise<readonly LocalExecution[]>
     detail: (input: ExecutionTarget) => Promise<LocalExecutionDetail>
+    inputs: (input: ExecutionInputsRequest) => Promise<LocalExecutionInputsPage>
     events: (input: ExecutionEventsRequest) => Promise<LocalExecutionEventsPage>
     send: (input: ExecutionSend) => Promise<{ accepted: boolean }>
     sendDraft: (input: ExecutionSendDraft) => Promise<LocalComposerDraft | null>

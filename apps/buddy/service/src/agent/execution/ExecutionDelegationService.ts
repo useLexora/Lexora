@@ -18,6 +18,7 @@ import { ExecutionAdmissionError, executionFence, hashChildAdmissionRequest, MAX
 import { getRoleToolDenial } from '../extensions/discovery/SessionToolScope'
 import { isPiShellToolName, isShellToolName } from '../extensions/piBuiltinTools'
 import { BuddySessionStorageError } from '../sessions/BuddySessionErrors'
+import { readClosedForwardTargets } from './executionForwardEvidence'
 import { readExecutionMailboxEntries } from './executionMailboxEntries'
 import { executionResultPage } from './executionResultPage'
 
@@ -38,6 +39,11 @@ const delegationFields = z.object({
 }).strict()
 
 export const delegationInputSchema = z.discriminatedUnion('operation', [
+  z.object({
+    operation: z.literal('forward'),
+    runId: z.string().min(1).max(256),
+    inputSourceId: z.string().min(1).max(256),
+  }).strict(),
   delegationFields.extend({ operation: z.enum(['list', 'context', 'history', 'delegate', 'resume', 'submit', 'review', 'status', 'result', 'report', 'send', 'wait', 'answer', 'cancel']) }),
   delegationFields.extend({
     operation: z.literal('question'),
@@ -58,7 +64,7 @@ export interface ExecutionDelegationServiceOptions {
   definitions: Pick<BuddyDefinitionResolver, 'capture'>
   executions: ExecutionRepository
   mailbox: MailboxRepository
-  coordinator: Pick<ExecutionCoordinator, 'admitChild' | 'send' | 'wait' | 'answerQuestion' | 'cancel' | 'assertShellExecutionAllowed'>
+  coordinator: Pick<ExecutionCoordinator, 'admitChild' | 'send' | 'forward' | 'wait' | 'answerQuestion' | 'cancel' | 'assertShellExecutionAllowed'>
   readToolOptions: (signal: AbortSignal) => Promise<readonly BuddyToolOption[]>
   stopExecution: (runId: string) => Promise<boolean>
   readResult: (runId: string) => Promise<string>
@@ -80,6 +86,8 @@ export class ExecutionDelegationService {
     const input = delegationInputSchema.parse(value)
     signal.throwIfAborted()
     const source = this.#require(caller.run.runId)
+    if (input.operation === 'forward')
+      return this.#options.coordinator.forward(source.run.id, input.runId, input.inputSourceId)
     this.#options.executions.assertCurrent(executionFence(source, this.#require(source.run.rootRunId)))
     if (input.operation === 'submit') {
       if (!input.submission)
@@ -105,18 +113,37 @@ export class ExecutionDelegationService {
       })) }
     }
     if (input.operation === 'context') {
+      if (input.runId) {
+        const { work, reply } = this.#options.executions.readPublicWork(source.run.id, input.runId)
+        return executionResultPage({
+          sources: [],
+          attachmentIds: [],
+          inputs: [],
+          works: [{ ...work, actorName: this.#options.buddies.get(work.actorId).name }],
+          replySourceId: reply?.sourceId ?? null,
+          replyMessageId: reply?.messageId ?? null,
+        }, reply?.text ?? null, input.offset ?? 0)
+      }
       const materials = this.#options.executions.listContext(source.run.id).filter(material => material.kind !== 'message' || material.text.trim() || material.references?.length)
       const offset = input.offset ?? 0
       const attachments = this.#options.executions.listAttachments(source.run.id)
       const page = materials.slice(offset, offset + 12)
-      return { attachmentIds: attachments.slice(offset, offset + 12), sources: page.map(material => material.kind === 'message'
-        ? { sourceId: material.sourceId, actorId: material.actorId, role: material.role, excerpt: material.text.slice(0, 240), referenceCount: material.references?.length ?? 0 }
-        : { sourceId: material.sourceId, actorId: material.actorId, artifactCount: material.artifacts.length, names: material.artifacts.slice(0, 3).map(artifact => artifact.name.slice(0, 80)) }), nextOffset: offset + 12 < Math.max(materials.length, attachments.length) ? offset + 12 : null }
+      const inputs = this.#options.executions.listAcceptedUserInputs(source.run.id, offset, 13)
+      const works = this.#options.executions.listPublicWork(source.run.id, offset, 13)
+      return {
+        inputs: inputs.slice(0, 12).map(({ text: _text, ...input }) => input),
+        works: works.slice(0, 12).map(work => ({ ...work, actorName: this.#options.buddies.get(work.actorId).name })),
+        attachmentIds: attachments.slice(offset, offset + 12),
+        sources: page.map(material => material.kind === 'message'
+          ? { sourceId: material.sourceId, actorId: material.actorId, role: material.role, excerpt: material.text.slice(0, 240), referenceCount: material.references?.length ?? 0 }
+          : { sourceId: material.sourceId, actorId: material.actorId, artifactCount: material.artifacts.length, names: material.artifacts.slice(0, 3).map(artifact => artifact.name.slice(0, 80)) }),
+        nextOffset: inputs.length > 12 || works.length > 12 || offset + 12 < Math.max(materials.length, attachments.length) ? offset + 12 : null,
+      }
     }
     if (input.operation === 'list')
       return this.#list(caller, source, signal)
     if (input.operation === 'delegate' || input.operation === 'resume')
-      return this.#delegate(caller, source, requestKey, input, signal)
+      return this.#delegate(caller, source, requestKey, input, signal, entries)
     if (input.operation === 'report' || (input.operation === 'send' && input.runId === source.run.parentRunId)) {
       if (!source.run.parentRunId || !input.text || (input.operation === 'report' && (input.runId || input.targetId)))
         throw new ExecutionAdmissionError('unauthorized')
@@ -282,12 +309,20 @@ export class ExecutionDelegationService {
     return { self, actors: catalog.actors.map(describe), npcs: catalog.npcs.map(describe) }
   }
 
-  async #delegate(caller: DelegationCaller, source: ExecutionStateRecord, requestKey: string, input: DelegationInput, signal: AbortSignal) {
+  async #delegate(caller: DelegationCaller, source: ExecutionStateRecord, requestKey: string, input: Exclude<DelegationInput, { operation: 'forward' }>, signal: AbortSignal, entries: readonly SessionEntry[]) {
     const previous = input.operation === 'resume' && input.runId ? this.#require(input.runId) : null
     const targetId = previous?.run.buddyId ?? input.targetId
     if (!targetId || (!input.text && !input.brief) || source.run.actorSnapshot?.kind !== 'actor' || !caller.run.requestModel
       || (input.operation === 'resume' && !previous)) {
       throw new ExecutionAdmissionError('unauthorized')
+    }
+    this.#options.executions.assertNoForwardFallback(source.run.id, targetId)
+    const latestInput = this.#options.executions.findForwardGuardInput(source.run.id)
+    if (latestInput) {
+      for (const runId of readClosedForwardTargets(entries, source.run.id, latestInput)) {
+        if (this.#options.executions.requirePublicWork(source.run.id, runId).run.buddyId === targetId)
+          throw new ExecutionAdmissionError('forward_closed')
+      }
     }
     const catalog = this.#catalog(source)
     const target = [...catalog.actors, ...catalog.npcs].find(item => item.id === targetId)

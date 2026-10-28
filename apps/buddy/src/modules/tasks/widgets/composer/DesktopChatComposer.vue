@@ -100,7 +100,12 @@ const {
   onLocateMaterial: material => resourceStrip.value?.highlightMaterial(material),
 })
 
-const queuesSubmission = computed(() => !props.isActorInput && !isLocalCommand.value && (props.isRunning || props.hasQueuedMessages))
+const inputDelivery = computed(() => isLocalCommand.value ? undefined : props.inputDelivery)
+const queuesSubmission = computed(() => {
+  if (isLocalCommand.value || inputDelivery.value)
+    return false
+  return !props.isActorInput && Boolean(props.isRunning || props.hasQueuedMessages)
+})
 const collaborationCount = computed(() => isLocalCommand.value ? 0 : getBuddyUserContentActorReferences(chatComposerDocumentToUserContent(props.composerContent)).length)
 const modelSelectorRef = useTemplateRef<InstanceType<typeof DesktopModelSelector>>('modelSelectorRef')
 
@@ -295,6 +300,7 @@ function captureDraft(): WorkbenchMenuSelection {
         :language="language"
         :can-submit="canSubmit"
         :queues-submission="queuesSubmission"
+        :input-delivery="inputDelivery"
         :is-running="isRunning"
         :is-stopping="isStopping"
         :is-sending="isSending"

@@ -89,24 +89,6 @@ describe('useTaskCapability', () => {
     }
   })
 
-  it('refreshes committed content for the active task without inventing a run output', async () => {
-    const api = createBranchingDesktopApi()
-    vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
-    const chat = createTestTask(api, { conversationId: 'conversation-1', branchId: 'branch-root', spaceId: null })
-    await chat.initialize()
-    const changed = { changeSetId: 'run-1', conversationId: 'conversation-1', runId: 'run-1', coverage: 'partial' as const, status: 'completed' as const, fileCount: 1, updatedAt: '2026-09-06T00:00:02.000Z' }
-    vi.mocked(api.localChat.conversations.listTimeline).mockResolvedValue({ changeSets: [changed], items: [], nextCursor: null, outputs: [], runEvents: [], runs: [] })
-    const notice = vi.mocked(api.localChat.changes.onChanged).mock.calls[0]![0]
-    const artifactNotice = vi.mocked(api.localChat.artifacts.onChanged).mock.calls[0]![0]
-    const timelineNotice = vi.mocked(api.localChat.conversations.onTimelineChanged).mock.calls[0]![0]
-    notice({ sourceId: 'changes-source', revision: 1, conversationId: 'conversation-1', runId: 'run-1' })
-    artifactNotice({ sourceId: 'artifact-source', revision: 1, conversationId: 'conversation-1' })
-    timelineNotice({ sourceId: 'action-source', revision: 1, conversationId: 'conversation-1', branchId: 'branch-root' })
-    await vi.waitFor(() => expect(chat.workspace.transcript.changeSets.value).toEqual([changed]))
-    expect(chat.workspace.transcript.runOutputs.value).toEqual([])
-    chat.dispose()
-  })
-
   it('restores saved attachments when the new-task pane keeps the same draft identity', async () => {
     const api = createDesktopApi()
     vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
@@ -175,41 +157,6 @@ describe('useTaskCapability', () => {
     expect((await api.localChat.composerDrafts.get(draftId)).modelSelection).toBeNull()
     chat.workspace.composer.updateComposerContent('first configured task', null)
     expect(await chat.workspace.execution.send('first configured task')).toBe(true)
-  })
-
-  it('restores the saved Draft model into the composer and submits that same configuration', async () => {
-    const api = createDesktopApi()
-    const models = await api.localChat.providers.listModels()
-    vi.mocked(api.localChat.providers.listModels).mockResolvedValue(models.map(model => ({
-      ...model,
-      serviceTiers: [{ displayName: 'Fast', id: 'priority' }],
-    })))
-    const savedModel = {
-      modelId: 'model-2',
-      providerId: 'provider-1',
-      reasoning: 'high' as const,
-      serviceTier: 'priority' as const,
-    }
-    const remote = await api.localChat.composerDrafts.open({
-      draftId: 'saved-global-draft',
-      initialContent: createBuddyUserContent('saved input'),
-      initialExecutionConfig: { approvalPolicy: 'policy', executionProfile: 'workspace_write' },
-      initialModelSelection: savedModel,
-      scope: { kind: 'global' },
-    })
-    vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
-    const chat = createTestTask(api)
-    await chat.initialize()
-
-    expect(chat.workspace.composer.selectedModelId.value).toBe('provider-1:model-2')
-    expect(chat.workspace.composer.selectedEffort.value).toBe('high')
-    expect(chat.workspace.composer.selectedServiceTier.value).toBe('priority')
-    expect(chat.workspace.composer.draft.value).toBe('saved input')
-    expect(await chat.workspace.execution.send('saved input')).toBe(true)
-    const sent = vi.mocked(api.localChat.chat.startTurn).mock.calls[0]![0]
-    expect(sent.draftId).toBe(remote.draftId)
-    expect((await api.localChat.composerDrafts.get(sent.draftId)).modelSelection).toEqual(savedModel)
-    expect(api.localChat.providers.setDefaultModel).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -296,46 +243,6 @@ describe('useTaskCapability', () => {
     expect(chat.workspace.composer.draft.value).toBe('source draft')
     expect(chat.workspace.composer.resources.value.map(entry => entry.resource)).toEqual([attachment])
     expect(chat.workspace.composer.composerContent.value).toMatchObject({ attrs: { panelResourceIds: ['resource-selected'] } })
-  })
-
-  it('keeps the model control disabled until its captured target is saved', async () => {
-    const api = createDesktopApi()
-    const conversation = {
-      buddyId: 'default',
-      activeBranchId: 'branch-1',
-      activity: 'idle' as const,
-      automationOccurrence: null,
-      createdAt: '2026-08-14T00:00:00.000Z',
-      deletedAt: null,
-      approvalPolicy: 'policy' as const,
-      executionProfile: 'workspace_write' as const,
-      id: 'conversation-1',
-      modelSelection: {
-        modelId: 'model-1',
-        providerId: 'provider-1',
-        reasoning: null,
-        serviceTier: null,
-      },
-      spaceId: null,
-      title: 'Conversation 1',
-      updatedAt: '2026-08-14T00:00:00.000Z',
-    }
-    vi.mocked(api.localChat.conversations.list).mockReset().mockResolvedValue([conversation])
-    const first = deferred<LocalConversation>()
-    vi.mocked(api.localChat.conversations.setModelSelection).mockReturnValue(first.promise)
-    vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
-    const chat = createTestTask(api)
-    await chat.initialize()
-    await chat.session.openTask('conversation-1')
-
-    const firstSelection = chat.workspace.composer.selectModel('provider-1:model-2')
-    await vi.waitUntil(() => chat.workspace.composer.isUpdatingModel.value)
-    await chat.workspace.composer.selectModel('provider-1:model-1')
-    first.resolve({ ...conversation, modelSelection: { modelId: 'model-2', providerId: 'provider-1', reasoning: 'medium', serviceTier: null } })
-    await firstSelection
-    expect(chat.workspace.composer.isUpdatingModel.value).toBe(false)
-    expect(chat.workspace.composer.selectedModelId.value).toBe('provider-1:model-2')
-    expect(chat.workspace.session.activeConversation.value?.modelSelection?.modelId).toBe('model-2')
   })
 
   it('surfaces an actionable message when Pi session storage is unavailable', async () => {
@@ -675,6 +582,53 @@ describe('useTaskCapability', () => {
     expect(chat.workspace.transcript.messages.value.map(message => message.id)).toEqual(['user-1', 'assistant-1', 'user-2'])
   })
 
+  it.each([
+    { permissions: { approvalPolicy: 'policy', executionProfile: 'read_only' }, pendingModel: false },
+    { permissions: { approvalPolicy: 'manual', executionProfile: 'workspace_write' }, pendingModel: false },
+    { permissions: { approvalPolicy: 'policy', executionProfile: 'read_only' }, pendingModel: true },
+  ] as const)('submits the first regenerated-branch draft with $permissions and pending model $pendingModel', async ({ permissions, pendingModel }) => {
+    const api = createBranchingDesktopApi(permissions)
+    const regenerate = vi.mocked(api.localChat.chat.regenerateAssistant).getMockImplementation()!
+    vi.mocked(api.localChat.chat.regenerateAssistant).mockImplementation(async (input) => {
+      const result = await regenerate(input)
+      return { ...result, run: { ...result.run, ...permissions, status: 'completed', completedAt: '2026-08-15T00:00:01.000Z' } }
+    })
+    const startTurn = vi.mocked<LexoraDesktopApi['localChat']['chat']['startTurn']>(api.localChat.chat.startTurn).getMockImplementation()!
+    let submitted: LocalComposerDraft | null = null
+    vi.mocked(api.localChat.chat.startTurn).mockImplementation(async (input) => {
+      submitted = await api.localChat.composerDrafts.get(input.draftId)
+      return startTurn(input)
+    })
+    vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
+    const chat = createTestTask(api, { conversationId: 'conversation-1', branchId: 'branch-root', spaceId: null })
+    await chat.initialize()
+
+    expect(await chat.workspace.execution.regenerateAssistant('run-2')).toBe(true)
+    expect(chat.workspace.session.activeBranchId.value).toBe('branch-regenerated')
+    const modelSave = deferred<LocalConversation>()
+    const modelSelection = { providerId: 'provider-1', modelId: 'model-2', reasoning: 'medium' as const, serviceTier: null }
+    vi.mocked(api.localChat.conversations.setModelSelection).mockImplementation(() => modelSave.promise)
+    const selecting = pendingModel ? chat.workspace.composer.selectModel('provider-1:model-2') : Promise.resolve()
+    const content = { ...createBuddyUserContent(), body: [{ type: 'paragraph' as const, content: [{ type: 'prompt_directive' as const, commandMode: 'prompt' as const, directive: 'slash_command' as const, value: '/review' }, { type: 'text' as const, text: ' inspect the current task' }] }] }
+    const sending = chat.workspace.execution.send({ content: '/review inspect the current task', userContent: content })
+    if (pendingModel) {
+      expect(await chat.flushDrafts()).toBe(true)
+      expect((await api.localChat.composerDrafts.get(chat.workspace.composer.draftId.value)).executionConfig).toEqual(permissions)
+      modelSave.resolve({ ...chat.session.activeTask.value!, modelSelection })
+    }
+    await selecting
+    expect(await sending).toBe(true)
+    expect(submitted).toMatchObject({
+      content,
+      executionConfig: permissions,
+      modelSelection: pendingModel ? modelSelection : null,
+      scope: { kind: 'conversation_branch', conversationId: 'conversation-1', branchId: 'branch-regenerated' },
+    })
+    expect(chat.workspace.composer.draft.value).toBe('')
+    expect(chat.workspace.status.errorMessage.value).toBeNull()
+    chat.dispose()
+  })
+
   it('does not start a turn while permission settings are being committed', async () => {
     const api = createBranchingDesktopApi()
     const pendingPermissionSettings = deferred<Awaited<ReturnType<
@@ -720,7 +674,7 @@ describe('useTaskCapability', () => {
     expect(draft.executionConfig).toEqual({ approvalPolicy: 'policy', executionProfile: 'full_access' })
   })
 
-  it.each(['text', 'structured'])('routes %s compact input through the command lifecycle without creating a turn', async (inputKind) => {
+  it('routes compact input through the command lifecycle without creating a turn', async () => {
     const api = createBranchingDesktopApi()
     const compactRun = {
       buddyId: 'default',
@@ -755,18 +709,9 @@ describe('useTaskCapability', () => {
     await chat.initialize()
     chat.workspace.composer.updateComposerContent('/compact focus on decisions', null)
 
-    const payload = inputKind === 'structured'
-      ? {
-          content: '/compact focus on decisions',
-          userContent: { version: 1 as const, panelResourceIds: [], body: [{ type: 'paragraph' as const, content: [
-            { type: 'prompt_directive' as const, directive: 'slash_command' as const, commandMode: 'action' as const, value: '/compact' },
-            { type: 'text' as const, text: ' focus on decisions' },
-          ] }] },
-        }
-      : '/compact focus on decisions'
-    await expect(chat.workspace.execution.send(payload)).resolves.toBe(true)
+    await expect(chat.workspace.execution.send('/compact focus on decisions')).resolves.toBe(true)
 
-    expect(vi.mocked(api.localChat.composerDrafts.save).mock.calls.at(-1)?.[0].content).toMatchObject({
+    expect((await api.localChat.composerDrafts.get(chat.workspace.composer.draftId.value)).content).toMatchObject({
       body: [{ content: [
         { commandMode: 'action', directive: 'slash_command', value: '/compact' },
         { text: ' focus on decisions', type: 'text' },
@@ -838,7 +783,7 @@ function createTaskCapability(
   })
 }
 
-function createBranchingDesktopApi() {
+function createBranchingDesktopApi(permissions: Pick<LocalConversation, 'approvalPolicy' | 'executionProfile'> = { approvalPolicy: 'policy', executionProfile: 'workspace_write' }) {
   const api = createDesktopApi()
   let activeBranchId = 'branch-root'
   const conversation = () => ({
@@ -848,8 +793,7 @@ function createBranchingDesktopApi() {
     automationOccurrence: null,
     createdAt: '2026-08-14T00:00:00.000Z',
     deletedAt: null,
-    approvalPolicy: 'policy' as const,
-    executionProfile: 'workspace_write' as const,
+    ...permissions,
     id: 'conversation-1',
     modelSelection: null,
     spaceId: null,

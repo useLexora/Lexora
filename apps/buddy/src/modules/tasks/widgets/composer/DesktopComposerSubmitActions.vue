@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { DesktopComposerInputDelivery } from './typing'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { ArrowUp20Regular, Stop20Filled } from '@vicons/fluent'
 import { NButton, NTooltip } from 'naive-ui'
@@ -10,6 +11,7 @@ const props = defineProps<{
   language: BuddyLocale
   canSubmit: boolean
   queuesSubmission: boolean
+  inputDelivery?: DesktopComposerInputDelivery
   isRunning: boolean
   isStopping: boolean
   isSending: boolean
@@ -18,16 +20,14 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ submit: [], stop: [] }>()
 const { t } = useBuddyI18n(() => props.language)
+const submitLabel = computed(() => {
+  if (props.isLocalCommand)
+    return t('desktop.command.run')
+  if (props.inputDelivery)
+    return t(props.inputDelivery.answering ? 'desktop.chat.inputDelivery.answer' : 'desktop.chat.inputDelivery.current')
+  return t(props.queuesSubmission ? 'desktop.chat.queueAdd' : 'desktop.chat.send')
+})
 const actions = computed(() => [
-  {
-    id: 'queue' as const,
-    visible: props.queuesSubmission,
-    label: t('desktop.chat.queueAdd'),
-    hint: props.issueMessage || t('desktop.chat.queueAdd'),
-    disabled: !props.canSubmit,
-    loading: props.isSending,
-    type: 'default' as const,
-  },
   {
     id: 'stop' as const,
     visible: props.isRunning,
@@ -38,13 +38,13 @@ const actions = computed(() => [
     type: 'error' as const,
   },
   {
-    id: 'send' as const,
-    visible: !props.queuesSubmission,
-    label: t(props.isLocalCommand ? 'desktop.command.run' : 'desktop.chat.send'),
-    hint: props.isLocalCommand ? t('desktop.command.run') : props.issueMessage || t('desktop.chat.send'),
+    id: props.queuesSubmission ? 'queue' : 'send',
+    visible: true,
+    label: submitLabel.value,
+    hint: props.isLocalCommand ? submitLabel.value : props.issueMessage || submitLabel.value,
     disabled: !props.canSubmit,
     loading: props.isSending,
-    type: 'primary' as const,
+    type: props.queuesSubmission ? 'default' as const : 'primary' as const,
   },
 ].filter(action => action.visible))
 </script>

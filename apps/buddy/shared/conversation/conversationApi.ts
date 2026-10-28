@@ -80,8 +80,10 @@ export const messageSchema = z.object({
   conversationId: idSchema,
   createdAt: timestampSchema,
   id: idSchema,
+  inputRunId: idSchema.optional(),
   role: z.enum(['user', 'assistant', 'tool']),
   runId: z.string().nullable(),
+  startedAt: timestampSchema.optional(),
 }).strict()
 
 export const conversationTimelineItemSchema = z.discriminatedUnion('kind', [

@@ -29,7 +29,7 @@ export interface TaskComposerHostProps {
   skillScopeId?: string | null
   composer: TaskComposer
   focusReady: boolean
-  execution: Pick<TaskExecution, 'isActorInput' | 'activeRun' | 'stoppingRunId' | 'canSend' | 'editingMessageId' | 'isMutatingBranch' | 'isSending' | 'cancelActiveRun' | 'send' | 'submitEditedMessage' | 'queuedMessages' | 'pendingQueueActions' | 'cancelQueuedMessage' | 'steerQueuedMessage'>
+  execution: Pick<TaskExecution, 'inputExecution' | 'queueRecipientNames' | 'isActorInput' | 'activeRun' | 'stoppingRunId' | 'canSend' | 'editingMessageId' | 'isMutatingBranch' | 'isSending' | 'cancelActiveRun' | 'send' | 'submitEditedMessage' | 'queuedMessages' | 'pendingQueueActions' | 'cancelQueuedMessage' | 'steerQueuedMessage'>
   language: BuddyLocale
 }
 

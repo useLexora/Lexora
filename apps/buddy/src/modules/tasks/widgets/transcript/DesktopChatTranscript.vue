@@ -73,6 +73,7 @@ const runProjections = computed(() => runTranscriptProjector.project(
 ))
 const transcriptProjection = computed(() => transcriptProjector.project({
   executionGroups: executionTree?.groups.value,
+  executionInputs: executionTree?.conversationId.value === props.conversationId && executionTree.branchId.value === props.activeBranchId ? executionTree.inputs.value : undefined,
   changeSets: props.changeSets,
   outputs: props.runOutputs,
   runProjections: runProjections.value,

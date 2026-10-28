@@ -3,10 +3,12 @@ import type { DeepReadonly } from '../runtime/apiValidation'
 import { z } from 'zod'
 import { idSchema } from '../runtime/apiValidation'
 import { buddyUserMessageContentV1Schema } from './buddyUserContent'
+import { buddyInputDeliverySchema } from './chatApi'
 import { buddyComposerDraftSendSchema } from './composerDraft'
 
 export const chatQueueItemSchema = z.object({
   buddyId: idSchema,
+  delivery: buddyInputDeliverySchema.optional(),
   id: idSchema,
   conversationId: idSchema,
   branchId: idSchema,
@@ -28,7 +30,7 @@ export type LocalChatQueueReceipt = z.infer<typeof queueReceiptSchema>
 const queueSteerResultSchema = z.enum(['accepted', 'incompatible', 'unavailable'])
 export type LocalChatQueueSteerResult = z.infer<typeof queueSteerResultSchema>
 export const chatQueueRpc = {
-  enqueue: { method: 'chat.queue.enqueue', input: buddyComposerDraftSendSchema, response: queueReceiptSchema },
+  enqueue: { method: 'chat.queue.enqueue', input: buddyComposerDraftSendSchema.unwrap().extend({ delivery: buddyInputDeliverySchema.optional() }).strict(), response: queueReceiptSchema },
   list: { method: 'chat.queue.list', input: scope, response: z.array(chatQueueItemSchema) },
   cancel: { method: 'chat.queue.cancel', input: target, response: z.boolean() },
   steer: { method: 'chat.queue.steer', input: target, response: queueSteerResultSchema },

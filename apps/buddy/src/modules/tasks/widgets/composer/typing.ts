@@ -56,7 +56,12 @@ export interface ChatComposerEditorOptions {
   onLocateQuote?: (reference: BuddyQuoteReference) => void
 }
 
+export interface DesktopComposerInputDelivery {
+  answering: boolean
+}
+
 export interface DesktopChatComposerProps {
+  inputDelivery?: DesktopComposerInputDelivery
   isActorInput?: boolean
   isLoadingModel?: boolean
   isUpdatingModel?: boolean

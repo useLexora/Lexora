@@ -7,7 +7,6 @@ import { computed, shallowRef } from 'vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import { useExecutionTree } from '../../state/runs/chatExecutionContext'
 import { useExecutionDetail } from '../../state/runs/useExecutionDetail'
-import BuddyExecutionInputs from '../executions/BuddyExecutionInputs.vue'
 import BuddyExecutionProcess from '../executions/BuddyExecutionProcess.vue'
 import { executionLabels } from '../executions/executionLabels'
 import BuddyChatTokenUsage from './BuddyChatTokenUsage.vue'
@@ -55,7 +54,6 @@ const labels = computed(() => executionLabels(props.language))
       <template v-if="state.detail.value">
         <BuddyChatTurnOutputs v-if="state.detail.value.artifacts.length" :artifacts="state.detail.value.artifacts" :language="language" @open-artifact="emit('openArtifact', $event)" />
         <BuddyChatTurnChanges v-if="state.detail.value.changes" :change-set="state.detail.value.changes" :language="language" @open-changes="emit('openChanges', $event)" />
-        <BuddyExecutionInputs :inputs="state.detail.value.inputs" :language="language" />
       </template>
       <p v-if="state.detail.value?.execution.cleanup === 'degraded'" role="alert" class="text-warning text-[12px]">
         {{ labels.cleanup }}

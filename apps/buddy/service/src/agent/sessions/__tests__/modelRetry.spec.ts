@@ -1,6 +1,7 @@
 import type { Api, AssistantMessage, Model } from '@earendil-works/pi-ai'
 import type { ModelRetryLimit } from '../../../../../shared/runtime/runtimePreferences'
 import type { BuddyExtensionRunContextStore } from '../../extensions/BuddyExtensionRunContext'
+import type { BuddyInProcessExtension } from '../../extensions/BuddyInProcessExtension'
 import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -18,58 +19,91 @@ afterEach(async () => {
 })
 
 describe('model retry policy', () => {
-  it('keeps an in-flight response on its model and uses the selected model for the next tool step', async () => {
-    const fixture = await createFixture(() => undefined, [], true)
+  it.each([false, true])('prepares the smaller model context before requesting it, with another switch during compaction: %s', async (switchDuringCompaction) => {
+    const compactedModels: string[] = []
+    const fixture = await createFixture(() => undefined, [], true, () => {
+      compactedModels.push(fixture.session.model!.id)
+      if (switchDuringCompaction)
+        fixture.selectFirstModel()
+    })
     const first = createAssistantMessageEventStream()
     const started = Promise.withResolvers<void>()
-    const requests: string[] = []
+    const requests: { model: string, context: string }[] = []
     const toolModels: string[] = []
     fixture.session.subscribe((event) => {
       if (event.type === 'tool_execution_start')
         toolModels.push(fixture.runContext.current!.requestModel!.modelId)
     })
-    vi.spyOn(fixture.runtime, 'streamSimple').mockImplementation((model) => {
-      requests.push(model.id)
-      if (requests.length > 1)
-        return response(model)
-      started.resolve()
-      return first
+    vi.spyOn(fixture.runtime, 'streamSimple').mockImplementation((model, context) => {
+      requests.push({ model: model.id, context: JSON.stringify(context.messages) })
+      if (requests.length === 1) {
+        started.resolve()
+        return first
+      }
+      if (requests.length === 2 && switchDuringCompaction) {
+        const stream = createAssistantMessageEventStream()
+        void response(model).result().then(message => stream.push({ type: 'done', reason: 'toolUse', message: { ...message, stopReason: 'toolUse', content: [{ type: 'toolCall', id: 'inspect-again', name: 'ls', arguments: { path: '.' } }] } }))
+        return stream
+      }
+      return response(model)
     })
-    const release = await fixture.activate(2)
-    const prompt = fixture.reusable.prompt('Inspect the current directory')
+    const release = await fixture.activate(0)
+    const prompt = fixture.reusable.prompt('Inspect the current directory and preserve the task context')
     await started.promise
-    expect(fixture.runContext.current?.requestModel).toEqual({ providerId: fixture.models[0]!.provider, modelId: fixture.models[0]!.id, reasoning: fixture.session.thinkingLevel, serviceTier: null })
+    expect(fixture.runContext.current?.requestModel?.modelId).toBe(fixture.models[0]!.id)
     fixture.selectNextModel()
     expect(fixture.runContext.current?.requestModel?.modelId).toBe(fixture.models[0]!.id)
     const original = await response(fixture.models[0]!).result()
-    first.push({ type: 'done', reason: 'toolUse', message: { ...original, stopReason: 'toolUse', content: [{ type: 'toolCall', id: 'inspect', name: 'ls', arguments: { path: '.' } }] } })
+    first.push({ type: 'done', reason: 'toolUse', message: { ...original, stopReason: 'toolUse', usage: { ...original.usage, input: 20_000, totalTokens: 20_000 }, content: [{ type: 'toolCall', id: 'inspect', name: 'ls', arguments: { path: '.' } }] } })
     await prompt
-    expect(requests).toEqual([fixture.models[0]!.id, fixture.models[1]!.id])
-    expect(fixture.runContext.current?.requestModel?.modelId).toBe(fixture.models[1]!.id)
-    expect(toolModels).toEqual([fixture.models[0]!.id])
-    expect(fixture.session.messages.filter(message => message.role === 'user')).toHaveLength(1)
-    expect(fixture.session.messages.at(-1)).toMatchObject({ model: fixture.models[1]!.id, stopReason: 'stop' })
+    expect(compactedModels).toEqual([fixture.models[1]!.id])
+    expect(requests.map(request => request.model)).toEqual([fixture.models[0]!.id, fixture.models[1]!.id, ...switchDuringCompaction ? [fixture.models[0]!.id] : []])
+    expect(requests[1]!.context).toContain('Preserved task context before switching models')
+    expect(toolModels).toEqual([fixture.models[0]!.id, ...switchDuringCompaction ? [fixture.models[1]!.id] : []])
+    expect(fixture.session.messages.at(-1)).toMatchObject({ model: requests.at(-1)!.model, stopReason: 'stop' })
+    expect(fixture.session.sessionManager.getEntries().filter(entry => entry.type === 'message' && entry.message.role === 'user')).toHaveLength(1)
     release()
   })
-  it('switches a waiting retry immediately without resubmitting input or rewriting the failed model', async () => {
-    const requests: string[] = []
-    const fixture = await createFixture((model) => {
-      requests.push(model.id)
-      return requests.length === 1 ? '503 service unavailable' : undefined
-    }, [], true)
+
+  it.each(['idle', 'retry'] as const)('compacts with the selected smaller model before the first %s request', async (mode) => {
+    const compactedModels: string[] = []
+    const fixture = await createFixture(() => undefined, [], true, () => compactedModels.push(fixture.session.model!.id))
+    const requests: { model: string, context: string }[] = []
+    vi.spyOn(fixture.runtime, 'streamSimple').mockImplementation((model, context) => {
+      requests.push({ model: model.id, context: JSON.stringify(context.messages) })
+      if (mode === 'retry' && requests.length === 2)
+        return response(model, '503 service unavailable')
+      if (requests.length === 1) {
+        const stream = createAssistantMessageEventStream()
+        void response(model).result().then(message => stream.push({ type: 'done', reason: 'stop', message: { ...message, usage: { ...message.usage, input: 20_000, totalTokens: 20_000 } } }))
+        return stream
+      }
+      return response(model)
+    })
     const release = await fixture.activate(2)
-    const waiting = Promise.withResolvers<void>()
-    fixture.session.subscribe(event => event.type === 'auto_retry_start' && waiting.resolve())
-    fixture.session.settingsManager.applyOverrides({ retry: { baseDelayMs: 60_000 } })
-    const prompt = fixture.reusable.prompt('Switch the failing model')
-    await waiting.promise
-    fixture.selectNextModel()
-    await prompt
-    expect(requests).toEqual([fixture.models[0]!.id, fixture.models[1]!.id])
+    await fixture.reusable.prompt('Retain this task context for a smaller model later. '.repeat(2_000))
+    expect(compactedModels).toEqual([])
+    if (mode === 'idle') {
+      fixture.selectNextModel()
+      await fixture.reusable.prompt('Continue the task after switching')
+    }
+    else {
+      const waiting = Promise.withResolvers<void>()
+      fixture.session.subscribe(event => event.type === 'auto_retry_start' && waiting.resolve())
+      fixture.session.settingsManager.applyOverrides({ retry: { baseDelayMs: 60_000 } })
+      const prompt = fixture.reusable.prompt('Continue the task after switching')
+      await waiting.promise
+      fixture.selectNextModel()
+      await prompt
+    }
+    expect(compactedModels).toEqual([fixture.models[1]!.id])
+    expect(requests.map(request => request.model)).toEqual([...Array.from({ length: mode === 'retry' ? 2 : 1 }, () => fixture.models[0]!.id), fixture.models[1]!.id])
+    expect(requests.at(-1)!.context).toContain('Preserved task context before switching models')
     expect(fixture.session.messages.at(-1)).toMatchObject({ model: fixture.models[1]!.id, stopReason: 'stop' })
     const entries = fixture.session.sessionManager.getEntries()
-    expect(entries.filter(entry => entry.type === 'message' && entry.message.role === 'user')).toHaveLength(1)
-    expect(entries.some(entry => entry.type === 'message' && entry.message.role === 'assistant' && entry.message.model === fixture.models[0]!.id && entry.message.stopReason === 'error')).toBe(true)
+    expect(entries.filter(entry => entry.type === 'message' && entry.message.role === 'user')).toHaveLength(2)
+    if (mode === 'retry')
+      expect(entries.some(entry => entry.type === 'message' && entry.message.role === 'assistant' && entry.message.model === fixture.models[0]!.id && entry.message.stopReason === 'error')).toBe(true)
     release()
   })
 
@@ -97,9 +131,9 @@ describe('model retry policy', () => {
     expect(attempts).toEqual([1, 2])
     release()
   })
-  it.each([2, 'unlimited'] as const)('restores the %s retry budget for the next tool step after switching models', async (limit) => {
+  it('restores the finite retry budget for the next tool step after switching models', async () => {
     const fixture = await createFixture(() => undefined, [], true)
-    const failures = limit === 'unlimited' ? 2 : limit
+    const limit = 2
     const requests: string[] = []
     vi.spyOn(fixture.runtime, 'streamSimple').mockImplementation((model) => {
       requests.push(model.id)
@@ -108,7 +142,7 @@ describe('model retry policy', () => {
         void response(model).result().then(message => stream.push({ type: 'done', reason: 'toolUse', message: { ...message, stopReason: 'toolUse', content: [{ type: 'toolCall', id: 'inspect', name: 'ls', arguments: { path: '.' } }] } }))
         return stream
       }
-      return response(model, requests.length <= failures + 2 ? '503 service unavailable' : undefined)
+      return response(model, requests.length <= limit + 2 ? '503 service unavailable' : undefined)
     })
     const release = await fixture.activate(limit)
     const waiting = Promise.withResolvers<void>()
@@ -123,8 +157,8 @@ describe('model retry policy', () => {
     await waiting.promise
     fixture.selectNextModel()
     await prompt
-    expect(requests).toEqual([fixture.models[0]!.id, ...Array.from({ length: failures + 2 }, () => fixture.models[1]!.id)])
-    expect(attempts).toEqual([1, ...Array.from({ length: failures }, (_, index) => index + 1)])
+    expect(requests).toEqual([fixture.models[0]!.id, ...Array.from({ length: limit + 2 }, () => fixture.models[1]!.id)])
+    expect(attempts).toEqual([1, ...Array.from({ length: limit }, (_, index) => index + 1)])
     expect(fixture.session.messages.at(-1)).toMatchObject({ model: fixture.models[1]!.id, stopReason: 'stop' })
     release()
   })
@@ -200,7 +234,6 @@ describe('model retry policy', () => {
     })
     let release = await fixture.activate(2)
     fixture.reusable.applyPreferences({ cacheWarming: 'streaming', codemode: false, modelRetryLimit: 0 })
-    fixture.reusable.applyPreferences({ cacheWarming: 'off', codemode: false, modelRetryLimit: 0 })
     fixture.session.settingsManager.applyOverrides({ retry: { baseDelayMs: 1 } })
     await fixture.reusable.prompt('First run')
     expect(requests).toBe(3)
@@ -212,11 +245,13 @@ describe('model retry policy', () => {
   })
 })
 
-async function createFixture(failure: (model: Model<Api>) => string | undefined, failureContent: AssistantMessage['content'] = [], liveSelection = false) {
+async function createFixture(failure: (model: Model<Api>) => string | undefined, failureContent: AssistantMessage['content'] = [], liveSelection = false, beforeCompact?: () => void) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'buddy-model-retry-')))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
   const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, refreshOnCreate: false })
   const models = runtime.getModels().filter(model => model.provider === 'anthropic').slice(0, 2)
+  if (beforeCompact)
+    models[1] = { ...models[1]!, contextWindow: 8_192, maxTokens: 1_024 }
   const model = models[0]!
   let selected = model
   const runContext: BuddyExtensionRunContextStore = { current: null }
@@ -235,10 +270,20 @@ async function createFixture(failure: (model: Model<Api>) => string | undefined,
     modelRuntime: runtime,
     thinkingLevel: 'off',
     resources: { skillReadRoots: [], skillReferences: [], approvedSkills: [], context: { agentsFiles: [], diagnostics: [] }, directoryContext: '', revision: 'empty' },
-    inProcessExtensions: [createModelSwitchExtension(runContext)],
+    inProcessExtensions: [createModelSwitchExtension(runContext), ...beforeCompact
+      ? [{
+        name: 'lexora-model-compaction-fixture',
+        factory(pi) {
+          pi.on('session_before_compact', (event) => {
+            beforeCompact()
+            return { compaction: { summary: 'Preserved task context before switching models', firstKeptEntryId: event.preparation.firstKeptEntryId, tokensBefore: event.preparation.tokensBefore } }
+          })
+        },
+      } satisfies BuddyInProcessExtension]
+      : []],
   })
   const { session } = created
-  session.settingsManager.setCompactionEnabled(false)
+  session.settingsManager.applyOverrides({ compaction: { enabled: !!beforeCompact, keepRecentTokens: 1, reserveTokens: 1_024 } })
   const reusable = createReusableBuddySession({
     session,
     shutdown: created.shutdown,
@@ -264,6 +309,10 @@ async function createFixture(failure: (model: Model<Api>) => string | undefined,
     activate,
     models,
     runtime,
+    selectFirstModel: () => {
+      selected = models[0]!
+      reusable.refreshModelSelection?.()
+    },
     selectNextModel: () => {
       selected = models[1]!
       reusable.refreshModelSelection?.()

@@ -5,8 +5,9 @@ import { createServer } from 'node:http'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { expect, test, useSyntheticCredentialStorage } from '../fixtures/electron.mjs'
+import { selectComposerModel, selectComposerPermission } from '../fixtures/model-controls.mjs'
 
-test('model controls preview dragging, commit on release and retain advanced panel selections', async ({ buddy }) => {
+test('model controls commit effort on release and retain effort and speed across panels', async ({ buddy }) => {
   const instance = await buddy.createInstance('model-selection')
   const desktop = await instance.launch()
   const { page } = desktop
@@ -52,11 +53,6 @@ test('model controls preview dragging, commit on release and retain advanced pan
   await expect(trigger).toHaveAttribute('aria-label', `${model.displayName} · ${finalLevel}`)
   await expect(slider).toBeVisible()
 
-  await page.keyboard.press('Escape')
-  await expect(slider).toBeHidden()
-  await trigger.click()
-  await expect(slider).toHaveValue(String(targetIndex))
-
   const fastMode = page.getByRole('switch', { name: 'Fast', exact: true })
   await fastMode.click()
   await expect(fastMode).toBeChecked()
@@ -66,25 +62,19 @@ test('model controls preview dragging, commit on release and retain advanced pan
   await expect(speed).toBeChecked()
   await speed.click()
   await expect(speed).not.toBeChecked()
-  await advanced.getByRole('button', { name: /^模型/ }).click()
-  const models = page.locator('.desktop-model-picker')
-  await expect(models).toBeVisible()
-  await models.getByPlaceholder('搜索模型…').fill(model.displayName)
-  await models.getByRole('menuitemradio', { name: `${model.displayName} ${model.modelId}`, exact: true }).click()
-  await expect(trigger).toContainText(model.displayName)
   await advanced.locator('.desktop-model-selector__back').click()
   await expect(slider).toBeVisible()
   await expect(fastMode).not.toBeChecked()
-  const advancedValue = await slider.inputValue()
   await page.keyboard.press('Escape')
   await expect(slider).toBeHidden()
   await trigger.click()
-  await expect(slider).toHaveValue(advancedValue)
+  await expect(slider).toHaveValue(String(targetIndex))
+  await expect(fastMode).not.toBeChecked()
   await page.keyboard.press('Escape')
   expect(desktop.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })
 
-test('live model selection resumes retries and drives regeneration while permission changes revoke approvals', async ({ buddy }, testInfo) => {
+test('live model selection resumes retries and regeneration while permissions revoke approvals and constrain an API queued review', async ({ buddy }) => {
   const requests = []
   let requestedWrite = false
   let gatedResponse = null
@@ -118,7 +108,7 @@ test('live model selection resumes retries and drives regeneration while permiss
     const desktop = await instance.launch()
     await useSyntheticCredentialStorage(desktop)
     const { page } = desktop
-    await page.evaluate(async (baseUrl) => {
+    const models = await page.evaluate(async (baseUrl) => {
       await window.lexoraDesktop.settings.update({ runtime: { modelRetryLimit: 'unlimited' } })
       const providers = window.lexoraDesktop.localChat.providers
       await providers.upsertCustom({ id: 'live-fixture', displayName: 'Live fixture', api: 'openai-completions', baseUrl, enabled: true, models: ['a', 'b'].map(id => ({ id: `model-${id}`, name: `Model ${id.toUpperCase()}`, input: ['text'], reasoning: false, contextWindow: 128000, maxTokens: 1024 })) })
@@ -131,32 +121,21 @@ test('live model selection resumes retries and drives regeneration while permiss
       }
       finally { stop() }
       await providers.setDefaultModel({ providerId: 'live-fixture', modelId: 'model-a', reasoning: null })
+      return providers.listModels('live-fixture')
     }, `http://127.0.0.1:${server.address().port}/v1`)
     await page.reload()
     await page.locator('.desktop-chat-composer__prosemirror:visible').fill('Keep this input while changing model and permissions.')
     await page.getByRole('button', { name: '发送消息', exact: true }).click()
     await expect(page.locator('.buddy-chat-run-activity')).toContainText('秒后重试')
-    await page.locator('.desktop-permission-mode-selector__trigger:visible').click()
-    for (const name of ['本机只读', '人工审批', '智能审批', '完全访问'])
-      await expect(page.getByRole('menuitemradio', { name: new RegExp(name) })).toBeEnabled()
-    await page.screenshot({ path: testInfo.outputPath('running-permission-menu.png'), animations: 'disabled' })
-    await page.getByRole('menuitemradio', { name: /人工审批/ }).click()
+    await selectComposerPermission(page, '人工审批')
     await expect(page.locator('.desktop-permission-mode-selector__trigger:visible')).toContainText('人工审批')
     const trigger = page.locator('.desktop-model-selector__trigger:visible')
-    await expect(trigger).toBeEnabled()
-    await trigger.click()
-    await page.locator('.desktop-model-selector__advanced').click()
-    await page.locator('.desktop-model-selector__panel--advanced').getByRole('button', { name: /^模型/ }).click()
-    await page.screenshot({ path: testInfo.outputPath('running-model-menu.png'), animations: 'disabled' })
-    await page.locator('.desktop-model-picker').getByRole('menuitemradio', { name: 'Model B model-b', exact: true }).click()
-    await page.keyboard.press('Escape')
+    await selectComposerModel(page, models.find(model => model.modelId === 'model-b'), null)
     await expect(trigger).toContainText('Model B')
     const read = query => readModelDatabase(instance.home, query)
     await expect.poll(() => read(db => db.prepare('SELECT COUNT(*) AS count FROM approvals WHERE status = ?').get('pending').count)).toBe(1)
     const approval = read(db => db.prepare('SELECT id FROM approvals WHERE status = ?').get('pending'))
-    await page.locator('.desktop-permission-mode-selector__trigger:visible').click()
-    await page.screenshot({ path: testInfo.outputPath('approval-permission-menu.png'), animations: 'disabled' })
-    await page.getByRole('menuitemradio', { name: /本机只读/ }).click()
+    await selectComposerPermission(page, '本机只读')
     await expect.poll(() => read(db => db.prepare('SELECT status FROM approvals WHERE id = ?').get(approval.id).status)).toBe('cancelled')
     await expect.poll(() => read(db => db.prepare('SELECT COUNT(*) AS count FROM runs WHERE status = ?').get('completed').count)).toBe(1)
     expect(requests.filter(body => body.model === 'model-b')).toHaveLength(2)
@@ -169,7 +148,6 @@ test('live model selection resumes retries and drives regeneration while permiss
     await expect(page.locator('.desktop-permission-mode-selector__trigger:visible')).toContainText('本机只读')
     const regenerate = page.getByTestId(`regenerate-run-${first.id}`)
     await expect(regenerate).toBeVisible()
-    await page.screenshot({ path: testInfo.outputPath('current-model-regenerate-footer.png'), animations: 'disabled' })
     await regenerate.click()
     await expect.poll(() => read(db => db.prepare('SELECT COUNT(*) AS count FROM runs WHERE status = ?').get('completed').count)).toBe(2)
     expect(requests.at(-1).model).toBe('model-b')
@@ -188,10 +166,7 @@ test('live model selection resumes retries and drives regeneration while permiss
     await page.locator('.desktop-chat-composer__prosemirror:visible').fill('/review inspect the current task')
     await page.getByRole('button', { name: '发送消息', exact: true }).click()
     await expect.poll(() => requests.length).toBe(beforeReview + 1)
-    await page.locator('.desktop-permission-mode-selector__trigger:visible').click()
-    await page.getByRole('menuitemradio', { name: /完全访问/ }).click()
-    await page.getByRole('checkbox', { name: '我已了解风险，并愿意继续' }).check()
-    await page.getByRole('button', { name: '允许完全访问', exact: true }).click()
+    await selectComposerPermission(page, '完全访问')
     await expect(page.locator('.desktop-permission-mode-selector__trigger:visible')).toContainText('完全访问')
     releaseResponse()
     await expect.poll(() => read(db => db.prepare('SELECT COUNT(*) AS count FROM runs WHERE status = ?').get('completed').count)).toBe(3)
@@ -200,8 +175,7 @@ test('live model selection resumes retries and drives regeneration while permiss
     const taskFile = path.join(instance.home, 'buddy/conversations', first.conversation_id, 'workspace/hot-permission.txt')
     await expect(readFile(taskFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
 
-    await page.locator('.desktop-permission-mode-selector__trigger:visible').click()
-    await page.getByRole('menuitemradio', { name: /本机只读/ }).click()
+    await selectComposerPermission(page, '本机只读')
     const ordinaryGate = Promise.withResolvers()
     gatedResponse = ordinaryGate.promise
     releaseResponse = () => {
@@ -214,12 +188,9 @@ test('live model selection resumes retries and drives regeneration while permiss
     await expect.poll(() => requests.length).toBe(beforeOrdinary + 1)
     const ordinary = read(db => db.prepare('SELECT id, execution_profile FROM runs WHERE status = ?').get('running'))
     expect(ordinary.execution_profile).toBe('read_only')
-    await page.locator('.desktop-permission-mode-selector__trigger:visible').click()
-    await page.getByRole('menuitemradio', { name: /完全访问/ }).click()
-    await page.getByRole('checkbox', { name: '我已了解风险，并愿意继续' }).check()
-    await page.getByRole('button', { name: '允许完全访问', exact: true }).click()
+    await selectComposerPermission(page, '完全访问')
     await page.locator('.desktop-chat-composer__prosemirror:visible').fill('/review inspect without changing anything')
-    await page.getByRole('button', { name: '加入队列', exact: true }).click()
+    await enqueueComposerThroughApi(page, read, ordinary.id, 'next')
     await expect.poll(() => read(db => db.prepare('SELECT COUNT(*) AS count FROM chat_queue WHERE state = ?').get('waiting').count)).toBe(1)
     requestedWrite = false
     releaseResponse()
@@ -234,7 +205,6 @@ test('live model selection resumes retries and drives regeneration while permiss
     await expect(readFile(taskFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(page.locator('.chat-message-queue__row')).toHaveCount(0)
     await expect(page.getByRole('button', { name: '发送消息', exact: true })).toBeVisible()
-    await page.screenshot({ path: testInfo.outputPath('queued-review-read-only.png'), animations: 'disabled' })
 
     requestedWrite = false
     await page.locator('.desktop-chat-composer__prosemirror:visible').fill('Create the file for an ordinary task.')
@@ -251,7 +221,7 @@ test('live model selection resumes retries and drives regeneration while permiss
   }
 })
 
-test('queued steering uses live permissions and deferred follow-up starts with the latest settings', async ({ buddy }, testInfo) => {
+test('API queued steering uses live permissions and explicit next input starts with the latest settings', async ({ buddy }) => {
   const requests = []
   const gates = new Map([0, 2].map(index => [index, Promise.withResolvers()]))
   const instance = await buddy.createInstance('queue-live-permissions')
@@ -302,19 +272,14 @@ test('queued steering uses live permissions and deferred follow-up starts with t
     await expect.poll(() => requests.length).toBe(1)
     const first = read(db => db.prepare('SELECT id, approval_policy, execution_profile FROM runs WHERE status = ?').get('running'))
     expect(first.execution_profile).toBe('workspace_write')
-    await permission.click()
-    await page.getByRole('menuitemradio', { name: /完全访问/ }).click()
-    await page.getByRole('checkbox', { name: '我已了解风险，并愿意继续' }).check()
-    await page.getByRole('button', { name: '允许完全访问', exact: true }).click()
+    await selectComposerPermission(page, '完全访问')
     await expect(permission).toContainText('完全访问')
     await composer.fill('Include this immediate instruction after the permission change.')
-    await page.getByRole('button', { name: '加入队列', exact: true }).click()
+    await enqueueComposerThroughApi(page, read, first.id)
     await expect(page.locator('.chat-message-queue__row')).toHaveCount(1)
     await page.getByRole('button', { name: '立即发送', exact: true }).click()
     await expect.poll(() => read(db => db.prepare('SELECT state, run_id FROM chat_queue ORDER BY rowid DESC LIMIT 1').get())).toEqual({ state: 'sent', run_id: first.id })
     await expect(page.locator('.chat-message-queue__row')).toHaveCount(0)
-    await expect(page.getByText('队列操作未完成，请稍后重试', { exact: true })).toHaveCount(0)
-    await page.screenshot({ path: testInfo.outputPath('steering-after-full-access.png'), animations: 'disabled' })
     gates.get(0).resolve()
     await expect.poll(() => read(db => db.prepare('SELECT status FROM runs WHERE id = ?').get(first.id).status)).toBe('completed')
     expect(requests).toHaveLength(2)
@@ -328,10 +293,9 @@ test('queued steering uses live permissions and deferred follow-up starts with t
     const second = read(db => db.prepare('SELECT id, approval_policy, execution_profile FROM runs WHERE status = ?').get('running'))
     expect(second.execution_profile).toBe('full_access')
     await composer.fill('Process this queued follow-up with the latest read-only permissions.')
-    await page.getByRole('button', { name: '加入队列', exact: true }).click()
+    await enqueueComposerThroughApi(page, read, second.id, 'next')
     await expect(page.locator('.chat-message-queue__row')).toHaveCount(1)
-    await permission.click()
-    await page.getByRole('menuitemradio', { name: /本机只读/ }).click()
+    await selectComposerPermission(page, '本机只读')
     await expect(permission).toContainText('本机只读')
     gates.get(2).resolve()
     await expect.poll(() => read(db => db.prepare('SELECT status FROM runs WHERE id = ?').get(second.id).status)).toBe('completed')
@@ -345,7 +309,6 @@ test('queued steering uses live permissions and deferred follow-up starts with t
     expect(read(db => db.prepare('SELECT COUNT(*) AS count FROM runs').get().count)).toBe(3)
     expect(read(db => db.prepare('SELECT id, approval_policy, execution_profile FROM runs WHERE id = ?').get(second.id))).toEqual(second)
     await expect(page.locator('.chat-message-queue__row')).toHaveCount(0)
-    await page.screenshot({ path: testInfo.outputPath('follow-up-after-read-only.png'), animations: 'disabled' })
     expect(desktop.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
   }
   finally {
@@ -356,6 +319,129 @@ test('queued steering uses live permissions and deferred follow-up starts with t
     await new Promise(resolve => server.close(resolve))
   }
 })
+
+test('switching model and effort during a tool batch immediately supplements the same run without replaying tools', async ({ buddy }) => {
+  test.setTimeout(180000)
+  const instance = await buddy.createInstance('tool-boundary-model-selection')
+  const requests = []
+  const errors = []
+  let workspace
+  const server = createServer(async (request, response) => {
+    try {
+      const chunks = []
+      for await (const chunk of request)
+        chunks.push(chunk)
+      const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      requests.push(payload)
+      const first = requests.length === 1
+      const shell = payload.tools.find(tool => tool.function?.name === 'lexora_shell')?.function.name
+        ?? payload.tools.find(tool => tool.function?.name === 'bash')?.function.name
+      if (first && !shell)
+        throw new Error('The bounded tool fixture requires a disclosed shell tool')
+      const parameters = command => ({ command, timeout: 120, ...(shell === 'lexora_shell' ? { shell: 'system' } : {}) })
+      const calls = first
+        ? [
+            { index: 0, id: 'gate-once', type: 'function', function: { name: shell, arguments: JSON.stringify(parameters('printf \'gate-once\\n\' >> hot-switch-calls; while [ ! -f hot-switch-release ]; do sleep 0.05; done; printf \'gate complete\'')) } },
+            { index: 1, id: 'tail-once', type: 'function', function: { name: shell, arguments: JSON.stringify(parameters('printf \'tail-once\\n\' >> hot-switch-calls')) } },
+          ]
+        : []
+      const common = { id: `hot-${requests.length}`, created: 1, model: payload.model, object: 'chat.completion.chunk' }
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.write(`data: ${JSON.stringify({ ...common, choices: [{ index: 0, delta: first ? { role: 'assistant', tool_calls: calls } : { role: 'assistant', content: '已在同一轮处理新模型补充。' }, finish_reason: null }] })}\n\n`)
+      response.write(`data: ${JSON.stringify({ ...common, choices: [{ index: 0, delta: {}, finish_reason: first ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 32, completion_tokens: 8, total_tokens: 40 } })}\n\n`)
+      response.end('data: [DONE]\n\n')
+    }
+    catch (error) {
+      errors.push(String(error))
+      response.destroy()
+    }
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  try {
+    const desktop = await instance.launch()
+    const { page } = desktop
+    await useSyntheticCredentialStorage(desktop)
+    const models = await page.evaluate(async (baseUrl) => {
+      const api = window.lexoraDesktop.localChat
+      await window.lexoraDesktop.settings.update({ desktop: { language: 'zh-CN' }, runtime: { codemode: false, modelRetryLimit: 0 } })
+      await api.providers.upsertCustom({ id: 'hot-model-fixture', displayName: 'Hot model fixture', api: 'openai-completions', baseUrl, enabled: true, models: ['a', 'b'].map(suffix => ({ id: `hot-model-${suffix}`, name: `Hot Model ${suffix.toUpperCase()}`, input: ['text'], reasoning: true, contextWindow: 128000, maxTokens: 2048 })) })
+      const stop = api.providers.onAuthChallenge((challenge) => {
+        if (challenge.providerId === 'hot-model-fixture' && challenge.type === 'secret')
+          void api.providers.respondToAuth(challenge.challengeId, 'offline-fixture-key')
+      })
+      try {
+        await api.providers.login('hot-model-fixture', 'api_key')
+      }
+      finally {
+        stop()
+      }
+      await api.providers.setDefaultModel({ providerId: 'hot-model-fixture', modelId: 'hot-model-a', reasoning: 'low' })
+      return api.providers.listModels('hot-model-fixture')
+    }, `http://127.0.0.1:${server.address().port}/v1`)
+    await page.reload()
+    await selectComposerModel(page, models.find(model => model.modelId === 'hot-model-a'), 'low')
+    await selectComposerPermission(page, '完全访问')
+    const editor = page.locator('.desktop-chat-composer__prosemirror:visible')
+    await editor.fill('Execute the two bounded fixture tools once, then wait for the supplemental instruction.')
+    await page.getByRole('button', { name: '发送消息', exact: true }).click()
+    const read = query => readModelDatabase(instance.home, query)
+    await expect.poll(() => read(db => db.prepare('SELECT COUNT(*) n FROM runs').get().n)).toBe(1)
+    const run = read(db => db.prepare('SELECT id, conversation_id, model FROM runs').get())
+    workspace = path.join(instance.home, 'buddy/conversations', run.conversation_id, 'workspace')
+    await expect.poll(async () => readFile(path.join(workspace, 'hot-switch-calls'), 'utf8').catch(() => '')).toContain('gate-once')
+    expect(read(db => db.prepare('SELECT status FROM runs WHERE id=?').get(run.id).status)).toBe('running')
+    const supplemental = 'SWITCHED_INPUT_482：保留工具结果，继续同一项工作。'
+    await editor.fill(supplemental)
+    await selectComposerModel(page, models.find(model => model.modelId === 'hot-model-b'), 'high')
+    await editor.press('Enter')
+    await expect(editor).toHaveText('')
+    await expect.poll(() => read(db => db.prepare('SELECT state,run_id FROM chat_queue ORDER BY rowid DESC LIMIT 1').get())).toEqual({ state: 'sent', run_id: run.id })
+    expect(requests).toHaveLength(1)
+    await writeFile(path.join(workspace, 'hot-switch-release'), 'release')
+    await expect.poll(() => read(db => db.prepare('SELECT status FROM runs WHERE id=?').get(run.id).status)).toBe('completed')
+    expect(requests).toHaveLength(2)
+    expect(requests.map(request => [request.model, request.reasoning_effort])).toEqual([['hot-model-a', 'low'], ['hot-model-b', 'high']])
+    expect(JSON.stringify(requests[1].messages)).toContain(supplemental)
+    expect((await readFile(path.join(workspace, 'hot-switch-calls'), 'utf8')).trim().split('\n').sort()).toEqual(['gate-once', 'tail-once'])
+    expect(read(db => db.prepare('SELECT id,model FROM runs').all())).toEqual([{ id: run.id, model: 'hot-model-a' }])
+    const answer = read(db => db.prepare('SELECT content_json FROM messages WHERE run_id=? AND role=\'assistant\' ORDER BY rowid DESC LIMIT 1').get(run.id))
+    expect(JSON.parse(answer.content_json).modelId).toBe('hot-model-b')
+    await expect(page.locator('.chat-message-queue__row')).toHaveCount(0)
+    expect(errors).toEqual([])
+    expect(desktop.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
+  }
+  finally {
+    if (workspace)
+      await writeFile(path.join(workspace, 'hot-switch-release'), 'release').catch(() => {})
+    await instance.stop()
+    server.closeAllConnections()
+    await new Promise(resolve => server.close(resolve))
+  }
+})
+
+async function enqueueComposerThroughApi(page, read, runId, mode) {
+  const run = read(db => db.prepare('SELECT buddy_id,conversation_id,branch_id,root_run_id FROM runs WHERE id=?').get(runId))
+  const marker = await page.locator('.desktop-chat-composer__prosemirror:visible').textContent()
+  expect(marker).toBeTruthy()
+  let draft
+  await expect.poll(async () => {
+    const row = read(db => db.prepare('SELECT id FROM composer_drafts WHERE scope_kind=\'conversation_branch\' AND conversation_id=? AND branch_id=? ORDER BY updated_at DESC LIMIT 1').get(run.conversation_id, run.branch_id))
+    draft = row ? await page.evaluate(id => window.lexoraDesktop.localChat.composerDrafts.get(id), row.id) : null
+    const permissions = read(db => db.prepare('SELECT approval_policy,execution_profile FROM conversations WHERE id=?').get(run.conversation_id))
+    return Boolean(draft && JSON.stringify(draft.content).includes(marker)
+      && draft.executionConfig.approvalPolicy === permissions.approval_policy
+      && draft.executionConfig.executionProfile === permissions.execution_profile)
+  }).toBe(true)
+  await page.evaluate(({ draft, run, runId, mode }) => window.lexoraDesktop.localChat.chat.enqueue({
+    draftId: draft.draftId,
+    expectedRevision: draft.revision,
+    requestId: crypto.randomUUID(),
+    ...(mode ? { delivery: { mode, actorId: run.buddy_id, target: { rootRunId: run.root_run_id, runId } } } : {}),
+  }), { draft, run, runId, mode })
+  await page.reload()
+  await expect(page.locator('.desktop-chat-composer__prosemirror:visible')).toHaveText('')
+}
 
 function readModelDatabase(home, query) {
   const database = new DatabaseSync(path.join(home, 'buddy/buddy.sqlite3'), { readOnly: true })

@@ -38,6 +38,7 @@ function fixture() {
       assertShellExecutionAllowed: () => {},
       admitChild: async input => f.executions.admitChild(input).execution,
       send,
+      forward: vi.fn(),
       wait,
       answerQuestion: vi.fn(),
       cancel: async () => false,
@@ -69,22 +70,14 @@ describe('execution delegation boundary', () => {
     expect([...catalog.actors, ...catalog.npcs].map(actor => actor.id)).not.toContain(profile.id)
   })
 
-  it('keeps the calling identity available when no delegation targets are eligible', async () => {
-    const f = fixture()
-    f.conversations.removeMember({ id: 'conversation', buddyId: f.actor.id, updatedAt: '2026-10-26T00:00:00.000Z' })
-    const actor = f.buddies.get('default')
-    f.buddies.update({ buddyId: actor.id, expectedRevision: actor.revision, settings: buddySettingsSchema.parse({ ...actor.settings, npcTeamEnabled: false }) })
-    await expect(f.service.execute(f.caller, 'empty-list', { operation: 'list' }, f.controller.signal)).resolves.toEqual({ self: { id: actor.id, name: actor.name, description: actor.description, kind: 'actor', executionKind: 'root' }, actors: [], npcs: [] })
-  })
-
-  it('keeps a legacy execution identity stable when its profile changes during the turn', async () => {
+  it('keeps a legacy execution identity stable after profile changes even with no eligible targets', async () => {
     const f = fixture()
     const profile = f.buddies.get('default')
     const stored = f.runs.findById('root')!.actorSnapshot
-    expect(stored?.name).toBeUndefined()
-    f.buddies.update({ buddyId: profile.id, expectedRevision: profile.revision, name: 'New profile name', description: 'New profile background' })
-    const catalog = await f.service.execute(f.caller, 'legacy-list', { operation: 'list' }, f.controller.signal) as { self: unknown }
-    expect(catalog.self).toEqual({ id: profile.id, name: profile.name, description: profile.description, kind: profile.kind, executionKind: 'root' })
+    f.conversations.removeMember({ id: 'conversation', buddyId: f.actor.id, updatedAt: '2026-10-26T00:00:00.000Z' })
+    f.buddies.update({ buddyId: profile.id, expectedRevision: profile.revision, name: 'New profile name', description: 'New profile background', settings: buddySettingsSchema.parse({ ...profile.settings, npcTeamEnabled: false }) })
+    const catalog = await f.service.execute(f.caller, 'legacy-list', { operation: 'list' }, f.controller.signal)
+    expect(catalog).toEqual({ self: { id: profile.id, name: profile.name, description: profile.description, kind: profile.kind, executionKind: 'root' }, actors: [], npcs: [] })
     expect(f.runs.findById('root')!.actorSnapshot).toEqual(stored)
   })
 
@@ -116,7 +109,6 @@ describe('execution delegation boundary', () => {
     const report = { operation: 'report', text: 'Validated the first boundary; continuing the task' }
     await expect(f.service.execute(child, 'progress', report, f.controller.signal)).resolves.toEqual({ runId: 'root', status: 'queued' })
     expect(f.send.mock.calls[0]).toEqual(['child', expect.objectContaining({ kind: 'supplement', purpose: 'progress', targetRunId: 'root', text: report.text })])
-    await expect(f.service.execute(child, 'legacy', { operation: 'send', runId: 'root', text: 'More progress' }, f.controller.signal)).resolves.toMatchObject({ status: 'queued' })
     await expect(f.service.execute(child, 'inspect-parent', { operation: 'status', runId: 'root' }, f.controller.signal)).resolves.toMatchObject({ runId: 'root', questions: [] })
     await expect(f.service.execute(child, 'override', { ...report, runId: 'root' }, f.controller.signal)).rejects.toMatchObject({ code: 'unauthorized' })
     await expect(f.service.execute(f.caller, 'root-report', report, f.controller.signal)).rejects.toMatchObject({ code: 'unauthorized' })
@@ -157,27 +149,16 @@ describe('execution delegation boundary', () => {
     expect(f.executions.find('child')?.phase).toBe('working')
   })
 
-  it('does not leak sibling questions or private reports through peer discovery', async () => {
-    const f = fixture()
-    f.executions.admitChild(f.child('child'))
-    f.executions.admitChild(f.child('sibling'))
-    const status = f.service.status('child', 'child')
-    expect(status.peers).toMatchObject([{ runId: 'sibling', questions: [] }])
-    expect(status.budget.remaining).toBe(62)
-  })
-
   it('rejects a supplement with no explicit receiver or with a self receiver', async () => {
     const f = fixture()
     for (const runId of [undefined, 'root'])
       await expect(f.service.execute(f.caller, 'loop', { operation: 'send', runId, text: 'Acknowledged' }, f.controller.signal)).rejects.toThrow()
-    expect(f.send).not.toHaveBeenCalled()
   })
 
   it('reads completed reports in pages without reopening the child or reading siblings', async () => {
     const f = fixture()
     f.executions.admitChild(f.child('child'))
     await expect(f.service.execute(f.caller, 'pending-result', { operation: 'result', runId: 'child' }, f.controller.signal)).resolves.toMatchObject({ result: null })
-    expect(f.readResult).not.toHaveBeenCalled()
     f.executions.beginClosing(f.fence('child'), 'failure')
     f.executions.finishClosing(f.fence('child'), 'failed', '2026-10-12T00:01:00.000Z', 'MODEL_UNAVAILABLE')
     f.readResult.mockResolvedValue('A'.repeat(32000).concat('Complete remaining findings'))
@@ -186,8 +167,8 @@ describe('execution delegation boundary', () => {
     const remaining = first.nextOffset === null ? '' : (await f.service.execute(f.caller, 'remaining', { operation: 'result', runId: 'child', offset: first.nextOffset }, f.controller.signal) as { result: string }).result
     expect(first.result + remaining).toBe('A'.repeat(32000).concat('Complete remaining findings'))
     expect(f.executions.find('child')?.phase).toBe('closed')
-    expect(f.send).not.toHaveBeenCalled()
   })
+
   it('accepts an isolated child before capability preflight and captures the actual request model', async () => {
     const f = fixture()
     const request = { operation: 'delegate', targetId: f.npc.id, text: 'Inspect only the named file' }

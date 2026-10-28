@@ -1,4 +1,5 @@
 import type { ExecutionSendDraft } from '../../../../shared/executions/executionPresentationApi'
+import type { BuddyExecutionProfile } from '../../../../shared/permissions/executionProfile'
 import type { ComposerDraftService } from '../../chat/ComposerDraftService'
 import type { ConversationRepository } from '../../storage/conversationRepository'
 import type { ExecutionRepository, ExecutionStateRecord } from '../../storage/executionRepository'
@@ -14,6 +15,7 @@ interface ExecutionComposerInputOptions {
   drafts: Pick<ComposerDraftService, 'update'>
   conversations: Pick<ConversationRepository, 'findById'>
   executions: Pick<ExecutionRepository, 'find'>
+  getRunPermissionCeiling: (runId: string) => BuddyExecutionProfile | undefined
   mailbox: Pick<MailboxRepository, 'find' | 'findQuestion' | 'listQuestions'>
   delivery: Pick<ExecutionPresentationService, 'send' | 'answer'>
 }
@@ -26,32 +28,63 @@ export class ExecutionComposerInputService {
   }
 
   async send(input: ExecutionSendDraft) {
-    const digest = createHash('sha256').update(JSON.stringify(['composer-execution-input', input.draftId, input.expectedRevision, input.conversationId, input.branchId, input.rootRunId, input.runId])).digest('hex')
+    if (input.delivery && (input.delivery.mode !== 'current' || input.delivery.target?.rootRunId !== input.rootRunId || input.delivery.target.runId !== input.runId))
+      throw new BuddyServiceError('INPUT_DELIVERY_INCOMPATIBLE')
+    const digest = createHash('sha256').update(JSON.stringify(['composer-execution-input', input.draftId, input.expectedRevision, input.conversationId, input.branchId, input.rootRunId, input.runId, ...(input.delivery ? [input.delivery] : [])])).digest('hex')
     const messageId = `${digest.slice(0, 8)}-${digest.slice(8, 12)}-8${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`
     let accepted = false
     const draft = await this.#options.drafts.update(input.draftId, async (draft) => {
       const execution = this.#options.executions.find(input.runId)
       if (!execution || !['actor_child', 'root'].includes(execution.run.executionKind))
-        throw new BuddyServiceError('VALIDATION_FAILED')
+        throw new BuddyServiceError(input.delivery ? 'INPUT_DELIVERY_TARGET_UNAVAILABLE' : 'VALIDATION_FAILED')
+      if (input.delivery && input.delivery.actorId !== execution.run.buddyId)
+        throw new BuddyServiceError('INPUT_DELIVERY_TARGET_UNAVAILABLE')
       const previous = this.#options.mailbox.find(messageId)
+      const question = this.#options.mailbox.listQuestions(input.runId)
+        .find(question => question.kind === 'question' && question.audience === 'user' && this.#options.mailbox.findQuestion(question.questionId)?.open)
+      const questionId = previous?.message.kind === 'answer' ? previous.message.questionId : question?.kind === 'question' ? question.questionId : null
+      const conversation = this.#options.conversations.findById(input.conversationId)
       if (!previous) {
         if (draft.revision !== input.expectedRevision)
           throw new BuddyServiceError('DRAFT_CONFLICT')
         const actors = [...new Set(getBuddyUserContentActorReferences(draft.content).map(reference => reference.actorId))]
         if (draft.scope.kind !== 'conversation_branch' || draft.scope.conversationId !== input.conversationId || draft.scope.branchId !== input.branchId
-          || actors.length !== 1 || actors[0] !== execution.run.buddyId || !isExecutionTextInput(draft.content)
-          || execution.run.rootRunId !== input.rootRunId || execution.run.conversationId !== input.conversationId || execution.run.branchId !== input.branchId
-          || this.#options.conversations.findById(input.conversationId)?.activeBranchId !== input.branchId) {
+          || !((actors.length === 1 && actors[0] === execution.run.buddyId)
+            || (actors.length === 0 && conversation?.buddyId === execution.run.buddyId
+              && (questionId || (input.delivery?.mode === 'current' && execution.run.executionKind === 'actor_child'))))
+            || execution.run.rootRunId !== input.rootRunId || execution.run.conversationId !== input.conversationId || execution.run.branchId !== input.branchId
+            || this.#options.conversations.findById(input.conversationId)?.activeBranchId !== input.branchId) {
           throw new BuddyServiceError('VALIDATION_FAILED')
         }
+        if (!isExecutionTextInput(draft.content))
+          throw new BuddyServiceError(input.delivery ? 'INPUT_DELIVERY_INCOMPATIBLE' : 'VALIDATION_FAILED')
+        if (input.delivery) {
+          const executionProfile = this.#options.getRunPermissionCeiling(execution.run.id) === 'read_only'
+            ? 'read_only'
+            : conversation?.executionProfile
+          const selection = execution.run.modelOverride ?? {
+            modelId: execution.run.model,
+            providerId: execution.run.provider,
+            reasoning: execution.initialInput?.reasoning ?? null,
+            serviceTier: execution.initialInput?.serviceTier ?? null,
+          }
+          if (draft.executionConfig.approvalPolicy !== conversation?.approvalPolicy || draft.executionConfig.executionProfile !== executionProfile
+            || (draft.modelSelection && (draft.modelSelection.modelId !== selection.modelId || draft.modelSelection.providerId !== selection.providerId
+              || draft.modelSelection.reasoning !== selection.reasoning || draft.modelSelection.serviceTier !== selection.serviceTier))) {
+            throw new BuddyServiceError('INPUT_DELIVERY_INCOMPATIBLE')
+          }
+        }
       }
-      if (!previous && this.#unavailable(execution))
+      if (!previous && this.#unavailable(execution)) {
+        if (input.delivery)
+          throw new BuddyServiceError('INPUT_DELIVERY_TARGET_UNAVAILABLE')
         return null
-      const question = this.#options.mailbox.listQuestions(input.runId)
-        .find(question => question.kind === 'question' && question.audience === 'user' && this.#options.mailbox.findQuestion(question.questionId)?.open)
-      const questionId = previous?.message.kind === 'answer' ? previous.message.questionId : question?.kind === 'question' ? question.questionId : null
-      if (!previous && execution.run.executionKind === 'root' && !questionId)
+      }
+      if (!previous && execution.run.executionKind === 'root' && !questionId) {
+        if (input.delivery)
+          throw new BuddyServiceError('INPUT_DELIVERY_INCOMPATIBLE')
         return null
+      }
       const delivery = {
         conversationId: input.conversationId,
         branchId: input.branchId,
@@ -69,8 +102,11 @@ export class ExecutionComposerInputService {
       catch (error) {
         const recorded = this.#options.mailbox.find(messageId)
         const current = this.#options.executions.find(input.runId)
-        if (((error instanceof ExecutionAdmissionError && error.code === 'stale') || (error instanceof BuddyServiceError && error.code === 'VALIDATION_FAILED')) && recorded === null && current && this.#unavailable(current))
+        if (((error instanceof ExecutionAdmissionError && error.code === 'stale') || (error instanceof BuddyServiceError && error.code === 'VALIDATION_FAILED')) && recorded === null && (!current || this.#unavailable(current))) {
+          if (input.delivery)
+            throw new BuddyServiceError('INPUT_DELIVERY_TARGET_UNAVAILABLE')
           return null
+        }
         throw error
       }
       accepted = true

@@ -43,6 +43,8 @@ export function resolveLocalChatErrorMessage(error: unknown, language: BuddyLoca
     BUDDY_CONFLICT: 'desktop.error.buddyConflict',
     BUDDY_NOT_FOUND: 'desktop.error.buddyNotFound',
     DRAFT_CONFLICT: 'desktop.chat.draftChanged',
+    INPUT_DELIVERY_TARGET_UNAVAILABLE: 'desktop.chat.inputDeliveryTargetUnavailable',
+    INPUT_DELIVERY_INCOMPATIBLE: 'desktop.chat.inputDeliveryIncompatible',
     CONVERSATION_BUSY: 'desktop.error.conversationBusy',
     CONVERSATION_QUEUE_NOT_EMPTY: 'desktop.error.conversationQueueNotEmpty',
     CONVERSATION_SPACE_CONFLICT: 'desktop.error.conversationSpaceConflict',

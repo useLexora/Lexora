@@ -41,7 +41,8 @@ function manageSkills() {
 <template>
   <ChatMessageQueue
     :items="execution.queuedMessages.value"
-    :active-buddy-id="execution.activeRun.value?.buddyId"
+    :recipient-names="execution.queueRecipientNames.value"
+    :active-buddy-id="execution.inputExecution.value?.buddyId ?? execution.activeRun.value?.buddyId"
     :pending="execution.pendingQueueActions.value"
     :language="language"
     @cancel="execution.cancelQueuedMessage"

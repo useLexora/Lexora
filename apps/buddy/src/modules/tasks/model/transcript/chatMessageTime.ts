@@ -55,8 +55,16 @@ export function projectChatTranscriptDisplayRows(
     row.kind === 'agent-turn' ? [row.turn.runId] : []
   )))
   let previousDayKey: string | null = null
+  let hasInputDayAnchor = false
 
   for (const row of rows) {
+    const isUserInput = row.kind === 'message' && row.message.role === 'user'
+    if (isUserInput)
+      hasInputDayAnchor = true
+    if (hasInputDayAnchor && !isUserInput) {
+      displayRows.push(row)
+      continue
+    }
     const assistantMessageBelongsToAgentTurn = row.kind === 'message'
       && row.message.role === 'assistant'
       && (

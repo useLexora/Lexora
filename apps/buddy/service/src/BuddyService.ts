@@ -1543,7 +1543,7 @@ export async function startBuddyService(
       )
       register(registerRuntimeRequest(options.rpc, promptsRpc.get, () => getBuiltinPromptCatalog()))
       register(registerContextPanelRpc({ rpc: options.rpc, runs, events: options.eventLog }))
-      register(registerExecutionRpc({ rpc: options.rpc, service: executionPresentation, inputs: new ExecutionComposerInputService({ drafts: composerDraftService, conversations, executions: executionRecords, mailbox: createMailboxRepository(options.database), delivery: executionPresentation }) }))
+      register(registerExecutionRpc({ rpc: options.rpc, service: executionPresentation, inputs: new ExecutionComposerInputService({ drafts: composerDraftService, conversations, executions: executionRecords, getRunPermissionCeiling, mailbox: createMailboxRepository(options.database), delivery: executionPresentation }) }))
       register(
         registerAttachmentRpc({
           rpc: options.rpc,

@@ -173,6 +173,8 @@ export class ChatTurnService {
     )
     if (replay)
       return this.#toTurnStart(replay.request, replay.run)
+    if (input.delivery?.target)
+      throw new BuddyServiceError('INPUT_DELIVERY_INCOMPATIBLE')
     const { prepared, stagedAttachments } = await this.prepareStart(input)
     const request = await persistPreparedTurn(stagedAttachments, () => {
       this.#stopping.signal.throwIfAborted()
@@ -204,7 +206,9 @@ export class ChatTurnService {
     const actorIds = [...new Set(getBuddyUserContentActorReferences(draft.content).map(reference => reference.actorId))]
     if (!existingConversation && actorIds.some(id => !(draft.participants?.actorIds ?? [leaderId]).includes(id)))
       throw new BuddyServiceError('BUDDY_NOT_MEMBER')
-    const buddyId = actorIds.length === 1 ? actorIds[0]! : leaderId
+    const buddyId = input.delivery?.actorId ?? (actorIds.length === 1 ? actorIds[0]! : leaderId)
+    if (input.delivery && (followupScope || buddyId !== (actorIds.length === 1 ? actorIds[0]! : leaderId)))
+      throw new BuddyServiceError('INPUT_DELIVERY_INCOMPATIBLE')
     const spaceId = scope.spaceId ?? existingConversation?.spaceId ?? null
     const space = spaceId
       ? requireActiveSpace(this.#options.spaces.findById(spaceId))
@@ -297,6 +301,7 @@ export class ChatTurnService {
       }), materialized)
       const persistedAttachmentIds = stagedAttachments.bindings.map(binding => binding.id)
       const prepared: PrepareTurnRequestInput = {
+        ...(input.delivery ? { delivery: input.delivery } : {}),
         leaderId,
         expectedActorModelSelection: resolvedActor.memberModelSelection,
         actorSnapshot: resolvedActor.definition,
@@ -349,7 +354,7 @@ export class ChatTurnService {
     const conversation = this.#options.conversations.findById(input.conversationId)
     if (!conversation || conversation.activeBranchId !== input.branchId || this.#options.conversationLifecycle.isDeleting(input.conversationId))
       throw new BuddyServiceError('VALIDATION_FAILED')
-    const buddyId = input.queueRouting?.mode === 'actor' ? input.queueRouting.actorId : conversation.buddyId
+    const buddyId = input.delivery?.actorId ?? (input.queueRouting?.mode === 'actor' ? input.queueRouting.actorId : conversation.buddyId)
     if (buddyId !== input.buddyId)
       throw new BuddyServiceError('BUDDY_CONFLICT')
     const resolved = await this.#options.definitions.resolve({ buddyId, kind: 'actor', conversationId: conversation.id, requestedModel: input.modelOverride ?? null })

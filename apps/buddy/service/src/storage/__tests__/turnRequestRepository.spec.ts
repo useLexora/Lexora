@@ -10,6 +10,7 @@ import { ComposerDraftCommitConflictError } from '../commitComposerDraft'
 import { createComposerDraftRepository } from '../composerDraftRepository'
 import { createConversationRepository } from '../conversationRepository'
 import { openBuddyDatabase } from '../database'
+import { createThreadBindingRepository } from '../threadBindingRepository'
 import {
   createTurnRequestRepository,
   TurnRequestConflictError,
@@ -23,6 +24,37 @@ afterEach(() => {
 })
 
 describe('turnRequestRepository', () => {
+  it.each([
+    { mode: 'current', mentioned: false, reuseWork: false },
+    { mode: 'current', mentioned: true, reuseWork: true },
+    { mode: 'next', mentioned: false, reuseWork: true },
+  ] as const)('separates automatic input lanes from explicit and legacy queued continuation ($mode, $mentioned)', ({ mode, mentioned, reuseWork }) => {
+    const database = createDatabase()
+    const repository = createTurnRequestRepository(database)
+    repository.prepare(createInput())
+    const taskThread = database.prepare('SELECT thread_id FROM runs WHERE id = ?').get('run-1')!.thread_id
+    const privateThread = createThreadBindingRepository(database).createIsolated('conversation-1', 'default', 'actor', createInput().createdAt).id
+    database.prepare(`UPDATE runs SET status = 'completed', thread_id = ?, pi_session_file = ? WHERE id = ?`)
+      .run(privateThread, '/private/original.jsonl', 'run-1')
+    database.prepare(`UPDATE execution_state SET phase = 'closed', cleanup_state = 'clean' WHERE run_id = ?`).run('run-1')
+    const revision = createComposerDraftRepository(database).findById('draft-1')!.revision
+    repository.prepare({
+      ...createInput(),
+      requestId: 'request-2',
+      requestFingerprint: 'fingerprint-2',
+      runId: 'run-2',
+      userMessageId: 'message-2',
+      buddyId: 'default',
+      actorIds: mentioned ? ['default'] : undefined,
+      delivery: { mode, actorId: 'default', target: null },
+      draft: { draftId: 'draft-1', expectedRevision: revision },
+    })
+    expect(database.prepare('SELECT scheduling_lane, thread_id FROM runs WHERE id = ?').get('run-2'))
+      .toEqual({ scheduling_lane: 'actor', thread_id: reuseWork ? privateThread : taskThread })
+    expect(database.prepare('SELECT thread_id, pi_session_file FROM runs WHERE id = ?').get('run-1'))
+      .toEqual({ thread_id: privateThread, pi_session_file: '/private/original.jsonl' })
+  })
+
   it('rejects new and retried acceptance without consuming drafts or changing requests while quarantined', () => {
     const database = createDatabase()
     const repository = createTurnRequestRepository(database)
@@ -141,8 +173,6 @@ describe('turnRequestRepository', () => {
     `)
     const drafts = createComposerDraftRepository(database)
     const original = drafts.findById('draft-1')
-    expect(drafts.discard({ draftId: 'draft-1', expectedRevision: original!.revision })).toBe(false)
-    expect(drafts.findById('draft-1')).toEqual(original)
     drafts.open({
       ...createDraftInput(),
       draftId: 'followup-draft',
@@ -269,23 +299,16 @@ describe('turnRequestRepository', () => {
     expect(repository.prepare(input)).toMatchObject({ created: false })
     expect(drafts.findById('draft-1')).toEqual(newer)
     expect(() => repository.prepare({ ...input, requestFingerprint: 'different' })).toThrow(TurnRequestConflictError)
-  })
-
-  it('rejects a second turn while the conversation already has an incomplete run', () => {
-    const database = createDatabase()
-    const repository = createTurnRequestRepository(database)
-    const first = createInput()
-    repository.prepare(first)
-
-    expect(repository.prepare(first)).toMatchObject({ created: false, runId: 'run-1' })
     expect(() => repository.prepare({
-      ...first,
+      ...input,
+      draft: { draftId: 'draft-1', expectedRevision: newer.revision },
       requestFingerprint: 'fingerprint-2',
       requestId: 'request-2',
       runId: 'run-2',
       userMessageId: 'message-2',
     })).toThrow(TurnRequestConflictError)
     expect(database.prepare('SELECT COUNT(*) AS count FROM runs').get()).toEqual({ count: 1 })
+    expect(drafts.findById('draft-1')).toEqual(newer)
   })
 
   it('atomically replaces an interrupted run without duplicating the user message', () => {

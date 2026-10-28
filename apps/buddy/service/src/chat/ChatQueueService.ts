@@ -132,7 +132,7 @@ export class ChatQueueService {
   async #enqueue(input: BuddyStartTurnInput) {
     if (this.#disposed)
       throw new BuddyServiceError('VALIDATION_FAILED')
-    const fingerprint = createHash('sha256').update(JSON.stringify([input.draftId, input.expectedRevision])).digest('hex')
+    const fingerprint = createHash('sha256').update(JSON.stringify([input.draftId, input.expectedRevision, ...(input.delivery ? [input.delivery] : [])])).digest('hex')
     const replay = this.#options.queue.replay(input.requestId, fingerprint)
     if (replay)
       return replay
@@ -148,6 +148,15 @@ export class ChatQueueService {
       }
       this.#options.availability?.assertConversationWritable(prepared.conversationId)
       stagedAttachments.validate()
+      const target = this.#options.queue.validateDelivery(prepared)
+      if (prepared.delivery?.mode === 'current' && target) {
+        if (!this.#canFollowUp(target.run, prepared))
+          throw new BuddyServiceError('INPUT_DELIVERY_INCOMPATIBLE')
+        await this.#options.turns.validatePreparedInput(prepared, false)
+        const current = this.#options.queue.validateDelivery(prepared)!
+        if (!this.#canFollowUp(current.run, prepared))
+          throw new BuddyServiceError('INPUT_DELIVERY_INCOMPATIBLE')
+      }
       result = this.#options.queue.enqueue({ ...prepared, requestFingerprint: fingerprint })
     }
     catch (error) {
@@ -159,7 +168,13 @@ export class ChatQueueService {
       this.pause(result, prepared.buddyId)
     this.#changed('enqueued', result, { commitId: randomUUID(), requestId: input.requestId, queueId: result.id, draftReceipt: result.draftReceipt, ...(prepared.attachmentBindings.length ? { attachmentOwnership: { kind: 'queue', attachmentIds: prepared.attachmentBindings.map(binding => binding.id) } } : {}) })
     await stagedAttachments.commit().catch(() => undefined)
-    if (prepared.actorIds?.length === 1 && this.#options.queue.activeRun(result, prepared.buddyId)
+    if (prepared.delivery?.mode === 'current' && prepared.delivery.target) {
+      void this.steer(result).then((status) => {
+        if (status !== 'accepted')
+          this.#pauseItem(result)
+      }).catch(() => this.#pauseItem(result))
+    }
+    else if (!prepared.delivery && prepared.actorIds?.length === 1 && this.#options.queue.activeRun(result, prepared.buddyId)
       && this.#options.queue.list(result).find(item => item.buddyId === prepared.buddyId)?.id === result.id) {
       void this.steer(result).catch(() => this.pause(result, prepared.buddyId))
     }
@@ -180,6 +195,12 @@ export class ChatQueueService {
     return this.#serialize(target, async () => {
       if (this.#isCancelling(target, this.#options.queue.pending(target)?.buddyId))
         return 'unavailable'
+      const queued = this.#options.queue.pending(target)
+      if (queued?.delivery) {
+        if (queued.delivery.mode === 'next' || !queued.delivery.target)
+          return await this.#dispatch(target, true) ? 'accepted' : 'unavailable'
+        return this.#steerCurrent(target, queued)
+      }
       if (!active) {
         if (this.#options.queue.pending(target)?.queueRouting?.mode !== 'actor' && this.#options.queue.activeRun(target))
           return 'incompatible'
@@ -197,6 +218,9 @@ export class ChatQueueService {
       await this.#options.turns.validatePreparedInput(input, false)
       if (this.#disposed || this.#isCancelling(target, this.#options.queue.pending(target)?.buddyId) || this.#options.eventLog.state !== 'open' || !this.#options.queue.pending(target) || !this.#options.queue.isCurrentInput(input) || this.#options.queue.activeRun(target, pending?.buddyId)?.id !== active.id)
         return 'unavailable'
+      const current = this.#options.runs.findById(active.id)
+      if (!current || !this.#canFollowUp(current, input))
+        return 'incompatible'
       return this.#deliver(input, active.id, 'steer') ? 'accepted' : 'unavailable'
     }, 'unavailable')
   }
@@ -210,13 +234,14 @@ export class ChatQueueService {
         if (signal.aborted || this.#isCancelling(run, run.buddyId) || this.#options.queue.activeRun(run, run.buddyId)?.id !== runId)
           return false
         const next = this.#options.queue.list(run).find(item => item.buddyId === run.buddyId)
-        if (next?.state !== 'waiting')
+        if (next?.state !== 'waiting' || (next.delivery && (next.delivery.mode !== 'current' || next.delivery.target?.runId !== runId)))
           return false
         const pending = this.#options.queue.pending(next)
         if (!pending)
           return false
         const input = await this.#options.turns.refreshQueuedInput(pending)
-        if (!this.#canFollowUp(run, input))
+        const refreshedRun = this.#options.runs.findById(runId)
+        if (!refreshedRun || !this.#canFollowUp(refreshedRun, input))
           return false
         await this.#options.turns.validatePreparedInput(input)
         if (this.#disposed || this.#isCancelling(run, run.buddyId) || this.#options.eventLog.state !== 'open' || signal.aborted)
@@ -227,6 +252,9 @@ export class ChatQueueService {
           || !this.#options.queue.pending(next) || !this.#options.queue.isCurrentInput(input)) {
           return false
         }
+        const current = this.#options.runs.findById(runId)
+        if (!current || !this.#canFollowUp(current, input))
+          return false
         return this.#deliver(input, runId, 'followUp')
       }, false)
     }
@@ -237,16 +265,54 @@ export class ChatQueueService {
     }
   }
 
+  async #steerCurrent(target: LocalChatQueueTarget, pending: QueuedTurnRequestInput): Promise<LocalChatQueueSteerResult> {
+    try {
+      this.#options.queue.validateDelivery(pending)
+      const input = await this.#options.turns.refreshQueuedInput(pending)
+      const execution = this.#options.queue.validateDelivery(input)!
+      if (!this.#canFollowUp(execution.run, input))
+        throw new BuddyServiceError('INPUT_DELIVERY_INCOMPATIBLE')
+      await this.#options.turns.validatePreparedInput(input, false)
+      const current = this.#options.queue.validateDelivery(input)!
+      if (!this.#canFollowUp(current.run, input))
+        throw new BuddyServiceError('INPUT_DELIVERY_INCOMPATIBLE')
+      if (this.#disposed || this.#options.eventLog.state !== 'open' || this.#isCancelling(target, input.buddyId)
+        || !this.#options.queue.pending(target) || !this.#options.queue.isCurrentInput(input)) {
+        throw new BuddyServiceError('INPUT_DELIVERY_TARGET_UNAVAILABLE')
+      }
+      if (!this.#deliver(input, execution.run.id, 'steer'))
+        throw new BuddyServiceError('INPUT_DELIVERY_TARGET_UNAVAILABLE')
+      return 'accepted'
+    }
+    catch (error) {
+      this.#pauseItem(target)
+      throw error
+    }
+  }
+
+  #pauseItem(target: LocalChatQueueTarget) {
+    if (!this.#disposed && this.#options.queue.pauseItem(target))
+      this.#changed('paused', target)
+  }
+
   #canFollowUp(run: RunRecord, input: PrepareTurnRequestInput) {
+    if (input.delivery && (input.delivery.mode !== 'current' || input.delivery.target?.runId !== run.id
+      || input.delivery.target.rootRunId !== run.rootRunId || input.delivery.actorId !== run.buddyId)) {
+      return false
+    }
     const current = this.#options.runInputs.findByRunId(run.id)
+    if (!current)
+      return false
+    const liveSelection = run.modelOverride ?? run.actorSnapshot?.model
+    const selection = liveSelection ?? { modelId: run.model, providerId: run.provider, reasoning: current.reasoning, serviceTier: current.serviceTier }
     return run.status === 'running' && run.branchId === input.branchId
       && run.buddyId === input.buddyId
       && (run.actorSnapshot && input.actorSnapshot ? buddyExecutionFingerprint(run.actorSnapshot) === buddyExecutionFingerprint(input.actorSnapshot) : !!run.actorSnapshot === !!input.actorSnapshot)
-      && run.model === input.model && run.provider === input.provider
+      && selection.modelId === input.model && selection.providerId === input.provider
+      && selection.reasoning === input.runInput.reasoning && selection.serviceTier === input.runInput.serviceTier
       && this.#options.getRunPermissionCeiling(run.id) === input.runExecutionProfile
-      && run.contextWindow === (input.modelParameters?.contextWindow ?? null)
-      && run.maxTokens === (input.modelParameters?.maxTokens ?? null)
-      && current?.reasoning === input.runInput.reasoning && current.serviceTier === input.runInput.serviceTier
+      && (!!liveSelection || (run.contextWindow === (input.modelParameters?.contextWindow ?? null)
+        && run.maxTokens === (input.modelParameters?.maxTokens ?? null)))
   }
 
   #deliver(input: QueuedTurnRequestInput, runId: string, mode: 'steer' | 'followUp') {
@@ -290,6 +356,19 @@ export class ChatQueueService {
         visited.add(next.buddyId)
         if (next.state !== 'waiting')
           continue
+        if (next.delivery?.mode === 'current' && next.delivery.target) {
+          try {
+            const pending = this.#options.queue.pending(next)
+            if (pending)
+              this.#options.queue.validateDelivery(pending)
+          }
+          catch (error) {
+            if (!(error instanceof BuddyServiceError))
+              throw error
+            this.#pauseItem(next)
+          }
+          continue
+        }
         const latest = this.#options.queue.latestRun(current, next.buddyId)
         if (latest?.status === 'failed' || latest?.status === 'cancelled') {
           this.pause(current, next.buddyId)
@@ -329,6 +408,7 @@ export class ChatQueueService {
       return false
     }
     return !this.#disposed && !this.#isCancelling(scope, scope.buddyId) && !this.#options.runner.isStopping && this.#options.eventLog.state === 'open'
+      && this.#options.queue.canDispatchDelivery(scope)
       && !this.#options.queue.activeRun(scope, scope.buddyId)
       && (scope.queueRouting?.mode === 'actor' || !this.#options.queue.activeRun(scope))
       && !this.#options.runner.hasActiveExecution(scope.conversationId, scope.buddyId)

@@ -29,6 +29,7 @@ export function useChatExecution(options: UseChatExecutionOptions) {
     draftScopeKey: options.draftScopeKey,
     draftChangedMessage: options.draftChangedMessage,
     executionProfile: options.executionProfile,
+    flushModelSelection: options.flushModelSelection,
     getRunTerminationMessage: options.getRunTerminationMessage,
     isUpdatingPermissionSettings: options.isUpdatingPermissionSettings,
     language: options.language,

@@ -81,6 +81,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
   } = chatSession
   const isSelectingFiles = shallowRef(false)
   const isClosing = shallowRef(false)
+  const cancellingInput = shallowRef<{ runId: string, scopeKey: string } | null>(null)
   const errorMessage = shallowRef<string | null>(null)
   const dismissedChatBlockerKind = shallowRef<ChatBlockerKind | null>(null)
   const { language } = applicationSettings
@@ -175,7 +176,6 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     const actors = getBuddyUserContentActorReferences(drafts.load(drafts.targetKey.value).content)
     return actors.length === 1 ? actors[0]!.actorId : null
   })
-  const actorInput = useActorInputTarget({ content: computed(() => drafts.load(drafts.targetKey.value).content), scopeKey: drafts.targetKey, tree: executionTree })
   const resolvedActorModel = shallowRef<{ conversationId: string | null, actorId: string | null, model: LocalConversation['modelSelection'] } | null>(null)
   const draftModelBinding = useTaskDraftModelBinding({
     drafts,
@@ -213,6 +213,12 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     runSync,
     selectDefaultModel: () => draftModelBinding.restoreScope(),
     session: chatSession,
+  })
+  const actorInput = useActorInputTarget({
+    content: computed(() => drafts.load(drafts.targetKey.value).content),
+    scopeKey: drafts.targetKey,
+    defaultActorId: computed(getDefaultActorId),
+    tree: executionTree,
   })
   const activeRun = computed(() => {
     const actorId = addressedActorId.value ?? activeConversation.value?.buddyId ?? draftBuddyId.value
@@ -508,6 +514,29 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     }
   }
 
+  async function cancelInputWork() {
+    const record = actorInput.execution.value
+    const target = actorInput.target.value
+    if (!target || record?.kind !== 'actor_child') {
+      await cancelActiveRun()
+      return
+    }
+    if (!record.canCancel || cancellingInput.value)
+      return
+    const pending = { runId: target.runId, scopeKey: draftScopeKey.value }
+    cancellingInput.value = pending
+    try {
+      await api.localChat.executions.cancel(target)
+    }
+    catch (error) {
+      if (!isClosing.value && draftScopeKey.value === pending.scopeKey)
+        setError(error)
+    }
+    finally {
+      cancellingInput.value = null
+    }
+  }
+
   function setError(error: unknown) {
     errorMessage.value = resolveLocalChatErrorMessage(error, language.value)
   }
@@ -643,16 +672,21 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
       },
     },
     execution: {
-      isActorInput: computed(() => actorInput.target.value !== null),
+      isActorInput: computed(() => actorInput.mailboxTarget.value !== null),
+      inputExecution: actorInput.execution,
       activeRun: readonly(activeRun),
       approvalViews: readonly(approvalViews),
       canMutateBranch: readonly(canMutateBranch),
       canSend: readonly(canSend),
       queuedMessages,
+      queueRecipientNames: computed(() => new Map([
+        ...executionTree.records.value.map(record => [record.buddyId, record.buddyName] as const),
+        ...(options.buddyCatalog?.value?.buddies ?? []).map(buddy => [buddy.id, buddy.name] as const),
+      ])),
       pendingQueueActions,
       cancelQueuedMessage,
       steerQueuedMessage,
-      cancelActiveRun,
+      cancelActiveRun: cancelInputWork,
       cancelEditUserMessage,
       editUserMessage,
       beginFollowup: execution.beginFollowup,
@@ -660,7 +694,10 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
       editingMessageId,
       isMutatingBranch: readonly(isMutatingBranch),
       isSending: readonly(isSending),
-      stoppingRunId: readonly(execution.stoppingRunId),
+      stoppingRunId: computed(() => cancellingInput.value?.scopeKey === draftScopeKey.value
+        && cancellingInput.value.runId === actorInput.target.value?.runId
+        ? cancellingInput.value.runId
+        : execution.stoppingRunId.value),
       regenerateAssistant,
       resolveApproval,
       resolvingApprovalActions: readonly(resolvingApprovalActions),

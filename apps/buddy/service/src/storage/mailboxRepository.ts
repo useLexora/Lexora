@@ -157,6 +157,26 @@ export function createMailboxRepository(database: DatabaseSync) {
 
   return {
     find,
+    listInputPage(runIds: readonly string[], options: { offset: number, limit: number }) {
+      const rows = database.prepare(`
+        SELECT id, created_at, length(CAST(payload_json AS BLOB)) AS payload_bytes FROM execution_mailbox_sources
+        WHERE target_run_id IN (${runIds.map(() => '?').join(', ')})
+          AND json_extract(payload_json, '$.kind') IN ('supplement', 'answer')
+        ORDER BY rowid LIMIT ? OFFSET ?
+      `).all(...runIds, options.limit + 1, options.offset)
+      let bytes = 0
+      let count = 0
+      for (const row of rows.slice(0, options.limit)) {
+        if (count > 0 && bytes + Number(row.payload_bytes) > 1024 * 1024)
+          break
+        bytes += Number(row.payload_bytes)
+        count++
+      }
+      return {
+        records: rows.slice(0, count).map(row => ({ ...find(row.id as string)!, createdAt: row.created_at as string })),
+        hasMore: rows.length > count,
+      }
+    },
     findQuestion(questionId: string) {
       const question = database.prepare('SELECT id FROM execution_mailbox_sources WHERE json_extract(payload_json, \'$.kind\') = \'question\' AND json_extract(payload_json, \'$.questionId\') = ?').get(questionId)
       if (!question)

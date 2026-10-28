@@ -13,10 +13,12 @@ import type {
   ChatTranscriptRowPatch,
 } from './chatTranscriptTypes'
 import { isVisibleExtensionAction, shouldShowAgentTurn } from './chatPersistedTranscriptRows'
-import { selectChatStreamingMessage } from './chatRunStreamingMessages'
+import { selectChatStreamingMessages } from './chatRunStreamingMessages'
 
 export interface CachedChatTranscriptProjection {
   executionGroups: ChatTranscriptProjectionInput['executionGroups']
+  executionInputs: ChatTranscriptProjectionInput['executionInputs']
+  supportsIncrementalUpdates: boolean
   continuation: ChatTranscriptContinuation
   includeUnanchoredTurns: boolean
   interleavedRunIds: ReadonlySet<string>
@@ -46,7 +48,9 @@ export function projectIncrementalChatTranscript(
   const runProjections = input.runProjections
   if (
     !runProjections
+    || !cached.supportsIncrementalUpdates
     || cached.executionGroups !== input.executionGroups
+    || cached.executionInputs !== input.executionInputs
     || cached.includeUnanchoredTurns !== (input.includeUnanchoredTurns ?? false)
     || !cached.runProjections
     || cached.timelineItems !== input.timelineItems
@@ -112,11 +116,14 @@ export function projectIncrementalChatTranscript(
     })
   }
 
-  const streamingMessage = selectChatStreamingMessage(
+  const streamingMessages = selectChatStreamingMessages(
     cached.messages,
     runProjections.flatMap(projection => projection.streamingMessages),
     input.runs,
-  )?.message ?? null
+  )
+  if (streamingMessages.length > 1)
+    return null
+  const streamingMessage = streamingMessages[0]?.message ?? null
   let streamingRowIndex = cached.streamingRowIndex
   let activityRowIndex = cached.activityRowIndex
   if (streamingMessage) {
@@ -241,6 +248,10 @@ export function createChatTranscriptProjectionCache(
   }
   return {
     executionGroups: input.executionGroups,
+    executionInputs: input.executionInputs,
+    supportsIncrementalUpdates: projection.rows.filter(row => row.kind === 'activity').length <= 1
+      && projection.rows.filter(row => row.kind === 'message' && row.streaming).length <= 1
+      && (activityRowIndex === null || activityRowIndex === projection.rows.length - 1),
     continuation,
     includeUnanchoredTurns: input.includeUnanchoredTurns ?? false,
     interleavedRunIds,

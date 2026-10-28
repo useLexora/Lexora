@@ -14,7 +14,7 @@ export function createDelegationCapability(options: {
   getPermissions: () => BuddyPermissionSettings
   actorKind: 'actor' | 'npc'
 }): BuddyCapability {
-  const operations = ['status', 'result', 'submit', 'report', 'send', 'wait', 'question', 'answer', ...options.actorKind === 'actor' ? ['list', 'context', 'history', 'delegate', 'resume', 'review', 'cancel'] : []]
+  const operations = ['status', 'result', 'submit', 'report', 'send', 'wait', 'question', 'answer', ...options.actorKind === 'actor' ? ['list', 'context', 'forward', 'history', 'delegate', 'resume', 'review', 'cancel'] : []]
   return {
     extension: {
       name: 'lexora-agents',
@@ -23,12 +23,20 @@ export function createDelegationCapability(options: {
           name: DELEGATION_TOOL_NAME,
           exposure: 'model-only',
           label: 'Partners and NPCs',
-          description: `${options.actorKind === 'npc' ? 'You are an NPC child execution. Report progress while working; your final reply is delivered to your caller automatically. Inspect related executions, exchange supplements, wait, or ask and answer questions. You cannot create new child executions.' : 'Manage local collaboration within this task. List allowed partners and NPC definitions, delegate a task to targetId, inspect status, read child results, exchange progress and supplements, wait, ask and answer questions, or cancel children.'} Call lexora_agents directly; it is unavailable in the CodeMode tools object. Both actors and NPCs can ask the human directly with operation: question and audience: user. NPCs are not restricted to caller questions.`,
+          description: `${options.actorKind === 'npc' ? 'You are an NPC child execution. Report progress while working; your final reply is delivered to your caller automatically. Inspect related executions, exchange supplements, wait, or ask and answer questions. You cannot create new child executions.' : 'Manage local collaboration within this task. For revisions to existing public actor work, use context to discover works and your accepted user inputs, then forward the original input without rewriting it. Use context with runId for its current state and latest public final reply. Otherwise list allowed partners and NPC definitions, delegate new work, inspect owned assignments, exchange supplements, wait, ask questions, or cancel children.'} Call lexora_agents directly; it is unavailable in the CodeMode tools object. Both actors and NPCs can ask the human directly with operation: question and audience: user. NPCs are not restricted to caller questions.`,
           promptGuidelines: [
             'The list result identifies you as self. actors and npcs contain only other eligible delegation targets and intentionally exclude you; your absence from those arrays does not mean you are unavailable.',
             'Complete bounded tasks directly by default. Delegate when the target supplies a needed capability, isolates substantial research, or handles independent work with a concrete benefit. File count alone is not a reason to delegate. Do not spawn agents merely to use them.',
             'New delegations use isolated context: only the task and explicitly selected materials are supplied. Use context to inspect available source and attachment IDs, then contextSourceIds and attachmentIds to hand off needed inputs. Use contextMode: conversation only when the partner needs shared task history; private caller reasoning is never copied. For independent review, use isolated context.',
-            'Use history to find assignments you own in this task, then resume with a terminal runId and new instructions to continue the same work and private thread. It creates a new attempt, preserving the earlier result. Read the previous result first; do not retry an operation with uncertain side effects. Only the actor that owned the assignment may resume it.',
+            ...options.actorKind === 'actor'
+              ? [
+                  'Input without an explicit actor mention belongs to the current main actor; a mention does not switch the main actor. You may still need to hand an exact user revision to existing public actor work, rather than rewrite the task or create a replacement.',
+                  'For a revision to existing public actor work, use context: inputs are only user inputs accepted by your current run, and works identify public actor work already visible to you in this conversation and branch. Select the exact work by runId, then use forward with runId and inputSourceId. Do not pass text: the server copies the original user input unchanged. No attachment, reference, private input, or permission is implicitly transferred.',
+                  'Use context with the selected runId to read its current phase/status and latest public final reply, following nextOffset for long replies. This is a targeted public refresh, not permission to read its private context. An old initial snapshot is not evidence that the revision remains unfinished.',
+                  'A forward accepted receipt is durable routing, not proof that the actor completed the revision; deliveryState reports receipt/consumption. Retrying the same input and target replays confirmation without another delivery. closed or unsupported_input does not deliver anything. Never treat busy, closed, or an accepted forward as a reason to delegate replacement work, resume an unrelated old assignment, or rephrase the user input through send.',
+                  'history lists only assignments owned by your actor, not all public work in the conversation. For your own explicitly continued assignment, read its result then resume the exact terminal runId to preserve its private thread. resume creates a new attempt; it is not the forwarding mechanism for existing public actor work. Do not retry an operation with uncertain side effects.',
+                ]
+              : [],
             'Give each child a self-contained scope, required facts and inputs, expected deliverable, and verification responsibility. NPC context is private. Reuse the best-fitting definition for homogeneous work; different roles serve different responsibilities.',
             'Missing user information can be part of a delegated task. When the user explicitly asks a child to investigate and ask them for missing details, delegate first with those unknowns; let the child ask the user and resume after their answer. Do not ask the user yourself before delegation merely to prepare the child input.',
             'Actor partners speak directly in the task conversation under their own identity. Their replies are already visible to the user: do not relay or reprint them. Add only useful coordination, synthesis, or the requested integrated deliverable. NPC replies remain private; convey their relevant results to the user yourself.',
@@ -66,7 +74,8 @@ export function createDelegationCapability(options: {
               acceptance: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 8000 }), { maxItems: 16 })),
             }, { additionalProperties: false })),
             targetId: Type.Optional(Type.String({ description: 'Reusable definition ID from list. Repeated NPC delegations create independent instances, including concurrent instances of the same definition.' })),
-            runId: Type.Optional(Type.String({ description: 'Your execution, caller, direct child, or sibling ID returned by status. Only direct children may be cancelled or have private results read.' })),
+            runId: Type.Optional(Type.String({ description: 'Exact execution ID from status/history, or public works returned by context. context + runId reads current public state/reply; forward requires the existing target runId. Public discovery grants no private result, cancel, send, or resume authority.' })),
+            inputSourceId: Type.Optional(Type.String({ description: 'Required only for forward: an inputs[].sourceId returned by context for a user input accepted by your current run. forward accepts only operation, runId, inputSourceId; no text or material overrides.' })),
             text: Type.Optional(Type.String({ minLength: 1, description: 'Task, supplement, question, or answer.' })),
             questionId: Type.Optional(Type.String()),
             audience: Type.Optional(Type.Union([Type.Literal('caller'), Type.Literal('user')], { description: 'Required for question. user: show a question to the human; caller: ask your delegating agent.' })),
@@ -91,11 +100,17 @@ export function createDelegationCapability(options: {
               const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : 'invalid_request'
               const guidance = code === 'budget_exceeded'
                 ? 'The root turn has exhausted its 64 child attempts. Keep completed evidence, summarize remaining work, and do not retry delegation.'
-                : code === 'SHELL_SUPERVISION_UNAVAILABLE'
-                  ? 'This platform cannot supervise shell descendants during delegation. Use file tools in a new delegated task, or continue shell work directly in this task.'
-                  : code === 'MUTATION_RESOURCE_UNSAFE'
-                    ? 'Cleanup of an owned process is unresolved. Do not retry writes or delegate this task until the affected resource is safe.'
-                    : 'Inspect current targets and execution state before retrying.'
+                : code === 'input_forwarded'
+                  ? 'Your latest accepted user input was already forwarded to this actor work. Use context with the original target runId to inspect current public state/reply. Do not create a replacement or resume a different assignment.'
+                  : code === 'forward_closed'
+                    ? 'Forwarding this exact input found the selected public work closed. Inspect that work with context; do not replace it by delegating or resuming another assignment for the same input.'
+                    : code === 'busy' || code === 'stale'
+                      ? 'The requested execution is busy, closing, closed, or no longer current. Use context to locate the exact existing public work and inspect it; do not create a replacement or resume unrelated work.'
+                      : code === 'SHELL_SUPERVISION_UNAVAILABLE'
+                        ? 'This platform cannot supervise shell descendants during delegation. Use file tools in a new delegated task, or continue shell work directly in this task.'
+                        : code === 'MUTATION_RESOURCE_UNSAFE'
+                          ? 'Cleanup of an owned process is unresolved. Do not retry writes or delegate this task until the affected resource is safe.'
+                          : 'Inspect current targets and execution state before retrying.'
               return { content: [{ type: 'text', text: `Collaboration request rejected: ${code}. ${guidance}` }], details: { code }, isError: true }
             }
           },

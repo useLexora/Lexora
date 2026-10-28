@@ -8,6 +8,7 @@ export function registerExecutionRpc(options: { rpc: RuntimeRequestRegistrar, se
   const stops = [
     registerRuntimeRequest(options.rpc, executionPresentationRpc.list, input => options.service.list(input)),
     registerRuntimeRequest(options.rpc, executionPresentationRpc.detail, input => options.service.detail(input)),
+    registerRuntimeRequest(options.rpc, executionPresentationRpc.inputs, input => options.service.inputs(input)),
     registerRuntimeRequest(options.rpc, executionPresentationRpc.events, input => options.service.events(input)),
     registerRuntimeRequest(options.rpc, executionPresentationRpc.send, input => options.service.send(input)),
     registerRuntimeRequest(options.rpc, executionPresentationRpc.sendDraft, input => options.inputs.send(input)),

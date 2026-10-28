@@ -83,6 +83,40 @@ function seedRun(
 }
 
 describe('buddy schema', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
+  it('upgrades schema 34 without rewriting queued input or historical data', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'buddy-input-delivery-migration-'))
+    directories.push(directory)
+    const databasePath = join(directory, 'buddy.sqlite3')
+    const previous = openMigrationFixtureDatabase(databasePath)
+    for (const migration of BUDDY_SCHEMA_MIGRATIONS.filter(migration => migration.version <= 34))
+      previous.exec(migration.sql)
+    seedRun(previous)
+    const legacy = JSON.stringify({ buddyId: 'default', userMessageContent: { text: 'Keep this queued input' }, requestId: 'legacy' }, null, 2)
+    previous.prepare('INSERT INTO chat_queue (id, conversation_id, branch_id, request_id, request_fingerprint, prepared_json, state, created_at) VALUES (?, \'conversation-1\', \'branch-1\', ?, ?, ?, \'paused\', ?)').run('legacy', 'legacy', 'legacy-fingerprint', legacy, '2026-10-27T00:00:00.000Z')
+    const before = {
+      queue: previous.prepare('SELECT * FROM chat_queue ORDER BY id').all(),
+      messages: previous.prepare('SELECT * FROM messages ORDER BY id').all(),
+      runs: previous.prepare('SELECT * FROM runs ORDER BY id').all(),
+    }
+    previous.exec('PRAGMA user_version = 34')
+    previous.close()
+
+    const migrated = openBuddyDatabase({ databasePath })
+    expect(migrated.prepare('PRAGMA user_version').get()).toEqual({ user_version: BUDDY_SCHEMA_VERSION })
+    expect(BUDDY_SCHEMA_VERSION).toBeGreaterThan(34)
+    expect(migrated.prepare('SELECT * FROM chat_queue ORDER BY id').all()).toEqual(before.queue)
+    expect(migrated.prepare('SELECT * FROM messages ORDER BY id').all()).toEqual(before.messages)
+    expect(migrated.prepare('SELECT * FROM runs ORDER BY id').all()).toEqual(before.runs)
+    expect(migrated.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    migrated.close()
+
+    const reopened = openBuddyDatabase({ databasePath })
+    databases.push(reopened)
+    expect(reopened.prepare('SELECT * FROM chat_queue ORDER BY id').all()).toEqual(before.queue)
+    expect(reopened.prepare('SELECT * FROM messages ORDER BY id').all()).toEqual(before.messages)
+    expect(reopened.prepare('SELECT * FROM runs ORDER BY id').all()).toEqual(before.runs)
+  })
+
   it('marks the actor identity format upgrade without rewriting legacy execution snapshots', () => {
     const directory = mkdtempSync(join(tmpdir(), 'buddy-actor-identity-migration-'))
     directories.push(directory)

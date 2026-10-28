@@ -30,6 +30,7 @@ function message(runId: string, sequence: number, text: string): LocalRunEvent {
 function setup() {
   const api: NonNullable<ReturnType<typeof useExecutionEnvironment>>['api'] = {
     list: vi.fn(async () => []),
+    inputs: async () => ({ inputs: [], nextOffset: null }),
     detail: vi.fn(async input => detail(input.runId)),
     events: vi.fn(async input => ({ events: [message(input.runId, 1, `${input.runId} private output`)], nextSequence: 1, hasMore: false })),
     answer: vi.fn(async () => ({ accepted: true })),
@@ -63,19 +64,26 @@ describe('execution detail lifecycle', () => {
     expect(JSON.stringify(f.state.rows.value)).not.toContain('Late first output')
   })
 
-  it('retains paged history and its cursor across same-identity refreshes and hiding', async () => {
+  it('refreshes input receipts without losing paged history across same-target refreshes and hiding', async () => {
     const f = setup()
+    const input = { kind: 'supplement' as const, messageId: 'input', text: 'Additional direction', state: 'pending' as const, createdAt: now }
+    const value = { ...detail('first'), inputs: [input] }
+    vi.mocked(f.api.detail).mockResolvedValue(value)
     let finish = false
     vi.mocked(f.api.events).mockImplementation(async input => (input.afterSequence ?? 0) === 0
       ? { events: [message(input.runId, 1, 'First page')], nextSequence: 1, hasMore: true }
       : input.afterSequence === 1
         ? { events: [message(input.runId, 2, 'Second page')], nextSequence: 2, hasMore: false }
         : finish ? { events: [message(input.runId, 3, 'Resumed output')], nextSequence: 3, hasMore: false } : { events: [], nextSequence: input.afterSequence ?? 0, hasMore: false })
+    await f.state.refresh()
     await vi.waitFor(() => expect(JSON.stringify(f.state.rows.value)).toContain('Second page'))
+    expect(f.state.detail.value?.inputs).toEqual([input])
     f.selected.value = { ...f.selected.value }
     await nextTick()
-    await f.state.refresh()
-    expect(vi.mocked(f.api.events).mock.calls.at(-1)?.[0].afterSequence).toBe(2)
+    vi.mocked(f.api.detail).mockResolvedValue({ ...value, inputs: [{ ...input, state: 'consumed' }] })
+    const changed = vi.mocked(f.api.onChanged).mock.calls[0]![0]
+    changed({ sourceId: 'source', revision: 1, conversationId: 'task', rootRunId: 'root' })
+    await vi.waitFor(() => expect(f.state.detail.value?.inputs).toEqual([{ ...input, state: 'consumed' }]))
     f.visible.value = false
     await nextTick()
     finish = true

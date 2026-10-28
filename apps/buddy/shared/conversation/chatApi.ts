@@ -6,6 +6,14 @@ import { idSchema, sessionIdentitySchema } from '../runtime/apiValidation'
 import { skillReferenceSchema } from '../skills/skillApi'
 import { buddyComposerDraftSendSchema } from './composerDraft'
 
+export const buddyInputDeliverySchema = z.object({
+  mode: z.enum(['current', 'next']),
+  actorId: idSchema,
+  target: z.object({ rootRunId: idSchema, runId: idSchema }).strict().nullable(),
+}).strict()
+
+export type BuddyInputDelivery = z.infer<typeof buddyInputDeliverySchema>
+
 export const _contextItemSchema = z.object({
   kind: z.enum(['file', 'skill', 'slashCommand']),
   value: z.string().min(1),
@@ -48,7 +56,7 @@ export const chatRequestSchemas = {
     requestId: z.string().min(1).max(128),
     sourceRunId: idSchema,
   }).strict(),
-  startTurn: buddyComposerDraftSendSchema.unwrap().extend({ buddyId: idSchema.optional() }).strict(),
+  startTurn: buddyComposerDraftSendSchema.unwrap().extend({ buddyId: idSchema.optional(), delivery: buddyInputDeliverySchema.optional() }).strict(),
 } as const
 
 export const chatResponseSchemas = {

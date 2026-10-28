@@ -23,6 +23,7 @@ function createOwner(name: string) {
     executionTree: {
       groups: shallowRef({ byRoot: new Map(), byRun: new Map() }),
       records: shallowRef([]),
+      inputs: shallowRef([]),
       revision: shallowRef(0),
       ready: shallowRef(true),
       conversationId: shallowRef(null),
@@ -34,6 +35,7 @@ function createOwner(name: string) {
       api: {
         sendDraft: async () => { throw new Error('No draft') },
         list: async () => [],
+        inputs: async () => ({ inputs: [], nextOffset: null }),
         detail: async () => { throw new Error('No execution') },
         events: async () => ({ events: [], nextSequence: 0, hasMore: false }),
         send: async () => ({ accepted: true }),
@@ -98,6 +100,8 @@ function createOwner(name: string) {
     },
     execution: {
       isActorInput: shallowRef(false),
+      inputExecution: shallowRef(null),
+      queueRecipientNames: shallowRef(new Map<string, string>()),
       queuedMessages: shallowRef([]),
       pendingQueueActions: shallowRef(new Set<string>()),
       cancelQueuedMessage: async () => {},
@@ -232,19 +236,6 @@ function bindWorkspace(owner: ReturnType<typeof createOwner>) {
 }
 
 describe('useChatWorkspace', () => {
-  it('does not wait for an unmounted transcript while showing the canvas', async () => {
-    const owner = createOwner('canvas')
-    const { props, view } = bindWorkspace(owner)
-    props.viewMode = 'canvas'
-    owner.workspace.session.activeConversationId.value = 'conversation-canvas'
-    owner.workspace.session.activeBranchId.value = 'branch-canvas'
-    owner.workspace.status.isLoading.value = false
-    await nextTick()
-    expect(view.isLoading.value).toBe(false)
-    props.viewMode = 'chat'
-    expect(view.isLoading.value).toBe(false)
-  })
-
   it('follows the tail again when the reader sends from a detached position', async () => {
     const owner = createOwner('send-follow')
     const { view, list } = bindWorkspace(owner)

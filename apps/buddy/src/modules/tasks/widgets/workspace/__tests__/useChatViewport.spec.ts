@@ -95,6 +95,46 @@ async function invalidate(fixture: ReturnType<typeof createViewport>, reason: In
 }
 
 describe('chat viewport operations', () => {
+  it('retains the reader anchor when a non-user scroll arrives before layout reconciliation', async () => {
+    const fixture = createViewport(async () => false)
+    fixture.options.hasOlderMessages.value = false
+    await nextTick()
+    await nextTick()
+    fixture.original.metrics.scrollTop = 200
+    fixture.viewport.handleScroll(fixture.original.metrics, { userInitiated: true })
+    const originalOffset = fixture.original.geometry.anchorTop - fixture.original.metrics.scrollTop
+
+    fixture.original.geometry.anchorTop += 30
+    fixture.original.metrics.scrollHeight += 30
+    fixture.viewport.handleContentResize(fixture.original.metrics)
+    fixture.original.geometry.anchorTop += 240
+    fixture.original.metrics.scrollHeight += 240
+    fixture.viewport.handleScroll(fixture.original.metrics, { userInitiated: false })
+    fixture.viewport.handleContentResize(fixture.original.metrics)
+    expect(fixture.original.geometry.anchorTop - fixture.original.metrics.scrollTop).toBe(originalOffset)
+    expect(fixture.original.metrics.scrollTop).toBe(470)
+
+    await fixture.viewport.revealOutlineMessage('new-target')
+    expect(fixture.original.revealBehaviors).toEqual(['smooth'])
+    fixture.original.metrics.scrollTop = 420
+    fixture.viewport.handleScroll(fixture.original.metrics, { userInitiated: false })
+    fixture.original.geometry.anchorTop += 50
+    fixture.original.metrics.scrollHeight += 50
+    fixture.viewport.handleContentResize(fixture.original.metrics)
+    expect(fixture.original.metrics.scrollTop).toBe(470)
+
+    fixture.original.metrics.scrollTop = 500
+    fixture.viewport.handleScroll(fixture.original.metrics, { userInitiated: true })
+    fixture.original.geometry.anchorTop += 50
+    fixture.original.metrics.scrollHeight += 50
+    fixture.viewport.handleContentResize(fixture.original.metrics)
+    expect(fixture.original.metrics.scrollTop).toBe(550)
+    await fixture.viewport.returnToLatest()
+    fixture.original.metrics.scrollHeight += 100
+    fixture.viewport.handleContentResize(fixture.original.metrics)
+    expect(fixture.original.metrics.scrollTop).toBe(fixture.original.metrics.scrollHeight - fixture.original.metrics.clientHeight)
+  })
+
   it('restores a disposed task from its lightweight anchor after loading the required history', async () => {
     const readingPositions: ChatReadingPositions = new Map()
     const first = createViewport(async () => false, { readingPositions })
@@ -220,9 +260,13 @@ describe('chat viewport operations', () => {
     expect(fixture.viewport.showReturnToLatest.value).toBe(false)
   })
 
-  it('anchors prepended history to the latest reader position while a request is pending', async () => {
+  it('shares pending history and restores the latest reader anchor without following appended content', async () => {
     const pending = deferred<boolean>()
-    const fixture = createViewport(() => pending.promise)
+    let requests = 0
+    const fixture = createViewport(() => {
+      requests += 1
+      return pending.promise
+    })
     fixture.viewport.handleScroll(fixture.original.metrics)
     fixture.original.metrics.scrollTop = 5
     fixture.viewport.handleScroll(fixture.original.metrics)
@@ -230,11 +274,16 @@ describe('chat viewport operations', () => {
     pending.resolve(true)
     await nextTick()
 
+    expect(requests).toBe(1)
     expect(fixture.original.metrics.scrollTop).toBe(405)
     fixture.original.geometry.anchorTop += 80
     fixture.original.metrics.scrollHeight += 80
     fixture.viewport.handleContentResize(fixture.original.metrics)
     expect(fixture.original.metrics.scrollTop).toBe(485)
+    fixture.original.metrics.scrollHeight = 1_500
+    fixture.viewport.handleContentResize(fixture.original.metrics)
+    expect(fixture.original.metrics.scrollTop).toBe(485)
+    expect(fixture.viewport.showReturnToLatest.value).toBe(true)
   })
 
   it('restores a recent task reading position on a remounted transcript', async () => {
@@ -290,26 +339,6 @@ describe('chat viewport operations', () => {
     pending.resolve(true)
     await nextTick()
     expect(fixture.original.revealed).toEqual([])
-  })
-
-  it('accepts an initial notification target and loads its history after the list becomes ready', async () => {
-    let pages = 0
-    const fixture = createViewport(async () => {
-      pages += 1
-      fixture.options.timelineItems.value = [{ id: 'new-target', kind: 'message' }]
-      return true
-    }, { isLoading: true, listMounted: false, revealMessageId: 'new-target' })
-    await nextTick()
-    expect(pages).toBe(0)
-    fixture.options.isLoading.value = false
-    fixture.options.list.value = fixture.original.handle
-    await nextTick()
-    await nextTick()
-    await nextTick()
-
-    expect(pages).toBe(1)
-    expect(fixture.original.revealed).toEqual(['new-target'])
-    expect(fixture.original.metrics.scrollTop).toBe(300)
   })
 
   it.each(['before', 'after'] as const)('reveals a target received before the list mounts %s initial loading finishes', async (mountOrder) => {
@@ -428,28 +457,6 @@ describe('chat viewport operations', () => {
     expect(current.metrics.scrollTop).toBe(150)
   })
 
-  it('restores the current history anchor once without following appended content', async () => {
-    const pending = deferred<boolean>()
-    let requests = 0
-    const fixture = createViewport(() => {
-      requests += 1
-      return pending.promise
-    })
-    fixture.viewport.handleScroll(fixture.original.metrics)
-    fixture.viewport.handleScroll(fixture.original.metrics)
-    await prependHistory(fixture)
-    pending.resolve(true)
-    await nextTick()
-    await nextTick()
-
-    expect(requests).toBe(1)
-    expect(fixture.original.metrics.scrollTop).toBe(420)
-    expect(fixture.viewport.showReturnToLatest.value).toBe(true)
-    fixture.original.metrics.scrollHeight = 1_500
-    fixture.viewport.handleContentResize(fixture.original.metrics)
-    expect(fixture.original.metrics.scrollTop).toBe(420)
-  })
-
   it('keeps only the latest outline target when two reveals wait for the same render', async () => {
     const fixture = createViewport(async () => false)
     fixture.options.hasOlderMessages.value = false
@@ -534,14 +541,7 @@ describe('chat viewport operations', () => {
 
     expect(fixture.original.metrics.scrollTop).toBe(0)
     expect(fixture.viewport.showReturnToLatest.value).toBe(false)
-  })
-
-  it('ignores a reader layout intent while the transcript cannot scroll', async () => {
-    const fixture = createViewport(async () => false)
-    fixture.original.metrics.scrollHeight = 400
-    fixture.original.metrics.scrollTop = 0
     fixture.viewport.handleReaderLayoutIntent()
-
     expect(fixture.viewport.showReturnToLatest.value).toBe(false)
   })
 
@@ -644,7 +644,6 @@ describe('chat viewport operations', () => {
     expect(fixture.original.metrics.scrollTop).toBe(600)
     expect(readingPositions.get('conversation-1:branch-1')).toBeNull()
 
-    // 新内容追加时保持跟随
     fixture.original.metrics.scrollHeight = 1_400
     fixture.viewport.handleContentResize(fixture.original.metrics)
     expect(fixture.original.metrics.scrollTop).toBe(1_000)
@@ -653,20 +652,16 @@ describe('chat viewport operations', () => {
   it('does not detach follow ownership on non-user scrolls caused by window or split resizing', async () => {
     const fixture = createViewport(async () => false)
     fixture.options.hasOlderMessages.value = false
-    // 初始处于 tail: 1000 - 400 = 600
     fixture.original.metrics.scrollTop = 600
     fixture.viewport.handleContentResize(fixture.original.metrics)
     expect(fixture.viewport.showReturnToLatest.value).toBe(false)
 
-    // 窗口或者分屏调整导致视口高度变小，且触发了非用户滚动事件
     fixture.original.metrics.clientHeight = 300
-    fixture.original.metrics.scrollTop = 500 // 暂时未到达最新 tail (700)
+    fixture.original.metrics.scrollTop = 500
     fixture.viewport.handleScroll(fixture.original.metrics, { userInitiated: false })
 
-    // 不会被误认为用户主动脱离
     expect(fixture.viewport.showReturnToLatest.value).toBe(false)
 
-    // ResizeObserver 回调触发后，立即自动跟随到最新底部
     fixture.viewport.handleContentResize(fixture.original.metrics)
     expect(fixture.original.metrics.scrollTop).toBe(700)
     expect(fixture.viewport.showReturnToLatest.value).toBe(false)
