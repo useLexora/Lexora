@@ -30,14 +30,14 @@ const TABLE: Record<
   Record<AccessKind, ZoneOutcomes>
 > = {
   full_access: {
-    delete: zones('allow', 'allow', 'allow', 'deny_sensitive'),
-    execute: zones('allow', 'allow', 'allow', 'deny_sensitive'),
+    delete: UNIFORM_ALLOW,
+    execute: UNIFORM_ALLOW,
     interaction: UNIFORM_ALLOW,
     network: UNIFORM_ALLOW,
-    read: READ_ANYWHERE,
-    render: zones('allow', 'allow', 'allow', 'deny_sensitive'),
+    read: UNIFORM_ALLOW,
+    render: UNIFORM_ALLOW,
     visual: UNIFORM_ALLOW,
-    write: zones('allow', 'allow', 'allow', 'deny_sensitive'),
+    write: UNIFORM_ALLOW,
   },
   read_only: {
     delete: zones('deny_profile', 'deny_profile', 'deny_profile', 'deny_sensitive'),

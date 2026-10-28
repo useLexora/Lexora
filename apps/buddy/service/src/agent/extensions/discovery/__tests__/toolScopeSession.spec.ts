@@ -3,7 +3,7 @@ import type { BuddySettings } from '../../../../../../shared/buddies/buddySettin
 import type { BuddyExecutionProfile } from '../../../../../../shared/permissions/executionProfile'
 import type { BuddyCapability } from '../../BuddyCapability'
 import type { BuddySessionExtensionServices } from '../../createBuddySessionExtensions'
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
@@ -11,7 +11,10 @@ import { createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTo
 import { defineTool, ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import * as userHomePaths from '../../../../../../platform/filesystem/userHomePaths'
 import { MutationCoordinator } from '../../../../changes/MutationCoordinator'
+import { FileResourceCoordinator } from '../../../../files/FileResourceCoordinator'
+import { NativeFileEngine } from '../../../../files/NativeFileEngine'
 import { ShellSelection } from '../../../../sandbox/ShellSelection'
 import { createIsolatedBuddySession } from '../../../sessions/__tests__/isolatedBuddySession'
 import { createBuddySessionExtensions } from '../../createBuddySessionExtensions'
@@ -102,6 +105,38 @@ describe('role tool scope in real Pi sessions', () => {
     expect(resumed.approved).toEqual(['lexora_host_shell'])
   })
 
+  it.each([false, true])('writes and reads outside grants and sensitive locations across full-access recovery, codemode=%s', async (codemode) => {
+    const outside = await realpath(await mkdtemp(join(tmpdir(), 'buddy-full-access-')))
+    cleanups.push(() => rm(outside, { recursive: true, force: true }))
+    const home = vi.spyOn(userHomePaths, 'resolveUserHomePaths').mockReturnValue([outside])
+    cleanups.push(async () => {
+      home.mockRestore()
+    })
+    await mkdir(join(outside, '.ssh'))
+    const f = await fixture({ executionProfile: 'full_access', codemode })
+    const invoke = async (session: typeof f, name: string, arguments_: ToolCall['arguments']) => {
+      await session.turn(codemode ? scriptCall(name, arguments_) : { name, arguments: arguments_ })
+    }
+    for (const path of [join(outside, 'document.txt'), join(outside, '.ssh', 'fixture.txt')]) {
+      await invoke(f, 'write', { path, content: 'synthetic full-access content' })
+      expect(f.lastResult()).toContain('Successfully wrote')
+      expect(await readFile(path, 'utf8')).toBe('synthetic full-access content')
+      await invoke(f, 'read', { path })
+      expect(f.lastResult()).toContain('synthetic full-access content')
+    }
+    expect(f.approved).toEqual([])
+    await f.shutdown()
+    const resumed = await fixture({ root: f.root, piSessionFile: f.sessionFile, executionProfile: 'full_access', codemode })
+    const sensitivePath = join(outside, '.ssh', 'fixture.txt')
+    await invoke(resumed, 'write', { path: sensitivePath, content: 'after restart' })
+    expect(await readFile(sensitivePath, 'utf8')).toBe('after restart')
+    expect(resumed.approved).toEqual([])
+    resumed.extensions.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile: 'workspace_write' })
+    await invoke(resumed, 'write', { path: sensitivePath, content: 'must stay blocked' })
+    expect(resumed.lastResult()).toContain('SENSITIVE_PATH')
+    expect(await readFile(sensitivePath, 'utf8')).toBe('after restart')
+  })
+
   it('keeps none empty across declarations, search and native CodeMode catalogs', async () => {
     const f = await fixture({ tools: { mode: 'none' } })
     await f.turn(scriptCall('lexora_tool_search', { toolNames: [deniedMcp] }))
@@ -126,7 +161,7 @@ describe('role tool scope in real Pi sessions', () => {
     expect(f.lastResult()).not.toContain(marker)
     expect(f.lastResult()).not.toContain(deniedMcp)
     expect(f.lastResult()).toContain('"external":false')
-    expect(f.approved).toEqual([allowedMcp])
+    expect(f.approved).toEqual([])
     await f.turn(scriptCall('lexora_tool_search', { toolNames: [deniedMcp, allowedMcp] }))
     expect(f.lastResult()).toContain(`"notFound":["${deniedMcp}"]`)
     expect(f.requests.map(request => request.tools).join('\n')).not.toContain(marker)
@@ -241,6 +276,15 @@ async function fixture(options: { tools?: BuddySettings['tools'], fileAccessLimi
     } },
   }
   const descriptors = [{ extensionId: 'fixture.shells', revision: '1', configurationRevision: '1', preferred: [], candidates: [] }]
+  const engine = new NativeFileEngine(join(root, 'file-operations'))
+  await engine.ready()
+  const fileResources = new FileResourceCoordinator(engine)
+  const mutations = new MutationCoordinator({ resources: fileResources })
+  const disposeResources = async () => {
+    await mutations.dispose()
+    await engine.dispose()
+  }
+  cleanups.push(disposeResources)
   const services: BuddySessionExtensionServices = {
     shells: options.shells ? { snapshot: async () => new ShellSelection(descriptors, async () => descriptors) } : undefined,
     approvalService: { request: async (input) => {
@@ -248,8 +292,8 @@ async function fixture(options: { tools?: BuddySettings['tools'], fileAccessLimi
       return { approvalId: `approval-${approved.length}`, decision: 'approved_once' }
     } },
     attachmentService: {} as BuddySessionExtensionServices['attachmentService'],
-    fileResources: {} as BuddySessionExtensionServices['fileResources'],
-    mutations: new MutationCoordinator(),
+    fileResources,
+    mutations,
     changeCaptureService: { beginInvocation: async input => ({ invocationId: input.invocationId, runId: input.runId }), finishInvocation: async () => ({ complete: true }), markPartial: async () => {} },
     createCapabilities: async () => [custom],
     directoryGrants: { assertCurrent() {}, grant: async () => { throw new Error('Unexpected directory grant') } },
@@ -273,7 +317,10 @@ async function fixture(options: { tools?: BuddySettings['tools'], fileAccessLimi
     resources: { skillReadRoots: [], skillReferences: [], approvedSkills: [], context: { agentsFiles: [], diagnostics: [] }, directoryContext: '', revision: 'empty' },
     inProcessExtensions: extensions.inProcessExtensions,
   })
-  const shutdown = () => created.shutdown('quit')
+  const shutdown = async () => {
+    await created.shutdown('quit')
+    await disposeResources()
+  }
   cleanups.push(shutdown)
   const requests: { names: string[], tools: string, prompt: string }[] = []
   let nextCall: Pick<ToolCall, 'name' | 'arguments'> | undefined

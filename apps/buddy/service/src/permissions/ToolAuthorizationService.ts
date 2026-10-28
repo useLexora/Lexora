@@ -251,6 +251,7 @@ export class ToolAuthorizationService {
             cwd: options.cwd,
             grants: options.getGrants(),
             paths: executionPaths,
+            profile: options.fileAccessLimit === 'read_only' ? 'read_only' : settings.executionProfile,
             reviewedPaths: decision.type === 'ask' ? decision.paths : undefined,
           })
         }

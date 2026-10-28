@@ -31,14 +31,14 @@ const expected: Record<
     write: ['allow', 'allow', 'ask_grant', 'deny_sensitive'],
   },
   full_access: {
-    delete: ['allow', 'allow', 'allow', 'deny_sensitive'],
-    execute: ['allow', 'allow', 'allow', 'deny_sensitive'],
+    delete: ['allow', 'allow', 'allow', 'allow'],
+    execute: ['allow', 'allow', 'allow', 'allow'],
     interaction: ['allow', 'allow', 'allow', 'allow'],
     network: ['allow', 'allow', 'allow', 'allow'],
-    read: ['allow', 'allow', 'allow', 'ask'],
-    render: ['allow', 'allow', 'allow', 'deny_sensitive'],
+    read: ['allow', 'allow', 'allow', 'allow'],
+    render: ['allow', 'allow', 'allow', 'allow'],
     visual: ['allow', 'allow', 'allow', 'allow'],
-    write: ['allow', 'allow', 'allow', 'deny_sensitive'],
+    write: ['allow', 'allow', 'allow', 'allow'],
   },
 }
 

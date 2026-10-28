@@ -185,7 +185,7 @@ describe('real Pi tool discovery loop', () => {
       authorization: new ToolAuthorizationService({
         approvalAvailable: true,
         approvalPolicy: 'policy',
-        executionProfile: 'full_access',
+        executionProfile: 'workspace_write',
         cwd: root,
         owner: { id: 'conversation-1', kind: 'conversation' },
         getGrants: () => [],

@@ -45,7 +45,7 @@ export default {
   'desktop.settings.runtime.defaultPermissionMode': 'New task permissions',
   'desktop.settings.runtime.defaultPermissionModeDescription': 'New tasks start with the selected permissions. Existing tasks, including unsent drafts, keep their current settings.',
   'desktop.settings.runtime.fullAccessDefaultTitle': 'Use full access by default for new tasks?',
-  'desktop.settings.runtime.fullAccessDefaultDescription': 'New tasks will start with local access to your files, credentials, and network. The sandbox cannot restrict what arbitrary commands do; some sensitive operations will still ask for confirmation.',
+  'desktop.settings.runtime.fullAccessDefaultDescription': 'New tasks use full access, automatically approving tools with access to local files, credentials, and network.',
   'desktop.settings.runtime.fullAccessDefaultAcknowledgement': 'I understand that full access will apply to every new task by default',
   'desktop.settings.runtime.fullAccessDefaultConfirm': 'Use as default',
   'desktop.settings.runtime.context': 'Context',

@@ -66,11 +66,11 @@ describe('isolated shell permissions', () => {
       const host = { ...request, toolName: name, profile: 'full_access' as const, arguments: { command } }
       await expect(engine.decide(host)).resolves.toEqual({ type: 'allow' })
       await expect(engine.decide({ ...host, approvalAvailable: false })).resolves.toEqual({ type: 'allow' })
-      await expect(engine.decide({ ...host, approvalPolicy: 'manual' })).resolves.toMatchObject({ type: 'ask', shell: { reason: 'manual-policy' } })
-      await expect(engine.decide({ ...host, forceAsk: true })).resolves.toMatchObject({ type: 'ask', kind: 'shell', shell: { cwd: request.cwd } })
+      await expect(engine.decide({ ...host, approvalPolicy: 'manual' })).resolves.toEqual({ type: 'allow' })
+      await expect(engine.decide({ ...host, forceAsk: true })).resolves.toEqual({ type: 'allow' })
       await expect(engine.decide({ ...host, arguments: { command: 42 } })).resolves.toMatchObject({ type: 'deny', code: 'VALIDATION_FAILED' })
-      await expect(engine.decide({ ...host, arguments: { command: mutation } })).resolves.toMatchObject({ type: 'ask', shell: { reason: 'system-mutation' } })
-      await expect(engine.decide({ ...host, arguments: { command: mutation }, approvalAvailable: false })).resolves.toMatchObject({ type: 'deny', code: 'APPROVAL_UNAVAILABLE_IN_BACKGROUND' })
+      await expect(engine.decide({ ...host, arguments: { command: mutation } })).resolves.toEqual({ type: 'allow' })
+      await expect(engine.decide({ ...host, arguments: { command: mutation }, approvalAvailable: false })).resolves.toEqual({ type: 'allow' })
     }
   })
 

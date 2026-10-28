@@ -17,7 +17,7 @@ afterEach(async () => {
 })
 
 describe('permissionEngine', () => {
-  it('uses trusted selected dialect metadata and never applies Bash safety rules to CMD or Zsh host execution', async () => {
+  it('allows all selected shell dialects in full access, including unattended runs', async () => {
     const fixture = await createFixture()
     const engine = createEngine(fixture.home)
     for (const shellDialect of ['cmd', 'zsh', 'sh'] as const) {
@@ -27,9 +27,9 @@ describe('permissionEngine', () => {
         profile: 'full_access',
         shellDialect,
       })
-      await expect(engine.decide(input)).resolves.toMatchObject({ type: 'ask', shell: { reason: 'unsupported-syntax' } })
+      await expect(engine.decide(input)).resolves.toEqual({ type: 'allow' })
       await expect(engine.decide({ ...input, profile: 'workspace_write', shellBoundary: 'sandbox' })).resolves.toEqual({ type: 'allow' })
-      await expect(engine.decide({ ...input, approvalAvailable: false })).resolves.toMatchObject({ type: 'deny', code: 'APPROVAL_UNAVAILABLE_IN_BACKGROUND' })
+      await expect(engine.decide({ ...input, approvalAvailable: false })).resolves.toEqual({ type: 'allow' })
     }
     await expect(engine.decide(request(fixture, {
       toolName: 'lexora_shell',
@@ -37,7 +37,7 @@ describe('permissionEngine', () => {
       profile: 'full_access',
       shellDialect: 'powershell',
       approvalPolicy: 'manual',
-    }))).resolves.toMatchObject({ type: 'ask', shell: { reason: 'manual-policy', boundary: 'host' } })
+    }))).resolves.toEqual({ type: 'allow' })
   })
 
   it('allows verified Git queries across profiles and backgrounds, while preserving manual approval', async () => {
@@ -111,16 +111,18 @@ describe('permissionEngine', () => {
           arguments: { command },
           profile,
           toolName: 'bash',
-        })), command).resolves.toMatchObject({
-          shell: { reason: 'sensitive-path' },
-          type: 'ask',
-        })
+        })), command).resolves.toMatchObject(profile === 'full_access'
+          ? { type: 'allow' }
+          : {
+              shell: { reason: 'sensitive-path' },
+              type: 'ask',
+            })
       }
       await expect(engine.decide(request(fixture, {
         arguments: { command },
         profile: 'full_access',
         toolName: 'lexora_host_shell',
-      })), command).resolves.toMatchObject({ shell: { reason: 'sensitive-path' }, type: 'ask' })
+      })), command).resolves.toEqual({ type: 'allow' })
     }
     for (const command of ['git diff --cached', 'git diff --cached --check', 'git diff --cached -- .']) {
       await expect(engine.decide(request(fixture, {
@@ -138,7 +140,7 @@ describe('permissionEngine', () => {
         arguments: { command: 'git diff -- .env' },
         profile: 'full_access',
         toolName,
-      }))).resolves.toMatchObject({ type: 'ask', shell: { reason: 'sensitive-path' } })
+      }))).resolves.toEqual({ type: 'allow' })
     }
   })
 
@@ -235,7 +237,7 @@ describe('permissionEngine', () => {
     })
   })
 
-  it('asks before reading a sensitive file and denies sensitive writes', async () => {
+  it('protects sensitive paths in controlled modes and allows them in full access', async () => {
     const fixture = await createFixture()
     const engine = createEngine(fixture.home)
     const ssh = join(fixture.home, '.ssh')
@@ -249,13 +251,58 @@ describe('permissionEngine', () => {
     }))).resolves.toMatchObject({ kind: 'read', type: 'ask' })
     await expect(engine.decide(request(fixture, {
       arguments: { content: 'changed', path: secret },
-      profile: 'full_access',
       toolName: 'write',
     }))).resolves.toEqual({
       code: 'SENSITIVE_PATH',
       source: 'sensitive',
       type: 'deny',
     })
+    for (const access of ['read', 'write', 'delete', 'render'] as const) {
+      await expect(engine.decide(request(fixture, {
+        access,
+        arguments: {},
+        approvalAvailable: false,
+        forceAsk: true,
+        requireApproval: true,
+        paths: [{ path: secret, mode: 'existing' }],
+        profile: 'full_access',
+        toolName: 'sensitive_tool',
+      }))).resolves.toEqual({ type: 'allow' })
+    }
+  })
+
+  it('validates full-access targets and commands before automatic approval', async () => {
+    const fixture = await createFixture()
+    const engine = createEngine(fixture.home)
+    for (const arguments_ of [{}, { command: 42 }, { command: ' ' }]) {
+      await expect(engine.decide(request(fixture, {
+        arguments: arguments_,
+        profile: 'full_access',
+        toolName: 'lexora_host_shell',
+      }))).resolves.toMatchObject({ type: 'deny', code: 'VALIDATION_FAILED' })
+    }
+    await expect(engine.decide(request(fixture, {
+      arguments: { path: join(fixture.outside, 'missing') },
+      profile: 'full_access',
+      toolName: 'read',
+    }))).resolves.toMatchObject({ type: 'deny', code: 'PATH_NOT_FOUND' })
+    await expect(engine.decide(request(fixture, {
+      arguments: {},
+      profile: 'full_access',
+      toolName: 'write',
+    }))).resolves.toMatchObject({ type: 'deny', code: 'VALIDATION_FAILED' })
+    await expect(engine.decide(request(fixture, {
+      arguments: { path: fixture.workspace, access: 'write', reason: 'Fixture' },
+      profile: 'full_access',
+      toolName: 'lexora_authorize_directory',
+      shellBoundary: 'sandbox',
+    }))).resolves.toEqual({ type: 'allow' })
+    await expect(engine.decide(request(fixture, {
+      arguments: { path: fixture.workspace, access: 'invalid' },
+      profile: 'full_access',
+      toolName: 'lexora_authorize_directory',
+      shellBoundary: 'sandbox',
+    }))).resolves.toMatchObject({ type: 'deny', code: 'VALIDATION_FAILED' })
   })
 
   it('keeps safe shell inspection available in read-only mode', async () => {
@@ -278,7 +325,7 @@ describe('permissionEngine', () => {
     })
   })
 
-  it('forces confirmation for unknown capabilities and recognizable system mutations', async () => {
+  it('automatically approves unknown capabilities and system mutations only in full access', async () => {
     const fixture = await createFixture()
     const engine = createEngine(fixture.home)
 
@@ -286,17 +333,14 @@ describe('permissionEngine', () => {
       arguments: {},
       profile: 'full_access',
       toolName: 'unknown_tool',
-    }))).resolves.toMatchObject({
-      kind: 'system',
-      type: 'ask',
-    })
+    }))).resolves.toEqual({ type: 'allow' })
     for (const toolName of ['bash', 'lexora_host_shell']) {
       for (const command of ['sudo /usr/bin/systemctl --user restart example.service', 'bash -c \'shutdown now\'']) {
         await expect(engine.decide(request(fixture, {
           arguments: { command },
           profile: 'full_access',
           toolName,
-        }))).resolves.toMatchObject({ type: 'ask', shell: { reason: 'system-mutation' } })
+        }))).resolves.toEqual({ type: 'allow' })
       }
     }
     await expect(engine.decide(request(fixture, {

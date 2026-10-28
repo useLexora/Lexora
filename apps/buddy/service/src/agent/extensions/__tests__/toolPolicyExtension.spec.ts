@@ -54,7 +54,7 @@ describe('toolPolicyExtension always-confirm', () => {
     }))
   })
 
-  it('awaits capability preparation and keeps forced approval in full access', async () => {
+  it('awaits capability preparation and automatically approves full-access operations', async () => {
     const request = vi.fn().mockResolvedValue({
       approvalId: 'approval-1',
       decision: 'approved_once',
@@ -102,9 +102,7 @@ describe('toolPolicyExtension always-confirm', () => {
     await expect(invoke(event)).resolves.toBeUndefined()
 
     expect(classifyTool).toHaveBeenCalledWith(event, run)
-    expect(request).toHaveBeenCalledWith(expect.objectContaining({
-      kind: 'shell',
-    }))
+    expect(request).not.toHaveBeenCalled()
   })
 
   it('does not let full access bypass a capability-owned classification failure', async () => {

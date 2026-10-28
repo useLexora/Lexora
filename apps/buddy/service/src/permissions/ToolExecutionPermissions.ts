@@ -1,3 +1,4 @@
+import type { BuddyExecutionProfile } from '../../../shared/permissions/executionProfile'
 import type { BuddyExtensionRunContext } from '../agent/extensions/BuddyExtensionRunContext'
 import type { DirectoryGrant } from '../directories/resolveGrantedPath'
 import type { PermissionPath } from './permissionContract'
@@ -28,6 +29,7 @@ export class ToolExecutionPermissions {
     cwd: string
     grants: readonly DirectoryGrant[]
     paths: readonly PermissionPath[]
+    profile: BuddyExecutionProfile
     reviewedPaths?: readonly { path: string }[]
   }): Promise<void> {
     if (this.#disposed)
@@ -39,7 +41,7 @@ export class ToolExecutionPermissions {
       const target = await classifyPath({ ...input, ...path, sensitive: this.#sensitive })
       if (input.reviewedPaths && target.canonicalPath !== input.reviewedPaths[index]?.path)
         throw new PathClassificationError('INVALID_PATH')
-      if (target.zone !== 'outside')
+      if (target.zone !== 'outside' && !(target.zone === 'sensitive' && input.profile === 'full_access'))
         continue
       const root = target.isDirectory ? target.canonicalPath : dirname(target.canonicalPath)
       grants.push({ canonicalRoot: root, root, kind: 'granted', grantId: `run:${run.runId}:${toolCallId}:${grants.length}` })

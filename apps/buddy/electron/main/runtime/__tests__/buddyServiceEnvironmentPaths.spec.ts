@@ -31,9 +31,10 @@ describe('service environment and sensitive path policy', () => {
       cwd: root,
       grants: [],
       owner: { id: 'fixture', kind: 'conversation' as const },
-      profile: 'full_access' as const,
+      profile: 'workspace_write' as const,
       toolName: 'read',
     }
+    await expect(engine.decide({ ...request, profile: 'full_access' })).resolves.toEqual({ type: 'allow' })
     expect(environment).not.toHaveProperty('OPENAI_API_KEY')
     await expect(engine.decide(request)).resolves.toMatchObject({ type: 'ask' })
     await expect(engine.decide({ ...request, toolName: 'write' }))

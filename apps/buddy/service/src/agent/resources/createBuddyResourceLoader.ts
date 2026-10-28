@@ -111,7 +111,7 @@ export async function createBuddyResourceLoader(
 }
 
 export function createPermissionPrompt(settings: BuddyPermissionSettings, platform?: NodeJS.Platform, activeToolNames?: readonly string[]): string {
-  return [createBuddyExecutionPrompt(settings.executionProfile, platform, activeToolNames), ...settings.approvalPolicy === 'manual' ? [BUDDY_MANUAL_APPROVAL_PROMPT] : []].join('\n\n')
+  return [createBuddyExecutionPrompt(settings.executionProfile, platform, activeToolNames), ...settings.executionProfile !== 'full_access' && settings.approvalPolicy === 'manual' ? [BUDDY_MANUAL_APPROVAL_PROMPT] : []].join('\n\n')
 }
 
 export class BuddyResourceLoadError extends Error {

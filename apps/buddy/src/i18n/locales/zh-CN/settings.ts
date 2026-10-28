@@ -43,7 +43,7 @@ export default {
   'desktop.settings.runtime.defaultPermissionMode': '新任务权限',
   'desktop.settings.runtime.defaultPermissionModeDescription': '新建任务时使用所选权限；已有任务（包括未发送的草稿）保持当前设置。',
   'desktop.settings.runtime.fullAccessDefaultTitle': '将完全访问设为新任务默认权限？',
-  'desktop.settings.runtime.fullAccessDefaultDescription': '之后新建的任务将默认以你的本机权限访问文件、凭据和网络。任意命令的实际行为无法由沙盒限制；部分敏感操作仍会请求确认。',
+  'desktop.settings.runtime.fullAccessDefaultDescription': '新任务默认使用完全访问，工具操作免审批，可访问本机文件、凭据和网络。',
   'desktop.settings.runtime.fullAccessDefaultAcknowledgement': '我已了解完全访问会默认应用于每个新任务',
   'desktop.settings.runtime.fullAccessDefaultConfirm': '设为默认权限',
   'desktop.settings.runtime.context': '上下文',

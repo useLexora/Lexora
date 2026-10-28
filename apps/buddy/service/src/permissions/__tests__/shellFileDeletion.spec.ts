@@ -101,25 +101,23 @@ describe.skipIf(process.platform === 'win32')('shell file deletion permissions',
     })
   })
 
-  it('denies explicitly protected paths and their canonical targets even in full access', async () => {
+  it('protects sensitive deletion targets only in controlled profiles', async () => {
     const fixture = await createFixture(true)
     await writeFile(join(fixture.workspace, '.env'), 'SYNTHETIC=fixture')
     await symlink(join(fixture.workspace, '.env'), join(fixture.workspace, 'public.vue'))
     for (const profile of ['read_only', 'workspace_write', 'full_access'] as const) {
       for (const command of ['rm .env', 'rm public.vue', 'rm obsolete.vue .env']) {
-        await expect(fixture.engine.decide(request(fixture, command, { profile }))).resolves.toEqual({
-          code: 'SENSITIVE_PATH',
-          source: 'sensitive',
-          type: 'deny',
-        })
+        await expect(fixture.engine.decide(request(fixture, command, { profile }))).resolves.toEqual(profile === 'full_access'
+          ? { type: 'allow' }
+          : {
+              code: 'SENSITIVE_PATH',
+              source: 'sensitive',
+              type: 'deny',
+            })
       }
     }
     for (const command of ['rm .env', 'rm public.vue', 'rm obsolete.vue .env']) {
-      await expect(fixture.engine.decide(request(fixture, command, { profile: 'full_access', toolName: 'lexora_host_shell' }))).resolves.toEqual({
-        code: 'SENSITIVE_PATH',
-        source: 'sensitive',
-        type: 'deny',
-      })
+      await expect(fixture.engine.decide(request(fixture, command, { profile: 'full_access', toolName: 'lexora_host_shell' }))).resolves.toEqual({ type: 'allow' })
     }
   })
 

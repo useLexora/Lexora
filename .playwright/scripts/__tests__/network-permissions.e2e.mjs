@@ -71,7 +71,7 @@ test('real network requests enforce saved access, file download, redirects and m
       }
       await providers.setDefaultModel({ providerId: 'permission-fixture', modelId: 'permission-fixture', reasoning: null })
     }, `http://127.0.0.1:${server.address().port}/v1`)
-    await desktop.page.evaluate(server => window.lexoraDesktop.settings.update({ proxy: { mode: 'custom', server } }), `http://127.0.0.1:${server.address().port}`)
+    await desktop.page.evaluate(server => window.lexoraDesktop.settings.update({ proxy: { mode: 'custom', server }, runtime: { codemode: false } }), `http://127.0.0.1:${server.address().port}`)
     await desktop.page.reload()
     const send = async (text) => {
       await desktop.page.locator('.desktop-chat-composer__prosemirror:visible').fill(text)
@@ -144,6 +144,45 @@ test('real network requests enforce saved access, file download, redirects and m
       browser.networkPermissions.rules[0].access = 'deny'
       await window.lexoraDesktop.settings.update({ browser: { networkPermissions: browser.networkPermissions } })
     })
+    const database = new DatabaseSync(path.join(instance.home, 'buddy/buddy.sqlite3'), { readOnly: true })
+    let conversationId
+    try {
+      conversationId = database.prepare('SELECT conversation_id FROM runs ORDER BY rowid DESC LIMIT 1').get().conversation_id
+    }
+    finally { database.close() }
+    await desktop.page.evaluate(async (conversationId) => {
+      await window.lexoraDesktop.localChat.conversations.setPermissionSettings(conversationId, { approvalPolicy: 'policy', executionProfile: 'full_access' })
+      const { browser } = await window.lexoraDesktop.settings.get()
+      browser.networkPermissions.rules[0].access = 'ask'
+      await window.lexoraDesktop.settings.update({ browser: { networkPermissions: browser.networkPermissions } })
+    }, conversationId)
+    const fullAccessSettings = await settings()
+    await send('Fetch a file with full access.')
+    await expect.poll(completed).toBe(6)
+    await expect(card).toBeHidden()
+    expect(hits.at(-1)).toBe('/file')
+    const fullAccessMessages = requests.at(-1).messages
+    const fullAccessResult = JSON.stringify(fullAccessMessages.slice(fullAccessMessages.findLastIndex(message => message.role === 'user') + 1))
+    expect(fullAccessResult).not.toMatch(/NETWORK_PERMISSION_DENIED|APPROVAL_UNAVAILABLE_IN_BACKGROUND/)
+    expect(await settings()).toEqual(fullAccessSettings)
+    const beforeRedirect = hits.filter(hit => hit === '/landing').length
+    await send('Open the browser to a redirect with full access.')
+    await expect.poll(completed).toBe(7)
+    await expect(card).toBeHidden()
+    expect(hits.filter(hit => hit === '/landing')).toHaveLength(beforeRedirect + 1)
+    expect(hits).not.toContain('/pixel')
+    await desktop.page.evaluate(async () => {
+      const { browser } = await window.lexoraDesktop.settings.get()
+      browser.networkPermissions.rules[0].access = 'deny'
+      await window.lexoraDesktop.settings.update({ browser: { networkPermissions: browser.networkPermissions } })
+    })
+    const beforeFullAccessDenial = hits.length
+    await send('Fetch a denied page with full access.')
+    await expect.poll(completed).toBe(8)
+    expect(hits).toHaveLength(beforeFullAccessDenial)
+    await expect(card).toBeHidden()
+    expect(JSON.stringify(requests.at(-1).messages)).toContain('NETWORK_PERMISSION_DENIED')
+
     const address = desktop.page.getByTestId('browser-address')
     await address.fill('http://permission.example.test/manual')
     await address.press('Enter')

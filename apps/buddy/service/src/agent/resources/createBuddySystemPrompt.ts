@@ -38,7 +38,7 @@ export function createBuddySystemPrompt(options: CreateBuddySystemPromptOptions)
     LEXORA_BUDDY_BASE_SYSTEM_PROMPT,
     ...options.includePermissions === false ? [] : [createBuddyExecutionPrompt(options.executionProfile, options.platform)],
   ]
-  if (options.includePermissions !== false && options.approvalPolicy === 'manual')
+  if (options.includePermissions !== false && options.executionProfile !== 'full_access' && options.approvalPolicy === 'manual')
     sections.push(BUDDY_MANUAL_APPROVAL_PROMPT)
   const directoryContext = options.directoryContext?.trim()
   if (directoryContext)
@@ -71,8 +71,8 @@ function createExecutionProfilePrompt(
   if (executionProfile === 'full_access') {
     return [
       'The user explicitly enabled full access for this conversation.',
-      'Host tools run with the Lexora Buddy service user\'s operating-system permissions. Ordinary operations are auto-approved, while sensitive reads, system mutations, MCP tool calls, automation changes, and unknown capabilities still require user authorization.',
-      'Full access does not grant root privileges or bypass operating-system authorization.',
+      'Available tools are automatically approved, including file and credential access, host commands, network requests, system mutations, MCP calls, and automation changes. Commands run on the host without shell sandbox isolation; saved directory grants do not constrain full-access tool calls.',
+      'Explicit tool-scope limits and denials still apply. Managed network tools enforce explicit domain denials; host commands have no network isolation. Full access does not grant root privileges, bypass execution-target validation or operating-system authorization, or expand the user task.',
       inspection,
     ].filter(Boolean).join('\n')
   }

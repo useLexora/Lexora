@@ -237,7 +237,7 @@ export default {
   'desktop.chat.toolDeniedReadOnly': '只读权限已阻止此操作',
   'desktop.chat.executionProfileFull': '完全访问',
   'desktop.chat.executionProfileFullConfirmAcknowledgement': '我已了解风险，并愿意继续',
-  'desktop.chat.executionProfileFullConfirmDescription': '完全访问会让命令使用你的本机权限访问文件、凭据和网络。部分工具仍需确认，但无法限制任意命令的实际行为。仅在信任当前任务并接受风险时开启。',
+  'desktop.chat.executionProfileFullConfirmDescription': '工具操作免审批，可访问本机文件、凭据和网络。仅对可信任务开启。',
   'desktop.chat.executionProfileFullConfirmTitle': '确认允许完全访问？',
   'desktop.chat.executionProfileOpen': '查看执行权限',
   'desktop.chat.permissionModeFullDescription': '命令使用本机权限执行。',

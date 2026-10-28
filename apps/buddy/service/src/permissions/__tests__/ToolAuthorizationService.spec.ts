@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, rm, symlink, unlink, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import * as userHomePaths from '../../../../platform/filesystem/userHomePaths'
 import { DEFAULT_NETWORK_PERMISSIONS, upsertNetworkPermission } from '../../../../shared/permissions/networkPermissions'
 import { SessionToolScope } from '../../agent/extensions/discovery/SessionToolScope'
 import { ApprovalService } from '../../approvals/ApprovalService'
@@ -95,7 +96,7 @@ describe('harness tool authorization', () => {
 
   it.each([
     ['ask', 'policy', 'workspace_write', 'APPROVAL_UNAVAILABLE_IN_BACKGROUND'],
-    ['ask', 'policy', 'full_access', 'APPROVAL_UNAVAILABLE_IN_BACKGROUND'],
+    ['ask', 'policy', 'full_access', null],
     ['allow', 'policy', 'workspace_write', null],
     ['allow', 'policy', 'read_only', null],
     ['allow', 'manual', 'workspace_write', 'APPROVAL_UNAVAILABLE_IN_BACKGROUND'],
@@ -340,11 +341,20 @@ describe('harness tool authorization', () => {
     await f.approvals.dispose()
   })
 
-  it('applies turn authorization to every approvable tool category while preserving hard denials', async () => {
+  it.each(['turn', 'full_access', 'full_access_background'] as const)('applies %s to every tool category while preserving denials and validation', async (mode) => {
     const f = fixture()
-    const initial = f.authorization.authorize(f.call('lexora_web_fetch', { url: 'https://example.com' }), f.run, { access: 'network' })
-    await f.approve('approved_for_turn')
-    await initial
+    const authorization = mode === 'turn'
+      ? f.authorization
+      : new ToolAuthorizationService({
+          ...f.options,
+          executionProfile: 'full_access',
+          approvalAvailable: mode !== 'full_access_background',
+        })
+    if (mode === 'turn') {
+      const initial = authorization.authorize(f.call('lexora_web_fetch', { url: 'https://example.com' }), f.run, { access: 'network' })
+      await f.approve('approved_for_turn')
+      await initial
+    }
 
     const browser = {
       action: 'click' as const,
@@ -378,17 +388,17 @@ describe('harness tool authorization', () => {
       ['future_plugin_tool', { action: 'fixture' }, {}],
     ]
     for (const [name, input, declared] of cases)
-      await expect(f.authorization.authorize(f.call(name, input), f.run, declared), name).resolves.toBeNull()
+      await expect(authorization.authorize(f.call(name, input), f.run, declared), name).resolves.toBeNull()
 
-    expect(f.directories.get(f.run)).toMatchObject([{ path: outside, access: 'write' }])
-    expect(f.records.size).toBe(1)
+    expect(f.directories.get(f.run)).toMatchObject(mode === 'turn' ? [{ path: outside, access: 'write' }] : [])
+    expect(f.records.size).toBe(mode === 'turn' ? 1 : 0)
     const readOnly = new ToolAuthorizationService({ ...f.options, executionProfile: 'read_only' })
     await expect(readOnly.authorize(f.call('write', { path: join(workspace, 'blocked.txt'), content: 'no' }), f.run)).resolves.toBe('READ_ONLY_PROFILE')
     const background = new ToolAuthorizationService({ ...f.options, approvalAvailable: false })
     await expect(background.authorize(f.call('lexora_host_shell', { command: 'node fixture.mjs' }), f.run)).resolves.toBe('APPROVAL_UNAVAILABLE_IN_BACKGROUND')
-    const stale = f.authorization.authorize(f.call('lexora_browser_act', {}), f.run, { forceAsk: true, approval: { kind: 'browser', summary: 'Stale', browser }, validateBeforeExecution: async () => ({ blocked: true, reason: 'BROWSER_TARGET_STALE' }) })
+    const stale = authorization.authorize(f.call('lexora_browser_act', {}), f.run, { forceAsk: true, approval: { kind: 'browser', summary: 'Stale', browser }, validateBeforeExecution: async () => ({ blocked: true, reason: 'BROWSER_TARGET_STALE' }) })
     await expect(stale).resolves.toBe('BROWSER_TARGET_STALE')
-    expect(f.records.size).toBe(1)
+    expect(f.records.size).toBe(mode === 'turn' ? 1 : 0)
   })
 
   it('rejects a path replaced while waiting without granting its new target', async () => {
@@ -418,6 +428,31 @@ describe('harness tool authorization', () => {
     await result
     expect(command.signal.aborted).toBe(false)
     expect(f.repository.listPending()).toEqual([])
+  })
+
+  it('grants full-access sensitive targets only to the current execution and revokes them on release', async () => {
+    const homes = vi.spyOn(userHomePaths, 'resolveUserHomePaths').mockReturnValue([root])
+    try {
+      const sensitive = join(root, '.ssh')
+      await mkdir(sensitive)
+      const output = join(sensitive, 'fixture.txt')
+      const f = fixture()
+      const authorization = new ToolAuthorizationService({ ...f.options, executionProfile: 'full_access', approvalAvailable: false })
+      const event = f.call('lexora_image_generate', { outputPath: output })
+      await expect(authorization.authorize(event, f.run, { access: 'write', paths: [{ path: output, mode: 'create' }] })).resolves.toBeNull()
+      const executionGrants = [...f.grants, ...f.executionPermissions.get(f.run, event.toolCallId)]
+      await expect(resolveGrantedPath(executionGrants, output, 'create')).resolves.toMatchObject({ canonicalPath: output })
+      await expect(resolveGrantedPath(f.grants, output, 'create')).rejects.toMatchObject({ code: 'PATH_OUTSIDE_GRANTED_DIRECTORY' })
+      expect(f.executionPermissions.get(f.run, 'another-call')).toEqual([])
+      expect(f.repository.list()).toEqual([])
+      authorization.releaseExecutionPermit(event, f.run)
+      expect(f.executionPermissions.get(f.run, event.toolCallId)).toEqual([])
+      expect(authorization.getExecutionPermit(event, f.run)).toBeNull()
+      authorization.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile: 'workspace_write' })
+      await expect(authorization.authorize(event, f.run, { access: 'write', paths: [{ path: output, mode: 'create' }] })).resolves.toBe('SENSITIVE_PATH')
+      expect(f.executionPermissions.get(f.run, event.toolCallId)).toEqual([])
+    }
+    finally { homes.mockRestore() }
   })
 
   it('passes temporary grants to the approved execution only without changing saved grants', async () => {

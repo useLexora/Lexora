@@ -239,7 +239,7 @@ export default {
   'desktop.chat.toolDeniedReadOnly': 'The read-only profile blocked this operation',
   'desktop.chat.executionProfileFull': 'Full access',
   'desktop.chat.executionProfileFullConfirmAcknowledgement': 'I understand the risks and want to continue',
-  'desktop.chat.executionProfileFullConfirmDescription': 'Full access lets commands use your local permissions for files, credentials, and network. Some tools still require confirmation, but arbitrary commands cannot be constrained. Enable it only for a trusted task if you accept these risks.',
+  'desktop.chat.executionProfileFullConfirmDescription': 'Automatically approve tools with access to local files, credentials, and network. Use only for trusted tasks.',
   'desktop.chat.executionProfileFullConfirmTitle': 'Allow full access?',
   'desktop.chat.executionProfileOpen': 'View execution permissions',
   'desktop.chat.permissionModeFullDescription': 'Run commands with local permissions.',

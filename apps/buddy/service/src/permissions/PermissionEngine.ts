@@ -152,10 +152,12 @@ export class PermissionEngine {
     if (input.access === 'write' && request.profile === 'read_only')
       return deny('READ_ONLY_PROFILE', 'profile')
     const path = await classifyPath({ cwd: request.cwd, grants: request.grants, mode: 'existing', path: input.path, sensitive: this.#sensitive })
-    if (path.zone === 'sensitive')
+    if (path.zone === 'sensitive' && request.profile !== 'full_access')
       return deny('SENSITIVE_PATH', 'sensitive')
     if (!path.isDirectory)
       return deny('INVALID_PATH', 'invalid')
+    if (request.profile === 'full_access')
+      return allow()
     const metadata = await stat(path.canonicalPath, { bigint: true })
     const directory = { access: input.access, path: path.canonicalPath, device: String(metadata.dev), inode: String(metadata.ino) }
     if (!request.forceAsk) {
@@ -178,6 +180,11 @@ export class PermissionEngine {
   }
 
   async #classifyShell(request: PermissionRequest): Promise<ToolDecision | undefined> {
+    if (request.profile === 'full_access') {
+      if (request.shellDialect || ['bash', 'powershell', 'lexora_shell', 'lexora_host_shell'].includes(request.toolName))
+        readStringProperty(request.arguments, 'command')
+      return undefined
+    }
     if (request.shellDialect && request.shellDialect !== 'bash' && request.shellDialect !== 'powershell') {
       readStringProperty(request.arguments, 'command')
       return { type: 'ask', forceAsk: true, kind: 'shell', reason: 'unsupported-syntax', summary: 'Review a host command in this Shell dialect' }
@@ -228,7 +235,7 @@ export class PermissionEngine {
     request: PermissionRequest,
     classifications: readonly PathClassification[],
   ): PermissionDecision {
-    if (classifications.some(entry => entry.zone === 'sensitive'))
+    if (request.profile !== 'full_access' && classifications.some(entry => entry.zone === 'sensitive'))
       return deny('SENSITIVE_PATH', 'sensitive')
     return ask({
       kind: request.approval?.kind ?? 'system',
@@ -335,12 +342,10 @@ export class PermissionEngine {
     if (!decision) {
       if (outcome === 'delegate_allowlist')
         return deny('READ_ONLY_PROFILE', 'profile')
-      return request.profile === 'full_access' && !request.forceAsk
-        ? allow()
-        : ask({
-            kind: request.approval?.kind ?? 'system',
-            summary: request.approval?.summary ?? summaryFor('execute'),
-          })
+      return ask({
+        kind: request.approval?.kind ?? 'system',
+        summary: request.approval?.summary ?? summaryFor('execute'),
+      })
     }
     if (decision.type === 'allow')
       return request.forceAsk ? this.#forcedShellAsk(request) : allow()
@@ -350,8 +355,6 @@ export class PermissionEngine {
       return this.#forcedShellAsk(request, decision.reason)
     if (outcome === 'delegate_allowlist')
       return deny('READ_ONLY_PROFILE', 'profile')
-    if (request.profile === 'full_access' && !request.forceAsk)
-      return allow()
     return ask({
       kind: 'shell',
       shell: { cwd: request.cwd, reason: request.forceAsk ? 'forced-confirmation' : decision.reason ?? 'unknown-command' },
@@ -478,6 +481,8 @@ function finalizeDecision(
   request: PermissionRequest,
   decision: PermissionDecision,
 ): PermissionDecision {
+  if (request.profile === 'full_access' && decision.type !== 'deny')
+    return allow()
   const requiredDecision = request.requireApproval && decision.type === 'allow'
     ? ask({
         kind: request.approval?.kind ?? approvalKindFor(request.access ?? 'interaction'),
