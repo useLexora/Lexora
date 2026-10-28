@@ -44,16 +44,46 @@ function setup(children: LocalExecution[]) {
   const content = shallowRef(createBuddyUserContent())
   const scopeKey = shallowRef('conversation:conversation:branch')
   const defaultActorId = shallowRef<string | null>('lead')
+  const followUpBehavior = shallowRef<'queue' | 'steer'>('steer')
   const scope = effectScope()
   cleanups.push(() => scope.stop())
-  const state = scope.run(() => useActorInputTarget({ content, scopeKey, defaultActorId, tree: { groups, target: record => ({ conversationId: 'conversation', branchId: 'branch', rootRunId: record.rootRunId, runId: record.runId }) } }))!
+  const state = scope.run(() => useActorInputTarget({ content, scopeKey, defaultActorId, followUpBehavior, tree: { groups, target: record => ({ conversationId: 'conversation', branchId: 'branch', rootRunId: record.rootRunId, runId: record.runId }) } }))!
   const mention = (actorId = 'partner') => {
     content.value = { ...createBuddyUserContent(), body: [{ type: 'paragraph', content: [{ type: 'actor_ref', actorId, name: 'Partner' }, { type: 'text', text: ' Additional request' }] }] }
   }
-  return { state, content, scopeKey, defaultActorId, mention, update: (children: LocalExecution[]) => groups.value = projectExecutionGroups([root, ...children]) }
+  return { state, content, scopeKey, defaultActorId, followUpBehavior, mention, update: (children: LocalExecution[]) => groups.value = projectExecutionGroups([root, ...children]) }
 }
 
 describe('actor composer routing', () => {
+  it('applies the preference to busy roots and children while idle recipients start immediately', () => {
+    const f = setup([execution('child')])
+    f.followUpBehavior.value = 'queue'
+    expect(f.state.delivery.value).toEqual({ mode: 'next', actorId: 'lead', target: { rootRunId: 'root', runId: 'root' } })
+    f.mention()
+    expect(f.state.delivery.value).toEqual({ mode: 'next', actorId: 'partner', target: { rootRunId: 'root', runId: 'child' } })
+    expect(f.state.mailboxTarget.value).toBeNull()
+    f.followUpBehavior.value = 'steer'
+    expect(f.state.delivery.value?.mode).toBe('current')
+    expect(f.state.mailboxTarget.value?.runId).toBe('child')
+    f.followUpBehavior.value = 'queue'
+    f.mention('idle')
+    expect(f.state.delivery.value).toEqual({ mode: 'current', actorId: 'idle', target: null })
+  })
+
+  it('answers a pending user question even when ordinary messages are queued', () => {
+    const f = setup([execution('child', {
+      canAnswer: true,
+      questions: [{ questionId: 'question', text: 'Which file?', open: true, answered: false, audience: 'user' }],
+    })])
+    f.followUpBehavior.value = 'queue'
+    f.mention()
+    expect(f.state.delivery.value?.mode).toBe('current')
+    expect(f.state.mailboxTarget.value?.runId).toBe('child')
+    f.content.value = { ...f.content.value, panelResourceIds: ['file'] }
+    expect(f.state.delivery.value?.mode).toBe('current')
+    expect(f.state.mailboxTarget.value).toBeNull()
+  })
+
   it('finds an earlier root child after an independent newer root finishes', () => {
     const f = setup([
       execution('first'),

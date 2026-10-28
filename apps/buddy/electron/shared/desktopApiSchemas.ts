@@ -89,6 +89,7 @@ export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({
     onboardingCompleted: z.boolean().optional(),
     backgroundCloseNoticeShown: z.boolean().optional(),
     chat: z.object({
+      followUpBehavior: z.enum(['queue', 'steer']).optional(),
       outlinePosition: z.enum(DESKTOP_CHAT_OUTLINE_POSITIONS).optional(),
       pasteTextAsAttachment: z.boolean().optional(),
       permissionMode: z.enum(BUDDY_PERMISSION_MODES).optional(),

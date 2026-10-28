@@ -102,8 +102,10 @@ const {
 
 const inputDelivery = computed(() => isLocalCommand.value ? undefined : props.inputDelivery)
 const queuesSubmission = computed(() => {
-  if (isLocalCommand.value || inputDelivery.value)
+  if (isLocalCommand.value)
     return false
+  if (inputDelivery.value)
+    return inputDelivery.value.mode === 'next'
   return !props.isActorInput && Boolean(props.isRunning || props.hasQueuedMessages)
 })
 const collaborationCount = computed(() => isLocalCommand.value ? 0 : getBuddyUserContentActorReferences(chatComposerDocumentToUserContent(props.composerContent)).length)

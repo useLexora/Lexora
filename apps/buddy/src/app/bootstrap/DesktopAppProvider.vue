@@ -328,6 +328,7 @@ const featureDiscovery = useFeatureDiscovery({
       'npc-team': desktopRouteLocations.buddies(buddyDirectory.catalog.value?.defaultBuddyId),
       'additional-directories': desktopRouteLocations.tasks(),
       'network-permissions': desktopRouteLocations.settings('browser'),
+      'follow-up-behavior': desktopRouteLocations.settings('runtime'),
     }[id]
     await navigation.navigate(location)
     if (router.currentRoute.value.path !== router.resolve(location).path)

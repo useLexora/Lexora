@@ -218,6 +218,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     content: computed(() => drafts.load(drafts.targetKey.value).content),
     scopeKey: drafts.targetKey,
     defaultActorId: computed(getDefaultActorId),
+    followUpBehavior: computed(() => applicationSettings.config.value?.desktop.chat.followUpBehavior ?? 'steer'),
     tree: executionTree,
   })
   const activeRun = computed(() => {
@@ -674,6 +675,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     execution: {
       isActorInput: computed(() => actorInput.mailboxTarget.value !== null),
       inputExecution: actorInput.execution,
+      inputDelivery: actorInput.delivery,
       activeRun: readonly(activeRun),
       approvalViews: readonly(approvalViews),
       canMutateBranch: readonly(canMutateBranch),

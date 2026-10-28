@@ -342,7 +342,7 @@ describe('addressed role input', () => {
     expect(f.drafts.draft.value).toBe('')
   })
 
-  it('binds a current root supplement to its original target and gives changed intent a new request id', async () => {
+  it('retries the same delivery and request id when the preference changes after an unclear acknowledgement', async () => {
     const f = prepare()
     f.actorInput.mailboxTarget.value = null
     f.api.chat.enqueue.mockRejectedValue(new Error('Offline'))
@@ -352,8 +352,8 @@ describe('addressed role input', () => {
     f.actorInput.delivery.value = { ...f.actorInput.delivery.value!, mode: 'next' }
     expect(await f.execution.send({ content: '@Partner Continue this work', userContent: f.content })).toBe(false)
     const second = f.api.chat.enqueue.mock.calls[1]![0]
-    expect(second.requestId).not.toBe(first.requestId)
-    expect(second.delivery.mode).toBe('next')
+    expect(second.requestId).toBe(first.requestId)
+    expect(second.delivery).toEqual(first.delivery)
     expect(f.drafts.snapshot(f.key).content).toEqual(f.content)
   })
 

@@ -190,13 +190,14 @@ export function createChatQueueRepository(database: DatabaseSync) {
         return Number(database.prepare('UPDATE chat_queue SET state = \'paused\' WHERE conversation_id = ? AND state = \'waiting\'').run(conversationId).changes)
       return Number(database.prepare('UPDATE chat_queue SET state = \'paused\' WHERE state = \'waiting\'').run().changes)
     },
-    commitInRun(input: QueuedTurnRequestInput, runId: string, runPermissionCeiling: BuddyExecutionProfile | undefined) {
+    commitInRun(input: QueuedTurnRequestInput, runId: string, runPermissionCeiling: BuddyExecutionProfile | undefined, promoteNext = false) {
       return withTransaction(database, () => {
         assertScope(input)
         if (!isCurrentInput(input))
           throw new BuddyServiceError('BUDDY_CONFLICT')
         const queued = find(input.queuedMessageId!)
-        if (!queued || !['waiting', 'paused'].includes(queued.state) || JSON.stringify(decode(queued).delivery) !== JSON.stringify(input.delivery))
+        const originalDelivery = promoteNext && input.delivery?.mode === 'current' ? { ...input.delivery, mode: 'next' } : input.delivery
+        if (!queued || !['waiting', 'paused'].includes(queued.state) || JSON.stringify(decode(queued).delivery) !== JSON.stringify(originalDelivery))
           throw new BuddyServiceError('VALIDATION_FAILED')
         assertTurnInputDelivery(database, input, 'in_run', runId)
         const run = database.prepare(`SELECT r.id, r.actor_snapshot_json FROM runs r JOIN conversations c ON c.id = r.conversation_id
@@ -218,7 +219,7 @@ export function createChatQueueRepository(database: DatabaseSync) {
           if (Number(database.prepare('UPDATE attachments SET draft_id = NULL, message_id = ? WHERE id = ? AND draft_id = ?').run(input.userMessageId, binding.id, input.queuedMessageId!).changes) !== 1)
             throw new TurnRequestAttachmentError()
         }
-        database.prepare('UPDATE chat_queue SET state = \'sent\', run_id = ? WHERE id = ?').run(runId, input.queuedMessageId!)
+        database.prepare('UPDATE chat_queue SET state = \'sent\', run_id = ?, prepared_json = ? WHERE id = ?').run(runId, JSON.stringify({ ...decode(queued), delivery: input.delivery }), input.queuedMessageId!)
       })
     },
   }

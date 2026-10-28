@@ -12,6 +12,7 @@ export function useTaskComposer(props: Readonly<TaskComposerHostProps>) {
       isActorInput: !execution.editingMessageId.value && execution.isActorInput.value,
       inputDelivery: !execution.editingMessageId.value && execution.inputExecution.value
         ? {
+            mode: execution.inputDelivery.value?.mode ?? 'current',
             answering: execution.inputExecution.value.canAnswer,
           }
         : undefined,

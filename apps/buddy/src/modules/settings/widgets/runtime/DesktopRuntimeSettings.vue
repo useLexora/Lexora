@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { DesktopChatPreferences } from '@buddy-electron/shared/desktopApi'
 import type { BuddyPermissionMode } from '@buddy-shared/permissions/permissionMode'
 import type { RuntimePreferences } from '@buddy-shared/runtime/runtimePreferences'
 import type { ApplicationSettingsProps } from '../app/typing'
@@ -14,7 +15,7 @@ import { useSettingMutation } from '../../state/useSettingMutation'
 import DesktopSettingRow from '../shared/DesktopSettingRow.vue'
 import DesktopSettingsGroup from '../shared/DesktopSettingsGroup.vue'
 
-type RuntimeSettingField = 'cacheWarming' | 'codemode' | 'defaultPermissionMode' | 'modelRetryLimit'
+type RuntimeSettingField = 'cacheWarming' | 'codemode' | 'defaultPermissionMode' | 'modelRetryLimit' | 'followUpBehavior'
 type RetryMode = 0 | 'limited' | 'unlimited'
 
 const props = defineProps<ApplicationSettingsProps>()
@@ -48,6 +49,10 @@ const { pending: pendingFields, save } = useSettingMutation<RuntimeSettingField>
   () => message.error(t('desktop.settings.saveFailed')),
 )
 const fullAccessConfirmationOpen = shallowRef(false)
+const followUpBehaviors = computed(() => [
+  { label: t('desktop.settings.runtime.followUpQueue'), value: 'queue' as const },
+  { label: t('desktop.settings.runtime.followUpSteer'), value: 'steer' as const },
+])
 const cacheWarmingModes = computed(() => [
   { label: t('desktop.settings.runtime.cacheWarmingOff'), value: 'off' },
   { label: t('desktop.settings.runtime.cacheWarmingStreaming'), value: 'streaming' },
@@ -102,6 +107,10 @@ function updateCacheWarming(cacheWarming: RuntimePreferences['cacheWarming']) {
 function updateCodemode(codemode: boolean) {
   void save('codemode', { runtime: { codemode } })
 }
+
+function updateFollowUpBehavior(followUpBehavior: DesktopChatPreferences['followUpBehavior']) {
+  void save('followUpBehavior', { desktop: { chat: { followUpBehavior } } })
+}
 </script>
 
 <template>
@@ -125,9 +134,12 @@ function updateCodemode(codemode: boolean) {
     </section>
     <section class="grid gap-[0.8rem]">
       <h2 class="m-0 text-[0.92rem]">
-        {{ t('desktop.settings.runtime.toolExecution') }}
+        {{ t('desktop.settings.runtime.executionBehavior') }}
       </h2>
       <DesktopSettingsGroup>
+        <DesktopSettingRow v-slot="{ controlAttrs }" :label="t('desktop.settings.runtime.followUpBehavior')" :description="t('desktop.settings.runtime.followUpBehaviorDescription')" toggle data-testid="follow-up-behavior-setting">
+          <DesktopSegmentedControl v-bind="controlAttrs" :model-value="config.desktop.chat.followUpBehavior" :options="followUpBehaviors" :disabled="pendingFields.has('followUpBehavior')" @update:model-value="updateFollowUpBehavior" />
+        </DesktopSettingRow>
         <DesktopSettingRow v-slot="{ controlAttrs }" :label="t('desktop.settings.runtime.codemode')" :description="t('desktop.settings.runtime.codemodeDescription')" toggle data-testid="codemode-setting">
           <NSwitch v-bind="controlAttrs" :round="false" :value="config.runtime.codemode" :loading="pendingFields.has('codemode')" :disabled="pendingFields.has('codemode')" :aria-disabled="pendingFields.has('codemode')" @update:value="updateCodemode" />
         </DesktopSettingRow>

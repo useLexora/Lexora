@@ -1,6 +1,9 @@
 import type { FeatureGuideId } from '@buddy-shared/onboarding/featureDiscovery'
 
 const targets = {
+  'follow-up-behavior': [
+    { id: 'follow-up-behavior', selector: '[data-testid="follow-up-behavior-setting"]', title: 'discovery.follow-up-behavior.title', description: 'discovery.follow-up-behavior.hint', side: 'bottom', align: 'start' },
+  ],
   'navigation-layout': [
     { id: 'navigation-layout', selector: '.desktop-navigation-layout-settings', title: 'discovery.navigation-layout.title', description: 'discovery.navigation-layout.hint', side: 'bottom', align: 'center' },
   ],

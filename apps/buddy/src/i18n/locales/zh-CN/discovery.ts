@@ -1,4 +1,7 @@
 export default {
+  'discovery.follow-up-behavior.title': '选择工作中发送消息的方式',
+  'discovery.follow-up-behavior.description': '在运行时设置的“执行行为”中，选择默认补充当前工作或排队等待。排队消息仍可单独立即发送。',
+  'discovery.follow-up-behavior.hint': '默认补充当前工作；选择排队后，新消息会等当前工作结束再处理。此设置与 Codemode 工具编排归在同一组，回答待处理问题不受影响。',
   'discovery.title': '版本功能列表',
   'discovery.description': '浏览当前及历史版本的功能，跟随引导找到对应入口。',
   'discovery.aboutDescription': '查看当前及历史版本的功能介绍，随时重温引导。',

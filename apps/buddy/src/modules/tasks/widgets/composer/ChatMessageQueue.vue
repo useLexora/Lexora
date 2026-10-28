@@ -37,8 +37,8 @@ const rows = computed(() => props.items.map((item) => {
   })
   return {
     ...item,
-    differentBuddy: !!props.activeBuddyId && item.buddyId !== props.activeBuddyId,
-    canSteer: !item.delivery || (item.delivery.mode === 'current' && item.delivery.target !== null && item.state === 'waiting'),
+    differentBuddy: !item.delivery && !!props.activeBuddyId && item.buddyId !== props.activeBuddyId,
+    canSteer: !item.delivery || item.delivery.mode === 'next' || (item.delivery.target !== null && item.state === 'waiting'),
     recipient: props.recipientNames?.get(item.buddyId)
       ?? getBuddyUserContentActorReferences(item.content.userContent).find(actor => actor.actorId === item.buddyId)?.name,
     status: item.delivery

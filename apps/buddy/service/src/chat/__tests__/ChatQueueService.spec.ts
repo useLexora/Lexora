@@ -205,6 +205,53 @@ describe('persistent chat queue scheduling', () => {
     expect(f.database.prepare('SELECT id FROM messages').all()).toEqual([{ id: 'initial' }])
   })
 
+  it('promotes only the explicitly selected next input with atomic attachment ownership and the original replay receipt', async () => {
+    const f = fixture()
+    const delivery = { mode: 'next' as const, actorId: 'default', target: { rootRunId: 'run-initial', runId: 'run-initial' } }
+    f.queue.enqueue({ ...f.input('first'), buddyId: 'default', delivery })
+    const attachments = createAttachmentRepository(f.database)
+    attachments.create({ id: 'queued-file', conversationId: null, draftId: 'draft', messageId: null, name: 'fixture.txt', mimeType: 'text/plain', sizeBytes: 1, storedPath: '/private/source.txt', createdAt: 'now' })
+    const prepared = { ...f.input('selected'), buddyId: 'default', delivery }
+    prepared.runInput.attachmentIds = ['queued-file']
+    prepared.attachmentBindings = [{ id: 'queued-file', sourceAttachmentId: 'queued-file', sourceDraftId: 'draft', messageId: 'selected', storedPath: '/private/destination.txt', mimeType: 'text/plain', createdAt: prepared.createdAt }]
+    const request = enqueueRequest(f, prepared)
+    const receipt = await f.service.enqueue(request)
+    f.queue.enqueue({ ...f.input('last'), buddyId: 'default', delivery })
+    await f.service.drain()
+    expect(await f.service.followUp('run-initial', f.controller.signal)).toBe(false)
+    expect(f.delivered).toEqual([])
+    expect(attachments.findById('queued-file')).toMatchObject({ draftId: 'selected', messageId: null })
+    expect(await f.service.steer(f.target('selected'))).toBe('accepted')
+    expect(f.delivered).toEqual(['steer:selected'])
+    expect(f.queue.list(f.scope)).toEqual(['first', 'last'].map(id => expect.objectContaining({ id, state: 'waiting', delivery })))
+    expect(attachments.findById('queued-file')).toMatchObject({ draftId: null, messageId: 'selected', conversationId: 'conversation' })
+    const persisted = f.database.prepare('SELECT prepared_json FROM chat_queue WHERE id = ?').get('selected') as { prepared_json: string }
+    expect(JSON.parse(persisted.prepared_json).delivery).toEqual({ ...delivery, mode: 'current' })
+    expect(await f.service.steer(f.target('selected'))).toBe('unavailable')
+    f.database.exec('UPDATE runs SET status = \'completed\'')
+    expect(await f.service.enqueue(request)).toEqual(receipt)
+    expect(f.delivered).toEqual(['steer:selected'])
+    expect(f.database.prepare('SELECT id FROM messages ORDER BY rowid').all()).toEqual([{ id: 'initial' }, { id: 'selected' }])
+  })
+
+  it.each(['incompatible', 'closed', 'refused'] as const)('keeps next intent and queue state when explicit steering is %s', async (failure) => {
+    const f = fixture()
+    const delivery = { mode: 'next' as const, actorId: 'default', target: { rootRunId: 'run-initial', runId: 'run-initial' } }
+    await f.service.enqueue(enqueueRequest(f, { ...f.input('next'), buddyId: 'default', delivery }))
+    const before = f.queue.list(f.scope)
+    if (failure === 'incompatible')
+      f.database.exec('UPDATE runs SET model = \'another-model\'')
+    else if (failure === 'closed')
+      f.validate.mockImplementationOnce(async () => { f.database.exec('UPDATE runs SET status = \'completed\'') })
+    else
+      f.runner.steer.mockReturnValueOnce(false)
+    expect(await f.service.steer(f.target('next'))).toBe(failure === 'incompatible' ? 'incompatible' : 'unavailable')
+    expect(f.queue.list(f.scope)).toEqual(before)
+    expect(f.delivered).toEqual([])
+    expect(f.launched).toEqual([])
+    expect(f.database.prepare('SELECT id FROM messages').all()).toEqual([{ id: 'initial' }])
+  })
+
   it('keeps next bound across leader changes and out of the current run until closure and owner release', async () => {
     const f = fixture()
     await f.enableDefinitions()
@@ -216,7 +263,6 @@ describe('persistent chat queue scheduling', () => {
     f.conversations.addMember({ id: 'conversation', buddyId: other.id, updatedAt: 'now' })
     f.conversations.setBuddy({ id: 'conversation', buddyId: other.id, updatedAt: 'now' })
     expect(await f.service.followUp('run-initial', f.controller.signal)).toBe(false)
-    expect(await f.service.steer(f.target('next'))).toBe('unavailable')
     expect(f.delivered).toEqual([])
     expect(f.database.prepare('SELECT id FROM messages').all()).toEqual([{ id: 'initial' }])
     expect(await f.service.reconcile(f.scope)).toBe(false)

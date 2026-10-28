@@ -1,6 +1,7 @@
 import type { DesktopChatWelcomeItem, DesktopChatWelcomePreference, DesktopTaskPinnedItem, DesktopTaskSidebarSection } from '@buddy-electron/shared/desktopApi'
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { ChangeRecoveryResolveRequest, LocalChangeRecoveryItem, LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
+import type { BuddyInputDelivery } from '@buddy-shared/conversation/chatApi'
 import type { LocalChatQueueItem } from '@buddy-shared/conversation/chatQueueApi'
 import type { BuddyComposerDraftScope } from '@buddy-shared/conversation/composerDraft'
 import type { BuddyComposerSource } from '@buddy-shared/conversation/composerResource'
@@ -147,6 +148,7 @@ export interface TaskComposer {
 }
 
 export interface TaskExecution {
+  inputDelivery: State<BuddyInputDelivery | undefined>
   isActorInput: State<boolean>
   inputExecution: State<LocalExecution | null>
   stoppingRunId: State<string | null>

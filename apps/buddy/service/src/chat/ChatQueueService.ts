@@ -197,6 +197,11 @@ export class ChatQueueService {
         return 'unavailable'
       const queued = this.#options.queue.pending(target)
       if (queued?.delivery) {
+        if (queued.delivery.mode === 'next' && queued.delivery.target) {
+          const execution = this.#options.queue.validateDelivery(queued)
+          if (execution && execution.phase !== 'closed')
+            return this.#steerCurrent(target, queued, true)
+        }
         if (queued.delivery.mode === 'next' || !queued.delivery.target)
           return await this.#dispatch(target, true) ? 'accepted' : 'unavailable'
         return this.#steerCurrent(target, queued)
@@ -265,10 +270,11 @@ export class ChatQueueService {
     }
   }
 
-  async #steerCurrent(target: LocalChatQueueTarget, pending: QueuedTurnRequestInput): Promise<LocalChatQueueSteerResult> {
+  async #steerCurrent(target: LocalChatQueueTarget, pending: QueuedTurnRequestInput, promoteNext = false): Promise<LocalChatQueueSteerResult> {
     try {
-      this.#options.queue.validateDelivery(pending)
-      const input = await this.#options.turns.refreshQueuedInput(pending)
+      const source: QueuedTurnRequestInput = promoteNext ? { ...pending, delivery: { ...pending.delivery!, mode: 'current' } } : pending
+      this.#options.queue.validateDelivery(source)
+      const input = await this.#options.turns.refreshQueuedInput(source)
       const execution = this.#options.queue.validateDelivery(input)!
       if (!this.#canFollowUp(execution.run, input))
         throw new BuddyServiceError('INPUT_DELIVERY_INCOMPATIBLE')
@@ -280,11 +286,18 @@ export class ChatQueueService {
         || !this.#options.queue.pending(target) || !this.#options.queue.isCurrentInput(input)) {
         throw new BuddyServiceError('INPUT_DELIVERY_TARGET_UNAVAILABLE')
       }
-      if (!this.#deliver(input, execution.run.id, 'steer'))
+      if (!this.#deliver(input, execution.run.id, 'steer', promoteNext))
         throw new BuddyServiceError('INPUT_DELIVERY_TARGET_UNAVAILABLE')
       return 'accepted'
     }
     catch (error) {
+      if (promoteNext) {
+        if (error instanceof BuddyServiceError && error.code === 'INPUT_DELIVERY_INCOMPATIBLE')
+          return 'incompatible'
+        if (error instanceof BuddyServiceError && error.code === 'INPUT_DELIVERY_TARGET_UNAVAILABLE')
+          return 'unavailable'
+        throw error
+      }
       this.#pauseItem(target)
       throw error
     }
@@ -315,7 +328,7 @@ export class ChatQueueService {
         && run.maxTokens === (input.modelParameters?.maxTokens ?? null)))
   }
 
-  #deliver(input: QueuedTurnRequestInput, runId: string, mode: 'steer' | 'followUp') {
+  #deliver(input: QueuedTurnRequestInput, runId: string, mode: 'steer' | 'followUp', promoteNext = false) {
     this.#options.availability?.assertRunExecutable(runId)
     return this.#options.runner[mode](runId, () => {
       this.#options.availability?.assertRunExecutable(runId)
@@ -333,7 +346,7 @@ export class ChatQueueService {
           return metadata?.startsWith('image/') && metadata !== 'image/svg+xml' ? [{ attachmentId: binding.id, mimeType: metadata }] : []
         }),
       })
-      this.#options.queue.commitInRun(input, runId, this.#options.getRunPermissionCeiling(runId))
+      this.#options.queue.commitInRun(input, runId, this.#options.getRunPermissionCeiling(runId), promoteNext)
       this.#changed('delivered', input, { commitId: randomUUID(), requestId: input.requestId, queueId: input.queuedMessageId!, runId, messageId: input.userMessageId, ...(input.attachmentBindings.length ? { attachmentOwnership: { kind: 'message', attachmentIds: input.attachmentBindings.map(binding => binding.id) } } : {}) })
       return reference
     }, input.runInput.contextItems.flatMap(item => item.kind === 'skill' && item.skill ? [item.skill] : []))

@@ -1,4 +1,7 @@
 export default {
+  'discovery.follow-up-behavior.title': 'Choose how to send messages during work',
+  'discovery.follow-up-behavior.description': 'Under Execution behavior in Runtime settings, choose whether messages steer current work or wait in the queue. Queued messages can still be sent immediately.',
+  'discovery.follow-up-behavior.hint': 'Messages steer current work by default. Select Queue to process new messages after the current work ends. This setting is grouped with Codemode tool orchestration; answers to pending questions are unaffected.',
   'discovery.title': 'Release features',
   'discovery.description': 'Browse current and past releases, with guides to help you find each feature.',
   'discovery.aboutDescription': 'Explore features from current and past releases and revisit their guides.',

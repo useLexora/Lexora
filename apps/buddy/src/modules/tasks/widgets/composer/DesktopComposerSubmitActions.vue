@@ -24,7 +24,7 @@ const submitLabel = computed(() => {
   if (props.isLocalCommand)
     return t('desktop.command.run')
   if (props.inputDelivery)
-    return t(props.inputDelivery.answering ? 'desktop.chat.inputDelivery.answer' : 'desktop.chat.inputDelivery.current')
+    return t(props.inputDelivery.mode === 'next' ? 'desktop.chat.queueAdd' : props.inputDelivery.answering ? 'desktop.chat.inputDelivery.answer' : 'desktop.chat.inputDelivery.current')
   return t(props.queuesSubmission ? 'desktop.chat.queueAdd' : 'desktop.chat.send')
 })
 const actions = computed(() => [

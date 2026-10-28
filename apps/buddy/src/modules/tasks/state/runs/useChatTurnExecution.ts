@@ -182,7 +182,7 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
       }
       const expectedRevision = confirmedDraft.revision!
       if (delivery) {
-        deliveryKey = `${confirmedDraft.draftId}:${expectedRevision}:${delivery.actorId}:${delivery.mode}`
+        deliveryKey = `${confirmedDraft.draftId}:${expectedRevision}:${delivery.actorId}`
         const pending = pendingDeliveries.get(deliveryKey)
         if (pending) {
           delivery = pending.delivery

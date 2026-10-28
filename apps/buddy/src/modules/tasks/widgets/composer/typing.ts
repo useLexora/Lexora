@@ -57,6 +57,7 @@ export interface ChatComposerEditorOptions {
 }
 
 export interface DesktopComposerInputDelivery {
+  mode: 'current' | 'next'
   answering: boolean
 }
 

@@ -101,6 +101,7 @@ function createOwner(name: string) {
     execution: {
       isActorInput: shallowRef(false),
       inputExecution: shallowRef(null),
+      inputDelivery: shallowRef(undefined),
       queueRecipientNames: shallowRef(new Map<string, string>()),
       queuedMessages: shallowRef([]),
       pendingQueueActions: shallowRef(new Set<string>()),

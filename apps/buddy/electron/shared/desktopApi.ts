@@ -166,6 +166,7 @@ export const DESKTOP_CHAT_OUTLINE_POSITIONS = [
 export type DesktopChatOutlinePosition = typeof DESKTOP_CHAT_OUTLINE_POSITIONS[number]
 
 export interface DesktopChatPreferences {
+  followUpBehavior: 'queue' | 'steer'
   outlinePosition: DesktopChatOutlinePosition
   pasteTextAsAttachment: boolean
   permissionMode: import('../../shared/permissions/permissionMode').BuddyPermissionMode
@@ -179,6 +180,7 @@ export interface DesktopChatPreferences {
 }
 
 export const DEFAULT_DESKTOP_CHAT_PREFERENCES: Readonly<DesktopChatPreferences> = {
+  followUpBehavior: 'steer',
   outlinePosition: 'top-right',
   pasteTextAsAttachment: true,
   permissionMode: BUDDY_DEFAULT_PERMISSION_MODE,
