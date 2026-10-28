@@ -32,6 +32,7 @@ import { extensionConfigurationSchema } from './extensionSettings'
 export const EXTENSION_IPC = {
   request: 'lexora:extensions:request',
   changed: 'lexora:extensions:changed',
+  installationsChanged: 'lexora:extensions:installations-changed',
   conditionsChanged: 'lexora:extensions:conditions-changed',
   review: 'lexora:extensions:review',
   workbench: 'lexora:extensions:workbench',
@@ -227,6 +228,7 @@ export interface ExtensionApi {
   closeView: (viewId: string, generation: string, token: string) => Promise<void>
   viewRequest: (viewId: string, generation: string, token: string, method: string, params: unknown) => Promise<JsonValue>
   onChanged: (listener: () => void) => () => void
+  onInstallationsChanged: (listener: () => void) => () => void
   onReview: (listener: (review: ExtensionReviewResult) => void) => () => void
   onWorkbench: (listener: (event: ExtensionWorkbenchEvent) => void) => () => void
   replyWorkbench: (requestId: string, result: ExtensionWorkbenchResult) => void

@@ -7,22 +7,22 @@ const { strToU8, zipSync } = createRequire(new URL('../../../apps/buddy/package.
 const id = 'tests.updates'
 const themeId = `${id}.theme`
 
-async function writePackage(directory, version, accent) {
+async function writePackage(directory, version, accent, pluginId = id) {
   const manifest = {
     schemaVersion: 1,
-    id,
-    name: '更新验收插件',
+    id: pluginId,
+    name: pluginId === id ? '更新验收插件' : '独立操作插件',
     description: '验证更新生效与配置保留。',
     tags: ['主题', '效率'],
     version,
     apiVersion: 3,
     engines: { lexora: '*' },
     contributes: {
-      themes: [{ id: themeId, label: '更新验收主题', appearance: 'light', path: 'theme.json' }],
-      settings: { items: [{ id: `${id}.preference`, key: 'preference', group: 'settings.general.general', type: 'string', title: 'Preference', default: '' }] },
+      themes: [{ id: `${pluginId}.theme`, label: '更新验收主题', appearance: 'light', path: 'theme.json' }],
+      settings: { items: [{ id: `${pluginId}.preference`, key: 'preference', group: 'settings.general.general', type: 'string', title: 'Preference', default: '' }] },
     },
   }
-  const file = path.join(directory, `plugin-${version}.lexora-extension`)
+  const file = path.join(directory, `${pluginId}-${version}.lexora-extension`)
   await fs.mkdir(directory, { recursive: true })
   await fs.writeFile(file, zipSync({ 'extension.json': strToU8(JSON.stringify(manifest)), 'theme.json': strToU8(JSON.stringify({ schemaVersion: 1, colors: { accent } })) }))
   return file
@@ -36,7 +36,7 @@ test('plugin updates apply separately from restart and preserve preferences and 
   const card = () => page.locator(`[data-extension-id="${id}"]`)
   async function install(version, accent, apply = true) {
     const file = await writePackage(directory, version, accent)
-    await page.evaluate(() => window.location.hash = '/extensions')
+    await page.getByRole('button', { name: '插件', exact: true }).click()
     await app.evaluate(({ dialog }, file) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] })
     }, file)

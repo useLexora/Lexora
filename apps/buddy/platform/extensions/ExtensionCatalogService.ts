@@ -16,11 +16,13 @@ export class ExtensionCatalogService {
   #loading: Promise<void> | null = null
   #refreshing: Promise<ExtensionCatalogSnapshot> | null = null
   readonly #abort = new AbortController()
+  readonly #checksum: (bytes: Uint8Array, signal: AbortSignal) => Promise<string>
 
-  constructor(root: string, version: string, get: (url: string, init: { signal: AbortSignal }) => Promise<Response>) {
+  constructor(root: string, version: string, get: (url: string, init: { signal: AbortSignal }) => Promise<Response>, checksum: (bytes: Uint8Array, signal: AbortSignal) => Promise<string> = async bytes => sha256(bytes)) {
     this.#path = join(root, 'catalog.json')
     this.#version = version
     this.#get = get
+    this.#checksum = checksum
   }
 
   async list(refresh = false): Promise<ExtensionCatalogSnapshot> {
@@ -53,8 +55,11 @@ export class ExtensionCatalogService {
       throw new Error('EXTENSION_MANIFEST_INVALID')
     const entry = parsed.data
     const bytes = await this.#fetch(entry.artifact.url, entry.artifact.size, signal)
-    if (bytes.byteLength !== entry.artifact.size || sha256(bytes) !== entry.artifact.sha256)
+    const checking = AbortSignal.any([signal, this.#abort.signal])
+    checking.throwIfAborted()
+    if (bytes.byteLength !== entry.artifact.size || await this.#checksum(bytes, checking) !== entry.artifact.sha256)
       throw new Error('EXTENSION_DOWNLOAD_CHECKSUM_FAILED')
+    checking.throwIfAborted()
     return { entry, bytes }
   }
 

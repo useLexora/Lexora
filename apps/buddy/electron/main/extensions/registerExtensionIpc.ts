@@ -26,6 +26,7 @@ import { extensionReferenceCaptureSchema } from '../../../shared/extensions/exte
 import { assertTrustedSender } from '../ipc'
 import { compileExtension } from './compileExtension'
 import { createExtensionClipboard } from './ExtensionClipboard'
+import { processExtensionPackageInBackground } from './ExtensionPackageWorker'
 import { ExtensionProtocol } from './ExtensionProtocol'
 import { SandboxedExtensionHost } from './SandboxedExtensionHost'
 
@@ -55,7 +56,7 @@ export function registerExtensionIpc(options: {
   conditionRuntime?: (input: { models: boolean, task: boolean, taskId: string | null, runId: string | null }, signal: AbortSignal) => Promise<ExtensionConditionRuntime>
   agentRequest?: (input: { invocationId: string, method: string, params: JsonValue }, signal: AbortSignal) => Promise<JsonValue>
 }): { shells: { list: ExtensionService['shellContributions'] }, skills: { list: ExtensionService['skillContributions'] }, capabilities: { list: ExtensionService['capabilityContributions'] }, withStoppedStorage: ExtensionService['withStoppedStorage'], themesReady: Promise<void>, conditions: ExtensionService['conditions'], dispose: () => Promise<void>, reviewPackage: (path: string) => Promise<void>, inspect: (id: string) => Promise<ExtensionInspection>, agent: { readResource: ExtensionService['readAgentResource'], list: () => Promise<ExtensionAgentDescriptor[]>, invoke: (input: ExtensionAgentInvocation, signal: AbortSignal) => Promise<JsonValue> } } {
-  const store = new ExtensionPackageStore(join(options.home, 'extensions'), options.version)
+  const store = new ExtensionPackageStore(join(options.home, 'extensions'), options.version, processExtensionPackageInBackground)
   async function reviewResult(operation: () => Promise<ExtensionReview>): Promise<ExtensionReviewResult> {
     try {
       return await operation()
@@ -199,10 +200,10 @@ export function registerExtensionIpc(options: {
         return refreshThemes()
     }),
     options.themes.onDidChange(snapshot => service.notifyThemeChanged(snapshot.revision)),
-    service.onDidChange(() => {
+    service.onDidChange((change) => {
       const current = window()
       if (current && !current.isDestroyed())
-        current.webContents.send(EXTENSION_IPC.changed)
+        current.webContents.send(change.kind === 'installation-progress' ? EXTENSION_IPC.installationsChanged : EXTENSION_IPC.changed)
     }),
     service.onDidChange((change) => {
       if (change.kind === 'contributions' && !change.initial)

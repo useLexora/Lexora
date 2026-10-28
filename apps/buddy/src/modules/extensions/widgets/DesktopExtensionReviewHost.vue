@@ -14,7 +14,6 @@ const { state, language } = useExtensionContext()
 const message = useMessage()
 const review = shallowRef<ExtensionReview | null>(null)
 const incompatibleReview = shallowRef<ExtensionIncompatibleReview | null>(null)
-const busy = shallowRef(false)
 function cancel() {
   const current = review.value
   review.value = null
@@ -28,26 +27,22 @@ onScopeDispose(state.api.onReview((next) => {
 }))
 onScopeDispose(cancel)
 async function install(applyUpdate: boolean, choices: FileOpeningChoice[]) {
-  if (!review.value || busy.value)
+  if (!review.value || state.busyIds.has(review.value.manifest.id))
     return
-  busy.value = true
   const current = review.value
+  review.value = null
   try {
-    await state.install(current, applyUpdate, choices)
-    if (review.value === current)
-      review.value = null
-    await state.refresh()
-    if (current.currentVersion) {
+    const installed = await state.install(current, applyUpdate, choices)
+    if (installed && current.currentVersion) {
       const labels = extensionLabels(language.value)
       message.success(applyUpdate ? labels.updateApplied : labels.updateDeferred)
     }
   }
   catch (error) { message.error(extensionErrorCode(error)) }
-  finally { busy.value = false }
 }
 </script>
 
 <template>
-  <DesktopExtensionInstallReview v-if="review" :key="review.token" :review="review" :language="language" :busy="busy" @cancel="cancel" @install="install" />
+  <DesktopExtensionInstallReview v-if="review" :key="review.token" :review="review" :language="language" :busy="state.busyIds.has(review.manifest.id)" @cancel="cancel" @install="install" />
   <DesktopExtensionIncompatibleReview v-if="incompatibleReview" :review="incompatibleReview" :language="language" @close="incompatibleReview = null" />
 </template>

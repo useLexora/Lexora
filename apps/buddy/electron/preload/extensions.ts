@@ -44,6 +44,7 @@ export function createExtensionApi(): ExtensionApi {
     closeView: (viewId, generation, token) => request({ action: 'closeView', viewId, generation, token }),
     viewRequest: (viewId, generation, token, method, params) => request({ action: 'viewRequest', viewId, generation, token, method, params }),
     onChanged: listener => subscribe(EXTENSION_IPC.changed, listener),
+    onInstallationsChanged: listener => subscribe(EXTENSION_IPC.installationsChanged, listener),
     onReview: listener => subscribe(EXTENSION_IPC.review, listener),
     onWorkbench: listener => subscribe(EXTENSION_IPC.workbench, listener),
     replyWorkbench: (requestId, result) => ipcRenderer.send(EXTENSION_IPC.workbenchReply, { requestId, result }),

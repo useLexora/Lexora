@@ -44,7 +44,7 @@ import { extensionConditionInvalidationSchema } from '../../shared/extensions/ex
 import { extensionDiagnostic, ExtensionRequestError } from '../../shared/extensions/extensionDiagnostic'
 import { extensionDocumentInfoSchema } from '../../shared/extensions/extensionDocumentInfo'
 import { extensionFileHandlerBindings } from '../../shared/extensions/extensionFileOpening'
-import { extensionCompatible, extensionManifestSchema, extensionPathSchema } from '../../shared/extensions/extensionManifest'
+import { extensionCompatible, extensionPathSchema } from '../../shared/extensions/extensionManifest'
 import { extensionReferenceCaptureSchema, extensionReferenceCommitSchema, extensionReferenceInputSchema, extensionReferenceOpeningSchema, extensionReferenceTargetSchema } from '../../shared/extensions/extensionReferences'
 import { extensionDirectoryScanSchema, extensionResourceCreateSchema, extensionResourceSelectionSchema } from '../../shared/extensions/extensionResources'
 import { extensionNotificationSchema, extensionScheduleIdSchema, extensionScheduleInputSchema } from '../../shared/extensions/extensionSchedule'
@@ -63,7 +63,7 @@ import { ExtensionCatalogService } from './ExtensionCatalogService'
 import { ExtensionConditionInvalidatedError } from './ExtensionConditionEvaluator'
 import { ExtensionConditions } from './ExtensionConditions'
 import { ExtensionDocuments } from './ExtensionDocuments'
-import { sha256, unpackExtension, verifiedExtensionAsset } from './extensionFiles'
+import { sha256, verifiedExtensionAsset } from './extensionFiles'
 import { ExtensionInstallations } from './ExtensionInstallations'
 import { extensionActivationOrder } from './ExtensionPackageStore'
 import { ExtensionResourceWriter } from './ExtensionResourceWriter'
@@ -210,7 +210,7 @@ export class ExtensionService {
         ports.agentChanged?.()
     })
     this.installations = new ExtensionInstallations(store.root, () => this.#publish({ kind: 'installation-progress' }))
-    this.catalog = new ExtensionCatalogService(store.root, store.appVersion, ports.get)
+    this.catalog = new ExtensionCatalogService(store.root, store.appVersion, ports.get, (bytes, signal) => store.processPackage({ kind: 'hash', bytes }, signal))
     this.scheduler = new ExtensionScheduler(store.root, {
       available: (id, command) => {
         if (this.#disposed || this.#diagnostics.get(id)?.error)
@@ -717,7 +717,7 @@ export class ExtensionService {
     await this.initialize()
     const job = this.installations.begin(basename(path), 'validate')
     try {
-      const review = await this.store.review(path, development)
+      const review = await this.store.review(path, development, job.signal)
       this.installations.identify(job.id, review.manifest.id, review.manifest.version)
       job.signal.throwIfAborted()
       this.#reviews.set(review.token, job.id)
@@ -744,13 +744,9 @@ export class ExtensionService {
     try {
       const { entry, bytes } = await this.catalog.download(id, version, job.signal)
       this.installations.log(job.id, 'validate', 'checksum')
-      const files = unpackExtension(bytes)
-      const manifest = extensionManifestSchema.parse(JSON.parse(new TextDecoder().decode(files.get('extension.json'))))
-      if (JSON.stringify(manifest) !== JSON.stringify(entry.manifest))
-        throw new Error('EXTENSION_CATALOG_MANIFEST_MISMATCH')
       job.signal.throwIfAborted()
       const source = { catalog: EXTENSION_CATALOG_URL, artifact: entry.artifact.url, sha256: entry.artifact.sha256 }
-      const review = await this.store.reviewFiles(files, false, source)
+      const review = await this.store.reviewArchive(bytes, source, entry.manifest, job.signal)
       this.installations.identify(job.id, review.manifest.id, review.manifest.version)
       this.#reviews.set(review.token, job.id)
       this.installations.log(job.id, 'review', 'permissions')

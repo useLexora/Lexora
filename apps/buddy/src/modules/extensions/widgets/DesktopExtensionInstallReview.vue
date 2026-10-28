@@ -53,9 +53,6 @@ const source = computed(() => props.review.development ? (english.value ? 'Devel
     :title="english ? (review.currentVersion ? 'Update plugin' : 'Install plugin') : (review.currentVersion ? '更新插件' : '安装插件')"
     class="extension-install-review"
     content-class="min-h-0 overflow-y-auto overscroll-contain"
-    :mask-closable="!busy"
-    :closable="!busy"
-    :close-on-esc="!busy"
     data-testid="extension-install-review"
     @update:show="value => { if (!value) emit('cancel') }"
   >
@@ -137,10 +134,10 @@ const source = computed(() => props.review.development ? (english.value ? 'Devel
           <DesktopIcon class="mt-0.5 shrink-0" :component="Warning20Regular" :size="16" aria-hidden="true" />
           {{ english ? 'Only install plugins from sources you trust.' : '请确认你信任此插件的来源。' }}
         </p>
-        <NButton :disabled="busy" @click="emit('cancel')">
+        <NButton @click="emit('cancel')">
           {{ labels.cancel }}
         </NButton>
-        <NButton type="primary" :loading="busy" :disabled="busy" data-testid="extension-confirm-install" @click="install">
+        <NButton type="primary" :disabled="busy" data-testid="extension-confirm-install" @click="install">
           {{ review.currentVersion ? (applyUpdate ? labels.updateAndApply : labels.update) : labels.confirm }}
         </NButton>
       </div>

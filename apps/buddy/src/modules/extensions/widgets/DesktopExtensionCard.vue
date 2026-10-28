@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import type { ExtensionStatus, ExtensionUnavailableInstallation } from '@buddy-shared/extensions/extensionApi'
+import type { ExtensionInstallation } from '@buddy-shared/extensions/extensionInstallation'
 import type { DropdownOption } from 'naive-ui'
+import type { ExtensionPendingInstall } from '../state/useExtensionOperations'
 import { MoreHorizontal20Regular } from '@vicons/fluent'
 import { NButton, NDropdown, NEllipsis, NTag, NTooltip } from 'naive-ui'
 import { computed } from 'vue'
@@ -8,9 +10,10 @@ import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopPluginIcon from '@/shared/ui/icon/DesktopPluginIcon.vue'
 import { extensionLabels } from '../extensionLabels'
 import DesktopExtensionCompatibilityHint from './DesktopExtensionCompatibilityHint.vue'
+import DesktopExtensionInstallationStatus from './DesktopExtensionInstallationStatus.vue'
 import DesktopExtensionTags from './DesktopExtensionTags.vue'
 
-const props = defineProps<{ item: ExtensionStatus, unavailablePending?: ExtensionUnavailableInstallation, language: string, busy: boolean, canOpen: boolean }>()
+const props = defineProps<{ item: ExtensionStatus, unavailablePending?: ExtensionUnavailableInstallation, language: string, busy: boolean, canOpen: boolean, installation?: ExtensionPendingInstall, job?: ExtensionInstallation }>()
 const emit = defineEmits<{
   toggle: []
   restart: []
@@ -19,6 +22,8 @@ const emit = defineEmits<{
   remove: []
   open: []
   revokeResources: []
+  progress: []
+  dismissInstall: []
 }>()
 const labels = computed(() => extensionLabels(props.language))
 const pending = computed(() => props.item.pending ?? props.unavailablePending)
@@ -56,7 +61,7 @@ function handleAction(key: string | number) {
 </script>
 
 <template>
-  <article class="extension-card box-border h-[200px] flex min-w-0 flex-col gap-2 border border-solid border-border rounded-micro bg-surface p-4" :data-extension-id="item.manifest.id" data-theme-surface="panel">
+  <article class="extension-card box-border h-[200px] flex min-w-0 flex-col gap-2 border border-solid border-border rounded-micro bg-surface p-4" :data-extension-id="item.manifest.id" :aria-busy="busy" data-theme-surface="panel">
     <header class="extension-card__header flex min-w-0 flex-none items-start gap-3">
       <DesktopPluginIcon :src="item.iconUrl" :size="28" />
       <div class="min-w-0 flex-1">
@@ -86,7 +91,8 @@ function handleAction(key: string | number) {
       </NEllipsis>
     </div>
     <footer class="mt-auto flex min-w-0 flex-none flex-col gap-2">
-      <DesktopExtensionTags :tags="item.manifest.tags" />
+      <DesktopExtensionInstallationStatus v-if="installation" :installation="installation" :job="job" :language="language" @progress="emit('progress')" @dismiss="emit('dismissInstall')" />
+      <DesktopExtensionTags v-else :tags="item.manifest.tags" />
       <div class="flex min-w-0 flex-wrap items-center gap-1">
         <NTooltip v-if="pending" :disabled="!!pending.incompatibility">
           <template #trigger>

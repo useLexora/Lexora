@@ -8,7 +8,6 @@ import { extensionLabels } from '../extensionLabels'
 import DesktopExtensionCatalogCard from './DesktopExtensionCatalogCard.vue'
 import DesktopExtensionCompatibilityHint from './DesktopExtensionCompatibilityHint.vue'
 
-defineProps<{ busy: boolean }>()
 const emit = defineEmits<{ install: [entry: ExtensionCatalogListing], applyUpdate: [id: string] }>()
 const { state, language } = useExtensionContext()
 const snapshot = shallowRef<ExtensionCatalogSnapshot | null>(null)
@@ -78,10 +77,10 @@ onScopeDispose(() => {
       <div v-else class="grid grid-cols-[repeat(auto-fill,_minmax(min(100%,_280px),_1fr))] gap-[12px]">
         <DesktopExtensionCatalogCard v-for="item in plugins" :key="item.manifest.id" :data-catalog-id="item.manifest.id" class="extension-catalog__card" :manifest="item.manifest" :icon-url="item.iconUrl" :repository="item.repository" :language="language">
           <template #actions>
-            <NButton v-if="item.installed?.pending?.manifest.version === item.manifest.version && !item.available" size="small" type="primary" :disabled="busy || !item.compatible || !!item.installed.pending.incompatibility" data-testid="catalog-apply-update" @click="emit('applyUpdate', item.manifest.id)">
+            <NButton v-if="item.installed?.pending?.manifest.version === item.manifest.version && !item.available" size="small" type="primary" :loading="state.busyIds.has(item.manifest.id)" :disabled="!item.compatible || !!item.installed.pending.incompatibility" data-testid="catalog-apply-update" @click="emit('applyUpdate', item.manifest.id)">
               {{ labels.applyUpdate }}
             </NButton>
-            <NButton v-else size="small" :type="item.available ? 'primary' : 'default'" :disabled="busy || !item.compatible || !item.available" @click="emit('install', item)">
+            <NButton v-else size="small" :type="item.available ? 'primary' : 'default'" :loading="state.busyIds.has(item.manifest.id)" :disabled="!item.compatible || !item.available" @click="emit('install', item)">
               {{ !item.available ? (en ? 'Installed' : '已安装') : item.installedVersion ? (en ? 'Update' : '更新') : (en ? 'Install' : '安装') }}
             </NButton>
             <DesktopExtensionCompatibilityHint v-if="item.incompatibility" :issue="item.incompatibility" :language="language" />

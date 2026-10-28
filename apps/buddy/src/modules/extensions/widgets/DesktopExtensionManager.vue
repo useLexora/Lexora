@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import type { ExtensionReview, ExtensionReviewResult, ExtensionStatus } from '@buddy-shared/extensions/extensionApi'
-import type { ExtensionCapabilityImpact } from '@buddy-shared/extensions/extensionCapabilities'
 import type { ExtensionIncompatibleReview } from '@buddy-shared/extensions/extensionCompatibility'
 import type { FileOpeningChoice } from '@buddy-shared/files/fileOpening'
 import { ChevronDown16Regular, MoreHorizontal20Regular, Wand20Regular } from '@vicons/fluent'
-import { NAlert, NButton, NDropdown, NEmpty, NModal, useMessage } from 'naive-ui'
+import { NButton, NDropdown, NEmpty, NModal, useMessage } from 'naive-ui'
 import { computed, onScopeDispose, shallowRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
@@ -12,12 +11,14 @@ import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import { useExtensionContext } from '../extensionContext'
 import { extensionLabels } from '../extensionLabels'
 import DesktopExtensionWorkbench from '../layouts/DesktopExtensionWorkbench.vue'
+import { useExtensionRemoval } from '../state/useExtensionRemoval'
 import { extensionErrorCode } from '../state/useExtensionState'
 import DesktopExtensionAuthoringSettings from './DesktopExtensionAuthoringSettings.vue'
 import DesktopExtensionCard from './DesktopExtensionCard.vue'
 import DesktopExtensionCatalog from './DesktopExtensionCatalog.vue'
 import DesktopExtensionIncompatibleReview from './DesktopExtensionIncompatibleReview.vue'
 import DesktopExtensionInstallations from './DesktopExtensionInstallations.vue'
+import DesktopExtensionInstallingCard from './DesktopExtensionInstallingCard.vue'
 import DesktopExtensionInstallReview from './DesktopExtensionInstallReview.vue'
 import DesktopExtensionUnavailableCard from './DesktopExtensionUnavailableCard.vue'
 import DesktopExtensionUninstallDialog from './DesktopExtensionUninstallDialog.vue'
@@ -34,14 +35,17 @@ const acquisitionActions = computed(() => [
   { key: 'development', label: labels.value.development, props: { 'role': 'menuitem', 'data-testid': 'extension-development' } },
 ])
 const acquisitionMenuOpen = shallowRef(false)
-const busy = shallowRef(false)
+const selecting = shallowRef(false)
+const creating = shallowRef(false)
+const reviewQueue: ExtensionReviewResult[] = []
+const jobs = computed(() => new Map(state.installations.value.map(job => [job.id, job])))
+const newInstallations = computed(() => [...state.pendingInstalls.values()].filter(item => !installed.value.some(plugin => plugin.manifest.id === item.manifest.id)))
 const review = shallowRef<ExtensionReview | null>(null)
 const incompatibleReview = shallowRef<ExtensionIncompatibleReview | null>(null)
 const diagnostics = shallowRef<string | null>(null)
 const installationLog = shallowRef(false)
 const authorSettings = shallowRef(false)
-const removing = shallowRef<ExtensionStatus | null>(null)
-const removalImpact = shallowRef<ExtensionCapabilityImpact | null>(null)
+const { removing, removalImpact, askRemove, remove, cancel: cancelRemoval } = useExtensionRemoval({ api: state.api, run, isBusy: id => state.busyIds.has(id), dismissInstall: state.dismissInstall })
 let disposed = false
 const message = useMessage()
 const router = useRouter()
@@ -53,14 +57,9 @@ watch(state.error, (error) => {
   if (error)
     showError(error)
 }, { immediate: true })
-async function run(action: () => Promise<unknown>) {
-  if (busy.value)
-    return false
-  busy.value = true
+async function run(action: () => Promise<unknown>, id?: string) {
   try {
-    await action()
-    await state.refresh()
-    return true
+    return (id ? await state.runOperation(id, action) : await action()) !== false
   }
   catch (reason) {
     if (reason instanceof Error && reason.message === 'SKILL_UNAVAILABLE')
@@ -69,46 +68,75 @@ async function run(action: () => Promise<unknown>) {
       showError(extensionErrorCode(reason))
     return false
   }
+}
+async function select(development = false) {
+  if (selecting.value)
+    return
+  selecting.value = true
+  try {
+    await run(async () => acceptReview(await state.api.selectPackage(development)))
+  }
   finally {
-    busy.value = false
+    selecting.value = false
   }
 }
-function select(development = false) {
-  void run(async () => {
-    acceptReview(await state.api.selectPackage(development))
-  })
-}
 function acceptReview(next: ExtensionReviewResult | null) {
-  cancel()
+  if (!next)
+    return
+  if (disposed) {
+    if ('token' in next)
+      void state.api.cancelInstall(next.token).catch(() => {})
+    return
+  }
+  reviewQueue.push(next)
+  showNextReview()
+}
+function showNextReview() {
+  if (disposed || review.value || incompatibleReview.value)
+    return
+  const next = reviewQueue.shift()
   incompatibleReview.value = next && 'incompatibility' in next ? next : null
   review.value = next && 'token' in next ? next : null
 }
-function create() {
-  void run(() => startCreation(labels.value.creationPrompt))
+async function create() {
+  if (creating.value)
+    return
+  creating.value = true
+  try {
+    await run(() => startCreation(labels.value.creationPrompt))
+  }
+  finally {
+    creating.value = false
+  }
 }
 function cancel() {
   const current = review.value
   review.value = null
+  incompatibleReview.value = null
   if (current)
     void state.api.cancelInstall(current.token).catch(() => {})
+  showNextReview()
 }
 function install(applyUpdate: boolean, choices: FileOpeningChoice[]) {
   const current = review.value
-  if (current) {
+  if (current && !state.busyIds.has(current.manifest.id)) {
+    review.value = null
+    section.value = 'installed'
     void run(async () => {
-      review.value = null
-      await state.install(current, applyUpdate, choices)
-      section.value = 'installed'
-      if (current.currentVersion)
+      const installed = await state.install(current, applyUpdate, choices)
+      if (installed && current.currentVersion)
         message.success(applyUpdate ? labels.value.updateApplied : labels.value.updateDeferred)
+      return installed
     })
+    showNextReview()
   }
 }
 function applyUpdate(id: string) {
+  state.dismissInstall(id)
   void run(async () => {
     await state.api.applyUpdate(id)
     message.success(labels.value.updateApplied)
-  })
+  }, id)
 }
 function openLocation(item: ExtensionStatus) {
   if (!item.enabled || !item.compatible || item.state === 'blocked')
@@ -120,25 +148,13 @@ function open(item: ExtensionStatus) {
   if (location)
     void router.push(location)
 }
-async function askRemove(item: ExtensionStatus) {
-  await run(async () => {
-    removing.value = null
-    removalImpact.value = null
-    const impact = await state.api.capabilityImpact(item.manifest.id)
-    if (!disposed) {
-      removalImpact.value = impact
-      removing.value = item
-    }
-  })
-}
-async function remove(clearData: boolean) {
-  const item = removing.value
-  if (item && removalImpact.value && await run(() => state.api.uninstall(item.manifest.id, { clearData })))
-    removing.value = null
-}
 onScopeDispose(() => {
   disposed = true
   cancel()
+  for (const next of reviewQueue.splice(0)) {
+    if ('token' in next)
+      void state.api.cancelInstall(next.token).catch(() => {})
+  }
 })
 </script>
 
@@ -153,14 +169,14 @@ onScopeDispose(() => {
         </NButton>
       </NDropdown>
       <div class="inline-flex items-stretch">
-        <NButton class="extension-manager__create-button" type="primary" size="small" :disabled="busy" data-testid="extension-create" @click="create">
+        <NButton class="extension-manager__create-button" type="primary" size="small" :loading="creating" data-testid="extension-create" @click="create">
           <template #icon>
             <DesktopIcon :component="Wand20Regular" :size="16" />
           </template>
           {{ labels.create }}
         </NButton>
-        <NDropdown v-model:show="acquisitionMenuOpen" trigger="click" placement="bottom-end" :options="acquisitionActions" :disabled="busy" @select="key => select(key === 'development')">
-          <NButton class="extension-manager__acquisition-arrow" type="primary" size="small" :disabled="busy" :aria-label="labels.acquisitionOptions" aria-haspopup="menu" :aria-expanded="acquisitionMenuOpen" data-testid="extension-install-options">
+        <NDropdown v-model:show="acquisitionMenuOpen" trigger="click" placement="bottom-end" :options="acquisitionActions" :disabled="selecting" @select="key => select(key === 'development')">
+          <NButton class="extension-manager__acquisition-arrow" type="primary" size="small" :loading="selecting" :aria-label="labels.acquisitionOptions" aria-haspopup="menu" :aria-expanded="acquisitionMenuOpen" data-testid="extension-install-options">
             <template #icon>
               <DesktopIcon :component="ChevronDown16Regular" :size="16" class="extension-manager__acquisition-chevron" :class="{ 'is-open': acquisitionMenuOpen }" />
             </template>
@@ -168,23 +184,17 @@ onScopeDispose(() => {
         </NDropdown>
       </div>
     </template>
-    <NAlert v-if="state.installations.value.some(job => job.status === 'running')" type="info">
-      {{ language === 'en-US' ? 'Installing plugin. You can continue using Lexora.' : '正在安装插件，你可以继续使用 Lexora。' }}
-      <NButton text @click="installationLog = true">
-        {{ language === 'en-US' ? 'View progress' : '查看进度' }}
-      </NButton>
-    </NAlert>
-    <DesktopExtensionCatalog v-if="section === 'marketplace'" :busy="busy" @install="entry => run(async () => { acceptReview(await state.api.reviewCatalog(entry.manifest.id, entry.manifest.version)) })" @apply-update="applyUpdate" />
-    <NEmpty v-else-if="!installed.length && !unavailable.length && !state.error.value" class="extension-manager__empty">
+    <DesktopExtensionCatalog v-if="section === 'marketplace'" @install="entry => run(async () => { acceptReview(await state.api.reviewCatalog(entry.manifest.id, entry.manifest.version)) }, entry.manifest.id)" @apply-update="applyUpdate" />
+    <NEmpty v-else-if="!installed.length && !unavailable.length && !newInstallations.length && !state.error.value" class="extension-manager__empty">
       <template #default>
         <strong>{{ labels.empty }}</strong>
         <p>{{ labels.emptyDescription }}</p>
-        <NButton type="primary" :disabled="busy" @click="create">
+        <NButton type="primary" :loading="creating" @click="create">
           {{ labels.create }}
         </NButton>
       </template>
     </NEmpty>
-    <div v-else-if="section === 'installed' && (installed.length || unavailable.length)" class="grid grid-cols-[repeat(auto-fill,_minmax(min(100%,_280px),_1fr))] items-stretch gap-[12px]">
+    <div v-else-if="section === 'installed' && (installed.length || unavailable.length || newInstallations.length)" class="grid grid-cols-[repeat(auto-fill,_minmax(min(100%,_280px),_1fr))] items-stretch gap-[12px]">
       <DesktopExtensionUnavailableCard v-for="item in unavailableCurrent" :key="item.manifest.id" :item="item" :language="language" />
       <DesktopExtensionCard
         v-for="item in installed"
@@ -192,15 +202,28 @@ onScopeDispose(() => {
         :item="item"
         :unavailable-pending="unavailablePending.get(item.manifest.id)"
         :language="language"
-        :busy="busy"
+        :busy="state.busyIds.has(item.manifest.id)"
+        :installation="state.pendingInstalls.get(item.manifest.id)"
+        :job="jobs.get(state.pendingInstalls.get(item.manifest.id)?.installationId ?? '')"
         :can-open="!!openLocation(item)"
-        @toggle="run(() => state.api.enable(item.manifest.id, !item.enabled))"
-        @restart="run(() => state.api.restart(item.manifest.id))"
+        @progress="installationLog = true"
+        @dismiss-install="state.dismissInstall(item.manifest.id)"
+        @toggle="run(() => state.api.enable(item.manifest.id, !item.enabled), item.manifest.id)"
+        @restart="run(() => state.api.restart(item.manifest.id), item.manifest.id)"
         @apply-update="applyUpdate(item.manifest.id)"
         @diagnostics="diagnostics = item.manifest.id"
         @remove="askRemove(item)"
         @open="open(item)"
-        @revoke-resources="run(() => state.api.revokeResources(item.manifest.id))"
+        @revoke-resources="run(() => state.api.revokeResources(item.manifest.id), item.manifest.id)"
+      />
+      <DesktopExtensionInstallingCard
+        v-for="item in newInstallations"
+        :key="item.manifest.id"
+        :installation="item"
+        :job="jobs.get(item.installationId ?? '')"
+        :language="language"
+        @progress="installationLog = true"
+        @dismiss="state.dismissInstall(item.manifest.id)"
       />
     </div>
   </DesktopExtensionWorkbench>
@@ -208,11 +231,11 @@ onScopeDispose(() => {
     <DesktopExtensionAuthoringSettings v-if="authorSettings" :author="authoring.author.value" :language="language" :save="authoring.save" @saved="authorSettings = false" />
   </NModal>
   <NModal v-model:show="installationLog" preset="card" :title="language === 'en-US' ? 'Installation log' : '安装记录'" class="extension-dialog">
-    <DesktopExtensionInstallations :jobs="state.installations.value" :language="language" @cancel="id => state.api.cancelInstallation(id).then(state.refresh)" />
+    <DesktopExtensionInstallations :jobs="state.installations.value" :language="language" @cancel="id => state.api.cancelInstallation(id).then(state.refreshInstallations)" />
   </NModal>
-  <DesktopExtensionInstallReview v-if="review" :key="review.token" :review="review" :language="language" :busy="busy" @cancel="cancel" @install="install" />
-  <DesktopExtensionIncompatibleReview v-if="incompatibleReview" :review="incompatibleReview" :language="language" @close="incompatibleReview = null" />
-  <DesktopExtensionUninstallDialog v-if="removing && removalImpact" :name="removing.manifest.name" :impact="removalImpact" :language="language" :busy="busy" @cancel="removing = null" @remove="remove" />
+  <DesktopExtensionInstallReview v-if="review" :key="review.token" :review="review" :language="language" :busy="state.busyIds.has(review.manifest.id)" @cancel="cancel" @install="install" />
+  <DesktopExtensionIncompatibleReview v-if="incompatibleReview" :review="incompatibleReview" :language="language" @close="cancel" />
+  <DesktopExtensionUninstallDialog v-if="removing && removalImpact" :name="removing.manifest.name" :impact="removalImpact" :language="language" :busy="state.busyIds.has(removing.manifest.id)" @cancel="cancelRemoval" @remove="remove" />
   <NModal :show="!!selected" preset="card" :title="labels.diagnostics" class="extension-dialog" @update:show="value => { if (!value) diagnostics = null }">
     <template v-if="selected">
       <h2>{{ selected.manifest.name }}</h2>

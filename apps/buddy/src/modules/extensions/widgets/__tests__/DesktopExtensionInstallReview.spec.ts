@@ -57,15 +57,17 @@ const capabilityReview: ExtensionReview = {
   }),
 }
 
-async function mount(value: ExtensionReview = review, language = 'en-US') {
+async function mount(value: ExtensionReview = review, language = 'en-US', busy = false) {
   const current = shallowRef(value)
   const root = document.createElement('div')
   document.body.append(root)
   const submissions: { applyUpdate: boolean, choices: FileOpeningChoice[] }[] = []
+  const cancellations: boolean[] = []
   const app = createApp({ render: () => h(DesktopExtensionInstallReview, {
     review: current.value,
     language,
-    busy: false,
+    busy,
+    onCancel: () => cancellations.push(true),
     onInstall: (applyUpdate: boolean, choices: FileOpeningChoice[]) => submissions.push({ applyUpdate, choices }),
   }) })
   app.mount(root)
@@ -77,8 +79,18 @@ async function mount(value: ExtensionReview = review, language = 'en-US') {
   const content = document.querySelector<HTMLElement>('[data-testid="extension-file-associations"]')!
   const submit = () => document.querySelector<HTMLButtonElement>('[data-testid="extension-confirm-install"]')!.click()
   const dialog = document.querySelector<HTMLElement>('[data-testid="extension-install-review"]')!
-  return { content, submissions, submit, dialog, current }
+  return { content, submissions, submit, dialog, current, cancellations }
 }
+
+it('allows closing a duplicate review while the plugin is busy without submitting another install', async () => {
+  const { dialog, submissions, cancellations } = await mount(review, 'en-US', true)
+  expect(dialog.querySelector<HTMLButtonElement>('[data-testid="extension-confirm-install"]')!.disabled).toBe(true)
+  const cancel = [...dialog.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === 'Cancel')!
+  expect(cancel.disabled).toBe(false)
+  cancel.click()
+  expect(cancellations).toEqual([true])
+  expect(submissions).toEqual([])
+})
 
 it('preselects requested associations and keeps existing defaults when replacements are cleared', async () => {
   const { content, submissions, submit } = await mount({

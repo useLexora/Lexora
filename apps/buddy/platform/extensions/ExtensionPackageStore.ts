@@ -4,29 +4,27 @@ import type { ExtensionConfiguration, ExtensionConfigurationSnapshot } from '../
 import type { FileOpeningChoice, FileOpeningReviewChoice, FileOpeningSnapshot } from '../../shared/files/fileOpening'
 import type { JsonValue } from '../../shared/workbench/workbenchState'
 import type { ExtensionCompiler } from './compileExtensionSource'
+import type { ExtensionPackageProcessor, ExtensionPackageRequests, ReviewedExtensionPackage } from './extensionPackageProcessing'
 import type { ExtensionPackage, extensionIndexSchema as indexSchema, InstalledExtension, ReviewedFileOpening, extensionSourceSchema as sourceSchema, storedPackageSchema, storedRecordSchema } from './extensionState'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
-import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { mkdir, rename, rm } from 'node:fs/promises'
+import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { gt, satisfies } from 'semver'
 import { z } from 'zod'
 import { extensionFileOpeningSourceSchema, extensionResourceSchema } from '../../shared/extensions/extensionApi'
 import { ExtensionCompatibilityError, extensionCompatibilityIssue } from '../../shared/extensions/extensionCompatibility'
 import { extensionFileHandlerBindings, extensionFileOpeningProviders } from '../../shared/extensions/extensionFileOpening'
-import { addedExtensionPermissions, extensionIdSchema, extensionManifestSchema, extensionMetadataSchema } from '../../shared/extensions/extensionManifest'
+import { addedExtensionPermissions, extensionIdSchema, extensionMetadataSchema } from '../../shared/extensions/extensionManifest'
 import { EXTENSION_REVIEW_BYTES_LIMIT, extensionFilesSize } from '../../shared/extensions/extensionPackageBudget'
 import { extensionConfigurationSchema, resolveExtensionConfiguration } from '../../shared/extensions/extensionSettings'
-import { EXTENSION_UNO_STYLESHEET } from '../../shared/extensions/extensionStyles'
 import { builtinFileOpeningProviders, fileOpeningChoiceSchema, fileOpeningExtension, resolveFileOpening } from '../../shared/files/fileOpening'
 import { spaceFileTargetSchema } from '../../shared/spaces/spaceFileApi'
-import { validateFileIconThemeFiles } from '../icons/fileIconThemeAssets'
-import { validateThemeFiles } from '../themes/themeAssets'
-import { EXTENSION_ARCHIVE_LIMIT, readExtensionDirectory, readExtensionFile, readExtensionJson, sha256, unpackExtension, validateExtensionFiles, verifiedExtensionAsset, writeExtensionJson } from './extensionFiles'
+import { readExtensionJson, verifiedExtensionAsset, writeExtensionJson } from './extensionFiles'
 import { extensionIconUrl } from './extensionIcon'
+import { processExtensionPackage } from './extensionPackageProcessing'
 import { ExtensionResourceStore } from './ExtensionResourceStore'
-import { validateExtensionSkillFiles } from './extensionSkillAssets'
 import { extensionPackageSchema as packageSchema, storedIndexSchema } from './extensionState'
 
 const grantSchema = z.union([
@@ -35,17 +33,6 @@ const grantSchema = z.union([
 ])
 export type { ExtensionPackage, InstalledExtension } from './extensionState'
 export interface ExtensionCandidate { token: string, package: ExtensionPackage, files: Map<string, Uint8Array>, development: boolean, expires: number, fileAssociations: ReviewedFileOpening[] }
-
-async function verifyExistingPackage(root: string, pkg: ExtensionPackage, renameError: unknown): Promise<void> {
-  const files = await readExtensionDirectory(root).catch((error) => {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT')
-      throw renameError
-    throw error
-  })
-  const hashes = Object.fromEntries([...files].sort(([a], [b]) => a.localeCompare(b)).map(([name, bytes]) => [name, sha256(bytes)]))
-  if (!isDeepStrictEqual(hashes, pkg.hashes) || sha256(JSON.stringify(hashes)) !== pkg.revision)
-    throw new Error('EXTENSION_PACKAGE_CHANGED')
-}
 
 export class ExtensionPackageStore {
   readonly root: string
@@ -59,10 +46,13 @@ export class ExtensionPackageStore {
   #tail = Promise.resolve()
   readonly #dataWrites = new Map<string, Promise<unknown>>()
   #loaded = false
+  #reviewing = 0
+  readonly processPackage: ExtensionPackageProcessor
 
-  constructor(root: string, appVersion: string) {
+  constructor(root: string, appVersion: string, processPackage: ExtensionPackageProcessor = processExtensionPackage) {
     this.root = root
     this.appVersion = appVersion
+    this.processPackage = processPackage
     this.resources = new ExtensionResourceStore(root)
   }
 
@@ -121,53 +111,50 @@ export class ExtensionPackageStore {
     ]
   }
 
-  async review(path: string, development = false) {
-    const files = development ? await readExtensionDirectory(path) : unpackExtension(await readExtensionFile(path, EXTENSION_ARCHIVE_LIMIT))
-    return this.reviewFiles(files, development)
+  review(path: string, development = false, signal?: AbortSignal) {
+    return this.#review({ kind: 'read', path, development, appVersion: this.appVersion }, development, null, signal)
   }
 
-  async reviewFiles(files: Map<string, Uint8Array>, development = false, source: z.infer<typeof sourceSchema> | null = null) {
+  reviewFiles(files: Map<string, Uint8Array>, development = false, source: z.infer<typeof sourceSchema> | null = null, signal?: AbortSignal) {
+    return this.#review({ kind: 'inspect', files, appVersion: this.appVersion }, development, source, signal)
+  }
+
+  reviewArchive(bytes: Uint8Array, source: z.infer<typeof sourceSchema>, expected: ExtensionManifest, signal: AbortSignal) {
+    return this.#review({ kind: 'unpack', bytes, appVersion: this.appVersion }, false, source, signal, expected)
+  }
+
+  async #review(request: ExtensionPackageRequests['read' | 'inspect' | 'unpack'], development: boolean, source: z.infer<typeof sourceSchema> | null, signal?: AbortSignal, expected?: ExtensionManifest) {
     await this.load()
-    validateExtensionFiles(files)
+    signal?.throwIfAborted()
     for (const [token, item] of this.#candidates) {
       if (item.expires < Date.now())
         this.#candidates.delete(token)
     }
-    if (this.#candidates.size >= 4)
+    if (this.#candidates.size + this.#reviewing >= 4)
       throw new Error('EXTENSION_REVIEW_LIMIT')
-    this.#checkReviewBytes(files)
-    let manifest: ExtensionManifest
+    if ('files' in request)
+      this.#checkReviewBytes(request.files)
+    this.#reviewing++
     try {
-      const raw = JSON.parse(Buffer.from(files.get('extension.json') ?? []).toString('utf8'))
-      const metadata = extensionMetadataSchema.parse(raw)
-      const issue = extensionCompatibilityIssue(metadata, this.appVersion)
-      if (issue)
-        throw new ExtensionCompatibilityError(metadata, issue)
-      manifest = extensionManifestSchema.parse(raw)
+      const inspected = await this.processPackage(request, signal)
+      signal?.throwIfAborted()
+      if (expected && !isDeepStrictEqual(inspected.manifest, expected))
+        throw new Error('EXTENSION_CATALOG_MANIFEST_MISMATCH')
+      return this.#acceptReview(inspected, development, source)
     }
-    catch (error) {
-      if (error instanceof ExtensionCompatibilityError)
-        throw error
-      throw new Error('EXTENSION_MANIFEST_INVALID')
+    finally {
+      this.#reviewing--
     }
-    for (const entry of [manifest.entry, ...manifest.contributes.views.map(view => view.entry)]) {
-      if (entry && (!files.has(entry) || !(manifest.format === 'source' ? /\.m?[jt]s$/.test(entry) : /\.m?js$/.test(entry))))
-        throw new Error('EXTENSION_ENTRY_MISSING')
-    }
-    if (manifest.format === 'compiled' && manifest.styles?.uno && !files.has(EXTENSION_UNO_STYLESHEET))
-      throw new Error('EXTENSION_STYLES_MISSING')
-    validateThemeFiles(files, manifest.contributes.themes)
-    validateFileIconThemeFiles(files, manifest.contributes.iconThemes)
-    validateExtensionSkillFiles(files, manifest.contributes.skills)
+  }
+
+  #acceptReview({ files, manifest, hashes, revision, iconUrl }: ReviewedExtensionPackage, development: boolean, source: z.infer<typeof sourceSchema> | null) {
+    this.#checkReviewBytes(files)
     const current = this.installed[manifest.id]
     const unavailable = this.#unavailable.get(manifest.id) ?? this.#unavailablePending.get(manifest.id)
     if (unavailable)
       throw unavailable.error
     if (current && !development && !gt(manifest.version, current.current.manifest.version))
       throw new Error('EXTENSION_VERSION_NOT_NEWER')
-    const hashes = Object.fromEntries([...files].sort(([a], [b]) => a.localeCompare(b)).map(([name, bytes]) => [name, sha256(bytes)]))
-    const revision = sha256(JSON.stringify(hashes))
-    const iconUrl = extensionIconUrl(manifest.icon, manifest.icon ? files.get(manifest.icon) : undefined)
     const token = randomUUID()
     const snapshot = this.fileOpeners()
     const fileAssociations: FileOpeningReviewChoice[] = manifest.contributes.fileHandlers.flatMap(provider => provider.extensions.flatMap(extension => extensionFileHandlerBindings(provider).map(({ location, requestDefault }) => {
@@ -189,13 +176,6 @@ export class ExtensionPackageStore {
       throw new Error('EXTENSION_REVIEW_BYTES_LIMIT')
   }
 
-  #verifyCandidate(candidate: ExtensionCandidate): void {
-    validateExtensionFiles(candidate.files)
-    const hashes = Object.fromEntries([...candidate.files].sort(([a], [b]) => a.localeCompare(b)).map(([name, bytes]) => [name, sha256(bytes)]))
-    if (!isDeepStrictEqual(hashes, candidate.package.hashes))
-      throw new Error('EXTENSION_PACKAGE_CHANGED')
-  }
-
   cancelReview(token: string): void {
     this.#candidates.delete(token)
   }
@@ -209,27 +189,19 @@ export class ExtensionPackageStore {
       return false
     if (!compile)
       throw new Error('EXTENSION_COMPILER_UNAVAILABLE')
-    this.#verifyCandidate(candidate)
-    const files = await compile(candidate.files, candidate.package.manifest, signal, report)
+    await this.processPackage({ kind: 'verify', files: candidate.files, hashes: candidate.package.hashes }, signal)
+    const compiled = await compile(candidate.files, candidate.package.manifest, signal, report)
     signal.throwIfAborted()
-    validateExtensionFiles(files)
-    const manifest = extensionManifestSchema.parse(JSON.parse(Buffer.from(files.get('extension.json') ?? []).toString('utf8')))
+    const { files, manifest, hashes, revision } = await this.processPackage({ kind: 'inspect', files: compiled, appVersion: this.appVersion }, signal)
+    signal.throwIfAborted()
     const original = candidate.package.manifest
     const expected = { ...original, format: 'compiled', ...(original.entry ? { entry: original.entry.replace(/\.(?:ts|mts)$/, '.js') } : {}), contributes: { ...original.contributes, views: original.contributes.views.map(view => ({ ...view, entry: view.entry.replace(/\.(?:ts|mts)$/, '.js') })) } }
     if (!isDeepStrictEqual(manifest, expected))
       throw new Error('EXTENSION_COMPILE_OUTPUT_INVALID')
-    extensionIconUrl(manifest.icon, manifest.icon ? files.get(manifest.icon) : undefined)
-    if (manifest.styles?.uno && !files.has(EXTENSION_UNO_STYLESHEET))
-      throw new Error('EXTENSION_STYLES_MISSING')
-    for (const entry of [manifest.entry, ...manifest.contributes.views.map(view => view.entry)]) {
-      if (entry && (!files.has(entry) || !/\.m?js$/.test(entry)))
-        throw new Error('EXTENSION_ENTRY_MISSING')
-    }
     if (this.#candidates.get(token) !== candidate)
       throw new Error('EXTENSION_INSTALL_CANCELLED')
-    const hashes = Object.fromEntries([...files].sort(([a], [b]) => a.localeCompare(b)).map(([name, bytes]) => [name, sha256(bytes)]))
     this.#checkReviewBytes(files, token)
-    this.#candidates.set(token, { ...candidate, files: new Map(files), package: { manifest, hashes, revision: sha256(JSON.stringify(hashes)), source: candidate.package.source } })
+    this.#candidates.set(token, { ...candidate, files: new Map(files), package: { manifest, hashes, revision, source: candidate.package.source } })
     return true
   }
 
@@ -238,7 +210,6 @@ export class ExtensionPackageStore {
     this.#candidates.delete(token)
     if (!candidate || candidate.expires < Date.now())
       throw new Error('EXTENSION_REVIEW_EXPIRED')
-    this.#verifyCandidate(candidate)
     const { package: pkg } = candidate
     const selected = new Set<string>()
     const reviewed = choices.map((raw) => {
@@ -263,21 +234,18 @@ export class ExtensionPackageStore {
     let committed = false
     await mkdir(temporary, { recursive: true, mode: 0o700 })
     try {
-      for (const [name, content] of candidate.files) {
-        signal?.throwIfAborted()
-        const bytes = Buffer.from(content)
-        if (sha256(bytes) !== pkg.hashes[name])
-          throw new Error('EXTENSION_PACKAGE_CHANGED')
-        const path = join(temporary, name)
-        await mkdir(dirname(path), { recursive: true, mode: 0o700 })
-        await writeFile(path, bytes, { flag: 'wx', mode: 0o600, flush: true })
-      }
+      await this.processPackage({ kind: 'stage', files: candidate.files, hashes: pkg.hashes, directory: temporary }, signal)
+      signal?.throwIfAborted()
       try {
         await rename(temporary, target)
         created = true
       }
       catch (error) {
-        await verifyExistingPackage(target, pkg, error)
+        await this.processPackage({ kind: 'existing', directory: target, package: pkg }, signal).catch((verificationError) => {
+          if ((verificationError as NodeJS.ErrnoException).code === 'ENOENT')
+            throw error
+          throw verificationError
+        })
       }
       await this.#update((index) => {
         signal?.throwIfAborted()

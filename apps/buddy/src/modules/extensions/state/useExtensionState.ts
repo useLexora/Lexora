@@ -1,8 +1,8 @@
 import type { ExtensionTaskAction } from '@buddy-shared/extensions/extensionActionApi'
-import type { ExtensionApi, ExtensionReview, ExtensionStatus, ExtensionUnavailableInstallation } from '@buddy-shared/extensions/extensionApi'
+import type { ExtensionApi, ExtensionStatus, ExtensionUnavailableInstallation } from '@buddy-shared/extensions/extensionApi'
 import type { ExtensionInstallation } from '@buddy-shared/extensions/extensionInstallation'
-import type { FileOpeningChoice } from '@buddy-shared/files/fileOpening'
 import { computed, onScopeDispose, shallowRef } from 'vue'
+import { useExtensionOperations } from './useExtensionOperations'
 
 export function useExtensionState(api: ExtensionApi) {
   const taskActions = shallowRef<ExtensionTaskAction[]>([])
@@ -13,59 +13,87 @@ export function useExtensionState(api: ExtensionApi) {
   const installationsError = shallowRef('')
   const error = computed(() => installedError.value || unavailableError.value || installationsError.value)
   const installations = shallowRef<ExtensionInstallation[]>([])
-  let revision = 0
   let disposed = false
-  async function refresh() {
-    const current = ++revision
-    const currentResult = () => !disposed && current === revision
+
+  function coalesce(read: (current: () => boolean) => Promise<void>) {
+    let revision = 0
+    let pending: Promise<void> | undefined
+    return () => {
+      if (disposed)
+        return Promise.resolve()
+      revision++
+      pending ??= Promise.resolve().then(async () => {
+        try {
+          let completed: number
+          do {
+            completed = revision
+            const current = completed
+            await read(() => !disposed && current === revision)
+            if (disposed)
+              return
+          } while (completed !== revision)
+        }
+        finally {
+          pending = undefined
+        }
+      })
+      return pending
+    }
+  }
+
+  const refreshStatus = coalesce(async (current) => {
     await Promise.all([
       api.unavailable().then((items) => {
-        if (currentResult()) {
+        if (current()) {
           unavailable.value = items
           unavailableError.value = ''
         }
       }).catch((reason) => {
-        if (currentResult())
+        if (current())
           unavailableError.value = extensionErrorCode(reason)
       }),
       api.taskActions().then((items) => {
-        if (currentResult())
+        if (current())
           taskActions.value = items
       }).catch(() => {
-        if (currentResult())
+        if (current())
           taskActions.value = []
       }),
       api.list().then((snapshot) => {
-        if (currentResult()) {
+        if (current()) {
           installed.value = snapshot
           installedError.value = ''
         }
       }).catch((reason) => {
-        if (currentResult())
+        if (current())
           installedError.value = extensionErrorCode(reason)
       }),
-      api.installations().then((jobs) => {
-        if (currentResult()) {
-          installations.value = jobs
-          installationsError.value = ''
-        }
-      }).catch((reason) => {
-        if (currentResult())
-          installationsError.value = extensionErrorCode(reason)
-      }),
     ])
+  })
+  const refreshInstallations = coalesce(async (current) => {
+    try {
+      const jobs = await api.installations()
+      if (current()) {
+        installations.value = jobs
+        installationsError.value = ''
+      }
+    }
+    catch (reason) {
+      if (current())
+        installationsError.value = extensionErrorCode(reason)
+    }
+  })
+  async function refresh() {
+    await Promise.all([refreshStatus(), refreshInstallations()])
   }
-  onScopeDispose(api.onChanged(() => void refresh()))
+
+  onScopeDispose(api.onChanged(() => void refreshStatus()))
+  onScopeDispose(api.onInstallationsChanged(() => void refreshInstallations()))
   onScopeDispose(() => {
     disposed = true
-    revision++
   })
-  async function install(review: ExtensionReview, applyUpdate: boolean, choices: FileOpeningChoice[] = []) {
-    await api.install(review.token, choices)
-    if (review.currentVersion && applyUpdate)
-      await api.applyUpdate(review.manifest.id)
-  }
-  return { api, taskActions, installed, unavailable, installations, error, refresh, install }
+  const operations = useExtensionOperations(api, refreshStatus)
+  return { api, taskActions, installed, unavailable, installations, error, refresh, refreshInstallations, ...operations }
 }
 
 export function extensionErrorCode(reason: unknown): string {
