@@ -40,6 +40,7 @@ export function registerProvidersIpc(context: LocalChatIpcContext): void {
   handle(LOCAL_CHAT_IPC_CHANNELS.providersSetModelParameters, (_event, input) => request(providersRpc.setModelParameters, providersRequestSchemas.providerModelParameters.parse(input)))
 
   handle(LOCAL_CHAT_IPC_CHANNELS.providersSetModelCatalogSource, (_event, input) => request(providersRpc.setModelCatalogSource, providersRequestSchemas.providerModelCatalogSource.parse(input)))
+  handle(LOCAL_CHAT_IPC_CHANNELS.providersSetModelType, (_event, input) => request(providersRpc.setModelType, providersRpc.setModelType.input.parse(input)))
   handle(LOCAL_CHAT_IPC_CHANNELS.providersSetModelCapabilities, (_event, input) => request(providersRpc.setModelCapabilities, providersRequestSchemas.providerModelCapabilities.parse(input)))
 
   handle(LOCAL_CHAT_IPC_CHANNELS.providersAcknowledgeModelSource, (_event, input) => request(providersRpc.acknowledgeModelSourceUpdate, providersRequestSchemas.providerModel.parse(input)))

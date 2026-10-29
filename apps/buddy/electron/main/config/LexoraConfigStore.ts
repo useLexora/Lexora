@@ -22,6 +22,7 @@ import { upsertNetworkPermission } from '../../../shared/permissions/networkPerm
 import { BUDDY_PERMISSION_MODES } from '../../../shared/permissions/permissionMode'
 import { DEFAULT_RUNTIME_PREFERENCES, runtimePreferencesSchema } from '../../../shared/runtime/runtimePreferences'
 import { keybindingsSchema } from '../../../shared/shortcuts/keybindingSchema'
+import { speechPreferencesSchema } from '../../../shared/speech/speechApi'
 import { DEFAULT_LOCAL_BACKUP_LIMIT, localBackupLimitSchema } from '../../../shared/storage/backupRetention'
 import { DESKTOP_ACCENT_COLORS, legacyThemePreferenceSchema, migrateThemePreference, themePreferenceSchema } from '../../../shared/theme/themePreferences'
 import { DEFAULT_TYPOGRAPHY, typographyPreferencesSchema } from '../../../shared/typography/typographyPreferences'
@@ -76,6 +77,7 @@ const desktopConfigSchema = z.object({
     code_font: typographyPreferencesSchema.shape.codeFont.default(DEFAULT_TYPOGRAPHY.codeFont),
     body_size: typographyPreferencesSchema.shape.bodySize.default(DEFAULT_TYPOGRAPHY.bodySize),
   }).passthrough().prefault({}),
+  speech: speechPreferencesSchema.optional(),
   plugin_author: extensionAuthorSchema.default(''),
   background_close_notice_shown: z.boolean().default(false),
   chat: z.object({
@@ -415,6 +417,7 @@ function decodeConfig(value: unknown): LexoraConfig {
       featureAnnouncementsEnabled: config.desktop.feature_announcements_enabled,
       onboardingCompleted: config.desktop.onboarding_completed,
       backgroundCloseNoticeShown: config.desktop.background_close_notice_shown,
+      speech: config.desktop.speech,
       pluginAuthor: config.desktop.plugin_author,
       chat: {
         outlinePosition: config.desktop.chat.outline_position,
@@ -492,6 +495,7 @@ function encodeConfig(config: LexoraConfig) {
       feature_announcements_enabled: config.desktop.featureAnnouncementsEnabled,
       onboarding_completed: config.desktop.onboardingCompleted,
       background_close_notice_shown: config.desktop.backgroundCloseNoticeShown,
+      speech: config.desktop.speech,
       plugin_author: config.desktop.pluginAuthor,
       chat: {
         outline_position: config.desktop.chat.outlinePosition,
@@ -578,6 +582,7 @@ function mergeConfig(current: LexoraConfig, patch: LexoraConfigPatch): LexoraCon
       fileIconTheme: fileIconPreferenceSchema.parse(patch.desktop?.fileIconTheme ?? current.desktop.fileIconTheme),
       theme: themePreferenceSchema.parse(patch.desktop?.theme ?? current.desktop.theme),
       typography: typographyPreferencesSchema.parse({ ...current.desktop.typography, ...patch.desktop?.typography }),
+      speech: speechPreferencesSchema.parse({ ...current.desktop.speech, ...patch.desktop?.speech }),
       pluginAuthor: extensionAuthorSchema.parse(patch.desktop?.pluginAuthor ?? current.desktop.pluginAuthor),
       chat: {
         ...current.desktop.chat,

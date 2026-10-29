@@ -63,6 +63,7 @@ export interface DesktopComposerInputDelivery {
 
 export interface DesktopChatComposerProps {
   inputDelivery?: DesktopComposerInputDelivery
+  speechEnabled?: boolean
   isActorInput?: boolean
   isLoadingModel?: boolean
   isUpdatingModel?: boolean

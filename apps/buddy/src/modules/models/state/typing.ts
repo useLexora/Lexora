@@ -3,6 +3,7 @@ import type { LocalBuiltinProviderPreset, LocalCustomProvider, LocalCustomProvid
 import type { ModelCapabilityOverrides } from '@buddy-shared/providers/providerCapabilities'
 import type { ModelCatalogReference } from '@buddy-shared/providers/providerCatalog'
 import type { ProviderRequestHeader } from '@buddy-shared/providers/providerHeaders'
+import type { ProviderModelType } from '@buddy-shared/providers/providerModelType'
 import type { Ref } from 'vue'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 
@@ -49,6 +50,7 @@ export interface ModelProvidersStore {
   setDefaultModel: (value: string | null) => Promise<boolean>
   setModelParameters: (providerId: string, modelId: string, parameters: ModelParameters) => Promise<boolean>
   setModelCatalogSource: (providerId: string, modelId: string, source: ModelCatalogReference | null) => Promise<boolean>
+  setModelType: (providerId: string, modelId: string, type: ProviderModelType | null) => Promise<boolean>
   setModelCapabilities: (providerId: string, modelId: string, capabilities: ModelCapabilityOverrides | null) => Promise<boolean>
   setProviderEnabled: (providerId: string, enabled: boolean) => Promise<boolean>
   setProviderModelEnabled: (providerId: string, modelId: string, enabled: boolean) => Promise<boolean>

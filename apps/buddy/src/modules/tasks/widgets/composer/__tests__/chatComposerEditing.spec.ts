@@ -561,6 +561,9 @@ describe('chat composer editing', () => {
     const flow = await mountComposer({
       model: {
         available: true,
+        type: 'chat',
+        sourceType: 'chat',
+        typeOverride: null,
         catalogMatch: 'not_applicable',
         catalog: { source: null, selection: null, candidates: [] },
         metadataKnown: true,

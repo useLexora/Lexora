@@ -4,6 +4,7 @@ import { BUDDY_THINKING_LEVELS } from '../../../shared/conversation/modelSelecti
 import { modelCapabilitiesSchema, modelCapabilityOverridesSchema } from '../../../shared/providers/providerCapabilities'
 import { modelCatalogResolutionSchema } from '../../../shared/providers/providerCatalog'
 import { providerRequestHeadersSchema } from '../../../shared/providers/providerHeaders'
+import { providerModelTypeSchema } from '../../../shared/providers/providerModelType'
 
 export const apiKeyCredentialSchema = z.object({
   type: z.literal('api_key'),
@@ -24,6 +25,7 @@ export const credentialSchema = z.union([
 ])
 
 export const buddyProviderSchema = z.object({
+  plugin: z.object({ id: z.string(), managementPage: z.boolean() }).strict().optional(),
   requestHeaders: providerRequestHeadersSchema.default([]),
   activeRunCount: z.number().int().nonnegative(),
   added: z.boolean(),
@@ -46,6 +48,9 @@ export const buddyProviderSchema = z.object({
 }).strict()
 
 export const buddyModelSchema = z.object({
+  type: providerModelTypeSchema.default('chat'),
+  sourceType: providerModelTypeSchema.default('chat'),
+  typeOverride: providerModelTypeSchema.nullable().default(null),
   available: z.boolean(),
   catalogMatch: z.enum(['matched', 'ambiguous', 'unmatched', 'not_applicable']),
   catalog: modelCatalogResolutionSchema,
@@ -59,16 +64,16 @@ export const buddyModelSchema = z.object({
   capabilityOverrides: modelCapabilityOverridesSchema.nullable(),
   sourceCapabilities: modelCapabilitiesSchema,
   reasoningOptions: z.array(z.enum(BUDDY_THINKING_LEVELS)),
-  contextWindow: z.number().int(),
+  contextWindow: z.number().int().nullable(),
   hasParameterOverride: z.boolean(),
-  maxTokens: z.number().int(),
+  maxTokens: z.number().int().nullable(),
   overrideContextWindow: z.number().int().positive().nullable(),
   overrideMaxTokens: z.number().int().positive().nullable(),
   enabled: z.boolean(),
   lastSeenAt: z.string().nullable(),
   source: z.enum(['builtin', 'manual', 'synced']),
-  sourceContextWindow: z.number().int().positive(),
-  sourceMaxTokens: z.number().int().positive(),
+  sourceContextWindow: z.number().int().positive().nullable(),
+  sourceMaxTokens: z.number().int().positive().nullable(),
   sourceParametersUpdated: z.boolean(),
 }).strict()
 

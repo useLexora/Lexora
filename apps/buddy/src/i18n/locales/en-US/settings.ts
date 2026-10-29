@@ -1,6 +1,8 @@
 import type zhCN from '../zh-CN/settings'
 
 export default {
+  'desktop.settings.category.speech': 'Voice',
+  'desktop.settings.categoryDescription.speech': 'Set up voice input and read aloud.',
   'desktop.backup.completed': 'Cloud backup completed',
   'desktop.backup.failed': 'Cloud backup did not complete. Check its status in Data storage and try again.',
   'desktop.backup.authenticationFailed': 'Cloud backup failed. Check your username, password or access keys.',

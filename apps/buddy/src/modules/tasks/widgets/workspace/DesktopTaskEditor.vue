@@ -7,6 +7,7 @@ import { useRouter } from 'vue-router'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { useFileOpening } from '@/modules/files'
 import { DesktopMcpDialog } from '@/modules/settings/ui'
+import { provideSpeechScope } from '@/modules/speech'
 import { createFileLinkMenu } from '@/modules/tasks/state/artifacts/createFileLinkMenu'
 import { provideConversationMcpPanel } from '@/modules/tasks/state/runs/conversationMcpPanel'
 import { provideConversationStatusPanel } from '@/modules/tasks/state/runs/conversationStatusPanel'
@@ -25,7 +26,7 @@ import { useDesktopUi } from '@/shared/ui/desktopUiContext'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopTaskPartners from './DesktopTaskPartners.vue'
 
-withDefaults(defineProps<{ readingPositions?: ChatReadingPositions, active?: boolean }>(), { active: true })
+const props = withDefaults(defineProps<{ readingPositions?: ChatReadingPositions, active?: boolean }>(), { active: true })
 const emit = defineEmits<{ ready: [] }>()
 const router = useRouter()
 const {
@@ -63,6 +64,7 @@ const { actions: taskActions, select: selectTaskAction } = useTaskMenuActions({
 const startTask = navigateDraft ?? tasks.session.startTask
 const chatSession = workspace.session
 const viewMode = shallowRef<'chat' | 'canvas'>('chat')
+provideSpeechScope({ active: () => props.active, key: () => [chatSession.activeConversationId.value, chatSession.activeBranchId.value, workspace.composer.editorKey.value, viewMode.value].join(':') })
 const statusPanelOpen = shallowRef(false)
 const mcpPanelOpen = shallowRef(false)
 provideConversationMcpPanel({ open: () => {

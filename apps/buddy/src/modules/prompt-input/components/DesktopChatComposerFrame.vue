@@ -35,12 +35,14 @@ withDefaults(defineProps<{
       </div>
 
       <div class="desktop-chat-composer__toolbar flex-wrap justify-between gap-[0.55rem] min-h-control">
-        <div class="desktop-chat-composer__leading-actions max-w-full flex-wrap gap-[0.35rem]">
-          <slot name="leading" />
-        </div>
-        <div class="desktop-chat-composer__actions max-w-full justify-end gap-[0.35rem] ml-auto">
-          <slot name="actions" />
-        </div>
+        <slot name="toolbar">
+          <div class="desktop-chat-composer__leading-actions max-w-full flex-wrap gap-[0.35rem]">
+            <slot name="leading" />
+          </div>
+          <div class="desktop-chat-composer__actions max-w-full justify-end gap-[0.35rem] ml-auto">
+            <slot name="actions" />
+          </div>
+        </slot>
       </div>
     </div>
 

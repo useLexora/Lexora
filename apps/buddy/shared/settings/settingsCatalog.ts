@@ -2,6 +2,7 @@ export const builtinSettingsCatalog = {
   'general': { section: 'personal', requiresRuntime: false },
   'appearance': { section: 'personal', requiresRuntime: false },
   'notifications': { section: 'personal', requiresRuntime: false },
+  'speech': { section: 'personal', requiresRuntime: false },
   'pet': { section: 'personal', requiresRuntime: true },
   'shortcuts': { section: 'personal', requiresRuntime: false },
   'models': { section: 'ai', requiresRuntime: true },

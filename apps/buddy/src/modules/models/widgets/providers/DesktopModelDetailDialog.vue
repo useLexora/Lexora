@@ -2,7 +2,8 @@
 import type { LocalRuntimeModelOption } from '@buddy-shared/providers/providerApi'
 import type { ModelParameterActions } from './typing'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { NCard, NModal } from 'naive-ui'
+import { providerModelTypeSchema } from '@buddy-shared/providers/providerModelType'
+import { NCard, NModal, NSelect } from 'naive-ui'
 import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopManualModelInfoPanel from '@/modules/models/widgets/providers/DesktopManualModelInfoPanel.vue'
@@ -22,6 +23,13 @@ const emit = defineEmits<{
   'update:show': [show: boolean]
 }>()
 const { t } = useBuddyI18n(() => props.language)
+const typeOptions = computed(() => [
+  { value: 'auto', label: `${t('desktop.providers.modelTypeAutomatic')} · ${t(`desktop.providers.modelTypes.${props.model?.sourceType ?? 'chat'}`)}` },
+  ...(['chat', 'transcription', 'speech'] as const).map(value => ({ value, label: t(`desktop.providers.modelTypes.${value}`) })),
+])
+function saveType(value: string) {
+  return props.actions?.saveType(value === 'auto' ? null : providerModelTypeSchema.parse(value))
+}
 const modelSourceSummary = computed(() => (
   props.model ? t(`desktop.providers.modelSourceSummary.${props.model.source}`) : ''
 ))
@@ -45,8 +53,12 @@ const modelSourceSummary = computed(() => (
       </template>
 
       <div class="grid gap-[0.85rem]">
+        <label class="grid gap-2">
+          <span>{{ t('desktop.providers.modelType') }}</span>
+          <NSelect :value="model.typeOverride ?? 'auto'" :options="typeOptions" :disabled="saving || disabled" @update:value="saveType" />
+        </label>
         <DesktopManualModelInfoPanel
-          v-if="model.source === 'manual'"
+          v-if="model.source === 'manual' && model.type === 'chat'"
           :actions="actions"
           :language="language"
           :saving="saving"
@@ -54,6 +66,7 @@ const modelSourceSummary = computed(() => (
           :show="show"
         />
         <DesktopModelCapabilitiesPanel
+          v-if="model.type === 'chat'"
           :model="model"
           :actions="actions"
           :language="language"
@@ -62,6 +75,7 @@ const modelSourceSummary = computed(() => (
           :show="show"
         />
         <DesktopModelThinkingPanel
+          v-if="model.type === 'chat'"
           :actions="actions"
           :language="language"
           :saving="saving"
@@ -70,6 +84,7 @@ const modelSourceSummary = computed(() => (
           :show="show"
         />
         <DesktopModelParametersPanel
+          v-if="model.type === 'chat'"
           :model="model"
           :actions="actions"
           :language="language"

@@ -2,6 +2,7 @@ import type { LocalCustomProvider, LocalCustomProviderModel } from '@buddy-share
 import type { ModelCapabilityOverrides } from '@buddy-shared/providers/providerCapabilities'
 import type { ModelCatalogReference } from '@buddy-shared/providers/providerCatalog'
 import type { ProviderRequestHeader } from '@buddy-shared/providers/providerHeaders'
+import type { ProviderModelType } from '@buddy-shared/providers/providerModelType'
 import type { ModelParameters } from '../../state/typing'
 
 export interface ManualModelEditorActions {
@@ -9,6 +10,7 @@ export interface ManualModelEditorActions {
 }
 
 export interface ModelParameterActions extends ManualModelEditorActions {
+  saveType: (type: ProviderModelType | null) => Promise<boolean>
   saveCapabilities: (capabilities: ModelCapabilityOverrides | null) => Promise<boolean>
   selectCatalogSource: (source: ModelCatalogReference | null) => Promise<boolean>
   saveParameters: (parameters: ModelParameters) => Promise<boolean>

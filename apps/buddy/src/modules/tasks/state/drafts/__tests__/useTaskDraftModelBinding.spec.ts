@@ -468,6 +468,9 @@ function modelSelection(modelId: string): BuddyComposerDraftModelSelection {
 function model(modelId: string): LocalRuntimeModelOption {
   return {
     available: true,
+    type: 'chat',
+    sourceType: 'chat',
+    typeOverride: null,
     catalogMatch: 'not_applicable',
     catalog: { source: null, selection: null, candidates: [] },
     metadataKnown: true,

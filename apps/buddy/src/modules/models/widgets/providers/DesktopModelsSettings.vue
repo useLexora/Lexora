@@ -91,7 +91,7 @@ function providerAuthenticationLabel(type: NonNullable<LocalProvider['storedCred
               </template>
             </div>
           </div>
-          <template v-if="!provider.setupComplete">
+          <template v-if="!provider.setupComplete && !provider.plugin">
             <NButton size="small" @click="openAddDialog(provider.id)">
               {{ t('desktop.providers.continueSetup') }}
             </NButton>

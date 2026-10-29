@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import type { LocalProvider, LocalRuntimeModelOption } from '@buddy-shared/providers/providerApi'
+import type { LocalProvider } from '@buddy-shared/providers/providerApi'
 
+import type { ModelPickerOption } from '../../model/modelCatalog'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { Checkmark16Regular, Search20Regular } from '@vicons/fluent'
 import { NInput } from 'naive-ui'
@@ -12,8 +13,8 @@ import { useModelPicker } from './useModelPicker'
 const props = defineProps<{
   disabled?: boolean
   language: BuddyLocale
-  models: ReadonlyArray<LocalRuntimeModelOption>
-  providers: ReadonlyArray<LocalProvider>
+  models: ReadonlyArray<ModelPickerOption>
+  providers: ReadonlyArray<Pick<LocalProvider, 'id' | 'displayName'>>
   selectedModelId: string | null
 }>()
 
@@ -60,7 +61,7 @@ const { query, activeProviderId, visibleGroups, activeGroup } = useModelPicker(p
         <button
           v-for="model in activeGroup?.models ?? []"
           :key="modelKey(model)"
-          class="desktop-model-picker__model h-13 min-h-13 ui-menu-option gap-[0.6rem] px-[0.55rem] py-[0.42rem]"
+          class="desktop-model-picker__model min-h-13 ui-menu-option gap-[0.6rem] px-[0.55rem] py-[0.42rem]"
           type="button"
           role="menuitemradio"
           :disabled="disabled"

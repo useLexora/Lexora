@@ -1,4 +1,4 @@
-import type { CredentialInfo } from '@earendil-works/pi-ai'
+import type { AuthType, CredentialInfo } from '@earendil-works/pi-ai'
 
 export interface ProviderCredentialSource {
   list: () => Promise<readonly CredentialInfo[]>
@@ -6,6 +6,7 @@ export interface ProviderCredentialSource {
 
 export interface ProviderCredentialStatus {
   readonly availability: 'known' | 'unknown'
+  type: (providerId: string) => AuthType | null
   list: () => Promise<readonly CredentialInfo[]>
   listOrEmpty: () => Promise<readonly CredentialInfo[]>
 }
@@ -16,6 +17,7 @@ export function createProviderCredentialStatus(
   let availability: 'known' | 'unknown' = 'unknown'
   let sequence = 0
   let accepted = 0
+  let current: readonly CredentialInfo[] = []
   const observe = (request: number, status: typeof availability) => {
     if (request >= accepted) {
       accepted = request
@@ -26,6 +28,8 @@ export function createProviderCredentialStatus(
     const request = ++sequence
     try {
       const credentials = await source.list()
+      if (request >= accepted)
+        current = credentials
       observe(request, 'known')
       return credentials
     }
@@ -36,6 +40,7 @@ export function createProviderCredentialStatus(
   }
   return {
     get availability() { return availability },
+    type: providerId => availability === 'known' ? current.find(item => item.providerId === providerId)?.type ?? null : null,
     list,
     async listOrEmpty() {
       try {

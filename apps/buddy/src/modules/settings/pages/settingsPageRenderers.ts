@@ -5,6 +5,7 @@ import { defineAsyncComponent } from 'vue'
 export const settingsPageRenderers: Record<Exclude<BuiltinSettingsCategory, 'general'>, Component> = {
   'appearance': defineAsyncComponent(() => import('./DesktopAppearanceSettingsView.vue')),
   'notifications': defineAsyncComponent(() => import('./DesktopNotificationsSettingsView.vue')),
+  'speech': defineAsyncComponent(() => import('./DesktopSpeechSettingsView.vue')),
   'pet': defineAsyncComponent(() => import('./DesktopPetSettingsView.vue')),
   'shortcuts': defineAsyncComponent(() => import('./DesktopShortcutsSettingsView.vue')),
   'models': defineAsyncComponent(() => import('./DesktopModelsSettingsView.vue')),

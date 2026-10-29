@@ -1,10 +1,11 @@
-import type { LocalProvider, LocalRuntimeModelOption } from '@buddy-shared/providers/providerApi'
+import type { LocalProvider } from '@buddy-shared/providers/providerApi'
+import type { ModelPickerOption } from '../../model/modelCatalog'
 import { computed, shallowRef } from 'vue'
 import { groupModelOptions } from '../../model/modelCatalog'
 import { modelKey } from '../../model/modelSelection'
 
 interface ModelPickerInput {
-  models: ReadonlyArray<LocalRuntimeModelOption>
+  models: ReadonlyArray<ModelPickerOption>
   providers: ReadonlyArray<Pick<LocalProvider, 'id' | 'displayName'>>
   selectedModelId: string | null
 }

@@ -6,6 +6,9 @@ import { resolveChatComposerModelInputIssue } from '../chatComposerModelCapabili
 function model(capabilities: readonly string[]): LocalRuntimeModelOption {
   return {
     available: true,
+    type: 'chat',
+    sourceType: 'chat',
+    typeOverride: null,
     catalogMatch: 'not_applicable',
     catalog: { source: null, selection: null, candidates: [] },
     metadataKnown: true,

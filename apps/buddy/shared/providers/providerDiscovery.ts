@@ -1,6 +1,8 @@
 import { z } from 'zod'
+import { providerModelTypeSchema } from './providerModelType'
 
 export const discoveredModelMetadataSchema = z.object({
+  type: providerModelTypeSchema.optional(),
   name: z.string().trim().min(1).max(200).optional(),
   input: z.array(z.enum(['text', 'image', 'pdf', 'audio', 'video'])).min(1).optional(),
   reasoningOptions: z.array(z.string().min(1).max(32).regex(/^[a-z0-9_-]+$/u)).optional(),

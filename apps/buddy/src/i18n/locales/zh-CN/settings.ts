@@ -1,4 +1,6 @@
 export default {
+  'desktop.settings.category.speech': '语音',
+  'desktop.settings.categoryDescription.speech': '设置语音输入与回复朗读。',
   'desktop.settings.category.storage': '数据存储',
   'desktop.settings.categoryDescription.storage': '管理数据目录、空间占用与备份恢复',
   'desktop.backup.completed': '云备份已完成',

@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import process from 'node:process'
 
 async function update() {
-  const response = await fetch('https://models.dev/api.json', { signal: AbortSignal.timeout(15_000) })
+  const response = await fetch('https://models.dev/experimental/v2.0/api.json', { signal: AbortSignal.timeout(15_000) })
   if (!response.ok)
     throw new Error(`models.dev: HTTP ${response.status}`)
   const text = await response.text()

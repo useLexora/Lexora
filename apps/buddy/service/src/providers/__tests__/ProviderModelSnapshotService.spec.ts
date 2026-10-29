@@ -46,7 +46,7 @@ describe('providerModelSnapshotService', () => {
       snapshotPath,
       now: () => new Date('2026-09-12T00:00:00.000Z'),
       fetch: async (url, options) => {
-        expect(url).toBe('https://models.dev/api.json')
+        expect(url).toBe('https://models.dev/experimental/v2.0/api.json')
         expect(options?.headers).toBeUndefined()
         return new Promise((resolve) => {
           finish = resolve

@@ -94,6 +94,10 @@ export class ProviderModelSnapshotService implements ModelMetadataCatalog {
     }
   }
 
+  getMediaModels(providerId?: string) {
+    return this.#catalog.getMediaModels(providerId)
+  }
+
   getModels(providerId?: string) {
     return this.#catalog.getModels(providerId)
   }
@@ -137,7 +141,7 @@ export class ProviderModelSnapshotService implements ModelMetadataCatalog {
     const operationId = randomUUID()
     this.#publish('refresh-started', operationId)
     try {
-      const response = await this.#fetch('https://models.dev/api.json', {
+      const response = await this.#fetch('https://models.dev/experimental/v2.0/api.json', {
         signal: AbortSignal.any([this.#controller.signal, AbortSignal.timeout(15_000)]),
         redirect: 'error',
       })
@@ -223,7 +227,7 @@ export class ProviderModelSnapshotService implements ModelMetadataCatalog {
 }
 
 function catalogFingerprint(catalog: ModelsDevCatalog): string {
-  return createHash('sha256').update(JSON.stringify({ providers: [...catalog.getProviders()].sort((a, b) => a.id.localeCompare(b.id)), models: [...catalog.getModels()].sort((a, b) => a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id)) })).digest('hex')
+  return createHash('sha256').update(JSON.stringify({ mediaModels: [...catalog.getMediaModels()].sort((a, b) => a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id)), providers: [...catalog.getProviders()].sort((a, b) => a.id.localeCompare(b.id)), models: [...catalog.getModels()].sort((a, b) => a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id)) })).digest('hex')
 }
 
 function parseSnapshot(value: unknown): Snapshot {

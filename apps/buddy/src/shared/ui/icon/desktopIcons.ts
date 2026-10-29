@@ -10,7 +10,10 @@ import messageBranchPreviousUrl from './assets/message-branch-previous.svg'
 import messageBranchUrl from './assets/message-branch.svg'
 import messageCopiedUrl from './assets/message-copied.svg'
 import messageCopyUrl from './assets/message-copy.svg'
+import messagePlaybackStopUrl from './assets/message-playback-stop.svg'
 import messageQueueUrl from './assets/message-queue.svg'
+import messageReadAloudUnavailableUrl from './assets/message-read-aloud-unavailable.svg'
+import messageReadAloudUrl from './assets/message-read-aloud.svg'
 import messageRetryUrl from './assets/message-retry.svg'
 import navigationAutomationUrl from './assets/navigation-automation.svg'
 import navigationSettingsUrl from './assets/navigation-settings.svg'
@@ -42,7 +45,10 @@ export const DESKTOP_ICON_URLS = {
   messageBranchPrevious: messageBranchPreviousUrl,
   messageCopied: messageCopiedUrl,
   messageCopy: messageCopyUrl,
+  messagePlaybackStop: messagePlaybackStopUrl,
   messageQueue: messageQueueUrl,
+  messageReadAloud: messageReadAloudUrl,
+  messageReadAloudUnavailable: messageReadAloudUnavailableUrl,
   messageRetry: messageRetryUrl,
   navigationAutomation: navigationAutomationUrl,
   navigationSettings: navigationSettingsUrl,

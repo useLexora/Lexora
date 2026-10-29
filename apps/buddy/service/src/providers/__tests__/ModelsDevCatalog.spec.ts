@@ -6,6 +6,21 @@ import snapshot from '../data/models-dev.json'
 import { ModelsDevCatalog } from '../ModelsDevCatalog'
 
 describe('models.dev metadata', () => {
+  it('reads explicit v2 purposes and distinguishes the supported audio protocol from audio modalities', () => {
+    const base = { name: 'Fixture', capabilities: { tools: { supported: false }, reasoning: { supported: false } } }
+    const catalog = new ModelsDevCatalog({ fixture: { name: 'Fixture', models: {
+      chat: { ...base, type: 'chat', modalities: { input: ['text', 'audio/wav'], output: ['text'] }, limit: { context: 8000, output: 1000 }, api: { responses: { base_url: 'https://fixture.test/v1' } } },
+      transcribe: { ...base, type: 'transcription', modalities: { input: ['text', 'audio/wav'], output: ['text'] }, api: { transcriptions: { base_url: 'https://fixture.test/v1', sdk: { opencodeai: '@opencode/ai/protocols/openai-transcription' } } } },
+      speech: { ...base, type: 'speech', modalities: { input: ['text'], output: ['audio/wav'] }, api: { speech: { base_url: 'https://fixture.test/v1', sdk: { opencodeai: '@opencode/ai/protocols/openai-speech' } } } },
+      google: { ...base, type: 'speech', modalities: { input: ['text'], output: ['audio/wav'] }, api: { speech: { base_url: 'https://fixture.test/v1', sdk: { opencodeai: '@opencode/ai/protocols/google-speech' } } } },
+    } } })
+    expect(catalog.getModels().map(model => model.id)).toEqual(['chat'])
+    expect(catalog.getModels()[0]?.audioInput).toBe(true)
+    expect(catalog.getMediaModels().find(model => model.id === 'transcribe')).toMatchObject({ type: 'transcription', api: 'openai-audio' })
+    expect(catalog.getMediaModels().find(model => model.id === 'speech')).toMatchObject({ type: 'speech', api: 'openai-audio' })
+    expect(catalog.getMediaModels().find(model => model.id === 'google')?.api).toBeUndefined()
+  })
+
   it.each([
     { tier: 'priority', supported: true },
     { tier: 'fast', supported: true },

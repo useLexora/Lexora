@@ -1,4 +1,5 @@
 import type { Api, Model } from '@earendil-works/pi-ai'
+import type { ProviderModelType } from '../../../shared/providers/providerModelType'
 import { BUDDY_THINKING_LEVELS } from '../../../shared/conversation/modelSelection'
 import { freezeEventSnapshot } from '../../../shared/events/eventSnapshot'
 
@@ -20,7 +21,20 @@ export interface CatalogModel {
   cost: Model<Api>['cost']
 }
 
+export interface CatalogMediaModel {
+  type?: ProviderModelType
+  baseUrl?: string
+  api?: 'openai-audio'
+  protocols?: readonly string[]
+  id: string
+  name: string
+  provider: string
+  input: readonly string[]
+  output: readonly string[]
+}
+
 export interface ModelMetadataCatalog {
+  getMediaModels?: (providerId?: string) => readonly CatalogMediaModel[]
   getModels: (providerId?: string) => readonly CatalogModel[]
   getProviders: () => ReadonlyArray<{ id: string, name: string }>
 }
@@ -34,6 +48,7 @@ const SDK_BASE_URLS: Record<string, string> = {
 export class ModelsDevCatalog implements ModelMetadataCatalog {
   readonly #providers: Array<{ id: string, name: string }> = []
   readonly #models: CatalogModel[] = []
+  readonly #mediaModels: CatalogMediaModel[] = []
   readonly #byProvider = new Map<string, CatalogModel[]>()
 
   constructor(data: unknown) {
@@ -43,11 +58,21 @@ export class ModelsDevCatalog implements ModelMetadataCatalog {
       if (!isRecord(provider) || !isRecord(provider.models) || typeof provider.name !== 'string')
         throw new Error('Invalid models.dev provider')
       const models: CatalogModel[] = []
-      for (const [modelId, model] of Object.entries(provider.models)) {
+      for (const [modelId, raw] of Object.entries(provider.models)) {
+        const model = isRecord(raw) && typeof raw.type === 'string' ? normalizeV2Model(raw) : raw
         if (!isRecord(model) || !isRecord(model.modalities) || !Array.isArray(model.modalities.input)
-          || !Array.isArray(model.modalities.output) || !isRecord(model.limit)) {
+          || !Array.isArray(model.modalities.output)) {
           throw new Error('Invalid models.dev model')
         }
+        if (typeof model.name !== 'string')
+          throw new Error('Invalid models.dev model name')
+        const type = model.type === undefined || model.type === 'chat' ? 'chat' : model.type === 'transcription' || model.type === 'speech' ? model.type : undefined
+        const protocols = isRecord(model.api) ? model.api : {}
+        const speechProtocol = type === 'transcription' ? protocols.transcriptions : type === 'speech' ? protocols.speech : undefined
+        const baseUrl = typeof model.baseUrl === 'string' ? model.baseUrl : typeof provider.api === 'string' ? provider.api : SDK_BASE_URLS[String(provider.npm)] ?? ''
+        this.#mediaModels.push({ id: modelId, name: model.name, provider: providerId, type, baseUrl: isRecord(speechProtocol) && typeof speechProtocol.base_url === 'string' ? speechProtocol.base_url : baseUrl, api: isOpenAiAudioProtocol(speechProtocol) ? 'openai-audio' : undefined, protocols: Object.keys(protocols), input: model.modalities.input.filter((item): item is string => typeof item === 'string'), output: model.modalities.output.filter((item): item is string => typeof item === 'string') })
+        if (type !== 'chat' || !isRecord(model.limit))
+          continue
         if (!model.modalities.input.includes('text') || !model.modalities.output.includes('text'))
           continue
         if (typeof model.name !== 'string')
@@ -59,7 +84,7 @@ export class ModelsDevCatalog implements ModelMetadataCatalog {
           id: modelId,
           provider: providerId,
           name: model.name,
-          baseUrl: typeof provider.api === 'string' ? provider.api : SDK_BASE_URLS[String(provider.npm)] ?? '',
+          baseUrl,
           input: model.modalities.input.includes('image') ? ['text', 'image'] : ['text'],
           pdfInput: model.modalities.input.includes('pdf'),
           audioInput: model.modalities.input.includes('audio'),
@@ -79,15 +104,20 @@ export class ModelsDevCatalog implements ModelMetadataCatalog {
         this.#byProvider.set(providerId, models)
       }
     }
-    if (!this.#models.length)
+    if (!this.#mediaModels.length)
       throw new Error('Empty models.dev catalog')
     freezeEventSnapshot(this.#providers)
     freezeEventSnapshot(this.#models)
+    freezeEventSnapshot(this.#mediaModels)
     for (const models of this.#byProvider.values()) freezeEventSnapshot(models)
   }
 
   getProviders() {
     return this.#providers as ReadonlyArray<{ id: string, name: string }>
+  }
+
+  getMediaModels(providerId?: string): readonly CatalogMediaModel[] {
+    return providerId ? this.#mediaModels.filter(model => model.provider === providerId) : this.#mediaModels
   }
 
   getModels(providerId?: string): readonly CatalogModel[] {
@@ -147,4 +177,52 @@ function positiveInteger(value: unknown): value is number {
 
 function price(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0
+}
+
+function normalizeV2Model(model: Record<string, unknown>): Record<string, unknown> {
+  const capabilities = isRecord(model.capabilities) ? model.capabilities : {}
+  const reasoning = isRecord(capabilities.reasoning) ? capabilities.reasoning : {}
+  const tools = isRecord(capabilities.tools) ? capabilities.tools : {}
+  const api = isRecord(model.api) ? model.api : {}
+  const endpoint = Object.values(api).find(isRecord)
+  const modalities = isRecord(model.modalities) ? model.modalities : {}
+  const normalize = (values: unknown) => Array.isArray(values) ? [...new Set(values.map(value => typeof value === 'string' ? value === 'application/pdf' ? 'pdf' : value.split('/')[0] : value))] : []
+  const cost = isRecord(model.cost) ? model.cost : {}
+  const text = isRecord(cost.text) ? cost.text : {}
+  const input = isRecord(text.input) ? text.input : {}
+  const output = isRecord(text.output) ? text.output : {}
+  const cache = isRecord(input.cache) ? input.cache : {}
+  const overrides = Array.isArray(input.overrides) ? input.overrides : []
+  const tiers = overrides.filter(isRecord).flatMap((entry) => {
+    const when = isRecord(entry.when) ? entry.when : {}
+    const context = isRecord(when.context) ? when.context : {}
+    if (typeof context.gt !== 'number')
+      return []
+    const outputOverride = (Array.isArray(output.overrides) ? output.overrides : []).filter(isRecord).find(candidate => JSON.stringify(candidate.when) === JSON.stringify(entry.when))
+    const cacheOverride = isRecord(entry.cache) ? entry.cache : {}
+    return [{ tier: { type: 'context', size: context.gt }, input: entry.price, output: outputOverride?.price ?? output.price, cache_read: cacheOverride.read ?? cache.read, cache_write: cacheOverride.write ?? cache.write }]
+  })
+  const experimental = isRecord(model.experimental) ? model.experimental : {}
+  const modes = isRecord(experimental.modes) ? experimental.modes : {}
+  const fast = isRecord(modes.fast) ? modes.fast : {}
+  return {
+    ...model,
+    baseUrl: endpoint?.base_url,
+    modalities: { input: normalize(modalities.input), output: normalize(modalities.output) },
+    tool_call: tools.supported,
+    reasoning: reasoning.supported,
+    reasoning_options: [
+      ...(Array.isArray(reasoning.effort) ? [{ type: 'effort', values: reasoning.effort }] : []),
+      ...(reasoning.toggle ? [{ type: 'toggle' }] : []),
+    ],
+    cost: { input: input.price, output: output.price, cache_read: cache.read, cache_write: cache.write, tiers },
+    experimental: { modes: { fast: { provider: { body: fast.body } } } },
+  }
+}
+
+function isOpenAiAudioProtocol(value: unknown): boolean {
+  if (!isRecord(value) || !isRecord(value.sdk))
+    return false
+  return value.sdk.opencodeai === '@opencode/ai/protocols/openai-transcription'
+    || value.sdk.opencodeai === '@opencode/ai/protocols/openai-speech'
 }

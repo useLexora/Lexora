@@ -146,6 +146,9 @@ function model(providerId: string, displayName: string): LocalRuntimeModelOption
   return {
     api: 'openai-completions',
     available: true,
+    type: 'chat',
+    sourceType: 'chat',
+    typeOverride: null,
     catalogMatch: 'not_applicable',
     catalog: { source: null, selection: null, candidates: [] },
     metadataKnown: true,

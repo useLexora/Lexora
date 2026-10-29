@@ -58,6 +58,7 @@ module.exports = {
     target: [{ target: 'dmg', arch: ['arm64'] }, { target: 'zip', arch: ['arm64'] }],
     artifactName: target.platform === OPERATING_SYSTEM.MacOS ? desktopArtifactName(target, 'dmg', macro('version')).replace(/\.dmg$/, `.${macro('ext')}`) : undefined,
     category: 'public.app-category.productivity',
+    extendInfo: { NSMicrophoneUsageDescription: 'Lexora uses the microphone when you record voice input or test your microphone.' },
     minimumSystemVersion: target.minimumSystemVersion,
     icon: 'resources/icons/app-icon.png',
     identity: signedMacos ? undefined : '-',

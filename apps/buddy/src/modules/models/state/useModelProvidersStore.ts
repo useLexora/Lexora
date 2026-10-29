@@ -3,11 +3,13 @@ import type {
   BuddyThinkingLevel,
 } from '@buddy-shared/conversation/modelSelection'
 import type { LocalBuiltinProviderPreset, LocalCustomProvider, LocalDefaultModel, LocalModelSnapshot, LocalProvider, LocalProviderAuthChallenge, LocalRuntimeModelOption } from '@buddy-shared/providers/providerApi'
-
 import type { ProviderRequestHeader } from '@buddy-shared/providers/providerHeaders'
+import type { ProviderModelType } from '@buddy-shared/providers/providerModelType'
+
 import type { ShallowRef } from 'vue'
 import type { ModelProvidersStore } from './typing'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
+import { isChatModel } from '@buddy-shared/providers/providerModelType'
 import { parseLocalChatPublicError } from '@buddy-shared/runtime/localChatError'
 import { computed, readonly, shallowRef } from 'vue'
 import { isProviderLoginCancelled, resolveLocalChatErrorMessage } from '@/shared/lib/localChatError'
@@ -264,6 +266,10 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
     return mutateProvider(providerId, () => options.api.setModelCatalogSource(providerId, modelId, source))
   }
 
+  async function setModelType(providerId: string, modelId: string, type: ProviderModelType | null) {
+    return mutateProvider(providerId, () => options.api.setModelType(providerId, modelId, type))
+  }
+
   async function setModelCapabilities(
     providerId: string,
     modelId: string,
@@ -465,6 +471,7 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
     setDefaultModel,
     setModelParameters,
     setModelCatalogSource,
+    setModelType,
     setModelCapabilities,
     setProviderEnabled,
     setProviderModelEnabled,
@@ -484,7 +491,7 @@ export function filterAvailableModels(
     .filter(provider => provider.added && provider.enabled && provider.status === 'available')
     .map(provider => provider.id))
   return models.filter(model => (
-    availableProviderIds.has(model.providerId)
+    isChatModel(model) && availableProviderIds.has(model.providerId)
     && model.enabled
     && model.available
   ))

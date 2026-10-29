@@ -190,20 +190,16 @@ const messageText = computed(() => (props.actionMessages ?? [props.message]).map
   pointer-events: none;
   transition: opacity 120ms ease;
 
-  &.has-usage {
-    position: static;
-  }
-
+  &.has-usage,
   .is-followup-source &,
   &.has-turn-result,
   &.has-branches {
     position: static;
-    opacity: 1;
-    pointer-events: auto;
   }
 
+  &:has([data-speech-playing="true"]),
   .buddy-chat-message:hover &,
-  .buddy-chat-message:focus-within & {
+  .buddy-chat-message:has(:focus-visible) & {
     opacity: 1;
     pointer-events: auto;
   }

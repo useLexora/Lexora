@@ -2,6 +2,7 @@ import type { LocalContextUsageSnapshot } from '@buddy-shared/conversation/conte
 import type { LocalRuntimeModelOption } from '@buddy-shared/providers/providerApi'
 import type { LocalRunEvent } from '@buddy-shared/runs/runApi'
 import type { ChatContextUsage, ChatContextUsageSegment } from './typing'
+import { isChatModel } from '@buddy-shared/providers/providerModelType'
 
 interface CreateChatContextUsageInput {
   events: ReadonlyArray<LocalRunEvent>
@@ -59,7 +60,7 @@ export function createChatContextUsage(
       && candidate.modelId === usageModel.modelId
     )) ?? input.selectedModel
     : input.selectedModel
-  if (!model)
+  if (!model || !isChatModel(model))
     return null
 
   if (!usage) {
@@ -82,7 +83,7 @@ export function createChatContextUsage(
 
 function readyContextUsage(
   usage: ContextUsageValues & { contextWindow?: number },
-  model: LocalRuntimeModelOption,
+  model: LocalRuntimeModelOption & { contextWindow: number },
   recordedAt: string,
 ): ChatContextUsage {
   return {

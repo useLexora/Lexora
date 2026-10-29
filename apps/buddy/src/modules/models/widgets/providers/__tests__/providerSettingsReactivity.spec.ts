@@ -2,7 +2,7 @@
 import type { LocalBuiltinProviderPreset, LocalCustomProviderModel, LocalProvider, LocalRuntimeModelOption } from '@buddy-shared/providers/providerApi'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { ModelProvidersStore } from '@/modules/models/state/typing'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, effectScope, h, nextTick, shallowReactive, shallowRef } from 'vue'
 import { translateBuddy } from '@/i18n/buddyI18n'
 import { useProviderSetupWizard } from '@/modules/models/state/useProviderSetupWizard'
@@ -419,6 +419,9 @@ function provider(displayName: string): LocalProvider {
 function model(displayName: string): LocalRuntimeModelOption {
   return {
     available: true,
+    type: 'chat',
+    sourceType: 'chat',
+    typeOverride: null,
     catalogMatch: 'not_applicable',
     catalog: { source: null, selection: null, candidates: [] },
     metadataKnown: true,
@@ -495,6 +498,7 @@ function createStore(name: string, locale: BuddyLocale = 'zh-CN') {
     respondToAuth: succeed,
     restoreModelSourceParameters: succeed,
     setModelCatalogSource: succeed,
+    setModelType: vi.fn(async () => true),
     setModelCapabilities: succeed,
     setDefaultEffort: succeed,
     setDefaultModel: succeed,

@@ -20,6 +20,7 @@ export function useProviderDetail(providerSettings: () => ModelProvidersStore, p
     if (!model)
       return null
     return {
+      saveType: type => providerSettings().setModelType(model.providerId, model.modelId, type),
       saveCapabilities: capabilities => providerSettings().setModelCapabilities(model.providerId, model.modelId, capabilities),
       selectCatalogSource: source => providerSettings().setModelCatalogSource(model.providerId, model.modelId, source),
       saveManualModel: input => providerSettings().upsertManualModel(model.providerId, input),
@@ -87,8 +88,8 @@ export function useProviderDetail(providerSettings: () => ModelProvidersStore, p
     showModelDetailDialog.value = true
   }
 
-  function formatTokens(value: number): string {
-    return new Intl.NumberFormat(providerSettings().language.value).format(value)
+  function formatTokens(value: number | null): string {
+    return value === null ? '' : new Intl.NumberFormat(providerSettings().language.value).format(value)
   }
 
   async function removeUnavailableModel(modelId: string) {

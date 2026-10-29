@@ -6,6 +6,7 @@ import { BrowserWindow, Menu, shell } from 'electron'
 import { DESKTOP_IPC_CHANNELS } from '../shared/desktopApi'
 import { createDesktopContextMenuTemplate } from './desktopContextMenu'
 import { isAllowedExternalUrl, isAllowedRendererNavigation } from './security/navigationPolicy'
+import { microphoneAllowed } from './speech/microphonePermission'
 
 export interface CreateDesktopWindowOptions {
   appName: string
@@ -59,13 +60,13 @@ export function createDesktopWindow(options: CreateDesktopWindowOptions): Deskto
   })
   let trustedRendererUrl = ''
   window.webContents.session.setPermissionCheckHandler((webContents, permission, _origin, details) => {
-    return permission === 'local-fonts'
+    return (permission === 'local-fonts' || (permission === 'media' && details.mediaType === 'audio' && microphoneAllowed(window.webContents.id)))
       && webContents === window.webContents
       && details.isMainFrame
       && isAllowedRendererNavigation(details.requestingUrl ?? '', trustedRendererUrl)
   })
   window.webContents.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
-    callback(permission === 'local-fonts'
+    callback((permission === 'local-fonts' || (permission === 'media' && 'mediaTypes' in details && details.mediaTypes?.length === 1 && details.mediaTypes[0] === 'audio' && microphoneAllowed(window.webContents.id)))
       && webContents === window.webContents
       && details.isMainFrame
       && isAllowedRendererNavigation(details.requestingUrl, trustedRendererUrl))

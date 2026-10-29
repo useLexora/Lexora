@@ -1,0 +1,7 @@
+export { speechErrorKey } from './speechError'
+export { provideSpeechScope } from './speechScope'
+export { useMicrophoneTest } from './useMicrophoneTest'
+export { useSpeechCatalog } from './useSpeechCatalog'
+export { useSpeechReadAloud } from './useSpeechReadAloud'
+export { useSpeechRecorder } from './useSpeechRecorder'
+export { useSystemVoices } from './useSystemVoices'

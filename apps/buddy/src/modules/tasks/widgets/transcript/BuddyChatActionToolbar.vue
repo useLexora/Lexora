@@ -9,6 +9,7 @@ import { useTimeoutFn } from '@vueuse/core'
 import { NButton, NTooltip, useMessage } from 'naive-ui'
 import { shallowRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import { SpeechReadAloud } from '@/modules/speech/ui'
 import WorkbenchMenu from '@/shared/ui/contributions/WorkbenchMenu.vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import { formatChatMessageTimeLabel } from '../../model/transcript/chatMessageTime'
@@ -84,6 +85,7 @@ async function copyContent() {
       </template>
       {{ t(copied ? 'desktop.chat.copied' : 'desktop.chat.copy') }}
     </NTooltip>
+    <SpeechReadAloud v-if="actions.showCopy && role === 'assistant' && copyText.trim()" :text="copyText" :owner="targetKey" :language="language" />
     <NTooltip v-if="actions.showEdit" placement="bottom">
       <template #trigger>
         <NButton

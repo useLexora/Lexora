@@ -11,6 +11,7 @@ import onboarding from './onboarding'
 import pet from './pet'
 import settings from './settings'
 import skills from './skills'
+import speech from './speech'
 import tasks from './tasks'
 import usage from './usage'
 
@@ -28,6 +29,7 @@ export default {
   ...pet,
   ...settings,
   ...skills,
+  ...speech,
   ...tasks,
   ...usage,
 }

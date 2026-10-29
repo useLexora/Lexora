@@ -7,6 +7,9 @@ import { useAutomationEditor } from '../useAutomationEditor'
 
 const model: LocalRuntimeModelOption = {
   available: true,
+  type: 'chat',
+  sourceType: 'chat',
+  typeOverride: null,
   catalogMatch: 'not_applicable',
   catalog: { source: null, selection: null, candidates: [] },
   metadataKnown: true,

@@ -28,6 +28,8 @@ import { checkDesktopDirectories, criticalDesktopDirectories, DesktopInstanceLoc
 import { observeStartupDiagnostics } from './startupDiagnostics'
 
 export function prepareDesktopEnvironment(): DesktopEnvironment {
+  if (currentPlatform.id === OPERATING_SYSTEM.Linux)
+    app.commandLine.appendSwitch('enable-speech-dispatcher')
   const desktopHost = desktopHosts[currentPlatform.id]
   const isSmokeTest = process.env.LEXORA_DESKTOP_SMOKE_TEST === '1'
   const legacyPaths = bootstrapStep('resolve_paths', () => resolveBuddyRuntimePaths({

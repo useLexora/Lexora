@@ -58,6 +58,7 @@ export function createProvidersApi(): Pick<LocalChatApi, 'providers'> {
         LOCAL_CHAT_IPC_CHANNELS.providersSetModelCatalogSource,
         { modelId, providerId, source },
       ),
+      setModelType: (providerId, modelId, type) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.providersSetModelType, { providerId, modelId, type }),
       setModelCapabilities: (providerId, modelId, capabilities) => ipcRenderer.invoke(
         LOCAL_CHAT_IPC_CHANNELS.providersSetModelCapabilities,
         { modelId, providerId, capabilities },

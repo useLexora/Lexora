@@ -6,9 +6,11 @@ import type {
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import type { Event } from '../../../shared/events/Emitter'
 import type { ModelCapabilityOverrides } from '../../../shared/providers/providerCapabilities'
+import type { ProviderCapabilityModel } from '../../../shared/providers/providerCapabilityModel'
 import type { ModelCatalogReference } from '../../../shared/providers/providerCatalog'
 import type { ProviderRequestHeader } from '../../../shared/providers/providerHeaders'
 import type { BuddyDefaultModel, CustomProviderInput, ProviderModelInput } from '../../../shared/providers/providerInput'
+import type { ProviderModelType } from '../../../shared/providers/providerModelType'
 import type { BuiltinProviderConfigRecord, BuiltinProviderConfigRepository } from '../storage/builtinProviderConfigRepository'
 import type { DefaultModelRepository } from '../storage/defaultModelRepository'
 import type {
@@ -61,7 +63,7 @@ export interface ProviderModelRuntime extends ProviderModelCatalogRuntime {
   getAvailable: ModelRuntime['getAvailable']
 }
 
-type ModelSnapshot = Pick<ProviderModelSnapshotService, 'initialize' | 'getModels' | 'getProviders' | 'getStatus' | 'refresh'> & Partial<Pick<ProviderModelSnapshotService, 'onDidChange' | 'dispose'>>
+type ModelSnapshot = Pick<ProviderModelSnapshotService, 'initialize' | 'getModels' | 'getProviders' | 'getStatus' | 'refresh'> & Partial<Pick<ProviderModelSnapshotService, 'onDidChange' | 'dispose' | 'getMediaModels'>>
 
 export interface ProviderServiceOptions {
   loginOptions?: LoginOptions
@@ -146,6 +148,10 @@ export class ProviderService {
       metadata: this.#modelSnapshot,
       modelRuntime: options.modelRuntime,
       models: options.providers.models,
+      supportsOperation: (providerId, type) => {
+        const source = this.#builtins.findById(providerId)?.builtinProviderId
+        return type === 'chat' || !((source === 'openai' || source === 'openai-codex') && this.#credentialStatus.type(providerId) === 'oauth')
+      },
     })
     this.#states = options.providers.states
     this.executionModels = new ProviderExecutionModelResolver({
@@ -219,6 +225,20 @@ export class ProviderService {
     })).sort((left, right) => left.displayName.localeCompare(right.displayName))
   }
 
+  #capabilityModels: readonly ProviderCapabilityModel[] = []
+  setCapabilityModels(models: readonly ProviderCapabilityModel[]): void {
+    if (JSON.stringify(models) === JSON.stringify(this.#capabilityModels))
+      return
+    this.#state.commit('discovery', () => {
+      this.#capabilityModels = models
+      this.#modelCatalog.reconcileCapabilityModels(models)
+      for (const model of models) {
+        if (model.providerId?.startsWith('plugin:'))
+          this.#ensureProviderState(model.providerId, true)
+      }
+    })
+  }
+
   async listProviders(): Promise<readonly BuddyProvider[]> {
     const credentialList = await this.#credentialStatus.listOrEmpty()
     const credentials = new Map(credentialList
@@ -227,9 +247,12 @@ export class ProviderService {
     const providerStates = new Map(this.#states.list().map(state => [state.providerId, state]))
     const modelSummaries = this.#modelCatalog.summarize()
     const builtinInstances = new Map(this.#builtins.list().map(instance => [instance.id, instance]))
-    const instanceIds = new Set([...builtinInstances.keys(), ...customProviders.keys()])
+    const instanceIds = new Set([...builtinInstances.keys(), ...customProviders.keys(), ...this.#capabilityModels.flatMap(item => item.providerId?.startsWith('plugin:') ? [item.providerId] : [])])
     const providers = [...instanceIds].map((id) => {
       const provider = this.#modelRuntime.getProvider(id)
+      const capabilities = this.#capabilityModels.filter(item => item.providerId === id)
+      const capabilityPlugin = capabilities.find(item => item.plugin)?.plugin
+      const plugin = capabilityPlugin ? { extensionId: capabilityPlugin.id, extensionName: capabilityPlugin.name, managementPage: capabilityPlugin.managementPage } : undefined
       const builtin = builtinInstances.get(id)
       const custom = customProviders.get(id)
       const template = builtin ? this.#builtinTemplates.get(builtin.builtinProviderId) : undefined
@@ -240,32 +263,61 @@ export class ProviderService {
       const enabledModelCount = modelSummary?.enabledModelCount ?? 0
       const syncUnavailableReason = this.#syncUnavailableReason(custom, storedCredentialType, provider)
       return buddyProviderSchema.parse({
+        plugin: plugin ? { id: plugin.extensionId, managementPage: plugin.managementPage } : undefined,
         requestHeaders: this.#requestHeaders.list(id),
         id,
         builtinProviderId: builtin?.builtinProviderId ?? null,
         api: custom?.api ?? null,
         description: custom?.description ?? null,
-        displayName: custom?.displayName ?? builtin?.displayName ?? template?.name ?? id,
+        displayName: plugin?.extensionName ?? custom?.displayName ?? builtin?.displayName ?? template?.name ?? id,
         baseUrl: custom?.baseUrl ?? provider?.baseUrl ?? null,
-        canSyncModels: Boolean(provider && syncUnavailableReason === null),
-        authTypes: provider ? providerAuthTypes(provider) : custom ? ['api_key'] : [],
+        canSyncModels: !plugin && Boolean(provider && syncUnavailableReason === null),
+        authTypes: plugin ? [] : provider ? providerAuthTypes(provider) : custom ? ['api_key'] : [],
         storedCredentialType,
-        status: !provider || this.#credentialStatus.availability === 'unknown' ? 'unavailable' : storedCredentialType ? 'available' : 'authentication_required',
+        status: plugin ? provider || capabilities.some(item => item.available) ? 'available' : 'unavailable' : !provider || this.#credentialStatus.availability === 'unknown' ? 'unavailable' : storedCredentialType ? 'available' : 'authentication_required',
         custom: Boolean(custom),
         activeRunCount: this.#activeRunsForProvider(id).length,
         added: true,
         enabled,
         enabledModelCount,
         modelCount: modelSummary?.modelCount ?? 0,
-        setupComplete: Boolean(provider && storedCredentialType !== null),
-        syncUnavailableReason: !provider && custom ? 'unsupported_api' : syncUnavailableReason,
+        setupComplete: Boolean((provider || capabilities.length) && (plugin || storedCredentialType !== null)),
+        syncUnavailableReason: plugin ? 'unsupported_api' : !provider && custom ? 'unsupported_api' : syncUnavailableReason,
       })
     })
     return providers.sort((left, right) => left.displayName.localeCompare(right.displayName))
   }
 
   async listModels(providerId?: string): Promise<readonly BuddyModel[]> {
+    await this.#credentialStatus.listOrEmpty()
     return this.#modelCatalog.list(providerId)
+  }
+
+  async prepareModelRequest(providerId: string, signal?: AbortSignal): Promise<{ baseUrl: string, headers: Record<string, string> }> {
+    const provider = await this.#requireListedProvider(providerId)
+    if (!provider.enabled || !provider.baseUrl || provider.plugin)
+      throw new ProviderUnavailableError()
+    const runtime = this.executionModels.getRuntime()
+    const auth = await runtime.getAuth(providerId, { signal })
+    if (!auth)
+      throw new ProviderAuthenticationRequiredError()
+    signal?.throwIfAborted()
+    const headers = new Headers()
+    if (auth.auth.apiKey)
+      headers.set('Authorization', `Bearer ${auth.auth.apiKey}`)
+    for (const [name, value] of Object.entries({ ...runtime.getProvider(providerId)?.headers, ...auth.auth.headers })) {
+      if (value === null)
+        headers.delete(name)
+      else
+        headers.set(name, value)
+    }
+    for (const [name, value] of Object.entries(this.#requestHeaders.resolve(providerId, Object.fromEntries(headers), auth.auth.apiKey))) {
+      if (value === null)
+        headers.delete(name)
+      else
+        headers.set(name, value)
+    }
+    return { baseUrl: auth.auth.baseUrl ?? provider.baseUrl, headers: Object.fromEntries(headers) }
   }
 
   getModelSnapshot(): Promise<ProviderModelSnapshotStatus> {
@@ -275,9 +327,15 @@ export class ProviderService {
   async refreshModelSnapshot(): Promise<ProviderModelSnapshotStatus> {
     return this.#operate('refreshModelSnapshot', async () => {
       await this.#modelSnapshot.refresh()
+      await this.#credentialStatus.listOrEmpty()
       for (const instance of this.#builtins.list()) {
         if (this.#modelRuntime.getProvider(instance.id))
           this.#state.commit('metadata', () => this.#modelCatalog.reconcileBuiltinModels(instance.id, instance.builtinProviderId, { metadataOnly: true }))
+      }
+      for (const instance of this.#builtins.list()) {
+        const baseUrl = this.#modelRuntime.getProvider(instance.id)?.baseUrl
+        if (baseUrl)
+          this.#state.commit('metadata', () => this.#modelCatalog.reconcileCatalogModels(instance.id, baseUrl, instance.builtinProviderId))
       }
       for (const provider of this.#configs.list()) {
         if (this.#state.commit('metadata', () => this.#modelCatalog.reconcileSyncedModelMetadata(provider)))
@@ -348,11 +406,13 @@ export class ProviderService {
   async upsertManualModel(providerId: string, input: ProviderModelInput): Promise<BuddyModel> {
     return this.#operate('upsertManualModel', async () => {
       const custom = this.#configs.findById(providerId)
-      if (!custom)
+      const builtin = this.#builtins.findById(providerId)
+      if (!custom && (!builtin || !input.type || input.type === 'chat'))
         throw new ProviderValidationError()
       this.#assertProviderIdle(providerId)
-      const model = this.#state.commit('configuration', () => this.#modelCatalog.upsertManualModel(custom, input))
-      this.#applyCatalog(providerId, () => this.#modelCatalog.registerCustomProvider(custom))
+      const model = this.#state.commit('configuration', () => this.#modelCatalog.upsertManualModel(custom ?? { id: providerId, api: 'openai-audio' }, input))
+      if (custom)
+        this.#applyCatalog(providerId, () => this.#modelCatalog.registerCustomProvider(custom))
       return model
     })
   }
@@ -365,6 +425,22 @@ export class ProviderService {
       this.#assertProviderIdle(providerId)
       const model = this.#state.commit('configuration', () => this.#modelCatalog.setCatalogSource(provider, modelId, source))
       this.#applyCatalog(providerId, () => this.#modelCatalog.registerCustomProvider(provider))
+      return model
+    })
+  }
+
+  async setModelType(providerId: string, modelId: string, type: ProviderModelType | null): Promise<BuddyModel> {
+    return this.#operate('setModelType', async () => {
+      this.#assertProviderIdle(providerId)
+      const model = this.#state.commit('configuration', () => {
+        const next = this.#modelCatalog.setType(providerId, modelId, type)
+        if (next.type !== 'chat')
+          this.#clearDefaultIfMatches(providerId, modelId)
+        return next
+      })
+      const custom = this.#configs.findById(providerId)
+      if (custom)
+        this.#applyCatalog(providerId, () => this.#modelCatalog.registerCustomProvider(custom))
       return model
     })
   }
@@ -400,6 +476,7 @@ export class ProviderService {
 
   async setModelEnabled(providerId: string, modelId: string, enabled: boolean): Promise<BuddyModel> {
     return this.#operate('setModelEnabled', async () => {
+      await this.#credentialStatus.listOrEmpty()
       this.#modelCatalog.assertCanSetEnabled(providerId, modelId, enabled)
       if (!enabled)
         this.#assertModelIdle(providerId, modelId)
@@ -414,6 +491,7 @@ export class ProviderService {
 
   async removeModel(providerId: string, modelId: string): Promise<void> {
     return this.#operate('removeModel', async () => {
+      await this.#credentialStatus.listOrEmpty()
       this.#assertModelIdle(providerId, modelId)
       this.#state.commit('configuration', () => {
         this.#modelCatalog.removeUnavailableModel(providerId, modelId)
@@ -433,9 +511,12 @@ export class ProviderService {
       if (!enabled)
         this.#assertProviderIdle(providerId)
       if (enabled) {
-        const credentials = await this.#credentialStatus.list()
-        if (!credentials.some(credential => credential.providerId === providerId))
-          throw new ProviderAuthenticationRequiredError()
+        const capabilities = this.#capabilityModels.filter(item => item.providerId === providerId && item.available)
+        if (!capabilities.some(item => item.plugin)) {
+          const credentials = await this.#credentialStatus.list()
+          if (!credentials.some(credential => credential.providerId === providerId))
+            throw new ProviderAuthenticationRequiredError()
+        }
         if (!this.#modelCatalog.hasEnabledAvailableModel(providerId))
           throw new ProviderUnavailableError()
       }
@@ -686,15 +767,21 @@ export class ProviderService {
   }
 
   async #reconcileBuiltinModels(instance: BuiltinProviderConfigRecord, authenticated: boolean): Promise<void> {
+    await this.#credentialStatus.listOrEmpty()
     const models = authenticated
       ? await this.#modelRuntime.getAvailable(instance.id)
       : this.#modelRuntime.getModels(instance.id)
     if (!this.#builtins.findById(instance.id))
       throw new ProviderUnavailableError()
-    this.#state.commit('discovery', () => this.#modelCatalog.reconcileBuiltinModels(instance.id, instance.builtinProviderId, {
-      models,
-      metadataOnly: !authenticated && this.#modelCatalog.hasModels(instance.id),
-    }))
+    this.#state.commit('discovery', () => {
+      this.#modelCatalog.reconcileBuiltinModels(instance.id, instance.builtinProviderId, {
+        models,
+        metadataOnly: !authenticated && this.#modelCatalog.hasModels(instance.id),
+      })
+      const baseUrl = this.#modelRuntime.getProvider(instance.id)?.baseUrl
+      if (baseUrl)
+        this.#modelCatalog.reconcileCatalogModels(instance.id, baseUrl, instance.builtinProviderId)
+    })
   }
 
   #capture() {

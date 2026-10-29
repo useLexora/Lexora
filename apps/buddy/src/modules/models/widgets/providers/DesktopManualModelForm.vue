@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import type { LocalCustomProviderModel } from '@buddy-shared/providers/providerApi'
+import type { ProviderModelType } from '@buddy-shared/providers/providerModelType'
 
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { NButton, NCheckbox, NCollapse, NCollapseItem, NInput, NInputNumber } from 'naive-ui'
+import { NButton, NCheckbox, NCollapse, NCollapseItem, NInput, NInputNumber, NSelect } from 'naive-ui'
 import { computed, reactive } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 
 const props = defineProps<{
+  allowChat?: boolean
   language: BuddyLocale
   saving: boolean
 }>()
@@ -14,7 +16,9 @@ const emit = defineEmits<{
   save: [model: LocalCustomProviderModel]
 }>()
 const { t } = useBuddyI18n(() => props.language)
+const typeOptions = computed(() => (props.allowChat === false ? ['transcription', 'speech'] as const : ['chat', 'transcription', 'speech'] as const).map(value => ({ value, label: t(`desktop.providers.modelTypes.${value}`) })))
 const form = reactive({
+  type: (props.allowChat === false ? 'transcription' : 'chat') as ProviderModelType,
   contextWindow: null as number | null,
   id: '',
   image: false,
@@ -24,25 +28,24 @@ const form = reactive({
 })
 const valid = computed(() => Boolean(
   form.id.trim()
-  && (form.contextWindow === null || form.contextWindow > 0)
-  && (form.maxTokens === null || form.maxTokens > 0)
-  && (
-    form.contextWindow === null
-    || form.maxTokens === null
-    || form.maxTokens <= form.contextWindow
-  ),
+  && (form.type !== 'chat' || (
+    (form.contextWindow === null || form.contextWindow > 0)
+    && (form.maxTokens === null || form.maxTokens > 0)
+    && (form.contextWindow === null || form.maxTokens === null || form.maxTokens <= form.contextWindow)
+  )),
 ))
 
 function save() {
   if (!valid.value)
     return
   emit('save', {
+    type: form.type,
     id: form.id.trim(),
-    input: form.image ? ['text', 'image'] : ['text'],
-    reasoning: form.reasoning,
+    input: form.type === 'chat' && form.image ? ['text', 'image'] : ['text'],
+    reasoning: form.type === 'chat' && form.reasoning,
     ...(form.name.trim() ? { name: form.name.trim() } : {}),
-    ...(form.contextWindow === null ? {} : { contextWindow: form.contextWindow }),
-    ...(form.maxTokens === null ? {} : { maxTokens: form.maxTokens }),
+    ...(form.type !== 'chat' || form.contextWindow === null ? {} : { contextWindow: form.contextWindow }),
+    ...(form.type !== 'chat' || form.maxTokens === null ? {} : { maxTokens: form.maxTokens }),
   })
 }
 </script>
@@ -60,7 +63,11 @@ function save() {
       </label>
     </div>
 
-    <div class="desktop-manual-model-form__capabilities">
+    <label class="desktop-manual-model-form__field grid gap-[0.35rem]">
+      <span>{{ t('desktop.providers.modelType') }}</span>
+      <NSelect v-model:value="form.type" :options="typeOptions" />
+    </label>
+    <div v-if="form.type === 'chat'" class="desktop-manual-model-form__capabilities">
       <NCheckbox v-model:checked="form.reasoning">
         {{ t('desktop.providers.reasoning') }}
       </NCheckbox>
@@ -69,7 +76,7 @@ function save() {
       </NCheckbox>
     </div>
 
-    <NCollapse arrow-placement="right">
+    <NCollapse v-if="form.type === 'chat'" arrow-placement="right">
       <NCollapseItem :title="t('desktop.providers.advancedModelSettings')" name="advanced">
         <div class="desktop-manual-model-form__grid grid grid-cols-[repeat(2,_minmax(0,_1fr))] gap-[0.8rem]">
           <label class="desktop-manual-model-form__field grid gap-[0.35rem]">

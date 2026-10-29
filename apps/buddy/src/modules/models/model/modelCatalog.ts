@@ -1,20 +1,22 @@
 import type { LocalProvider, LocalRuntimeModelOption } from '@buddy-shared/providers/providerApi'
 
+export type ModelPickerOption = Pick<LocalRuntimeModelOption, 'providerId' | 'modelId' | 'displayName'>
+
 export interface ModelGroup {
-  models: ReadonlyArray<LocalRuntimeModelOption>
+  models: ReadonlyArray<ModelPickerOption>
   providerId: string
   providerName: string
 }
 
 export function groupModelOptions(
-  models: ReadonlyArray<LocalRuntimeModelOption>,
+  models: ReadonlyArray<ModelPickerOption>,
   providers: ReadonlyArray<Pick<LocalProvider, 'id' | 'displayName'>>,
   query: string,
 ): ReadonlyArray<ModelGroup> {
   const providerNames = new Map(providers.map(provider => [provider.id, provider.displayName]))
   const providerOrder = new Map(providers.map((provider, index) => [provider.id, index]))
   const normalizedQuery = query.trim().toLocaleLowerCase()
-  const groups = new Map<string, LocalRuntimeModelOption[]>()
+  const groups = new Map<string, ModelPickerOption[]>()
   for (const model of models) {
     const providerName = providerNames.get(model.providerId) ?? model.providerId
     if (normalizedQuery && ![providerName, model.displayName, model.modelId]

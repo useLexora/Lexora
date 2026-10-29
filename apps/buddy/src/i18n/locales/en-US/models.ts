@@ -1,6 +1,17 @@
 import type zhCN from '../zh-CN/models'
 
 export default {
+  'desktop.providers.modelType': 'Model purpose',
+  'desktop.providers.modelTypeAutomatic': 'Use source',
+  'desktop.providers.modelTypes.all': 'All models',
+  'desktop.providers.modelTypes.chat': 'Chat',
+  'desktop.providers.modelTypes.transcription': 'Transcription',
+  'desktop.providers.modelTypes.speech': 'Speech synthesis',
+
+  'desktop.providers.pluginManaged': 'Managed by plugin',
+  'desktop.providers.pluginManagedDescription': 'Prepare models and configure loading or endpoints in the plugin page.',
+  'desktop.providers.pluginUnavailable': 'The plugin is unavailable. Existing model selections are preserved; restore the plugin to use them again.',
+  'desktop.providers.managePlugin': 'Manage plugin',
   'desktop.providers.addCustom': 'Custom API',
   'desktop.providers.add': 'Add',
   'desktop.providers.addedServices': 'Model management',
@@ -108,7 +119,7 @@ export default {
   'desktop.providers.modelParameters': 'Model parameters',
   'desktop.providers.models': 'Models',
   'desktop.providers.modelsDescription': 'Manage model capabilities, parameters, and enabled status.',
-  'desktop.providers.modelUnavailableHint': 'This model is not in the current model catalog, so it cannot be enabled.',
+  'desktop.providers.modelUnavailableHint': 'This model is unavailable through the current service connection and cannot be enabled.',
   'desktop.providers.modelsStep': 'Models',
   'desktop.providers.modelSource.builtin': 'Built-in',
   'desktop.providers.modelSource.manual': 'Manual',
@@ -120,7 +131,7 @@ export default {
   'desktop.providers.noEnabledAvailableModelsHint': 'No enabled models are currently available. Sync or enable models in Management.',
   'desktop.providers.noModels': 'No models',
   'desktop.providers.noSearchResults': 'No matching model services',
-  'desktop.providers.notFoundInLastSync': 'Unavailable in the current model catalog',
+  'desktop.providers.notFoundInLastSync': 'Model currently unavailable',
   'desktop.providers.oauthConfigured': 'OAuth authorized',
   'desktop.providers.openModelSnapshotDirectory': 'Open directory',
   'desktop.providers.parameterPairSummary': 'Context {contextWindow} · max output {maxTokens}',

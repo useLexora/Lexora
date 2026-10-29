@@ -1,6 +1,7 @@
 import type { BrowserWindow, IpcMainEvent } from 'electron'
 import type { ExtensionDocumentPorts } from '../../../platform/extensions/ExtensionWorkingCopyStore'
 import type { FileIconThemeService } from '../../../platform/icons/FileIconThemeService'
+import type { SpeechBackend } from '../../../platform/speech/SpeechBackend'
 import type { ThemeService } from '../../../platform/themes/ThemeService'
 import type { ApplicationDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { ExtensionTaskAction, ExtensionTaskActionInput, ExtensionTaskActionResult } from '../../../shared/extensions/extensionActionApi'
@@ -55,7 +56,7 @@ export function registerExtensionIpc(options: {
   record?: ApplicationDiagnosticReporter
   conditionRuntime?: (input: { models: boolean, task: boolean, taskId: string | null, runId: string | null }, signal: AbortSignal) => Promise<ExtensionConditionRuntime>
   agentRequest?: (input: { invocationId: string, method: string, params: JsonValue }, signal: AbortSignal) => Promise<JsonValue>
-}): { shells: { list: ExtensionService['shellContributions'] }, skills: { list: ExtensionService['skillContributions'] }, capabilities: { list: ExtensionService['capabilityContributions'] }, withStoppedStorage: ExtensionService['withStoppedStorage'], themesReady: Promise<void>, conditions: ExtensionService['conditions'], dispose: () => Promise<void>, reviewPackage: (path: string) => Promise<void>, inspect: (id: string) => Promise<ExtensionInspection>, agent: { readResource: ExtensionService['readAgentResource'], list: () => Promise<ExtensionAgentDescriptor[]>, invoke: (input: ExtensionAgentInvocation, signal: AbortSignal) => Promise<JsonValue> } } {
+}): { speech?: SpeechBackend, shells: { list: ExtensionService['shellContributions'] }, skills: { list: ExtensionService['skillContributions'] }, capabilities: { list: ExtensionService['capabilityContributions'] }, withStoppedStorage: ExtensionService['withStoppedStorage'], themesReady: Promise<void>, conditions: ExtensionService['conditions'], dispose: () => Promise<void>, reviewPackage: (path: string) => Promise<void>, inspect: (id: string) => Promise<ExtensionInspection>, agent: { readResource: ExtensionService['readAgentResource'], list: () => Promise<ExtensionAgentDescriptor[]>, invoke: (input: ExtensionAgentInvocation, signal: AbortSignal) => Promise<JsonValue> } } {
   const store = new ExtensionPackageStore(join(options.home, 'extensions'), options.version, processExtensionPackageInBackground)
   async function reviewResult(operation: () => Promise<ExtensionReview>): Promise<ExtensionReviewResult> {
     try {

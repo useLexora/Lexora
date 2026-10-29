@@ -3,6 +3,7 @@ import type { ModelCapabilityOverrides } from '../../../shared/providers/provide
 import type { ModelCatalogReference } from '../../../shared/providers/providerCatalog'
 import type { ServiceModelMetadata } from '../../../shared/providers/providerDiscovery'
 import type { ProviderModelInput } from '../../../shared/providers/providerInput'
+import type { ProviderModelType } from '../../../shared/providers/providerModelType'
 import type {
   ProviderConfigRecord,
   ProviderConfigRepository,
@@ -22,6 +23,7 @@ import { supportsPdfInputApi } from '../../../shared/providers/pdfInput'
 import { modelCapabilityOverridesSchema } from '../../../shared/providers/providerCapabilities'
 import { modelDiscoveryBaseUrl, serviceModelMetadataSchema } from '../../../shared/providers/providerDiscovery'
 import { providerModelInputSchema, storedCustomProviderModelSchema } from '../../../shared/providers/providerInput'
+import { providerModelTypeSchema } from '../../../shared/providers/providerModelType'
 import { applyModelCapabilities, getModelFileInputMimeTypes, readModelCapabilities, supportsModelAudioInput, supportsModelPdfInput, supportsModelVideoInput } from './modelCapabilities'
 import { serializeModelMetadata } from './modelMetadata'
 import { normalizeProviderBaseUrl, ProviderCatalogMatcher } from './ProviderCatalogMatcher'
@@ -62,19 +64,24 @@ export interface ProviderModelCatalogOptions {
   readonly modelRuntime: ProviderModelCatalogRuntime
   readonly models: ProviderModelStateRepository
   readonly metadata: ModelMetadataCatalog
+  readonly supportsOperation?: (providerId: string, type: ProviderModelType) => boolean
 }
 
 export class ProviderModelCatalog {
+  readonly #metadata: ModelMetadataCatalog
   readonly #configs: ProviderConfigRepository
   readonly #catalogMatcher: ProviderCatalogMatcher
   readonly #modelRuntime: ProviderModelCatalogRuntime
   readonly #models: ProviderModelStateRepository
+  readonly #supportsOperation: NonNullable<ProviderModelCatalogOptions['supportsOperation']>
 
   constructor(options: ProviderModelCatalogOptions) {
+    this.#metadata = options.metadata
     this.#configs = options.configs
     this.#catalogMatcher = new ProviderCatalogMatcher(options.metadata)
     this.#modelRuntime = options.modelRuntime
     this.#models = options.models
+    this.#supportsOperation = options.supportsOperation ?? (() => true)
   }
 
   list(providerId?: string): readonly BuddyModel[] {
@@ -87,7 +94,7 @@ export class ProviderModelCatalog {
       const current = summaries.get(model.providerId)
       summaries.set(model.providerId, {
         enabledModelCount: (current?.enabledModelCount ?? 0)
-          + Number(model.enabled && model.available),
+          + Number(model.enabled && this.#available(model)),
         modelCount: (current?.modelCount ?? 0) + 1,
       })
     }
@@ -96,7 +103,7 @@ export class ProviderModelCatalog {
 
   hasEnabledAvailableModel(providerId: string): boolean {
     return this.#models.list(providerId)
-      .some(model => model.enabled && model.available)
+      .some(model => model.enabled && this.#available(model))
   }
 
   hasModels(providerId: string): boolean {
@@ -105,7 +112,7 @@ export class ProviderModelCatalog {
 
   isEnabledAvailable(providerId: string, modelId: string): boolean {
     const model = this.#models.find(providerId, modelId)
-    return Boolean(model?.enabled && model.available)
+    return Boolean(model?.enabled && this.#available(model))
   }
 
   removeForProvider(providerId: string): void {
@@ -116,7 +123,7 @@ export class ProviderModelCatalog {
     this.#modelRuntime.registerProvider(provider.id, {
       api: provider.api,
       baseUrl: provider.baseUrl,
-      models: this.#models.list(provider.id).map(model => this.#sourceModel(model)),
+      models: this.#models.list(provider.id).filter(model => effectiveType(model) === 'chat').map(model => this.#sourceModel(model)),
       name: provider.displayName,
     })
   }
@@ -129,6 +136,7 @@ export class ProviderModelCatalog {
       if (current)
         continue
       const source = createSourceMetadata({
+        type: model.type,
         api: provider.api,
         catalogProviderId: model.catalogProviderId ?? null,
         catalogModelId: model.catalogModelId ?? null,
@@ -189,6 +197,7 @@ export class ProviderModelCatalog {
       })
       this.#models.upsert({
         catalogSelection: null,
+        typeOverride: current?.typeOverride ?? null,
         capabilityOverrides: current?.capabilityOverrides ?? null,
         acknowledgedSourceRevision: current?.acknowledgedSourceRevision ?? null,
         available: options.metadataOnly ? current!.available : true,
@@ -210,7 +219,7 @@ export class ProviderModelCatalog {
     if (options.metadataOnly)
       return
     for (const current of this.#models.list(providerId)) {
-      if (current.source === 'manual' || seen.has(current.modelId))
+      if (current.source === 'manual' || effectiveType(current) !== 'chat' || seen.has(current.modelId))
         continue
       this.#models.upsert({ ...current, available: false, updatedAt: now })
     }
@@ -236,6 +245,7 @@ export class ProviderModelCatalog {
       const source = this.#syncedSourceMetadata(provider, definition, current, serviceMetadata)
       this.#models.upsert({
         catalogSelection: current?.catalogSelection ?? null,
+        typeOverride: current?.typeOverride ?? null,
         capabilityOverrides: current?.capabilityOverrides ?? null,
         acknowledgedSourceRevision: current?.acknowledgedSourceRevision ?? null,
         available: true,
@@ -286,11 +296,12 @@ export class ProviderModelCatalog {
     return changed
   }
 
-  upsertManualModel(provider: ProviderConfigRecord, input: ProviderModelInput): BuddyModel {
+  upsertManualModel(provider: Pick<ProviderConfigRecord, 'id' | 'api'>, input: ProviderModelInput): BuddyModel {
     const model = providerModelInputSchema.parse(input)
     const now = new Date().toISOString()
     const current = this.#models.find(provider.id, model.id)
     const source = createSourceMetadata({
+      type: model.type,
       api: provider.api,
       catalogProviderId: null,
       compat: null,
@@ -316,6 +327,7 @@ export class ProviderModelCatalog {
       overrideMaxTokens: current?.overrideMaxTokens ?? null,
       providerId: provider.id,
       ...source,
+      typeOverride: null,
       source: 'manual',
       sourceRevision: sourceParametersChanged(current, source)
         ? nextSourceRevision(current?.sourceRevision, now)
@@ -323,6 +335,77 @@ export class ProviderModelCatalog {
       updatedAt: now,
     })
     return this.#toBuddyModel(next)
+  }
+
+  setType(providerId: string, modelId: string, type: ProviderModelType | null): BuddyModel {
+    const current = this.#requireModelState(providerId, modelId)
+    if (providerId.startsWith('plugin:'))
+      throw new ProviderValidationError()
+    if (!providerModelTypeSchema.nullable().safeParse(type).success)
+      throw new ProviderValidationError()
+    const nextType = type ?? current.type ?? 'chat'
+    const next = this.#models.upsert({
+      ...current,
+      typeOverride: type,
+      sourceContextWindow: nextType === 'chat' ? current.sourceContextWindow ?? 128_000 : current.sourceContextWindow,
+      sourceMaxTokens: nextType === 'chat' ? current.sourceMaxTokens ?? 16_384 : current.sourceMaxTokens,
+      updatedAt: new Date().toISOString(),
+    })
+    return this.#toBuddyModel(next)
+  }
+
+  reconcileCatalogModels(providerId: string, baseUrl: string, catalogProviderId: string): void {
+    const entries = this.#metadata.getMediaModels?.(catalogProviderId) ?? []
+    const seen = new Set<string>()
+    const now = new Date().toISOString()
+    for (const entry of entries) {
+      if (!entry.type || entry.type === 'chat' || entry.api !== 'openai-audio' || normalizeProviderBaseUrl(entry.baseUrl ?? '') !== normalizeProviderBaseUrl(baseUrl))
+        continue
+      seen.add(entry.id)
+      const current = this.#models.find(providerId, entry.id)
+      if (current?.source === 'manual')
+        continue
+      if (!current && !this.#supportsOperation(providerId, entry.type))
+        continue
+      const source = createSourceMetadata({ type: entry.type, api: 'openai-audio', catalogProviderId, catalogModelId: entry.id, compat: null, cost: emptyModelCost(), displayName: entry.name, input: ['text'], reasoning: false, samplingParams: null, sourceContextWindow: null, sourceMaxTokens: null, thinkingLevelMap: null })
+      this.#models.upsert({
+        ...source,
+        providerId,
+        modelId: entry.id,
+        typeOverride: current?.typeOverride ?? null,
+        sourceContextWindow: current?.typeOverride === 'chat' ? current.sourceContextWindow : null,
+        sourceMaxTokens: current?.typeOverride === 'chat' ? current.sourceMaxTokens : null,
+        catalogSelection: null,
+        capabilityOverrides: null,
+        acknowledgedSourceRevision: null,
+        available: true,
+        enabled: current?.enabled ?? false,
+        source: 'builtin',
+        overrideContextWindow: current?.overrideContextWindow ?? null,
+        overrideMaxTokens: current?.overrideMaxTokens ?? null,
+        createdAt: current?.createdAt ?? now,
+        updatedAt: now,
+        lastSeenAt: now,
+        sourceRevision: current?.sourceRevision ?? now,
+      })
+    }
+    for (const current of this.#models.list(providerId)) {
+      if (current.source === 'builtin' && current.api === 'openai-audio' && !seen.has(current.modelId))
+        this.#models.upsert({ ...current, available: false, updatedAt: now })
+    }
+  }
+
+  reconcileCapabilityModels(models: readonly import('../../../shared/providers/providerCapabilityModel').ProviderCapabilityModel[]): void {
+    const now = new Date().toISOString()
+    for (const model of models) {
+      const current = this.#models.find(model.providerId, model.modelId)
+      const source = createSourceMetadata({ type: model.kind === 'speech.transcribe' ? 'transcription' : 'speech', api: 'plugin-speech', catalogProviderId: null, compat: null, cost: emptyModelCost(), displayName: model.modelId, input: ['text'], reasoning: false, samplingParams: null, sourceContextWindow: null, sourceMaxTokens: null, thinkingLevelMap: null })
+      this.#models.upsert({ ...source, providerId: model.providerId, modelId: model.modelId, typeOverride: null, catalogSelection: null, capabilityOverrides: null, acknowledgedSourceRevision: null, available: model.available, enabled: current?.enabled ?? true, source: 'synced', overrideContextWindow: null, overrideMaxTokens: null, createdAt: current?.createdAt ?? now, updatedAt: now, lastSeenAt: now, sourceRevision: current?.sourceRevision ?? now })
+    }
+    for (const current of this.#models.list()) {
+      if (current.api === 'plugin-speech' && !models.some(model => model.providerId === current.providerId && model.modelId === current.modelId))
+        this.#models.upsert({ ...current, available: false, updatedAt: now })
+    }
   }
 
   setCatalogSource(provider: ProviderConfigRecord, modelId: string, selection: ModelCatalogReference | null): BuddyModel {
@@ -359,6 +442,8 @@ export class ProviderModelCatalog {
     if (!parsed.success)
       throw new ProviderValidationError()
     const current = this.#requireModelState(providerId, modelId)
+    if (effectiveType(current) !== 'chat')
+      throw new ProviderValidationError()
     return this.#toBuddyModel(this.#models.upsert({
       ...current,
       capabilityOverrides: parsed.data && Object.values(parsed.data).some(value => value !== undefined) ? parsed.data : null,
@@ -375,6 +460,8 @@ export class ProviderModelCatalog {
     if (!parsed.success)
       throw new ProviderValidationError()
     const current = this.#requireModelState(providerId, modelId)
+    if (effectiveType(current) !== 'chat')
+      throw new ProviderValidationError()
     const hadOverride = hasParameterOverride(current)
     const next = this.#models.upsert({
       ...current,
@@ -422,19 +509,21 @@ export class ProviderModelCatalog {
 
   assertCanSetEnabled(providerId: string, modelId: string, enabled: boolean): void {
     const current = this.#models.find(providerId, modelId)
-    if (!current || (enabled && !current.available))
+    if (!current || (enabled && !this.#available(current)))
       throw new ProviderUnavailableError()
   }
 
   removeUnavailableModel(providerId: string, modelId: string): void {
     const current = this.#models.find(providerId, modelId)
-    if (!current || current.available)
+    if (!current || this.#available(current))
       throw new ProviderUnavailableError()
     this.#models.remove(providerId, modelId)
   }
 
   executionSnapshot(providerId: string, modelId: string) {
     const state = this.#requireModelState(providerId, modelId)
+    if (effectiveType(state) !== 'chat')
+      return { type: effectiveType(state), api: state.api, modelId: state.modelId }
     const { name: _name, ...execution } = this.#effectiveModel(state, this.#sourceModel(state))
     return execution
   }
@@ -446,10 +535,14 @@ export class ProviderModelCatalog {
     const state = this.#models.find(providerId, modelId)
     if (!state)
       return model
+    if (effectiveType(state) !== 'chat')
+      throw new ProviderUnavailableError()
     return this.#effectiveModel(state, this.#sourceModel(state, model))
   }
 
   #sourceModel(model: ProviderModelStateRecord, runtimeModel = this.#modelRuntime.getModels(model.providerId).find(candidate => candidate.id === model.modelId)): InputModel {
+    if (model.sourceContextWindow === null || model.sourceMaxTokens === null)
+      throw new ProviderValidationError()
     const provider = this.#configs.findById(model.providerId)
     const api = provider?.api ?? runtimeModel?.api ?? model.api
     const baseUrl = provider?.baseUrl ?? runtimeModel?.baseUrl ?? ''
@@ -487,7 +580,43 @@ export class ProviderModelCatalog {
     return applyModelCapabilities({ ...sourceModel, ...effectiveParameters(model) }, model.capabilityOverrides)
   }
 
+  #available(model: ProviderModelStateRecord): boolean {
+    return model.available && this.#supportsOperation(model.providerId, effectiveType(model))
+  }
+
   #toBuddyModel(model: ProviderModelStateRecord): BuddyModel {
+    const type = effectiveType(model)
+    if (type !== 'chat') {
+      return buddyModelSchema.parse({
+        type,
+        sourceType: model.type ?? 'chat',
+        typeOverride: model.typeOverride ?? null,
+        id: model.modelId,
+        providerId: model.providerId,
+        displayName: model.displayName,
+        api: model.api === 'plugin-speech' ? model.api : 'openai-audio',
+        enabled: model.enabled,
+        available: this.#available(model),
+        source: model.source,
+        lastSeenAt: model.lastSeenAt,
+        catalogMatch: model.catalogProviderId ? 'matched' : 'not_applicable',
+        catalog: { source: model.catalogProviderId && model.catalogModelId ? { providerId: model.catalogProviderId, modelId: model.catalogModelId, providerName: this.#catalogMatcher.providerName(model.catalogProviderId) } : null, selection: null, candidates: [] },
+        metadataKnown: true,
+        capabilities: [],
+        fileInputMimeTypes: [],
+        capabilityOverrides: null,
+        sourceCapabilities: { image: false, pdf: false, audio: false, video: false, reasoningOptions: ['off'] },
+        reasoningOptions: [],
+        contextWindow: null,
+        maxTokens: null,
+        sourceContextWindow: null,
+        sourceMaxTokens: null,
+        overrideContextWindow: null,
+        overrideMaxTokens: null,
+        hasParameterOverride: false,
+        sourceParametersUpdated: false,
+      })
+    }
     const sourceModel = this.#sourceModel(model)
     const effectiveModel = this.#effectiveModel(model, sourceModel)
     const match = model.source === 'synced'
@@ -499,9 +628,12 @@ export class ProviderModelCatalog {
         })
       : null
     return buddyModelSchema.parse({
+      type,
+      sourceType: model.type ?? 'chat',
+      typeOverride: model.typeOverride ?? null,
       api: effectiveModel.api,
       fileInputMimeTypes: getModelFileInputMimeTypes(effectiveModel),
-      available: model.available,
+      available: this.#available(model),
       capabilities: [...effectiveModel.input, ...(supportsModelPdfInput(effectiveModel) ? ['pdf' as const] : []), ...(supportsModelAudioInput(effectiveModel) ? ['audio' as const] : []), ...(supportsModelVideoInput(effectiveModel) ? ['video' as const] : []), ...(effectiveModel.reasoning ? ['reasoning' as const] : [])],
       capabilityOverrides: model.capabilityOverrides,
       sourceCapabilities: readModelCapabilities(sourceModel),
@@ -561,6 +693,11 @@ export class ProviderModelCatalog {
     current: ProviderModelStateRecord | null,
     serviceMetadata = this.#serviceMetadata(provider, current),
   ): ModelSourceMetadata {
+    const catalogType = this.#metadata.getMediaModels?.().find(model => model.id === definition.id && model.type && model.type !== 'chat' && model.api === 'openai-audio' && normalizeProviderBaseUrl(model.baseUrl ?? '') === normalizeProviderBaseUrl(provider.baseUrl))
+    const type = serviceMetadata?.metadata.type ?? catalogType?.type ?? current?.type ?? 'chat'
+    if (type !== 'chat') {
+      return createSourceMetadata({ type, api: provider.api, catalogProviderId: catalogType?.provider ?? null, catalogModelId: catalogType?.id ?? null, compat: null, cost: emptyModelCost(), displayName: definition.name ?? catalogType?.name ?? current?.displayName ?? definition.id, input: ['text'], reasoning: false, samplingParams: null, sourceContextWindow: current?.typeOverride === 'chat' ? current.sourceContextWindow : null, sourceMaxTokens: current?.typeOverride === 'chat' ? current.sourceMaxTokens : null, thinkingLevelMap: null }, serviceMetadata)
+    }
     const match = this.#catalogMatcher.match({
       api: provider.api,
       baseUrl: provider.baseUrl,
@@ -603,6 +740,8 @@ function hasParameterOverride(model: ProviderModelStateRecord): boolean {
 }
 
 function effectiveParameters(model: ProviderModelStateRecord): ModelParametersOverride {
+  if (model.sourceContextWindow === null || model.sourceMaxTokens === null)
+    throw new ProviderValidationError()
   if (hasParameterOverride(model)) {
     return {
       contextWindow: model.overrideContextWindow!,
@@ -622,6 +761,7 @@ function nextSourceRevision(previous: string | undefined, candidate: string): st
 }
 
 interface ModelSourceMetadata {
+  type: ProviderModelType
   serviceMetadata: ServiceModelMetadata | null
   api: string
   catalogProviderId: string | null
@@ -632,9 +772,9 @@ interface ModelSourceMetadata {
   input: Array<'text' | 'image'>
   reasoning: boolean
   samplingParams: Record<string, unknown> | null
-  sourceContextWindow: number
+  sourceContextWindow: number | null
   sourceFingerprint: string
-  sourceMaxTokens: number
+  sourceMaxTokens: number | null
   thinkingLevelMap: Model<Api>['thinkingLevelMap'] | null
 }
 
@@ -660,7 +800,7 @@ function emptyModelCost(): Model<Api>['cost'] {
 }
 
 function createSourceMetadata(
-  input: Omit<ModelSourceMetadata, 'sourceFingerprint' | 'catalogModelId' | 'serviceMetadata'> & { catalogModelId?: string | null },
+  input: Omit<ModelSourceMetadata, 'type' | 'sourceFingerprint' | 'catalogModelId' | 'serviceMetadata'> & { type?: ProviderModelType, catalogModelId?: string | null },
   serviceMetadata: ServiceModelMetadata | null = null,
 ): ModelSourceMetadata {
   const declared = serviceMetadata?.metadata
@@ -669,9 +809,10 @@ function createSourceMetadata(
   const maxTokens = declared?.maxTokens ?? input.sourceMaxTokens
   const metadata = {
     ...input,
+    type: input.type ?? 'chat' as const,
     catalogModelId: input.catalogModelId ?? null,
     serviceMetadata,
-    ...(declared
+    ...(declared && (input.type ?? 'chat') === 'chat'
       ? {
           displayName: declared.name ?? input.displayName,
           input: declared.input ? declared.input.filter((value): value is 'text' | 'image' => value === 'text' || value === 'image') : input.input,
@@ -679,8 +820,8 @@ function createSourceMetadata(
           thinkingLevelMap: reasoningOptions !== undefined
             ? Object.fromEntries(BUDDY_THINKING_LEVELS.map(level => [level, reasoningOptions.includes(level) ? level === 'off' ? 'none' : level : null]))
             : input.thinkingLevelMap,
-          sourceContextWindow: declared.contextWindow === undefined ? Math.max(contextWindow, maxTokens) : contextWindow,
-          sourceMaxTokens: declared.maxTokens === undefined ? Math.min(maxTokens, contextWindow) : maxTokens,
+          sourceContextWindow: declared.contextWindow === undefined ? Math.max(contextWindow ?? 128_000, maxTokens ?? 16_384) : contextWindow,
+          sourceMaxTokens: declared.maxTokens === undefined ? Math.min(maxTokens ?? 16_384, contextWindow ?? 128_000) : maxTokens,
         }
       : {}),
   }
@@ -703,4 +844,8 @@ function sourceParametersChanged(
 
 function hasServiceMetadata(model: ProviderModelStateRecord): boolean {
   return Boolean(model.serviceMetadata && Object.entries(model.serviceMetadata.metadata).some(([key, value]) => key !== 'name' && value !== undefined))
+}
+
+function effectiveType(model: ProviderModelStateRecord): ProviderModelType {
+  return model.typeOverride ?? model.type ?? 'chat'
 }

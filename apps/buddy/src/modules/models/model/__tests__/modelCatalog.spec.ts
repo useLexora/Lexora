@@ -68,6 +68,9 @@ describe('model catalog selection', () => {
 function model(providerId: string, modelId: string, displayName = modelId): LocalRuntimeModelOption {
   return {
     available: true,
+    type: 'chat',
+    sourceType: 'chat',
+    typeOverride: null,
     catalogMatch: 'not_applicable',
     catalog: { source: null, selection: null, candidates: [] },
     metadataKnown: true,

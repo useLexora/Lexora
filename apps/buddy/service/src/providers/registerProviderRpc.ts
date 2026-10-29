@@ -8,12 +8,14 @@ import { ok, registerRuntimeRequest } from '../rpc/runtimeRequest'
 export interface RegisterProviderRpcOptions {
   rpc: RuntimeRequestRegistrar
   service: ProviderService
+  refreshCapabilities?: () => Promise<void>
 }
 
 export function registerProviderRpc(options: RegisterProviderRpcOptions): () => void {
   const disposers: Array<() => void> = []
 
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.list, async () => {
+    await options.refreshCapabilities?.()
     return options.service.listProviders()
   }))
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.listBuiltinPresets, () => options.service.listBuiltinPresets()))
@@ -59,6 +61,7 @@ export function registerProviderRpc(options: RegisterProviderRpcOptions): () => 
     return ok()
   }))
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.setEnabled, async (input) => {
+    await options.refreshCapabilities?.()
     const provider = await options.service.setProviderEnabled(input.providerId, input.enabled)
     return provider
   }))
@@ -78,6 +81,7 @@ export function registerProviderRpc(options: RegisterProviderRpcOptions): () => 
     const model = await options.service.setModelCatalogSource(input.providerId, input.modelId, input.source)
     return toRuntimeModelOption(options.service.executionModels, model)
   }))
+  disposers.push(registerRuntimeRequest(options.rpc, providersRpc.setModelType, async input => toRuntimeModelOption(options.service.executionModels, await options.service.setModelType(input.providerId, input.modelId, input.type))))
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.setModelCapabilities, async (input) => {
     const model = await options.service.setModelCapabilities(input.providerId, input.modelId, input.capabilities)
     return toRuntimeModelOption(options.service.executionModels, model)
@@ -138,10 +142,12 @@ function toRuntimeModelOption(
   return {
     ...details,
     modelId: id,
-    serviceTiers: models.getServiceTiers({
-      api: model.api,
-      modelId: model.id,
-      providerId: model.providerId,
-    }),
+    serviceTiers: model.type !== 'chat'
+      ? []
+      : models.getServiceTiers({
+          api: model.api,
+          modelId: model.id,
+          providerId: model.providerId,
+        }),
   }
 }

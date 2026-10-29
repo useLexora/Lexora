@@ -192,6 +192,9 @@ function provider(
 function model(providerId: string): LocalRuntimeModelOption {
   return {
     available: true,
+    type: 'chat',
+    sourceType: 'chat',
+    typeOverride: null,
     catalogMatch: 'not_applicable',
     catalog: { source: null, selection: null, candidates: [] },
     metadataKnown: true,

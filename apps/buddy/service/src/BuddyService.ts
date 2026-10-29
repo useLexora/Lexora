@@ -160,6 +160,7 @@ import { createProviderService } from './providers/createProviderService'
 import { createExtensionModelCapabilities } from './providers/extensionModelCapabilities'
 import { ProviderDependents } from './providers/ProviderDependents'
 import { registerProviderRpc } from './providers/registerProviderRpc'
+import { refreshProviderSpeechModels, registerProviderSpeechRpc } from './providers/registerProviderSpeechRpc'
 import { resolveInteractiveModelSelection } from './providers/resolveInteractiveModelSelection'
 import { BuddyServiceError, registerRuntimeRequest } from './rpc/runtimeRequest'
 import { registerRunRpc } from './runs/registerRunRpc'
@@ -1692,10 +1693,12 @@ export async function startBuddyService(
       })))
       register(registerSpaceFileRpc(options.rpc, spaceFiles))
       register(registerTaskFileRpc(options.rpc, taskFileService))
+      register(registerProviderSpeechRpc({ rpc: options.rpc, providers: providerService, workspace }))
       register(
         registerProviderRpc({
           rpc: options.rpc,
           service: providerService,
+          refreshCapabilities: () => refreshProviderSpeechModels({ rpc: options.rpc, providers: providerService, workspace }),
         }),
       )
       register(

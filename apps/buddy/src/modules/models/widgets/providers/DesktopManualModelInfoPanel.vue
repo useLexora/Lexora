@@ -44,10 +44,10 @@ async function save() {
   if (!valid.value)
     return
   const input: LocalCustomProviderModel = {
-    contextWindow: props.model.sourceContextWindow,
+    contextWindow: props.model.sourceContextWindow ?? undefined,
     id: props.model.modelId,
     input: props.model.sourceCapabilities.image ? ['text', 'image'] : ['text'],
-    maxTokens: props.model.sourceMaxTokens,
+    maxTokens: props.model.sourceMaxTokens ?? undefined,
     name: form.name.trim(),
     reasoning: props.model.sourceCapabilities.reasoningOptions.some(level => level !== 'off'),
   }

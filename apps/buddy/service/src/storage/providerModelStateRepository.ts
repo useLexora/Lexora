@@ -3,6 +3,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { ModelCapabilityOverrides } from '../../../shared/providers/providerCapabilities'
 import type { ModelCatalogReference } from '../../../shared/providers/providerCatalog'
 import type { ServiceModelMetadata } from '../../../shared/providers/providerDiscovery'
+import type { ProviderModelType } from '../../../shared/providers/providerModelType'
 import { modelCapabilityOverridesSchema } from '../../../shared/providers/providerCapabilities'
 import { modelCatalogReferenceSchema } from '../../../shared/providers/providerCatalog'
 import { serviceModelMetadataSchema } from '../../../shared/providers/providerDiscovery'
@@ -10,6 +11,8 @@ import { serviceModelMetadataSchema } from '../../../shared/providers/providerDi
 export type ProviderModelSource = 'builtin' | 'manual' | 'synced'
 
 export interface ProviderModelStateRecord {
+  type?: ProviderModelType
+  typeOverride?: ProviderModelType | null
   providerId: string
   modelId: string
   displayName: string
@@ -24,8 +27,8 @@ export interface ProviderModelStateRecord {
   reasoning: boolean
   cost: Model<Api>['cost']
   samplingParams: Record<string, unknown> | null
-  sourceContextWindow: number
-  sourceMaxTokens: number
+  sourceContextWindow: number | null
+  sourceMaxTokens: number | null
   overrideContextWindow: number | null
   overrideMaxTokens: number | null
   sourceRevision: string
@@ -49,6 +52,8 @@ export interface ProviderModelStateRepository {
 }
 
 interface ProviderModelStateRow {
+  model_type: ProviderModelType
+  type_override: ProviderModelType | null
   provider_id: string
   model_id: string
   display_name: string
@@ -63,8 +68,8 @@ interface ProviderModelStateRow {
   reasoning: number
   cost_json: string
   sampling_params_json: string | null
-  context_window: number
-  max_tokens: number
+  context_window: number | null
+  max_tokens: number | null
   override_context_window: number | null
   override_max_tokens: number | null
   source_revision: string
@@ -106,9 +111,11 @@ export function createProviderModelStateRepository(
       source_revision, acknowledged_source_revision, source, enabled, available,
       last_seen_at, created_at, updated_at, thinking_level_map_json,
       sampling_params_json, compat_json, catalog_provider_id, source_fingerprint,
-      catalog_model_id, catalog_selection_json, capability_overrides_json, service_metadata_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      catalog_model_id, catalog_selection_json, capability_overrides_json, service_metadata_json, model_type, type_override
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (provider_id, model_id) DO UPDATE SET
+      model_type = excluded.model_type,
+      type_override = excluded.type_override,
       display_name = excluded.display_name,
       api = excluded.api,
       input_json = excluded.input_json,
@@ -181,6 +188,8 @@ export function createProviderModelStateRepository(
         serializeJson(record.catalogSelection),
         serializeJson(record.capabilityOverrides),
         serializeJson(record.serviceMetadata),
+        record.type ?? 'chat',
+        record.typeOverride ?? null,
       )
       return requireProviderModelState(find.get(record.providerId, record.modelId))
     },
@@ -196,6 +205,8 @@ function requireProviderModelState(value: unknown): ProviderModelStateRecord {
 
 function toProviderModelState(row: ProviderModelStateRow): ProviderModelStateRecord {
   return {
+    type: row.model_type,
+    typeOverride: row.type_override,
     providerId: row.provider_id,
     modelId: row.model_id,
     displayName: row.display_name,

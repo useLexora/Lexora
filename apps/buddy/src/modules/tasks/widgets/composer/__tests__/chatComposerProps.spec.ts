@@ -3,11 +3,19 @@ import type { JSONContent } from '@tiptap/core'
 import type { ComposerResourceView } from '../../../state/composer/typing'
 import type { DesktopChatComposerProps } from '../typing'
 import type { ChatPromptContextOption } from '@/modules/prompt-input'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, defineComponent, h, nextTick, shallowReactive } from 'vue'
 import { createChatComposerContentFromText, getChatComposerResourceIds } from '@/modules/prompt-input'
 import DesktopChatComposer from '../DesktopChatComposer.vue'
 
+beforeEach(() => {
+  vi.stubGlobal('lexoraDesktop', {
+    speech: { onChanged: () => () => {}, catalog: async () => ({ providers: [], preferences: {} }) },
+    app: { onHidden: () => () => {}, onBeforeQuit: () => () => {} },
+    settings: { onChanged: () => () => {} },
+  })
+})
+afterEach(() => vi.unstubAllGlobals())
 const cleanups: (() => void)[] = []
 afterEach(() => cleanups.splice(0).forEach(cleanup => cleanup()))
 

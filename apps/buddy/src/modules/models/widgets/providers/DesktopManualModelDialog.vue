@@ -7,6 +7,7 @@ import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopManualModelForm from '@/modules/models/widgets/providers/DesktopManualModelForm.vue'
 
 const props = defineProps<{
+  allowChat?: boolean
   formKey: number
   language: BuddyLocale
   saving: boolean
@@ -38,6 +39,7 @@ const { t } = useBuddyI18n(() => props.language)
       <DesktopManualModelForm
         :key="formKey"
         :language="language"
+        :allow-chat="allowChat"
         :saving="saving"
         @save="emit('save', $event)"
       />

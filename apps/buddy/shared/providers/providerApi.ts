@@ -8,8 +8,10 @@ import { modelCapabilitiesSchema, modelCapabilityOverridesSchema } from './provi
 import { modelCatalogReferenceSchema, modelCatalogResolutionSchema } from './providerCatalog'
 import { providerRequestHeadersSchema } from './providerHeaders'
 import { customProviderInputSchema, defaultModelSchema, providerBaseUrlSchema, providerDisplayNameSchema, providerModelInputSchema } from './providerInput'
+import { providerModelTypeSchema } from './providerModelType'
 
 export const providerSchema = z.object({
+  plugin: z.object({ id: z.string(), managementPage: z.boolean() }).strict().optional(),
   requestHeaders: providerRequestHeadersSchema.default([]),
   activeRunCount: z.number().int().nonnegative(),
   added: z.boolean(),
@@ -50,6 +52,9 @@ export const modelSnapshotSchema = z.object({
 }).strict()
 
 export const modelSchema = z.object({
+  type: providerModelTypeSchema.default('chat'),
+  sourceType: providerModelTypeSchema.default('chat'),
+  typeOverride: providerModelTypeSchema.nullable().default(null),
   api: z.string().min(1),
   available: z.boolean(),
   catalogMatch: z.enum(['matched', 'ambiguous', 'unmatched', 'not_applicable']),
@@ -59,12 +64,12 @@ export const modelSchema = z.object({
   fileInputMimeTypes: z.array(z.enum(BUDDY_DOCUMENT_MIME_TYPES)),
   capabilityOverrides: modelCapabilityOverridesSchema.nullable(),
   sourceCapabilities: modelCapabilitiesSchema,
-  contextWindow: z.number().int().positive(),
+  contextWindow: z.number().int().positive().nullable(),
   displayName: z.string().min(1),
   enabled: z.boolean(),
   hasParameterOverride: z.boolean(),
   lastSeenAt: timestampSchema.nullable(),
-  maxTokens: z.number().int().positive(),
+  maxTokens: z.number().int().positive().nullable(),
   modelId: idSchema,
   overrideContextWindow: z.number().int().positive().nullable(),
   overrideMaxTokens: z.number().int().positive().nullable(),
@@ -75,10 +80,19 @@ export const modelSchema = z.object({
     id: z.enum(BUDDY_SERVICE_TIERS),
   }).strict()),
   source: z.enum(['builtin', 'manual', 'synced']),
-  sourceContextWindow: z.number().int().positive(),
-  sourceMaxTokens: z.number().int().positive(),
+  sourceContextWindow: z.number().int().positive().nullable(),
+  sourceMaxTokens: z.number().int().positive().nullable(),
   sourceParametersUpdated: z.boolean(),
 }).strict().superRefine((model, context) => {
+  if (model.type !== 'chat') {
+    if ([model.contextWindow, model.maxTokens, model.sourceContextWindow, model.sourceMaxTokens, model.overrideContextWindow, model.overrideMaxTokens].some(value => value !== null) || model.hasParameterOverride)
+      context.addIssue({ code: 'custom', message: 'Speech models do not use chat token parameters' })
+    return
+  }
+  if (model.sourceContextWindow === null || model.sourceMaxTokens === null) {
+    context.addIssue({ code: 'custom', message: 'Chat models require token parameters' })
+    return
+  }
   const hasOverridePair = model.overrideContextWindow !== null && model.overrideMaxTokens !== null
   const hasPartialOverride = (model.overrideContextWindow === null) !== (model.overrideMaxTokens === null)
   if (hasPartialOverride || model.hasParameterOverride !== hasOverridePair) {
@@ -116,6 +130,7 @@ export const modelParametersOverrideSchema = z.object({
 }).strict().refine(value => value.maxTokens <= value.contextWindow)
 
 export const customProviderModelSchema = z.object({
+  type: providerModelTypeSchema.optional(),
   contextWindow: z.number().int().positive().optional(),
   id: z.string().trim().min(1).max(200),
   input: z.array(z.enum(['text', 'image'])).min(1),
@@ -296,6 +311,11 @@ export const providersRpc = {
   setModelEnabled: { method: 'providers.setModelEnabled', input: providersRequestSchemas.providerModelEnabled, response: providersResponseSchemas.model },
   removeModel: { method: 'providers.removeModel', input: providersRequestSchemas.providerModel, response: validationResponseSchemas.mutation },
   setModelParameters: { method: 'providers.setModelParameters', input: providersRequestSchemas.providerModelParameters, response: providersResponseSchemas.model },
+  setModelType: {
+    method: 'providers.setModelType',
+    input: z.object({ providerId: idSchema, modelId: idSchema, type: providerModelTypeSchema.nullable() }).strict(),
+    response: modelSchema,
+  },
   setModelCapabilities: { method: 'providers.setModelCapabilities', input: providersRequestSchemas.providerModelCapabilities, response: providersResponseSchemas.model },
   setModelCatalogSource: { method: 'providers.setModelCatalogSource', input: providersRequestSchemas.providerModelCatalogSource, response: providersResponseSchemas.model },
   acknowledgeModelSourceUpdate: { method: 'providers.acknowledgeModelSourceUpdate', input: providersRequestSchemas.providerModel, response: providersResponseSchemas.model },

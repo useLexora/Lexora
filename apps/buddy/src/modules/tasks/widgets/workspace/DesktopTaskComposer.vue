@@ -52,6 +52,7 @@ function manageSkills() {
     ref="composerRef"
     :key="editorKey"
     v-bind="bindings"
+    :speech-enabled="focusReady"
     :paste-text-as-attachment="chat.pasteTextAsAttachment"
     :manage-skills="manageSkills"
     :has-queued-messages="execution.queuedMessages.value.length > 0"

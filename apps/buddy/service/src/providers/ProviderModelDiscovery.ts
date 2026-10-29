@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { safeDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import { diagnosticResponseType, diagnosticTransportCode } from '../../../shared/diagnostics/providerRequestDiagnostic'
 import { discoveredModelMetadataSchema } from '../../../shared/providers/providerDiscovery'
+import { providerModelTypeSchema } from '../../../shared/providers/providerModelType'
 import { diagnosticContext } from '../diagnostics/diagnosticContext'
 import {
   ProviderAuthenticationRequiredError,
@@ -129,9 +130,11 @@ function parseModelDefinitions(value: unknown): readonly ProviderModelDefinition
   return value.data.map((item) => {
     if (!isRecord(item) || typeof item.id !== 'string' || !item.id.trim())
       throw new ProviderModelSyncError()
+    const type = providerModelTypeSchema.safeParse(item.type)
     const name = typeof item.name === 'string' ? item.name.trim() : ''
     return {
       id: item.id.trim(),
+      ...(type.success ? { metadata: { type: type.data } } : {}),
       ...(name ? { name } : {}),
     }
   })

@@ -43,6 +43,8 @@ watch([
 }, { immediate: true })
 
 function resetForm() {
+  if (props.model.contextWindow === null || props.model.maxTokens === null)
+    return
   form.contextWindow = props.model.contextWindow
   form.maxTokens = props.model.maxTokens
 }
@@ -52,8 +54,8 @@ function startEditing() {
   editing.value = true
 }
 
-function formatTokens(value: number): string {
-  return new Intl.NumberFormat(props.language).format(value)
+function formatTokens(value: number | null): string {
+  return value === null ? '' : new Intl.NumberFormat(props.language).format(value)
 }
 
 async function save() {
