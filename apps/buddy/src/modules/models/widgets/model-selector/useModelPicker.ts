@@ -7,7 +7,8 @@ import { modelKey } from '../../model/modelSelection'
 interface ModelPickerInput {
   models: ReadonlyArray<ModelPickerOption>
   providers: ReadonlyArray<Pick<LocalProvider, 'id' | 'displayName'>>
-  selectedModelId: string | null
+  selectedModelId?: string | null
+  selectedModelIds?: readonly string[]
 }
 
 export function useModelPicker(props: ModelPickerInput) {
@@ -23,7 +24,8 @@ export function useModelPicker(props: ModelPickerInput) {
   ))
 
   function resolveSelectedProviderId(): string | null {
-    return props.models.find(model => modelKey(model) === props.selectedModelId)?.providerId ?? null
+    const selected = props.selectedModelIds?.[0] ?? props.selectedModelId
+    return props.models.find(model => modelKey(model) === selected)?.providerId ?? null
   }
 
   return { query, activeProviderId, visibleGroups, activeGroup }

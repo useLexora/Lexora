@@ -38,6 +38,7 @@ import { BUDDY_V34_ACTOR_IDENTITY_SCHEMA_SQL } from './migrations/v34ActorIdenti
 import { BUDDY_V35_INPUT_DELIVERY_SCHEMA_SQL } from './migrations/v35InputDelivery'
 import { BUDDY_V36_EXTENSION_CAPABILITIES_SCHEMA_SQL } from './migrations/v36ExtensionCapabilities'
 import { BUDDY_V37_MODEL_TYPES_SCHEMA_SQL } from './migrations/v37ModelTypes'
+import { BUDDY_V38_IMAGE_MODELS_SCHEMA_SQL } from './migrations/v38ImageModels'
 
 export interface BuddySchemaMigration {
   foreignKeys?: 'off'
@@ -45,7 +46,7 @@ export interface BuddySchemaMigration {
   version: number
 }
 
-export const BUDDY_SCHEMA_VERSION = 37 as const
+export const BUDDY_SCHEMA_VERSION = 38 as const
 
 export const BUDDY_SCHEMA_MIGRATIONS: readonly BuddySchemaMigration[] = [
   { sql: BUDDY_V1_INITIAL_SCHEMA_SQL, version: 1 },
@@ -85,4 +86,5 @@ export const BUDDY_SCHEMA_MIGRATIONS: readonly BuddySchemaMigration[] = [
   { sql: BUDDY_V35_INPUT_DELIVERY_SCHEMA_SQL, version: 35 },
   { sql: BUDDY_V36_EXTENSION_CAPABILITIES_SCHEMA_SQL, version: 36 },
   { sql: BUDDY_V37_MODEL_TYPES_SCHEMA_SQL, version: 37 },
+  { sql: BUDDY_V38_IMAGE_MODELS_SCHEMA_SQL, version: 38 },
 ]

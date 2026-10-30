@@ -25,7 +25,7 @@ const emit = defineEmits<{
 const { t } = useBuddyI18n(() => props.language)
 const typeOptions = computed(() => [
   { value: 'auto', label: `${t('desktop.providers.modelTypeAutomatic')} · ${t(`desktop.providers.modelTypes.${props.model?.sourceType ?? 'chat'}`)}` },
-  ...(['chat', 'transcription', 'speech'] as const).map(value => ({ value, label: t(`desktop.providers.modelTypes.${value}`) })),
+  ...(['chat', 'transcription', 'speech', 'image-generation'] as const).map(value => ({ value, label: t(`desktop.providers.modelTypes.${value}`) })),
 ])
 function saveType(value: string) {
   return props.actions?.saveType(value === 'auto' ? null : providerModelTypeSchema.parse(value))

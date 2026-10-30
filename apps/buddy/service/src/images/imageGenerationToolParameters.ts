@@ -1,6 +1,11 @@
 import { Type } from 'typebox'
 
 export const imageGenerationParameters = Type.Object({
+  output: Type.Optional(Type.Object({
+    size: Type.String({ pattern: '^(auto|[1-9]\\d{1,3}x[1-9]\\d{1,3})$' }),
+    quality: Type.Union([Type.Literal('auto'), Type.Literal('low'), Type.Literal('medium'), Type.Literal('high')]),
+    background: Type.Union([Type.Literal('auto'), Type.Literal('opaque'), Type.Literal('transparent')]),
+  }, { additionalProperties: false })),
   outputPath: Type.String({
     description: 'Output file path in the current workspace. The image extension is optional.',
     maxLength: 4096,

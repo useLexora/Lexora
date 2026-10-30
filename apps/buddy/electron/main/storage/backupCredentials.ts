@@ -6,9 +6,9 @@ import { z } from 'zod'
 import { isMissing } from '../../../platform/storage/storageFiles'
 import { createCredentialVault, createSafeStorageCipher } from '../secrets/CredentialVault'
 
-const namespaceSchema = z.enum(['providers', 'connectors', 'web', 'sync'])
+const namespaceSchema = z.enum(['providers', 'connectors', 'web', 'sync', 'images'])
 const credentialSchema = z.object({ namespace: namespaceSchema, id: z.string().min(1).max(256), value: z.unknown() }).strict()
-const scopes = { providers: 'providers', connectors: 'connections', web: 'connections', sync: 'connections' } as const
+const scopes = { providers: 'providers', connectors: 'connections', web: 'connections', sync: 'connections', images: 'settings' } as const
 export async function exportBackupCredentials(home: string, selected: readonly BackupScope[]) {
   const cipher = createSafeStorageCipher()
   if (!cipher.available())

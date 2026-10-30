@@ -57,7 +57,7 @@ describe('request attachment projection', () => {
   it('projects previous image tool results when switching models without editing history', () => {
     const tool = { role: 'toolResult' as const, toolCallId: 'call', toolName: 'read', isError: false, timestamp: 0, content: [{ type: 'text' as const, text: 'Working file: /workspace/image.png' }, { type: 'image' as const, mimeType: 'image/png', data: 'image-bytes' }] }
     const projected = projectMessageImages(tool, { ...model, input: ['text'] })
-    expect(projected).toMatchObject({ content: [{ type: 'text', text: 'Working file: /workspace/image.png' }, { type: 'text', text: expect.stringContaining('not supplied') }] })
+    expect(projected).toMatchObject({ content: [{ type: 'text', text: 'Working file: /workspace/image.png' }, { type: 'text', text: expect.stringContaining('this model does not accept images') }] })
     expect(projectMessageImages(tool, model)).toBe(tool)
     expect(tool.content[1]).toMatchObject({ type: 'image', data: 'image-bytes' })
   })
@@ -65,7 +65,7 @@ describe('request attachment projection', () => {
   it('budgets binary tool references by their encoded size before loading image bytes', () => {
     const tool = { role: 'toolResult' as const, toolCallId: 'call', toolName: 'read', isError: false, timestamp: 0, content: [{ type: 'image' as const, mimeType: 'image/png', data: '' }], buddyToolMedia: { version: 1 as const, images: [{ contentIndex: 0, mimeType: 'image/png', sha256: 'a'.repeat(64), sizeBytes: 3000 }] } }
     const budget = { remainingBytes: 4000, remainingImages: 1, remainingMessageImages: 1 }
-    expect(projectMessageImages(tool, model, budget)).toMatchObject({ content: [{ type: 'text', text: expect.stringContaining('not supplied') }] })
+    expect(projectMessageImages(tool, model, budget)).toMatchObject({ content: [{ type: 'text', text: expect.stringContaining('image input limits') }] })
     expect(budget.remainingImages).toBe(1)
     expect(projectMessageImages(tool, model, { ...budget, remainingBytes: 5000 })).toBe(tool)
     expect(tool.content[0]!.data).toBe('')
@@ -78,7 +78,7 @@ describe('request attachment projection', () => {
     expect(projected.input.images).toEqual(input.images)
     const tool = { role: 'toolResult' as const, toolCallId: 'call', toolName: 'read', isError: false, timestamp: 0, content: [{ type: 'image' as const, mimeType: 'image/png', data: 'AAAA' }] }
     const budget = { remainingBytes: 10_000 - projected.bytes, remainingImages: 0, remainingMessageImages: 1 }
-    expect(projectMessageImages(tool, limited, budget)).toMatchObject({ content: [{ type: 'text', text: expect.stringContaining('not supplied') }] })
+    expect(projectMessageImages(tool, limited, budget)).toMatchObject({ content: [{ type: 'text', text: expect.stringContaining('image input limits') }] })
     expect(twoImages.images).toHaveLength(2)
     expect(tool.content[0]?.data).toBe('AAAA')
   })

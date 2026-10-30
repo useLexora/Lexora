@@ -1,4 +1,5 @@
 import type { ToolCallEvent } from '@earendil-works/pi-coding-agent'
+import type { ImagePreferencesSnapshot } from '../../../../shared/images/imagePreferences'
 import type { BuddyExecutionProfile } from '../../../../shared/permissions/executionProfile'
 import type { NetworkOperation } from '../../../../shared/permissions/networkPermissions'
 import type { BuddySessionMode } from '../../../../shared/permissions/sessionMode'
@@ -33,6 +34,7 @@ export interface BuddyCapabilityContext {
   executionProfile: BuddyExecutionProfile
   cwd: string
   getRunId: () => string | undefined
+  getImagePreferences?: () => ImagePreferencesSnapshot | undefined
   isCodemodeEnabled?: () => boolean
   grants: readonly DirectoryGrant[]
   getExecutionGrants?: (toolCallId: string) => readonly DirectoryGrant[]

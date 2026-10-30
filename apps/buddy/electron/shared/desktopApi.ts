@@ -221,6 +221,7 @@ export interface LexoraConfig {
     localBackupLimit: number
     notifyWhenFocused: boolean
     profile: DesktopUserProfileConfig
+    images?: import('../../shared/images/imagePreferences').ImagePreferences
     speech?: import('../../shared/speech/speechApi').SpeechPreferences
     pluginAuthor: string
     sidebarCollapsed: boolean
@@ -254,6 +255,7 @@ export interface LexoraConfigPatch {
 export interface LexoraDesktopApi {
   notifications: DesktopNotificationsApi
   notificationSounds: NotificationSoundsApi
+  images: import('../../shared/images/imagePreferences').ImageApi
   speech: import('../../shared/speech/speechApi').SpeechApi
   sync: import('../../shared/sync/syncApi').SyncApi
   storage: import('../../shared/storage/storageApi').StorageApi

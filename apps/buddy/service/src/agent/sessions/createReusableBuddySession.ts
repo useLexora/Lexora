@@ -4,6 +4,7 @@ import type {
   SessionEntry,
 } from '@earendil-works/pi-coding-agent'
 import type { ExecutionMailboxMessage, ExecutionMailboxReceipt } from '../../../../shared/executions/executionApi'
+import type { ImagePreferences } from '../../../../shared/images/imagePreferences'
 import type { BuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
 import type { RuntimePreferences } from '../../../../shared/runtime/runtimePreferences'
 import type { SkillReference } from '../../../../shared/skills/skillApi'
@@ -23,6 +24,7 @@ import { randomUUID } from 'node:crypto'
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai'
 import { prepareCompaction } from '@earendil-works/pi-coding-agent'
 import { BUDDY_DEFAULT_THINKING_LEVEL } from '../../../../shared/conversation/modelSelection'
+import { copyEventSnapshot } from '../../../../shared/events/eventSnapshot'
 import { EXECUTION_MAILBOX_ENTRY_TYPE, executionMailboxMessageSchema, executionMailboxReceiptSchema } from '../../../../shared/executions/executionApi'
 import { DEFAULT_RUNTIME_PREFERENCES } from '../../../../shared/runtime/runtimePreferences'
 import { applyDocumentInputPayload } from '../../providers/documentInputPayload'
@@ -42,6 +44,7 @@ import { syncBuddySessionJournal } from './tree/syncBuddySessionJournal'
 export interface CreateReusableBuddySessionOptions {
   getPendingExecutionMessages?: (runId: string, entries: readonly SessionEntry[]) => readonly ExecutionMailboxMessage[]
   getModelSelection?: () => Promise<BuddySessionModelSelection | null>
+  getImagePreferences?: (signal: AbortSignal) => Promise<ImagePreferences>
   getPermissionSettings?: (runId: string) => BuddyPermissionSettings
   updatePermissionSettings?: (settings: BuddyPermissionSettings) => void
   setCodemodeEnabled?: (enabled: boolean) => void
@@ -56,6 +59,7 @@ export interface CreateReusableBuddySessionOptions {
   ) => Promise<Model<Api>>
   inputReferences: BuddyInputReferenceStore
   getInputMetadata?: (ids: readonly string[]) => readonly { id: string, sizeBytes: number }[]
+  allowsNativeImages?: () => Promise<boolean>
   prepareInputImages?: (images: readonly AttachmentImageReference[], model: InputModel) => Promise<ReadonlyMap<string, PreparedAttachmentImage | null>>
   materializeInput: (input: BuddyInputReferenceV1, images?: ReadonlyMap<string, PreparedAttachmentImage | null>) => Promise<UserMessage['content']>
   materializeDocuments?: (input: BuddyInputReferenceV1) => Promise<AttachmentFileInput[]>
@@ -246,6 +250,7 @@ export function createReusableBuddySession(
     const model = session.model
     if (!model)
       throw new Error('Missing input model')
+    const imageModel = model.input.includes('image') && await options.allowsNativeImages?.() === false ? { ...model, input: model.input.filter(kind => kind !== 'image') } : model
     const history = prepareBuddyInputHistory(messages)
     const imageLimits = getModelImageLimits(model)
     const mergeToolImages = ['openai-completions', 'anthropic-messages', 'bedrock-converse-stream'].includes(model.api)
@@ -263,13 +268,13 @@ export function createReusableBuddySession(
         previousRole = message.role
         const reference = readBuddyInputReference(message)
         if (!reference) {
-          projectedMessages.set(message, projectMessageImages(message, model, budget))
+          projectedMessages.set(message, projectMessageImages(message, imageModel, budget))
           continue
         }
         const ids = reference.attachmentIds ?? [...reference.images, ...reference.documents ?? []].map(file => file.attachmentId)
         const sizes = new Map(options.getInputMetadata?.(ids).map(file => [file.id, file.sizeBytes]) ?? [])
         let images: ReadonlyMap<string, PreparedAttachmentImage | null> | undefined
-        if (model.input.includes('image') && options.prepareInputImages) {
+        if (imageModel.input.includes('image') && options.prepareInputImages) {
           images = budget.remainingBytes > 512 && budget.remainingImages > 0
             ? await options.prepareInputImages(reference.images, model)
             : new Map<string, PreparedAttachmentImage | null>()
@@ -278,7 +283,7 @@ export function createReusableBuddySession(
             sizes.set(image.attachmentId, prepared ? Buffer.byteLength(prepared.image.data, 'base64') : Number.POSITIVE_INFINITY)
           }
         }
-        const projection = projectBuddyInput(reference, model, sizes, budget.remainingBytes, budget.remainingImages)
+        const projection = projectBuddyInput(reference, imageModel, sizes, budget.remainingBytes, budget.remainingImages)
         for (const image of projection.input.images) {
           const prepared = images?.get(image.attachmentId)
           if (prepared)
@@ -444,6 +449,8 @@ export function createReusableBuddySession(
         signal: input.signal,
       }
       try {
+        options.runContext.current.imagePreferences = copyEventSnapshot(await options.getImagePreferences?.(input.signal) ?? {})
+        input.signal.throwIfAborted()
         await withPiSessionStorageBoundary(
           session,
           async () => {

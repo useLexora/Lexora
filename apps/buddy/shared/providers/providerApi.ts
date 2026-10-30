@@ -86,7 +86,7 @@ export const modelSchema = z.object({
 }).strict().superRefine((model, context) => {
   if (model.type !== 'chat') {
     if ([model.contextWindow, model.maxTokens, model.sourceContextWindow, model.sourceMaxTokens, model.overrideContextWindow, model.overrideMaxTokens].some(value => value !== null) || model.hasParameterOverride)
-      context.addIssue({ code: 'custom', message: 'Speech models do not use chat token parameters' })
+      context.addIssue({ code: 'custom', message: 'Non-chat models do not use chat token parameters' })
     return
   }
   if (model.sourceContextWindow === null || model.sourceMaxTokens === null) {

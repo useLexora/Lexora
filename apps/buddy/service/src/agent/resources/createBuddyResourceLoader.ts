@@ -3,6 +3,8 @@ import type { BuddyApprovalPolicy } from '../../../../shared/permissions/approva
 import type { BuddyExecutionProfile } from '../../../../shared/permissions/executionProfile'
 import type { BuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
 import type { LocalSkill } from '../../../../shared/skills/skillApi'
+import type { ImageReadingMaterialWriter } from '../../images/ImageReadingMaterialStore'
+import type { ImageReader } from '../../images/ImageReadingService'
 import type { BuddyInputReferenceV1 } from '../context/BuddyInputReference'
 import type { BuddyInProcessExtension } from '../extensions/BuddyInProcessExtension'
 import type { BoundedContextFile } from './loadBoundedContextFiles'
@@ -24,6 +26,8 @@ import { createSystemSectionsExtension } from '../extensions/systemSectionsExten
 import { BUDDY_MANUAL_APPROVAL_PROMPT, createBuddyExecutionPrompt, createBuddySystemPrompt } from './createBuddySystemPrompt'
 
 export interface CreateBuddyResourceLoaderOptions {
+  readImage?: ImageReader
+  writeImageMaterial?: ImageReadingMaterialWriter
   actorPrompt?: string
   getPermissionSettings?: () => BuddyPermissionSettings
   getPendingInput?: () => BuddyInputReferenceV1 | null
@@ -79,7 +83,7 @@ export async function createBuddyResourceLoader(
     agentsFilesOverride: () => ({ agentsFiles: [...options.boundedContextFiles] }),
     appendSystemPromptOverride: () => [],
     cwd: options.cwd,
-    extensionFactories: [createReadFileExtension(options.cwd), ...options.inProcessExtensions, createSystemSectionsExtension(options.getPendingInput, toolNames => createPermissionPrompt(options.getPermissionSettings?.() ?? options, options.platform, toolNames), () => options.actorPrompt ?? '')],
+    extensionFactories: [createReadFileExtension(options.cwd, options.readImage, options.writeImageMaterial), ...options.inProcessExtensions, createSystemSectionsExtension(options.getPendingInput, toolNames => createPermissionPrompt(options.getPermissionSettings?.() ?? options, options.platform, toolNames), () => options.actorPrompt ?? '')],
     noContextFiles: true,
     noExtensions: true,
     noPromptTemplates: true,

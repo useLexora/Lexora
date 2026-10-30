@@ -1,3 +1,4 @@
+import type { ProviderModelType } from './providerModelType'
 import { z } from 'zod'
 import { BUDDY_THINKING_LEVELS } from '../conversation/modelSelection'
 import { isHttpEndpointUrl } from '../network/networkSecurity'
@@ -43,7 +44,7 @@ const customProviderModelBaseSchema = z.object({
 }).strict()
 
 function withCustomModelDefaults<T extends {
-  type: 'chat' | 'transcription' | 'speech'
+  type: ProviderModelType
   contextWindow?: number | null
   id: string
   maxTokens?: number | null

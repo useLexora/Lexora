@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
+import { DesktopImageSettings } from '@/modules/images/ui'
 import { DesktopModelsSettings } from '@/modules/models/ui'
 import DesktopSettingsModuleLayout from '@/modules/settings/layouts/DesktopSettingsModuleLayout.vue'
 import { useSettingsContext } from '@/modules/settings/settingsContext'
@@ -15,5 +16,6 @@ const { providerSettings } = useSettingsContext()
       :provider-settings="providerSettings"
       @manage-provider="router.push(desktopRouteLocations.provider($event))"
     />
+    <DesktopImageSettings :language="providerSettings.language.value" />
   </DesktopSettingsModuleLayout>
 </template>

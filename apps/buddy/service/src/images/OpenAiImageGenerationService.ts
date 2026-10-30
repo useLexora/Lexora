@@ -12,10 +12,7 @@ import type {
 } from './ImageGenerationGateway'
 import { Buffer } from 'node:buffer'
 import { ImageGenerationError } from './ImageGenerationGateway'
-
-const MAX_GENERATED_IMAGE_BYTES = 32 * 1024 * 1024
-const MAX_RESPONSE_BYTES = Math.ceil(MAX_GENERATED_IMAGE_BYTES * 4 / 3) + 2 * 1024 * 1024
-const PNG_SIGNATURE = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10])
+import { decodePng, readBoundedResponse, readResponseChunks } from './imageResponseBody'
 
 export interface OpenAiImageGenerationServiceOptions {
   fetch?: typeof globalThis.fetch
@@ -45,7 +42,7 @@ export class OpenAiImageGenerationService implements ImageGenerationGateway {
   async generate(input: ImageGenerationInput): Promise<ImageGenerationResult> {
     const credential = this.#resolveCredentialMetadata(input.model.provider)
     if (!this.#supportsCredential(input.model, credential?.type ?? null))
-      throw new ImageGenerationError('IMAGE_GENERATION_UNSUPPORTED')
+      throw new ImageGenerationError('IMAGE_GENERATION_UNSUPPORTED', { retryable: true })
     input.signal.throwIfAborted()
     let auth: AuthResult | undefined
     try {
@@ -53,7 +50,7 @@ export class OpenAiImageGenerationService implements ImageGenerationGateway {
     }
     catch (error) {
       input.signal.throwIfAborted()
-      throw new ImageGenerationError('PROVIDER_AUTHENTICATION_FAILED', { cause: error })
+      throw new ImageGenerationError('PROVIDER_AUTHENTICATION_FAILED', { cause: error, retryable: true })
     }
     input.signal.throwIfAborted()
     const current = this.#resolveCredentialMetadata(input.model.provider)
@@ -61,7 +58,7 @@ export class OpenAiImageGenerationService implements ImageGenerationGateway {
       throw new ImageGenerationError('IMAGE_GENERATION_UNSUPPORTED')
     const apiKey = auth?.auth.apiKey
     if (!auth || !apiKey)
-      throw new ImageGenerationError('PROVIDER_AUTHENTICATION_FAILED')
+      throw new ImageGenerationError('PROVIDER_AUTHENTICATION_FAILED', { retryable: true })
 
     const codex = input.model.api === 'openai-codex-responses'
     const headers = createHeaders(input.model, auth, codex)
@@ -71,11 +68,25 @@ export class OpenAiImageGenerationService implements ImageGenerationGateway {
       headers,
       method: 'POST',
       signal: input.signal,
+    }).catch((cause: unknown) => {
+      input.signal.throwIfAborted()
+      throw new ImageGenerationError('IMAGE_GENERATION_INCOMPLETE', { cause, diagnostic: input.requestId ? { requestId: input.requestId } : undefined })
     })
+    const backendRequestId = readProviderErrorDiagnostic(response, null)?.requestId
+    if (backendRequestId && input.onSubmitted) {
+      try {
+        await input.onSubmitted(backendRequestId)
+      }
+      catch (error) {
+        await response.body?.cancel().catch(() => {})
+        throw error
+      }
+    }
     if (!response.ok) {
       const body = await readBoundedResponse(response, input.signal)
       throw new ImageGenerationError(normalizeProviderError(response.status), {
         diagnostic: readProviderErrorDiagnostic(response, body),
+        retryable: [400, 401, 403, 404, 429].includes(response.status),
       })
     }
 
@@ -136,10 +147,10 @@ function createRequestBody(input: ImageGenerationInput, stream: boolean) {
     tool_choice: { type: 'image_generation' },
     tools: [{
       action: input.inputImages.length > 0 ? 'edit' : 'generate',
-      background: 'auto',
+      background: input.output?.background ?? 'auto',
       output_format: 'png',
-      quality: 'auto',
-      size: 'auto',
+      quality: input.output?.quality ?? 'auto',
+      size: input.output?.size ?? 'auto',
       type: 'image_generation',
     }],
   }
@@ -190,52 +201,6 @@ function extractChatGptAccountId(token: string): string {
   catch (error) {
     throw new ImageGenerationError('PROVIDER_AUTHENTICATION_FAILED', { cause: error })
   }
-}
-
-async function* readResponseChunks(response: Response, signal: AbortSignal): AsyncGenerator<string> {
-  if (!response.body) {
-    signal.throwIfAborted()
-    return
-  }
-
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let receivedBytes = 0
-  const cancel = () => {
-    void reader.cancel().catch(() => {})
-  }
-  signal.addEventListener('abort', cancel, { once: true })
-  try {
-    signal.throwIfAborted()
-    const declaredLength = Number(response.headers.get('content-length'))
-    if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES)
-      throw new ImageGenerationError('IMAGE_GENERATION_RESPONSE_TOO_LARGE')
-    while (true) {
-      signal.throwIfAborted()
-      const chunk = await reader.read()
-      signal.throwIfAborted()
-      if (chunk.done) {
-        yield decoder.decode()
-        return
-      }
-      receivedBytes += chunk.value.byteLength
-      if (receivedBytes > MAX_RESPONSE_BYTES)
-        throw new ImageGenerationError('IMAGE_GENERATION_RESPONSE_TOO_LARGE')
-      yield decoder.decode(chunk.value, { stream: true })
-    }
-  }
-  finally {
-    signal.removeEventListener('abort', cancel)
-    cancel()
-    reader.releaseLock()
-  }
-}
-
-async function readBoundedResponse(response: Response, signal: AbortSignal): Promise<string> {
-  const parts: string[] = []
-  for await (const chunk of readResponseChunks(response, signal))
-    parts.push(chunk)
-  return parts.join('')
 }
 
 function parseJsonOutput(body: string, response: Response): ImageGenerationResult {
@@ -349,19 +314,6 @@ function extractImages(output: unknown): ImageGenerationResult['images'] {
     seen.add(result)
     return [{ bytes: decodePng(result), mimeType: 'image/png' as const }]
   })
-}
-
-function decodePng(value: string): Uint8Array {
-  if (!/^[A-Z0-9+/]*={0,2}$/i.test(value))
-    throw new ImageGenerationError('IMAGE_GENERATION_INVALID_RESPONSE')
-  const bytes = Buffer.from(value, 'base64')
-  if (
-    bytes.byteLength > MAX_GENERATED_IMAGE_BYTES
-    || PNG_SIGNATURE.some((byte, index) => bytes[index] !== byte)
-  ) {
-    throw new ImageGenerationError('IMAGE_GENERATION_INVALID_RESPONSE')
-  }
-  return new Uint8Array(bytes)
 }
 
 function normalizeProviderError(status: number) {

@@ -5,6 +5,7 @@ import type { BuddyToolClassification } from '../approvals/toolClassification'
 import type { CreateBuddyToolPresentationInput } from '../events/toolPresentationSupport'
 import type { ImageGenerationErrorDiagnostic } from './ImageGenerationGateway'
 import { BUDDY_ATTACHMENT_COUNT_LIMIT } from '../../../shared/conversation/attachmentPolicy'
+import { imageSourceSchema } from '../../../shared/images/imagePreferences'
 import {
   readOptionalString,
   readRecord,
@@ -18,6 +19,7 @@ export interface ImageGenerationToolDetails {
   code?: string
   diagnostic?: ImageGenerationErrorDiagnostic
   responseId: string | null
+  source?: Extract<BuddyToolPresentation, { card: 'image' }>['source']
 }
 
 export function classifyImageGenerationTool(
@@ -64,6 +66,7 @@ export function createImageGenerationToolPresentation(
     card: 'image',
     description: readOptionalString(arguments_, 'description'),
     generatedCount: details?.artifactIds.length ?? null,
+    ...(details?.source ? { source: details.source } : {}),
     prompt: readOptionalString(arguments_, 'prompt'),
     reference: readImageReference(arguments_),
     status: input.result === undefined
@@ -85,10 +88,12 @@ export function readImageGenerationToolDetails(value: unknown): ImageGenerationT
       ))].slice(0, BUDDY_ATTACHMENT_COUNT_LIMIT)
     : []
   const diagnostic = readDiagnostic(details.diagnostic)
+  const source = imageSourceSchema.safeParse(details.source)
   return {
     artifactIds,
     ...(typeof details.code === 'string' && details.code ? { code: details.code } : {}),
     ...(diagnostic ? { diagnostic } : {}),
+    ...(source.success ? { source: source.data } : {}),
     responseId: typeof details.responseId === 'string' && details.responseId
       ? details.responseId
       : null,

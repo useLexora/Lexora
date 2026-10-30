@@ -5,6 +5,7 @@ import automations from './automations'
 import chat from './chat'
 import diagnostics from './diagnostics'
 import discovery from './discovery'
+import images from './images'
 import mcp from './mcp'
 import models from './models'
 import onboarding from './onboarding'
@@ -16,6 +17,7 @@ import tasks from './tasks'
 import usage from './usage'
 
 export default {
+  ...images,
   ...app,
   ...applicationLogs,
   ...approvals,

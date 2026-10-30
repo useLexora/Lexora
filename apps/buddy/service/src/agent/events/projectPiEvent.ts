@@ -58,6 +58,12 @@ type ModelRequestFailureCode
     | 'MODEL_INPUT_UNSUPPORTED'
     | 'MODEL_INPUT_TOO_LARGE'
     | 'RESOURCE_MATERIALIZATION_FAILED'
+    | 'MODEL_RESOURCES_CHANGED'
+    | 'MODEL_RESOURCES_UNAVAILABLE'
+    | 'MODEL_LOAD_FAILED'
+    | 'MODEL_RESOURCE_EXHAUSTED'
+    | 'MODEL_PROCESS_EXITED'
+    | 'MODEL_CONFIGURATION_CHANGED'
     | 'MODEL_REQUEST_FAILED'
     | 'MODEL_STREAM_INCOMPLETE'
     | 'MODEL_REQUEST_TIMED_OUT'
@@ -694,6 +700,18 @@ function classifyModelRequestFailure(message: string | undefined): ModelRequestF
     return message
   if (!message)
     return 'MODEL_REQUEST_FAILED'
+  if (message === 'EXTENSION_INFERENCE_RESOURCE_CHANGED' || message === 'EXTENSION_INFERENCE_CHECKSUM_MISMATCH')
+    return 'MODEL_RESOURCES_CHANGED'
+  if (message === 'EXTENSION_INFERENCE_RESOURCE_UNAVAILABLE' || message === 'EXTENSION_INFERENCE_RESOURCE_NOT_EXECUTABLE')
+    return 'MODEL_RESOURCES_UNAVAILABLE'
+  if (message === 'EXTENSION_INFERENCE_RESOURCE_EXHAUSTED')
+    return 'MODEL_RESOURCE_EXHAUSTED'
+  if (message === 'EXTENSION_INFERENCE_LOAD_FAILED')
+    return 'MODEL_LOAD_FAILED'
+  if (message === 'EXTENSION_INFERENCE_PROCESS_EXITED')
+    return 'MODEL_PROCESS_EXITED'
+  if (message === 'EXTENSION_INFERENCE_CONFIGURATION_CHANGED')
+    return 'MODEL_CONFIGURATION_CHANGED'
   if (/stream ended without (?:a )?finish(?:_| )reason/i.test(message))
     return 'MODEL_STREAM_INCOMPLETE'
   if (

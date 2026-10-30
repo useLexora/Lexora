@@ -12,6 +12,7 @@ import type { McpConnectorService } from './connectors/mcp/McpConnectorService'
 import type { SessionReferenceServices } from './conversations/SessionReferenceService'
 import type { ImageGenerationGateway } from './images/ImageGenerationGateway'
 import type { ImageGenerationServiceOptions } from './images/ImageGenerationService'
+import type { ImageRequestStore } from './images/ImageRequestStore'
 import type { ImageTransformService } from './images/ImageTransformService'
 import type { PetActionService } from './pet/PetActionService'
 import type { PluginAuthoringService } from './plugins/PluginAuthoringService'
@@ -52,6 +53,7 @@ export interface BuddyCapabilityServices {
   browserHost: BrowserCapabilityHost
   presentBrowser: (source: ContextPanelSource) => Promise<void>
   connectorService: Pick<McpConnectorService, 'getTools'>
+  imageRequests?: ImageRequestStore
   imageGenerationGateway: ImageGenerationGateway
   imageTransformService: Pick<ImageTransformService, 'removeChroma'>
   webService: Pick<WebCapabilityService, 'search' | 'fetch'>
@@ -145,7 +147,9 @@ function createImageCapability(context: BuddyCapabilityContext, services: BuddyC
     conversationId: context.conversationId,
     cwd: context.cwd,
     get grants() { return context.grants },
+    requests: services.imageRequests,
     imageGenerationGateway: services.imageGenerationGateway,
+    getImagePreferences: context.getImagePreferences,
   })
   const diagnostics = services.record ? observeImageDiagnostics(service, services.record) : null
   return {

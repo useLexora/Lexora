@@ -1,6 +1,8 @@
 import type { LocalProvider, LocalRuntimeModelOption } from '@buddy-shared/providers/providerApi'
 
-export type ModelPickerOption = Pick<LocalRuntimeModelOption, 'providerId' | 'modelId' | 'displayName'>
+export type ModelPickerOption = Pick<LocalRuntimeModelOption, 'providerId' | 'modelId' | 'displayName'> & {
+  disabled?: boolean
+}
 
 export interface ModelGroup {
   models: ReadonlyArray<ModelPickerOption>

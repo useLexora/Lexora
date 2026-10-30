@@ -9,6 +9,8 @@ import type { BuddyServiceTier } from '../../../../shared/conversation/modelSele
 import type { BuddyApprovalPolicy } from '../../../../shared/permissions/approvalPolicy'
 import type { BuddyExecutionProfile } from '../../../../shared/permissions/executionProfile'
 import type { BuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
+import type { ImageReadingMaterialWriter } from '../../images/ImageReadingMaterialStore'
+import type { ImageReader } from '../../images/ImageReadingService'
 import type { BuddyInputReferenceV1 } from '../context/BuddyInputReference'
 import type { BuddyInProcessExtension } from '../extensions/BuddyInProcessExtension'
 import type { BuddySessionResources } from '../resources/BuddySessionResources'
@@ -50,6 +52,8 @@ import { installBuddySystemSections } from './installBuddySystemSections'
 const sessionIdentityPattern = /^[A-Z0-9][\w-]{0,127}$/i
 
 export interface CreateBuddySessionOptions {
+  readImage?: ImageReader
+  writeImageMaterial?: ImageReadingMaterialWriter
   getPermissionSettings?: () => BuddyPermissionSettings
   getInputMessages?: () => AgentSession['messages']
   getPendingInput?: () => BuddyInputReferenceV1 | null
@@ -237,6 +241,8 @@ async function createConfiguredBuddySession(
   const imageStore = new ImageBlobStore(conversationImageDirectory(join(resolve(options.conversationsDirectory), options.conversationId)))
   const settingsManager = createBuddySettingsManager()
   const resourceLoader = await createBuddyResourceLoader({
+    readImage: options.readImage,
+    writeImageMaterial: options.writeImageMaterial,
     actorPrompt: options.resources.actorPrompt,
     getPendingInput: options.getPendingInput,
     approvedSkills: [...options.resources.approvedSkills],

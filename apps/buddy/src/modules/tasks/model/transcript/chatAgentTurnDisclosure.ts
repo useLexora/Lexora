@@ -16,6 +16,12 @@ export interface ChatAgentTurnFailurePresentation {
 const SPECIFIC_FAILURE_MESSAGE_KEYS: Readonly<Record<string, BuddyI18nKey>> = {
   AUTHENTICATION_REQUIRED: 'desktop.error.authenticationRequired',
   MODEL_NOT_SUPPORTED: 'desktop.chat.modelNotSupported',
+  MODEL_RESOURCES_CHANGED: 'desktop.chat.modelResourcesChanged',
+  MODEL_RESOURCES_UNAVAILABLE: 'desktop.chat.modelResourcesUnavailable',
+  MODEL_LOAD_FAILED: 'desktop.chat.modelLoadFailed',
+  MODEL_RESOURCE_EXHAUSTED: 'desktop.chat.modelResourceExhausted',
+  MODEL_PROCESS_EXITED: 'desktop.chat.modelProcessExited',
+  MODEL_CONFIGURATION_CHANGED: 'desktop.chat.modelConfigurationChanged',
   MODEL_INPUT_UNSUPPORTED: 'desktop.chat.modelInputUnsupported',
   MODEL_INPUT_TOO_LARGE: 'desktop.chat.modelInputTooLarge',
   RESOURCE_MATERIALIZATION_FAILED: 'desktop.chat.attachmentMaterializationFailed',

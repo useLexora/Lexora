@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { BROWSER_ACTION_KINDS } from '../browser'
 import { BUDDY_ATTACHMENT_COUNT_LIMIT } from '../conversation/attachmentPolicy'
+import { imageSourceSchema } from '../images/imagePreferences'
 
 const legacyDirectoryScopeRelationSchema = z.enum([
   'ancestor',
@@ -71,6 +72,7 @@ export const buddyToolPresentationSchema = z.discriminatedUnion('card', [
     card: z.literal('image'),
     description: z.string().min(1).max(4 * 1024).nullable(),
     generatedCount: z.number().int().nonnegative().nullable(),
+    source: imageSourceSchema.optional(),
     prompt: z.string().min(1).max(32 * 1024).nullable(),
     reference: z.discriminatedUnion('mode', [
       z.object({

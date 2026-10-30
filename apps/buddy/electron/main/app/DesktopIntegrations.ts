@@ -39,6 +39,8 @@ import { ApplicationLogReader } from '../diagnostics/ApplicationLogReader'
 import { readAuthorizedFileResource, readSpaceFileResource } from '../extensions/readSpaceFileResource'
 import { registerExtensionIpc } from '../extensions/registerExtensionIpc'
 import { createFeedbackIssueUrl } from '../feedbackIssue'
+import { registerImageIpc } from '../images/registerImageIpc'
+import { registerOcrIpc } from '../images/registerOcrIpc'
 import { registerDesktopIpc } from '../ipc'
 import { registerLocalChatIpc } from '../localChatIpc'
 import { NotificationAudioPlayer } from '../notifications/NotificationAudioPlayer'
@@ -192,6 +194,8 @@ export class DesktopIntegrations {
       },
       readText: async (target, signal) => spaceTextDocumentSchema.parse(await service.request('spaceFiles.readDocument', target, { signal })).text,
     })
+    this.#subscriptions.push(registerImageIpc({ getWindow: () => windows.window, config: runtime.configStore, applyConfig: config => this.applyConfig(config), request: (method, input) => service.request(method, input) }))
+    this.#subscriptions.push(registerOcrIpc(() => windows.window, runtime.ocr))
     runtime.speechModels = () => extensions.speech?.list() ?? Promise.resolve([])
     this.#subscriptions.push(() => {
       runtime.speechModels = undefined

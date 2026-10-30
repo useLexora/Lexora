@@ -200,7 +200,7 @@ function storageUsageCategory(path: string): [StorageUsageCategoryId, StorageUsa
     return ['data', 'workspace']
   if (/^buddy\/(?:conversations\/[^/]+\/(?:inputs|image-inputs|media)|drafts\/[^/]+\/attachments)\//.test(path))
     return ['data', 'attachments']
-  if (/^buddy\/conversations\/[^/]+\/(?:session|events)\//.test(path))
+  if (/^buddy\/conversations\/[^/]+\/(?:session|events|image-requests)\//.test(path))
     return ['data', 'sessions']
   if (/^buddy\/conversations\/[^/]+\/changes\//.test(path))
     return ['data', 'changes']

@@ -16,7 +16,7 @@ const emit = defineEmits<{
   save: [model: LocalCustomProviderModel]
 }>()
 const { t } = useBuddyI18n(() => props.language)
-const typeOptions = computed(() => (props.allowChat === false ? ['transcription', 'speech'] as const : ['chat', 'transcription', 'speech'] as const).map(value => ({ value, label: t(`desktop.providers.modelTypes.${value}`) })))
+const typeOptions = computed(() => (props.allowChat === false ? ['transcription', 'speech'] as const : ['chat', 'transcription', 'speech', 'image-generation'] as const).map(value => ({ value, label: t(`desktop.providers.modelTypes.${value}`) })))
 const form = reactive({
   type: (props.allowChat === false ? 'transcription' : 'chat') as ProviderModelType,
   contextWindow: null as number | null,
@@ -67,6 +67,9 @@ function save() {
       <span>{{ t('desktop.providers.modelType') }}</span>
       <NSelect v-model:value="form.type" :options="typeOptions" />
     </label>
+    <p v-if="form.type === 'image-generation'" class="m-0 text-muted text-[0.75rem]">
+      {{ t('desktop.providers.imageProtocolHint') }}
+    </p>
     <div v-if="form.type === 'chat'" class="desktop-manual-model-form__capabilities">
       <NCheckbox v-model:checked="form.reasoning">
         {{ t('desktop.providers.reasoning') }}

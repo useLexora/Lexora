@@ -12,6 +12,7 @@ import { ApplicationEvents } from '../../../../shared/observability/ApplicationE
 import { isExecutionProfileWithin } from '../../../../shared/permissions/executionProfile'
 import { AttachmentToolWorkspace } from '../../attachments/AttachmentToolWorkspace'
 import { canReadReferenceSnapshots } from '../../conversations/referenceSnapshotToolContract'
+import { ImageReadingMaterialStore } from '../../images/ImageReadingMaterialStore'
 import { supportsModelToolCalls } from '../../providers/modelCapabilities'
 import { BuddyAgentRunError } from '../../runs/runError'
 import { createBuddySessionExtensions } from '../extensions/createBuddySessionExtensions'
@@ -119,7 +120,10 @@ export class BuddySessionFactory {
     try {
       const tree = await this.#options.tree.open(run, blueprint.canonicalRoot, selected.model)
       let reusable: ReturnType<typeof createReusableBuddySession> | undefined
+      const imageMaterials = new ImageReadingMaterialStore(blueprint.scratchRoot, blueprint.conversationId)
       const session = await createBuddySession({
+        writeImageMaterial: (text, signal) => imageMaterials.write(text, signal),
+        readImage: this.#options.services.imageReading ? input => this.#options.services.imageReading!.read({ ...input, runId: extensions.runContext.current?.runId, preferences: extensions.runContext.current?.imagePreferences }) : undefined,
         getInputMessages: () => reusable?.getInputContext?.().messages ?? [],
         sessionManager: tree.manager,
         agentDir: this.#options.agentDirectory,
@@ -195,6 +199,7 @@ export class BuddySessionFactory {
           })
         },
         runContext: extensions.runContext,
+        getImagePreferences: this.#options.services.getImagePreferences,
         session: session.session,
         shutdown: (reason) => {
           unsubscribePreferences?.()
@@ -206,6 +211,7 @@ export class BuddySessionFactory {
           })
         },
         inputReferences: extensions.inputReferences,
+        allowsNativeImages: () => this.#options.services.imageReading?.allowsNativeInput(extensions.runContext.current?.imagePreferences) ?? Promise.resolve(true),
         getInputMetadata: ids => this.#options.services.attachmentService.getInputMetadata(ids, blueprint.conversationId),
         prepareInputImages: (images, model) => this.#options.services.attachmentService.prepareInputImages(images, blueprint.conversationId, model),
         materializeDocuments: input => this.#options.services.attachmentService.materializeDocumentInputs(

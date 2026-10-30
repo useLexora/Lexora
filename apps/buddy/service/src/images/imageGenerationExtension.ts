@@ -57,7 +57,7 @@ export function createImageGenerationExtension(
 function createImageGenerationTool(options: CreateImageGenerationExtensionOptions): ToolDefinition {
   return defineTool<TSchema, ImageGenerationToolDetails>({
     description: [
-      'Generate or edit an image with the active model.',
+      'Generate or edit an image using the configured image processing policy and image model, independently of the chat model.',
       'Use reference.mode=resources for exact attachment or artifact ids, or reference.mode=latest for the latest image in this conversation.',
       'Generated images are saved and shown in the Lexora Buddy conversation immediately.',
     ].join(' '),
@@ -73,7 +73,7 @@ function createImageGenerationTool(options: CreateImageGenerationExtensionOption
         return imageToolFailure('IMAGE_GENERATION_UNSUPPORTED')
       const executionSignal = signal ?? new AbortController().signal
       try {
-        const result = await options.service.generate(input, model, executionSignal, options.getExecutionGrants?.(toolCallId), options.createFileWriter?.({ type: 'tool_call', toolCallId, toolName: IMAGE_GENERATION_TOOL_NAME, input: parameters as Record<string, unknown>, signal: executionSignal }))
+        const result = await options.service.generate(input, model, executionSignal, options.getExecutionGrants?.(toolCallId), options.createFileWriter?.({ type: 'tool_call', toolCallId, toolName: IMAGE_GENERATION_TOOL_NAME, input: parameters as Record<string, unknown>, signal: executionSignal }), { runId: options.getRunId()!, toolCallId })
         return {
           content: [{
             text: JSON.stringify({ artifactIds: result.artifactIds, generatedCount: result.artifactIds.length }),
@@ -110,7 +110,9 @@ function imageToolFailure(
     ? '. The provider result is unknown; do not automatically repeat this image request.'
     : code === 'IMAGE_GENERATION_UNSUPPORTED'
       ? '. The selected model, authentication method or channel does not support image generation. Do not automatically switch accounts or billing routes.'
-      : ''
+      : code === 'IMAGE_GENERATION_RESOURCE_EXHAUSTED' || code === 'IMAGE_GENERATION_BUSY'
+        ? '. The image backend is busy or lacks resources. Do not automatically repeat this request, stop other models, or reduce the requested image requirements. Ask the user to adjust the backend or retry later.'
+        : ''
   return {
     content: [{
       text: `Lexora Buddy image generation failed: ${code}${diagnosticText ? ` (${diagnosticText})` : ''}${recovery}`,

@@ -23,6 +23,8 @@ import { extensionAgentInvocationSchema, extensionAgentRpc } from '../../../shar
 import { extensionAgentResourceRequestSchema } from '../../../shared/extensions/extensionAgentResources'
 import { extensionCapabilitiesRpc } from '../../../shared/extensions/extensionCapabilities'
 import { extensionSkillsRpc } from '../../../shared/extensions/extensionSkills'
+import { imageRpc } from '../../../shared/images/imagePreferences'
+import { ocrRpc } from '../../../shared/images/ocrService'
 import { networkPermissionGrantSchema, networkPermissionsRpc } from '../../../shared/permissions/networkPermissionsRpc'
 import { isLinux } from '../../../shared/platform/identifiers'
 import { runtimePreferencesRpc } from '../../../shared/runtime/runtimePreferences'
@@ -35,6 +37,7 @@ import { ContextPanelHost } from '../context-panel/ContextPanelHost'
 import { DesktopPerformanceMonitor } from '../diagnostics/DesktopPerformanceMonitor'
 import { registerExtensionAuthoringRpc } from '../extensions/registerExtensionAuthoringRpc'
 import { registerExtensionShellRpc } from '../extensions/registerExtensionShellRpc'
+import { OcrService } from '../images/OcrService'
 import { DesktopNetwork } from '../network/DesktopNetwork'
 import { HostWebService } from '../network/HostWebService'
 import { registerWebHostRpc } from '../network/registerWebHostRpc'
@@ -179,6 +182,12 @@ export class DesktopRuntimeHost {
     const networkDiagnostics = this.#network.onDidChange(change => environment.events.publish({ event: `network.${change.kind}.${change.status}`, component: 'desktop.network', level: ['failed', 'degraded', 'unavailable'].includes(change.status) ? 'warn' : 'info', operationId: change.operationId, revision: change.revision, ...(change.failure ? { failure: change.failure, errorCode: 'NETWORK_START_FAILED' } : {}) }))
     this.#subscriptions.push(() => networkDiagnostics.dispose())
     await this.#network.start(config.proxy)
+    this.ocr = new OcrService({
+      preferences: async () => (await this.configStore.read()).desktop.images ?? {},
+      save: async (ocrService) => { await this.configStore.updateImages(current => ({ ...current, ocrService })) },
+      credentials,
+      request: this.#network.request,
+    })
     this.#webHost = new HostWebService({
       authenticateProxy: this.#network.authenticateProxy,
       assertAvailable: this.#network.assertAvailable,
@@ -234,6 +243,8 @@ export class DesktopRuntimeHost {
           return this.inspectExtension(id)
         }, () => this.#config?.desktop.pluginAuthor ?? '')
         const disposers = [
+          peer.onRequest(imageRpc.preferences, async () => (await this.configStore.read()).desktop.images ?? {}),
+          peer.onRequest(ocrRpc.read, (raw, signal) => this.ocr.read(raw, signal ?? new AbortController().signal)),
           peer.onRequest(HOST_SPEECH_MODELS, () => this.speechModels?.() ?? []),
           registerExtensionShellRpc(peer, () => this.extensionShells),
           peer.onRequest(extensionAgentRpc.list, () => this.extensionAgent?.list() ?? []),
@@ -338,6 +349,8 @@ export class DesktopRuntimeHost {
     this.#subscriptions.push(installAttachmentProtocol(service))
     this.#subscriptions.push(installRendererProtocol())
   }
+
+  ocr!: OcrService
 
   speechModels: (() => Promise<SpeechProvider[]>) | undefined
 

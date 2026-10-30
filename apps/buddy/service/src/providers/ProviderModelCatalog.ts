@@ -298,6 +298,8 @@ export class ProviderModelCatalog {
 
   upsertManualModel(provider: Pick<ProviderConfigRecord, 'id' | 'api'>, input: ProviderModelInput): BuddyModel {
     const model = providerModelInputSchema.parse(input)
+    if (model.type === 'image-reading')
+      throw new ProviderValidationError()
     const now = new Date().toISOString()
     const current = this.#models.find(provider.id, model.id)
     const source = createSourceMetadata({
@@ -339,7 +341,7 @@ export class ProviderModelCatalog {
 
   setType(providerId: string, modelId: string, type: ProviderModelType | null): BuddyModel {
     const current = this.#requireModelState(providerId, modelId)
-    if (providerId.startsWith('plugin:'))
+    if (providerId.startsWith('plugin:') || type === 'image-reading')
       throw new ProviderValidationError()
     if (!providerModelTypeSchema.nullable().safeParse(type).success)
       throw new ProviderValidationError()
@@ -594,7 +596,7 @@ export class ProviderModelCatalog {
         id: model.modelId,
         providerId: model.providerId,
         displayName: model.displayName,
-        api: model.api === 'plugin-speech' ? model.api : 'openai-audio',
+        api: model.api === 'plugin-speech' ? model.api : type === 'image-generation' ? 'openai-images' : 'openai-audio',
         enabled: model.enabled,
         available: this.#available(model),
         source: model.source,

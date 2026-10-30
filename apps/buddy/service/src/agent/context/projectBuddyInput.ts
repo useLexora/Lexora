@@ -34,7 +34,8 @@ export function projectMessageImages(message: AgentSession['messages'][number], 
       return block
     }
     changed = true
-    return { type: 'text' as const, text: '[Image content is not supplied to the current model. Use available file paths for file operations; do not claim to have seen this image.]' }
+    const reason = model.input.includes('image') ? 'image input limits' : 'this model does not accept images'
+    return { type: 'text' as const, text: `[Image content is not supplied: ${reason}. Visual details are unavailable.]` }
   })
   return changed ? { ...message, content } : message
 }

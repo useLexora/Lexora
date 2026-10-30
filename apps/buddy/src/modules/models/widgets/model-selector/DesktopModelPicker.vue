@@ -5,6 +5,7 @@ import type { ModelPickerOption } from '../../model/modelCatalog'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { Checkmark16Regular, Search20Regular } from '@vicons/fluent'
 import { NInput } from 'naive-ui'
+import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import { modelKey } from '../../model/modelSelection'
@@ -15,7 +16,12 @@ const props = defineProps<{
   language: BuddyLocale
   models: ReadonlyArray<ModelPickerOption>
   providers: ReadonlyArray<Pick<LocalProvider, 'id' | 'displayName'>>
-  selectedModelId: string | null
+  selectedModelId?: string | null
+  selectedModelIds?: readonly string[]
+  multiple?: boolean
+  max?: number
+  searchPlaceholder?: string
+  emptyText?: string
 }>()
 
 const emit = defineEmits<{
@@ -24,16 +30,29 @@ const emit = defineEmits<{
 
 const { t } = useBuddyI18n(() => props.language)
 const { query, activeProviderId, visibleGroups, activeGroup } = useModelPicker(props)
+const selectedIds = computed(() => new Set(props.multiple ? props.selectedModelIds : props.selectedModelId ? [props.selectedModelId] : []))
+function isDisabled(model: ModelPickerOption) {
+  if (props.disabled)
+    return true
+  if (props.multiple && selectedIds.value.has(modelKey(model)))
+    return false
+  return Boolean(model.disabled || (props.multiple && props.max !== undefined && selectedIds.value.size >= props.max))
+}
+function select(model: ModelPickerOption) {
+  if (!isDisabled(model))
+    emit('select', modelKey(model))
+}
 </script>
 
 <template>
-  <section class="desktop-model-picker grid overflow-hidden w-[min(29rem,_calc(100vw_-_18rem))] min-w-88 max-h-[min(25rem,_62vh)] border-1 border-solid border-border rounded-menu bg-raised shadow-overlay">
-    <div class="desktop-model-picker__search border-b-1 border-b-solid border-b-border p-[0.55rem]">
+  <section class="desktop-model-picker flex flex-col overflow-hidden w-[min(29rem,_calc(100vw_-_18rem))] min-w-88 border-1 border-solid border-border rounded-menu bg-raised shadow-overlay" :class="multiple ? 'max-h-[min(36rem,_80vh)]' : 'max-h-[min(25rem,_62vh)]'">
+    <slot name="selection" />
+    <div class="desktop-model-picker__search shrink-0 border-b-1 border-b-solid border-b-border p-[0.55rem]">
       <NInput
         v-model:value="query"
         clearable
         size="small"
-        :placeholder="t('desktop.chat.searchModels')"
+        :placeholder="searchPlaceholder ?? t('desktop.chat.searchModels')"
       >
         <template #prefix>
           <DesktopIcon :component="Search20Regular" />
@@ -41,7 +60,7 @@ const { query, activeProviderId, visibleGroups, activeGroup } = useModelPicker(p
       </NInput>
     </div>
 
-    <div v-if="visibleGroups.length" class="grid h-[min(17.75rem,_calc(62vh_-_6.5rem))] min-h-0 grid-cols-[minmax(8.5rem,_0.8fr)_minmax(12rem,_1.35fr)] overflow-hidden">
+    <div v-if="visibleGroups.length" class="grid min-h-0 grid-cols-[minmax(8.5rem,_0.8fr)_minmax(12rem,_1.35fr)] overflow-hidden" :class="multiple ? 'h-[min(15rem,_40vh)]' : 'h-[min(17.75rem,_calc(62vh_-_6.5rem))]'">
       <div class="desktop-model-picker__providers border-r-1 border-r-solid border-r-border bg-subtle grid content-start gap-[0.15rem] overflow-x-hidden overflow-y-auto p-[0.45rem]">
         <button
           v-for="group in visibleGroups"
@@ -63,17 +82,17 @@ const { query, activeProviderId, visibleGroups, activeGroup } = useModelPicker(p
           :key="modelKey(model)"
           class="desktop-model-picker__model min-h-13 ui-menu-option gap-[0.6rem] px-[0.55rem] py-[0.42rem]"
           type="button"
-          role="menuitemradio"
-          :disabled="disabled"
-          :aria-checked="selectedModelId === modelKey(model)"
-          @click="emit('select', modelKey(model))"
+          :role="multiple ? 'menuitemcheckbox' : 'menuitemradio'"
+          :disabled="isDisabled(model)"
+          :aria-checked="selectedIds.has(modelKey(model))"
+          @click="select(model)"
         >
           <span class="desktop-model-picker__model-copy grid min-w-0 flex-1 gap-[0.08rem]">
             <strong class="min-w-0 truncate text-[0.78rem] font-650">{{ model.displayName }}</strong>
-            <small class="min-w-0 truncate text-muted text-[0.66rem]">{{ model.modelId }}</small>
+            <small class="min-w-0 truncate text-muted text-[0.66rem]">{{ model.disabled ? t('provider.status.unavailable') : model.modelId }}</small>
           </span>
           <DesktopIcon
-            v-if="selectedModelId === modelKey(model)"
+            v-if="selectedIds.has(modelKey(model))"
             :component="Checkmark16Regular"
           />
         </button>
@@ -81,7 +100,7 @@ const { query, activeProviderId, visibleGroups, activeGroup } = useModelPicker(p
     </div>
 
     <span v-else class="min-h-32 text-muted text-[0.72rem] py-10 px-4 text-center">
-      {{ t('desktop.chat.noMatchingModels') }}
+      {{ emptyText ?? t('desktop.chat.noMatchingModels') }}
     </span>
   </section>
 </template>

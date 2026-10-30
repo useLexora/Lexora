@@ -1,4 +1,13 @@
 export default {
+  'desktop.models.selection.placeholder': '选择模型',
+  'desktop.models.selection.selected': '已选模型',
+  'desktop.models.selection.clear': '清空选择',
+  'desktop.models.selection.moveUp': '上移 {name}',
+  'desktop.models.selection.moveDown': '下移 {name}',
+  'desktop.models.selection.remove': '移除 {name}',
+  'desktop.providers.imageProtocolHint': '需要支持 OpenAI Images 接口。',
+  'desktop.providers.modelTypes.image-generation': '图像生成',
+  'desktop.providers.modelTypes.image-reading': '图像识别',
   'desktop.providers.modelType': '模型用途',
   'desktop.providers.modelTypeAutomatic': '跟随来源',
   'desktop.providers.modelTypes.all': '全部模型',

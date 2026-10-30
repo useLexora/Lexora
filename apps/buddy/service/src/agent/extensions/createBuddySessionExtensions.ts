@@ -3,6 +3,7 @@ import type { BuddySettings } from '../../../../shared/buddies/buddySettings'
 import type { BuddyUserMessageContentV1 } from '../../../../shared/conversation/buddyUserContent'
 import type { BuddyServiceTier } from '../../../../shared/conversation/modelSelection'
 import type { ApplicationDiagnosticReporter } from '../../../../shared/diagnostics/applicationDiagnostic'
+import type { ImagePreferences } from '../../../../shared/images/imagePreferences'
 import type { BuddyApprovalPolicy } from '../../../../shared/permissions/approvalPolicy'
 import type { BuddyExecutionProfile } from '../../../../shared/permissions/executionProfile'
 import type { BuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
@@ -15,6 +16,7 @@ import type { MutationCoordinator } from '../../changes/MutationCoordinator'
 import type { DirectoryGrantService } from '../../directories/DirectoryGrantService'
 import type { DirectoryGrant } from '../../directories/resolveGrantedPath'
 import type { FileResourceCoordinator } from '../../files/FileResourceCoordinator'
+import type { ImageReadingService } from '../../images/ImageReadingService'
 import type { NetworkPermissionsStore } from '../../permissions/NetworkPermissionsClient'
 import type { ShellSandboxClient } from '../../sandbox/ShellSandboxClient'
 import type { ExtensionShellRegistry } from '../../sandbox/ShellSelection'
@@ -50,6 +52,8 @@ import { createToolPolicyExtension } from './toolPolicyExtension'
 export interface BuddySessionExtensionServices {
   getInputProjection?: (conversationId: string, messageId: string) => Pick<BuddyUserMessageContentV1, 'materialProjection' | 'resourceSnapshots'> | null
   networkPermissions?: NetworkPermissionsStore
+  imageReading?: Pick<ImageReadingService, 'read' | 'allowsNativeInput'>
+  getImagePreferences?: (signal: AbortSignal) => Promise<ImagePreferences>
   delegation?: Pick<ExecutionDelegationService, 'execute' | 'pending' | 'assertShellExecutionAllowed'>
   followUp?: (runId: string, signal: AbortSignal) => Promise<void>
   prepareForRun?: (signal: AbortSignal) => Promise<void>
@@ -196,6 +200,7 @@ export async function createBuddySessionExtensions(
       get executionProfile() { return getExecutionProfile() },
       cwd: options.canonicalRoot,
       getRunId: () => runContext.current?.runId,
+      getImagePreferences: () => runContext.current?.imagePreferences,
       getExecutionGrants: toolCallId => [...grants.snapshot, ...executionPermissions.get(runContext.current, toolCallId)],
       get grants() { return grants.snapshot },
       sessionMode: options.sessionMode,

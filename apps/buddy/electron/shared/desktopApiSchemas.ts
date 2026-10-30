@@ -4,6 +4,7 @@ import { browserPreferencesPatchSchema } from '../../shared/browser/browserPrefe
 import { DESKTOP_NAVIGATION_LAYOUTS } from '../../shared/desktopNavigationLayout'
 import { extensionAuthorSchema } from '../../shared/extensions/extensionIdentity'
 import { fileIconPreferenceSchema } from '../../shared/icons/fileIconTheme'
+import { imagePreferencesSchema } from '../../shared/images/imagePreferences'
 import { downloadSettingsSchema } from '../../shared/network/downloadSettings'
 import { proxySettingsSchema } from '../../shared/network/proxySettings'
 import { notificationSoundPreferencesPatchSchema } from '../../shared/notifications/notificationSound'
@@ -112,6 +113,7 @@ export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({
     taskSidebar: taskSidebarPreferencesSchema.optional(),
     profile: desktopUserProfilePatchSchema.optional(),
     developerToolsEnabled: z.boolean().optional(),
+    images: imagePreferencesSchema.optional(),
     speech: speechPreferencesSchema.optional(),
     pluginAuthor: extensionAuthorSchema.optional(),
     language: z.enum(['zh-CN', 'en-US']).optional(),

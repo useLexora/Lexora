@@ -20,7 +20,7 @@ import { safeDiagnosticReporter } from '../../../shared/diagnostics/applicationD
 import { credentialVaultSystemCodeSchema } from '../../../shared/diagnostics/credentialVaultFailure'
 import { OPERATING_SYSTEM } from '../../../shared/platform/identifiers'
 
-type LocalCredentialNamespace = CredentialNamespace | 'sync' | 'backup'
+type LocalCredentialNamespace = CredentialNamespace | 'sync' | 'backup' | 'images'
 
 const SECRET_FILE_SUFFIX = '.credential'
 

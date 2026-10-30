@@ -17,12 +17,13 @@ import process from 'node:process'
 import { currentPlatform } from '../../platform/currentPlatform'
 import { resolveWindowsPowerShell } from '../../platform/windows/powerShell'
 import { artifactsChanged } from '../../shared/artifacts/artifactApi'
-
 import { automationNotifications } from '../../shared/automation/automationApi'
+
 import { buddiesChanged } from '../../shared/buddies/buddyApi'
 import { changesChanged } from '../../shared/changes/changeApi'
 import { connectorNotifications } from '../../shared/connectors/connectorApi'
 import { contextPanelRpc, contextPanelStateSchema } from '../../shared/context-panel/contextPanel'
+
 import { buddyUserMessageContentV1Schema, getBuddyUserContentActorReferences } from '../../shared/conversation/buddyUserContent'
 import { composerResourcesChanged } from '../../shared/conversation/composerApi'
 import { CONVERSATION_CHANGED, conversationTimelineChanged } from '../../shared/conversation/conversationApi'
@@ -33,6 +34,7 @@ import { extensionAgentRpc } from '../../shared/extensions/extensionAgent'
 import { extensionCapabilitiesRpc, extensionCapabilityApplyRpc, extensionCapabilityDescriptorSchema, extensionCapabilityImpactRpc } from '../../shared/extensions/extensionCapabilities'
 import { extensionShellRpc } from '../../shared/extensions/extensionShell'
 import { extensionSkillDescriptorSchema, extensionSkillsRpc } from '../../shared/extensions/extensionSkills'
+import { imagePreferencesSchema, imageRpc } from '../../shared/images/imagePreferences'
 import { ServiceHost } from '../../shared/lifecycle/ServiceHost'
 import { ServiceLifecycleSource } from '../../shared/lifecycle/ServiceLifecycleSource'
 import { webSettingsChanged } from '../../shared/network/webApi'
@@ -139,8 +141,11 @@ import { registerTaskFileRpc } from './files/registerTaskFileRpc'
 import { TaskFileAccess } from './files/TaskFileAccess'
 import { TaskFileService } from './files/TaskFileService'
 import { observeImageDiagnostics } from './images/ImageOperationLifecycle'
+import { ImageReadingService } from './images/ImageReadingService'
+import { ImageRequestStore } from './images/ImageRequestStore'
 import { ImageTransformService } from './images/ImageTransformService'
 import { OpenAiImageGenerationService } from './images/OpenAiImageGenerationService'
+import { RoutedImageGateway } from './images/RoutedImageGateway'
 import { AttentionNotificationService } from './notifications/AttentionNotificationService'
 import { NotificationProjection } from './notifications/NotificationProjection'
 import { registerNotificationRpc } from './notifications/registerNotificationRpc'
@@ -587,11 +592,18 @@ export async function startBuddyService(
       return service
     })
     const executionModels = providerService.executionModels
-    const imageGenerationGateway = new OpenAiImageGenerationService({
+    const nativeImageGateway = new OpenAiImageGenerationService({
       modelRuntime: executionModels.getRuntime(),
       resolveCredentialMetadata: providerId => providerService.getCredentialMetadata(providerId),
       resolveSourceProviderId: providerId => executionModels.resolveSourceProviderId(providerId),
     })
+    const getImagePreferences = async (signal?: AbortSignal) => imagePreferencesSchema.parse(await options.rpc.request(imageRpc.preferences, {}, 30000, signal))
+    const imageGenerationGateway = new RoutedImageGateway({
+      native: nativeImageGateway,
+      providers: providerService,
+      preferences: getImagePreferences,
+    })
+    const imageReading = new ImageReadingService({ rpc: options.rpc, providers: providerService, usage: usageService, preferences: getImagePreferences })
     const sessions = await host.start('runtime.sessions', () => new BuddySessionRegistry<ReusableBuddySession>())
     const sessionReferences = createSessionReferenceRepository(options.database)
     const conversationMetadata = await host.start('runtime.task_metadata', ({ defer }) => {
@@ -964,6 +976,8 @@ export async function startBuddyService(
     const sessionExtensionServices: BuddySessionExtensionServices = {
       shells: new ExtensionShellRegistry(options.rpc),
       networkPermissions: new NetworkPermissionsClient(options.rpc),
+      imageReading,
+      getImagePreferences,
       fileResources,
       delegation: { pending: (...arguments_) => delegation.pending(...arguments_), execute: (...arguments_) => delegation.execute(...arguments_), assertShellExecutionAllowed: runId => delegation.assertShellExecutionAllowed(runId) },
       followUp: async (runId, signal) => { await chatQueueService?.followUp(runId, signal) },
@@ -1029,6 +1043,7 @@ export async function startBuddyService(
           }
         },
         connectorService,
+        imageRequests: new ImageRequestStore(paths),
         imageGenerationGateway,
         imageTransformService,
         webService,
@@ -1693,6 +1708,9 @@ export async function startBuddyService(
       })))
       register(registerSpaceFileRpc(options.rpc, spaceFiles))
       register(registerTaskFileRpc(options.rpc, taskFileService))
+      register(options.rpc.onRequest(imageRpc.catalog, async () => {
+        return { ...await imageGenerationGateway.catalog(), readingCandidates: await imageReading.candidates() }
+      }))
       register(registerProviderSpeechRpc({ rpc: options.rpc, providers: providerService, workspace }))
       register(
         registerProviderRpc({
