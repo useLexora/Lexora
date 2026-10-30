@@ -120,37 +120,42 @@ async function confirmSetup() {
     @update:show="popoverOpen = $event"
   >
     <template #trigger>
-      <NButton
-        class="desktop-permission-mode-selector__trigger"
-        :class="{ 'is-full-access': isFullAccess, 'has-warning': boundaryWarning }"
-        quaternary
-        size="small"
-        :aria-label="t('desktop.chat.executionProfileOpen')"
-        :aria-description="boundaryWarning ? t(`desktop.chat.shellSandboxStatus.${sandboxStatus}`) : undefined"
-        :aria-expanded="popoverOpen"
-      >
-        <template #icon>
-          <DesktopIcon :component="selected.icon" />
-        </template>
-        <span class="desktop-permission-mode-selector__trigger-label">
-          {{ t(selected.label) }}
-        </span>
-        <NTooltip v-if="boundaryWarning" placement="top" :disabled="popoverOpen">
-          <template #trigger>
-            <span
-              class="desktop-permission-mode-selector__warning absolute top-[-0.1rem] right-[-0.1rem] z-1 inline-flex w-[0.875rem] h-[0.875rem] items-center justify-center text-warning"
-              role="img"
-              :aria-label="t(`desktop.chat.shellSandboxStatus.${sandboxStatus}`)"
-            >
-              <DesktopIcon :component="Warning20Regular" :size="16" aria-hidden="true" />
+      <NTooltip :disabled="popoverOpen || boundaryWarning">
+        <template #trigger>
+          <NButton
+            class="desktop-permission-mode-selector__trigger"
+            :class="{ 'is-full-access': isFullAccess, 'has-warning': boundaryWarning }"
+            quaternary
+            size="small"
+            :aria-label="t('desktop.chat.executionProfileOpen')"
+            :aria-description="boundaryWarning ? t(`desktop.chat.shellSandboxStatus.${sandboxStatus}`) : t(selected.label)"
+            :aria-expanded="popoverOpen"
+          >
+            <template #icon>
+              <DesktopIcon :component="selected.icon" />
+            </template>
+            <span class="desktop-permission-mode-selector__trigger-label">
+              {{ t(selected.label) }}
             </span>
-          </template>
-          <div class="desktop-permission-mode-selector__warning-tooltip grid max-w-[min(18rem,_calc(100vw_-_2rem))] gap-1">
-            <strong>{{ t(`desktop.chat.shellSandboxStatus.${sandboxStatus}`) }}</strong>
-            <span>{{ t(`desktop.chat.shellSandboxHint.${sandboxStatus}`) }}</span>
-          </div>
-        </NTooltip>
-      </NButton>
+            <NTooltip v-if="boundaryWarning" placement="top" :disabled="popoverOpen">
+              <template #trigger>
+                <span
+                  class="desktop-permission-mode-selector__warning absolute top-[-0.1rem] right-[-0.1rem] z-1 inline-flex w-[0.875rem] h-[0.875rem] items-center justify-center text-warning"
+                  role="img"
+                  :aria-label="t(`desktop.chat.shellSandboxStatus.${sandboxStatus}`)"
+                >
+                  <DesktopIcon :component="Warning20Regular" :size="16" aria-hidden="true" />
+                </span>
+              </template>
+              <div class="desktop-permission-mode-selector__warning-tooltip grid max-w-[min(18rem,_calc(100vw_-_2rem))] gap-1">
+                <strong>{{ t(`desktop.chat.shellSandboxStatus.${sandboxStatus}`) }}</strong>
+                <span>{{ t(`desktop.chat.shellSandboxHint.${sandboxStatus}`) }}</span>
+              </div>
+            </NTooltip>
+          </NButton>
+        </template>
+        {{ t(selected.label) }}
+      </NTooltip>
     </template>
 
     <section class="w-[min(18rem,_calc(100vw_-_1rem))]">
@@ -233,8 +238,11 @@ async function confirmSetup() {
 <style scoped lang="scss">
 .desktop-permission-mode-selector__trigger {
   position: relative;
+  width: var(--composer-permission-width, auto);
   min-width: 0;
   height: var(--buddy-composer-control-height);
+  padding-inline: var(--composer-permission-padding, 10px);
+  font-size: var(--composer-toolbar-font-size, 13px);
   border-radius: var(--buddy-composer-control-radius);
   background-color: transparent;
   color: var(--buddy-text-secondary);
@@ -251,10 +259,23 @@ async function confirmSetup() {
     outline-offset: -2px;
   }
 
-  &.is-full-access {
-    background-color: var(--buddy-status-danger-surface);
-    color: var(--buddy-status-danger-text);
+  :deep(.n-button__icon) {
+    margin: var(--composer-permission-icon-margin, 0 6px 0 0);
   }
+
+  &.is-full-access {
+    color: var(--buddy-status-danger-text);
+
+    &:hover,
+    &:focus-visible,
+    &[aria-expanded='true'] {
+      background-color: var(--buddy-nav-hover);
+    }
+  }
+}
+
+.desktop-permission-mode-selector__trigger-label {
+  display: var(--composer-permission-label-display, inline);
 }
 
 .desktop-permission-mode-selector__warning-tooltip {

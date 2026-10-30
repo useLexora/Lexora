@@ -10,7 +10,7 @@ import {
   FolderAdd16Regular,
   Search16Regular,
 } from '@vicons/fluent'
-import { NButton, NInput, NPopover } from 'naive-ui'
+import { NButton, NInput, NPopover, NTooltip } from 'naive-ui'
 import { computed, nextTick, shallowRef, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopSpaceIcon from '@/modules/tasks/widgets/space/DesktopSpaceIcon.vue'
@@ -83,23 +83,28 @@ function openSpaceCreator() {
       @update:show="panelOpen = $event"
     >
       <template #trigger>
-        <NButton
-          class="desktop-task-space-selector__trigger"
-          quaternary
-          size="small"
-          aria-haspopup="dialog"
-          :aria-label="triggerLabel"
-          :aria-expanded="panelOpen"
-        >
-          <DesktopSpaceIcon class="desktop-task-space-selector__icon" :icon="activeSpace?.icon" :icon-color="activeSpace?.iconColor" :size="16" />
-          <span class="desktop-task-space-selector__label">{{ triggerLabel }}</span>
-          <DesktopIcon
-            class="desktop-task-space-selector__chevron"
-            :class="{ 'is-open': panelOpen }"
-            :component="ChevronDown16Regular"
-            :size="16"
-          />
-        </NButton>
+        <NTooltip :disabled="panelOpen">
+          <template #trigger>
+            <NButton
+              class="desktop-task-space-selector__trigger"
+              quaternary
+              size="small"
+              aria-haspopup="dialog"
+              :aria-label="triggerLabel"
+              :aria-expanded="panelOpen"
+            >
+              <DesktopSpaceIcon class="desktop-task-space-selector__icon" :icon="activeSpace?.icon" :icon-color="activeSpace?.iconColor" :size="16" />
+              <span class="desktop-task-space-selector__label">{{ triggerLabel }}</span>
+              <DesktopIcon
+                class="desktop-task-space-selector__chevron"
+                :class="{ 'is-open': panelOpen }"
+                :component="ChevronDown16Regular"
+                :size="16"
+              />
+            </NButton>
+          </template>
+          {{ triggerLabel }}
+        </NTooltip>
       </template>
 
       <section
@@ -181,14 +186,11 @@ function openSpaceCreator() {
 </template>
 
 <style scoped lang="scss">
-.desktop-task-space-selector {
-  @container desktop-chat-composer (max-width: 21rem) {
-    display: none;
-  }
-}
-
 .desktop-task-space-selector__trigger {
-  max-width: min(14rem, 40cqw);
+  width: var(--composer-space-width, auto);
+  max-width: var(--composer-space-max-width, 14rem);
+  padding-inline: var(--composer-space-padding, 10px);
+  font-size: var(--composer-toolbar-font-size, 13px);
   min-width: 0;
   height: var(--buddy-composer-control-height);
   border-radius: var(--buddy-composer-control-radius);
@@ -216,7 +218,7 @@ function openSpaceCreator() {
 
   :deep(.n-button__content) {
     min-width: 0;
-    gap: 0.3rem;
+    gap: var(--composer-space-gap, 0.3rem);
   }
 
   span {
@@ -225,24 +227,11 @@ function openSpaceCreator() {
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-
-  @container desktop-chat-composer (max-width: 30rem) {
-    width: var(--buddy-composer-control-height);
-    min-width: var(--buddy-composer-control-height);
-    max-width: var(--buddy-composer-control-height);
-    padding: 0;
-
-    :deep(.n-button__content) {
-      gap: 0;
-    }
-  }
 }
 
 .desktop-task-space-selector__label,
 .desktop-task-space-selector__chevron {
-  @container desktop-chat-composer (max-width: 30rem) {
-    display: none;
-  }
+  display: var(--composer-space-label-display, inline);
 }
 
 .desktop-task-space-selector__chevron {
