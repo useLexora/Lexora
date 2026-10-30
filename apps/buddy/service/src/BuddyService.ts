@@ -1501,6 +1501,9 @@ export async function startBuddyService(
       return service
     })
     const contextUsageService = new ContextUsageSnapshotService({
+      runs,
+      threads,
+      events: options.eventLog,
       definitions: buddyDefinitions,
       getDefaultActorId: () => buddies.defaultBuddyId,
       getRuntimePreferences: async () => {

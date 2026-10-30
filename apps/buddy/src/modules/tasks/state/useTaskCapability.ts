@@ -366,7 +366,21 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     onError: setError,
     refresh: runSync.refreshActiveConversation,
   })
+  const inputActorId = computed(() => addressedActorId.value ?? activeConversation.value?.buddyId ?? draftBuddyId.value)
+  const inputContextRunId = computed(() => actorInput.delivery.value?.mode === 'current'
+    && actorInput.execution.value?.buddyId === inputActorId.value
+    ? actorInput.target.value?.runId ?? null
+    : null)
+  const inputActorRunIds = computed(() => new Set(inputContextRunId.value
+    ? [inputContextRunId.value]
+    : runs.value.filter(run => run.buddyId === inputActorId.value
+      && run.conversationId === activeConversationId.value && run.branchId === activeBranchId.value).map(run => run.id)))
   const contextUsageTracker = useChatContextUsage({
+    actorId: inputActorId,
+    runId: inputContextRunId,
+    runRevision: computed(() => inputContextRunId.value
+      ? executionTree.records.value.find(run => run.runId === inputContextRunId.value)?.updatedAt ?? null
+      : null),
     activeBranchId,
     activeConversationId,
     approvalPolicy: permissionSettingsState.approvalPolicy,
@@ -375,7 +389,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     executionProfile: permissionSettingsState.executionProfile,
     models: modelProviders.models,
     spaceId,
-    runSignalEvents,
+    runSignalEvents: computed(() => runSignalEvents.value.filter(event => inputActorRunIds.value.has(event.runId))),
     runtimeState: runtimeSupervisor.runtimeState,
     selectedEffort: taskModels.selectedEffort,
     selectedModel: taskModels.selectedModel,
@@ -750,6 +764,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
   } as const
 
   return {
+    contextTarget: contextUsageTracker.target,
     prepareClose,
     cancelClose: () => isClosing.value = false,
     dispose,

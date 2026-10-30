@@ -38,6 +38,8 @@ export type LocalContextUsageSnapshotRequest = z.infer<typeof contextRequestSche
 
 export const contextRequestSchemas = {
   contextUsageSnapshot: z.object({
+    actorId: idSchema.optional(),
+    runId: idSchema.optional(),
     approvalPolicy: approvalPolicySchema,
     branchId: sessionIdentitySchema.nullable(),
     conversationId: sessionIdentitySchema.nullable(),
@@ -47,7 +49,9 @@ export const contextRequestSchemas = {
     spaceId: idSchema.nullable(),
   }).strict().refine(input => (
     (input.conversationId === null) === (input.branchId === null)
-  ), { path: ['branchId'] }),
+  ), { path: ['branchId'] }).refine(input => (
+    !input.runId || (input.actorId !== undefined && input.conversationId !== null && input.branchId !== null)
+  ), { path: ['runId'] }),
 } as const
 
 export const contextResponseSchemas = {

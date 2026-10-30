@@ -13,6 +13,7 @@ export interface RunEventWriter {
 }
 
 export interface RunEventReader {
+  findLatest: (runId: string, eventTypes: readonly string[]) => Promise<BuddyRunEvent | null>
   list: (
     runId: string,
     options?: ListBuddyRunEventsOptions,

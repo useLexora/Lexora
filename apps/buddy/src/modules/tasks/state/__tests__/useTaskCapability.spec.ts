@@ -4,6 +4,7 @@ import type { LocalStartTurnRequest } from '@buddy-shared/conversation/chatApi'
 import type { LocalComposerDraft } from '@buddy-shared/conversation/composerApi'
 import type { BuddyComposerResourceAccept } from '@buddy-shared/conversation/composerResource'
 import type { LocalConversation } from '@buddy-shared/conversation/conversationApi'
+import type { LocalExecution } from '@buddy-shared/executions/executionPresentationApi'
 
 import type { UseTaskCapabilityOptions } from '../useTaskCapability'
 import { ServiceHost } from '@buddy-shared/lifecycle/ServiceHost'
@@ -17,6 +18,86 @@ import { useTaskIndex } from '../task-index/useTaskIndex'
 import { useTaskCapability } from '../useTaskCapability'
 
 describe('useTaskCapability', () => {
+  it('binds current actor-child context to the execution instead of the actors public history', async () => {
+    const api = createBranchingDesktopApi()
+    const publicRun = { ...queuedRun(), id: 'public-run', branchId: 'branch-root', status: 'completed' as const }
+    const timeline = await api.localChat.conversations.listTimeline({ conversationId: 'conversation-1', branchId: 'branch-root' })
+    vi.mocked(api.localChat.conversations.listTimeline).mockResolvedValue({
+      ...timeline,
+      runs: [publicRun],
+      runEvents: [{
+        runId: publicRun.id,
+        sequence: 1,
+        type: 'context.usage.updated',
+        createdAt: '2026-08-19T00:00:00.000Z',
+        payload: { model: 'model-1', provider: 'provider-1', totalTokens: 900, messageTokens: 900, mcpTokens: 0, skillTokens: 0, systemPromptTokens: 0, toolTokens: 0 },
+      }],
+    })
+    const models = await api.localChat.providers.listModels()
+    vi.mocked(api.localChat.providers.listModels).mockResolvedValue(models.map(model => ({ ...model, type: 'chat', sourceType: 'chat', typeOverride: null })))
+    let child: LocalExecution = {
+      runId: 'isolated-child',
+      rootRunId: 'root',
+      parentRunId: 'root',
+      buddyId: 'default',
+      buddyName: 'Actor',
+      ordinal: 1,
+      kind: 'actor_child',
+      phase: 'working',
+      status: 'running',
+      startedAt: '2026-08-19T00:00:00.000Z',
+      completedAt: null,
+      updatedAt: '2026-08-19T00:00:00.000Z',
+      progress: null,
+      toolCount: 0,
+      usage: null,
+      stopping: false,
+      task: 'Private task',
+      waitingFor: null,
+      activeChildren: 0,
+      canCancel: true,
+      canSend: true,
+      canAnswer: false,
+      cleanup: 'pending',
+      errorCode: null,
+      affectedResources: [],
+      questions: [],
+    }
+    const root: LocalExecution = { ...child, runId: 'root', rootRunId: 'root', parentRunId: null, kind: 'root', buddyId: 'caller' }
+    api.localChat.executions.list = async () => [{ ...root }, { ...child }]
+    api.localChat.executions.inputs = async () => ({ inputs: [], nextOffset: null })
+    let ready = false
+    vi.mocked(api.localChat.context.getUsageSnapshot).mockImplementation(async (input) => {
+      const identity = { modelId: 'model-1', providerId: 'provider-1', contextWindow: 4096, createdAt: '2026-08-20T00:00:00.000Z' }
+      if (input.runId && !ready)
+        return { ...identity, status: 'pending' as const }
+      const tokens = input.runId ? 200 : 900
+      return { ...identity, status: 'ready' as const, totalTokens: tokens, messageTokens: tokens, mcpTokens: 0, skillTokens: 0, systemPromptTokens: 0, toolTokens: 0 }
+    })
+    vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
+    const scope = effectScope()
+    const chat = scope.run(() => createTestTask(api, { conversationId: 'conversation-1', branchId: 'branch-root', spaceId: null }))!
+    try {
+      await chat.initialize()
+      await vi.waitFor(() => expect(chat.workspace.execution.inputExecution.value?.runId).toBe(child.runId))
+      await vi.waitFor(() => expect(chat.workspace.composer.contextUsage.value).toMatchObject({ status: 'pending', totalTokens: null }))
+      expect(vi.mocked(api.localChat.context.getUsageSnapshot).mock.calls.at(-1)?.[0]).toMatchObject({
+        actorId: 'default',
+        runId: child.runId,
+        conversationId: 'conversation-1',
+        branchId: 'branch-root',
+      })
+      ready = true
+      child = { ...child, updatedAt: '2026-08-21T00:00:00.000Z' }
+      await chat.workspace.executionTree.refresh()
+      await vi.waitFor(() => expect(chat.workspace.composer.contextUsage.value).toMatchObject({ status: 'ready', totalTokens: 200 }))
+    }
+    finally {
+      chat.dispose()
+      scope.stop()
+    }
+  })
+
   it('binds composer stopping to the chosen actor while other active actors keep branch mutation disabled', async () => {
     const api = createBranchingDesktopApi()
     const main = { ...queuedRun(), id: 'main-active', branchId: 'branch-root' }

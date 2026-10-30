@@ -43,6 +43,7 @@ export type RunEventProjectorPort = Pick<
 export type RunEventQueryPort = Pick<
   RunEventQueries,
   | 'findConversationId'
+  | 'findLatest'
   | 'hasCheckpoint'
   | 'hasProjectedEvents'
   | 'isTerminalRun'
@@ -173,6 +174,14 @@ export class RunEventLog implements RunEventLogPort {
     return this.#enqueue(runId, () => {
       this.#assertRunAvailable(runId)
       return this.#readAndRepair(runId)
+    })
+  }
+
+  findLatest(runId: string, eventTypes: readonly string[]): Promise<BuddyRunEvent | null> {
+    const types = [...eventTypes]
+    return this.#enqueue(runId, async () => {
+      this.#assertRunAvailable(runId)
+      return this.#queries.findLatest(runId, types)
     })
   }
 

@@ -18,6 +18,17 @@ export class RunEventQueries {
     this.#database = database
   }
 
+  findLatest(runId: string, eventTypes: readonly string[]): BuddyRunEvent | null {
+    if (!eventTypes.length)
+      return null
+    const row = this.#database.prepare(`
+      SELECT * FROM run_events
+      WHERE run_id = ? AND event_type IN (SELECT value FROM json_each(?))
+      ORDER BY sequence DESC LIMIT 1
+    `).get(runId, JSON.stringify(eventTypes)) as unknown as RunEventRow | undefined
+    return row ? toRunEvent(row) : null
+  }
+
   list(runId: string, options: ListBuddyRunEventsOptions = {}): BuddyRunEvent[] {
     const limit = options.limit ?? 500
     const rows = options.afterSequence === undefined

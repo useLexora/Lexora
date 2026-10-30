@@ -10,12 +10,16 @@ import type { BuddySessionBlueprintService } from '../agent/sessions/BuddySessio
 import type { BuddyContextSnapshot } from '../agent/sessions/createBuddySession'
 import type { BuddyConversationTree } from '../agent/sessions/tree/BuddyConversationTree'
 import type { BuddyDefinitionResolver } from '../buddies/BuddyDefinitionResolver'
+import type { RunEventReader } from '../events/RunEventPorts'
 import type { ProviderExecutionModelResolver } from '../providers/ProviderExecutionModelResolver'
 import type { BuddyDataPaths } from '../storage/BuddyDataPaths'
 import type { ComposerDraftRepository } from '../storage/composerDraftRepository'
 import type { ConversationHistoryRepository } from '../storage/conversationHistoryRepository'
 import type { ConversationRepository } from '../storage/conversationRepository'
+import type { RunRepository } from '../storage/runRepository'
+import type { ThreadBindingRepository } from '../storage/threadBindingRepository'
 import { SessionManager } from '@earendil-works/pi-coding-agent'
+import { contextUsageSnapshotSchema } from '../../../shared/conversation/contextApi'
 import { DEFAULT_RUNTIME_PREFERENCES } from '../../../shared/runtime/runtimePreferences'
 import { createBuddySessionExtensions } from '../agent/extensions/createBuddySessionExtensions'
 import { createBuddyContextSnapshot } from '../agent/sessions/createBuddySession'
@@ -31,6 +35,7 @@ export interface ContextUsageModelSelection {
 
 export interface ContextUsageSnapshotInput {
   actorId?: string
+  runId?: string
   approvalPolicy: BuddyApprovalPolicy
   branchId: string | null
   conversationId: string | null
@@ -41,6 +46,9 @@ export interface ContextUsageSnapshotInput {
 }
 
 export interface ContextUsageSnapshotServiceOptions {
+  runs: Pick<RunRepository, 'findById'>
+  threads: Pick<ThreadBindingRepository, 'find'>
+  events: Pick<RunEventReader, 'findLatest'>
   definitions: Pick<BuddyDefinitionResolver, 'capture'>
   getDefaultActorId: () => string
   getRuntimePreferences?: () => Promise<RuntimePreferences>
@@ -111,17 +119,48 @@ export class ContextUsageSnapshotService implements ContextUsageSnapshotReader {
       throw new BuddyServiceError('VALIDATION_FAILED')
     }
 
-    const actorId = input.actorId ?? conversation?.buddyId ?? this.#options.getDefaultActorId()
-    const actor = (await this.#options.definitions.capture({ buddyId: actorId, kind: 'actor', conversationId: conversation?.id ?? null, requestedModel: input.modelSelection })).definition
-    const threadId = conversation ? actorThreadId(conversation.id, actorId) : undefined
-    const approvalPolicy = conversation?.approvalPolicy ?? input.approvalPolicy
-    const executionProfile = conversation?.executionProfile ?? input.executionProfile
+    const targetRun = input.runId ? this.#requireRun(input) : null
+    if (targetRun && followup && (source?.runId !== targetRun.id || source.branchId !== input.branchId))
+      throw new BuddyServiceError('VALIDATION_FAILED')
     const selected = await this.#options.models.resolveSession({
       contextWindow: null,
       maxTokens: null,
       modelId: input.modelSelection.modelId,
       providerId: input.modelSelection.providerId,
     })
+    const identity = {
+      contextWindow: selected.model.contextWindow,
+      createdAt: new Date().toISOString(),
+      modelId: selected.model.id,
+      providerId: selected.model.provider,
+    }
+    if (targetRun) {
+      const latest = await this.#options.events.findLatest(targetRun.id, ['context.usage.updated', 'context.compaction.completed'])
+      if (this.#requireRun(input).threadId !== targetRun.threadId)
+        throw new BuddyServiceError('VALIDATION_FAILED')
+      if (latest?.type !== 'context.usage.updated' || latest.runId !== targetRun.id)
+        return { ...identity, status: 'pending' }
+      const payload = latest.payload as Record<string, unknown> | null
+      if (payload?.model !== identity.modelId || payload.provider !== identity.providerId)
+        return { ...identity, status: 'pending' }
+      const snapshot = contextUsageSnapshotSchema.safeParse({
+        ...identity,
+        createdAt: latest.createdAt,
+        status: 'ready',
+        mcpTokens: payload.mcpTokens,
+        messageTokens: payload.messageTokens,
+        skillTokens: payload.skillTokens,
+        systemPromptTokens: payload.systemPromptTokens,
+        toolTokens: payload.toolTokens,
+        totalTokens: payload.totalTokens,
+      })
+      return snapshot.success ? snapshot.data : { ...identity, status: 'pending' }
+    }
+    const actorId = input.actorId ?? conversation?.buddyId ?? this.#options.getDefaultActorId()
+    const actor = (await this.#options.definitions.capture({ buddyId: actorId, kind: 'actor', conversationId: conversation?.id ?? null, requestedModel: input.modelSelection })).definition
+    const threadId = conversation ? actorThreadId(conversation.id, actorId) : undefined
+    const approvalPolicy = conversation?.approvalPolicy ?? input.approvalPolicy
+    const executionProfile = conversation?.executionProfile ?? input.executionProfile
     const branchId = followup?.branchId ?? input.branchId ?? 'context-preview'
     const blueprint = conversation
       ? await this.#options.blueprints.createForConversation({
@@ -158,12 +197,6 @@ export class ContextUsageSnapshotService implements ContextUsageSnapshotReader {
     })
     try {
       extensions.setCodemodeEnabled(runtimePreferences?.codemode ?? DEFAULT_RUNTIME_PREFERENCES.codemode)
-      const identity = {
-        contextWindow: selected.model.contextWindow,
-        createdAt: new Date().toISOString(),
-        modelId: selected.model.id,
-        providerId: selected.model.provider,
-      }
       const sessionManager = conversation
         ? followup
           ? await this.#options.tree.snapshot(conversation.id, branchId, blueprint.canonicalRoot, source!.runId!, 'after', threadId!, source!.id)
@@ -200,5 +233,22 @@ export class ContextUsageSnapshotService implements ContextUsageSnapshotReader {
     finally {
       await extensions.dispose()
     }
+  }
+
+  #requireRun(input: ContextUsageSnapshotInput) {
+    const run = input.runId ? this.#options.runs.findById(input.runId) : null
+    const conversation = input.conversationId ? this.#options.conversations.findById(input.conversationId) : null
+    const thread = run ? this.#options.threads.find(run.threadId) : null
+    if (!run || !conversation || !input.actorId
+      || conversation.deletedAt !== null
+      || conversation.spaceId !== input.spaceId
+      || conversation.approvalPolicy !== input.approvalPolicy
+      || conversation.executionProfile !== input.executionProfile
+      || run.conversationId !== input.conversationId || run.branchId !== input.branchId || run.buddyId !== input.actorId
+      || (run.executionKind !== 'root' && run.executionKind !== 'actor_child')
+      || thread?.conversationId !== input.conversationId || thread.actorId !== input.actorId || thread.kind !== 'actor') {
+      throw new BuddyServiceError('VALIDATION_FAILED')
+    }
+    return run
   }
 }

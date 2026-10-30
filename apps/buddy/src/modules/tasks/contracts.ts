@@ -5,6 +5,7 @@ import type { BuddyInputDelivery } from '@buddy-shared/conversation/chatApi'
 import type { LocalChatQueueItem } from '@buddy-shared/conversation/chatQueueApi'
 import type { BuddyComposerDraftScope } from '@buddy-shared/conversation/composerDraft'
 import type { BuddyComposerSource } from '@buddy-shared/conversation/composerResource'
+import type { LocalContextUsageSnapshotRequest } from '@buddy-shared/conversation/contextApi'
 import type { LocalConversation, LocalConversationBranch, LocalConversationSummary, LocalConversationTimelineItem, LocalMessage } from '@buddy-shared/conversation/conversationApi'
 import type { LocalConversationTree } from '@buddy-shared/conversation/conversationTree'
 import type { BuddyServiceTier, BuddyThinkingLevel } from '@buddy-shared/conversation/modelSelection'
@@ -274,6 +275,7 @@ export interface TaskChatWorkspace {
 }
 
 export interface TaskCapability {
+  contextTarget: Readonly<Ref<LocalContextUsageSnapshotRequest | null>>
   prepareClose: () => Promise<boolean>
   cancelClose: () => void
   index: TaskIndex

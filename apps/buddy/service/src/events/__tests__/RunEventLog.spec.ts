@@ -24,6 +24,34 @@ afterEach(async () => {
 })
 
 describe('runEventLog', () => {
+  it('reads the latest requested fact after pending commits without a historical event window', async () => {
+    const fixture = await createFixture()
+    const types = ['context.usage.updated', 'context.compaction.completed']
+    try {
+      await expect(fixture.log.findLatest('run-1', types)).resolves.toBeNull()
+      await fixture.log.append({ runId: 'run-1', type: 'context.usage.updated', payload: { totalTokens: 200 } })
+      const append = fixture.log.appendBatch(Array.from({ length: 300 }, (_, index) => ({
+        runId: 'run-1',
+        type: 'message.delta',
+        payload: { messageId: 'answer', delta: `private-${index}` },
+      })))
+      const pendingRead = fixture.log.findLatest('run-1', types)
+      await append
+      await expect(pendingRead).resolves.toMatchObject({ sequence: 1, type: 'context.usage.updated', payload: { totalTokens: 200 } })
+      await fixture.log.append({ runId: 'run-1', type: 'context.compaction.completed', payload: { tokensBefore: 200 } })
+      await expect(fixture.log.findLatest('run-1', types)).resolves.toMatchObject({ sequence: 302, type: 'context.compaction.completed' })
+      await expect(fixture.log.findLatest('run-1', [])).resolves.toBeNull()
+      await expect(fixture.log.findLatest('another-run', types)).resolves.toBeNull()
+      const captured = fixture.log.findLatest('run-1', types)
+      types.splice(0)
+      await expect(captured).resolves.toMatchObject({ type: 'context.compaction.completed' })
+    }
+    finally {
+      await fixture.log.close()
+    }
+    await expect(fixture.log.findLatest('run-1', ['context.usage.updated'])).rejects.toThrow('run event log is closed')
+  })
+
   it('does not publish a committed record when its required projection cannot recover', async () => {
     const fixture = await createFixture()
     const delivered: number[] = []
