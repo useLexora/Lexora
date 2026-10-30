@@ -25,6 +25,19 @@ beforeEach(() => {
 })
 
 describe('local chat preload boundary', () => {
+  it('delivers metrics change payloads without Electron event access and unsubscribes', () => {
+    const api = createLocalChatApi()
+    const received: unknown[] = []
+    const stop = api.runs.onMetricsChanged((...args) => received.push(args))
+    const notice = { conversationId: 'conversation-1', revision: 3 }
+    for (const listener of electron.listeners.get(LOCAL_CHAT_IPC_CHANNELS.runsMetricsChanged) ?? [])
+      listener({ privileged: true }, notice)
+    stop()
+    for (const listener of electron.listeners.get(LOCAL_CHAT_IPC_CHANNELS.runsMetricsChanged) ?? [])
+      listener({ privileged: true }, { ...notice, revision: 4 })
+    expect(received).toEqual([[notice]])
+  })
+
   it('passes only payloads to subscribers and releases each subscription independently', () => {
     const api = createLocalChatApi()
     const received: unknown[] = []

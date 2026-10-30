@@ -1,7 +1,7 @@
 import type { RuntimeRequestContract } from '../runtime/apiContract'
 import type { DeepReadonly } from '../runtime/apiValidation'
 import { z } from 'zod'
-import { idSchema, validationRequestSchemas } from '../runtime/apiValidation'
+import { idSchema, validationRequestSchemas } from '../runtime/apiValidation.ts'
 
 const tallySchema = z.object({
   total: z.number().int().nonnegative(),
@@ -25,6 +25,11 @@ const tokenTotalsSchema = z.object({
   recordCount: z.number().int().nonnegative(),
   totalCost: z.number().nonnegative(),
   totalTokens: z.number().int().nonnegative(),
+}).strict()
+
+export const modelThroughputSchema = z.object({
+  samples: z.number().int().nonnegative(),
+  tokensPerSecond: z.number().nonnegative().nullable(),
 }).strict()
 
 export const cacheWarmingStatusSchema = z.enum(['off', 'unsupported', 'idle', 'waiting', 'scheduled', 'refreshing', 'uneconomic', 'unavailable', 'expired', 'stopped'])
@@ -57,10 +62,7 @@ export const conversationStatusSchema = z.object({
     modelMs: z.number().nonnegative(),
     wallMs: z.number().nonnegative(),
     toolMs: z.number().nonnegative(),
-    throughput: z.object({
-      samples: z.number().int().nonnegative(),
-      tokensPerSecond: z.number().nonnegative(),
-    }).strict(),
+    throughput: modelThroughputSchema,
     ttft: z.object({
       averageMs: z.number().nonnegative(),
       maxMs: z.number().nonnegative(),
@@ -82,6 +84,7 @@ export type LocalConversationStatus = DeepReadonly<z.infer<typeof conversationSt
 
 export const conversationStatusRequestSchema = z.object({
   conversationId: idSchema,
+  branchId: idSchema.optional(),
 }).strict()
 
 export const runsStatusRpc = {

@@ -245,7 +245,12 @@ describe('projectStreamingAssistantMessage', () => {
     expect(projectChatAgentTurns([...thought, event(3, 'run.progress', { phase: 'preparing', toolName: null })], [run('running')])[0]?.nodes).toMatchObject([{ status: 'completed' }])
     expect(projectChatAgentTurns([...thought, event(3, 'run.progress', { phase: 'preparing', toolName: 'read' })], [run('running')])[0]?.nodes).toMatchObject([{ status: 'running' }])
     expect(projectChatAgentTurns([...responding, event(4, 'message.block.delta', { contentIndex: 0, kind: 'reasoning', messageId: 'stream', delta: ' more' })], [run('running')])[0]?.nodes).toMatchObject([{ status: 'running', text: 'Checking more' }])
-    expect(projectChatAgentTurns([...thought, event(3, 'message.block.started', { contentIndex: 1, kind: 'text', messageId: 'stream', phase: 'commentary' })], [run('running')])[0]?.nodes[0]).toMatchObject({ status: 'completed' })
+    for (const phase of [undefined, 'commentary', 'final_answer']) {
+      const nodes = projectChatAgentTurns([...thought, event(3, 'message.block.started', { contentIndex: 1, kind: 'text', messageId: 'stream', ...(phase ? { phase } : {}) })], [run('running')])[0]?.nodes
+      expect(nodes?.[0]).toMatchObject({ kind: 'reasoning', text: 'Checking', status: 'completed' })
+      if (phase !== 'commentary')
+        expect(nodes).toHaveLength(1)
+    }
   })
 
   it.each(['failed', 'length'])('retains interrupted thinking after a %s message while a retry waits', (stopReason) => {

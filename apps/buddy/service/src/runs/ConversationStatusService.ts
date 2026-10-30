@@ -1,305 +1,128 @@
+import type { EventSubscription } from '../../../shared/events/eventTypes'
 import type { LocalConversationStatus } from '../../../shared/runs/conversationStatusApi'
-import type { RunEventReader } from '../events/RunEventPorts'
-import type { RunRecord } from '../storage/runRecord'
+import type { LocalTaskMetrics, TaskMetricsChanged, TaskMetricsRequest } from '../../../shared/runs/taskMetricsApi'
+import type { RunEventObservation } from '../events/RunEventPorts'
+import type { ConversationStatisticsRepository, ConversationStatisticsScope, ConversationStatisticsSnapshot } from '../storage/conversationStatisticsRepository'
 import type { RunRepository } from '../storage/runRepository'
-import type { UsageRecord, UsageRepository } from '../storage/usageRepository'
+import { Emitter } from '../../../shared/events/Emitter'
+import { conversationStatusRequestSchema } from '../../../shared/runs/conversationStatusApi'
+import { taskMetricsRequestSchema } from '../../../shared/runs/taskMetricsApi'
+import { BuddyServiceError, parse } from '../rpc/runtimeRequest'
 
 export interface ConversationStatusOptions {
+  repository: ConversationStatisticsRepository
+  runs: Pick<RunRepository, 'findById'>
+  events: Pick<RunEventObservation, 'onDidCommit'>
   getCacheWarmingStatus?: (conversationId: string) => LocalConversationStatus['cacheWarming']
-  events: Pick<RunEventReader, 'listForConversation'>
-  repository: Pick<RunRepository, 'listForConversation'>
-  usage: Pick<UsageRepository, 'listForConversation'>
 }
 
-interface ConversationStatusEvent {
-  createdAt: string
-  payload: unknown
-  runId: string
-  sequence: number
-  type: string
-}
-
-interface TokenCounts {
-  cacheReadTokens: number
-  cacheWriteTokens: number
-  inputTokens: number
-  outputTokens: number
-  reasoningTokens: number
-  recordCount: number
-  totalCost: number
-  totalTokens: number
-}
-
-const RUN_LIMIT = 1_000
-const EVENT_LIMIT = 20_000
-const NAMED_LIMIT = 3
-
-const RUN_PURPOSES = {
-  automation: 'automation',
-  chat: 'chat',
-  compaction: 'conversation.compaction',
-} as const
+const CACHE_LIMIT = 16
+const CHANGE_WINDOW_MS = 120
+const CHANGE_EVENTS = new Set([
+  'run.started',
+  'run.completed',
+  'run.failed',
+  'run.cancelled',
+  'message.started',
+  'message.block.started',
+  'message.completed',
+  'message.interrupted',
+  'message.tool_result',
+  'tool.preparing',
+  'tool.started',
+  'tool.completed',
+  'tool.failed',
+  'tool.denied',
+  'usage.recorded',
+  'context.usage.updated',
+  'context.compaction.started',
+  'context.compaction.completed',
+  'context.compaction.cancelled',
+  'context.compaction.failed',
+])
 
 export class ConversationStatusService {
   readonly #options: ConversationStatusOptions
+  readonly #cache = new Map<string, ConversationStatisticsSnapshot>()
+  readonly #changes = new Emitter<TaskMetricsChanged>(() => {})
+  readonly #subscription: EventSubscription
+  readonly #pending = new Map<string, ReturnType<typeof setTimeout>>()
+  readonly onDidChange = this.#changes.event
+  #revision = 0
+  #disposed = false
 
   constructor(options: ConversationStatusOptions) {
     this.#options = options
+    this.#subscription = options.events.onDidCommit((event) => {
+      if (!CHANGE_EVENTS.has(event.type))
+        return
+      const run = options.runs.findById(event.runId)
+      if (run)
+        this.notifyChanged(run.conversationId)
+    })
   }
 
-  async status(conversationId: string): Promise<LocalConversationStatus> {
-    const runs = this.#options.repository.listForConversation(conversationId, RUN_LIMIT)
-    const events = await this.#options.events.listForConversation(conversationId, { limit: EVENT_LIMIT })
-    const ordered = [...events].sort((left, right) => left.sequence - right.sequence)
-    const usage = this.#options.usage.listForConversation(conversationId)
+  notifyChanged(conversationId: string): void {
+    if (this.#disposed || this.#pending.has(conversationId))
+      return
+    const timer = setTimeout(() => {
+      this.#pending.delete(conversationId)
+      this.#changes.fire(Object.freeze({ conversationId, revision: ++this.#revision }))
+    }, CHANGE_WINDOW_MS)
+    timer.unref()
+    this.#pending.set(conversationId, timer)
+  }
 
-    return {
+  dispose(): void {
+    this.#disposed = true
+    this.#subscription.dispose()
+    for (const timer of this.#pending.values())
+      clearTimeout(timer)
+    this.#pending.clear()
+    this.#cache.clear()
+    this.#changes.dispose()
+  }
+
+  async status(conversationId: string, branchId?: string): Promise<LocalConversationStatus> {
+    const scope = parse(conversationStatusRequestSchema, { conversationId, branchId })
+    const snapshot = this.#snapshot(scope)
+    return structuredClone({
+      ...snapshot.status,
       cacheWarming: this.#options.getCacheWarmingStatus?.(conversationId) ?? null,
-      activity: {
-        compactions: foldCompactions(ordered),
-        runs: {
-          automation: tallyRuns(runs, RUN_PURPOSES.automation),
-          chat: tallyRuns(runs, RUN_PURPOSES.chat),
-          compaction: tallyRuns(runs, RUN_PURPOSES.compaction),
-        },
-        tools: foldTools(ordered),
-        turns: new Set(runs
-          .filter(run => run.purpose === RUN_PURPOSES.chat)
-          .map(run => run.triggeringMessageId)).size,
+      timing: {
+        ...snapshot.status.timing,
+        wallMs: snapshot.wallStart === null ? 0 : Math.max(0, (snapshot.wallEnd ?? Date.now()) - snapshot.wallStart),
       },
-      timing: foldTiming(ordered, usage, new Set(runs.filter(run => run.purpose === RUN_PURPOSES.chat).map(run => run.id))),
-      tokens: foldTokens(usage),
+    })
+  }
+
+  metrics(input: TaskMetricsRequest): LocalTaskMetrics {
+    const scope = parse(taskMetricsRequestSchema, input)
+    const snapshot = this.#snapshot(scope)
+    const { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens } = snapshot.status.tokens.totals
+    return {
+      ...scope,
+      turns: snapshot.status.activity.turns,
+      steps: snapshot.steps,
+      tokens: { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens },
+      throughput: { ...snapshot.status.timing.throughput },
     }
   }
-}
 
-function emptyCounts(): TokenCounts {
-  return {
-    cacheReadTokens: 0,
-    cacheWriteTokens: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-    reasoningTokens: 0,
-    recordCount: 0,
-    totalCost: 0,
-    totalTokens: 0,
-  }
-}
-
-function addRecord(counts: TokenCounts, record: UsageRecord): void {
-  counts.cacheReadTokens += record.cacheReadTokens
-  counts.cacheWriteTokens += record.cacheWriteTokens
-  counts.inputTokens += record.inputTokens
-  counts.outputTokens += record.outputTokens
-  counts.reasoningTokens += record.reasoningTokens ?? 0
-  counts.recordCount += 1
-  counts.totalCost += record.totalCost
-  counts.totalTokens += record.totalTokens
-}
-
-function foldTokens(usage: readonly UsageRecord[]) {
-  const totals = emptyCounts()
-  const byModel = new Map<string, TokenCounts & { modelId: string, providerId: string, runIds: Set<string> }>()
-  const byPurpose = new Map<string, TokenCounts>()
-  for (const record of usage) {
-    addRecord(totals, record)
-    const modelKey = `${record.provider}:${record.model}`
-    const model = byModel.get(modelKey) ?? { ...emptyCounts(), modelId: record.model, providerId: record.provider, runIds: new Set<string>() }
-    addRecord(model, record)
-    if (record.runId)
-      model.runIds.add(record.runId)
-    byModel.set(modelKey, model)
-    const purpose = byPurpose.get(record.purpose) ?? emptyCounts()
-    addRecord(purpose, record)
-    byPurpose.set(record.purpose, purpose)
-  }
-  return {
-    byModel: [...byModel.values()]
-      .map(({ runIds, ...counts }) => ({ ...counts, runCount: runIds.size }))
-      .sort((left, right) => right.totalTokens - left.totalTokens),
-    byPurpose: [...byPurpose.entries()]
-      .map(([purpose, counts]) => ({ ...counts, purpose }))
-      .sort((left, right) => right.totalTokens - left.totalTokens),
-    totals,
-  }
-}
-
-function tallyRuns(runs: readonly RunRecord[], purpose: string) {
-  const tally = { cancelled: 0, failed: 0, running: 0, succeeded: 0, total: 0 }
-  for (const run of runs) {
-    if (run.purpose !== purpose)
-      continue
-    tally.total += 1
-    if (run.status === 'completed')
-      tally.succeeded += 1
-    else if (run.status === 'failed')
-      tally.failed += 1
-    else if (run.status === 'cancelled')
-      tally.cancelled += 1
-    else
-      tally.running += 1
-  }
-  return tally
-}
-
-function readString(payload: unknown, key: string): string | null {
-  if (payload === null || typeof payload !== 'object')
-    return null
-  const value = (payload as Record<string, unknown>)[key]
-  return typeof value === 'string' && value.length > 0 ? value : null
-}
-
-function readNumber(payload: unknown, key: string): number | null {
-  if (payload === null || typeof payload !== 'object')
-    return null
-  const value = (payload as Record<string, unknown>)[key]
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
-}
-
-function foldTools(events: readonly ConversationStatusEvent[]) {
-  const calls = new Map<string, { name: string, startedAt: number | null, result: 'denied' | 'failed' | 'succeeded' | null }>()
-  for (const event of events) {
-    const toolCallId = readString(event.payload, 'toolCallId')
-    if (!toolCallId)
-      continue
-    const name = readString(event.payload, 'toolName') ?? readString(event.payload, 'toolLabel') ?? 'tool'
-    const call = calls.get(toolCallId) ?? { name, result: null, startedAt: null }
-    call.name = name
-    const at = Date.parse(event.createdAt)
-    if (event.type === 'tool.started' || event.type === 'tool.preparing')
-      call.startedAt ??= at
-    else if (event.type === 'tool.completed')
-      call.result = (event.payload as Record<string, unknown> | null)?.isError === true ? 'failed' : 'succeeded'
-    else if (event.type === 'tool.failed')
-      call.result = call.result ?? 'failed'
-    else if (event.type === 'tool.denied')
-      call.result = 'denied'
-    calls.set(toolCallId, call)
-  }
-  const counts = new Map<string, number>()
-  let denied = 0
-  let failed = 0
-  let running = 0
-  let succeeded = 0
-  for (const call of calls.values()) {
-    counts.set(call.name, (counts.get(call.name) ?? 0) + 1)
-    if (call.result === 'denied')
-      denied += 1
-    else if (call.result === 'failed')
-      failed += 1
-    else if (call.result === 'succeeded')
-      succeeded += 1
-    else
-      running += 1
-  }
-  return {
-    denied,
-    failed,
-    running,
-    succeeded,
-    top: [...counts.entries()]
-      .map(([name, count]) => ({ count, name }))
-      .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name))
-      .slice(0, NAMED_LIMIT),
-    total: calls.size,
-  }
-}
-
-function foldCompactions(events: readonly ConversationStatusEvent[]) {
-  const completed = events.filter(event => event.type === 'context.compaction.completed')
-  const last = completed.at(-1)
-  return {
-    count: completed.length,
-    lastAfterTokens: last ? readNumber(last.payload, 'estimatedTokensAfter') : null,
-    lastBeforeTokens: last ? readNumber(last.payload, 'tokensBefore') : null,
-  }
-}
-
-function foldTiming(
-  events: readonly ConversationStatusEvent[],
-  usage: readonly UsageRecord[],
-  chatRunIds: ReadonlySet<string>,
-) {
-  const messageStarts = new Map<string, number>()
-  const firstNameBlock = new Map<string, number>()
-  const messageEnds = new Map<string, number>()
-  const openTools = new Map<string, number>()
-  let toolMs = 0
-  for (const event of events) {
-    const at = Date.parse(event.createdAt)
-    const messageId = readString(event.payload, 'messageId')
-    if (event.type === 'message.started' && messageId && chatRunIds.has(event.runId)) {
-      messageStarts.set(messageId, at)
+  #snapshot(scope: ConversationStatisticsScope): ConversationStatisticsSnapshot {
+    const hasTarget = this.#options.repository.hasTarget(scope)
+    if (this.#disposed || (!hasTarget && scope.branchId !== undefined))
+      throw new BuddyServiceError('VALIDATION_FAILED')
+    const key = JSON.stringify([scope.conversationId, scope.branchId ?? null])
+    if (!hasTarget) {
+      this.#cache.delete(key)
+      return this.#options.repository.read(scope)
     }
-    else if (event.type === 'message.block.started' && messageId && !firstNameBlock.has(messageId)) {
-      firstNameBlock.set(messageId, at)
-    }
-    else if ((event.type === 'message.completed' || event.type === 'message.interrupted') && messageId) {
-      messageEnds.set(messageId, at)
-    }
-    else if (event.type === 'tool.started' || event.type === 'tool.preparing') {
-      const toolCallId = readString(event.payload, 'toolCallId')
-      if (toolCallId)
-        openTools.set(toolCallId, at)
-    }
-    else if (event.type === 'tool.completed' || event.type === 'tool.failed' || event.type === 'tool.denied') {
-      const toolCallId = readString(event.payload, 'toolCallId')
-      const startedAt = toolCallId ? openTools.get(toolCallId) : undefined
-      if (startedAt !== undefined && event.type === 'tool.completed')
-        toolMs += Math.max(0, at - startedAt)
-      if (toolCallId)
-        openTools.delete(toolCallId)
-    }
+    const snapshot = this.#options.repository.read(scope, this.#cache.get(key))
+    this.#cache.delete(key)
+    this.#cache.set(key, snapshot)
+    if (this.#cache.size > CACHE_LIMIT)
+      this.#cache.delete(this.#cache.keys().next().value!)
+    return snapshot
   }
-  let modelMs = 0
-  let ttftTotal = 0
-  let ttftMax = 0
-  let ttftSamples = 0
-  let decodeMs = 0
-  let decodeSamples = 0
-  for (const [messageId, startedAt] of messageStarts) {
-    const endedAt = messageEnds.get(messageId)
-    const firstBlockAt = firstNameBlock.get(messageId)
-    if (endedAt !== undefined)
-      modelMs += Math.max(0, endedAt - startedAt)
-    if (firstBlockAt !== undefined) {
-      const ttft = Math.max(0, firstBlockAt - startedAt)
-      ttftTotal += ttft
-      ttftMax = Math.max(ttftMax, ttft)
-      ttftSamples += 1
-      if (endedAt !== undefined) {
-        decodeMs += Math.max(0, endedAt - firstBlockAt)
-        decodeSamples += 1
-      }
-    }
-  }
-  const outputTokens = usage
-    .reduce((sum, record) => sum + (record.purpose === 'turn' && record.runId && chatRunIds.has(record.runId) ? record.outputTokens : 0), 0)
-  const wall = foldWall(events)
-  return {
-    modelMs,
-    throughput: {
-      samples: decodeSamples,
-      tokensPerSecond: decodeMs > 0 ? (outputTokens / decodeMs) * 1_000 : 0,
-    },
-    toolMs,
-    ttft: {
-      averageMs: ttftSamples ? ttftTotal / ttftSamples : 0,
-      maxMs: ttftMax,
-      samples: ttftSamples,
-    },
-    wallMs: wall,
-  }
-}
-
-function foldWall(events: readonly ConversationStatusEvent[]): number {
-  const started = events.filter(event => event.type === 'run.started').map(event => Date.parse(event.createdAt))
-  const ended = events
-    .filter(event => event.type === 'run.completed' || event.type === 'run.failed' || event.type === 'run.cancelled')
-    .map(event => Date.parse(event.createdAt))
-  if (!started.length)
-    return 0
-  const from = Math.min(...started)
-  const to = ended.length ? Math.max(...ended) : Date.now()
-  return Math.max(0, to - from)
 }

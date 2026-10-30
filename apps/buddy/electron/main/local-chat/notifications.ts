@@ -13,6 +13,7 @@ import { notificationsChanged } from '../../../shared/notifications/notification
 import { providerNotifications } from '../../../shared/providers/providerApi'
 import { toPublicRunEvent } from '../../../shared/runs/publicRunEvent'
 import { runNotifications } from '../../../shared/runs/runApi'
+import { taskMetricsChanged } from '../../../shared/runs/taskMetricsApi'
 import { runtimeResponseSchemas } from '../../../shared/runtime/serviceState'
 import { skillChangedSchema, skillReviewRequested } from '../../../shared/skills/skillApi'
 import { spaceChanged } from '../../../shared/spaces/spaceApi'
@@ -31,6 +32,12 @@ export function registerLocalChatNotifications(options: RegisterLocalChatIpcOpti
       const event = contract.params.safeParse(notification.params)
       if (event.success)
         sendToRenderer(options.getWindow(), contract === artifactsChanged ? LOCAL_CHAT_IPC_CHANNELS.artifactsChanged : LOCAL_CHAT_IPC_CHANNELS.changesChanged, event.data)
+      return
+    }
+    if (notification.method === taskMetricsChanged.method) {
+      const event = taskMetricsChanged.params.safeParse(notification.params)
+      if (event.success)
+        sendToRenderer(options.getWindow(), LOCAL_CHAT_IPC_CHANNELS.runsMetricsChanged, event.data)
       return
     }
     if (notification.method === executionsChanged.method) {

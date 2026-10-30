@@ -7,6 +7,7 @@ import { approvalsRequestSchemas, approvalsRpc } from '../../../shared/permissio
 import { conversationStatusRequestSchema, runsStatusRpc } from '../../../shared/runs/conversationStatusApi'
 import { toPublicRunEvent } from '../../../shared/runs/publicRunEvent'
 import { runsRequestSchemas, runsResponseSchemas, runsRpc } from '../../../shared/runs/runApi'
+import { runsMetricsRpc, taskMetricsRequestSchema } from '../../../shared/runs/taskMetricsApi'
 import { usageAnalyticsRpc, usagePeriodSchema, usageTopTasksRequestSchema, usageTrendRequestSchema } from '../../../shared/usage/usageAnalyticsApi'
 import { usageRpc } from '../../../shared/usage/usageApi'
 import { LOCAL_CHAT_IPC_CHANNELS } from '../../shared/localChatApi'
@@ -49,6 +50,7 @@ export function registerActivityIpc(context: LocalChatIpcContext): void {
   })
 
   handle(LOCAL_CHAT_IPC_CHANNELS.runsStatus, (_event, input) => request(runsStatusRpc.status, conversationStatusRequestSchema.parse(input)))
+  handle(LOCAL_CHAT_IPC_CHANNELS.runsMetrics, (_event, input) => request(runsMetricsRpc.metrics, taskMetricsRequestSchema.parse(input)))
 
   handle(LOCAL_CHAT_IPC_CHANNELS.approvalsList, (_event, input) => request(approvalsRpc.list, approvalsRequestSchemas.listApprovals.parse(input)))
 

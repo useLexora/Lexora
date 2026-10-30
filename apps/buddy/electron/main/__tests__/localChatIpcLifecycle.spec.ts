@@ -55,6 +55,21 @@ function setup(request: DesktopRuntimeGateway['request']) {
 }
 
 describe('local chat IPC lifecycle and host authorization', () => {
+  it('forwards validated metrics changes from the runtime and releases the transport subscription', () => {
+    const { dispose, notificationListeners, sent } = setup(async () => ({}))
+    const notice = { conversationId: 'conversation-1', revision: 7 }
+    for (const listener of notificationListeners) {
+      listener({ method: 'metrics.changed', params: notice })
+      listener({ method: 'metrics.changed', params: { ...notice, revision: -1 } })
+      listener({ method: 'metrics.changed', params: { ...notice, private: 'not-public' } })
+    }
+    expect(sent).toEqual([[LOCAL_CHAT_IPC_CHANNELS.runsMetricsChanged, notice]])
+    dispose()
+    for (const listener of notificationListeners)
+      listener({ method: 'metrics.changed', params: { ...notice, revision: 8 } })
+    expect(sent).toHaveLength(1)
+  })
+
   it('consumes native directory selections once and rejects renderer verification claims', async () => {
     const requests: unknown[] = []
     const { event } = setup(async (_method, input) => {

@@ -3,25 +3,23 @@ import type { RuntimeRequestRegistrar } from '../rpc/runtimeRequest'
 import type { RunInputRepository } from '../storage/runInputRepository'
 import type { RunRecord } from '../storage/runRecord'
 import type { RunRepository } from '../storage/runRepository'
-import type { UsageRepository } from '../storage/usageRepository'
-import type { ConversationStatusOptions } from './ConversationStatusService'
+import type { ConversationStatusService } from './ConversationStatusService'
 import { runsStatusRpc } from '../../../shared/runs/conversationStatusApi'
 import { toPublicRunEvent } from '../../../shared/runs/publicRunEvent'
 import { runsRpc } from '../../../shared/runs/runApi'
+import { runsMetricsRpc } from '../../../shared/runs/taskMetricsApi'
 import { BuddyServiceError, registerRuntimeRequest } from '../rpc/runtimeRequest'
-import { ConversationStatusService } from './ConversationStatusService'
 import { toPublicRun } from './publicRun'
 
 export interface RegisterRunRpcOptions {
+  statistics: Pick<ConversationStatusService, 'metrics' | 'status'>
   isBusy: () => boolean
-  getCacheWarmingStatus?: ConversationStatusOptions['getCacheWarmingStatus']
   eventLog: Pick<RunEventReader, 'list' | 'listForConversation'> & Partial<Pick<RunEventAvailability, 'getRecoveryFailures'>>
   inputs: Pick<RunInputRepository, 'findByRunId'>
   repository: Pick<
     RunRepository,
     'findById' | 'listForConversation' | 'listRecent'
   >
-  usage: Pick<UsageRepository, 'listForConversation'>
   rpc: RuntimeRequestRegistrar
 }
 
@@ -32,15 +30,10 @@ export function registerRunRpc(options: RegisterRunRpcOptions): () => void {
       : run,
     options.inputs.findByRunId(run.id)?.reasoning ?? null,
   )
-  const status = new ConversationStatusService({
-    getCacheWarmingStatus: options.getCacheWarmingStatus,
-    events: options.eventLog,
-    repository: options.repository,
-    usage: options.usage,
-  })
   const disposers = [
     registerRuntimeRequest(options.rpc, runsRpc.isBusy, () => options.isBusy()),
-    registerRuntimeRequest(options.rpc, runsStatusRpc.status, input => status.status(input.conversationId)),
+    registerRuntimeRequest(options.rpc, runsStatusRpc.status, input => options.statistics.status(input.conversationId, input.branchId)),
+    registerRuntimeRequest(options.rpc, runsMetricsRpc.metrics, input => options.statistics.metrics(input)),
     registerRuntimeRequest(options.rpc, runsRpc.list, (input) => {
       const records = input.conversationId
         ? options.repository.listForConversation(input.conversationId, input.limit ?? 100)

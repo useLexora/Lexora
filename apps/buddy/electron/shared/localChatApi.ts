@@ -39,6 +39,7 @@ import type { ModelCatalogReference } from '../../shared/providers/providerCatal
 import type { ProviderRequestHeader } from '../../shared/providers/providerHeaders'
 import type { ProviderModelType } from '../../shared/providers/providerModelType'
 import type { LocalRun, LocalRunEvent } from '../../shared/runs/runApi'
+import type { LocalTaskMetrics, TaskMetricsChanged } from '../../shared/runs/taskMetricsApi'
 import type { LocalBuddyServiceSupervisorState } from '../../shared/runtime/serviceState'
 
 import type { LocalSkillCatalog, SkillChangeNotice, SkillDetail, SkillDirectoryRequest, SkillFileTarget, SkillInstallPreview, SkillPreviewInput } from '../../shared/skills/skillApi'
@@ -229,6 +230,8 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   runsList: 'lexora:buddy:runs:list',
   runsListEvents: 'lexora:buddy:runs:list-events',
   runsStatus: 'lexora:buddy:runs:status',
+  runsMetrics: 'lexora:buddy:runs:metrics',
+  runsMetricsChanged: 'lexora:buddy:runs:metrics-changed',
   runtimeRestart: 'lexora:buddy:runtime:restart',
   runtimeStateChanged: 'lexora:buddy:runtime:state-changed',
   runtimeStatus: 'lexora:buddy:runtime:status',
@@ -540,7 +543,9 @@ export interface LocalChatApi {
       conversationId: string
       limit?: number
     }) => Promise<ReadonlyArray<LocalRunEvent>>
-    status: (input: { conversationId: string }) => Promise<LocalConversationStatus>
+    status: (input: { conversationId: string, branchId?: string }) => Promise<LocalConversationStatus>
+    metrics: (input: { conversationId: string, branchId: string }) => Promise<LocalTaskMetrics>
+    onMetricsChanged: (listener: (event: TaskMetricsChanged) => void) => () => void
   }
   approvals: {
     list: (input?: {

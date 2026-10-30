@@ -1,5 +1,6 @@
 import type { ArtifactChangeNotice } from '../../../shared/artifacts/artifactApi'
 import type { ChangeSetChangeNotice } from '../../../shared/changes/changeApi'
+import type { TaskMetricsChanged } from '../../../shared/runs/taskMetricsApi'
 import type { LocalChatApi } from '../../shared/localChatApi'
 import { ipcRenderer } from 'electron'
 import { LOCAL_CHAT_IPC_CHANNELS } from '../../shared/localChatApi'
@@ -42,10 +43,12 @@ export function createActivityApi(): Pick<LocalChatApi, 'artifacts' | 'notificat
       get: changeSetId => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.changesGet, { changeSetId }),
     }),
     runs: Object.freeze({
+      onMetricsChanged: listener => subscribe<TaskMetricsChanged>(LOCAL_CHAT_IPC_CHANNELS.runsMetricsChanged, listener),
       list: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.runsList, input ?? {}),
       get: runId => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.runsGet, { runId }),
       listEvents: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.runsListEvents, input),
       status: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.runsStatus, { ...input }),
+      metrics: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.runsMetrics, { conversationId: input.conversationId, branchId: input.branchId }),
     }),
     approvals: Object.freeze({
       list: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.approvalsList, input ?? {}),

@@ -514,15 +514,13 @@ function projectMessageContentUpdate(
   }
   if (event.type === 'text_start') {
     const phase = resolvePiTextPhase(event.partial.content[event.contentIndex])
-    if (phase !== 'commentary')
-      return { events: [] }
     return {
       events: [{
         payload: {
           contentIndex: event.contentIndex,
           kind: 'text',
           messageId,
-          phase,
+          ...(phase ? { phase } : {}),
         },
         type: 'message.block.started',
       }],
