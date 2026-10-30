@@ -22,7 +22,7 @@ Lexora is a personal AI agent that evolves through hands-on work on your desktop
 <p align="center"><a href="./README.md">中文</a> · <strong>English</strong></p>
 
 <p align="center">
-  <img src="apps/website/src/public/landing/crew-cover-en.webp" width="1200" alt="Lexora delegates to DeepSeek, Claude, and ChatGPT companions, who can delegate subtasks to four NPCs" />
+  <a href="apps/website/src/public/landing/screenshots/readme-overview-en.webp"><img src="apps/website/src/public/landing/screenshots/readme-overview-en.webp" width="1200" alt="The complete Lexora app with Compact navigation, an outline on the left, illustration notes above right, a draft below, and a portrait cottage illustration in the context panel" /></a>
 </p>
 
 ## Keep working toward your goals
@@ -34,38 +34,38 @@ Conversations and execution records stay with the task. Return later and pick up
 <table>
 <tr>
 <td width="50%" valign="top">
-<h3>Keep materials and tasks together</h3>
-<p>Open tasks, files, and previews side by side. Review and refine results while each task keeps its own context.</p>
-<a href="apps/website/src/public/landing/screenshots/workspace-en.webp"><img src="apps/website/src/public/landing/screenshots/workspace-en.webp" width="640" alt="Files and split views" /></a>
+<h3>Turn research into useful deliverables.</h3>
+<p>Use the Office plugin for documents, spreadsheets, presentations, and PDFs. Keep the task discussion beside your files.</p>
+<a href="apps/website/src/public/landing/screenshots/readme-office-en.webp"><img src="apps/website/src/public/landing/screenshots/readme-office-en.webp" width="640" alt="Case discussion beside the Office home and recently used files in four formats" /></a>
 </td>
 <td width="50%" valign="top">
-<h3>Point to what needs changing</h3>
-<p>Quote part of a conversation, file, or web page with its source attached, then explain what to do next.</p>
-<a href="apps/website/src/public/landing/screenshots/references-en.webp"><img src="apps/website/src/public/landing/screenshots/references-en.webp" width="640" alt="Context references" /></a>
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-<h3>Bring in the right companion</h3>
-<p>Work with several companions in one task. Let Lexora coordinate or ask a companion to take over.</p>
-<a href="apps/website/src/public/landing/screenshots/collaboration-zh.webp"><img src="apps/website/src/public/landing/screenshots/collaboration-zh.webp" width="640" alt="Companion collaboration" /></a>
-</td>
-<td width="50%" valign="top">
-<h3>Build your own crew</h3>
-<p>Choose each companion’s model, instructions, and capabilities. Recruit NPCs to help with subtasks.</p>
-<a href="apps/website/src/public/landing/screenshots/companions-en.webp"><img src="apps/website/src/public/landing/screenshots/companions-en.webp" width="640" alt="Your companion crew" /></a>
+<h3>Quote a passage. Keep refining it.</h3>
+<p>Select a passage in Word and bring the original text into your next instruction. Discuss changes with the document in view.</p>
+<a href="apps/website/src/public/landing/screenshots/readme-office-word-en.webp"><img src="apps/website/src/public/landing/screenshots/readme-office-word-en.webp" width="640" alt="Dark workspace with a real Word selection quoted into the conversation" /></a>
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
-<h3>Turn an idea into a plugin</h3>
-<p>Describe it, confirm installation, and keep refining it. Shown here: Moonlight Record, made through conversation.</p>
-<a href="apps/website/src/public/landing/screenshots/plugin-moonlight.webp"><img src="apps/website/src/public/landing/screenshots/plugin-moonlight.webp" width="640" alt="Create plugins through chat" /></a>
+<h3>Meet your companion crew.</h3>
+<p>Let companions bring different strengths, then call on specialist NPCs for research, implementation, and review.</p>
+<a href="apps/website/src/public/landing/crew-cover-en.webp"><img src="apps/website/src/public/landing/crew-cover-en.webp" width="640" alt="Lexora, companions, and specialist NPCs working together" /></a>
 </td>
 <td width="50%" valign="top">
-<h3>Keep recurring work on schedule</h3>
-<p>Set a time and goal for recurring tasks, then review each run and its results.</p>
-<a href="apps/website/src/public/landing/screenshots/schedules-en.webp"><img src="apps/website/src/public/landing/screenshots/schedules-en.webp" width="640" alt="Scheduled tasks" /></a>
+<h3>Share the work. Bring an idea to life.</h3>
+<p>Lexora coordinates, Big Fish shapes the idea, and Xiaobai builds it. Follow the conversation beside the working star animation.</p>
+<a href="apps/website/src/public/landing/screenshots/readme-collaboration-en.webp"><img src="apps/website/src/public/landing/screenshots/readme-collaboration-en.webp" width="640" alt="Real companion collaboration beside a working HTML star animation" /></a>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<h3>Recruit NPCs for the task.</h3>
+<p>Choose exploration, research, execution, and review NPCs to give each companion the capabilities the task needs.</p>
+<a href="apps/website/src/public/landing/screenshots/readme-npc-zh.webp"><img src="apps/website/src/public/landing/screenshots/readme-npc-zh.webp" width="640" alt="NPC recruitment dialog within companion settings" /></a>
+</td>
+<td width="50%" valign="top">
+<h3>Find the issue. Fix it. Follow through.</h3>
+<p>Read files and logs, run commands, and inspect changes while checking the project and pull request in the browser.</p>
+<a href="apps/website/src/public/landing/screenshots/readme-project-zh.webp"><img src="apps/website/src/public/landing/screenshots/readme-project-zh.webp" width="640" alt="Project repair conversation and execution records beside GitHub" /></a>
 </td>
 </tr>
 </table>

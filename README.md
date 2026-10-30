@@ -22,7 +22,7 @@ Lexora 是在真实桌面实践中自我演化的个人 AI Agent。它不局限�
 <p align="center"><strong>中文</strong> · <a href="./README.en.md">English</a></p>
 
 <p align="center">
-  <img src="apps/website/src/public/landing/crew-cover-zh.webp" width="1200" alt="Lexora 调度大肥鱼、小克、小白，伙伴再按需调度四位 NPC" />
+  <a href="apps/website/src/public/landing/screenshots/readme-overview-zh.webp"><img src="apps/website/src/public/landing/screenshots/readme-overview-zh.webp" width="1200" alt="Lexora 完整应用界面：轻简导航，左侧写作提纲、右上配图讨论、右下开篇草稿，右侧上下文面板展开竖版小屋插画" /></a>
 </p>
 
 ## 围绕目标，持续工作
@@ -34,38 +34,38 @@ Lexora 是在真实桌面实践中自我演化的个人 AI Agent。它不局限�
 <table>
 <tr>
 <td width="50%" valign="top">
-<h3>把材料和任务放在一起</h3>
-<p>并排打开任务、文件与预览，边看成果边修改。多个任务各自保留上下文。</p>
-<a href="apps/website/src/public/landing/screenshots/workspace-zh.webp"><img src="apps/website/src/public/landing/screenshots/workspace-zh.webp" width="640" alt="文件与多分屏" /></a>
+<h3>把资料整理成可用的成果</h3>
+<p>用 Office 插件集中处理文档、表格、演示文稿和 PDF，随时对照任务讨论与已有资料。</p>
+<a href="apps/website/src/public/landing/screenshots/readme-office-zh.webp"><img src="apps/website/src/public/landing/screenshots/readme-office-zh.webp" width="640" alt="左侧案例讨论，右侧 Office 首页与四种格式的最近使用文档" /></a>
 </td>
 <td width="50%" valign="top">
-<h3>指着具体内容继续改</h3>
-<p>选中对话、文件或网页中的内容，带着来源补充要求，让下一步有据可依。</p>
-<a href="apps/website/src/public/landing/screenshots/references-zh.webp"><img src="apps/website/src/public/landing/screenshots/references-zh.webp" width="640" alt="上下文引用" /></a>
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-<h3>让合适的伙伴接手</h3>
-<p>同一任务，多位伙伴。由 Lexora 统筹，也可以点名伙伴接手，协力推进目标。</p>
-<a href="apps/website/src/public/landing/screenshots/collaboration-zh.webp"><img src="apps/website/src/public/landing/screenshots/collaboration-zh.webp" width="640" alt="伙伴协作" /></a>
-</td>
-<td width="50%" valign="top">
-<h3>组建自己的伙伴小队</h3>
-<p>按需要设定伙伴的模型、行动准则与能力，招募 NPC 协助完成子任务。</p>
-<a href="apps/website/src/public/landing/screenshots/companions-zh.webp"><img src="apps/website/src/public/landing/screenshots/companions-zh.webp" width="640" alt="伙伴小队" /></a>
+<h3>引用具体段落，继续打磨</h3>
+<p>选中 Word 里的段落，带着原文提出修改要求；一边沟通，一边查看文档。</p>
+<a href="apps/website/src/public/landing/screenshots/readme-office-word-zh.webp"><img src="apps/website/src/public/landing/screenshots/readme-office-word-zh.webp" width="640" alt="暗色工作台中引用 Word 摘要，右侧显示团队简报及对应选区" /></a>
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
-<h3>把想法做成插件</h3>
-<p>说出需求，确认安装，再继续修改。图中是对话制作的「月光唱片」。</p>
-<a href="apps/website/src/public/landing/screenshots/plugin-moonlight.webp"><img src="apps/website/src/public/landing/screenshots/plugin-moonlight.webp" width="640" alt="通过对话制作插件" /></a>
+<h3>认识你的伙伴小队</h3>
+<p>让不同伙伴各展所长，再按需调用专业 NPC，把构思、研究、执行与审查串起来。</p>
+<a href="apps/website/src/public/landing/crew-cover-zh.webp"><img src="apps/website/src/public/landing/crew-cover-zh.webp" width="640" alt="Lexora、伙伴与专业 NPC 的分工示意" /></a>
 </td>
 <td width="50%" valign="top">
-<h3>让日常任务按时推进</h3>
-<p>为重复任务设置时间与目标，查看每次运行的记录和结果。</p>
-<a href="apps/website/src/public/landing/screenshots/schedules-zh.webp"><img src="apps/website/src/public/landing/screenshots/schedules-zh.webp" width="640" alt="定时自动化" /></a>
+<h3>伙伴分工，一起完成作品</h3>
+<p>Lexora 统筹，大肥鱼构思，小白实现。从对话里的分工，到右侧可运行的星星动画。</p>
+<a href="apps/website/src/public/landing/screenshots/readme-collaboration-zh.webp"><img src="apps/website/src/public/landing/screenshots/readme-collaboration-zh.webp" width="640" alt="真实伙伴协作对话与右侧可运行的星星动画" /></a>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<h3>按需招募 NPC</h3>
+<p>为伙伴挑选探索、研究、执行和审查 NPC，按任务需要组合能力。</p>
+<a href="apps/website/src/public/landing/screenshots/readme-npc-zh.webp"><img src="apps/website/src/public/landing/screenshots/readme-npc-zh.webp" width="640" alt="伙伴配置中的 NPC 招募弹窗" /></a>
+</td>
+<td width="50%" valign="top">
+<h3>查问题、改代码、跟进结果</h3>
+<p>读文件、查日志、执行命令和检查改动，同时打开浏览器核对项目与拉取请求。</p>
+<a href="apps/website/src/public/landing/screenshots/readme-project-zh.webp"><img src="apps/website/src/public/landing/screenshots/readme-project-zh.webp" width="640" alt="项目修复对话、执行记录与右侧 GitHub 浏览器" /></a>
 </td>
 </tr>
 </table>
