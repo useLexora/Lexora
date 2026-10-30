@@ -44,7 +44,7 @@ const {
 } = useProviderDetail(() => props.providerSettings, () => props.providerId)
 const typeFilter = ref('all')
 const query = ref('')
-const typeOptions = computed(() => (['all', 'chat', 'transcription', 'speech', 'image-generation', 'image-reading'] as const).map(value => ({ value, label: t(`desktop.providers.modelTypes.${value}`) })))
+const typeOptions = computed(() => (['all', 'chat', 'transcription', 'speech', 'image-generation'] as const).map(value => ({ value, label: t(`desktop.providers.modelTypes.${value}`) })))
 const visibleModels = computed(() => {
   const search = query.value.trim().toLocaleLowerCase()
   return models.value.filter(model => (typeFilter.value === 'all' || model.type === typeFilter.value)

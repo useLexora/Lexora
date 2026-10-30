@@ -697,7 +697,7 @@ export class ProviderService {
 
   async #saveCustomProvider(input: CustomProviderInput, createOnly: boolean): Promise<BuddyProvider> {
     const parsed = customProviderInputSchema.safeParse(input)
-    if (!parsed.success || parsed.data.models.some(model => model.type === 'image-reading'))
+    if (!parsed.success)
       throw new ProviderValidationError()
 
     const existing = this.#configs.findById(parsed.data.id)

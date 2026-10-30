@@ -28,8 +28,8 @@ CREATE TABLE provider_model_states_next (
   catalog_selection_json TEXT CHECK (catalog_selection_json IS NULL OR json_valid(catalog_selection_json)),
   capability_overrides_json TEXT CHECK (capability_overrides_json IS NULL OR json_valid(capability_overrides_json)),
   service_metadata_json TEXT CHECK (service_metadata_json IS NULL OR json_valid(service_metadata_json)),
-  model_type TEXT NOT NULL DEFAULT 'chat' CHECK (model_type IN ('chat', 'transcription', 'speech', 'image-generation', 'image-reading')),
-  type_override TEXT CHECK (type_override IN ('chat', 'transcription', 'speech', 'image-generation', 'image-reading')),
+  model_type TEXT NOT NULL DEFAULT 'chat' CHECK (model_type IN ('chat', 'transcription', 'speech', 'image-generation')),
+  type_override TEXT CHECK (type_override IN ('chat', 'transcription', 'speech', 'image-generation')),
   CHECK (COALESCE(type_override, model_type) <> 'chat' OR (context_window IS NOT NULL AND max_tokens IS NOT NULL)),
   PRIMARY KEY (provider_id, model_id)
 );

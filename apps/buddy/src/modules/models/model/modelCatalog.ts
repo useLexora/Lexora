@@ -20,6 +20,8 @@ export function groupModelOptions(
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const groups = new Map<string, ModelPickerOption[]>()
   for (const model of models) {
+    if (model.disabled)
+      continue
     const providerName = providerNames.get(model.providerId) ?? model.providerId
     if (normalizedQuery && ![providerName, model.displayName, model.modelId]
       .some(value => value.toLocaleLowerCase().includes(normalizedQuery))) {

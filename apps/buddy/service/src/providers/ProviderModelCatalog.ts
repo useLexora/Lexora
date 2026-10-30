@@ -298,8 +298,6 @@ export class ProviderModelCatalog {
 
   upsertManualModel(provider: Pick<ProviderConfigRecord, 'id' | 'api'>, input: ProviderModelInput): BuddyModel {
     const model = providerModelInputSchema.parse(input)
-    if (model.type === 'image-reading')
-      throw new ProviderValidationError()
     const now = new Date().toISOString()
     const current = this.#models.find(provider.id, model.id)
     const source = createSourceMetadata({
@@ -341,7 +339,7 @@ export class ProviderModelCatalog {
 
   setType(providerId: string, modelId: string, type: ProviderModelType | null): BuddyModel {
     const current = this.#requireModelState(providerId, modelId)
-    if (providerId.startsWith('plugin:') || type === 'image-reading')
+    if (providerId.startsWith('plugin:'))
       throw new ProviderValidationError()
     if (!providerModelTypeSchema.nullable().safeParse(type).success)
       throw new ProviderValidationError()

@@ -9,7 +9,6 @@ export default {
   'desktop.models.selection.remove': 'Remove {name}',
   'desktop.providers.imageProtocolHint': 'Requires an OpenAI Images compatible endpoint.',
   'desktop.providers.modelTypes.image-generation': 'Image generation',
-  'desktop.providers.modelTypes.image-reading': 'Image reading',
   'desktop.providers.modelType': 'Model purpose',
   'desktop.providers.modelTypeAutomatic': 'Use source',
   'desktop.providers.modelTypes.all': 'All models',
