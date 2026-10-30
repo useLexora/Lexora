@@ -1,6 +1,7 @@
 import type { WorkbenchContextSnapshot } from '@buddy-shared/workbench/workbenchContext'
 import type { Ref } from 'vue'
 import type { RouteLocationRaw } from 'vue-router'
+import type { ExtensionDataPort } from './data/extensionDataPort'
 import type { useExtensionState } from './state/useExtensionState'
 import type { useExtensionUiContributions } from './state/useExtensionUiContributions'
 import type { useExtensionViews } from './widgets/useExtensionViews'
@@ -8,6 +9,7 @@ import type { WorkbenchAnchors } from '@/shared/ui/contributions/workbenchUiCont
 import { createInjectionState } from '@vueuse/core'
 
 export interface ExtensionContext {
+  data?: ExtensionDataPort
   workbench: Readonly<Ref<WorkbenchContextSnapshot>>
   anchors: WorkbenchAnchors
   ui: ReturnType<typeof useExtensionUiContributions>

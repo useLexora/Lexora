@@ -16,7 +16,3 @@ const { surfaces, selected } = useExtensionUiSurfaces(() => ({ kind: 'slot', tar
     <slot v-if="!selected.length" />
   </div>
 </template>
-
-<style scoped lang="scss">
-.extension-slot__surface { position: absolute; inset: 0; }
-</style>

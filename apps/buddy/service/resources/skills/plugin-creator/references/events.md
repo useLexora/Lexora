@@ -20,6 +20,7 @@ subscription.dispose()
 | 宿主 | `configuration:changed` | `{configuration, changedKeys}`，观察已保存配置；实际热应用另用 `configuration.onChange` |
 | 宿主 | `workbench:panes:changed` | `{panes}`；`workbench.onPanesChange` |
 | 视图 | `view:message:received` | `{message}`，本插件私有广播；`onMessage` |
+| 视图数据观察 | `data:changed` | `{id, snapshot}`，订阅最新状态，null 表示取消；由 `data.observe` 创建，见 [只读数据](data.md) |
 | 视图 | `workbench:context:changed` | `{context}`，公开上下文；`onWorkbenchChange` |
 | 视图 | `view:visibility:changed` | `{visible}`；`onVisibilityChange` |
 | 视图 | `view:environment:changed` | `{environment}`，语言与主题；`onEnvironmentChange` |
@@ -29,11 +30,11 @@ subscription.dispose()
 | 控件视图 | `control:changed` | `{control}`，控件快照；`control.onChange` |
 | 交互视图 | `interaction:activated` | `{regionId, x, y}`，自己命中区域的局部点击；`interaction.onActivate` |
 
-旧入口和原有回调载荷继续可用，与事件订阅共用同一来源，API 仍为 3。不要同时订阅新旧入口来处理同一变化。宿主事件只属于当前扩展，视图事件只属于当前实例；私有广播仅分发到本插件当前 generation 的视图。通配符不增加数据权限，`**` 也不包含任务、对话历史、凭据或未授权资源。插件没有发布宿主事件的入口。
+旧入口和原有回调载荷继续可用，与事件订阅共用同一来源，不改变 API 主版本。不要同时订阅新旧入口来处理同一变化。宿主事件只属于当前扩展，视图事件只属于当前实例；私有广播仅分发到本插件当前 generation 的视图。通配符不增加数据权限，`**` 也不包含未授权的任务数据、对话历史、凭据或未授权资源；数据观察仅返回获批来源与宿主绑定范围内的值，未获批来源返回 denied，不会获得正文或任意任务访问。插件没有发布宿主事件的入口。
 
 数组是一个订阅组：同次发布即使同时命中多个 pattern 也只调用一次；`once` 表示整组只接收第一次匹配的事件；`dispose()` 或 signal 取消会释放整组。分别调用两次 `on` 是独立订阅，不互相去重或释放。
 
-每次派发固定订阅快照，新加订阅从下次生效，已释放订阅不再调用。`once` 在回调前释放，重入不会重复调用。同一 pattern 按注册顺序调用；不同 pattern 间不要依赖顺序，异步监听器也不保证完成顺序。状态类事件先更新只读快照再通知；订阅不重放历史，初始状态仍通过对应读取接口获取。私有广播的 message 保持 JSON 契约，不用于发布系统事件。
+每次派发固定订阅快照，新加订阅从下次生效，已释放订阅不再调用。`once` 在回调前释放，重入不会重复调用。同一 pattern 按注册顺序调用；不同 pattern 间不要依赖顺序，异步监听器也不保证完成顺序。状态类事件先更新只读快照再通知；普通事件订阅不重放历史，初始状态通过对应读取接口获取；`data.observe` 自行创建观察并异步交付当前数据状态。私有广播的 message 保持 JSON 契约，不用于发布系统事件。
 
 普通通知不会等待异步监听器；同步异常和 Promise 拒绝均被隔离。包括 `configuration:changed` 在内，普通订阅及 `**` 都不表示插件已应用配置。
 

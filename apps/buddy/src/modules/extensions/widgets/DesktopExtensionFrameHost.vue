@@ -4,8 +4,10 @@ import type { ViewEnvironment } from '@buddy-shared/extensions/extensionViewEven
 import type { AnchorGeometry, MountGeometry } from '@buddy-shared/workbench/workbenchUi'
 import type { ExtensionSurface } from './useExtensionViews'
 import type { SurfaceLayout, SurfaceLayoutLease } from '@/shared/ui/surfaces/surfaceLayout'
+import { extensionDataObserveRequestSchema, extensionDataReadRequestSchema, extensionDataUnobserveRequestSchema } from '@buddy-shared/extensions/extensionData'
 import { onMounted, onScopeDispose, useTemplateRef, watch } from 'vue'
 import { SurfaceHitRegions } from '@/workbench/browser/surfaces/SurfaceHitRegions'
+import { createExtensionDataClient, extensionDataGrants } from '../data/createExtensionDataClient'
 import { useExtensionContext } from '../extensionContext'
 import { extensionErrorCode } from '../state/useExtensionState'
 import { ExtensionCloseRequests } from './ExtensionCloseRequests'
@@ -22,6 +24,7 @@ interface Frame {
   mount: MountGeometry | null
   visible: boolean
   projection: ExtensionViewProjection
+  data: ReturnType<typeof createExtensionDataClient>
   started: number
   ping: { id: string, time: number } | null
 }
@@ -71,6 +74,7 @@ function sync() {
   const retained = new Set([...views.surfaces.values()].map(surface => surface.session?.token).filter(Boolean))
   for (const [token, frame] of frames) {
     if (!retained.has(token)) {
+      frame.data.dispose()
       frame.projection.dispose()
       frame.hitRegions?.dispose()
       frame.layout.dispose()
@@ -141,8 +145,9 @@ function sync() {
             notify(session.token, frame, { type: 'interaction:activated', data: { regionId: activation.id, x: activation.x, y: activation.y } })
         })
       : null
-    const projection = new ExtensionViewProjection({ workbench: workbench.value, environment: environment(), visible: false, anchor: null, mount: null, control: surface.control?.snapshot() ?? null }, { decoration: overlay, control: !!surface.control, interaction: !!surface.input.interactionId })
-    const frame: Frame = { element, hitRegions, surface, layout: props.layout.attach(element, options), geometry: null, mount: null, visible: false, projection, started: performance.now(), ping: null }
+    const projection = new ExtensionViewProjection({ workbench: workbench.value, environment: environment(), visible: false, anchor: null, mount: null, control: surface.control?.snapshot() ?? null, data: {} }, { decoration: overlay, control: !!surface.control, interaction: !!surface.input.interactionId, data: extensionDataGrants(context, surface) })
+    const data = createExtensionDataClient(context, surface, update => projection.publish({ type: 'data:changed', data: update }))
+    const frame: Frame = { data, element, hitRegions, surface, layout: props.layout.attach(element, options), geometry: null, mount: null, visible: false, projection, started: performance.now(), ping: null }
     projection.onDidChange(event => send(session.token, frame, event))
     frames.set(session.token, frame)
     element.src = session.url
@@ -198,8 +203,20 @@ async function receive(event: MessageEvent) {
     if ((['resources.pickFiles', 'resources.pickDirectory', 'resources.beginSave', 'documents.pick', 'references.add', 'references.capture', 'references.commit'].includes(data.method) || (data.method === 'documents.beginWrite' && data.params?.mode === 'saveAs')) && (!frame.visible || document.visibilityState !== 'visible' || !document.hasFocus()))
       throw new Error('EXTENSION_RESOURCE_PICKER_UNAVAILABLE')
     if (data.method === 'events.snapshot') {
+      frame.data.refresh()
       projections.refresh(frame)
       value = frame.projection.synchronization
+    }
+    else if (data.method === 'data.read') {
+      value = await frame.data.read(extensionDataReadRequestSchema.parse(data.params))
+    }
+    else if (data.method === 'data.observe') {
+      frame.data.observe(extensionDataObserveRequestSchema.parse(data.params))
+      value = null
+    }
+    else if (data.method === 'data.unobserve') {
+      frame.data.unobserve(extensionDataUnobserveRequestSchema.parse(data.params).id)
+      value = null
     }
     else {
       value = await state.api.viewRequest(session.id, session.generation, session.token, data.method, data.params)
@@ -211,7 +228,7 @@ async function receive(event: MessageEvent) {
     if (data.method === 'bootstrap' && value && typeof value === 'object') {
       projections.refresh(frame)
       const { snapshot, ...eventCursor } = frame.projection.synchronization
-      value = { ...value, ...snapshot, eventCursor }
+      value = { ...value, ...snapshot, eventCursor, dataSources: extensionDataGrants(context, frame.surface) }
     }
     if (data.method === 'view.ready') {
       frame.surface.ready = true
@@ -287,6 +304,7 @@ onScopeDispose(() => {
   window.removeEventListener('blur', focused)
   document.removeEventListener('visibilitychange', visibilityChanged)
   for (const frame of frames.values()) {
+    frame.data.dispose()
     frame.projection.dispose()
     frame.hitRegions?.dispose()
     frame.layout.dispose()

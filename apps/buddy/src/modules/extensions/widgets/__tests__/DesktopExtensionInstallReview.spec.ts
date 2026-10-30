@@ -82,6 +82,27 @@ async function mount(value: ExtensionReview = review, language = 'en-US', busy =
   return { content, submissions, submit, dialog, current, cancellations }
 }
 
+it.each(['en-US', 'zh-CN'])('reviews each requested data source separately from message access in %s', async (language) => {
+  const { current } = await mount({
+    ...review,
+    currentVersion: '0.9.0',
+    addedPermissions: ['data:context.usage'],
+    manifest: extensionManifestSchema.parse({ ...review.manifest, permissions: { data: ['task.metrics', 'context.usage'], network: ['https://metrics.example.com'] } }),
+  }, language)
+  const permissions = document.querySelector('[data-testid="extension-review-permissions"]')!
+  const text = permissions.textContent ?? ''
+  expect(text).toContain(language === 'en-US' ? 'Bound data sources' : '绑定范围的数据源')
+  expect(text).toContain(language === 'en-US' ? 'Task metrics' : '任务统计')
+  expect(text).toContain(language === 'en-US' ? 'Context usage' : '上下文用量')
+  expect(text).toContain(language === 'en-US' ? 'No message text, logs or credentials' : '不读取正文、日志或凭据')
+  expect(text).toContain(language === 'en-US' ? 'New' : '新增')
+  expect(text).not.toContain(language === 'en-US' ? 'Read messages' : '读取消息')
+  expect(document.querySelector('[data-testid="extension-content-sharing-warning"]')).not.toBeNull()
+  current.value = { ...review, fileAssociations: [] }
+  await nextTick()
+  expect(document.querySelector('[data-testid="extension-review-permissions"]')).toBeNull()
+})
+
 it('allows closing a duplicate review while the plugin is busy without submitting another install', async () => {
   const { dialog, submissions, cancellations } = await mount(review, 'en-US', true)
   expect(dialog.querySelector<HTMLButtonElement>('[data-testid="extension-confirm-install"]')!.disabled).toBe(true)

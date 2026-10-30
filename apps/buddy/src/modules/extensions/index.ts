@@ -1,3 +1,4 @@
+export type { ExtensionDataBinding, ExtensionDataPort } from './data/extensionDataPort'
 export { useProvideExtensionContext } from './extensionContext'
 export { ExtensionWindowStyleController } from './state/ExtensionWindowStyleController'
 export { useExtensionState } from './state/useExtensionState'

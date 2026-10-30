@@ -1,3 +1,4 @@
+import { createExtensionDataViewClient } from '../../../../shared/extensions/extensionDataViewClient'
 import { createExtensionDocumentClient } from '../../../../shared/extensions/extensionDocumentClient'
 import { waitsForExtensionIo } from '../../../../shared/extensions/extensionRequestLifecycle'
 import { createExtensionNetworkClient, createExtensionResourceClient, writeExtensionResource } from '../../../../shared/extensions/extensionResourceClient'
@@ -101,7 +102,7 @@ async function initialize() {
     const initial = await request('bootstrap')
     interactionId = initial.interactionId
     overlay = initial.presentation === 'decoration'
-    state.initialize({ workbench: initial.workbench, visible: initial.visible, environment: initial.environment, anchor: initial.anchor ?? null, mount: initial.mount ?? null, control: initial.control }, overlay, initial.eventCursor, !!interactionId)
+    state.initialize({ workbench: initial.workbench, visible: initial.visible, environment: initial.environment, anchor: initial.anchor ?? null, mount: initial.mount ?? null, control: initial.control, data: initial.data ?? {} }, overlay, initial.eventCursor, !!interactionId, initial.dataSources ?? [])
     if (overlay) {
       document.documentElement.style.overflow = 'hidden'
       document.body.style.overflow = 'hidden'
@@ -127,6 +128,7 @@ async function initialize() {
       instanceId: initial.instanceId,
       interaction: interactionId ? Object.freeze({ id: interactionId, setRegions: regions => request('interaction.setRegions', regions), onActivate: listener => events.on('interaction:activated', ({ data }) => listener({ id: data.regionId, x: data.x, y: data.y })) }) : null,
       onMessage: listener => events.on('view:message:received', event => listener(event.data.message)),
+      data: createExtensionDataViewClient(request, events, controller.signal, initial.dataSources ?? []),
       get workbench() { return state.snapshot.workbench },
       onWorkbenchChange: listener => events.on('workbench:context:changed', event => listener(event.data.context)),
       get visible() { return state.snapshot.visible },

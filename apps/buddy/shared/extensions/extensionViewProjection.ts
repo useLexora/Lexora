@@ -1,11 +1,14 @@
 import type { EventSnapshot } from '../events/eventTypes'
 import type { WorkbenchContextSnapshot } from '../workbench/workbenchContext'
 import type { AnchorGeometry, ControlSnapshot, MountGeometry } from '../workbench/workbenchUi'
+import type { ExtensionDataSnapshot, ExtensionDataSource } from './extensionData'
 import type { ExtensionViewNotification } from './extensionEvents'
 import type { ViewEnvironment } from './extensionViewEvents'
 import { copyEventSnapshot } from '../events/eventSnapshot'
+import { projectExtensionDataSnapshot } from './extensionData'
 
 export interface ExtensionViewSnapshot {
+  readonly data?: Readonly<Record<string, ExtensionDataSnapshot>>
   readonly workbench: WorkbenchContextSnapshot
   readonly environment: ViewEnvironment
   readonly visible: boolean
@@ -17,6 +20,7 @@ export interface ExtensionViewPolicy {
   readonly decoration: boolean
   readonly control: boolean
   readonly interaction: boolean
+  readonly data?: readonly ExtensionDataSource[]
 }
 export interface ExtensionViewCursor {
   readonly streamId: string
@@ -30,9 +34,20 @@ export interface ExtensionViewSynchronization extends ExtensionViewCursor {
 }
 
 export function projectExtensionViewEvent(snapshot: ExtensionViewSnapshot, input: ExtensionViewNotification, policy: ExtensionViewPolicy): { snapshot: ExtensionViewSnapshot, event: ExtensionViewNotification } | null {
-  const event = copyEventSnapshot<unknown>(input) as ExtensionViewNotification
+  let event = copyEventSnapshot<unknown>(input) as ExtensionViewNotification
   let update: Partial<ExtensionViewSnapshot> = {}
   switch (event.type) {
+    case 'data:changed': {
+      const { id } = event.data
+      const data = { ...snapshot.data }
+      const value = event.data.snapshot && copyEventSnapshot(projectExtensionDataSnapshot(event.data.snapshot, policy.data))
+      if (value)
+        data[id] = value
+      else delete data[id]
+      update = { data: Object.freeze(data) }
+      event = copyEventSnapshot({ type: 'data:changed', data: { id, snapshot: value } })
+      break
+    }
     case 'workbench:context:changed':
       update = { workbench: event.data.context }
       break
@@ -72,5 +87,5 @@ export function projectExtensionViewEvent(snapshot: ExtensionViewSnapshot, input
 }
 
 export function ownExtensionViewSnapshot(snapshot: ExtensionViewSnapshot, policy: ExtensionViewPolicy): ExtensionViewSnapshot {
-  return copyEventSnapshot({ ...snapshot, anchor: policy.decoration ? snapshot.anchor : null, control: policy.control ? snapshot.control : null })
+  return copyEventSnapshot({ ...snapshot, data: Object.fromEntries(Object.entries(snapshot.data ?? {}).map(([id, value]) => [id, projectExtensionDataSnapshot(value, policy.data)])), anchor: policy.decoration ? snapshot.anchor : null, control: policy.control ? snapshot.control : null })
 }

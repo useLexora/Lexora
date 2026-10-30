@@ -19,7 +19,7 @@ export function useExtensionUiSurfaces(target: () => WorkbenchUiSelectionTarget)
   const surfaces = computed(() => [...inputs.value.values()].map((input) => {
     const entry = views.surfaces.get(input.viewId)
     const provider = providers.value.find(provider => provider.placement.id === input.placementId)!
-    return { input, entry, height: provider.placement.height, available: provider.enabled && !!entry?.active && entry.ready && entry.eligible && !entry.error && !['failed', 'blocked'].includes(provider.plugin.state) }
+    return { input, entry, enabled: provider.enabled, height: provider.placement.height, available: provider.enabled && !!entry?.active && entry.ready && entry.eligible && !entry.error && !['failed', 'blocked'].includes(provider.plugin.state) }
   }))
   const selected = computed(() => {
     const current = target()

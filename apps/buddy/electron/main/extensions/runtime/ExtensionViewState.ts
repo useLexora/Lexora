@@ -1,3 +1,4 @@
+import type { ExtensionDataSource } from '../../../../shared/extensions/extensionData'
 import type { ExtensionViewEvents, ExtensionViewNotification } from '../../../../shared/extensions/extensionEvents'
 import type { ExtensionViewCursor, ExtensionViewPolicy, ExtensionViewSnapshot, ExtensionViewSynchronization, ExtensionViewUpdate } from '../../../../shared/extensions/extensionViewProjection'
 import { EventBus } from '../../../../shared/events/EventBus'
@@ -10,7 +11,7 @@ export class ExtensionViewState {
   readonly events = this.#bus.subscriber
   readonly #resynchronize?: () => Promise<ExtensionViewSynchronization>
   #policy: ExtensionViewPolicy = { decoration: false, control: false, interaction: false }
-  #state: ExtensionViewSnapshot = copyEventSnapshot({ workbench: { values: {}, pages: [] }, environment: { language: 'zh-CN', colorScheme: 'light', colors: {} }, visible: false, mount: null, anchor: null, control: null })
+  #state: ExtensionViewSnapshot = copyEventSnapshot({ workbench: { values: {}, pages: [] }, environment: { language: 'zh-CN', colorScheme: 'light', colors: {} }, visible: false, mount: null, anchor: null, control: null, data: {} })
   #cursor: ExtensionViewCursor | null = null
   #buffer: ExtensionViewUpdate[] = []
   #lost: ExtensionViewCursor | null = null
@@ -26,10 +27,10 @@ export class ExtensionViewState {
   get snapshot() { return this.#state }
   get synchronizationStatus() { return this.#sync ? 'resynchronizing' : this.#needsSync ? 'degraded' : this.#cursor ? 'current' : 'initializing' }
 
-  initialize(state: ExtensionViewSnapshot, decoration: boolean, cursor?: ExtensionViewCursor, interaction = false): void {
+  initialize(state: ExtensionViewSnapshot, decoration: boolean, cursor?: ExtensionViewCursor, interaction = false, dataSources: readonly ExtensionDataSource[] = []): void {
     if (this.#disposed)
       return
-    this.#policy = Object.freeze({ decoration, control: state.control !== null, interaction })
+    this.#policy = Object.freeze({ decoration, control: state.control !== null, interaction, data: Object.freeze([...dataSources]) })
     this.#state = ownExtensionViewSnapshot(state, this.#policy)
     if (cursor) {
       this.#install({ ...cursor, snapshot: state }, false)
@@ -131,6 +132,10 @@ export class ExtensionViewState {
     const publish = (key: keyof ExtensionViewSnapshot, event: ExtensionViewNotification) => {
       if (JSON.stringify(previous[key]) !== JSON.stringify(current[key]))
         this.#bus.emit(event)
+    }
+    for (const id of new Set([...Object.keys(previous.data ?? {}), ...Object.keys(current.data ?? {})])) {
+      if (JSON.stringify(previous.data?.[id]) !== JSON.stringify(current.data?.[id]))
+        this.#bus.emit({ type: 'data:changed', data: { id, snapshot: current.data?.[id] ?? null } })
     }
     publish('workbench', { type: 'workbench:context:changed', data: { context: current.workbench } })
     publish('environment', { type: 'view:environment:changed', data: { environment: current.environment } })

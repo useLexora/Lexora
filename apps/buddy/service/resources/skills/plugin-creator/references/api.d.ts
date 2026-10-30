@@ -375,6 +375,46 @@ export interface DocumentApi {
   reveal: (document: Pick<EditableDocument, 'id'>) => Promise<void>
 }
 
+export type ExtensionDataSource = 'task.metrics' | 'context.usage'
+export interface ExtensionDataQuery<Source extends ExtensionDataSource = ExtensionDataSource> {
+  readonly source: Source
+  readonly scope: 'bound'
+}
+export interface ExtensionDataValues {
+  'task.metrics': {
+    taskId: string
+    branchId: string
+    turns: number
+    steps: number
+    tokens: { inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number }
+    throughput: { samples: number, tokensPerSecond: number | null }
+  }
+  'context.usage': {
+    taskId: string
+    branchId: string
+    actorId: string
+    runId: string | null
+    tokens: number
+    window: number
+    percent: number
+  }
+}
+export type ExtensionDataSnapshot<Source extends ExtensionDataSource = ExtensionDataSource> = {
+  [Key in Source]: {
+    readonly source: Key
+    readonly status: 'ready'
+    readonly value: EventSnapshot<ExtensionDataValues[Key]>
+  } | {
+    readonly source: Key
+    readonly status: 'denied' | 'no_target' | 'unavailable'
+    readonly value: null
+  }
+}[Source]
+export interface ExtensionDataApi {
+  read: <Source extends ExtensionDataSource>(query: ExtensionDataQuery<Source>) => Promise<ExtensionDataSnapshot<Source>>
+  observe: <Source extends ExtensionDataSource>(query: ExtensionDataQuery<Source>, listener: (snapshot: ExtensionDataSnapshot<Source>) => unknown) => Disposable
+}
+
 export interface ViewContext {
   readonly documents: DocumentApi
   readonly clipboard: {
@@ -393,6 +433,7 @@ export interface ViewContext {
   } | null
   onMessage: (listener: (message: Json) => void) => Disposable
   readonly instanceId: string | null
+  readonly data: ExtensionDataApi
   readonly workbench: WorkbenchContextSnapshot
   onWorkbenchChange: (listener: (snapshot: WorkbenchContextSnapshot) => void) => Disposable
   readonly visible: boolean
@@ -436,6 +477,9 @@ export interface ViewEnvironment {
   readonly themeRevision?: number
   readonly colors: Readonly<Record<string, string>>
 }
+export interface ExtensionDataEvents {
+  'data:changed': { readonly id: string, readonly snapshot: ExtensionDataSnapshot | null }
+}
 export interface ViewStateEvents {
   'view:visibility:changed': { readonly visible: boolean }
   'view:environment:changed': { readonly environment: ViewEnvironment }
@@ -459,7 +503,7 @@ export interface InteractionEvents {
 export interface ComposerEvents {
   'composer:input:received': { readonly caret?: Rect | null }
 }
-export interface ViewEvents extends ViewStateEvents, ViewGeometryEvents, ViewMessageEvents, WorkbenchContextEvents, ControlEvents, InteractionEvents, ComposerEvents {}
+export interface ViewEvents extends ExtensionDataEvents, ViewStateEvents, ViewGeometryEvents, ViewMessageEvents, WorkbenchContextEvents, ControlEvents, InteractionEvents, ComposerEvents {}
 export interface ExtensionModule {
   activate: (context: ExtensionContext) => void | Promise<void>
   deactivate?: () => void | Promise<void>

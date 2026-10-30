@@ -102,6 +102,16 @@ const resources = computed<ReviewResource[]>(() => {
       ].join(english.value ? ' ' : ''),
     },
     {
+      key: 'data',
+      title: english.value ? 'Bound data sources' : '绑定范围的数据源',
+      icon: Document20Regular,
+      operations: [
+        { key: 'task.metrics', label: english.value ? 'Task metrics' : '任务统计', permissions: p.data.includes('task.metrics') ? ['data:task.metrics'] : [] },
+        { key: 'context.usage', label: english.value ? 'Context usage' : '上下文用量', permissions: p.data.includes('context.usage') ? ['data:context.usage'] : [] },
+      ],
+      scope: english.value ? 'Read-only sources within the scope bound by the host to this view. Task metrics include task and branch IDs; context usage also includes actor and run IDs. No message text, logs or credentials; no arbitrary task access.' : '仅读取宿主为当前视图绑定范围内的数据源。任务统计包含任务、分支标识，上下文用量还包含角色、运行标识；不读取正文、日志或凭据，不任意访问其他任务。',
+    },
+    {
       key: 'selectedContent',
       title: english.value ? 'Selected content' : '选中内容',
       icon: Document20Regular,
@@ -170,7 +180,7 @@ const resources = computed<ReviewResource[]>(() => {
 })
 const sharesContent = computed(() => {
   const p = props.review.manifest.permissions
-  return (p.clipboardRead || p.selectedResource === 'read' || p.localResources || p.fileEditing || p.selectedContent || p.taskMessages || p.references) && p.network.length > 0
+  return (p.clipboardRead || p.selectedResource === 'read' || p.localResources || p.fileEditing || p.selectedContent || p.taskMessages || p.data.length > 0 || p.references) && p.network.length > 0
 })
 function isNewOperation(operation: ReviewOperation): boolean {
   return !!props.review.currentVersion && operation.permissions.some(key => props.review.addedPermissions.includes(key))

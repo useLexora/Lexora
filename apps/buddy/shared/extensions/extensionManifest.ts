@@ -8,6 +8,7 @@ import { workbenchConditionSchema } from '../workbench/workbenchContext.ts'
 import { workbenchAnchorSchema, workbenchControls, workbenchControlSchema, workbenchMenuSchema, workbenchMountTargetSchema, workbenchPresentationSchema, workbenchSlots, workbenchSlotSchema } from '../workbench/workbenchUi.ts'
 import { extensionAgentSchema } from './extensionAgent.ts'
 import { extensionConditionDefinitionSchema } from './extensionConditions.ts'
+import { extensionDataSourceSchema } from './extensionData.ts'
 import { extensionAuthorSchema } from './extensionIdentity.ts'
 import { extensionMcpConnectorContributionSchema } from './extensionMcpConnectors.ts'
 import { extensionPathSchema } from './extensionPath.ts'
@@ -84,6 +85,7 @@ export const extensionPermissionsSchema = z.object({
   models: z.boolean().default(false),
   tasks: z.enum(['none', 'read', 'title']).default('none'),
   taskMessages: z.boolean().default(false),
+  data: z.array(extensionDataSourceSchema).max(extensionDataSourceSchema.options.length).refine(sources => new Set(sources).size === sources.length).default([]),
   windowEffects: z.boolean().default(false),
   controls: z.array(workbenchControlSchema).max(workbenchControlSchema.options.length).default([]),
   notifications: z.boolean().default(false),
@@ -331,6 +333,7 @@ export function addedExtensionPermissions(previous: ExtensionPermissions | undef
     ...(next.shells && !previous?.shells ? ['shells'] : []),
     ...(next.themeManagement && !previous?.themeManagement ? ['themeManagement'] : []),
     ...(next.taskMessages && !previous?.taskMessages ? ['taskMessages'] : []),
+    ...next.data.filter(source => !previous?.data?.includes(source)).map(source => `data:${source}`),
     ...(next.agent && !previous?.agent ? ['agent'] : []),
     ...(next.models && !previous?.models ? ['models'] : []),
     ...(next.tasks !== 'none' && next.tasks !== previous?.tasks && previous?.tasks !== 'title' ? [`tasks:${next.tasks}`] : []),

@@ -9,6 +9,7 @@
 | 打开独立页面或文件标签 | `views`、`navigation`，按需要选择资源模式 | [视图](views.md) |
 | 在工作台或分屏显示面板 | `placements` 的 `view` 与 `presentation` | [挂载](views.md#正式挂载点) |
 | 替换或追加宿主内容 | `slot`、`control`，使用正式目标与真实默认回退 | [插槽](slots.md) |
+| 读取或观察绑定范围的统计与上下文用量 | `ViewContext.data.read/observe` 与逐来源 `permissions.data`；呈现位置另选 | [只读数据](data.md) |
 | 输入命令或点击业务菜单 | `commands`、`slash`、`menus` | [命令](commands.md) |
 | 临时覆盖交互、布局订阅 | `interactions` 与宿主布局快照 | [交互](interactions.md) |
 | 复制粘贴、显示文档名和修改状态 | 交互视图的 `clipboard`、`setDocumentInfo` | [视图](views.md#视图类型) |
