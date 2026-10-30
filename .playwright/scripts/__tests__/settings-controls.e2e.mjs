@@ -125,6 +125,10 @@ test('download proxies retain edits, order and deletions across the master switc
   }
   const panel = () => desktop.page.getByTestId('download-proxy-settings')
   const rows = () => panel().getByTestId('download-proxy-row')
+  const action = async (row, name) => {
+    await row.getByTestId('download-proxy-actions').click()
+    await desktop.page.getByRole('menuitem', { name, exact: true }).click()
+  }
   const settings = () => desktop.page.evaluate(async () => (await window.lexoraDesktop.settings.get()).downloads)
   const master = () => panel().getByRole('switch', { name: '启用下载代理', exact: true })
   await open()
@@ -136,11 +140,11 @@ test('download proxies retain edits, order and deletions across the master switc
   await dialog.getByLabel('代理地址', { exact: true }).fill('https://mirror.example/cache')
   await dialog.getByRole('button', { name: '保存', exact: true }).click()
   await expect(dialog).toHaveCount(0)
-  await rows().filter({ hasText: '自定义下载源' }).getByRole('button', { name: '上移', exact: true }).click()
+  await action(rows().filter({ hasText: '自定义下载源' }), '上移')
   await expect(rows().first()).toContainText('自定义下载源')
   await rows().first().getByRole('switch').click()
   await expect(rows().first().getByRole('switch')).not.toBeChecked()
-  await rows().filter({ hasText: 'gh.monlor.com' }).getByRole('button', { name: '删除', exact: true }).click()
+  await action(rows().filter({ hasText: 'gh.monlor.com' }), '删除')
   await expect(rows()).toHaveCount(2)
   const saved = await settings()
   expect(saved.proxies.map(proxy => proxy.id)).toEqual(['gh-proxy.com', 'ghfast.top'])
@@ -186,7 +190,7 @@ test('download proxies retain edits, order and deletions across the master switc
   await expect(dialog).toHaveCount(0)
   await expect(rows()).toHaveCount(3)
   for (let remaining = 3; remaining > 0; remaining--) {
-    await rows().first().getByRole('button', { name: '删除', exact: true }).click()
+    await action(rows().first(), '删除')
     await expect(rows()).toHaveCount(remaining - 1)
   }
   await instance.stop()

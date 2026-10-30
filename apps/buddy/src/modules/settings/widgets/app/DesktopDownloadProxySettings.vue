@@ -2,11 +2,14 @@
 import type { DownloadProxy, DownloadSettings } from '@buddy-shared/network/downloadSettings'
 import type { ApplicationSettingsProps } from './typing'
 import { downloadSettingsSchema } from '@buddy-shared/network/downloadSettings'
+import { Add20Regular } from '@vicons/fluent'
 import { NButton, NSwitch, useMessage } from 'naive-ui'
 import { computed, shallowRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import { useSettingMutation } from '../../state/useSettingMutation'
 import DesktopSettingRow from '../shared/DesktopSettingRow.vue'
+import DesktopSettingsGroup from '../shared/DesktopSettingsGroup.vue'
 import DesktopDownloadProxyDialog from './DesktopDownloadProxyDialog.vue'
 import DesktopDownloadProxyRow from './DesktopDownloadProxyRow.vue'
 
@@ -63,30 +66,36 @@ function move(index: number, direction: -1 | 1) {
 </script>
 
 <template>
-  <section v-if="config" class="grid gap-[0.8rem]" data-testid="download-proxy-settings">
-    <h2 class="m-0 text-[0.92rem]">
-      {{ t('desktop.settings.downloads.title') }}
-    </h2>
-    <div class="border border-solid border-border rounded-[0.65rem] bg-surface p-[0.9rem]" data-theme-surface="panel">
-      <DesktopSettingRow v-slot="{ controlAttrs }" :label="t('desktop.settings.downloads.enabled')" :description="t('desktop.settings.downloads.description')" toggle class="[--setting-row-height:0px] [--setting-row-px:0px] [--setting-row-py:0px]">
-        <NSwitch v-bind="controlAttrs" :round="false" :value="config.downloads.enabled" :loading="pending" :disabled="pending" @update:value="save({ enabled: $event })" />
+  <section v-if="config" class="grid gap-3" data-testid="download-proxy-settings">
+    <header class="flex flex-wrap items-center justify-between gap-2">
+      <h2 class="m-0 text-[0.92rem] font-600">
+        {{ t('desktop.settings.downloads.title') }}
+      </h2>
+      <NButton size="small" secondary :disabled="pending || config.downloads.proxies.length >= 20" @click="edit()">
+        <template #icon>
+          <DesktopIcon :component="Add20Regular" :size="16" />
+        </template>
+        {{ t('desktop.settings.downloads.add') }}
+      </NButton>
+    </header>
+    <DesktopSettingsGroup>
+      <DesktopSettingRow v-slot="{ controlAttrs }" :label="t('desktop.settings.downloads.enabled')" :description="t('desktop.settings.downloads.description')" toggle class="[--setting-control-min:0px] [--setting-control-max:max-content]">
+        <NSwitch v-bind="controlAttrs" size="small" :round="false" :value="config.downloads.enabled" :loading="pending" :disabled="pending" :aria-disabled="pending" @update:value="save({ enabled: $event })" />
       </DesktopSettingRow>
-      <ul v-if="config.downloads.proxies.length" class="m-0 mt-4 list-none p-0">
+      <ol v-if="config.downloads.proxies.length" class="m-0 list-none p-0">
         <DesktopDownloadProxyRow
           v-for="(proxy, index) in config.downloads.proxies" :key="proxy.id"
-          :proxy="proxy" :language="language" :disabled="pending" :first="index === 0" :last="index === config.downloads.proxies.length - 1"
+          :proxy="proxy" :language="language" :disabled="pending" :index="index" :last="index === config.downloads.proxies.length - 1"
           @toggle="toggle(proxy.id, $event)" @edit="edit(proxy)" @remove="remove(proxy.id)" @move="move(index, $event)"
         />
-      </ul>
-      <p v-else class="my-4 text-muted text-sm">
+      </ol>
+      <p v-else class="m-0 px-[0.9rem] py-6 text-center text-[0.75rem] text-muted">
         {{ t('desktop.settings.downloads.empty') }}
       </p>
-      <div class="mt-3 flex justify-end">
-        <NButton size="small" :disabled="pending || config.downloads.proxies.length >= 20" @click="edit()">
-          {{ t('desktop.settings.downloads.add') }}
-        </NButton>
-      </div>
-    </div>
+    </DesktopSettingsGroup>
+    <p class="m-0 text-[0.7rem] leading-relaxed text-muted" role="status">
+      {{ t(config.downloads.enabled ? 'desktop.settings.downloads.orderHelp' : 'desktop.settings.downloads.pausedHelp') }}
+    </p>
     <DesktopDownloadProxyDialog v-if="editing" :proxy="editing" :is-new="isNew" :language="language" :pending="pending" @save="submit" @close="editing = null" />
   </section>
 </template>

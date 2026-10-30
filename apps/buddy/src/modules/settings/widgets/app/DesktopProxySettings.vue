@@ -8,6 +8,7 @@ import { useBuddyI18n } from '@/i18n/buddyI18n'
 
 import { useSettingMutation } from '../../state/useSettingMutation'
 import DesktopSettingRow from '../shared/DesktopSettingRow.vue'
+import DesktopSettingsGroup from '../shared/DesktopSettingsGroup.vue'
 import DesktopDownloadProxySettings from './DesktopDownloadProxySettings.vue'
 
 const props = defineProps<ApplicationSettingsProps>()
@@ -59,48 +60,50 @@ async function select(next: ProxySettings['mode']) {
 </script>
 
 <template>
-  <section v-if="config" class="desktop-proxy-settings grid gap-[0.8rem] [container-type:inline-size]">
-    <h2 class="m-0 text-[0.92rem]">
-      {{ t('desktop.settings.proxy.title') }}
-    </h2>
-    <div class="desktop-proxy-settings__panel border border-solid border-border rounded-[0.65rem] bg-surface p-[0.9rem]" data-theme-surface="panel">
-      <DesktopSettingRow v-slot="{ controlAttrs }" :label="t('desktop.settings.proxy.mode')" :description="t('desktop.settings.proxy.description')" toggle class="[--setting-row-height:0px] [--setting-row-px:0px] [--setting-row-py:0px] [--setting-control-min:0px] [--setting-control-max:max-content]">
-        <div class="desktop-proxy-settings__modes relative grid grid-cols-[repeat(3,_minmax(0,_1fr))] w-60 max-w-full rounded-[0.65rem] bg-subtle p-[0.2rem]" v-bind="controlAttrs" role="radiogroup" :aria-busy="pending" :style="{ '--selected-index': selectedIndex }">
-          <span class="desktop-proxy-settings__slider absolute top-[0.2rem] bottom-[0.2rem] left-[0.2rem] w-[calc((100%_-_0.4rem)_/_3)] rounded-[0.45rem] bg-surface shadow-soft" aria-hidden="true" />
-          <label v-for="option in modes" :key="option.value" class="relative grid min-h-[1.7rem] place-items-center rounded-[0.45rem] text-[0.75rem] font-400 whitespace-nowrap cursor-pointer transition-colors duration-160" :class="mode === option.value ? 'text-fg' : 'text-muted'">
-            <input
-              class="absolute inset-0 opacity-0 cursor-inherit m-0"
-              type="radio"
-              :name="groupId"
-              :value="option.value"
-              :checked="mode === option.value"
-              :disabled="pending"
-              @change="select(option.value)"
-            >
-            <span>{{ option.label }}</span>
-          </label>
-        </div>
-      </DesktopSettingRow>
-      <form v-if="mode === 'custom'" class="grid gap-2 mt-4 border-t-1 border-t-solid border-t-border pt-4" @submit.prevent="save">
-        <label :for="`${groupId}-server`" class="text-[0.8rem] font-600">{{ t('desktop.settings.proxy.server') }}</label>
-        <NInput
-          v-model:value="server"
-          :input-props="{ 'id': `${groupId}-server`, 'aria-describedby': `${groupId}-help` }"
-          :disabled="pending"
-          :status="invalid ? 'error' : undefined"
-          @update:value="invalid = false"
-        />
-        <small :id="`${groupId}-help`" class="text-muted text-[0.7rem] leading-[1.5]">{{ t('desktop.settings.proxy.serverHelp') }}</small>
-        <small v-if="invalid" class="text-danger text-[0.7rem] leading-[1.5]" role="alert">{{ t('desktop.settings.proxy.invalidServer') }}</small>
-        <div class="flex justify-end">
-          <NButton attr-type="submit" size="small" :loading="pending" :disabled="!dirty" type="primary">
-            {{ t('desktop.settings.proxy.save') }}
-          </NButton>
-        </div>
-      </form>
-    </div>
+  <div v-if="config" class="desktop-proxy-settings grid w-full max-w-[48rem] mx-auto gap-6 [container-type:inline-size]">
+    <section class="grid gap-3">
+      <h2 class="m-0 text-[0.92rem] font-600">
+        {{ t('desktop.settings.proxy.connectionTitle') }}
+      </h2>
+      <DesktopSettingsGroup class="desktop-proxy-settings__panel">
+        <DesktopSettingRow v-slot="{ controlAttrs }" :label="t('desktop.settings.proxy.mode')" :description="t('desktop.settings.proxy.description')" toggle class="[--setting-control-min:0px] [--setting-control-max:max-content]">
+          <div class="desktop-proxy-settings__modes relative grid grid-cols-[repeat(3,_minmax(0,_1fr))] w-60 max-w-full rounded-[0.65rem] bg-subtle p-[0.2rem]" v-bind="controlAttrs" role="radiogroup" :aria-busy="pending" :style="{ '--selected-index': selectedIndex }">
+            <span class="desktop-proxy-settings__slider absolute top-[0.2rem] bottom-[0.2rem] left-[0.2rem] w-[calc((100%_-_0.4rem)_/_3)] rounded-[0.45rem] bg-surface shadow-soft" aria-hidden="true" />
+            <label v-for="option in modes" :key="option.value" class="relative grid min-h-[1.7rem] place-items-center rounded-[0.45rem] text-[0.75rem] font-400 whitespace-nowrap cursor-pointer transition-colors duration-160" :class="mode === option.value ? 'text-fg' : 'text-muted'">
+              <input
+                class="absolute inset-0 opacity-0 cursor-inherit m-0"
+                type="radio"
+                :name="groupId"
+                :value="option.value"
+                :checked="mode === option.value"
+                :disabled="pending"
+                @change="select(option.value)"
+              >
+              <span>{{ option.label }}</span>
+            </label>
+          </div>
+        </DesktopSettingRow>
+        <form v-if="mode === 'custom'" class="grid gap-2 p-[0.9rem]" @submit.prevent="save">
+          <label :for="`${groupId}-server`" class="text-[0.8rem] font-600">{{ t('desktop.settings.proxy.server') }}</label>
+          <NInput
+            v-model:value="server"
+            :input-props="{ 'id': `${groupId}-server`, 'aria-describedby': `${groupId}-help` }"
+            :disabled="pending"
+            :status="invalid ? 'error' : undefined"
+            @update:value="invalid = false"
+          />
+          <small :id="`${groupId}-help`" class="text-muted text-[0.7rem] leading-[1.5]">{{ t('desktop.settings.proxy.serverHelp') }}</small>
+          <small v-if="invalid" class="text-danger text-[0.7rem] leading-[1.5]" role="alert">{{ t('desktop.settings.proxy.invalidServer') }}</small>
+          <div class="flex justify-end">
+            <NButton attr-type="submit" size="small" :loading="pending" :disabled="!dirty" type="primary">
+              {{ t('desktop.settings.proxy.save') }}
+            </NButton>
+          </div>
+        </form>
+      </DesktopSettingsGroup>
+    </section>
     <DesktopDownloadProxySettings v-bind="props" />
-  </section>
+  </div>
 </template>
 
 <style scoped lang="scss">
