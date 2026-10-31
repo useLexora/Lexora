@@ -5,6 +5,7 @@ import { useMessage } from 'naive-ui'
 import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
+import { usePreviewWheelZoom } from '@/shared/ui/media/usePreviewWheelZoom'
 import { desktopMermaidTheme } from '@/theme/mermaidTheme'
 
 defineOptions({ inheritAttrs: false })
@@ -20,6 +21,7 @@ const { language } = useDesktopUi()
 const { t } = useBuddyI18n(language)
 const message = useMessage()
 const themeKey = computed(() => JSON.stringify(desktopMermaidTheme.value))
+usePreviewWheelZoom()
 
 async function copy(event: MermaidBlockEvent) {
   event.preventDefault()
@@ -46,6 +48,7 @@ async function copy(event: MermaidBlockEvent) {
     :show-collapse-button="true"
     :is-strict="true"
     :enable-mermaid-interactions="false"
+    :enable-wheel-zoom="false"
     @copy="copy"
   />
 </template>

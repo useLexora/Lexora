@@ -5,6 +5,7 @@ import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { NImageGroup } from 'naive-ui'
 import { computed, h } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import { usePreviewWheelZoom } from './usePreviewWheelZoom'
 
 const props = defineProps<{
   language: BuddyLocale
@@ -15,6 +16,7 @@ const show = defineModel<boolean>('show', { default: false })
 
 const { t } = useBuddyI18n(() => props.language)
 const sourceList = computed(() => [...props.sources])
+usePreviewWheelZoom()
 const renderToolbar: NonNullable<ImageGroupProps['renderToolbar']> = ({ nodes }) => h(
   'div',
   { class: 'buddy-image-preview-toolbar' },
@@ -25,23 +27,24 @@ const renderToolbar: NonNullable<ImageGroupProps['renderToolbar']> = ({ nodes })
     ]),
     h('span', { 'aria-hidden': 'true', 'class': 'buddy-image-preview-toolbar__divider' }),
     h('div', { class: 'buddy-image-preview-toolbar__group' }, [
-      toolbarButton(nodes.zoomOut, t('desktop.imagePreview.zoomOut')),
-      toolbarButton(nodes.zoomIn, t('desktop.imagePreview.zoomIn')),
+      toolbarButton(nodes.zoomOut, t('desktop.imagePreview.zoomOut'), 'out'),
+      toolbarButton(nodes.zoomIn, t('desktop.imagePreview.zoomIn'), 'in'),
     ]),
     h('span', { 'aria-hidden': 'true', 'class': 'buddy-image-preview-toolbar__divider' }),
     h('div', { class: 'buddy-image-preview-toolbar__group' }, [
       toolbarButton(nodes.download, t('desktop.imagePreview.download')),
-      toolbarButton(nodes.close, t('desktop.imagePreview.close'), true),
+      toolbarButton(nodes.close, t('desktop.imagePreview.close'), 'close'),
     ]),
   ],
 )
 
-function toolbarButton(node: VNode, label: string, close = false): VNode {
+function toolbarButton(node: VNode, label: string, action?: 'in' | 'out' | 'close'): VNode {
   return h('button', {
     'aria-label': label,
+    'data-preview-zoom': action === 'close' ? undefined : action,
     'class': [
       'buddy-image-preview-toolbar__button',
-      { 'is-close': close },
+      { 'is-close': action === 'close' },
     ],
     'type': 'button',
     'onClick': (event: MouseEvent) => invokeToolbarNode(node, event),
