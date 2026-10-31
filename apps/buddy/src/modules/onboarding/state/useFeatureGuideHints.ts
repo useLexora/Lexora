@@ -63,7 +63,7 @@ export function useFeatureGuideHints(controller: FeatureDiscovery, language: () 
         hints: [{
           id: step.id,
           element: step.selector,
-          beacon: { side: step.side, align: step.align, animate: false, className: 'buddy-feature-hint' },
+          beacon: { ...step.beacon, animate: false, className: 'buddy-feature-hint' },
           popover: {
             title: t(step.title),
             description: t(step.description),
@@ -81,8 +81,14 @@ export function useFeatureGuideHints(controller: FeatureDiscovery, language: () 
       })
       guide.show()
       openingFrame = requestAnimationFrame(() => guide?.open(step.id))
-      resize = new ResizeObserver(() => guide?.refresh())
-      resize.observe(element)
+      resize = new ResizeObserver(() => {
+        const rect = element.getBoundingClientRect()
+        if (rect.top < 0 || rect.left < 0 || rect.bottom > window.innerHeight || rect.right > window.innerWidth)
+          element.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' })
+        guide?.refresh()
+      })
+      for (let target: HTMLElement | null = element; target; target = target.parentElement)
+        resize.observe(target)
       return true
     }
 

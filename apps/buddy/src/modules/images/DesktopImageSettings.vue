@@ -25,7 +25,7 @@ function failureLabel(operation: ImageOperation) {
 
 <template>
   <section class="grid gap-[0.8rem]" data-image-settings>
-    <h2 class="m-0 text-[0.92rem] font-600">
+    <h2 class="m-0 w-fit text-[0.92rem] font-600">
       {{ t('images.title') }}
     </h2>
     <div v-if="failed" class="flex items-center gap-2 text-danger text-[0.75rem]" role="alert">

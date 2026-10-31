@@ -8,11 +8,11 @@ const features = [
 ]
 
 describe('feature discovery across releases', () => {
-  it('introduces follow-up behavior in 0.18.0 without announcing it in 0.17.0', () => {
-    const feature = { id: 'follow-up-behavior', version: '0.18.0' }
-    expect(availableFeatureGuides('0.17.0')).not.toContainEqual(feature)
-    expect(availableFeatureGuides('0.18.0')).toContainEqual(feature)
-    expect(advanceFeatureDiscovery({ version: '0.17.0', pending: [], notified: [] }, '0.18.0', false).pending).toEqual(['follow-up-behavior'])
+  it('introduces follow-up behavior, speech and image settings when upgrading to 0.18.0', () => {
+    const ids = ['follow-up-behavior', 'speech-settings', 'image-settings']
+    expect(availableFeatureGuides('0.17.0').filter(feature => ids.includes(feature.id))).toEqual([])
+    expect(availableFeatureGuides('0.18.0').filter(feature => feature.version === '0.18.0').map(feature => feature.id)).toEqual(ids)
+    expect(advanceFeatureDiscovery({ version: '0.17.0', pending: [], notified: [] }, '0.18.0', false).pending).toEqual(ids)
   })
 
   it('combines skipped releases without dropping unseen or dismissed items', () => {

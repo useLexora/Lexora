@@ -1,8 +1,16 @@
 import type { FeatureGuideId } from '@buddy-shared/onboarding/featureDiscovery'
 
+const inlineBeacon = { side: 'right', align: 'center', offsetX: 12 } as const
+
 const targets = {
   'follow-up-behavior': [
-    { id: 'follow-up-behavior', selector: '[data-testid="follow-up-behavior-setting"]', title: 'discovery.follow-up-behavior.title', description: 'discovery.follow-up-behavior.hint', side: 'bottom', align: 'start' },
+    { id: 'follow-up-behavior', selector: '[data-testid="follow-up-behavior-setting"] .desktop-segmented-control', title: 'discovery.follow-up-behavior.title', description: 'discovery.follow-up-behavior.hint', beacon: inlineBeacon, side: 'top', align: 'end' },
+  ],
+  'speech-settings': [
+    { id: 'speech-settings', selector: '[data-testid="speech-output-settings"] h3', title: 'discovery.speech-settings.title', description: 'discovery.speech-settings.hint', beacon: inlineBeacon, side: 'bottom', align: 'start' },
+  ],
+  'image-settings': [
+    { id: 'image-settings', selector: '[data-image-settings] > h2', title: 'discovery.image-settings.title', description: 'discovery.image-settings.hint', beacon: inlineBeacon, side: 'bottom', align: 'start' },
   ],
   'navigation-layout': [
     { id: 'navigation-layout', selector: '.desktop-navigation-layout-settings', title: 'discovery.navigation-layout.title', description: 'discovery.navigation-layout.hint', side: 'bottom', align: 'center' },
@@ -19,8 +27,12 @@ const targets = {
   ],
 } as const
 
-export type FeatureGuideStep = typeof targets[FeatureGuideId][number] & { featureId: FeatureGuideId }
-
-export function featureGuideSteps(ids: readonly FeatureGuideId[]): FeatureGuideStep[] {
-  return ids.flatMap(featureId => targets[featureId].map(target => ({ ...target, featureId })))
+export function featureGuideSteps(ids: readonly FeatureGuideId[]) {
+  return ids.flatMap(featureId => targets[featureId].map(target => ({
+    ...target,
+    beacon: 'beacon' in target ? target.beacon : { side: target.side, align: target.align },
+    featureId,
+  })))
 }
+
+export type FeatureGuideStep = ReturnType<typeof featureGuideSteps>[number]

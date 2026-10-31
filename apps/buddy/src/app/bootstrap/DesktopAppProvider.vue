@@ -330,6 +330,8 @@ const featureDiscovery = useFeatureDiscovery({
       'additional-directories': desktopRouteLocations.tasks(),
       'network-permissions': desktopRouteLocations.settings('browser'),
       'follow-up-behavior': desktopRouteLocations.settings('runtime'),
+      'speech-settings': desktopRouteLocations.settings('speech'),
+      'image-settings': desktopRouteLocations.settings('models'),
     }[id]
     await navigation.navigate(location)
     if (router.currentRoute.value.path !== router.resolve(location).path)
