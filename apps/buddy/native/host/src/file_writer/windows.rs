@@ -9,11 +9,12 @@ use std::{
 };
 use windows_sys::Win32::{
     Foundation::{
-        ERROR_ACCESS_DENIED, ERROR_LOCK_VIOLATION, ERROR_SHARING_VIOLATION, ERROR_WRITE_PROTECT,
-        GetLastError,
+        ERROR_ACCESS_DENIED, ERROR_LOCK_VIOLATION, ERROR_NOT_SUPPORTED, ERROR_SHARING_VIOLATION,
+        ERROR_WRITE_PROTECT, GetLastError,
     },
     Storage::FileSystem::{
-        FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ, MoveFileExW, ReplaceFileW,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ, MOVEFILE_REPLACE_EXISTING, MoveFileExW,
+        ReplaceFileW,
     },
 };
 
@@ -99,7 +100,23 @@ pub fn write(request: &WriteBytesRequest<'_>) -> Result<(), WriteError> {
         };
         if replaced == 0 {
             // SAFETY: GetLastError has no preconditions and immediately follows ReplaceFileW.
-            let error = unsafe { GetLastError() };
+            let mut error = unsafe { GetLastError() };
+            if error == ERROR_NOT_SUPPORTED {
+                // Redirectors such as \\wsl.localhost reject ReplaceFileW but rename over an existing file atomically.
+                // SAFETY: Both buffers are terminated and remain alive for the call.
+                let moved = unsafe {
+                    MoveFileExW(
+                        replacement.as_ptr(),
+                        destination.as_ptr(),
+                        MOVEFILE_REPLACE_EXISTING,
+                    )
+                };
+                if moved != 0 {
+                    return Ok(());
+                }
+                // SAFETY: GetLastError has no preconditions and immediately follows MoveFileExW.
+                error = unsafe { GetLastError() };
+            }
             let outcome = replacement_failure(error);
             if matches!(outcome, WriteError::Failed) {
                 return Err(outcome);

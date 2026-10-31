@@ -2,7 +2,7 @@ use super::{
     io,
     journal::Journal,
     operations,
-    protocol::{Command, Error, MAX_FRAME, Request, Result, Status, VERSION},
+    protocol::{Action, Command, Error, MAX_FRAME, Request, Result, Status, VERSION},
     resources::{Claim, Roots, contains, identity, overlap, path_key},
 };
 use notify::{RecursiveMode, Watcher};
@@ -84,33 +84,16 @@ pub fn serve(directory: &Path) -> Result<()> {
     });
     let changed = Arc::new(Mutex::new(Vec::new()));
     let watcher_changes = changed.clone();
-    let watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
-        if result
-            .as_ref()
-            .is_ok_and(|event| matches!(event.kind, notify::EventKind::Access(_)))
-        {
-            return;
-        }
-        if let Ok(mut changes) = watcher_changes.lock() {
-            if changes.len() >= 256 {
-                changes.clear();
-                changes.push(std::path::PathBuf::new());
-            } else {
-                changes.extend(
-                    result
-                        .map(|event| event.paths)
-                        .unwrap_or_else(|_| vec![std::path::PathBuf::new()]),
-                );
-            }
-        }
-    })
-    .ok();
+    let watcher =
+        notify::recommended_watcher(move |result| record_change(&watcher_changes, result)).ok();
     let mut engine = Engine {
         roots: Roots::default(),
         journal,
         controls,
         output,
         watcher,
+        poller: None,
+        changes: changed.clone(),
         subscriptions: HashSet::new(),
         watched: HashMap::new(),
         pending: VecDeque::new(),
@@ -165,12 +148,46 @@ pub fn serve(directory: &Path) -> Result<()> {
     Ok(())
 }
 
+fn record_change(changes: &Mutex<Vec<PathBuf>>, result: notify::Result<notify::Event>) {
+    if result
+        .as_ref()
+        .is_ok_and(|event| matches!(event.kind, notify::EventKind::Access(_)))
+    {
+        return;
+    }
+    if let Ok(mut changes) = changes.lock() {
+        if changes.len() >= 256 {
+            changes.clear();
+            changes.push(PathBuf::new());
+        } else {
+            changes.extend(
+                result
+                    .map(|event| event.paths)
+                    .unwrap_or_else(|_| vec![PathBuf::new()]),
+            );
+        }
+    }
+}
+
+// Volumes that never push change notifications (\\wsl.localhost, network shares) are polled instead.
+fn is_polled(directory: &Path) -> bool {
+    #[cfg(windows)]
+    return super::windows_shell::validate_trash_path(directory).is_err();
+    #[cfg(not(windows))]
+    {
+        let _ = directory;
+        false
+    }
+}
+
 struct Engine {
     roots: Roots,
     journal: Journal,
     controls: Arc<Mutex<Controls>>,
     output: Output,
     watcher: Option<notify::RecommendedWatcher>,
+    poller: Option<notify::PollWatcher>,
+    changes: Arc<Mutex<Vec<PathBuf>>>,
     subscriptions: HashSet<String>,
     watched: HashMap<PathBuf, String>,
     pending: VecDeque<Request>,
@@ -178,15 +195,46 @@ struct Engine {
 }
 
 impl Engine {
+    fn watch_path(&mut self, directory: &Path) -> bool {
+        if is_polled(directory) {
+            if self.poller.is_none() {
+                let changes = self.changes.clone();
+                self.poller = notify::PollWatcher::new(
+                    move |result| record_change(&changes, result),
+                    notify::Config::default().with_poll_interval(Duration::from_secs(2)),
+                )
+                .ok();
+            }
+            self.poller
+                .as_mut()
+                .is_some_and(|poller| poller.watch(directory, RecursiveMode::NonRecursive).is_ok())
+        } else {
+            self.watcher.as_mut().is_some_and(|watcher| {
+                watcher
+                    .watch(directory, RecursiveMode::NonRecursive)
+                    .is_ok()
+            })
+        }
+    }
+
+    fn unwatch_path(&mut self, directory: &Path) {
+        if let Some(watcher) = &mut self.watcher {
+            let _ = watcher.unwatch(directory);
+        }
+        if let Some(poller) = &mut self.poller {
+            let _ = poller.unwatch(directory);
+        }
+    }
+
     fn watch_directory(&mut self, key: &str, path: &str) -> Result<()> {
         if !self.subscriptions.contains(key) {
             return Ok(());
         }
         let root = self.roots.get(key)?;
         let directory = root.resolve(path)?;
-        let Some(watcher) = &mut self.watcher else {
+        if self.watcher.is_none() {
             return Ok(());
-        };
+        }
         for directory in directory
             .ancestors()
             .take_while(|path| path.starts_with(&root.path))
@@ -204,31 +252,54 @@ impl Engine {
                 continue;
             }
             if self.watched.remove(directory).is_some() {
-                let _ = watcher.unwatch(directory);
+                self.unwatch_path(directory);
             }
-            if watcher
-                .watch(directory, RecursiveMode::NonRecursive)
-                .is_ok()
-            {
+            if self.watch_path(directory) {
                 self.watched.insert(directory.to_owned(), current);
             }
         }
         root.check()
     }
 
+    // A watched directory cannot be deleted, renamed or moved on some volumes (\\wsl.localhost), so drop the
+    // watches below the source first; the next listing watches them again.
+    fn release_watches(&mut self, root: &str, path: &str) {
+        let Ok(root) = self.roots.get(root) else {
+            return;
+        };
+        let Ok(source) = root.resolve(path) else {
+            return;
+        };
+        let below: Vec<PathBuf> = self
+            .watched
+            .keys()
+            .filter(|directory| directory.starts_with(&source))
+            .cloned()
+            .collect();
+        for directory in below {
+            self.watched.remove(&directory);
+            self.unwatch_path(&directory);
+        }
+    }
+
     fn revoke_watch(&mut self, key: &str) {
         self.subscriptions.remove(key);
-        self.watched.retain(|path, _| {
-            let retained = self.subscriptions.iter().any(|key| {
-                self.roots.0.get(key).is_some_and(|root| {
-                    !root.revoked.load(Ordering::SeqCst) && path.starts_with(&root.path)
+        let released: Vec<PathBuf> = self
+            .watched
+            .keys()
+            .filter(|path| {
+                !self.subscriptions.iter().any(|key| {
+                    self.roots.0.get(key).is_some_and(|root| {
+                        !root.revoked.load(Ordering::SeqCst) && path.starts_with(&root.path)
+                    })
                 })
-            });
-            if !retained && let Some(watcher) = &mut self.watcher {
-                let _ = watcher.unwatch(path);
-            }
-            retained
-        });
+            })
+            .cloned()
+            .collect();
+        for path in released {
+            self.watched.remove(&path);
+            self.unwatch_path(&path);
+        }
     }
 
     fn dispatch(&mut self, request: &Request) -> Result<bool> {
@@ -393,6 +464,12 @@ impl Engine {
                     .lock()
                     .map_err(|_| Error::Recovery)?
                     .cancellation(&request.operation_id);
+                if matches!(
+                    request.action,
+                    Action::Trash | Action::Rename { .. } | Action::Move { .. }
+                ) {
+                    self.release_watches(&request.root, &request.path);
+                }
                 let output = self.output.clone();
                 let operation_id = request.operation_id.clone();
                 let progress = |bytes: u64| {
