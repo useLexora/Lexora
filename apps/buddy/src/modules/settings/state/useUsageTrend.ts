@@ -1,5 +1,5 @@
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
-import type { LocalUsageTrend, UsagePeriod } from '@buddy-shared/usage/usageAnalyticsApi'
+import type { LocalUsageTrend, UsagePeriod, UsageTrendRequest } from '@buddy-shared/usage/usageAnalyticsApi'
 import type { Ref } from 'vue'
 import type { UsageTrendView } from '../model/usageTrend'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
@@ -17,11 +17,14 @@ interface UsageTrendOptions {
 }
 
 export function useUsageTrend(options: UsageTrendOptions) {
-  const view = shallowRef<UsageTrendView>('year')
+  const view = shallowRef<UsageTrendView>('month')
   const selectedDate = shallowRef<string | null>(null)
   const date = computed(() => selectedDate.value ?? options.annual.value.endDate)
   const request = computed(() => usageTrendRequest(view.value, date.value, options.annual.value))
-  const buckets = shallowRef<LocalUsageTrend>([])
+  const snapshot = shallowRef<{ request: UsageTrendRequest, buckets: LocalUsageTrend } | null>(null)
+  const buckets = computed<LocalUsageTrend>(() => snapshot.value?.buckets ?? [])
+  const displayRequest = computed(() => snapshot.value?.request ?? request.value)
+  const hasSnapshot = computed(() => snapshot.value !== null)
   const loading = shallowRef(true)
   const error = shallowRef<string | null>(null)
   const retryRevision = shallowRef(0)
@@ -37,16 +40,17 @@ export function useUsageTrend(options: UsageTrendOptions) {
     onCleanup(() => active = false)
     loading.value = true
     error.value = null
-    buckets.value = []
-    if (status !== 'ready')
+    if (status !== 'ready') {
+      snapshot.value = null
       return
+    }
     try {
       await options.ready
       if (!active)
         return
       const result = await options.api.trend(input)
       if (active)
-        buckets.value = result
+        snapshot.value = { request: input, buckets: result }
     }
     catch (cause) {
       if (active)
@@ -64,6 +68,8 @@ export function useUsageTrend(options: UsageTrendOptions) {
     request,
     annual: options.annual,
     buckets: readonly(buckets),
+    displayRequest,
+    hasSnapshot,
     loading: readonly(loading),
     error: readonly(error),
     setView: (value: UsageTrendView) => view.value = value,
