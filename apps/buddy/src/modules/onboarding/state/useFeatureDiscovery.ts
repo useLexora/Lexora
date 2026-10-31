@@ -3,7 +3,7 @@ import type { FeatureDiscoveryState, FeatureGuideId } from '@buddy-shared/onboar
 import type { Ref } from 'vue'
 import type { FeatureGuideStep } from '../model/featureGuideSteps'
 import type { ApplicationSettings } from '@/modules/settings/contracts'
-import { advanceFeatureDiscovery, availableFeatureGuides } from '@buddy-shared/onboarding/featureDiscovery'
+import { advanceFeatureDiscovery, availableFeatureGuides, FEATURE_GUIDES } from '@buddy-shared/onboarding/featureDiscovery'
 import { computed, onScopeDispose, shallowRef, watch } from 'vue'
 import { featureGuideSteps } from '../model/featureGuideSteps'
 
@@ -23,8 +23,9 @@ export function useFeatureDiscovery(options: {
   const initialized = shallowRef(false)
   const state = computed(() => settings.config.value?.desktop.featureDiscovery)
   const announcementsEnabled = computed(() => settings.config.value?.desktop.featureAnnouncementsEnabled ?? true)
-  const features = computed(() => availableFeatureGuides(appInfo.value?.version ?? ''))
-  const unread = computed(() => features.value.filter(feature => state.value?.pending.includes(feature.id)))
+  const releasedFeatures = computed(() => availableFeatureGuides(appInfo.value?.version ?? ''))
+  const features = computed(() => import.meta.env.DEV && appInfo.value && !appInfo.value.isPackaged ? FEATURE_GUIDES : releasedFeatures.value)
+  const unread = computed(() => releasedFeatures.value.filter(feature => state.value?.pending.includes(feature.id)))
   const unannounced = computed(() => unread.value.filter(feature => !state.value?.notified.includes(feature.id)))
   let disposed = false
   let initialization: Promise<boolean> | undefined
@@ -118,7 +119,7 @@ export function useFeatureDiscovery(options: {
   function arrived(id: FeatureGuideStep['id']) {
     const current = session.value
     const step = active.value
-    if (!current || !step || step.id !== id || !state.value?.pending.includes(step.featureId))
+    if (!current || !step || step.id !== id || !unread.value.some(feature => feature.id === step.featureId))
       return
     if (current.steps[current.index + 1]?.featureId === step.featureId)
       return

@@ -1,20 +1,28 @@
 import fs from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import { expect, test } from '../fixtures/electron.mjs'
 
-async function launchRelease(instance) {
+const { parse } = createRequire(new URL('../../../apps/buddy/package.json', import.meta.url))('smol-toml')
+
+async function launchRelease(instance, version = '0.14.0') {
+  const initial = parse(await fs.readFile(path.join(instance.home, 'config.toml'), 'utf8')).desktop?.feature_discovery ?? { version: '', pending: [], notified: [] }
   const launched = await instance.launch()
-  await launched.app.evaluate(({ app }) => {
+  const currentVersion = await launched.page.evaluate(async () => (await window.lexoraDesktop.app.getInfo()).version)
+  await expect.poll(() => launched.page.evaluate(async () => (await window.lexoraDesktop.settings.get()).desktop.featureDiscovery.version)).toBe(currentVersion)
+  await launched.app.evaluate(({ app }, version) => {
     if (app.getName() !== 'Lexora Buddy Test')
       throw new Error('Release previews require an isolated test instance')
-    app.getVersion = () => '0.14.0'
-  })
+    app.getVersion = () => version
+  }, version)
+  await launched.page.evaluate(featureDiscovery => window.lexoraDesktop.settings.update({ desktop: { featureDiscovery } }), initial)
   await launched.page.reload()
   return launched
 }
 
 async function openFeatures(page) {
-  await page.evaluate(() => window.location.hash = '/settings/about')
+  await page.locator('.desktop-app-sidebar').getByRole('button', { name: '设置', exact: true }).click()
+  await page.locator('.desktop-settings-sidebar').getByRole('link', { name: '关于', exact: true }).click()
   await page.locator('.desktop-onboarding-settings').getByRole('button', { name: '查看列表', exact: true }).click()
   await expect(page.locator('.feature-discovery-dialog')).toBeVisible()
 }
