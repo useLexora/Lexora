@@ -16,7 +16,7 @@ function fixture() {
   const show = shallowRef(true)
   const target = shallowRef<LocalSpace | null>(space('first'))
   const save = vi.fn<(input: TaskSpaceInput) => Promise<boolean>>().mockResolvedValue(true)
-  const selectDirectory = vi.fn<() => Promise<string | null>>().mockResolvedValue(null)
+  const selectDirectory = vi.fn<(source?: { wsl: string }) => Promise<string | null>>().mockResolvedValue(null)
   const editor = scope.run(() => useSpaceEditor({ show: () => show.value, space: () => target.value, selectDirectory, save, onSaved: () => {
     show.value = false
   } }))!
@@ -24,6 +24,18 @@ function fixture() {
 }
 
 describe('space editing session', () => {
+  it('asks for a WSL directory only when the WSL entry is used', async () => {
+    const f = fixture()
+    const root = String.raw`\\wsl.localhost\Ubuntu-24.04\home\user\project`
+    f.selectDirectory.mockResolvedValueOnce(root)
+    await f.editor.selectPrimaryDirectory({ wsl: 'Ubuntu-24.04' })
+    expect(f.selectDirectory).toHaveBeenLastCalledWith({ wsl: 'Ubuntu-24.04' })
+    expect(f.editor.form.primaryDirectory).toEqual({ id: null, root })
+    f.selectDirectory.mockResolvedValueOnce('/other')
+    await f.editor.selectAdditionalDirectory()
+    expect(f.selectDirectory).toHaveBeenLastCalledWith(undefined)
+  })
+
   it('shows existing additional directories and submits only explicit removals and selected additions', async () => {
     const f = fixture()
     const timestamp = '2026-09-08T00:00:00.000Z'

@@ -127,9 +127,9 @@ export function useTaskIndex(options: TaskIndexOptions) {
         data.applyConversation(conversation)
       return true
     },
-    async selectSpaceDirectory() {
+    async selectSpaceDirectory(source) {
       try {
-        return await api.spaces.selectDirectory()
+        return await api.spaces.selectDirectory(source)
       }
       catch (error) {
         setError(error)

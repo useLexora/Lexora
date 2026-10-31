@@ -1,20 +1,21 @@
 <script setup lang="ts">
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 
-import type { TaskSpacePrimaryDirectoryInput } from '@/modules/tasks/state/task-index/typing'
-import { Folder20Regular } from '@vicons/fluent'
-import { NButton, NInput } from 'naive-ui'
+import type { SpaceDirectorySource, TaskSpacePrimaryDirectoryInput } from '@/modules/tasks/state/task-index/typing'
+import { NButton } from 'naive-ui'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
-import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
+import DesktopDirectoryPathInput from './DesktopDirectoryPathInput.vue'
+import DesktopDirectorySourceButton from './DesktopDirectorySourceButton.vue'
 
 const props = defineProps<{
   disabled: boolean
   language: BuddyLocale
   primaryDirectory: TaskSpacePrimaryDirectoryInput | null
+  wslDistributions: readonly string[]
 }>()
 const emit = defineEmits<{
   removePrimary: []
-  selectPrimary: []
+  selectPrimary: [source?: SpaceDirectorySource]
 }>()
 const { t } = useBuddyI18n(() => props.language)
 </script>
@@ -27,23 +28,19 @@ const { t } = useBuddyI18n(() => props.language)
     </div>
 
     <div class="flex items-center gap-2">
-      <NInput
+      <DesktopDirectoryPathInput
         class="desktop-space-primary-directory__input"
-        readonly
         :placeholder="t('desktop.tasks.spaceManagedWorkspace')"
-        :value="primaryDirectory?.root ?? ''"
-      >
-        <template #prefix>
-          <DesktopIcon :component="Folder20Regular" />
-        </template>
-      </NInput>
-      <NButton
+        :root="primaryDirectory?.root ?? ''"
+      />
+      <DesktopDirectorySourceButton
         v-if="!primaryDirectory"
         :disabled="disabled"
-        @click="emit('selectPrimary')"
-      >
-        {{ t('desktop.tasks.selectSpaceWorkingDirectory') }}
-      </NButton>
+        :distributions="wslDistributions"
+        :label="t('desktop.tasks.selectSpaceWorkingDirectory')"
+        :language="language"
+        @select="emit('selectPrimary', $event)"
+      />
       <NButton
         v-else
         :disabled="disabled"
@@ -75,10 +72,5 @@ const { t } = useBuddyI18n(() => props.language)
 .desktop-space-primary-directory__input {
   min-width: 0;
   flex: 1;
-}
-
-.desktop-space-primary-directory__input :deep(.n-input__input-el) {
-  font-family: var(--buddy-font-mono);
-  font-size: 0.75rem;
 }
 </style>

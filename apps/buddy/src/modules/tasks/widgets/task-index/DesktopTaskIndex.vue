@@ -6,9 +6,9 @@ import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
 
 import type { TaskIndex, TaskMarks } from '../../contracts'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import type { TaskSpaceInput } from '@/modules/tasks/state/task-index/typing'
+import type { SpaceDirectorySource, TaskSpaceInput } from '@/modules/tasks/state/task-index/typing'
 import { Add20Regular, Tag20Regular } from '@vicons/fluent'
-import { NAlert, NButton, NInput, NModal, NTooltip } from 'naive-ui'
+import { NAlert, NButton, NInput, NModal, NTooltip, useMessage } from 'naive-ui'
 import { computed, shallowRef, toRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopSpaceDialog from '@/modules/tasks/widgets/task-index/DesktopSpaceDialog.vue'
@@ -37,7 +37,7 @@ const props = defineProps<{
   pinnedItems: ReadonlyArray<DesktopTaskPinnedItem>
   sidebar: TaskIndex['sidebar']
   spaces: ReadonlyArray<LocalSpace>
-  selectSpaceDirectory: () => Promise<string | null>
+  selectSpaceDirectory: (source?: SpaceDirectorySource) => Promise<string | null>
   createSpace: (input: TaskSpaceInput) => Promise<boolean>
   moveTaskToSpace: (taskId: string, spaceId: string) => Promise<boolean>
   updateSpace: (input: TaskSpaceInput & { spaceId: string }) => Promise<boolean>

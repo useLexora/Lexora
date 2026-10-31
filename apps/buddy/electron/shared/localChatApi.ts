@@ -193,6 +193,7 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   spacesList: 'lexora:buddy:spaces:list',
   spacesSearchFiles: 'lexora:buddy:spaces:search-files',
   spacesSelectDirectory: 'lexora:buddy:spaces:select-directory',
+  spacesWslDistributions: 'lexora:buddy:spaces:wsl-distributions',
   spacesUpdate: 'lexora:buddy:spaces:update',
   providerAuthChallenge: 'lexora:buddy:providers:auth-challenge',
   providersChanged: 'lexora:buddy:providers:changed',
@@ -260,6 +261,9 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
 interface LocalMutationResult {
   ok: true
 }
+
+// Where the system folder dialog should open; without it the dialog opens where the user last was.
+export interface SpaceDirectorySource { wsl: string }
 
 export interface LocalChatApi {
   executions: {
@@ -422,7 +426,8 @@ export interface LocalChatApi {
     delete: (spaceId: string) => Promise<LocalMutationResult>
     list: (limit?: number) => Promise<ReadonlyArray<LocalSpace>>
     searchFiles: (spaceId: string, query: string) => Promise<ReadonlyArray<LocalSpaceFile>>
-    selectDirectory: () => Promise<string | null>
+    selectDirectory: (source?: SpaceDirectorySource) => Promise<string | null>
+    wslDistributions: () => Promise<string[]>
     update: (input: LocalSpaceUpdateInput) => Promise<LocalSpace>
   }
   skills: {

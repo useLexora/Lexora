@@ -25,7 +25,7 @@ import type { ChatApprovalDecision, ChatContextUsage, ChatRunEventBuckets } from
 import type { ChatBlocker } from './model/status/typing'
 import type { ChatComposerInteraction, ComposerResourceView } from './state/composer/typing'
 import type { DraftRestorationConflict, DraftRestorationState } from './state/drafts/typing'
-import type { TaskSpaceInput } from './state/task-index/typing'
+import type { SpaceDirectorySource, TaskSpaceInput } from './state/task-index/typing'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { ChatComposerContextOptions, ChatComposerSessionScope, ChatComposerSubmitPayload } from '@/modules/prompt-input'
 
@@ -72,7 +72,7 @@ export interface TaskIndex {
   deleteTask: (taskId: string) => Promise<void>
   renameTask: (taskId: string, title: string) => Promise<boolean>
   moveTaskToSpace: (taskId: string, spaceId: string) => Promise<boolean>
-  selectSpaceDirectory: () => Promise<string | null>
+  selectSpaceDirectory: (source?: SpaceDirectorySource) => Promise<string | null>
   openSpaceDirectory: (spaceId: string) => Promise<boolean>
   refresh: () => Promise<void>
 }

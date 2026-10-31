@@ -1,11 +1,11 @@
 import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
-import type { TaskSpaceInput, TaskSpacePrimaryDirectoryInput } from '../../state/task-index/typing'
+import type { SpaceDirectorySource, TaskSpaceInput, TaskSpacePrimaryDirectoryInput } from '../../state/task-index/typing'
 import { computed, onScopeDispose, reactive, readonly, shallowRef, watch } from 'vue'
 
 interface SpaceEditorOptions {
   show: () => boolean
   space: () => LocalSpace | null
-  selectDirectory: () => Promise<string | null>
+  selectDirectory: (source?: SpaceDirectorySource) => Promise<string | null>
   save: (input: TaskSpaceInput) => Promise<boolean>
   onSaved: () => void
 }
@@ -52,14 +52,14 @@ export function useSpaceEditor(options: SpaceEditorOptions) {
   const directoryChangeBlocked = computed(() => directoryEditingDisabled.value && directoryConfigurationChanged.value)
   const canSave = computed(() => Boolean(form.name.trim()) && !saving.value && !selectingDirectory.value && !directoryChangeBlocked.value)
 
-  async function selectPrimaryDirectory() {
+  async function selectPrimaryDirectory(source?: SpaceDirectorySource) {
     if (form.primaryDirectory || directoryEditingDisabled.value || selectingDirectory.value || saving.value)
       return
     const current = session
     selectingDirectory.value = true
     failed.value = false
     try {
-      const selected = await options.selectDirectory()
+      const selected = await options.selectDirectory(source)
       if (!selected || current !== session || directoryEditingDisabled.value)
         return
       const existing = options.space()?.additionalDirectories.find(directory => directory.root === selected)
@@ -78,14 +78,14 @@ export function useSpaceEditor(options: SpaceEditorOptions) {
     }
   }
 
-  async function selectAdditionalDirectory() {
+  async function selectAdditionalDirectory(source?: SpaceDirectorySource) {
     if (directoryEditingDisabled.value || selectingDirectory.value || saving.value || form.additionalDirectories.length + Number(Boolean(form.primaryDirectory)) >= 32)
       return
     const current = session
     selectingDirectory.value = true
     failed.value = false
     try {
-      const selected = await options.selectDirectory()
+      const selected = await options.selectDirectory(source)
       if (!selected || current !== session || directoryEditingDisabled.value
         || selected === form.primaryDirectory?.root || form.additionalDirectories.some(directory => directory.root === selected)) {
         return
