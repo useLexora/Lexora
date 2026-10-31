@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const imageReadingLimits = { inputBytes: 32 * 1024 * 1024, textBytes: 128 * 1024 } as const
+export const imageReadingLimits = { maxImages: 16, inputBytes: 32 * 1024 * 1024, textBytes: 128 * 1024 } as const
 export const ocrServiceInputSchema = z.object({ api: z.literal('paddleocr'), endpoint: z.url({ protocol: /^https?$/ }) }).strict()
 export const ocrServiceConfigSchema = ocrServiceInputSchema.extend({ credentialId: z.uuid().optional() }).strict()
 export type OcrServiceConfig = z.infer<typeof ocrServiceConfigSchema>

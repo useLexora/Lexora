@@ -12,7 +12,7 @@ import {
   IMAGE_GENERATION_TOOL_NAME,
 } from '../imageGenerationToolContract'
 
-const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0])
+const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAFElEQVR4AQEJAPb/AAD/AP//AAD/EPgD/UE7EkoAAAAASUVORK5CYII=', 'base64')
 const workspaceContext = {
   cwd: '/workspace',
   grants: [{
@@ -35,6 +35,7 @@ describe('imageGenerationExtension', () => {
     }))
     const registerGeneratedImages = vi.fn(async () => [{
       id: 'generated-1',
+      currentPath: '/workspace/images/像素风角色.png',
       mimeType: 'image/png',
     }])
     const generate = vi.fn(async () => ({
@@ -45,10 +46,12 @@ describe('imageGenerationExtension', () => {
     const extension = createTestImageExtension({
       ...workspaceContext,
       artifactService: {
+        listConversationArtifacts: () => [{ id: 'reference-1', kind: 'file', mimeType: 'image/png', createdAt: '2026-10-31T00:00:00Z', updatedAt: '2026-10-31T00:00:00Z' }],
         materializeConversationImages,
         registerGeneratedImages,
       },
       attachmentService: {
+        listForConversation: () => [],
         materializeConversationImages: vi.fn(),
       },
       conversationId: 'conversation-1',
@@ -84,7 +87,7 @@ describe('imageGenerationExtension', () => {
         responseId: 'response-1',
       },
     })
-    expect(materializeConversationImages).toHaveBeenCalledWith('conversation-1')
+    expect(materializeConversationImages).toHaveBeenCalledWith('conversation-1', ['reference-1'], { ...workspaceContext, signal: expect.any(AbortSignal) })
     expect(generate).toHaveBeenCalledWith(expect.objectContaining({
       inputImages: [expect.objectContaining({ mimeType: 'image/png' })],
       prompt: 'Turn the reference into Q-style pixel art',
@@ -131,12 +134,28 @@ describe('imageGenerationExtension', () => {
     expect(generate).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['IMAGE_GENERATION_REFERENCE_UNAVAILABLE', 'failed', 'No image request was submitted'],
+    ['IMAGE_GENERATION_INVALID_RESPONSE', 'unknown', 'do not automatically repeat'],
+  ] as const)('distinguishes reference preparation failure from an unknown provider result: %s', async (code, outcome, recovery) => {
+    let tool: ToolDefinition | undefined
+    createImageGenerationExtension({
+      getRunId: () => 'run-1',
+      service: { supports: () => true, generate: async () => { throw new ImageGenerationError(code, { cause: new Error('private body'), outcome }) } },
+    }).factory({ on: () => {}, registerTool: (registered: ToolDefinition) => tool = registered } as never)
+    const result = await tool!.execute!('fixture-call', { outputPath: 'image.png', prompt: 'Create' }, undefined, undefined, { model: openAiModel() } as never)
+    expect(result.details).toMatchObject({ code, outcome, artifactIds: [] })
+    expect(result.content).toEqual([{ type: 'text', text: expect.stringContaining(recovery) }])
+    expect(JSON.stringify(result)).not.toContain('private body')
+  })
+
   it('returns safe provider diagnostics to the model', async () => {
     let tool: ToolDefinition | undefined
     createTestImageExtension({
       ...workspaceContext,
       artifactService: emptyArtifactService(),
       attachmentService: {
+        listForConversation: () => [],
         materializeConversationImages: vi.fn(),
       },
       conversationId: 'conversation-1',
@@ -189,6 +208,7 @@ describe('imageGenerationExtension', () => {
 
 function emptyArtifactService() {
   return {
+    listConversationArtifacts: () => [],
     materializeConversationImages: vi.fn(async () => ({ images: [], records: [] })),
     registerGeneratedImages: vi.fn(async () => []),
   }

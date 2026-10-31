@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer'
 import { ImageGenerationError } from './ImageGenerationGateway'
+import { runNativeImage } from './runNativeImage'
 
 const MAX_GENERATED_IMAGE_BYTES = 32 * 1024 * 1024
 const MAX_RESPONSE_BYTES = Math.ceil(MAX_GENERATED_IMAGE_BYTES * 4 / 3) + 2 * 1024 * 1024
@@ -62,4 +63,20 @@ export function decodePng(value: string): Uint8Array {
     throw new ImageGenerationError('IMAGE_GENERATION_INVALID_RESPONSE')
   }
   return new Uint8Array(bytes)
+}
+
+export async function validateGeneratedImages(images: readonly { bytes: Uint8Array, mimeType: string }[], signal: AbortSignal): Promise<void> {
+  if (!images.length)
+    throw new ImageGenerationError('IMAGE_GENERATION_INVALID_RESPONSE')
+  for (const image of images) {
+    try {
+      if (image.mimeType !== 'image/png')
+        throw new ImageGenerationError('IMAGE_GENERATION_INVALID_RESPONSE')
+      await runNativeImage(image.bytes, { operation: 'validate', options: { mimeType: image.mimeType } }, signal)
+    }
+    catch (cause) {
+      signal.throwIfAborted()
+      throw new ImageGenerationError('IMAGE_GENERATION_INVALID_RESPONSE', { cause })
+    }
+  }
 }

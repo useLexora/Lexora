@@ -57,7 +57,7 @@ describe('request attachment projection', () => {
   it('projects previous image tool results when switching models without editing history', () => {
     const tool = { role: 'toolResult' as const, toolCallId: 'call', toolName: 'read', isError: false, timestamp: 0, content: [{ type: 'text' as const, text: 'Working file: /workspace/image.png' }, { type: 'image' as const, mimeType: 'image/png', data: 'image-bytes' }] }
     const projected = projectMessageImages(tool, { ...model, input: ['text'] })
-    expect(projected).toMatchObject({ content: [{ type: 'text', text: 'Working file: /workspace/image.png' }, { type: 'text', text: expect.stringContaining('this model does not accept images') }] })
+    expect(projected).toMatchObject({ content: [{ type: 'text', text: 'Working file: /workspace/image.png' }, { type: 'text', text: expect.stringContaining('native image input is unavailable for this request') }] })
     expect(projectMessageImages(tool, model)).toBe(tool)
     expect(tool.content[1]).toMatchObject({ type: 'image', data: 'image-bytes' })
   })

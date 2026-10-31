@@ -11,11 +11,13 @@ import type { BuddySessionMode } from '../../../../shared/permissions/sessionMod
 import type { ApprovalService } from '../../approvals/ApprovalService'
 import type { BuddyToolClassificationResult } from '../../approvals/toolClassification'
 import type { AttachmentService } from '../../attachments/AttachmentService'
+import type { ImageBlobStore } from '../../attachments/ImageBlobStore'
 import type { ChangeCaptureService } from '../../changes/ChangeCaptureService'
 import type { MutationCoordinator } from '../../changes/MutationCoordinator'
 import type { DirectoryGrantService } from '../../directories/DirectoryGrantService'
 import type { DirectoryGrant } from '../../directories/resolveGrantedPath'
 import type { FileResourceCoordinator } from '../../files/FileResourceCoordinator'
+import type { ImageReadingMaterialWriter } from '../../images/ImageReadingMaterialStore'
 import type { ImageReadingService } from '../../images/ImageReadingService'
 import type { NetworkPermissionsStore } from '../../permissions/NetworkPermissionsClient'
 import type { ShellSandboxClient } from '../../sandbox/ShellSandboxClient'
@@ -29,6 +31,7 @@ import type { BuddyToolExposureResolver } from './discovery/toolDiscoveryContrac
 import { copyEventSnapshot } from '../../../../shared/events/eventSnapshot'
 import { createCapturedFileWriter } from '../../changes/CapturedFileWriter'
 import { SessionDirectoryGrants } from '../../directories/SessionDirectoryGrants'
+import { createImageReadingCapability } from '../../images/imageReadingExtension'
 import { observeSessionPermissions } from '../../permissions/observeSessionPermissions'
 import { ToolAuthorizationService } from '../../permissions/ToolAuthorizationService'
 import { ToolExecutionPermissions } from '../../permissions/ToolExecutionPermissions'
@@ -72,6 +75,8 @@ export interface BuddySessionExtensionServices {
 }
 
 export interface CreateBuddySessionExtensionsOptions {
+  imageStore?: ImageBlobStore
+  writeImageMaterial?: ImageReadingMaterialWriter
   actorKind?: 'actor' | 'npc'
   approvalPolicy: BuddyApprovalPolicy
   canonicalRoot: string
@@ -206,6 +211,15 @@ export async function createBuddySessionExtensions(
       sessionMode: options.sessionMode,
       signal: lifetime.signal,
     }))
+    if (services.imageReading && options.imageStore && options.writeImageMaterial) {
+      capabilities.push(createImageReadingCapability({
+        cwd: options.canonicalRoot,
+        store: options.imageStore,
+        writeMaterial: options.writeImageMaterial,
+        readImage: input => services.imageReading!.read({ ...input, runId: runContext.current?.runId, preferences: runContext.current?.imagePreferences }),
+        getGrants: toolCallId => [...grants.snapshot, ...executionPermissions.get(runContext.current, toolCallId)],
+      }))
+    }
     const shells = await services.shells?.snapshot(lifetime.signal)
     const shellCapability = createShellCapability({
       shells,

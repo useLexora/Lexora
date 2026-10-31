@@ -21,8 +21,10 @@ export function createToolMediaExtension(store: ImageBlobStore): BuddyInProcessE
           images.push({ ...await store.put(block.data), contentIndex, mimeType: block.mimeType })
           content.push({ ...block, data: '' })
         }
-        if (images.length)
+        if (images.length) {
+          content.push({ type: 'text' as const, text: `Saved image references (in order): ${images.map(image => `image:${image.sha256}`).join(', ')}. Use lexora_image_read with these references for focused inspection or comparison when needed.` })
           return { message: { ...message, content, buddyToolMedia: { version: 1, images } } satisfies ToolMediaReferenceMessage }
+        }
       })
     },
   }

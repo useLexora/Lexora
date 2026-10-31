@@ -18,6 +18,8 @@ export interface ImageGenerationToolDetails {
   artifactIds: string[]
   code?: string
   diagnostic?: ImageGenerationErrorDiagnostic
+  outputs?: Array<{ artifactId: string, path: string, mimeType: string }>
+  outcome?: 'failed' | 'unknown'
   responseId: string | null
   source?: Extract<BuddyToolPresentation, { card: 'image' }>['source']
 }

@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer'
 import { constants } from 'node:fs'
 import { open } from 'node:fs/promises'
-import { detectSupportedImageMimeTypeFromFile } from '@earendil-works/pi-coding-agent'
+import { detectReadingImageMime } from '../../images/detectReadingImageMime'
 import { decodeReadText, detectBinaryReadFormat } from './readFileContent'
 
 export type ReadFileSnapshot
@@ -40,6 +40,6 @@ export async function readFileSnapshot(path: string, signal?: AbortSignal): Prom
   const format = detectBinaryReadFormat(bytes)
   if (format)
     return { kind: 'omitted', format, sizeBytes: bytes.length }
-  const mimeType = await detectSupportedImageMimeTypeFromFile(path)
+  const mimeType = detectReadingImageMime(bytes)
   return mimeType ? { kind: 'image', bytes, mimeType } : { kind: 'text', text: decodeReadText(bytes) }
 }

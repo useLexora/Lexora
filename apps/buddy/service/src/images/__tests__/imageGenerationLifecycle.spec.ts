@@ -25,7 +25,7 @@ describe('image generation through the Pi session', () => {
     const requests: string[] = []
     const closed: string[] = []
     let pendingResponse: ServerResponse | undefined
-    const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0])
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAFElEQVR4AQEJAPb/AAD/AP//AAD/EPgD/UE7EkoAAAAASUVORK5CYII=', 'base64')
     const server = createServer((request, response) => {
       let body = ''
       request.setEncoding('utf8')
@@ -80,7 +80,7 @@ describe('image generation through the Pi session', () => {
         : { type: 'api_key', key: 'fixture-key' })
       let turns = 0
       vi.spyOn(runtime, 'streamSimple').mockImplementation(target => assistantResponse(target, turns++ === 0))
-      const source = { materializeConversationImages: async () => ({ images: [], records: [] }) }
+      const source = { listConversationArtifacts: () => [], listForConversation: () => [], materializeConversationImages: async () => ({ images: [], records: [] }) }
       const published: string[] = []
       service = new ImageGenerationService({
         conversationId: 'conversation-1',
@@ -92,7 +92,7 @@ describe('image generation through the Pi session', () => {
           async registerGeneratedImages(input) {
             expect(input.images).toEqual([{ bytes: new Uint8Array(png), mimeType: 'image/png' }])
             published.push(input.outputPath)
-            return [{ id: 'artifact-1' }]
+            return [{ id: 'artifact-1', currentPath: join(root, 'success.png'), mimeType: 'image/png' }]
           },
         },
         imageGenerationGateway: new OpenAiImageGenerationService({

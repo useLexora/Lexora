@@ -8,9 +8,11 @@ import type { RunRepository } from '../../storage/runRepository'
 import type { BuddySessionExtensionServices } from '../extensions/createBuddySessionExtensions'
 import type { BuddySessionBlueprint } from './BuddySessionBlueprint'
 import type { BuddyConversationTree } from './tree/BuddyConversationTree'
+import { join, resolve } from 'node:path'
 import { ApplicationEvents } from '../../../../shared/observability/ApplicationEvents'
 import { isExecutionProfileWithin } from '../../../../shared/permissions/executionProfile'
 import { AttachmentToolWorkspace } from '../../attachments/AttachmentToolWorkspace'
+import { conversationImageDirectory, ImageBlobStore } from '../../attachments/ImageBlobStore'
 import { canReadReferenceSnapshots } from '../../conversations/referenceSnapshotToolContract'
 import { ImageReadingMaterialStore } from '../../images/ImageReadingMaterialStore'
 import { supportsModelToolCalls } from '../../providers/modelCapabilities'
@@ -98,10 +100,14 @@ export class BuddySessionFactory {
       modelId: effectiveModel?.modelId ?? run.model,
       providerId: effectiveModel?.providerId ?? run.provider,
     })
+    const imageMaterials = new ImageReadingMaterialStore(blueprint.scratchRoot, blueprint.conversationId)
+    const imageStore = new ImageBlobStore(conversationImageDirectory(join(resolve(this.#options.conversationsDirectory), blueprint.conversationId)))
     const extensions = await events.operation('session.resources', async () => {
       if (run.purpose !== 'conversation.compaction')
         await this.#options.services.prepareForRun?.(input.signal)
       return createBuddySessionExtensions({
+        imageStore,
+        writeImageMaterial: (text, signal) => imageMaterials.write(text, signal),
         actorKind: blueprint.actor?.kind,
         toolScope: run.purpose === 'conversation.compaction' ? { mode: 'none' } : blueprint.actor?.settings.tools,
         fileAccessLimit: this.#options.getRunPermissionCeiling(run.id) === 'read_only' ? 'read_only' : blueprint.actor?.settings.limits.fileAccess,
@@ -120,7 +126,6 @@ export class BuddySessionFactory {
     try {
       const tree = await this.#options.tree.open(run, blueprint.canonicalRoot, selected.model)
       let reusable: ReturnType<typeof createReusableBuddySession> | undefined
-      const imageMaterials = new ImageReadingMaterialStore(blueprint.scratchRoot, blueprint.conversationId)
       const session = await createBuddySession({
         writeImageMaterial: (text, signal) => imageMaterials.write(text, signal),
         readImage: this.#options.services.imageReading ? input => this.#options.services.imageReading!.read({ ...input, runId: extensions.runContext.current?.runId, preferences: extensions.runContext.current?.imagePreferences }) : undefined,

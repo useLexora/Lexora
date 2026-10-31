@@ -34,8 +34,10 @@ export function projectMessageImages(message: AgentSession['messages'][number], 
       return block
     }
     changed = true
-    const reason = model.input.includes('image') ? 'image input limits' : 'this model does not accept images'
-    return { type: 'text' as const, text: `[Image content is not supplied: ${reason}. Visual details are unavailable.]` }
+    const reason = model.input.includes('image') ? 'image input limits' : 'native image input is unavailable for this request'
+    return { type: 'text' as const, text: image
+      ? `[Image content is not supplied: ${reason}. Inspect saved image:${image.sha256} with lexora_image_read to obtain visual evidence.]`
+      : `[Image content is not supplied: ${reason}. Visual details are unavailable.]` }
   })
   return changed ? { ...message, content } : message
 }

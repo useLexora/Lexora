@@ -18,12 +18,14 @@ import {
   resolve,
   sep,
 } from 'node:path'
+import { readBoundedFile } from '../../../platform/filesystem/boundedFile'
 import { relativeCanonicalPath } from '../../../platform/filesystem/filePaths'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { inferFileMimeType, isImageMimeType } from '../../../shared/files/fileMimeTypes'
 import { resolveGrantedPath } from '../directories/resolveGrantedPath'
 import { resolveMediaPreview } from '../files/resolveMediaPreview'
+import { runNativeImage } from '../images/runNativeImage'
 
 export const BUDDY_ARTIFACT_COUNT_LIMIT = 512
 export const BUDDY_ARTIFACT_TOTAL_BYTES_LIMIT = 32 * 1024 * 1024
@@ -486,7 +488,10 @@ export class ArtifactService {
   async materializeConversationImages(
     conversationId: string,
     ids?: readonly string[],
+    access?: { cwd: string, grants: readonly DirectoryGrant[], signal?: AbortSignal },
   ): Promise<{ images: ImageContent[], records: ArtifactRecord[] }> {
+    if (!access)
+      throw new ArtifactError('DIRECTORY_NOT_AUTHORIZED')
     const available = this.#repository.listForConversation(conversationId)
       .filter(record => record.kind === 'file' && record.mimeType.startsWith('image/'))
     const selected = ids === undefined
@@ -497,11 +502,17 @@ export class ArtifactService {
               throw new ArtifactError('ARTIFACT_NOT_FOUND')
             return true
           })
-    const images = await Promise.all(selected.map(async (artifact): Promise<ImageContent> => ({
-      data: (await readFile(artifact.currentPath)).toString('base64'),
-      mimeType: artifact.mimeType,
-      type: 'image',
-    })))
+    const images = await Promise.all(selected.map(async (artifact): Promise<ImageContent> => {
+      access.signal?.throwIfAborted()
+      await this.#fileAccess?.resolve(artifact)
+      const location = await resolveGrantedPath(access.grants, resolve(access.cwd, artifact.currentPath), 'existing')
+      if (location.canonicalPath !== artifact.currentPath)
+        throw new ArtifactError('DIRECTORY_NOT_AUTHORIZED')
+      const bytes = await readBoundedFile(location.root, location.canonicalPath, BUDDY_ARTIFACT_TOTAL_BYTES_LIMIT, access.signal)
+      await runNativeImage(bytes, { operation: 'validate', options: { mimeType: artifact.mimeType } }, access.signal)
+      await this.#fileAccess?.resolve(artifact)
+      return { data: bytes.toString('base64'), mimeType: artifact.mimeType, type: 'image' }
+    }))
     return { images, records: selected }
   }
 
