@@ -2,10 +2,22 @@ import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { SpaceFileMutation, SpaceFileTarget } from '@buddy-shared/spaces/spaceFileApi'
 import type { ExplorerNode } from '@/shared/ui/explorer/treeCollection'
 import { parseLocalChatPublicError } from '@buddy-shared/runtime/localChatError'
-import { useDialog } from 'naive-ui'
+import { useDialog, useMessage } from 'naive-ui'
 import { computed, onScopeDispose, shallowRef } from 'vue'
 import { useFileOperations } from '../fileOperationsContext'
 import { explorerLabels } from './explorerLabels'
+
+export interface ExplorerNameRequest {
+  kind: 'rename' | 'newFile' | 'newFolder'
+  title: string
+  name: string
+  parent: string
+}
+
+export interface ExplorerNameError {
+  message: string
+  status: 'warning' | 'error'
+}
 
 export function useExplorerCommands(options: {
   target: () => SpaceFileTarget
@@ -15,25 +27,33 @@ export function useExplorerCommands(options: {
 }) {
   const operations = useFileOperations()
   const dialog = useDialog()
+  const message = useMessage()
   const labels = computed(() => explorerLabels(options.language()))
-  const nameRequest = shallowRef<{ title: string, name: string, parent: string } | null>(null)
+  const nameRequest = shallowRef<ExplorerNameRequest | null>(null)
   const busy = shallowRef<SpaceFileMutation | null>(null)
-  const error = shallowRef('')
-  let finishName: (name: string | null) => void = () => {}
+  const nameError = shallowRef<ExplorerNameError | null>(null)
+  let nameAction: ((name: string) => SpaceFileMutation) | null = null
   let stopped = false
+  function closeName() {
+    nameRequest.value = null
+    nameAction = null
+    nameError.value = null
+  }
   onScopeDispose(() => {
     stopped = true
-    finishName(null)
+    closeName()
   })
-  function requestName(title: string, name: string, parent: string) {
-    return new Promise<string | null>((resolve) => {
-      finishName(null)
-      nameRequest.value = { title, name, parent }
-      finishName = (value) => {
-        nameRequest.value = null
-        resolve(value)
-      }
-    })
+  async function finishName(name: string | null) {
+    if (busy.value || !nameRequest.value || !nameAction || stopped)
+      return
+    if (name === null) {
+      closeName()
+      return
+    }
+    nameError.value = null
+    const result = await run(nameAction(name), 'name')
+    if (!stopped && result?.status === 'applied')
+      closeName()
   }
   function confirmTrash(name: string) {
     return new Promise<boolean>((resolve) => {
@@ -53,22 +73,30 @@ export function useExplorerCommands(options: {
       default: return labels.value.failure
     }
   }
-  async function run(input: SpaceFileMutation) {
+  async function run(input: SpaceFileMutation, feedback: 'name' | 'message' = 'message') {
     if (busy.value || stopped)
       return
     busy.value = input
-    error.value = ''
+    const fail = (code: string) => {
+      if (stopped)
+        return
+      if (feedback === 'name') {
+        nameError.value = { message: code === 'FILE_CONFLICT' ? labels.value.nameConflict : failureMessage(code), status: code === 'FILE_CONFLICT' ? 'warning' : 'error' }
+      }
+      else {
+        message.error(failureMessage(code))
+      }
+    }
     try {
       const result = await operations.execute(input)
       if (result && result.status !== 'applied')
-        error.value = result.status === 'needs-recovery' ? labels.value.unknown : failureMessage(result.error ?? '')
+        fail(result.status === 'needs-recovery' ? 'FILE_ENGINE_INTERRUPTED' : result.error ?? '')
       if (!stopped)
         await options.refresh()
       return result
     }
     catch (cause) {
-      if (!stopped)
-        error.value = failureMessage(cause instanceof Error ? parseLocalChatPublicError(cause.message)?.code ?? cause.message : '')
+      fail(cause instanceof Error ? parseLocalChatPublicError(cause.message)?.code ?? cause.message : '')
     }
     finally { busy.value = null }
   }
@@ -86,18 +114,20 @@ export function useExplorerCommands(options: {
     if (command === 'copyPath') {
       if (!node)
         return
-      error.value = ''
       try {
         await options.api.copyFilePath({ ...target, path })
       }
       catch {
         if (!stopped)
-          error.value = labels.value.copyPathFailure
+          message.error(labels.value.copyPathFailure)
       }
       return
     }
     if (command === 'reveal') {
-      await options.api.revealFile({ ...target, path }).catch(() => error.value = labels.value.failure)
+      await options.api.revealFile({ ...target, path }).catch(() => {
+        if (!stopped)
+          message.error(labels.value.failure)
+      })
       return
     }
     if (command === 'refresh') {
@@ -121,14 +151,15 @@ export function useExplorerCommands(options: {
     }
     if (command === 'rename' && !node)
       return
-    if (!['rename', 'newFile', 'newFolder'].includes(command))
+    if (command !== 'rename' && command !== 'newFile' && command !== 'newFolder')
       return
     const folder = command === 'rename' ? path.split('/').slice(0, -1).join('/') : parent
-    const name = await requestName(command === 'rename' ? labels.value.rename : command === 'newFile' ? labels.value.newFile : labels.value.newFolder, command === 'rename' ? node!.label : '', folder)
-    if (name === null || stopped)
-      return
-    const destination = folder ? `${folder}/${name}` : name
-    await run({ ...target, path: command === 'rename' ? path : destination, operationId: crypto.randomUUID(), action: command === 'rename' ? { kind: 'rename', destination } : { kind: command === 'newFile' ? 'createFile' : 'createDirectory' } })
+    nameError.value = null
+    nameRequest.value = { kind: command, title: labels.value[command], name: command === 'rename' ? node!.label : command === 'newFile' ? labels.value.defaultFileName : '', parent: folder }
+    nameAction = (name) => {
+      const destination = folder ? `${folder}/${name}` : name
+      return { ...target, path: command === 'rename' ? path : destination, operationId: crypto.randomUUID(), action: command === 'rename' ? { kind: 'rename', destination } : { kind: command === 'newFile' ? 'createFile' : 'createDirectory' } }
+    }
   }
-  return { clipboard: operations.clipboard, labels, nameRequest, finishName: (name: string | null) => finishName(name), busy, error, command, run, cancel: () => busy.value && options.api.cancelFileOperation(busy.value).catch(() => {}) }
+  return { clipboard: operations.clipboard, labels, nameRequest, nameError, finishName, clearNameError: () => nameError.value = null, busy, command, run, cancel: () => busy.value && options.api.cancelFileOperation(busy.value).catch(() => {}) }
 }

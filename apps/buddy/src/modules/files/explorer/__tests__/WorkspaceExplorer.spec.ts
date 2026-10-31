@@ -13,7 +13,7 @@ vi.mock('../useExplorerCommands', async () => {
     useExplorerCommands: () => ({
       labels: shallowRef({}),
       busy: shallowRef(null),
-      error: shallowRef(null),
+      nameError: shallowRef(null),
       nameRequest: shallowRef(null),
       clipboard: shallowRef(null),
       command,
