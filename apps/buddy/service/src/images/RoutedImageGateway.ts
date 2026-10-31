@@ -1,20 +1,15 @@
 import type { Api, Model } from '@earendil-works/pi-ai'
 import type { ImageCandidate, ImageCatalog, ImagePreferences, ImageSupport, ImageTarget } from '../../../shared/images/imagePreferences'
 import type { ProviderService } from '../providers/ProviderService'
-import type { ImageGenerationGateway, ImageGenerationInput, ImageGenerationResult } from './ImageGenerationGateway'
+import type { ImageGenerationDescription, ImageGenerationGateway, ImageGenerationInput, ImageGenerationResult, ImageGenerationRoute } from './ImageGenerationGateway'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { imageOutputOptionsSchema, imagePolicyTargets, resolveImagePolicy } from '../../../shared/images/imagePreferences'
 import { ImageGenerationError } from './ImageGenerationGateway'
+import { nativeImageSupport } from './imageGenerationSupport'
 import { ProviderImageService } from './ProviderImageService'
 
-export const nativeImageSupport: ImageSupport = {
-  operations: ['generate', 'edit'],
-  maxReferenceImages: 4,
-  sizes: ['auto', '1024x1024', '1536x1024', '1024x1536'],
-  qualities: ['auto', 'low', 'medium', 'high'],
-  backgrounds: ['auto', 'opaque', 'transparent'],
-}
+export { nativeImageSupport } from './imageGenerationSupport'
 
 export interface ImageGenerationBackend {
   candidates: (signal?: AbortSignal) => Promise<ImageCandidate[]>
@@ -33,6 +28,36 @@ export class RoutedImageGateway implements ImageGenerationGateway {
   constructor(options: RoutedImageGatewayOptions) { this.options = options }
 
   supports(_model: Model<Api>): boolean { return true }
+
+  async describe(input: Parameters<NonNullable<ImageGenerationGateway['describe']>>[0]): Promise<ImageGenerationDescription> {
+    input.signal?.throwIfAborted()
+    const catalog = await this.catalog()
+    input.signal?.throwIfAborted()
+    const preferences = input.preferences ?? catalog.preferences
+    const current: ImageTarget = { kind: 'model', providerId: input.model.provider, modelId: input.model.id }
+    const nativeSupported = this.options.native.supports(input.model)
+    const routes = (operation: 'generate' | 'edit'): ImageGenerationRoute[] => {
+      const policy = resolveImagePolicy(preferences, operation)
+      const targets = policy.mode === 'native'
+        ? [current]
+        : [...policy.mode === 'auto' && nativeSupported ? [current] : [], ...imagePolicyTargets(policy)]
+      const seen = new Set<string>()
+      return targets.flatMap((target) => {
+        const key = JSON.stringify(target)
+        if (seen.has(key))
+          return []
+        seen.add(key)
+        const candidate = catalog.candidates.find(candidate => JSON.stringify(candidate.target) === key)
+        const isCurrent = target.kind === 'model' && target.providerId === current.providerId && target.modelId === current.modelId
+        if (isCurrent && nativeSupported)
+          return [{ target, title: input.model.name, support: nativeImageSupport, capabilitySource: 'adapter_constraints' as const }]
+        if (!candidate?.available || !candidate.support.operations.includes(operation))
+          return []
+        return [{ target, title: candidate.title, support: candidate.support, capabilitySource: target.kind === 'plugin' ? 'backend_declaration' as const : 'adapter_constraints' as const }]
+      })
+    }
+    return { generate: routes('generate'), edit: routes('edit') }
+  }
 
   async catalog(): Promise<ImageCatalog> {
     const [preferences, plugins, providers] = await Promise.all([this.options.preferences(), this.options.plugins?.candidates() ?? [], this.options.providers.listProviders()])

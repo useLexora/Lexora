@@ -25,6 +25,7 @@ pub fn validate(bytes: &[u8], options: &ValidationOptions) -> Result<Vec<u8>, Im
         "image/jpeg" => ImageFormat::Jpeg,
         "image/gif" => ImageFormat::Gif,
         "image/webp" => ImageFormat::WebP,
+        "image/bmp" => ImageFormat::Bmp,
         _ => return Err(ImageError::InvalidImage),
     };
     if image::guess_format(bytes).map_err(decode_error)? != format {

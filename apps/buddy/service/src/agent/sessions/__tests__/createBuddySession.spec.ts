@@ -1,5 +1,4 @@
 import type { AssistantMessage, AuthType } from '@earendil-works/pi-ai'
-import type { ExtensionToolContext } from '@earendil-works/pi-coding-agent'
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -60,14 +59,6 @@ describe('createBuddySession', () => {
     try {
       expect(result.session.getActiveToolNames()).not.toContain('lexora_image_generate')
       await result.session.setModel(otherModel)
-      expect(result.session.getActiveToolNames()).not.toContain('lexora_image_generate')
-      await result.session.getToolDefinition('lexora_tool_search')!.execute(
-        'discover-image',
-        { toolNames: ['lexora_image_generate'] },
-        undefined,
-        undefined,
-        result.session.extensionRunner.createContext() as ExtensionToolContext,
-      )
       expect(result.session.getActiveToolNames()).toContain('lexora_image_generate')
       await result.session.setModel(model)
       expect(result.session.getActiveToolNames()).not.toContain('lexora_image_generate')
@@ -77,7 +68,7 @@ describe('createBuddySession', () => {
     }
   })
 
-  it('removes discovered image tools and request declarations when OpenAI authentication changes to ChatGPT sign-in', async () => {
+  it('removes image tools and request declarations when OpenAI authentication changes to ChatGPT sign-in', async () => {
     const root = await createDirectory()
     const credentials = new InMemoryCredentialStore()
     const modelRuntime = await ModelRuntime.create({ credentials, modelsPath: null, refreshOnCreate: false })
@@ -123,13 +114,6 @@ describe('createBuddySession', () => {
       inProcessExtensions: [image.extension, createToolDiscoveryCapability(image.disclosure!).extension],
     })
     try {
-      await result.session.getToolDefinition('lexora_tool_search')!.execute(
-        'discover-image',
-        { toolNames: ['lexora_image_generate'] },
-        undefined,
-        undefined,
-        result.session.extensionRunner.createContext() as ExtensionToolContext,
-      )
       for (const type of ['api_key', 'oauth', 'api_key'] as const) {
         credentialType = type
         await credentials.modify(model.provider, async () => type === 'api_key'

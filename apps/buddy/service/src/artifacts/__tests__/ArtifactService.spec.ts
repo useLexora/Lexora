@@ -28,6 +28,30 @@ afterEach(async () => {
 })
 
 describe('artifactService', () => {
+  it('materializes an image reference only within current grants and rejects revoked or replaced files', async () => {
+    const fixture = await createFixture()
+    const conversationGrants = createConversationDirectoryGrantRepository(fixture.database)
+    conversationGrants.grant({ conversationId: 'conversation-1', id: 'workspace-1', root: fixture.workspace, canonicalRoot: fixture.workspace, createdAt: '2026-08-27T00:00:00.000Z' })
+    const service = new ArtifactService({ repository: fixture.repository, fileAccess: new ArtifactFileAccess({ conversations: createConversationRepository(fixture.database), conversationGrants, spaces: createSpaceRepository(fixture.database), paths: new BuddyDataPaths(fixture.root) }) })
+    const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAFElEQVR4AQEJAPb/AAD/AP//AAD/EPgD/UE7EkoAAAAASUVORK5CYII=', 'base64')
+    const path = join(fixture.workspace, 'reference.png')
+    await writeFile(path, bytes)
+    const [artifact] = await service.presentOutputs({ conversationId: 'conversation-1', cwd: fixture.workspace, grants: fixture.grants, paths: [path] })
+    const access = { cwd: fixture.workspace, grants: fixture.grants }
+    await expect(service.materializeConversationImages('conversation-1', [artifact!.id], access)).resolves.toMatchObject({ images: [{ data: bytes.toString('base64'), mimeType: 'image/png' }] })
+    await expect(service.materializeConversationImages('conversation-1', [artifact!.id])).rejects.toMatchObject({ code: 'DIRECTORY_NOT_AUTHORIZED' })
+    await expect(service.materializeConversationImages('conversation-1', [artifact!.id], { ...access, grants: [] })).rejects.toMatchObject({ code: 'PATH_OUTSIDE_GRANTED_DIRECTORY' })
+    const outside = join(fixture.root, 'outside.png')
+    await writeFile(outside, bytes)
+    await rm(path)
+    await symlink(outside, path)
+    await expect(service.materializeConversationImages('conversation-1', [artifact!.id], access)).rejects.toThrow()
+    await rm(path)
+    await writeFile(path, bytes)
+    conversationGrants.revokeAll('conversation-1', '2026-08-28T00:00:00.000Z')
+    await expect(service.materializeConversationImages('conversation-1', [artifact!.id], access)).rejects.toMatchObject({ code: 'DIRECTORY_NOT_AUTHORIZED' })
+  })
+
   it('publishes an independent generated file and refuses revoked publication before promotion', async () => {
     const f = await createFixture()
     const path = join(f.workspace, 'outputs', 'document.docx')

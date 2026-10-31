@@ -1,5 +1,5 @@
 import type { Api, ImageContent, Model } from '@earendil-works/pi-ai'
-import type { ImageOutputOptions, ImagePreferencesSnapshot, ImageSource, ImageTarget } from '../../../shared/images/imagePreferences'
+import type { ImageOutputOptions, ImagePreferencesSnapshot, ImageSource, ImageSupport, ImageTarget } from '../../../shared/images/imagePreferences'
 
 export const IMAGE_GENERATION_ERROR_CODES = [
   'IMAGE_GENERATION_FAILED',
@@ -8,6 +8,7 @@ export const IMAGE_GENERATION_ERROR_CODES = [
   'IMAGE_GENERATION_INCOMPLETE',
   'IMAGE_GENERATION_INVALID_RESPONSE',
   'IMAGE_GENERATION_RESPONSE_TOO_LARGE',
+  'IMAGE_GENERATION_REFERENCE_UNAVAILABLE',
   'IMAGE_GENERATION_UNSUPPORTED',
   'PROVIDER_ACCESS_DENIED',
   'PROVIDER_AUTHENTICATION_FAILED',
@@ -27,7 +28,7 @@ export interface ImageGenerationInput {
   onSubmitted?: (backendRequestId: string) => Promise<void>
 
   requestId?: string
-  output?: ImageOutputOptions
+  output?: Partial<ImageOutputOptions>
   preferences?: ImagePreferencesSnapshot
   inputImages: readonly ImageContent[]
   model: Model<Api>
@@ -42,8 +43,21 @@ export interface ImageGenerationResult {
 }
 
 export interface ImageGenerationGateway {
+  describe?: (input: { model: Model<Api>, preferences?: ImagePreferencesSnapshot, signal?: AbortSignal }) => Promise<ImageGenerationDescription>
   generate: (input: ImageGenerationInput) => Promise<ImageGenerationResult>
   supports: (model: Model<Api>) => boolean
+}
+
+export interface ImageGenerationRoute {
+  target: ImageTarget
+  title: string
+  support: ImageSupport
+  capabilitySource: 'backend_declaration' | 'adapter_constraints'
+}
+
+export interface ImageGenerationDescription {
+  generate: ImageGenerationRoute[]
+  edit: ImageGenerationRoute[]
 }
 
 export class ImageGenerationError extends Error {
@@ -68,8 +82,9 @@ export class ImageGenerationError extends Error {
 export function readImageGenerationError(error: unknown): {
   code: ImageGenerationErrorCode
   diagnostic: ImageGenerationErrorDiagnostic | null
+  outcome: 'failed' | 'unknown'
 } {
   return error instanceof ImageGenerationError
-    ? { code: error.code, diagnostic: error.diagnostic }
-    : { code: 'IMAGE_GENERATION_FAILED', diagnostic: null }
+    ? { code: error.code, diagnostic: error.diagnostic, outcome: error.outcome }
+    : { code: 'IMAGE_GENERATION_FAILED', diagnostic: null, outcome: 'unknown' }
 }

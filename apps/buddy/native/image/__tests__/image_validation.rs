@@ -27,6 +27,7 @@ fn fully_decodes_supported_formats_and_rejects_mime_mismatch() {
         (ImageFormat::Jpeg, "image/jpeg"),
         (ImageFormat::Gif, "image/gif"),
         (ImageFormat::WebP, "image/webp"),
+        (ImageFormat::Bmp, "image/bmp"),
     ] {
         let mut bytes = Cursor::new(Vec::new());
         DynamicImage::ImageRgb8(RgbImage::new(2, 3))
@@ -38,7 +39,17 @@ fn fully_decodes_supported_formats_and_rejects_mime_mismatch() {
             serde_json::json!({"width":2,"height":3,"mimeType":mime})
         );
         assert!(request(&bytes[..bytes.len() / 2], mime).is_err());
-        assert!(request(&bytes, "image/bmp").is_err());
+        assert!(
+            request(
+                &bytes,
+                if mime == "image/png" {
+                    "image/jpeg"
+                } else {
+                    "image/png"
+                }
+            )
+            .is_err()
+        );
     }
 }
 

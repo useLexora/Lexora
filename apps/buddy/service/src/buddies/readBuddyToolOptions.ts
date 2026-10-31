@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import process from 'node:process'
 import { toolCatalogId, toolCatalogPolicies } from '../agent/extensions/discovery/toolCatalog'
 import { getActivePiBuiltinToolNames } from '../agent/extensions/piBuiltinTools'
+import { IMAGE_READING_DISCLOSURE } from '../images/imageReadingExtension'
 import { SHELL_COMMAND_DISCLOSURE } from '../sandbox/ShellSelection'
 
 export async function readBuddyToolOptions(createCapabilities: BuddyCapabilityFactory, cwd: string, signal?: AbortSignal, shells?: Pick<ExtensionShellRegistry, 'snapshot'>): Promise<BuddyToolOption[]> {
@@ -24,7 +25,7 @@ export async function readBuddyToolOptions(createCapabilities: BuddyCapabilityFa
   try {
     signal?.throwIfAborted()
     const snapshot = await shells?.snapshot(signal)
-    const policies = [...capabilities.flatMap(capability => capability.disclosure ?? []), ...snapshot?.enabled ? [SHELL_COMMAND_DISCLOSURE] : []]
+    const policies = [IMAGE_READING_DISCLOSURE, ...capabilities.flatMap(capability => capability.disclosure ?? []), ...snapshot?.enabled ? [SHELL_COMMAND_DISCLOSURE] : []]
     const options = toolCatalogPolicies(getActivePiBuiltinToolNames(process.platform), policies)
       .flatMap(policy => policy.tools.map(tool => ({
         id: toolCatalogId(policy.source, tool),

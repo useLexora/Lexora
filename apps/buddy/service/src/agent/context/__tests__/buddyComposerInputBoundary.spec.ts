@@ -291,7 +291,7 @@ describe('composer input at the Buddy session boundary', () => {
     expect(fixture.contexts).toHaveLength(2)
     expect(userMessages(fixture.contexts[1])[0]?.content).toEqual(materializedContent(fixture))
     expect(fixture.contexts[1]?.messages).toContainEqual(expect.objectContaining({
-      content: [fixture.nativeToolImage],
+      content: [fixture.nativeToolImage, { type: 'text', text: expect.stringMatching(/^Saved image references \(in order\): image:[a-f0-9]{64}/) }],
       role: 'toolResult',
       toolName: 'lexora_fixture_image',
     }))

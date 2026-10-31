@@ -22,7 +22,8 @@ image = { version = "0.25.10", default-features = false, features = [
   "png",
   "jpeg",
   "gif",
-  "webp"
+  "webp",
+  "bmp"
 ] }
 
 png.workspace = true

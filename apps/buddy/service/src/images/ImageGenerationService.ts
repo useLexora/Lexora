@@ -9,9 +9,10 @@ import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { ArtifactPublicationError } from '../artifacts/ArtifactService'
 import { ImageGenerationError } from './ImageGenerationGateway'
 import { ImageOperationLifecycle } from './ImageOperationLifecycle'
+import { validateGeneratedImages } from './imageResponseBody'
 
 export interface GenerateConversationImageInput {
-  output?: ImageOutputOptions
+  output?: Partial<ImageOutputOptions>
   outputPath: string
   prompt: string
   reference?: { mode: 'latest' } | { mode: 'resources', resourceIds: readonly string[] }
@@ -21,12 +22,14 @@ interface ConversationImageSource {
   materializeConversationImages: (
     conversationId: string,
     ids?: readonly string[],
+    access?: { cwd: string, grants: readonly DirectoryGrant[], signal?: AbortSignal },
   ) => Promise<{ images: ImageContent[], records: Array<{ id: string }> }>
 }
 
 export interface ImageGenerationServiceOptions {
   requests?: ImageRequestStore
   artifactService: ConversationImageSource & {
+    listConversationArtifacts: (conversationId: string) => Array<{ id: string, kind: string, mimeType: string, createdAt: string, updatedAt: string }>
     registerGeneratedImages: (input: {
       conversationId: string
       cwd: string
@@ -34,9 +37,11 @@ export interface ImageGenerationServiceOptions {
       images: readonly { bytes: Uint8Array, mimeType: string }[]
       outputPath: string
       sourceArtifactId: string | null
-    }, writeFiles?: CapturedFileWriter) => Promise<Array<{ id: string }>>
+    }, writeFiles?: CapturedFileWriter) => Promise<Array<{ id: string, currentPath: string, mimeType: string }>>
   }
-  attachmentService: ConversationImageSource
+  attachmentService: ConversationImageSource & {
+    listForConversation: (conversationId: string) => Array<{ id: string, mimeType: string, createdAt: string }>
+  }
   conversationId: string
   cwd: string
   grants: readonly DirectoryGrant[]
@@ -66,6 +71,10 @@ export class ImageGenerationService {
     return this.#options.imageGenerationGateway.supports(model)
   }
 
+  describe(model: Model<Api>, signal?: AbortSignal) {
+    return this.#options.imageGenerationGateway.describe?.({ model, preferences: this.#options.getImagePreferences?.(), signal })
+  }
+
   generate(input: GenerateConversationImageInput, model: Model<Api>, signal: AbortSignal, grants = this.#options.grants, writeFiles?: CapturedFileWriter, invocation?: { runId: string, toolCallId: string }) {
     const request = copyEventSnapshot(input)
     const directories = copyEventSnapshot(grants)
@@ -73,13 +82,19 @@ export class ImageGenerationService {
     return this.#operations.run({ conversationId: this.#options.conversationId, kind: 'generation', signal }, async (progress) => {
       signal.throwIfAborted()
       if (!this.supports(model))
-        throw new ImageGenerationError('IMAGE_GENERATION_UNSUPPORTED')
-      const references = request.reference
-        ? await this.#materializeReferences(request.reference)
-        : { artifactIds: [], images: [] }
+        throw new ImageGenerationError('IMAGE_GENERATION_UNSUPPORTED', { outcome: 'failed' })
+      let references: { artifactIds: string[], images: ImageContent[] } = { artifactIds: [], images: [] }
+      try {
+        if (request.reference)
+          references = await this.#materializeReferences(request.reference, directories, signal)
+      }
+      catch (cause) {
+        signal.throwIfAborted()
+        throw new ImageGenerationError('IMAGE_GENERATION_REFERENCE_UNAVAILABLE', { cause, outcome: 'failed' })
+      }
       signal.throwIfAborted()
       if (request.reference && !references.images.length)
-        throw new ImageGenerationError('IMAGE_GENERATION_UNSUPPORTED')
+        throw new ImageGenerationError('IMAGE_GENERATION_REFERENCE_UNAVAILABLE', { outcome: 'failed' })
       const receipt = invocation && this.#options.requests ? await this.#options.requests.begin(this.#options.conversationId, invocation.runId, invocation.toolCallId) : undefined
       try {
         progress('processing')
@@ -93,6 +108,7 @@ export class ImageGenerationService {
           prompt: request.prompt.trim(),
           signal,
         })
+        await validateGeneratedImages(generated.images, signal)
         progress('result-received')
         signal.throwIfAborted()
         progress('publishing')
@@ -106,8 +122,9 @@ export class ImageGenerationService {
           sourceArtifactId: references.artifactIds.at(-1) ?? null,
         }, writeFiles)
         const artifactIds = artifacts.map(artifact => artifact.id)
+        const outputs = artifacts.map(artifact => ({ artifactId: artifact.id, path: artifact.currentPath, mimeType: artifact.mimeType }))
         await receipt?.settle('completed', artifactIds, generated.responseId)
-        return { value: { artifactIds, responseId: generated.responseId, ...(generated.source ? { source: generated.source } : {}) }, artifactIds }
+        return { value: { artifactIds, outputs, responseId: generated.responseId, ...(generated.source ? { source: generated.source } : {}) }, artifactIds }
       }
       catch (error) {
         await this.#settleFailure(receipt, error)
@@ -131,25 +148,31 @@ export class ImageGenerationService {
 
   async #materializeReferences(
     reference: NonNullable<GenerateConversationImageInput['reference']>,
+    grants: readonly DirectoryGrant[],
+    signal: AbortSignal,
   ): Promise<{ artifactIds: string[], images: ImageContent[] }> {
     const { artifactService, attachmentService, conversationId } = this.#options
+    let resourceIds: readonly string[]
     if (reference.mode === 'latest') {
-      const artifacts = await artifactService.materializeConversationImages(conversationId)
-      if (artifacts.images.length > 0) {
-        return {
-          artifactIds: artifacts.records.map(record => record.id),
-          images: artifacts.images,
-        }
-      }
-      const attachments = await attachmentService.materializeConversationImages(conversationId)
-      return { artifactIds: [], images: attachments.images }
+      const candidates = [
+        ...artifactService.listConversationArtifacts(conversationId)
+          .filter(record => record.kind === 'file' && record.mimeType.startsWith('image/'))
+          .map(record => ({ id: record.id, timestamp: Date.parse(record.updatedAt || record.createdAt) || 0 })),
+        ...attachmentService.listForConversation(conversationId)
+          .filter(record => record.mimeType.startsWith('image/'))
+          .map(record => ({ id: record.id, timestamp: Date.parse(record.createdAt) || 0 })),
+      ]
+      const latest = candidates.reduce<(typeof candidates)[number] | undefined>((selected, candidate) => !selected || candidate.timestamp >= selected.timestamp ? candidate : selected, undefined)
+      resourceIds = latest ? [latest.id] : []
     }
-
+    else {
+      resourceIds = reference.resourceIds
+    }
     const artifactIds: string[] = []
     const images: ImageContent[] = []
-    for (const resourceId of reference.resourceIds) {
+    for (const resourceId of resourceIds) {
       try {
-        const artifacts = await artifactService.materializeConversationImages(conversationId, [resourceId])
+        const artifacts = await artifactService.materializeConversationImages(conversationId, [resourceId], { cwd: this.#options.cwd, grants, signal })
         artifactIds.push(resourceId)
         images.push(...artifacts.images)
       }
