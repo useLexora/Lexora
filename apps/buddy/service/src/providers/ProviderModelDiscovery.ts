@@ -84,18 +84,11 @@ export class OpenAiCompatibleModelDiscovery implements ProviderModelDiscovery {
           headers.set(name, value)
       }
       const baseUrl = input.baseUrl.endsWith('/') ? input.baseUrl : `${input.baseUrl}/`
-      const url = new URL('models', baseUrl)
-      url.searchParams.set('client_version', 'pi')
-      const requestOptions: RequestInit = {
+      const response = await this.#request(new URL('models', baseUrl), {
         headers,
         redirect: 'error',
         signal: AbortSignal.any([AbortSignal.timeout(15_000), ...(input.signal ? [input.signal] : [])]),
-      }
-      let response = await this.#request(url, requestOptions)
-      if ([400, 404, 422].includes(response.status)) {
-        await response.body?.cancel()
-        response = await this.#request(new URL('models', baseUrl), requestOptions)
-      }
+      })
       evidence.responseObserved = true
       evidence.responseMs = Math.round(performance.now() - startedAt)
       evidence.status = response.status

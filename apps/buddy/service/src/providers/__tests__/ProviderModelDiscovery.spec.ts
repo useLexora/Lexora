@@ -4,13 +4,15 @@ import { applicationDiagnosticSchema } from '../../../../shared/diagnostics/appl
 import { OpenAiCompatibleModelDiscovery } from '../ProviderModelDiscovery'
 
 describe('providerModelDiscovery', () => {
-  it('discovers and normalizes models through the OpenAI-compatible protocol', async () => {
-    const request = vi.fn(async (..._args: Parameters<typeof fetch>) => new Response(JSON.stringify({
-      data: [
-        { id: ' model-1 ', name: ' Model One ' },
-        { id: 'model-2' },
-      ],
-    }), { status: 200 }))
+  it.each(['openai-completions', 'openai-responses'])('discovers the standard catalog for %s when client-specific queries return an empty catalog', async (api) => {
+    const request = vi.fn(async (url: Parameters<typeof fetch>[0], _init?: RequestInit) => Response.json(new URL(String(url)).search
+      ? { models: [] }
+      : {
+          data: [
+            { id: ' model-1 ', name: ' Model One ' },
+            { id: 'model-2' },
+          ],
+        }))
     const discovery = new OpenAiCompatibleModelDiscovery({
       credentials: {
         read: () => Promise.resolve({ key: 'test-api-key', type: 'api_key' }),
@@ -19,7 +21,7 @@ describe('providerModelDiscovery', () => {
     })
 
     await expect(discovery.discover({
-      api: 'openai-responses',
+      api,
       baseUrl: 'https://models.example.test/v1',
       providerId: 'example',
     })).resolves.toEqual([
@@ -27,7 +29,7 @@ describe('providerModelDiscovery', () => {
       { id: 'model-2' },
     ])
     const [url, init] = request.mock.calls[0]!
-    expect(String(url)).toBe('https://models.example.test/v1/models?client_version=pi')
+    expect(String(url)).toBe('https://models.example.test/v1/models')
     expect(new Headers(init?.headers).get('authorization')).toBe('Bearer test-api-key')
   })
 
@@ -67,21 +69,24 @@ describe('providerModelDiscovery', () => {
     })))
   })
 
-  it.each([400, 404, 422])('uses the standard catalog when the service rejects discovery parameters with HTTP %s', async (status) => {
+  it('reports a successful empty standard catalog without probing other formats', async () => {
     const requests: string[] = []
+    const records: ApplicationDiagnostic[] = []
     const discovery = new OpenAiCompatibleModelDiscovery({
       credentials: { read: async () => ({ key: 'fixture-key', type: 'api_key' }) },
       request: async (url) => {
         requests.push(String(url))
-        return new URL(String(url)).search ? Response.json({ error: 'unsupported query' }, { status }) : Response.json({ data: [{ id: 'route-high' }] })
+        return Response.json({ data: [] })
       },
+      record: record => records.push(applicationDiagnosticSchema.parse(record)),
     })
-    await expect(discovery.discover({ api: 'openai-completions', baseUrl: 'https://models.example.test/v1', providerId: 'custom' })).resolves.toEqual([{ id: 'route-high' }])
-    expect(requests).toEqual(['https://models.example.test/v1/models?client_version=pi', 'https://models.example.test/v1/models'])
+    await expect(discovery.discover({ api: 'openai-completions', baseUrl: 'https://models.example.test/v1/', providerId: 'custom' })).resolves.toEqual([])
+    expect(requests).toEqual(['https://models.example.test/v1/models'])
+    expect(records.at(-1)).toMatchObject({ event: 'provider.request.completed', count: 0 })
   })
 
   it.each([
-    ...[401, 403, 429, 502].map(status => [status, 'application/json', '{"error":"private-response"}', 'http'] as const),
+    ...[400, 401, 403, 404, 422, 429, 502].map(status => [status, 'application/json', '{"error":"private-response"}', 'http'] as const),
     [200, 'text/html', '<html>private-response</html>', 'decode'],
     [200, 'application/json', '{"models":["private-model"]}', 'schema'],
   ] as const)('preserves HTTP %s / %s failures without retrying or leaking free-form data', async (status, contentType, body, failureStage) => {
@@ -96,7 +101,7 @@ describe('providerModelDiscovery', () => {
       record: record => records.push(applicationDiagnosticSchema.parse(record)),
     })
     await expect(discovery.discover({ api: 'openai-completions', baseUrl: 'https://private.test/v1', providerId: 'fixture' })).rejects.toMatchObject({ code: 'MODEL_SYNC_FAILED' })
-    expect(requests).toEqual(['https://private.test/v1/models?client_version=pi'])
+    expect(requests).toEqual(['https://private.test/v1/models'])
     expect(records.at(-1)).toMatchObject({ providerRequest: { operation: 'models', responseObserved: true, status, failureStage } })
     expect(records[0]?.requestId).toBe(records[1]?.requestId)
     expect(JSON.stringify(records)).not.toContain('private')
