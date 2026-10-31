@@ -34,6 +34,7 @@ export default {
   'usageAnalytics.weekly': 'Week',
   'usageAnalytics.monthly': 'Month',
   'usageAnalytics.yearly': 'Year',
+  'usageAnalytics.updating': 'Updating…',
   'usageAnalytics.trendDate': 'View date',
   'usageAnalytics.trendKeyboard': 'Use Left / Right to inspect periods, Home / End to jump to either end, and Esc to dismiss details.',
   'usageAnalytics.empty': 'No usage recorded in this period',

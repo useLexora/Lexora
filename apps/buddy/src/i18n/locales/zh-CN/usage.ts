@@ -34,6 +34,7 @@ export default {
   'usageAnalytics.weekly': '周',
   'usageAnalytics.monthly': '月',
   'usageAnalytics.yearly': '年',
+  'usageAnalytics.updating': '更新中…',
   'usageAnalytics.trendDate': '查看日期',
   'usageAnalytics.trendKeyboard': '使用左右方向键查看相邻时段，Home / End 跳到首尾，Esc 关闭明细。',
   'usageAnalytics.empty': '这个时段没有用量记录',
