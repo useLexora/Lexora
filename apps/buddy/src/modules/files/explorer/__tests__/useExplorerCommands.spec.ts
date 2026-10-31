@@ -5,12 +5,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { effectScope, shallowRef } from 'vue'
 import { useExplorerCommands } from '../useExplorerCommands'
 
-const { getOperations } = vi.hoisted(() => ({ getOperations: vi.fn() }))
+const { getOperations, messages } = vi.hoisted(() => ({ getOperations: vi.fn(), messages: [] as string[] }))
 vi.mock('../../fileOperationsContext', () => ({ useFileOperations: getOperations }))
-vi.mock('naive-ui', () => ({ useDialog: () => ({}) }))
+vi.mock('naive-ui', () => ({ useDialog: () => ({}), useMessage: () => ({ error: (text: string) => messages.push(text) }) }))
 
 const cleanup: Array<() => void> = []
 afterEach(() => {
+  messages.length = 0
   for (const stop of cleanup.splice(0)) stop()
 })
 const target = { spaceId: 'space', directoryId: 'directory', revision: 1, path: '' }
@@ -75,11 +76,11 @@ describe('explorer clipboard commands', () => {
     const pending = operations.clipboard.value
     copyFilePath.mockRejectedValueOnce(new Error('clipboard unavailable'))
     await commands.command('copyPath', destination)
-    expect(commands.error.value).toBe('复制路径失败，请重试。')
+    expect(messages).toEqual(['复制路径失败，请重试。'])
     expect(systemClipboard.value).toBe('previous text')
     expect(operations.clipboard.value).toBe(pending)
     await commands.command('copyPath', destination)
-    expect(commands.error.value).toBe('')
+    expect(messages).toEqual(['复制路径失败，请重试。'])
     expect(systemClipboard.value).toBe('/workspace/destination')
     expect(operations.clipboard.value).toBe(pending)
   })
@@ -92,6 +93,6 @@ describe('explorer clipboard commands', () => {
     }
     expect(systemClipboard.value).toBe('previous text')
     expect(operations.clipboard.value).toBeNull()
-    expect(commands.error.value).toBe('')
+    expect(messages).toEqual([])
   })
 })
