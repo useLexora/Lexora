@@ -62,9 +62,9 @@ withDefaults(defineProps<{
 .desktop-chat-composer__header.has-welcome {
   --welcome-companion-height: 4.55rem;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-content: end;
   min-height: var(--welcome-companion-height);
-  padding-right: calc(var(--welcome-companion-height) + 2.2rem);
 }
 
 @container task-pane (max-height: 620px) {
@@ -76,7 +76,6 @@ withDefaults(defineProps<{
 @container task-pane (max-height: 340px) {
   .desktop-chat-composer__header.has-welcome {
     min-height: 0;
-    padding-right: 0;
   }
 }
 

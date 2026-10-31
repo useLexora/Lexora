@@ -266,6 +266,7 @@ function captureDraft(): WorkbenchMenuSelection {
         :language="language"
         :disabled="isSending"
         removable
+        wheel-to-horizontal
         @remove="removeMaterial"
         @retry="emit('retryResource', $event)"
         @preview-text="pastedText.open"

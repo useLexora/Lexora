@@ -6,10 +6,11 @@ import { buddyInputMaterialKey } from '@buddy-shared/conversation/buddyInputMate
 import { usePreferredReducedMotion, useTimeoutFn } from '@vueuse/core'
 import { NScrollbar } from 'naive-ui'
 import { computed, nextTick, shallowRef, useTemplateRef, watch } from 'vue'
+import { scrollWheelHorizontally } from '@/shared/lib/scrollWheelHorizontally'
 import BuddyImagePreview from '@/shared/ui/media/BuddyImagePreview.vue'
 import ChatInputMaterialCard from './ChatInputMaterialCard.vue'
 
-const props = defineProps<{ materials: readonly InputMaterialView[], language: BuddyLocale, removable?: boolean, disabled?: boolean, compact?: boolean, expanded?: boolean, alignEnd?: boolean }>()
+const props = defineProps<{ materials: readonly InputMaterialView[], language: BuddyLocale, removable?: boolean, disabled?: boolean, compact?: boolean, expanded?: boolean, alignEnd?: boolean, wheelToHorizontal?: boolean }>()
 const emit = defineEmits<{ remove: [material: BuddyInputMaterial], retry: [id: string], previewText: [id: string] }>()
 const track = useTemplateRef<HTMLElement>('track')
 const reducedMotion = usePreferredReducedMotion()
@@ -49,12 +50,17 @@ function preview(material: InputMaterialView) {
   previewOpen.value = true
 }
 
+function handleWheel(event: WheelEvent) {
+  if (props.wheelToHorizontal)
+    scrollWheelHorizontally(event)
+}
+
 defineExpose({ highlightMaterial, highlightResource: (id: string) => highlightMaterial({ kind: 'resource', id }) })
 </script>
 
 <template>
   <div v-if="materials.length" class="chat-input-material-strip min-w-0 max-w-full" :class="compact ? 'is-compact' : 'w-full mb-2'" data-quote-exclude>
-    <NScrollbar class="chat-input-material-strip__scrollbar" container-class="chat-input-material-strip__scrollport" content-style="width: max-content; min-width: 100%" trigger="hover" x-scrollable>
+    <NScrollbar class="chat-input-material-strip__scrollbar" container-class="chat-input-material-strip__scrollport" content-style="width: max-content; min-width: 100%" trigger="hover" x-scrollable @wheel="handleWheel">
       <div ref="track" class="flex flex-nowrap items-start gap-[0.45rem]" :class="{ 'justify-end': alignEnd }">
         <ChatInputMaterialCard
           v-for="material in materials" :id="material.kind === 'resource' ? `buddy-resource-${material.id}` : undefined"
