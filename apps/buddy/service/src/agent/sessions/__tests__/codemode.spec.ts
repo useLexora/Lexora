@@ -16,6 +16,7 @@ import { ApprovalCancelledError } from '../../../approvals/ApprovalService'
 import { MutationCoordinator } from '../../../changes/MutationCoordinator'
 import { FileResourceCoordinator } from '../../../files/FileResourceCoordinator'
 import { NativeFileEngine } from '../../../files/NativeFileEngine'
+import { compactToolGuidelines } from '../../context/compactToolGuidelines'
 import { createEstimatedContextUsage } from '../../context/contextUsageBreakdown'
 import { CODEMODE_EXTENSION, CodemodeCleanupIncompleteError, createCodemodeCapability } from '../../extensions/codemodeExtension'
 import { createBuddySessionExtensions } from '../../extensions/createBuddySessionExtensions'
@@ -69,6 +70,34 @@ describe('codemode runtime preference', () => {
     fixture.apply(true)
     await fixture.turn()
     expect((await fixture.preview())?.toolTokens).toBe(fixture.requests.at(-1)?.toolTokens)
+  })
+
+  it('retains rules not fully covered by the current inline catalog', () => {
+    const section = 'Active tool guidelines:\n- Inline rule.\n- Inline rule. Keep the safety constraint.\n- Unlisted tool rule.'
+    const messages = [{ role: 'system' as const, content: '', sections: { buddy_tool_guidelines: section }, toolsAdded: [{ name: 'codemode', description: 'Nested tools:\n- Inline rule.', parameters: Type.Object({}) }], timestamp: 0 }]
+    expect(compactToolGuidelines(messages)[0]).toMatchObject({ sections: { buddy_tool_guidelines: 'Active tool guidelines:\n- Inline rule. Keep the safety constraint.\n- Unlisted tool rule.' } })
+    expect(messages[0]!.sections.buddy_tool_guidelines).toBe(section)
+    expect(compactToolGuidelines([...messages, { role: 'system', content: '', toolsRemoved: [{ name: 'codemode' }], timestamp: 1 }])[0]).toBe(messages[0])
+  })
+
+  it('keeps inlined tool rules once in requests without rewriting the journal', async () => {
+    const fixture = await createFixture()
+    fixture.apply(true)
+    await fixture.turn()
+    const request = fixture.requests.at(-1)!
+    const description = request.tools.find(tool => tool.name === 'codemode')!.description
+    const journal = JSON.stringify(fixture.session.sessionManager.getEntries())
+    const rule = '- Use write only for new files or complete rewrites.'
+    expect(description).toContain(rule)
+    expect(request.prompt).not.toContain(rule)
+    expect(journal).toContain(rule)
+    expect(request.prompt).toContain('Use codemode to batch independent tool calls')
+    expect(request.prompt).toContain('Keep dependent calls and mutations sequential')
+    expect(request.prompt).toContain('Complete bounded tasks directly by default.')
+
+    fixture.apply(false)
+    await fixture.turn()
+    expect(fixture.requests.at(-1)!.prompt).toContain(rule)
   })
 
   it('authorizes nested tools individually and keeps their parent and bounded journal records', async () => {
@@ -524,9 +553,9 @@ async function createFixture(executionProfile: BuddyExecutionProfile = 'read_onl
   let nextCall: FixtureCall | FixtureCall[] | undefined
   let first = false
   let run = 0
-  const requests: { prompt: string, names: string[], toolTokens: number }[] = []
+  const requests: { prompt: string, names: string[], toolTokens: number, tools: ReturnType<typeof getCurrentTools> }[] = []
   vi.spyOn(runtime, 'streamSimple').mockImplementation((target, context) => {
-    requests.push({ prompt: getCurrentSystemPrompt(context.messages), names: getCurrentTools(context.messages).map(tool => tool.name), toolTokens: createEstimatedContextUsage(context).toolTokens })
+    requests.push({ prompt: getCurrentSystemPrompt(context.messages), names: getCurrentTools(context.messages).map(tool => tool.name), toolTokens: createEstimatedContextUsage(context).toolTokens, tools: getCurrentTools(context.messages) })
     const call = first ? nextCall : undefined
     first = false
     return response(target, call, run)

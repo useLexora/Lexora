@@ -4,11 +4,13 @@ import { buildSessionContext } from '@earendil-works/pi-coding-agent'
 import { supportsModelToolCalls } from '../../providers/modelCapabilities'
 import { createBuddyInputReferenceMessage } from '../context/BuddyInputReference'
 import { buildBuddySystemSections } from '../context/buddySystemSections'
+import { compactToolGuidelines } from '../context/compactToolGuidelines'
 
 export function createSystemSectionsExtension(getPendingInput?: () => BuddyInputReferenceV1 | null, getPermissionPrompt?: (activeToolNames: readonly string[]) => string, getActorPrompt?: () => string): BuddyInProcessExtension {
   return {
     name: 'lexora-system-sections',
     factory(pi) {
+      pi.on('context_with_system', event => ({ messages: compactToolGuidelines(event.messages) }))
       pi.on('before_agent_start', (event, context) => {
         const messages = buildSessionContext(context.sessionManager.getBranch()).messages
         if (event.messageType === 'user') {
