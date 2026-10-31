@@ -7,6 +7,8 @@ export const FEATURE_GUIDES = [
   { id: 'additional-directories', version: '0.15.0' },
   { id: 'network-permissions', version: '0.15.0' },
   { id: 'follow-up-behavior', version: '0.18.0' },
+  { id: 'speech-settings', version: '0.18.0' },
+  { id: 'image-settings', version: '0.18.0' },
 ] as const
 
 export type FeatureGuideId = typeof FEATURE_GUIDES[number]['id']
