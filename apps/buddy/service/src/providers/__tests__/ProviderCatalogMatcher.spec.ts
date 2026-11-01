@@ -98,6 +98,46 @@ describe('providerCatalogMatcher', () => {
       .toMatchObject({ status: 'unmatched' })
   })
 
+  it('recovers a channel namespace through a first-party rolling name without conflating versions', () => {
+    const official = { ...model('deepseek', 'deepseek-flash', 'https://api.deepseek.test'), name: 'DeepSeek V4.1 Flash 1017', input: ['text', 'image'] as Array<'text' | 'image'> }
+    const reseller = model('reseller', 'deepseek-v4.1-flash', 'https://reseller.test')
+    const matcher = new ProviderCatalogMatcher(catalogRuntime([official, reseller]))
+    const input = { api: 'openai-completions', baseUrl: 'https://relay.test', modelId: 'workbuddy/deepseek-v4.1-flash' }
+    expect(matcher.match(input)).toMatchObject({ status: 'matched', model: official })
+    expect(matcher.match({ ...input, baseUrl: reseller.baseUrl })).toMatchObject({ status: 'matched', model: reseller })
+    expect(matcher.match({ ...input, selection: { providerId: reseller.provider, modelId: reseller.id } })).toMatchObject({ status: 'matched', model: reseller })
+    for (const modelId of ['workbuddy/deepseek-v4-flash', 'workbuddy/deepseek-v4.1-pro', 'workbuddy/deepseek-v4.1-flash-0901', '@gateway/deepseek-v4.1-flash', 'a/b/deepseek-v4.1-flash'])
+      expect(matcher.match({ ...input, modelId }), modelId).toMatchObject({ status: 'unmatched' })
+    const untrusted = new ProviderCatalogMatcher(catalogRuntime([{ ...official, provider: 'reseller' }]))
+    expect(untrusted.match(input)).toMatchObject({ status: 'unmatched' })
+  })
+
+  it.each(['minimal', 'low', 'medium', 'high'])('recovers Gemini %s suffix metadata only when the full ID is absent', (effort) => {
+    const official = { ...model('google', 'gemini-3.8-flash', 'https://google.test'), input: ['text', 'image'] as Array<'text' | 'image'> }
+    const input = { api: 'openai-completions', baseUrl: 'https://relay.test', modelId: `cpa/gemini-3.8-flash-${effort}` }
+    expect(new ProviderCatalogMatcher(catalogRuntime([official])).match(input)).toMatchObject({ status: 'matched', model: official })
+    const exact = model('reseller', input.modelId, input.baseUrl)
+    expect(new ProviderCatalogMatcher(catalogRuntime([official, exact])).match(input)).toMatchObject({ status: 'matched', model: exact })
+    for (const modelId of ['gemini-3.8-flash-lite-high', 'gemini-3.8-flash-0901-high', 'gemini-3.8-flash-preview', 'gemini-3.8-flash-ultra', 'gemini-3.8-flash-high-high'])
+      expect(new ProviderCatalogMatcher(catalogRuntime([official])).match({ ...input, modelId }), modelId).toMatchObject({ status: 'unmatched' })
+  })
+
+  it('retains unanimous fields without choosing a provider or voting away conflicts', () => {
+    const first = { ...model('first', 'shared', 'https://first.test'), input: ['text', 'image'] as Array<'text' | 'image'>, contextWindow: 256_000, maxTokens: 32_000 }
+    const second = { ...first, provider: 'second', baseUrl: 'https://second.test', contextWindow: 512_000 }
+    const input = { api: 'openai-completions', baseUrl: 'https://relay.test', modelId: 'gateway/shared' }
+    const match = new ProviderCatalogMatcher(catalogRuntime([first, second])).match(input)
+    expect(match).toMatchObject({ status: 'ambiguous', defaults: { input: ['text', 'image'], maxTokens: 32_000 } })
+    if (match.status === 'ambiguous') {
+      expect(match.defaults).not.toHaveProperty('contextWindow')
+      expect(match.defaults).not.toHaveProperty('baseUrl')
+    }
+    const conflict = new ProviderCatalogMatcher(catalogRuntime([first, second, { ...second, provider: 'third', input: ['text'] }])).match(input)
+    expect(conflict).toMatchObject({ status: 'ambiguous' })
+    if (conflict.status === 'ambiguous')
+      expect(conflict.defaults).not.toHaveProperty('input')
+  })
+
   it('matches model metadata independently of the execution protocol', () => {
     const matcher = new ProviderCatalogMatcher(catalogRuntime([
       { ...model('anthropic', 'claude-sonnet', 'https://api.anthropic.test'), api: 'anthropic-messages' },

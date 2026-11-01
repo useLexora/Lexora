@@ -546,9 +546,14 @@ export class ProviderModelCatalog {
     const provider = this.#configs.findById(model.providerId)
     const api = provider?.api ?? runtimeModel?.api ?? model.api
     const baseUrl = provider?.baseUrl ?? runtimeModel?.baseUrl ?? ''
-    const metadata = model.catalogProviderId && model.catalogModelId
-      ? this.#catalogMatcher.find({ providerId: model.catalogProviderId, modelId: model.catalogModelId })
-      : undefined
+    const match = model.source === 'synced'
+      ? this.#catalogMatcher.match({ api, baseUrl, modelId: model.modelId, selection: model.catalogSelection })
+      : null
+    const metadata = match
+      ? match.status === 'matched' ? match.model : match.status === 'ambiguous' ? match.defaults : undefined
+      : model.catalogProviderId && model.catalogModelId
+        ? this.#catalogMatcher.find({ providerId: model.catalogProviderId, modelId: model.catalogModelId })
+        : undefined
     const sameEndpoint = Boolean(metadata?.baseUrl
       && normalizeProviderBaseUrl(metadata.baseUrl) === normalizeProviderBaseUrl(baseUrl))
     const serviceInput = provider ? this.#serviceMetadata(provider, model)?.metadata.input : undefined
@@ -660,7 +665,8 @@ export class ProviderModelCatalog {
           compatibility: null,
         })) ?? [],
       },
-      metadataKnown: model.source !== 'synced' || model.catalogProviderId !== null || hasServiceMetadata(model),
+      metadataKnown: model.source !== 'synced' || model.catalogProviderId !== null || hasServiceMetadata(model)
+        || (match?.status === 'ambiguous' && match.defaults.input !== undefined),
       contextWindow: effectiveModel.contextWindow,
       displayName: model.displayName,
       enabled: model.enabled,
@@ -709,8 +715,10 @@ export class ProviderModelCatalog {
       return sourceMetadataFromCatalogModel(provider.api, match.model, sameEndpoint ? match.model.cost : current?.cost ?? emptyModelCost(), current, serviceMetadata)
     }
 
-    const previousSource = current?.serviceMetadata ? null : current
+    const defaults = match.status === 'ambiguous' ? match.defaults : undefined
+    const previousSource = current?.serviceMetadata || match.status === 'ambiguous' ? null : current
     const compatibleCurrent = previousSource?.api === provider.api ? previousSource : null
+    const contextWindow = defaults?.contextWindow ?? previousSource?.sourceContextWindow ?? 128_000
     return createSourceMetadata({
       api: provider.api,
       catalogProviderId: compatibleCurrent?.catalogProviderId ?? null,
@@ -718,12 +726,12 @@ export class ProviderModelCatalog {
       compat: current?.api === provider.api ? current.compat : null,
       cost: current?.cost ?? emptyModelCost(),
       displayName: definition.name?.trim() || current?.displayName || definition.id,
-      input: previousSource?.input ?? ['text'],
-      reasoning: compatibleCurrent?.reasoning ?? false,
+      input: defaults?.input ?? previousSource?.input ?? ['text'],
+      reasoning: defaults?.reasoning ?? compatibleCurrent?.reasoning ?? false,
       samplingParams: current?.api === provider.api ? current.samplingParams : null,
-      sourceContextWindow: previousSource?.sourceContextWindow ?? 128_000,
-      sourceMaxTokens: previousSource?.sourceMaxTokens ?? 16_384,
-      thinkingLevelMap: compatibleCurrent?.thinkingLevelMap ?? null,
+      sourceContextWindow: contextWindow,
+      sourceMaxTokens: Math.min(defaults?.maxTokens ?? previousSource?.sourceMaxTokens ?? 16_384, contextWindow),
+      thinkingLevelMap: defaults?.thinkingLevelMap ?? compatibleCurrent?.thinkingLevelMap ?? null,
     }, serviceMetadata)
   }
 

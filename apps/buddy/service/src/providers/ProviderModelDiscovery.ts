@@ -125,9 +125,10 @@ function parseModelDefinitions(value: unknown): readonly ProviderModelDefinition
       throw new ProviderModelSyncError()
     const type = providerModelTypeSchema.safeParse(item.type)
     const name = typeof item.name === 'string' ? item.name.trim() : ''
+    const metadata = parseServiceMetadata(item)
     return {
       id: item.id.trim(),
-      ...(type.success ? { metadata: { type: type.data } } : {}),
+      ...(type.success || Object.keys(metadata).length ? { metadata: { ...metadata, ...(type.success ? { type: type.data } : {}) } } : {}),
       ...(name ? { name } : {}),
     }
   })
@@ -137,9 +138,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
-const cliProxyApiModelSchema = z.object({
-  slug: z.string().trim().min(1).max(200),
-  display_name: z.string().trim().min(1).max(200).optional(),
+const serviceModelMetadataSchema = z.object({
   context_window: z.number().int().positive().optional(),
   max_tokens: z.number().int().positive().optional(),
   input_modalities: discoveredModelMetadataSchema.shape.input,
@@ -148,21 +147,31 @@ const cliProxyApiModelSchema = z.object({
   })).optional(),
 })
 
+const cliProxyApiModelSchema = serviceModelMetadataSchema.extend({
+  slug: z.string().trim().min(1).max(200),
+  display_name: z.string().trim().min(1).max(200).optional(),
+})
+
 function parseCliProxyApiModels(value: unknown): readonly ProviderModelDefinition[] {
   const body = z.object({ models: z.array(cliProxyApiModelSchema) }).parse(value)
   return body.models.map(model => ({
     id: model.slug,
     ...(model.display_name ? { name: model.display_name } : {}),
-    metadata: discoveredModelMetadataSchema.parse({
+    metadata: {
       ...(model.display_name ? { name: model.display_name } : {}),
-      ...(model.input_modalities ? { input: [...new Set(model.input_modalities)] } : {}),
-      ...(model.supported_reasoning_levels
-        ? {
-            reasoningOptions: [...new Set(model.supported_reasoning_levels.map(level => level.effort === 'none' ? 'off' : level.effort))],
-          }
-        : {}),
-      ...(model.context_window !== undefined ? { contextWindow: model.context_window } : {}),
-      ...(model.max_tokens !== undefined ? { maxTokens: model.max_tokens } : {}),
-    }),
+      ...parseServiceMetadata(model),
+    },
   }))
+}
+
+function parseServiceMetadata(value: Record<string, unknown>): DiscoveredModelMetadata {
+  const model = serviceModelMetadataSchema.parse(value)
+  return discoveredModelMetadataSchema.parse({
+    ...(model.input_modalities ? { input: [...new Set(model.input_modalities)] } : {}),
+    ...(model.supported_reasoning_levels
+      ? { reasoningOptions: [...new Set(model.supported_reasoning_levels.map(level => level.effort === 'none' ? 'off' : level.effort))] }
+      : {}),
+    ...(model.context_window !== undefined ? { contextWindow: model.context_window } : {}),
+    ...(model.max_tokens !== undefined ? { maxTokens: model.max_tokens } : {}),
+  })
 }
