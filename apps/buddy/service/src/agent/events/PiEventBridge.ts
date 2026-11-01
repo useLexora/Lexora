@@ -412,7 +412,7 @@ class ActivePiEventChannel implements PiCompactionEventChannel, PiTurnEventChann
 function isTerminalToolExecutionUpdate(
   event: AgentSessionEvent,
 ): event is PiToolExecutionUpdateEvent {
-  return event.type === 'tool_execution_update' && (isShellToolName(event.toolName) || event.toolName === 'lexora_host_shell')
+  return event.type === 'tool_execution_update' && (isShellToolName(event.toolName) || event.toolName === 'lexora_host_shell' || event.toolName === 'lexora_wsl_shell')
 }
 
 async function settledError(promise: Promise<unknown>): Promise<unknown> {

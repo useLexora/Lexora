@@ -23,6 +23,7 @@ import { FILE_MUTATION_EXTENSION } from '../extensions/fileMutationExtension'
 import { getPiShellToolName, PI_BUILTIN_TOOL_NAME_SET } from '../extensions/piBuiltinTools'
 import { createReadFileExtension, READ_FILE_EXTENSION } from '../extensions/readFileExtension'
 import { createSystemSectionsExtension } from '../extensions/systemSectionsExtension'
+import { createWslSearchExtension, WSL_SEARCH_EXTENSION } from '../extensions/wslSearchExtension'
 import { BUDDY_MANUAL_APPROVAL_PROMPT, createBuddyExecutionPrompt, createBuddySystemPrompt } from './createBuddySystemPrompt'
 
 export interface CreateBuddyResourceLoaderOptions {
@@ -83,7 +84,7 @@ export async function createBuddyResourceLoader(
     agentsFilesOverride: () => ({ agentsFiles: [...options.boundedContextFiles] }),
     appendSystemPromptOverride: () => [],
     cwd: options.cwd,
-    extensionFactories: [createReadFileExtension(options.cwd, options.readImage, options.writeImageMaterial), ...options.inProcessExtensions, createSystemSectionsExtension(options.getPendingInput, toolNames => createPermissionPrompt(options.getPermissionSettings?.() ?? options, options.platform, toolNames), () => options.actorPrompt ?? '')],
+    extensionFactories: [createReadFileExtension(options.cwd, options.readImage, options.writeImageMaterial), createWslSearchExtension(options.cwd), ...options.inProcessExtensions, createSystemSectionsExtension(options.getPendingInput, toolNames => createPermissionPrompt(options.getPermissionSettings?.() ?? options, options.platform, toolNames), () => options.actorPrompt ?? '')],
     noContextFiles: true,
     noExtensions: true,
     noPromptTemplates: true,
@@ -140,6 +141,7 @@ function validateLoadedExtensions(loader: DefaultResourceLoader): void {
       (PI_BUILTIN_TOOL_NAME_SET.has(toolName)
         && !(toolName === getPiShellToolName(process.platform) && extension.path === `<inline:${SHELL_SANDBOX_EXTENSION}>`)
         && !(toolName === 'read' && extension.path === `<inline:${READ_FILE_EXTENSION}>`)
+        && !((toolName === 'grep' || toolName === 'find' || toolName === 'ls') && extension.path === `<inline:${WSL_SEARCH_EXTENSION}>`)
         && !((toolName === 'write' || toolName === 'edit') && extension.path === `<inline:${FILE_MUTATION_EXTENSION}>`))
       || (!toolName.startsWith('lexora_') && !toolName.startsWith('mcp__') && !PI_BUILTIN_TOOL_NAME_SET.has(toolName)
         && !(toolName === CODEMODE_TOOL_NAME && extension.path === `<inline:${CODEMODE_EXTENSION}>`))

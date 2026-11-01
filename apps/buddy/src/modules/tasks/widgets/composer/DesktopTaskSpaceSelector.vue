@@ -3,7 +3,7 @@ import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
 
 import type { InputInst } from 'naive-ui'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import type { TaskSpaceInput } from '@/modules/tasks/state/task-index/typing'
+import type { SpaceDirectorySource, TaskSpaceInput } from '@/modules/tasks/state/task-index/typing'
 import {
   Checkmark16Regular,
   ChevronDown16Regular,
@@ -21,7 +21,7 @@ const props = defineProps<{
   activeSpace: LocalSpace | null
   language: BuddyLocale
   spaces: ReadonlyArray<LocalSpace>
-  selectDirectory: () => Promise<string | null>
+  selectDirectory: (source?: SpaceDirectorySource) => Promise<string | null>
   createSpace: (input: TaskSpaceInput) => Promise<boolean>
 }>()
 

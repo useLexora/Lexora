@@ -1,3 +1,4 @@
+import type { SpaceDirectorySource } from '@buddy-electron/shared/localChatApi'
 import type { SpaceAdditionalDirectoryChanges } from '@buddy-shared/spaces/spaceApi'
 import type { SpaceIcon, SpaceIconColor } from '@buddy-shared/spaces/spaceAppearance'
 
@@ -14,3 +15,5 @@ export interface TaskSpacePrimaryDirectoryInput {
   id: string | null
   root: string
 }
+
+export type { SpaceDirectorySource }

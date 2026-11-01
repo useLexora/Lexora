@@ -40,6 +40,7 @@ const BUILTIN_TOOL_ACCESS: Record<string, AccessKind> = {
   grep: 'read',
   lexora_host_shell: 'execute',
   lexora_shell: 'execute',
+  lexora_wsl_shell: 'execute',
   ls: 'read',
   powershell: 'execute',
   read: 'read',
@@ -87,7 +88,8 @@ export class PermissionEngine {
       return deny('NETWORK_PERMISSION_DENIED', 'profile')
     if (request.shellBoundary === 'sandbox' && request.toolName === 'lexora_authorize_directory')
       return this.#decideSandboxDirectory(request)
-    if (request.toolName === 'lexora_host_shell') {
+    // Both run outside the sandbox: a host command, and a Linux process in WSL that a Windows sandbox cannot confine.
+    if (request.toolName === 'lexora_host_shell' || request.toolName === 'lexora_wsl_shell') {
       if (request.profile === 'read_only')
         return deny('READ_ONLY_PROFILE', 'profile')
       if (request.profile !== 'full_access')
@@ -181,7 +183,7 @@ export class PermissionEngine {
 
   async #classifyShell(request: PermissionRequest): Promise<ToolDecision | undefined> {
     if (request.profile === 'full_access') {
-      if (request.shellDialect || ['bash', 'powershell', 'lexora_shell', 'lexora_host_shell'].includes(request.toolName))
+      if (request.shellDialect || ['bash', 'powershell', 'lexora_shell', 'lexora_host_shell', 'lexora_wsl_shell'].includes(request.toolName))
         readStringProperty(request.arguments, 'command')
       return undefined
     }
@@ -387,7 +389,7 @@ function applyApprovalPolicy(
   return ask({
     kind: request.approval?.kind ?? approvalKindFor(access),
     paths: toDecisionPaths(classifications),
-    ...(['bash', 'powershell', 'lexora_shell', 'lexora_host_shell'].includes(request.toolName)
+    ...(['bash', 'powershell', 'lexora_shell', 'lexora_host_shell', 'lexora_wsl_shell'].includes(request.toolName)
       && access === 'execute'
       ? { shell: { cwd: request.cwd, reason: 'manual-policy' as const, boundary: request.shellBoundary ?? 'host' as const } }
       : {}),
