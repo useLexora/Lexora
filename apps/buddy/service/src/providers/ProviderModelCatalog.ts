@@ -14,7 +14,7 @@ import type {
 } from '../storage/providerModelStateRepository'
 import type { InputModel } from './modelCapabilities'
 import type { CatalogModel, ModelMetadataCatalog } from './ModelsDevCatalog'
-import type { ProviderModelDefinition } from './ProviderModelDiscovery'
+import type { ProviderModelDefinition, ProviderModelDiscoveryResult } from './ProviderModelDiscovery'
 import type { BuddyModel, ModelParametersOverride } from './providerSchemas'
 import { createHash } from 'node:crypto'
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai'
@@ -227,8 +227,9 @@ export class ProviderModelCatalog {
 
   reconcileSyncedModels(
     provider: ProviderConfigRecord,
-    definitions: readonly ProviderModelDefinition[],
+    result: ProviderModelDiscoveryResult,
   ): void {
+    const definitions = result.models
     const now = new Date().toISOString()
     const seen = new Set(definitions.map(model => model.id))
     for (const definition of definitions) {
@@ -264,6 +265,8 @@ export class ProviderModelCatalog {
         updatedAt: now,
       })
     }
+    if (!result.complete)
+      return
     for (const current of this.#models.list(provider.id)) {
       if (current.source !== 'synced' || seen.has(current.modelId))
         continue

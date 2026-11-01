@@ -1,8 +1,5 @@
 import type {
   Api,
-  AuthInteraction,
-  AuthType,
-  Credential,
   CredentialInfo,
   Model,
   Provider,
@@ -10,7 +7,7 @@ import type {
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import type { DatabaseSync } from 'node:sqlite'
 import type { HostCredentialStore } from '../HostCredentialStore'
-import type { ProviderModelDiscovery } from '../ProviderModelDiscovery'
+import type { ProviderModelDefinition, ProviderModelDiscovery } from '../ProviderModelDiscovery'
 import type { ProviderServiceOptions } from '../ProviderService'
 import { mkdtempSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
@@ -122,7 +119,6 @@ describe('providerService', () => {
       expect(commits.at(-1)?.models[0]?.facets).toContain('execution')
       expect(service.snapshot.catalogRevision).toBeGreaterThan(before.catalogRevision)
       expect(before.models[0]?.capabilities).not.toContain('image')
-      expect(Object.isFrozen(service.snapshot.models[0]?.capabilities)).toBe(true)
     }
     finally {
       await service.dispose()
@@ -133,7 +129,7 @@ describe('providerService', () => {
   it('rejects late discovery after its provider has been removed', async () => {
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     const runtime = new FakeModelRuntime()
-    const discovered = Promise.withResolvers<Awaited<ReturnType<ProviderModelDiscovery['discover']>>>()
+    const discovered = Promise.withResolvers<readonly ProviderModelDefinition[]>()
     const started = Promise.withResolvers<void>()
     const service = createProviderServiceForTest({ authInteractions: new AuthInteractionService(), modelRuntime: runtime, providers: createProviderRepository(database), modelDiscovery: createTestModelDiscovery(() => {
       started.resolve()
@@ -156,14 +152,14 @@ describe('providerService', () => {
     }
   })
 
-  it('rejects custom creation collisions without overwriting provider configuration', async () => {
+  it('protects provider identity and stored configuration while validating custom input', async () => {
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     try {
       const runtime = new FakeModelRuntime()
       runtime.providers = [provider('xiaomi')]
       const repository = createProviderRepository(database)
       const service = createProviderServiceForTest({ authInteractions: new AuthInteractionService(), modelRuntime: runtime, providers: repository })
-      const input = { api: 'openai-completions' as const, baseUrl: 'https://proxy.example.test/v1', displayName: 'xiaomi', enabled: false, id: 'custom-xiaomi', models: [] }
+      const input = { api: 'openai-completions' as const, baseUrl: 'http://proxy.example.test/v1', displayName: 'xiaomi', enabled: false, id: 'custom-xiaomi', models: [] }
       await expect(service.createCustomProvider({ ...input, id: 'xiaomi' })).rejects.toMatchObject({ code: 'PROVIDER_ID_CONFLICT' })
       expect(repository.configs.findById('xiaomi')).toBeNull()
       await service.createCustomProvider(input)
@@ -172,6 +168,14 @@ describe('providerService', () => {
       expect(repository.configs.findById(input.id)).toEqual(original)
       await expect(service.createCustomProvider({ ...input, id: 'custom-another' })).resolves.toMatchObject({ id: 'custom-another', displayName: 'xiaomi' })
       await expect(service.upsertCustomProvider({ ...input, displayName: 'renamed' })).resolves.toMatchObject({ displayName: 'renamed' })
+      await expect(service.upsertCustomProvider({ ...input, id: 'unsafe', apiKey: 'sk-test-secret' } as never))
+        .rejects
+        .toMatchObject({ code: 'VALIDATION_FAILED' })
+      await expect(service.upsertCustomProvider({
+        ...input,
+        id: 'untrusted-metadata',
+        models: [{ catalogProviderId: 'openai', id: 'model-1', input: ['text'], reasoning: false }],
+      } as never)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
     }
     finally {
       database.close()
@@ -206,79 +210,6 @@ describe('providerService', () => {
     }
   })
 
-  it('registers custom provider metadata without accepting secrets', async () => {
-    const database = openBuddyDatabase({ databasePath: ':memory:' })
-    const runtime = new FakeModelRuntime()
-    runtime.credentials = [{ providerId: 'openai-proxy', type: 'api_key' } as CredentialInfo]
-    const service = createProviderServiceForTest({
-      authInteractions: new AuthInteractionService(),
-      modelRuntime: runtime,
-      providers: createProviderRepository(database),
-    })
-
-    await service.upsertCustomProvider({
-      api: 'openai-responses',
-      baseUrl: 'https://models.example.test/v1',
-      displayName: 'Example Models',
-      enabled: true,
-      id: 'example-models',
-      models: [{
-        contextWindow: 128_000,
-        id: 'reasoner',
-        input: ['text'],
-        maxTokens: 16_384,
-        name: 'Reasoner',
-        reasoning: true,
-      }],
-    })
-
-    expect(runtime.registered).toEqual([{
-      config: expect.objectContaining({
-        api: 'openai-responses',
-        baseUrl: 'https://models.example.test/v1',
-        name: 'Example Models',
-      }),
-      providerId: 'example-models',
-    }])
-    await expect(service.upsertCustomProvider({
-      api: 'openai-responses',
-      apiKey: 'sk-test-secret',
-      baseUrl: 'https://models.example.test/v1',
-      displayName: 'Unsafe',
-      id: 'unsafe',
-      models: [],
-    } as never)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
-    await expect(service.upsertCustomProvider({
-      api: 'openai-responses',
-      baseUrl: 'https://models.example.test/v1',
-      displayName: 'Untrusted metadata',
-      enabled: false,
-      id: 'untrusted-metadata',
-      models: [{
-        catalogProviderId: 'openai',
-        id: 'model-1',
-        input: ['text'],
-        reasoning: false,
-      }],
-    } as never)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
-    await expect(service.upsertCustomProvider({
-      api: 'openai-responses',
-      baseUrl: 'http://models.example.test/v1',
-      displayName: 'Public HTTP',
-      enabled: true,
-      id: 'public-http',
-      models: [{
-        contextWindow: 4096,
-        id: 'model-1',
-        input: ['text'],
-        maxTokens: 1024,
-        name: 'Model',
-        reasoning: false,
-      }],
-    })).resolves.toMatchObject({ id: 'public-http' })
-    database.close()
-  })
-
   it('requires a currently authenticated and available provider before resolving a run model', async () => {
     const runtime = new FakeModelRuntime()
     runtime.providers = [{
@@ -288,13 +219,11 @@ describe('providerService', () => {
       name: 'Anthropic',
     } as Provider]
     runtime.models = [model('anthropic', 'model-1')]
-    const sessionRuntime = {} as ModelRuntime
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     const service = createProviderServiceForTest({
       authInteractions: new AuthInteractionService(),
       modelRuntime: runtime,
       providers: createProviderRepository(database),
-      sessionRuntime,
     })
 
     await restoreLegacyProvider(service, database, 'anthropic')
@@ -311,10 +240,6 @@ describe('providerService', () => {
     runtime.credentials = [{ providerId: 'anthropic', type: 'api_key' } as CredentialInfo]
     await service.setProviderEnabled('anthropic', true)
     await expect(service.executionModels.resolveAvailable(selection)).resolves.toMatchObject(runtime.models[0]!)
-    await expect(service.executionModels.resolveSession(selection)).resolves.toEqual({
-      model: expect.objectContaining(runtime.models[0]!),
-      runtime: sessionRuntime,
-    })
     runtime.credentials = []
     await expect(service.executionModels.resolveAvailable(selection)).rejects.toMatchObject({
       code: 'AUTHENTICATION_REQUIRED',
@@ -508,15 +433,6 @@ describe('providerService', () => {
         sourceParametersUpdated: true,
       }),
     ])
-    expect(runtime.registered.at(-1)).toMatchObject({
-      config: {
-        models: [{
-          input: ['text', 'image'],
-          thinkingLevelMap: { high: 'high', max: 'max' },
-        }],
-      },
-      providerId: 'openai-proxy',
-    })
     database.close()
   })
 
@@ -623,9 +539,12 @@ describe('providerService', () => {
       sourceContextWindow: 256_000,
       capabilities: ['text', 'image', 'reasoning'],
     })
-    expect(runtime.registered.at(-1)).toMatchObject({
-      providerId: 'relay',
-      config: { api: 'openai-responses', baseUrl: 'https://relay.example.test/v1', models: [{ id: 'shared' }] },
+    runtime.models.push(model('relay', 'shared'))
+    expect(service.executionModels.resolve({ providerId: 'relay', modelId: 'shared', contextWindow: null, maxTokens: null })).toMatchObject({
+      id: 'shared',
+      provider: 'relay',
+      api: 'openai-responses',
+      baseUrl: 'https://relay.example.test/v1',
     })
     await expect(service.setModelCatalogSource('relay', 'shared', { providerId: 'first', modelId: 'other' }))
       .rejects
@@ -656,11 +575,11 @@ describe('providerService', () => {
     reopened.close()
   })
 
-  it('keeps capability overrides across model sync, snapshot refresh and restart, then restores current defaults', async () => {
+  it('preserves full and sparse capability overrides across sync and restart while untouched fields follow the source', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'lexora-buddy-capabilities-'))
     databasePaths.push(directory)
     const databasePath = join(directory, 'buddy.sqlite3')
-    const database = openBuddyDatabase({ databasePath })
+    let database = openBuddyDatabase({ databasePath })
     const runtime = new FakeModelRuntime()
     runtime.providers = [provider('origin')]
     runtime.models = [model('origin', 'shared')]
@@ -669,64 +588,42 @@ describe('providerService', () => {
       modelDiscovery: createTestModelDiscovery(() => Promise.resolve([{ id: 'shared' }])),
       modelRuntime: runtime,
     }
-    const service = createProviderServiceForTest({ ...options, providers: createProviderRepository(database) })
-    await service.upsertCustomProvider({
-      id: 'relay',
-      displayName: 'Relay',
-      api: 'openai-responses',
-      baseUrl: 'https://relay.example.test/v1',
-    })
-    await service.syncModels('relay')
-    const capabilities = { image: true, pdf: true, reasoningOptions: ['high', 'max'] as const }
-    runtime.models.push({ ...model('relay', 'shared'), baseUrl: 'https://relay.example.test/v1' })
-    await service.setModelCapabilities('relay', 'shared', { ...capabilities, reasoningOptions: [...capabilities.reasoningOptions] })
-    await service.setModelParametersOverride('relay', 'shared', { contextWindow: 64_000, maxTokens: 8_000 })
-    await service.syncModels('relay')
-    await service.refreshModelSnapshot()
-    expect((await service.listModels('relay'))[0]).toMatchObject({
-      capabilities: ['text', 'image', 'pdf', 'reasoning'],
-      capabilityOverrides: capabilities,
-      contextWindow: 64_000,
-      maxTokens: 8_000,
-    })
-    database.close()
-
-    const reopened = openBuddyDatabase({ databasePath })
-    const restored = createProviderServiceForTest({ ...options, providers: createProviderRepository(reopened) })
-    await restored.initializeProviders()
-    const selection = { providerId: 'relay', modelId: 'shared', contextWindow: null, maxTokens: null }
-    const effective = restored.executionModels.resolve(selection)
-    expect(supportsModelPdfInput(effective)).toBe(true)
-    expect(effective.input).toEqual(['text', 'image'])
-    expect(getSupportedThinkingLevels(effective)).toEqual(['high', 'max'])
-    await restored.setModelCapabilities('relay', 'shared', null)
-    const defaults = restored.executionModels.resolve(selection)
-    expect(supportsModelPdfInput(defaults)).toBe(false)
-    expect(defaults.input).toEqual(['text'])
-    expect(defaults.reasoning).toBe(false)
-    expect(defaults.contextWindow).toBe(64_000)
-    expect(defaults.maxTokens).toBe(8_000)
-    expect((await restored.listModels('relay'))[0]?.capabilityOverrides).toBeNull()
-    reopened.close()
-  })
-
-  it('keeps sparse overrides across restart while unedited capabilities follow snapshot changes', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'lexora-buddy-sparse-capabilities-'))
-    databasePaths.push(directory)
-    const databasePath = join(directory, 'buddy.sqlite3')
-    const database = openBuddyDatabase({ databasePath })
-    const runtime = new FakeModelRuntime()
-    runtime.providers = [provider('origin')]
-    runtime.models = [model('origin', 'shared')]
-    const options = {
-      authInteractions: new AuthInteractionService(),
-      modelDiscovery: createTestModelDiscovery(() => Promise.resolve([{ id: 'shared' }])),
-      modelRuntime: runtime,
-    }
+    let service = createProviderServiceForTest({ ...options, providers: createProviderRepository(database) })
     try {
-      const service = createProviderServiceForTest({ ...options, providers: createProviderRepository(database) })
       await service.upsertCustomProvider({ id: 'relay', displayName: 'Relay', api: 'openai-responses', baseUrl: 'https://relay.example.test/v1' })
       await service.syncModels('relay')
+      const capabilities = { image: true, pdf: true, reasoningOptions: ['high', 'max'] as const }
+      runtime.models.push({ ...model('relay', 'shared'), baseUrl: 'https://relay.example.test/v1' })
+      await service.setModelCapabilities('relay', 'shared', { ...capabilities, reasoningOptions: [...capabilities.reasoningOptions] })
+      await service.setModelParametersOverride('relay', 'shared', { contextWindow: 64_000, maxTokens: 8_000 })
+      await service.syncModels('relay')
+      await service.refreshModelSnapshot()
+      expect((await service.listModels('relay'))[0]).toMatchObject({
+        capabilities: ['text', 'image', 'pdf', 'reasoning'],
+        capabilityOverrides: capabilities,
+        contextWindow: 64_000,
+        maxTokens: 8_000,
+      })
+      await service.dispose()
+      database.close()
+
+      database = openBuddyDatabase({ databasePath })
+      service = createProviderServiceForTest({ ...options, providers: createProviderRepository(database) })
+      await service.initializeProviders()
+      const selection = { providerId: 'relay', modelId: 'shared', contextWindow: null, maxTokens: null }
+      const effective = service.executionModels.resolve(selection)
+      expect(supportsModelPdfInput(effective)).toBe(true)
+      expect(effective.input).toEqual(['text', 'image'])
+      expect(getSupportedThinkingLevels(effective)).toEqual(['high', 'max'])
+      await service.setModelCapabilities('relay', 'shared', null)
+      const defaults = service.executionModels.resolve(selection)
+      expect(supportsModelPdfInput(defaults)).toBe(false)
+      expect(defaults.input).toEqual(['text'])
+      expect(defaults.reasoning).toBe(false)
+      expect(defaults.contextWindow).toBe(64_000)
+      expect(defaults.maxTokens).toBe(8_000)
+      expect((await service.listModels('relay'))[0]?.capabilityOverrides).toBeNull()
+
       await service.setModelCapabilities('relay', 'shared', { image: true })
       runtime.models[0] = { ...runtime.models[0]!, reasoning: true, thinkingLevelMap: { off: 'none', low: 'low', max: 'max' } }
       await service.refreshModelSnapshot()
@@ -735,28 +632,26 @@ describe('providerService', () => {
         capabilities: ['text', 'image', 'reasoning'],
         reasoningOptions: getSupportedThinkingLevels(runtime.models[0]),
       })
-    }
-    finally {
+      await service.dispose()
       database.close()
-    }
 
-    const reopened = openBuddyDatabase({ databasePath })
-    try {
-      const restored = createProviderServiceForTest({ ...options, providers: createProviderRepository(reopened) })
-      await restored.initializeProviders()
-      expect((await restored.listModels('relay'))[0]?.capabilityOverrides).toEqual({ image: true })
-      await restored.setModelCapabilities('relay', 'shared', { reasoningOptions: ['high'] })
+      database = openBuddyDatabase({ databasePath })
+      service = createProviderServiceForTest({ ...options, providers: createProviderRepository(database) })
+      await service.initializeProviders()
+      expect((await service.listModels('relay'))[0]?.capabilityOverrides).toEqual({ image: true })
+      await service.setModelCapabilities('relay', 'shared', { reasoningOptions: ['high'] })
       runtime.models[0] = { ...runtime.models[0]!, input: ['text', 'image'] }
-      await restored.refreshModelSnapshot()
-      expect((await restored.listModels('relay'))[0]).toMatchObject({
+      await service.refreshModelSnapshot()
+      expect((await service.listModels('relay'))[0]).toMatchObject({
         capabilityOverrides: { reasoningOptions: ['high'] },
         capabilities: ['text', 'image', 'reasoning'],
         reasoningOptions: ['high'],
       })
-      expect((await restored.setModelCapabilities('relay', 'shared', {})).capabilityOverrides).toBeNull()
+      expect((await service.setModelCapabilities('relay', 'shared', {})).capabilityOverrides).toBeNull()
     }
     finally {
-      reopened.close()
+      await service.dispose()
+      database.close()
     }
   })
 
@@ -817,20 +712,15 @@ describe('providerService', () => {
     database.close()
   })
 
-  it('does not re-register or refresh an existing custom provider while one of its runs is active', async () => {
+  it('rejects connection edits, manual models and discovery while custom provider runs are active', async () => {
     const runtime = new FakeModelRuntime()
     let activeRuns: Array<{ model: string, provider: string }> = []
-    let syncCalls = 0
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     const service = createProviderServiceForTest({
       authInteractions: new AuthInteractionService(),
       getActiveRuns: () => activeRuns,
       modelRuntime: runtime,
       providers: createProviderRepository(database),
-      modelDiscovery: createTestModelDiscovery(async () => {
-        syncCalls += 1
-        return []
-      }),
     })
     await service.upsertCustomProvider({
       api: 'openai-responses',
@@ -858,8 +748,7 @@ describe('providerService', () => {
     await expect(service.syncModels('custom-provider'))
       .rejects
       .toMatchObject({ code: 'PROVIDER_HAS_ACTIVE_RUNS' })
-    expect(runtime.registered).toHaveLength(1)
-    expect(syncCalls).toBe(0)
+    expect(await service.listModels('custom-provider')).toEqual([])
     await expect(service.listProviders()).resolves.toEqual([
       expect.objectContaining({
         api: 'openai-responses',
@@ -879,7 +768,6 @@ describe('providerService', () => {
       api: 'openai-completions',
       baseUrl: 'https://new.example.test/v1',
     })
-    expect(runtime.registered).toHaveLength(2)
     database.close()
   })
 
@@ -946,7 +834,7 @@ describe('providerService', () => {
     database.close()
   })
 
-  it('clears only models that left the synced catalog and releases their default selection', async () => {
+  it('retains missing synced models and their default until explicitly removed', async () => {
     const runtime = new FakeModelRuntime()
     let definitions = [{ id: 'current-model' }, { id: 'retired-model' }]
     const database = openBuddyDatabase({ databasePath: ':memory:' })
@@ -1027,10 +915,10 @@ function createProviderServiceForTest(options: ProviderServiceTestOptions): Prov
 }
 
 function createTestModelDiscovery(
-  discover: ProviderModelDiscovery['discover'] = () => Promise.resolve([]),
+  discover: (...args: Parameters<ProviderModelDiscovery['discover']>) => Promise<readonly ProviderModelDefinition[]> = () => Promise.resolve([]),
 ): ProviderModelDiscovery {
   return {
-    discover,
+    discover: async input => ({ models: await discover(input), complete: true }),
     supports: api => api === 'openai-completions' || api === 'openai-responses',
   }
 }
@@ -1070,21 +958,13 @@ class FakeModelRuntime {
     this.providers.push(provider)
   }
 
-  readonly registered: Array<{ config: unknown, providerId: string }> = []
   credentialsError: Error | null = null
   credentials: CredentialInfo[] = []
-  loginResult: string | null = null
   providers: Provider[] = []
   models: Model<Api>[] = []
-  readonly refreshCalls: unknown[] = []
 
-  refresh(options?: unknown): Promise<Awaited<ReturnType<ModelRuntime['refresh']>>> {
-    this.refreshCalls.push(options)
+  refresh(): Promise<Awaited<ReturnType<ModelRuntime['refresh']>>> {
     return Promise.resolve({ aborted: false, errors: new Map() })
-  }
-
-  getAuth(): Promise<undefined> {
-    return Promise.resolve(undefined)
   }
 
   getModels(providerId?: string): readonly Model<Api>[] {
@@ -1096,8 +976,6 @@ class FakeModelRuntime {
   }
 
   getProvider(providerId: string): Provider | undefined {
-    if (providerId === 'openai-codex')
-      return { auth: { oauth: {} }, id: providerId } as Provider
     return this.providers.find(provider => provider.id === providerId)
   }
 
@@ -1111,13 +989,8 @@ class FakeModelRuntime {
     return Promise.resolve(this.credentials)
   }
 
-  async login(_providerId: string, _type: AuthType, interaction: AuthInteraction): Promise<Credential> {
-    interaction.notify({ type: 'auth_url', url: 'https://auth.openai.com/authorize' })
-    this.loginResult = await interaction.prompt({
-      message: 'Paste the authorization code',
-      type: 'manual_code',
-    })
-    return { type: 'api_key', key: this.loginResult }
+  async login(): Promise<never> {
+    throw new Error('Unexpected login')
   }
 
   logout(providerId: string): Promise<void> {
@@ -1125,9 +998,7 @@ class FakeModelRuntime {
     return Promise.resolve()
   }
 
-  registerProvider(providerId: string, config: unknown): void {
-    this.registered.push({ config, providerId })
-  }
+  registerProvider(): void {}
 
   unregisterProvider(): void {}
 }

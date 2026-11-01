@@ -594,7 +594,7 @@ export class ProviderService {
       if (!custom || !this.#modelDiscovery.supports(custom.api))
         throw new ProviderModelSyncUnsupportedError()
       this.#assertProviderIdle(providerId)
-      const definitions = await this.#modelDiscovery.discover({
+      const discovery = await this.#modelDiscovery.discover({
         signal: this.#shutdown.signal,
         api: custom.api,
         baseUrl: custom.baseUrl,
@@ -603,7 +603,7 @@ export class ProviderService {
       if (JSON.stringify(this.#configs.findById(providerId)) !== JSON.stringify(custom))
         throw new ProviderUnavailableError()
       this.#assertProviderIdle(providerId)
-      this.#state.commit('discovery', () => this.#modelCatalog.reconcileSyncedModels(custom, definitions))
+      this.#state.commit('discovery', () => this.#modelCatalog.reconcileSyncedModels(custom, discovery))
       this.#applyCatalog(providerId, () => this.#modelCatalog.registerCustomProvider(custom))
       return this.listModels(providerId)
     })

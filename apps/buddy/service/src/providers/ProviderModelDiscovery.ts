@@ -21,6 +21,11 @@ export interface ProviderModelDefinition {
   readonly metadata?: DiscoveredModelMetadata
 }
 
+export interface ProviderModelDiscoveryResult {
+  readonly models: readonly ProviderModelDefinition[]
+  readonly complete: boolean
+}
+
 export interface ProviderModelDiscoveryInput {
   readonly signal?: AbortSignal
   readonly api: string
@@ -31,7 +36,7 @@ export interface ProviderModelDiscoveryInput {
 export interface ProviderModelDiscovery {
   discover: (
     input: ProviderModelDiscoveryInput,
-  ) => Promise<readonly ProviderModelDefinition[]>
+  ) => Promise<ProviderModelDiscoveryResult>
   supports: (api: string) => boolean
 }
 
@@ -63,7 +68,7 @@ export class OpenAiCompatibleModelDiscovery implements ProviderModelDiscovery {
 
   async discover(
     input: ProviderModelDiscoveryInput,
-  ): Promise<readonly ProviderModelDefinition[]> {
+  ): Promise<ProviderModelDiscoveryResult> {
     if (!this.supports(input.api))
       throw new ProviderModelSyncUnsupportedError()
     const credential = await this.#credentials.read(input.providerId)
@@ -103,7 +108,7 @@ export class OpenAiCompatibleModelDiscovery implements ProviderModelDiscovery {
       if (new Set(models.map(model => model.id)).size !== models.length)
         throw new ProviderModelSyncError()
       this.#record({ ...context, event: 'provider.request.completed', level: 'info', durationMs: Math.round(performance.now() - startedAt), count: models.length, providerRequest: evidence })
-      return models
+      return { models, complete: modelListIsComplete(body, response, models.length) }
     }
     catch (error) {
       evidence.failureStage = failureStage
@@ -115,6 +120,36 @@ export class OpenAiCompatibleModelDiscovery implements ProviderModelDiscovery {
       throw new ProviderModelSyncError()
     }
   }
+}
+
+function modelListIsComplete(value: unknown, response: Response, modelCount: number): boolean {
+  if (response.status !== 200 || response.headers.has('content-range') || response.headers.has('link') || !isRecord(value))
+    return false
+  if (value.pagination != null)
+    return false
+  for (const key of ['has_more', 'hasMore', 'partial', 'truncated']) {
+    if (key in value && value[key] !== false)
+      return false
+  }
+  for (const key of ['next', 'next_page', 'next_cursor', 'next_page_token', 'nextPageToken']) {
+    if (value[key] != null && value[key] !== '')
+      return false
+  }
+  if (value.links != null) {
+    if (!isRecord(value.links))
+      return false
+    if (value.links.next != null || value.links.prev != null)
+      return false
+  }
+  for (const key of ['total', 'total_count']) {
+    if (key in value && value[key] !== modelCount)
+      return false
+  }
+  if (value.offset != null && value.offset !== 0)
+    return false
+  if (value.page != null && value.page !== 1)
+    return false
+  return true
 }
 
 function parseModelDefinitions(value: unknown): readonly ProviderModelDefinition[] {
