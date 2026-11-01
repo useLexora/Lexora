@@ -330,6 +330,7 @@ const featureDiscovery = useFeatureDiscovery({
       'additional-directories': desktopRouteLocations.tasks(),
       'network-permissions': desktopRouteLocations.settings('browser'),
       'follow-up-behavior': desktopRouteLocations.settings('runtime'),
+      'codemode-concurrency': desktopRouteLocations.settings('runtime'),
       'speech-settings': desktopRouteLocations.settings('speech'),
       'image-settings': desktopRouteLocations.settings('models'),
     }[id]

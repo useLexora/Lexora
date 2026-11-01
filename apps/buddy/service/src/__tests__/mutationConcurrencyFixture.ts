@@ -14,6 +14,7 @@ import { SessionManager } from '@earendil-works/pi-coding-agent'
 import { expect, vi } from 'vitest'
 import { DEFAULT_BUDDY_SETTINGS } from '../../../shared/buddies/buddySettings'
 import { createBuddyUserContent } from '../../../shared/conversation/buddyUserContent'
+import { DEFAULT_RUNTIME_PREFERENCES } from '../../../shared/runtime/runtimePreferences'
 import { readCheckpoint } from '../agent/sessions/tree/BuddyTreeStore'
 import { startBuddyService } from '../BuddyService'
 import { createChangeSetRepository } from '../changes/changeSetRepository'
@@ -81,7 +82,7 @@ function rpcHarness(shells: readonly ExtensionShellDescriptor[]) {
         case 'host.extensions.shells.list': return shells
         case 'host.images.preferences': return {}
         case 'host.networkPermissions.get': return { defaults: { access: 'ask', download: 'ask', upload: 'ask' }, rules: [] }
-        case 'host.runtimePreferences.get': return { cacheWarming: 'off', codemode: false, modelRetryLimit: 0 }
+        case 'host.runtimePreferences.get': return { ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: false, modelRetryLimit: 0 }
         case 'host.credentials.list': return { ok: true, providers: [{ providerId: 'mutation-local', type: 'api_key' }] }
         case 'host.credentials.read': return { ok: true, value: { type: 'api_key', key: 'local-test-only' } }
         default: throw new Error(`Unexpected host RPC: ${method}`)

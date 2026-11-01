@@ -1,4 +1,7 @@
 export default {
+  'discovery.codemode-concurrency.title': 'Choose tool orchestration concurrency',
+  'discovery.codemode-concurrency.description': 'Set script concurrency for all tasks in Runtime settings: 4 by default, a custom count, or unlimited. Choose to wait or return busy when capacity is full.',
+  'discovery.codemode-concurrency.hint': 'Raise concurrency to run more scripts at once. Unlimited asks you to acknowledge resource usage. Waiting scripts resume as capacity becomes available.',
   'discovery.follow-up-behavior.title': 'Choose how to send messages during work',
   'discovery.follow-up-behavior.description': 'Under Execution behavior in Runtime settings, choose whether messages steer current work or wait in the queue. Queued messages can still be sent immediately.',
   'discovery.follow-up-behavior.hint': 'Messages steer current work by default. Select Queue to process new messages after the current work ends.',

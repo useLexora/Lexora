@@ -8,8 +8,28 @@ import {
   replaceChatRunEventBuckets,
 } from '../../runs/chatRunEventBuckets'
 import { createChatRunTranscriptProjector } from '../chatRunTranscriptProjector'
+import { describeChatTool } from '../chatToolDisplay'
 
 describe('chat run transcript projector', () => {
+  it('shows queued scripts and resumes their status from durable phase events', () => {
+    const projector = createChatRunTranscriptProjector()
+    const identity = { toolCallId: 'queued-script', toolName: 'codemode' }
+    const events = [
+      messageEvent('run-a', 1, 'tool.started', { ...identity, presentation: terminalPresentation(null) }),
+      messageEvent('run-a', 2, 'tool.phase', { ...identity, timing: { phase: 'queued', durations: {} } }),
+    ]
+    const queued = replaceChatRunEventBuckets(events.map(toPublicRunEvent))
+    const waiting = projector.project(queued, [run('run-a')])[0]!.turn.nodes.find(node => node.kind === 'tool')!
+    expect(waiting).toMatchObject({ status: 'running', executionPhase: 'queued' })
+    expect(describeChatTool(waiting, 'zh-CN').status).toBe('排队等待')
+    const resumed = mergeChatRunEventBuckets(queued, [toPublicRunEvent(messageEvent('run-a', 3, 'tool.phase', { ...identity, timing: { phase: 'executing', durations: { queued: 61000 } } }))])
+    const running = projector.project(resumed, [run('run-a')])[0]!.turn.nodes.find(node => node.kind === 'tool')!
+    expect(running).toMatchObject({ status: 'running', executionPhase: 'executing' })
+    expect(describeChatTool(running, 'zh-CN').status).not.toBe('排队等待')
+    const completed = mergeChatRunEventBuckets(resumed, [messageEvent('run-a', 4, 'tool.completed', { ...identity, presentation: terminalPresentation('done'), isError: false })])
+    expect(projector.project(completed, [run('run-a')])[0]!.turn.nodes.find(node => node.kind === 'tool')).toMatchObject({ status: 'completed' })
+  })
+
   it('preserves reused call IDs and denied executions through durable compaction and replay', () => {
     const payload = { toolCallId: 'reused', toolName: 'bash', presentation: terminalPresentation(null) }
     const events = [

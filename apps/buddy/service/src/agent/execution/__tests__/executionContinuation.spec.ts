@@ -13,6 +13,7 @@ import { ModelRuntime, SessionManager } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EXECUTION_MAILBOX_ENTRY_TYPE } from '../../../../../shared/executions/executionApi'
+import { DEFAULT_RUNTIME_PREFERENCES } from '../../../../../shared/runtime/runtimePreferences'
 import { createRunEventLog } from '../../../events/createRunEventLog'
 import { RunContinuityService } from '../../../runs/RunContinuityService'
 import { createConversationRepository } from '../../../storage/conversationRepository'
@@ -490,7 +491,7 @@ async function fixture(options: { compact?: () => void, pending?: () => Executio
         return options.pending!().filter(message => !delivered.some(entry => entry.message.messageId === message.messageId))
       }
     : undefined, assertModelAccess: async () => model, runContext, inputReferences, materializeInput: async input => [{ type: 'text', text: input.prompt }], tree: cursor })
-  reusable.applyPreferences({ cacheWarming: 'off', codemode: false, modelRetryLimit: 0 })
+  reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: false, modelRetryLimit: 0 })
   const sessions = new BuddySessionRegistry<typeof reusable>()
   const piEvents = new PiEventBridge({ eventLog, usage: new UsageService({ eventLog, repository: createUsageRepository(database) }) })
   const executor = new PiTurnExecutor({ eventLog, piEvents, continuity: new RunContinuityService(runs), sessions, sessionFactory: async () => ({ session: reusable, piSessionFile: created.piSessionFile }) })

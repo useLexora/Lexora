@@ -4,6 +4,7 @@ import type { LocalRun, LocalRunEvent } from '@buddy-shared/runs/runApi'
 import type { BuddyToolPresentation } from '@buddy-shared/runs/runEventPresentation'
 
 import type { BuddyRunProgress } from '@buddy-shared/runs/runProgress'
+import type { ToolExecutionPhase } from '@buddy-shared/runs/toolExecutionPhase'
 import type { ToolFailureCode } from '@buddy-shared/runs/toolFailure'
 import type { LocalRunTokenUsage } from '@buddy-shared/usage/runTokenUsage'
 import type { ChatAgentCompactionNode } from './chatRunCompaction'
@@ -11,6 +12,7 @@ import type { ChatProjectionReducer } from './chatRunEventProjection'
 import { contextPanelOperationSchema } from '@buddy-shared/context-panel/contextPanel'
 import { approvalReviewPayloadSchema } from '@buddy-shared/permissions/approvalReviewPayload'
 import { buddyRunProgressSchema } from '@buddy-shared/runs/runProgress'
+import { toolExecutionTimingSchema } from '@buddy-shared/runs/toolExecutionPhase'
 import { isToolFailureCode } from '@buddy-shared/runs/toolFailure'
 import { createChatRunCompactionReducer } from './chatRunCompaction'
 import { readAssistantTextPhase, readNonnegativeInteger, readPayload, readString } from './chatRunEventProjection'
@@ -41,6 +43,7 @@ export interface ChatAgentToolNode {
   approvalId?: string
   denialCode?: string
   errorCode?: ToolFailureCode
+  executionPhase?: ToolExecutionPhase
   description: string | null
   id: string
   isError: boolean
@@ -117,6 +120,7 @@ export function createChatAgentTurnReducer(
   const usage = createChatRunTokenUsageReducer(run.id)
   const reasoning = new Map<string, ChatAgentReasoningNode>()
   const tools = new Map<string, ChatAgentToolNode & { toolCallId: string }>()
+  const toolPhases = new Map<string, ToolExecutionPhase>()
   const previousTools: ChatAgentToolNode[] = []
   const approvalTools = new Map<string, string>()
   const text = new Map<string, ChatAgentNarrationNode>()
@@ -391,6 +395,17 @@ export function createChatAgentTurnReducer(
       }
       return
     }
+    if (event.type === 'tool.phase') {
+      const toolCallId = readString(payload.toolCallId)
+      const timing = toolExecutionTimingSchema.safeParse(payload.timing)
+      if (toolCallId && timing.success) {
+        toolPhases.set(toolCallId, timing.data.phase)
+        const current = tools.get(toolCallId)
+        if (current && (timing.data.phase === 'finished' || ['preparing', 'running', 'awaiting_approval'].includes(current.status)))
+          tools.set(toolCallId, { ...current, executionPhase: timing.data.phase })
+      }
+      return
+    }
     if (event.type === 'tool.denied' || event.type === 'tool.failed') {
       const toolCallId = readString(payload.toolCallId)
       const current = toolCallId ? tools.get(toolCallId) : undefined
@@ -449,6 +464,7 @@ export function createChatAgentTurnReducer(
         ...(current?.approvalId ? { approvalId: current.approvalId } : {}),
         ...(current?.denialCode ? { denialCode: current.denialCode } : {}),
         ...(current?.errorCode ? { errorCode: current.errorCode } : {}),
+        ...(toolPhases.has(toolCallId) ? { executionPhase: toolPhases.get(toolCallId) } : {}),
         description,
         ...(toolLabel ? { toolLabel } : {}),
         id,

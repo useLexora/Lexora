@@ -25,7 +25,7 @@ const actions = useChatContent()
 const display = computed(() => describeChatTool(props.node, props.language))
 const canExpand = computed(() => canExpandChatTool(props.node, actions.canPreviewFile))
 const active = computed(() => isChatToolActive(props.node))
-const processing = computed(() => props.node.status === 'running' || props.node.status === 'preparing')
+const processing = computed(() => props.node.executionPhase !== 'queued' && (props.node.status === 'running' || props.node.status === 'preparing'))
 const issue = computed(() => isChatToolIssue(props.node))
 </script>
 

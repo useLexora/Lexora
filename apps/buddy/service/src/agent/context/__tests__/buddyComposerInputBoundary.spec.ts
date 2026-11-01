@@ -12,6 +12,7 @@ import { streamSimple } from '@earendil-works/pi-ai/compat'
 import { estimateTokens, ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 import { afterEach, describe, expect, it } from 'vitest'
+import { DEFAULT_RUNTIME_PREFERENCES } from '../../../../../shared/runtime/runtimePreferences'
 import { createOutputPresentationExtension } from '../../../artifacts/outputPresentationExtension'
 import { PermissionEngine } from '../../../permissions/PermissionEngine'
 import { createSensitivePathMatcher } from '../../../permissions/sensitivePaths'
@@ -309,7 +310,7 @@ describe('composer input at the Buddy session boundary', () => {
         ? terminalStream(model, { content: [], stopReason: 'error', errorMessage: '429 rate limit exceeded' })
         : terminalStream(model),
     })
-    fixture.reusable.applyPreferences({ cacheWarming: 'off', codemode: false, modelRetryLimit: 1 })
+    fixture.reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: false, modelRetryLimit: 1 })
     fixture.session.settingsManager.applyOverrides({ retry: { baseDelayMs: 1 } })
     await fixture.send(plan())
 
@@ -786,7 +787,7 @@ async function createFixture(options: {
     shutdown: created.shutdown,
   })
 
-  reusable.applyPreferences({ cacheWarming: 'off', codemode: false, modelRetryLimit: 0 })
+  reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: false, modelRetryLimit: 0 })
 
   async function send(input: InputPlan, runId = `run-${input.messageId}`) {
     const reference = toBuddyInputReference(input)

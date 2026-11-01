@@ -52,6 +52,7 @@ import { PiEventBridge } from './agent/events/PiEventBridge'
 import { BuddyAgentRunner } from './agent/execution/BuddyAgentRunner'
 import { BuddyRunExecutionPlanner } from './agent/execution/BuddyRunExecutionPlanner'
 import { BuddyTurnLauncher } from './agent/execution/BuddyTurnLauncher'
+import { CodemodeWorkerPool } from './agent/execution/CodemodeWorkerPool'
 import { ExecutionComposerInputService } from './agent/execution/ExecutionComposerInputService'
 import { ExecutionCoordinator } from './agent/execution/ExecutionCoordinator'
 import { ExecutionDelegationService } from './agent/execution/ExecutionDelegationService'
@@ -977,6 +978,13 @@ export async function startBuddyService(
       return service
     })
     const sessionExtensionServices: BuddySessionExtensionServices = {
+      codemodeWorkers: await host.start('runtime.codemode_workers', async ({ defer }) => {
+        const pool = new CodemodeWorkerPool()
+        defer(() => pool.dispose())
+        const unsubscribe = await bindRuntimePreferences(options.rpc, preferences => pool.configure(preferences))
+        defer(unsubscribe)
+        return pool
+      }),
       shells: new ExtensionShellRegistry(options.rpc),
       networkPermissions: new NetworkPermissionsClient(options.rpc),
       imageReading,

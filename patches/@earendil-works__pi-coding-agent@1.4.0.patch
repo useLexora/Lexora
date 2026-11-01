@@ -804,7 +804,7 @@ new file mode 100644
 diff --git a/dist/extensions/codemode/execute.js b/dist/extensions/codemode/execute.js
 --- a/dist/extensions/codemode/execute.js
 +++ b/dist/extensions/codemode/execute.js
-@@ -431,6 +431,13 @@
+@@ -431,6 +431,13 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
      const startedAt = performance.now();
      const { code, options: sourceOptions } = parseCodemodeSource(input.code);
      const calls = [];
@@ -818,7 +818,7 @@ diff --git a/dist/extensions/codemode/execute.js b/dist/extensions/codemode/exec
      // Usage of the script's `models.*` calls. Nested tool calls report theirs through the session.
      let modelUsage;
      // Images returned by `models.generateImages()`, to notice a script that never shows them.
-@@ -442,7 +449,7 @@
+@@ -442,7 +449,7 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
          modelUsage = modelUsage ? combineUsage(modelUsage, usage) : usage;
      };
      const snapshot = () => ({ calls: calls.map((call) => ({ ...call })) });
@@ -827,7 +827,7 @@ diff --git a/dist/extensions/codemode/execute.js b/dist/extensions/codemode/exec
      // Show the script as running before its first nested call, so the row's timer starts.
      publish();
      const callable = ctx ? getCodemodeCallableTools(ctx.tools) : [];
-@@ -465,18 +472,29 @@
+@@ -465,39 +472,66 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
              // Only tools from ctx.tools are callable, so ctx is set here.
              if (!ctx)
                  throw new Error("Tool calls need a session");
@@ -865,11 +865,39 @@ diff --git a/dist/extensions/codemode/execute.js b/dist/extensions/codemode/exec
 -            return toScriptValue(tool, outcome);
          },
      }));
-     // The wait for a worker counts toward the script's deadline.
-@@ -492,12 +510,13 @@
+-    // The wait for a worker counts toward the script's deadline.
+     const deadline = sourceOptions.timeoutMs ?? Number.POSITIVE_INFINITY;
+     const waitStartedAt = performance.now();
+-    const admission = await reserveCodemodeWorker(signal, Math.min(deadline, CODEMODE_WORKER_WAIT_MS));
+-    const waitedMs = performance.now() - waitStartedAt;
++    let releaseReservation = releaseCodemodeWorker;
++    let admission;
++    let admissionError;
++    if (options.runtime?.acquireWorker) {
++        try {
++            releaseReservation = await options.runtime.acquireWorker(toolCallId, signal);
++            admission = "reserved";
++        }
++        catch (error) {
++            admission = signal?.aborted ? "aborted" : "rejected";
++            if (admission === "rejected")
++                admissionError = error instanceof Error ? error.message : String(error);
++        }
++    }
++    else {
++        admission = await reserveCodemodeWorker(signal, Math.min(deadline, CODEMODE_WORKER_WAIT_MS));
++    }
++    const waitedMs = options.runtime?.acquireWorker ? 0 : performance.now() - waitStartedAt;
+     if (admission !== "reserved") {
+         const waited = ((performance.now() - startedAt) / 1000).toFixed(1);
+         const reason = signal?.reason;
+-        const error = admission === "aborted"
++        const error = admissionError ?? (admission === "aborted"
+             ? `Script aborted: ${reason instanceof Error ? reason.message : "Execution aborted"}`
              : deadline <= CODEMODE_WORKER_WAIT_MS
                  ? `Script timed out: Execution timed out after ${deadline} ms while waiting for a free codemode worker`
-                 : `No codemode worker became free within ${CODEMODE_WORKER_WAIT_MS / 1000} seconds. All ${maxCodemodeWorkers()} workers, shared by every session in this process, are held by other scripts. Retry after they finish.`;
+-                : `No codemode worker became free within ${CODEMODE_WORKER_WAIT_MS / 1000} seconds. All ${maxCodemodeWorkers()} workers, shared by every session in this process, are held by other scripts. Retry after they finish.`;
++                : `No codemode worker became free within ${CODEMODE_WORKER_WAIT_MS / 1000} seconds. All ${maxCodemodeWorkers()} workers, shared by every session in this process, are held by other scripts. Retry after they finish.`);
 +        publishing = false;
          return {
              content: [
@@ -881,7 +909,7 @@ diff --git a/dist/extensions/codemode/execute.js b/dist/extensions/codemode/exec
              isError: true,
          };
      }
-@@ -509,6 +528,17 @@
+@@ -509,6 +543,17 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
      try {
          sandbox = new CodemodeSandbox({
              tools: sandboxTools,
@@ -899,8 +927,21 @@ diff --git a/dist/extensions/codemode/execute.js b/dist/extensions/codemode/exec
              globals: [
                  ...createDiscoveryGlobals(callable, samples, options),
                  ...(options.models && ctx
-@@ -537,6 +567,25 @@
-             releaseCodemodeWorker();
+@@ -524,7 +569,7 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
+                     throw new Error("The script already settled");
+                 // From here the sandbox releases the slot when the worker actually exits.
+                 reserved = false;
+-                return releaseCodemodeWorker;
++                return releaseReservation;
+             },
+         });
+         const store = ctx ? readCodemodeStore(ctx.sessionManager.getBranch()) : {};
+@@ -534,9 +579,28 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
+         await sandbox?.close();
+         if (reserved) {
+             reserved = false;
+-            releaseCodemodeWorker();
++            releaseReservation();
          }
      }
 +    const cleanup = toolCleanup.then(() => workerExit);
@@ -925,7 +966,7 @@ diff --git a/dist/extensions/codemode/execute.js b/dist/extensions/codemode/exec
      // Calls still marked running were cut off by the script ending, a timeout, or an abort.
      for (const call of calls) {
          if (call.status === "running")
-@@ -553,8 +602,13 @@
+@@ -553,8 +617,13 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
              scriptOutput.push({ type: "text", text: valueText(result.value) });
      }
      const items = formatOutput(scriptOutput);
@@ -940,7 +981,7 @@ diff --git a/dist/extensions/codemode/execute.js b/dist/extensions/codemode/exec
      if (generatedImages > 0 && !items.some((item) => item.type === "image")) {
          items.push({
              type: "text",
-@@ -567,7 +621,7 @@
+@@ -567,7 +636,7 @@ export async function executeCodemode(toolCallId, input, signal, onUpdate, ctx,
      const output = joinAdjacentText(await saveImages(truncated.items));
      const wallTime = ((performance.now() - startedAt) / 1000).toFixed(1);
      const header = `${result.ok ? "Script completed" : "Script failed"}\nWall time ${wallTime} seconds\nOutput:\n`;
@@ -974,11 +1015,13 @@ diff --git a/dist/extensions/codemode/index.js b/dist/extensions/codemode/index.
 diff --git a/dist/extensions/codemode/tool.d.ts b/dist/extensions/codemode/tool.d.ts
 --- a/dist/extensions/codemode/tool.d.ts
 +++ b/dist/extensions/codemode/tool.d.ts
-@@ -35,7 +35,17 @@
+@@ -35,7 +35,19 @@ export interface CodemodeStoreEntryData {
  }
  /** The part of the model registry that scripts reach through `models`. */
  export type CodemodeModelRuntime = Pick<ModelRegistry, "getModelsOfType" | "getAvailableOfType" | "getModelOfType" | "classify" | "generateImages">;
 +export interface CodemodeRuntimeOptions {
++    /** Host admission replaces the process pool. Waiting is cancellable and excluded from the script deadline. Release runs on actual worker exit or a failed launch. */
++    acquireWorker?(toolCallId: string, signal: AbortSignal | undefined): Promise<() => void>;
 +    computeTimeoutMs?: number;
 +    maxPendingToolCalls?: number;
 +    maxQueuedToolCalls?: number;
@@ -992,7 +1035,7 @@ diff --git a/dist/extensions/codemode/tool.d.ts b/dist/extensions/codemode/tool.
      /** Namespace of a tool, for `searchTools()` ranking and its `namespace` filter. */
      getToolNamespace?: (toolName: string) => ToolNamespace | undefined;
      /** Prompt guidelines of every tool, by tool name, shown with declarations by `describeTool()` and `ALL_TOOLS`. */
-@@ -75,6 +85,7 @@
+@@ -75,6 +87,7 @@ export interface CodemodeNestedCall {
  }
  export interface CodemodeToolDetails {
      calls: CodemodeNestedCall[];

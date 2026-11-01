@@ -10,7 +10,7 @@ import { Worker } from 'node:worker_threads'
 import { createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTools, InMemoryCredentialStore } from '@earendil-works/pi-ai'
 import { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_RUNTIME_PREFERENCES } from '../../../../../shared/runtime/runtimePreferences'
 import { ApprovalCancelledError } from '../../../approvals/ApprovalService'
 import { MutationCoordinator } from '../../../changes/MutationCoordinator'
@@ -18,6 +18,7 @@ import { FileResourceCoordinator } from '../../../files/FileResourceCoordinator'
 import { NativeFileEngine } from '../../../files/NativeFileEngine'
 import { compactToolGuidelines } from '../../context/compactToolGuidelines'
 import { createEstimatedContextUsage } from '../../context/contextUsageBreakdown'
+import { CodemodeWorkerPool } from '../../execution/CodemodeWorkerPool'
 import { CODEMODE_EXTENSION, CodemodeCleanupIncompleteError, createCodemodeCapability } from '../../extensions/codemodeExtension'
 import { createBuddySessionExtensions } from '../../extensions/createBuddySessionExtensions'
 import { createReusableBuddySession } from '../createReusableBuddySession'
@@ -26,9 +27,15 @@ import { createIsolatedBuddyContextSnapshot, createIsolatedBuddySession } from '
 type FixtureCall = Pick<ToolCall, 'name' | 'arguments'>
 
 const cleanups: (() => Promise<void>)[] = []
+let workers: CodemodeWorkerPool
+beforeEach(() => {
+  workers = new CodemodeWorkerPool()
+  workers.configure({ codemodeWorkerLimit: 2, codemodeOverflow: 'wait' })
+})
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse())
     await cleanup()
+  workers.dispose()
   vi.unstubAllEnvs()
 })
 
@@ -231,6 +238,95 @@ describe('codemode runtime preference', () => {
     expect(fixture.session.messages.at(-1)).toMatchObject({ content: [{ type: 'text', text: 'Done' }] })
   })
 
+  it('keeps the fifth script queued beyond 60 seconds and starts its execution deadline after admission', async () => {
+    workers = new CodemodeWorkerPool()
+    const fixtures = await Promise.all(Array.from({ length: 5 }, () => createFixture()))
+    for (const fixture of fixtures)
+      fixture.apply(true)
+    const turns = fixtures.slice(0, 4).map(fixture => fixture.turn({ name: 'codemode', arguments: { code: 'await tools.lexora_gate({ value: 1 });' } }))
+    try {
+      await vi.waitFor(() => expect(fixtures.slice(0, 4).every(fixture => fixture.gates.length === 1)).toBe(true))
+      let finished = false
+      const waiting = fixtures[4]!.turn({ name: 'codemode', arguments: { code: '// @options: {"timeout_ms": 1000}\ntext(await tools.lexora_gate({ value: 5 }));' } }).then(() => {
+        finished = true
+      })
+      turns.push(waiting)
+      await vi.waitFor(() => expect(fixtures[4]!.phases.some(event => event.phase === 'queued')).toBe(true))
+      await new Promise(resolve => setTimeout(resolve, 61_000))
+      expect(finished).toBe(false)
+      expect(fixtures[4]!.gates).toHaveLength(0)
+      fixtures[0]!.gates[0]!.release()
+      await turns[0]
+      await vi.waitFor(() => expect(fixtures[4]!.gates).toHaveLength(1))
+      fixtures[4]!.gates[0]!.release()
+      await waiting
+      expect(fixtures[4]!.lastResult()).toContain('Script completed')
+      expect(fixtures[4]!.gates.map(gate => gate.value)).toEqual([5])
+      expect(fixtures[4]!.phases.filter(event => event.phase === 'queued')).toHaveLength(1)
+    }
+    finally {
+      await Promise.all(fixtures.map(fixture => fixture.reusable.abort()))
+      await Promise.allSettled(turns)
+    }
+  }, 75_000)
+
+  it('applies raised, lowered and unlimited capacity to live sessions without stopping running scripts', async () => {
+    workers.configure({ codemodeWorkerLimit: 1, codemodeOverflow: 'wait' })
+    const fixtures = await Promise.all(Array.from({ length: 6 }, () => createFixture()))
+    const turns: Promise<void>[] = []
+    try {
+      for (const fixture of fixtures) {
+        fixture.apply(true)
+        turns.push(fixture.turn({ name: 'codemode', arguments: { code: 'text(await tools.lexora_gate({ value: 1 }));' } }))
+        await vi.waitFor(() => expect(fixture.events.some(event => event.type === 'tool_execution_start' && event.toolName === 'codemode')).toBe(true))
+      }
+      await vi.waitFor(() => expect(fixtures[0]!.gates).toHaveLength(1))
+      expect(fixtures.slice(1).every(fixture => fixture.gates.length === 0)).toBe(true)
+      workers.configure({ codemodeWorkerLimit: 2, codemodeOverflow: 'wait' })
+      await vi.waitFor(() => expect(fixtures[1]!.gates).toHaveLength(1))
+      workers.configure({ codemodeWorkerLimit: 1, codemodeOverflow: 'wait' })
+      expect(fixtures.slice(0, 2).every(fixture => !fixture.gates[0]!.signal.aborted)).toBe(true)
+      fixtures[0]!.gates[0]!.release()
+      await turns[0]
+      await new Promise(resolve => setTimeout(resolve, 100))
+      expect(fixtures.slice(2).every(fixture => fixture.gates.length === 0)).toBe(true)
+      workers.configure({ codemodeWorkerLimit: 'unlimited', codemodeOverflow: 'reject' })
+      await vi.waitFor(() => expect(fixtures.slice(1).every(fixture => fixture.gates.length === 1)).toBe(true))
+      for (const fixture of fixtures.slice(1))
+        fixture.gates[0]!.release()
+      await Promise.all(turns)
+      expect(fixtures.every(fixture => fixture.lastResult().includes('Script completed'))).toBe(true)
+    }
+    finally {
+      await Promise.all(fixtures.map(fixture => fixture.reusable.abort()))
+      await Promise.allSettled(turns)
+    }
+  })
+
+  it('rejects a new script immediately at capacity without side effects and allows a later call', async () => {
+    workers.configure({ codemodeWorkerLimit: 1, codemodeOverflow: 'reject' })
+    const [first, second] = await Promise.all([createFixture(), createFixture()])
+    first.apply(true)
+    second.apply(true)
+    const running = first.turn({ name: 'codemode', arguments: { code: 'await tools.lexora_gate({ value: 1 });' } })
+    try {
+      await vi.waitFor(() => expect(first.gates).toHaveLength(1))
+      await second.turn({ name: 'codemode', arguments: { code: 'await tools.lexora_gate({ value: 2 });' } })
+      expect(second.lastResult()).toContain('CodeMode capacity is full')
+      expect(second.lastResult()).toContain('The script did not start.')
+      expect(second.gates).toHaveLength(0)
+      first.gates[0]!.release()
+      await running
+      await second.turn({ name: 'codemode', arguments: { code: 'text("available again");' } })
+      expect(second.lastResult()).toContain('Script completed')
+      expect(second.lastResult()).toContain('available again')
+    }
+    finally {
+      await first.reusable.abort()
+      await running
+    }
+  })
+
   it('queues across three sessions and admits the waiter after cancellation', async () => {
     const [first, second, third] = await Promise.all(Array.from({ length: 3 }, () => createFixture('read_only', { computeTimeoutMs: 200 })))
     for (const fixture of [first, second, third])
@@ -266,9 +362,8 @@ describe('codemode runtime preference', () => {
     }
   })
 
-  it.each([undefined, '3', '0'])('drains five sessions in FIFO order with worker limit %s', async (limit) => {
-    vi.stubEnv('PI_CODEMODE_MAX_WORKERS', limit)
-    const capacity = limit === '3' ? 3 : 2
+  it.each([2, 3, 4])('drains five sessions in FIFO order with worker limit %s', async (capacity) => {
+    workers.configure({ codemodeWorkerLimit: capacity, codemodeOverflow: 'wait' })
     const fixtures = await Promise.all(Array.from({ length: 5 }, () => createFixture('read_only')))
     const turns: Promise<void>[] = []
     const code = 'text(await tools.lexora_gate({ value: 1 }));'
@@ -325,7 +420,7 @@ describe('codemode runtime preference', () => {
     }
   }, 60_000)
 
-  it.each(['timeout', 'abort'])('removes a waiting script after %s without starting nested tools', async (outcome) => {
+  it('removes a cancelled waiting script without starting nested tools', async () => {
     const [first, second, third, fourth] = await Promise.all(Array.from({ length: 4 }, () => createFixture('read_only')))
     const fixtures = [first, second, third, fourth]
     for (const fixture of fixtures)
@@ -334,18 +429,17 @@ describe('codemode runtime preference', () => {
     const turns = [first.turn({ name: 'codemode', arguments: { code } }), second.turn({ name: 'codemode', arguments: { code } })]
     try {
       await vi.waitFor(() => expect(first.gates.length + second.gates.length).toBe(2))
-      const waiting = third.turn({ name: 'codemode', arguments: { code: outcome === 'timeout' ? `// @options: {"timeout_ms": 100}\n${code}` : code } })
+      const waiting = third.turn({ name: 'codemode', arguments: { code } })
       turns.push(waiting)
       await vi.waitFor(() => expect(third.events.some(event => event.type === 'tool_execution_start' && event.toolName === 'codemode')).toBe(true))
       const successor = fourth.turn({ name: 'codemode', arguments: { code } })
       turns.push(successor)
-      if (outcome === 'abort')
-        await third.reusable.abort()
+      await third.reusable.abort()
       await waiting
       const result = third.events.filter(event => event.type === 'tool_execution_end' && event.toolName === 'codemode').at(-1)
       expect(result).toMatchObject({ isError: true, result: { details: { calls: [], cleanup: { toolCalls: 'completed', worker: 'exited' } } } })
       expect(JSON.stringify(result)).toContain('The script did not start.')
-      expect(JSON.stringify(result)).toContain(outcome === 'timeout' ? '100 ms while waiting' : 'Script aborted:')
+      expect(JSON.stringify(result)).toContain('Script aborted:')
       expect(third.gates).toHaveLength(0)
       first.gates[0]!.release()
       await turns[0]
@@ -499,8 +593,9 @@ describe('codemode runtime preference', () => {
           details: { cleanup: { toolCalls: 'completed', worker: 'pending' } },
         })
       }
-      await third.turn({ name: 'codemode', arguments: { code: '// @options: {"timeout_ms": 100}\ntext("must not be admitted");' } })
-      expect(third.lastResult()).toContain('while waiting for a free codemode worker')
+      workers.configure({ codemodeWorkerLimit: 2, codemodeOverflow: 'reject' })
+      await third.turn({ name: 'codemode', arguments: { code: 'text("must not be admitted");' } })
+      expect(third.lastResult()).toContain('CodeMode capacity is full')
       expect(third.lastResult()).toContain('The script did not start.')
       expect(third.lastResult()).not.toContain('must not be admitted')
     }
@@ -575,6 +670,7 @@ async function createFixture(executionProfile: BuddyExecutionProfile = 'read_onl
     await engine.dispose()
   })
   const services: BuddySessionExtensionServices = {
+    codemodeWorkers: workers,
     delegation: { pending: () => [], execute: async () => ({ status: 'working', updates: [] }), assertShellExecutionAllowed: () => {} },
     approvalService: { request: async () => ({ approvalId: 'denied-1', decision: 'denied' }) },
     attachmentService: {} as BuddySessionExtensionServices['attachmentService'],
@@ -655,6 +751,7 @@ async function createFixture(executionProfile: BuddyExecutionProfile = 'read_onl
   cleanups.push(() => extensions.dispose())
   const cleanupPromises: Promise<void>[] = []
   const runtimeCapability = runtimeOptions && createCodemodeCapability(() => true, {
+    acquireWorker: (_id, signal) => workers.acquire(signal),
     ...runtimeOptions,
     onCleanupIncomplete(pending) {
       cleanupPromises.push(pending)
@@ -700,6 +797,7 @@ async function createFixture(executionProfile: BuddyExecutionProfile = 'read_onl
     assertCodemodeReady: runtimeCapability?.assertReady ?? extensions.assertCodemodeReady,
   })
   const controller = new AbortController()
+  const phases: { toolCallId: string, phase: string }[] = []
   const authorized: AuthorizedToolExecution[] = []
   const denied: DeniedToolExecution[] = []
   return {
@@ -721,6 +819,7 @@ async function createFixture(executionProfile: BuddyExecutionProfile = 'read_onl
     maximumActive: () => maximumActive,
     controller,
     authorized,
+    phases,
     denied,
     apply: (codemode: boolean) => reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, codemode }),
     lastResult: () => session.messages.filter(message => message.role === 'toolResult').at(-1)?.content.filter(block => block.type === 'text').map(block => block.text).join('\n') ?? '',
@@ -736,6 +835,7 @@ async function createFixture(executionProfile: BuddyExecutionProfile = 'read_onl
         maxTokens: null,
         signal: controller.signal,
         flushProjectedEvents: async () => {},
+        onToolExecutionPhase: event => phases.push(event),
         onToolExecutionAuthorized: async (call) => { authorized.push(call) },
         onToolExecutionDenied: async (call) => { denied.push(call) },
       })

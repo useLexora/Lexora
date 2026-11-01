@@ -9,8 +9,8 @@ import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import type { DatabaseSync } from 'node:sqlite'
 import type { LocalBuddy } from '../../../shared/buddies/buddyApi'
-
 import type { BuddyComposerResource } from '../../../shared/conversation/composerResource'
+
 import type { ApplicationDiagnostic } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { BuddyServiceRpcServer } from '../rpc/BuddyServiceRpcServer'
 import { Buffer } from 'node:buffer'
@@ -21,10 +21,11 @@ import { join } from 'node:path'
 import { SessionManager } from '@earendil-works/pi-coding-agent'
 import { afterEach, describe, expect, it } from 'vitest'
 import { DEFAULT_BUDDY_SETTINGS } from '../../../shared/buddies/buddySettings'
-
 import { createBuddyUserContent } from '../../../shared/conversation/buddyUserContent'
+
 import { EXECUTION_MAILBOX_ENTRY_TYPE } from '../../../shared/executions/executionApi'
 import { DEFAULT_NETWORK_PERMISSIONS } from '../../../shared/permissions/networkPermissions'
+import { DEFAULT_RUNTIME_PREFERENCES } from '../../../shared/runtime/runtimePreferences'
 import { inspectCommittedPiCompaction } from '../agent/sessions/recovery/inspectCommittedPiCompaction'
 import { readCheckpoint } from '../agent/sessions/tree/BuddyTreeStore'
 import { startBuddyService } from '../BuddyService'
@@ -1712,7 +1713,7 @@ function createRuntimeRpcHarness(
       if (method === 'host.images.preferences')
         return Promise.resolve({})
       if (method === 'host.runtimePreferences.get')
-        return Promise.resolve({ cacheWarming: 'off', codemode: false, modelRetryLimit: 3 })
+        return Promise.resolve({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: false, modelRetryLimit: 3 })
       if (method === 'host.credentials.list') {
         return Promise.resolve({
           ok: true,

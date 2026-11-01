@@ -3,6 +3,9 @@ import type { FeatureGuideId } from '@buddy-shared/onboarding/featureDiscovery'
 const inlineBeacon = { side: 'right', align: 'center', offsetX: 12 } as const
 
 const targets = {
+  'codemode-concurrency': [
+    { id: 'codemode-concurrency', selector: '[data-testid="codemode-concurrency-setting"] .desktop-segmented-control', title: 'discovery.codemode-concurrency.title', description: 'discovery.codemode-concurrency.hint', beacon: inlineBeacon, side: 'bottom', align: 'start' },
+  ],
   'follow-up-behavior': [
     { id: 'follow-up-behavior', selector: '[data-testid="follow-up-behavior-setting"] .desktop-segmented-control', title: 'discovery.follow-up-behavior.title', description: 'discovery.follow-up-behavior.hint', beacon: inlineBeacon, side: 'top', align: 'end' },
   ],

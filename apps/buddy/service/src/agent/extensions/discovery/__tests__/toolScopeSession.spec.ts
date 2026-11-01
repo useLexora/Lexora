@@ -16,6 +16,7 @@ import { MutationCoordinator } from '../../../../changes/MutationCoordinator'
 import { FileResourceCoordinator } from '../../../../files/FileResourceCoordinator'
 import { NativeFileEngine } from '../../../../files/NativeFileEngine'
 import { ShellSelection } from '../../../../sandbox/ShellSelection'
+import { CodemodeWorkerPool } from '../../../execution/CodemodeWorkerPool'
 import { createIsolatedBuddySession } from '../../../sessions/__tests__/isolatedBuddySession'
 import { createBuddySessionExtensions } from '../../createBuddySessionExtensions'
 import { getPiShellToolName } from '../../piBuiltinTools'
@@ -287,6 +288,7 @@ async function fixture(options: { tools?: BuddySettings['tools'], fileAccessLimi
   }
   cleanups.push(disposeResources)
   const services: BuddySessionExtensionServices = {
+    codemodeWorkers: new CodemodeWorkerPool(),
     shells: options.shells ? { snapshot: async () => new ShellSelection(descriptors, async () => descriptors) } : undefined,
     approvalService: { request: async (input) => {
       approved.push(input.toolName)
