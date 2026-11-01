@@ -124,6 +124,7 @@ describe('buddyServiceEnvironment', () => {
       LEXORA_BUDDY_HOME: 'C:\\Users\\Fixture\\.lexora\\buddy',
       NODE_USE_ENV_PROXY: '1',
       PI_CODING_AGENT_DIR: 'C:\\Users\\Fixture\\.lexora\\buddy\\agent',
+      PI_CODEMODE_MAX_WORKERS: '8',
     })
   })
   it('preserves Linux user and desktop session environment and excludes ambient credentials', () => {
@@ -155,8 +156,26 @@ describe('buddyServiceEnvironment', () => {
       LEXORA_BUDDY_HOME: '/data/lexora/buddy',
       NODE_USE_ENV_PROXY: '1',
       PI_CODING_AGENT_DIR: '/data/lexora/buddy/agent',
+      PI_CODEMODE_MAX_WORKERS: '8',
       PATH: '/usr/bin',
     })
+  })
+
+  it.each([
+    ['linux', {}, '8'],
+    ['linux', { PI_CODEMODE_MAX_WORKERS: '' }, '8'],
+    ['win32', {}, '8'],
+    ['win32', { PI_CODEMODE_MAX_WORKERS: '' }, '8'],
+    ['linux', { PI_CODEMODE_MAX_WORKERS: '2' }, '2'],
+    ['linux', { PI_CODEMODE_MAX_WORKERS: '16' }, '16'],
+    ['linux', { PI_CODEMODE_MAX_WORKERS: '0' }, '0'],
+    ['linux', { PI_CODEMODE_MAX_WORKERS: 'abc' }, 'abc'],
+    ['win32', { PI_CODEMODE_MAX_WORKERS: '16' }, '16'],
+    ['win32', { pi_codemode_max_workers: '4' }, '4'],
+    ['linux', { pi_codemode_max_workers: '4' }, '8'],
+  ] as const)('sets the shared codemode worker limit on %s', (platform, source, expected) => {
+    const home = platform === 'win32' ? 'C:\\Users\\Fixture' : '/home/example'
+    expect(createBuddyServiceEnvironment({ HOME: home, ...source }, `${home}/buddy`, platform).PI_CODEMODE_MAX_WORKERS).toBe(expected)
   })
 
   it.each(['linux', 'darwin'] as const)('uses the main process home when HOME is missing or empty on %s', (platform) => {

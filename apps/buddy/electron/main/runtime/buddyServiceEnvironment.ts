@@ -10,6 +10,21 @@ import { resolveBuddyTarget } from '../../../platform/target'
 import { resolveBuddyPlatform } from '../../../shared/platform'
 import { isWindows } from '../../../shared/platform/identifiers'
 
+// Pi's CLI runs one session per process, so two codemode workers are enough there.
+// This service runs every session and in-process subagent in one process, and a
+// script that calls subagents holds its worker until they return. pi-web uses the
+// same host shape and defaults the shared limit to 8. A value the user set is
+// passed through unchanged, including values Pi rejects.
+const DEFAULT_PI_CODEMODE_MAX_WORKERS = '8'
+const PI_CODEMODE_MAX_WORKERS = 'PI_CODEMODE_MAX_WORKERS'
+
+function codemodeWorkerLimit(source: NodeJS.ProcessEnv, caseSensitive: boolean): string {
+  const value = Object.entries(source).find(([name]) => (
+    (caseSensitive ? name : name.toUpperCase()) === PI_CODEMODE_MAX_WORKERS
+  ))?.[1]
+  return value === undefined || value === '' ? DEFAULT_PI_CODEMODE_MAX_WORKERS : value
+}
+
 export function resolveBuddySearchToolsDirectory(options: {
   appPath: string
   isPackaged: boolean
@@ -51,6 +66,7 @@ export function createBuddyServiceEnvironment(
       LEXORA_BUDDY_EVENT_RECOVERY: recoveryMode === 'full' ? 'full' : undefined,
       NODE_USE_ENV_PROXY: '1',
       PI_CODING_AGENT_DIR: filePathAdapters[targetPlatform.id].resolveInput('agent', buddyHome),
+      PI_CODEMODE_MAX_WORKERS: codemodeWorkerLimit(environmentSource, targetPlatform.environment.caseSensitive),
     },
   })
   if (proxyUrl) {
