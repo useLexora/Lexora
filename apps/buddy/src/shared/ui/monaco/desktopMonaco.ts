@@ -22,6 +22,7 @@ export function loadDesktopMonaco(): Promise<typeof Monaco> {
       import('monaco-editor/features/codicon/register.js'),
       import('monaco-editor/features/contextmenu/register.js'),
       import('monaco-editor/features/clipboard/register.js'),
+      import('monaco-editor/languages/definitions/bat/register.js'),
       import('monaco-editor/languages/definitions/css/register.js'),
       import('monaco-editor/languages/definitions/html/register.js'),
       import('monaco-editor/languages/definitions/javascript/register.js'),
@@ -40,9 +41,11 @@ export function loadDesktopMonaco(): Promise<typeof Monaco> {
       registrations,
       import('monaco-editor/languages/definitions/powershell/powershell.js'),
       import('monaco-editor/languages/definitions/shell/shell.js'),
-    ]).then(([monaco, , powershell, shell]) => {
+      import('monaco-editor/languages/definitions/bat/bat.js'),
+    ]).then(([monaco, , powershell, shell, bat]) => {
       monaco.languages.setMonarchTokensProvider('powershell', powershell.language)
       monaco.languages.setMonarchTokensProvider('shell', shell.language)
+      monaco.languages.setMonarchTokensProvider('bat', bat.language)
       return monaco
     })
   }

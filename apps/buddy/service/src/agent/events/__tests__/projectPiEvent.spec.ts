@@ -27,7 +27,11 @@ describe('projectPiEvent retries', () => {
     expect(projectPiEvent({ type: 'agent_settled', aborted: false }, state).events).toEqual([{ type: 'run.progress', payload: { phase: 'idle', toolName: null } }])
   })
 
-  it.each(['thinking_delta', 'text_delta', 'toolcall_delta'] as const)('restores live activity on the first nonempty %s before the retried response finishes', (type) => {
+  it.each([
+    ['thinking_delta', 'model_thinking'],
+    ['text_delta', 'model_responding'],
+    ['toolcall_delta', 'preparing'],
+  ] as const)('restores live activity on the first nonempty %s before the retried response finishes', (type, phase) => {
     const state = createPiEventProjectionState()
     const partial: AssistantMessage = {
       api: 'openai-completions',
@@ -48,29 +52,38 @@ describe('projectPiEvent retries', () => {
       message: partial,
       assistantMessageEvent: { type, contentIndex: 0, delta, partial },
     }, state)
-    update('')
-    expect(state.progress?.retry).toEqual({ attempt: 1, maxAttempts: 3, retryAt: null })
+    expect(update('').events.filter(event => event.type === 'run.progress')).toEqual([{
+      type: 'run.progress',
+      payload: { phase, toolName: null, retry: { attempt: 1, maxAttempts: 3, retryAt: null } },
+    }])
     const recovered = update('Recovered content')
     expect(recovered.events.at(-1)).toEqual({
       type: 'run.progress',
-      payload: { phase: state.progress!.phase, toolName: null },
+      payload: { phase, toolName: null },
     })
-    expect(state.progress?.retry).toBeUndefined()
     expect(update('More content').events.some(event => event.type === 'run.progress')).toBe(false)
-    projectPiEvent({ type: 'auto_retry_start', attempt: 2, maxAttempts: 3, delayMs: 4000, errorMessage: '503 transient' }, state)
-    expect(state.progress?.retry).toMatchObject({ attempt: 2, maxAttempts: 3 })
+    expect(projectPiEvent({ type: 'auto_retry_start', attempt: 2, maxAttempts: 3, delayMs: 4000, errorMessage: '503 transient' }, state).events).toEqual([{
+      type: 'run.progress',
+      payload: { phase: 'model_requesting', toolName: null, retry: { attempt: 2, maxAttempts: 3, retryAt: expect.any(String) } },
+    }])
   })
 
-  it('projects summary retries and clears the progress after exhaustion or cancellation', () => {
+  it('projects summary retry attempts and clears retry progress after exhaustion', () => {
     const state = createPiEventProjectionState()
     projectPiEvent({ type: 'summarization_retry_scheduled', attempt: 2, maxAttempts: 3, delayMs: 4000, errorMessage: 'private' }, state)
-    projectPiEvent({ type: 'summarization_retry_attempt_start', source: 'compaction', reason: 'overflow' }, state)
-    expect(state.progress?.retry).toEqual({ attempt: 2, maxAttempts: 3, retryAt: null })
-    projectPiEvent({ type: 'summarization_retry_finished' }, state)
-    expect(state.progress?.retry).toBeUndefined()
+    expect(projectPiEvent({ type: 'summarization_retry_attempt_start', source: 'compaction', reason: 'overflow' }, state).events).toEqual([{
+      type: 'run.progress',
+      payload: { phase: 'model_requesting', toolName: null, retry: { attempt: 2, maxAttempts: 3, retryAt: null } },
+    }])
+    expect(projectPiEvent({ type: 'summarization_retry_finished' }, state).events).toEqual([{
+      type: 'run.progress',
+      payload: { phase: 'model_requesting', toolName: null },
+    }])
     projectPiEvent({ type: 'auto_retry_start', attempt: 1, maxAttempts: 1, delayMs: 2000, errorMessage: 'private' }, state)
-    projectPiEvent({ type: 'auto_retry_end', attempt: 1, success: false, finalError: 'private' }, state)
-    expect(state.progress?.retry).toBeUndefined()
+    expect(projectPiEvent({ type: 'auto_retry_end', attempt: 1, success: false, finalError: 'private' }, state).events).toEqual([{
+      type: 'run.progress',
+      payload: { phase: 'model_requesting', toolName: null },
+    }])
   })
 })
 
@@ -233,61 +246,46 @@ describe('projectPiEvent product messages', () => {
   it.each([undefined, 'commentary', 'final_answer'] as const)('distinguishes %s text from thinking, tool arguments and empty message starts', (textPhase) => {
     const state = createPiEventProjectionState()
     const partial: AssistantMessage = { api: 'openai-responses', content: [{ type: 'text', text: '', textSignature: JSON.stringify({ v: 1, id: 'text', phase: textPhase }) }], model: 'fixture', provider: 'fixture', role: 'assistant', stopReason: 'pending', timestamp: 1, usage: emptyUsage() }
-    projectPiEvent({ type: 'message_start', message: partial }, state)
-    expect(state.progress?.phase).toBe('model_streaming')
-    projectPiEvent({ type: 'message_update', message: partial, assistantMessageEvent: { type: 'text_start', contentIndex: 0, partial } }, state)
-    expect(state.progress?.phase).toBe(textPhase === 'commentary' ? 'model_streaming' : 'model_responding')
-    projectPiEvent({ type: 'message_update', message: partial, assistantMessageEvent: { type: 'thinking_end', contentIndex: 1, content: 'Previous thought', partial } }, state)
-    expect(state.progress?.phase).toBe(textPhase === 'commentary' ? 'model_streaming' : 'model_responding')
-    projectPiEvent({ type: 'message_update', message: partial, assistantMessageEvent: { type: 'text_end', contentIndex: 0, content: 'Visible text', partial } }, state)
-    expect(state.progress?.phase).toBe('model_streaming')
+    expect(projectPiEvent({ type: 'message_start', message: partial }, state).events.at(-1)).toEqual({
+      type: 'run.progress',
+      payload: { phase: 'model_streaming', toolName: null },
+    })
+    const started = projectPiEvent({ type: 'message_update', message: partial, assistantMessageEvent: { type: 'text_start', contentIndex: 0, partial } }, state)
+    expect(started.events.filter(event => event.type === 'run.progress')).toEqual(textPhase === 'commentary'
+      ? []
+      : [{
+          type: 'run.progress',
+          payload: { phase: 'model_responding', toolName: null },
+        }])
+    const thoughtEnded = projectPiEvent({ type: 'message_update', message: partial, assistantMessageEvent: { type: 'thinking_end', contentIndex: 1, content: 'Previous thought', partial } }, state)
+    expect(thoughtEnded.events.filter(event => event.type === 'run.progress')).toEqual([])
+    const ended = projectPiEvent({ type: 'message_update', message: partial, assistantMessageEvent: { type: 'text_end', contentIndex: 0, content: 'Visible text', partial } }, state)
+    expect(ended.events.filter(event => event.type === 'run.progress')).toEqual(textPhase === 'commentary'
+      ? []
+      : [{
+          type: 'run.progress',
+          payload: { phase: 'model_streaming', toolName: null },
+        }])
     const preparing = projectPiEvent({ type: 'message_update', message: partial, assistantMessageEvent: { type: 'toolcall_start', contentIndex: 1, partial } }, state)
     expect(preparing.events).toEqual([{ type: 'run.progress', payload: { phase: 'preparing', toolName: null } }])
   })
 
-  it('keeps Harness-tracked file changes out of run outputs', () => {
+  it('bounds and deduplicates generated Artifact facts without treating file changes as outputs', () => {
     const state = createPiEventProjectionState()
-    projectPiEvent({
-      args: { path: 'site/index.html' },
-      toolCallId: 'tool-write-1',
-      toolName: 'write',
-      type: 'tool_execution_start',
-    }, state)
-
+    const artifactIds = Array.from({ length: 20 }, (_, index) => `generated-image-${index + 1}`)
+    const result = {
+      content: [{ text: 'generated', type: 'text' as const }],
+      details: { artifactIds: [artifactIds[0]!, ...artifactIds] },
+    }
     const completed = projectPiEvent({
       isError: false,
-      result: {
-        content: [{ text: 'Successfully wrote file', type: 'text' }],
-        details: { artifactIds: ['artifact-html-1'] },
-      },
-      toolCallId: 'tool-write-1',
-      toolName: 'write',
-      type: 'tool_execution_end',
-    }, state)
-
-    expect(completed.events).not.toContainEqual(expect.objectContaining({
-      type: 'output.produced',
-    }))
-  })
-
-  it('bounds and deduplicates generated Artifact facts', () => {
-    const state = createPiEventProjectionState()
-    const attachmentIds = [
-      ...Array.from({ length: 20 }, (_, index) => `generated-image-${index + 1}`),
-      'generated-image-1',
-    ]
-    const completed = projectPiEvent({
-      isError: false,
-      result: {
-        content: [{ text: 'generated', type: 'text' }],
-        details: { artifactIds: attachmentIds },
-      },
+      result,
       toolCallId: 'tool-image-bounded',
       toolName: 'lexora_image_generate',
       type: 'tool_execution_end',
     }, state)
 
-    const expectedIds = attachmentIds.slice(0, 16)
+    const expectedIds = artifactIds.slice(0, 16)
     expect(completed.events).toMatchObject([
       {
         payload: {
@@ -306,6 +304,13 @@ describe('projectPiEvent product messages', () => {
         type: 'output.produced',
       },
     ])
+
+    const fileTool = { toolCallId: 'tool-write', toolName: 'write' }
+    projectPiEvent({ type: 'tool_execution_start', ...fileTool, args: { path: 'site/index.html' } }, state)
+    expect(projectPiEvent({ type: 'tool_execution_end', ...fileTool, isError: false, result }, state).events).toMatchObject([{
+      type: 'tool.completed',
+      payload: { toolName: 'write' },
+    }])
   })
 
   it('preserves Codex commentary and final answer phases without joining their text', () => {
@@ -569,39 +574,9 @@ describe('projectPiEvent product messages', () => {
     expect(JSON.stringify(completed)).not.toContain('private-provider-signature')
   })
 
-  it('redacts sensitive values from public tool output', () => {
-    const state = createPiEventProjectionState()
-    projectPiEvent({
-      args: { command: 'printenv' },
-      toolCallId: 'tool-1',
-      toolName: 'bash',
-      type: 'tool_execution_start',
-    }, state)
-
-    expect(projectPiEvent({
-      args: { command: 'printenv' },
-      partialResult: {
-        content: [{
-          text: 'Authorization: Bearer private-token\nAPI_KEY=private-key',
-          type: 'text',
-        }],
-        details: {},
-      },
-      toolCallId: 'tool-1',
-      toolName: 'bash',
-      type: 'tool_execution_update',
-    }, state).events[0]).toMatchObject({
-      payload: {
-        presentation: {
-          output: 'Authorization: Bearer [redacted]\nAPI_KEY=[redacted]',
-        },
-      },
-    })
-  })
-
-  it('checkpoints, appends and bounds one terminal stream through completion', () => {
+  it.each([false, true])('preserves shell metadata and redacted terminal history when isError is %s', (isError) => {
     const state = createPiEventProjectionState({ canonicalRoot: '/workspace/space' })
-    const tool = { toolCallId: 'tool-terminal', toolName: 'bash' }
+    const tool = { toolCallId: 'tool-terminal', toolName: 'lexora_shell' }
     projectPiEvent({
       ...tool,
       args: { command: 'printf output' },
@@ -610,45 +585,49 @@ describe('projectPiEvent product messages', () => {
     const update = (text: string) => projectPiEvent({
       ...tool,
       args: { command: 'printf output' },
-      partialResult: { content: [{ text, type: 'text' }], details: {} },
+      partialResult: { content: [{ text, type: 'text' }], details: { shell: { dialect: 'powershell' } } },
       type: 'tool_execution_update',
     }, state)
 
-    expect(update('first').events[0]).toMatchObject({
-      payload: { presentation: { card: 'terminal', output: 'first' } },
+    const rawFirst = 'Authorization: Bearer private-token\nAPI_KEY=private-key'
+    const first = 'Authorization: Bearer [redacted]\nAPI_KEY=[redacted]'
+    const initial = update(rawFirst)
+    expect(initial.events[0]).toMatchObject({
+      payload: { presentation: { card: 'terminal', output: first, shellDialect: 'powershell' } },
       type: 'tool.updated',
     })
-    expect(update('first\nsecond').events[0]).toEqual({
+    expect(update(`${rawFirst}\nsecond`).events[0]).toEqual({
       payload: {
         ...tool,
         presentationDelta: {
           card: 'terminal',
           outputDelta: '\nsecond',
-          outputStart: 5,
+          outputStart: first.length,
           truncated: false,
         },
       },
       type: 'tool.updated',
     })
-    const checkpoint = `first\nsecond${'\n'.repeat(16 * 1024)}`
-    expect(update(checkpoint).events[0]).toMatchObject({
-      payload: { presentation: { card: 'terminal', output: checkpoint } },
-      type: 'tool.updated',
-    })
-    const boundedOutput = `${checkpoint}${'\n'.repeat(64 * 1024)}`
+    const boundedOutput = `${rawFirst}\nsecond${'\n'.repeat(128 * 1024)}`
     expect(update(`${boundedOutput} first overflow`).events[0]).toMatchObject({
       payload: { presentation: { truncated: true } },
     })
     expect(update(`${boundedOutput} second overflow`).events).toEqual([])
-    expect(projectPiEvent({
+    const completed = projectPiEvent({
       ...tool,
-      isError: false,
-      result: { content: [{ text: boundedOutput, type: 'text' }], details: {} },
+      isError,
+      result: { content: [{ text: isError ? 'aborted' : boundedOutput, type: 'text' }], details: {} },
       type: 'tool_execution_end',
-    }, state).events[0]).toMatchObject({
-      payload: { presentation: { cwd: '.', exitCode: 0, signal: null } },
+    }, state)
+    expect(completed.events[0]).toMatchObject({
+      payload: { isError, presentation: { cwd: '.', exitCode: isError ? null : 0, signal: null, shellDialect: 'powershell', output: isError ? 'aborted' : expect.stringContaining(first) } },
       type: 'tool.completed',
     })
+    for (const projection of [initial, completed]) {
+      const publicEvent = toPublicRunEvent({ ...projection.events[0]!, createdAt: '2026-11-01T00:00:00Z', runId: 'shell-run', sequence: 1 })
+      expect(publicEvent.payload).toMatchObject({ presentation: { card: 'terminal', shellDialect: 'powershell' } })
+      expect(JSON.stringify(publicEvent)).not.toContain('private-')
+    }
   })
 
   it('redacts sensitive values from edit diffs', () => {

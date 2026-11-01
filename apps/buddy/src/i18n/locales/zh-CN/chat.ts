@@ -1,5 +1,12 @@
 export default {
   'desktop.chat.processToolQueued': '排队等待',
+  'desktop.chat.processToolResourceWaiting': '等待资源',
+  'desktop.chat.processToolResourceTimeout': '等待资源超时，命令未执行',
+  'desktop.chat.processToolCommandTimeout': '命令超时',
+  'desktop.chat.resourceSameRun': '本次执行中的其他操作',
+  'desktop.chat.resourceOtherTask': '其他任务',
+  'desktop.chat.resourceOwnerActive': '「{name}」已占用 {seconds} 秒',
+  'desktop.chat.resourceOwnerQueued': '排在「{name}」之后，对方已等待 {seconds} 秒',
   'desktop.chat.command.mcp': '查看 MCP 状态，快速启停和重连。',
   'desktop.chat.attachmentImportFailed': '文件导入失败，请重试或重新选择文件。',
   'desktop.chat.attachmentUnsupported': '暂不支持此文件格式，请选择支持的文档、图片或音视频文件。',

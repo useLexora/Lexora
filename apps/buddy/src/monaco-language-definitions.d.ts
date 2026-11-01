@@ -9,3 +9,9 @@ declare module 'monaco-editor/languages/definitions/shell/shell.js' {
 
   export const language: languages.IMonarchLanguage
 }
+
+declare module 'monaco-editor/languages/definitions/bat/bat.js' {
+  import type { languages } from 'monaco-editor/editor/editor.api.js'
+
+  export const language: languages.IMonarchLanguage
+}

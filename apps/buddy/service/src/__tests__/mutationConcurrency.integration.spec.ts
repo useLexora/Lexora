@@ -307,7 +307,7 @@ describe('real Runtime multi-agent mutation concurrency', () => {
       await shellReached.promise
       const tree = treeByRole(f)
       const active = f.database.prepare('SELECT invocation_id, claims_json FROM run_mutation_leases WHERE run_id = ? AND status = \'active\'').get(tree.root.id)!
-      expect(JSON.parse(String(active.claims_json))).toEqual([{ kind: 'host' }])
+      expect(JSON.parse(String(active.claims_json))).toEqual([{ kind: 'tree', canonicalPath: f.workspace }])
       const processes = f.database.prepare('SELECT process_id, settlement FROM run_mutation_processes WHERE invocation_id = ? ORDER BY process_id').all(active.invocation_id!)
       expect(processes.length).toBeGreaterThan(0)
       expect(processes.every(process => process.settlement === 'pending')).toBe(true)

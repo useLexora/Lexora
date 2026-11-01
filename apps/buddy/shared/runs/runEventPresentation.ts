@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { BROWSER_ACTION_KINDS } from '../browser'
 import { BUDDY_ATTACHMENT_COUNT_LIMIT } from '../conversation/attachmentPolicy'
 import { imageSourceSchema } from '../images/imagePreferences'
+import { shellDialectSchema } from '../shell/shellProgram'
 
 const legacyDirectoryScopeRelationSchema = z.enum([
   'ancestor',
@@ -37,6 +38,7 @@ export const buddyToolPresentationSchema = z.discriminatedUnion('card', [
   }).strict(),
   previewSchema.extend({
     card: z.literal('terminal'),
+    shellDialect: shellDialectSchema.optional(),
     command: z.string().max(4 * 1024),
     cwd: pathSchema.nullable(),
     exitCode: z.number().int().nullable(),

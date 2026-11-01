@@ -2,6 +2,7 @@ import type { BuddyRunRetry } from '@buddy-shared/runs/runProgress'
 import type { ChatAgentTurn } from './chatAgentTurn'
 import type { BuddyI18nKey, BuddyLocale } from '@/i18n/buddyI18n'
 import { translateBuddy } from '@/i18n/buddyI18n'
+import { getChatToolWaitPhase } from './chatToolDisplay'
 
 export interface ChatCurrentActivity {
   label: string
@@ -32,12 +33,16 @@ export function describeChatCurrentActivity(turn: ChatAgentTurn, language: Buddy
   }
   if (turn.nodes.some(node => node.kind === 'compaction' && node.status === 'running'))
     return { label: t('desktop.chat.compactionStarted'), active: true }
-  if (turn.nodes.some(node => node.kind === 'tool' && node.status === 'running'))
+  if (turn.nodes.some(node => node.kind === 'tool' && node.status === 'running' && !getChatToolWaitPhase(node)))
     return { label: t('desktop.chat.progressToolExecuting'), active: true }
-  if (turn.nodes.some(node => node.kind === 'tool' && node.status === 'preparing'))
+  if (turn.nodes.some(node => node.kind === 'tool' && node.status === 'preparing' && !getChatToolWaitPhase(node)))
     return { label: t('desktop.chat.progressPreparing'), active: true }
   if (turn.nodes.some(node => node.kind === 'reasoning' && node.status === 'running'))
     return { label: t('desktop.chat.processReasoningRunning'), active: true }
+  if (turn.nodes.some(node => node.kind === 'tool' && getChatToolWaitPhase(node) === 'resource'))
+    return { label: t('desktop.chat.processToolResourceWaiting'), active: false }
+  if (turn.nodes.some(node => node.kind === 'tool' && getChatToolWaitPhase(node) === 'queued'))
+    return { label: t('desktop.chat.processToolQueued'), active: false }
   const progressLabels = {
     idle: 'desktop.chat.activity',
     awaiting_approval: 'desktop.chat.progressApproval',

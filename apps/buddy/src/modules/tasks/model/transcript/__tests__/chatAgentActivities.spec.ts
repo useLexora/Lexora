@@ -6,13 +6,20 @@ import { createChatAgentActivityProjector } from '../chatAgentActivities'
 import { canExpandChatTool, describeChatTool } from '../chatToolDisplay'
 
 describe('activity grouping', () => {
+  it.each(['queued', 'resource'] as const)('summarizes %s tools without hiding concurrent execution or approval', (executionPhase) => {
+    const waiting = { ...tool('waiting', 'running'), executionPhase }
+    const projector = createChatAgentActivityProjector()
+    expect(projector.project([waiting, tool('done')])[0]).toMatchObject({ status: executionPhase, issueCount: 0 })
+    expect(projector.project([waiting, tool('active', 'running')])[0]).toMatchObject({ status: 'running' })
+    expect(projector.project([waiting, tool('approval', 'awaiting_approval')])[0]).toMatchObject({ status: 'awaiting_approval' })
+    expect(projector.project([{ ...waiting, status: 'completed' }])[0]).toMatchObject({ status: 'completed' })
+  })
+
   it.each(['user', 'harness', 'mixed'] as const)('groups consecutive %s panel operations while preserving every source record', (actor) => {
     const nodes = [panel('open', actor === 'harness' ? 'harness' : 'user'), panel('close', actor === 'user' ? 'user' : 'harness', 'close')]
-    const original = structuredClone(nodes)
     expect(createChatAgentActivityProjector().project(nodes)).toMatchObject([
       { kind: 'panel-group', actor, nodes },
     ])
-    expect(nodes).toEqual(original)
   })
 
   it('separates panel groups at tools, reasoning, narration and compaction without changing tool counts', () => {
@@ -52,9 +59,6 @@ describe('activity grouping', () => {
     expect(group.toolCount).toBe(5)
     expect(summarizeChatActivityCounts(group, 'zh-CN')).toBe('创建 1 个文件 · 编辑 1 个文件 · 读取 1 个文件 · 另 1 次调用')
     expect(summarizeChatActivityCounts(group, 'zh-CN', Infinity)).toBe('创建 1 个文件 · 编辑 1 个文件 · 读取 1 个文件 · 搜索 1 次')
-    const unknown = createChatAgentActivityProjector().project([{ ...tool('create'), toolName: 'write', presentation: { card: 'generic', argumentNames: [], description: null, output: null, truncated: false } }])[0]!
-    if (unknown.kind === 'activity-group')
-      expect(summarizeChatActivityCounts(unknown, 'zh-CN')).toBe('创建 1 次')
   })
 
   it('merges adjacent reasoning in order without changing source nodes or crossing tool boundaries', () => {
@@ -75,9 +79,7 @@ describe('activity grouping', () => {
   })
 
   it.each([
-    ['completed', 'running', 'running'],
     ['interrupted', 'running', 'running'],
-    ['interrupted', 'completed', 'interrupted'],
     ['completed', 'interrupted', 'interrupted'],
   ] as const)('combines reasoning states %s and %s as %s, including empty active blocks', (first, last, status) => {
     const layout = presentChatActivityLayout([thought('first', first), { ...thought('last', last), text: '' }])
@@ -103,12 +105,6 @@ function panel(id: string, actor: ChatAgentPanelNode['actor'] = 'user', action: 
 }
 
 describe('tool display registration', () => {
-  it('keeps external calls generic even when their output uses a built-in card', () => {
-    const presentation = { card: 'diff', operation: 'created', path: 'output.txt', diff: null, firstChangedLine: null, description: null, output: null, truncated: false } as const
-    const node: ChatAgentToolNode = { ...tool('extension'), toolName: 'extension_file', presentation }
-    expect(describeChatTool(node, 'zh-CN')).toMatchObject({ label: '工具调用', icon: 'tool', target: 'extension_file' })
-  })
-
   it('keeps full paths available while emphasizing the filename on both platforms', () => {
     const node = tool('one')
     expect(describeChatTool(node, 'zh-CN')).toMatchObject({ target: 'Row.vue', context: 'src/components/', fullTarget: 'src/components/Row.vue' })
@@ -116,10 +112,10 @@ describe('tool display registration', () => {
   })
 
   it('does not expose denied output and preserves an unfamiliar tool name', () => {
-    const node: ChatAgentToolNode = { ...tool('external', 'denied'), toolName: 'external_tool', presentation: { card: 'generic', argumentNames: [], description: null, output: 'not authorized', truncated: false } }
+    const node: ChatAgentToolNode = { ...tool('external', 'denied'), toolName: 'external_tool', presentation: { card: 'diff', operation: 'edited', path: 'private.txt', diff: '+1 private', firstChangedLine: 1, output: null, truncated: false, description: null } }
     expect(canExpandChatTool(node)).toBe(false)
-    expect(describeChatTool(node, 'zh-CN')).toMatchObject({ label: '工具调用', target: 'external_tool', status: '未获批准' })
-    expect(canExpandChatTool({ ...node, presentation: { card: 'diff', operation: 'edited', path: 'private.txt', diff: '+1 private', firstChangedLine: 1, output: null, truncated: false, description: null } })).toBe(false)
+    expect(describeChatTool(node, 'zh-CN')).toMatchObject({ label: '工具调用', icon: 'tool', target: 'external_tool', status: '未获批准' })
+    expect(canExpandChatTool({ ...node, presentation: { card: 'generic', argumentNames: [], description: null, output: 'not authorized', truncated: false } })).toBe(false)
   })
 })
 

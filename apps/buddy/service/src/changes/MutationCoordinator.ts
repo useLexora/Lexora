@@ -1,3 +1,4 @@
+import type { ToolResourceBlocker } from '../../../shared/runs/toolExecutionPhase'
 import type { FileResourceCoordinator } from '../files/FileResourceCoordinator'
 import type { MutationEvidenceRepository } from './mutationEvidenceRepository'
 import type { MutationExecutionUpdate, MutationRepository, OwnedProcessSettlement } from './mutationRepository'
@@ -30,6 +31,7 @@ export interface MutationRunState {
 }
 
 export interface MutationLease extends MutationIdentity {
+  acquiredAt: number
   segmentId: string
   lifetime: MutationLifetime
   sequence: number
@@ -39,6 +41,9 @@ export interface MutationLease extends MutationIdentity {
 }
 
 interface PendingMutation extends MutationIdentity {
+  queuedAt: number
+  onWait?: (blocker: ToolResourceBlocker) => void
+  lastBlocker?: string
   captureBoundary: boolean
   claims: readonly MutationClaim[]
   lifetime: MutationLifetime
@@ -68,6 +73,7 @@ export class MutationCoordinator {
   readonly #resources: Pick<FileResourceCoordinator, 'acquire' | 'release' | 'reconcile'> | undefined
   readonly #settlements = new Map<string, Promise<void>>()
   readonly #repository: MutationRepository | undefined
+  readonly #getRunTitle: ((runId: string) => string | undefined) | undefined
   readonly #evidence: MutationEvidenceRepository | undefined
   readonly #resolutions = new Map<string, Promise<void>>()
   readonly #changes = new Emitter<{ runId: string }>(() => console.error('MUTATION_OBSERVER_FAILED'))
@@ -78,7 +84,8 @@ export class MutationCoordinator {
   #sequence = 0
   #disposed = false
 
-  constructor(options: { repository?: MutationRepository, evidence?: MutationEvidenceRepository, resources?: Pick<FileResourceCoordinator, 'acquire' | 'release' | 'reconcile'> } = {}) {
+  constructor(options: { repository?: MutationRepository, evidence?: MutationEvidenceRepository, resources?: Pick<FileResourceCoordinator, 'acquire' | 'release' | 'reconcile'>, getRunTitle?: (runId: string) => string | undefined } = {}) {
+    this.#getRunTitle = options.getRunTitle
     this.#resources = options.resources
     this.#evidence = options.evidence
     const repository = options.repository
@@ -96,7 +103,7 @@ export class MutationCoordinator {
     }
   }
 
-  async acquire(input: MutationIdentity & { claims: readonly MutationClaim[], lifetime: MutationLifetime, captureBoundary?: boolean, signal: AbortSignal }): Promise<MutationLease> {
+  async acquire(input: MutationIdentity & { claims: readonly MutationClaim[], lifetime: MutationLifetime, captureBoundary?: boolean, signal: AbortSignal, onWait?: (blocker: ToolResourceBlocker) => void }): Promise<MutationLease> {
     if (this.#disposed)
       return Promise.reject(new MutationCoordinatorError('MUTATION_COORDINATOR_STOPPED'))
     input.signal.throwIfAborted()
@@ -105,6 +112,8 @@ export class MutationCoordinator {
     const claims = normalizeClaims(input.claims)
     const lease = await new Promise<MutationLease>((resolve, reject) => {
       const pending: PendingMutation = {
+        queuedAt: Date.now(),
+        onWait: input.onWait,
         captureBoundary: input.captureBoundary === true,
         runId: input.runId,
         invocationId: input.invocationId,
@@ -339,8 +348,18 @@ export class MutationCoordinator {
   #drain(): void {
     for (let index = 0; index < this.#pending.length;) {
       const pending = this.#pending[index]!
-      if ([...this.#active.values()].some(lease => claimsOverlap(lease.claims, pending.claims))
-        || this.#pending.slice(0, index).some(earlier => claimsOverlap(earlier.claims, pending.claims))) {
+      const blocker = [...this.#active.values()].find(lease => claimsOverlap(lease.claims, pending.claims))
+        ?? this.#pending.slice(0, index).find(earlier => claimsOverlap(earlier.claims, pending.claims))
+      if (blocker) {
+        const state = 'acquiredAt' in blocker ? 'active' : 'queued'
+        const key = `${state}:${blocker.invocationId}`
+        if (pending.onWait && pending.lastBlocker !== key) {
+          pending.lastBlocker = key
+          try {
+            pending.onWait({ runId: blocker.runId, title: this.#getRunTitle?.(blocker.runId)?.slice(0, 256), since: 'acquiredAt' in blocker ? blocker.acquiredAt : blocker.queuedAt, state })
+          }
+          catch { console.error('MUTATION_OBSERVER_FAILED') }
+        }
         index++
         continue
       }
@@ -350,6 +369,7 @@ export class MutationCoordinator {
       if (pending.claims.length)
         this.#lastWriter = pending.captureBoundary ? undefined : { runId: pending.runId, segmentId }
       const lease: MutationLease = {
+        acquiredAt: Date.now(),
         runId: pending.runId,
         invocationId: pending.invocationId,
         segmentId,

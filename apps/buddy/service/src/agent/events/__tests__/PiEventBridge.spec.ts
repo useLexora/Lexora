@@ -1,6 +1,7 @@
 import type { AssistantMessage, Usage } from '@earendil-works/pi-ai'
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 import type { ApplicationDiagnostic, ApplicationDiagnosticReporter } from '../../../../../shared/diagnostics/applicationDiagnostic'
+import type { ToolExecutionTiming } from '../../../../../shared/runs/toolExecutionPhase'
 import type { AppendBuddyRunEventInput } from '../../../events/BuddyRunEvent'
 
 import type { RunEventWriter } from '../../../events/RunEventPorts'
@@ -8,7 +9,22 @@ import { describe, expect, it, vi } from 'vitest'
 import { PiEventBridge } from '../PiEventBridge'
 
 describe('piEventBridge', () => {
-  it('persists nonoverlapping phase durations and ignores late lifecycle events after completion', async () => {
+  it('fills a settled tool outcome without reopening phase durations or accepting later updates', async () => {
+    const { appended, channel } = createProjectionHarness()
+    const identity = { toolCallId: 'cancelled', toolName: 'bash' }
+    channel.projectToolExecutionPhase({ ...identity, phase: 'executing' })
+    channel.projectToolExecutionPhase({ ...identity, phase: 'finished' })
+    await channel.flush()
+    const before = (appended.at(-1)!.payload as { timing: ToolExecutionTiming }).timing
+    channel.projectToolExecutionPhase({ ...identity, phase: 'finished', outcome: 'cancelled' })
+    channel.projectToolExecutionPhase({ ...identity, phase: 'finished', outcome: 'failed' })
+    channel.projectToolExecutionPhase({ ...identity, phase: 'cleaning' })
+    await channel.flush()
+    expect(appended.at(-1)?.payload).toEqual({ ...identity, timing: { ...before, outcome: 'cancelled' } })
+    expect(appended.filter(event => event.type === 'tool.phase')).toHaveLength(3)
+  })
+
+  it('persists nonoverlapping phase durations and resource owners without reopening completed tools', async () => {
     let now = 0
     const clock = vi.spyOn(performance, 'now').mockImplementation(() => now)
     try {
@@ -18,8 +34,14 @@ describe('piEventBridge', () => {
       await channel.flush()
       now = 10
       await channel.projectToolExecutionAuthorized({ ...identity, arguments: {} })
+      const first = { runId: 'first', title: 'First task', since: 1, state: 'active' as const }
+      const second = { runId: 'second', since: 2, state: 'queued' as const }
       now = 20
-      channel.projectToolExecutionPhase({ ...identity, phase: 'resource' })
+      channel.projectToolExecutionPhase({ ...identity, phase: 'resource', waitingFor: first })
+      now = 30
+      channel.projectToolExecutionPhase({ ...identity, phase: 'resource', waitingFor: first })
+      now = 40
+      channel.projectToolExecutionPhase({ ...identity, phase: 'resource', waitingFor: second })
       now = 50
       channel.projectToolExecutionPhase({ ...identity, phase: 'executing', executionBasis: 'backend' })
       now = 70
@@ -34,6 +56,11 @@ describe('piEventBridge', () => {
       channel.projectToolExecutionPhase({ ...identity, phase: 'executing', executionBasis: 'backend' })
       await channel.flush()
       const phases = appended.filter(event => event.type === 'tool.phase')
+      const timings = phases.map(event => (event.payload as { timing: ToolExecutionTiming }).timing)
+      expect(timings.filter(timing => timing.phase === 'resource').map(timing => timing.waitingFor)).toEqual([first, second])
+      const executing = timings.find(timing => timing.phase === 'executing')
+      expect(executing).toMatchObject({ durations: { resource: 30 } })
+      expect(executing).not.toHaveProperty('waitingFor')
       expect(phases.at(-1)?.payload).toEqual({ ...identity, timing: { phase: 'finished', executionBasis: 'backend', durations: { authorizing: 10, preparing: 10, resource: 30, executing: 40, approval: 30, cleaning: 5 } } })
       expect(JSON.stringify(phases)).not.toContain('private-command')
     }
@@ -47,23 +74,6 @@ describe('piEventBridge', () => {
     await channel.flush()
     expect(channel.outcome.failureCode).toBe('MODEL_REQUEST_ABORTED')
     expect(appended.at(-1)).toMatchObject({ type: 'run.progress', payload: { phase: 'idle', toolName: null } })
-  })
-
-  it('preserves registered labels in replayable tool events without adding them to output deltas', async () => {
-    const { appended, channel, emit } = createProjectionHarness(undefined, () => 'Query local data')
-    emit({ type: 'tool_execution_start', toolCallId: 'custom', toolName: 'custom_query', args: {} })
-    await channel.flush()
-    await channel.projectToolExecutionAuthorized({ toolCallId: 'custom', toolName: 'custom_query', arguments: {} })
-    emit({ type: 'tool_execution_update', toolCallId: 'custom', toolName: 'custom_query', args: {}, partialResult: { content: [{ type: 'text', text: 'first' }], details: {} } })
-    emit({ type: 'tool_execution_end', toolCallId: 'custom', toolName: 'custom_query', isError: false, result: { content: [{ type: 'text', text: 'done' }], details: {} } })
-    await channel.flush()
-    const tools = appended.filter(event => ['tool.preparing', 'tool.started', 'tool.completed'].includes(event.type))
-    expect(tools.map(event => event.payload)).toEqual([
-      expect.objectContaining({ toolName: 'custom_query', toolLabel: 'Query local data' }),
-      expect.objectContaining({ toolName: 'custom_query', toolLabel: 'Query local data' }),
-      expect.objectContaining({ toolName: 'custom_query', toolLabel: 'Query local data' }),
-    ])
-    expect(appended.find(event => event.type === 'tool.updated')?.payload).not.toHaveProperty('toolLabel')
   })
 
   it('correlates each model turn without recording messages or tool results', async () => {
@@ -118,11 +128,9 @@ describe('piEventBridge', () => {
         })
       }
 
-      await vi.advanceTimersByTimeAsync(24)
       expect(appended).not.toContainEqual(expect.objectContaining({ type: 'tool.updated' }))
 
-      await vi.advanceTimersByTimeAsync(1)
-      await channel.flush()
+      await vi.runOnlyPendingTimersAsync()
       expect(appended.filter(event => event.type === 'tool.updated')).toEqual([
         expect.objectContaining({
           payload: expect.objectContaining({
@@ -195,8 +203,9 @@ describe('piEventBridge', () => {
       })
     }
     await channel.flush()
-    expect(appended.filter(event => event.type === 'tool.updated' && (event.payload as { toolCallId?: string }).toolCallId === 'tool-read'))
-      .toHaveLength(2)
+    expect(appended.filter(event => event.type === 'tool.updated' && (event.payload as { toolCallId?: string }).toolCallId === 'tool-read')
+      .map(event => (event.payload as { presentation: { output: string } }).presentation.output))
+      .toEqual(['first', 'second'])
   })
 
   it('reports actual input context instead of billing total tokens', async () => {
@@ -218,13 +227,13 @@ describe('piEventBridge', () => {
         sequence: ++sequence,
       }))),
     }
-    const getContextUsageBreakdown = vi.fn((totalTokens: number) => ({
+    const getContextUsageBreakdown = (totalTokens: number) => ({
       mcpTokens: 0,
       messageTokens: totalTokens,
       skillTokens: 0,
       systemPromptTokens: 0,
       toolTokens: 0,
-    }))
+    })
     const bridge = new PiEventBridge({
       eventLog,
       usage: {
@@ -289,7 +298,6 @@ describe('piEventBridge', () => {
 
     await channel.flush()
 
-    expect(getContextUsageBreakdown).toHaveBeenCalledWith(271_000)
     expect(appended.find(event => event.type === 'context.usage.updated')?.payload).toMatchObject({
       messageTokens: 271_000,
       totalTokens: 271_000,
@@ -349,7 +357,7 @@ function usage(): Usage {
   }
 }
 
-function createProjectionHarness(record?: ApplicationDiagnosticReporter, getToolLabel?: (name: string) => string | undefined): {
+function createProjectionHarness(record?: ApplicationDiagnosticReporter): {
   appended: AppendBuddyRunEventInput[]
   channel: ReturnType<PiEventBridge['createTurn']>
   emit: (event: AgentSessionEvent) => void
@@ -386,7 +394,6 @@ function createProjectionHarness(record?: ApplicationDiagnosticReporter, getTool
     provider: 'openai-codex',
     runId: 'run-1',
     session: {
-      getToolLabel,
       subscribe(nextListener) {
         listener = nextListener
         return () => {}

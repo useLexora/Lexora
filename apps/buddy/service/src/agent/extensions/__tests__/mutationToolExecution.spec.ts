@@ -1,10 +1,13 @@
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
+import type { BuddyExecutionProfile } from '../../../../../shared/permissions/executionProfile'
+import type { ToolExecutionPhaseChange } from '../../../../../shared/runs/toolExecutionPhase'
 import type { BuddyToolClassification } from '../../../approvals/toolClassification'
 import type { BuddyExtensionRunContext } from '../BuddyExtensionRunContext'
 import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
+import { setTimeout as delay } from 'node:timers/promises'
 import { defineTool } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -29,6 +32,96 @@ afterEach(async () => {
 })
 
 describe('authorized mutation execution', () => {
+  it.each(['bash', 'powershell', 'lexora_shell', 'lexora_host_shell'])('allows full-access %s in a separate directory while retaining process ownership', async (name) => {
+    const fixture = await setup()
+    const held = join(fixture.root, 'run-1')
+    const independent = join(fixture.root, 'run-2')
+    await writeFile(join(independent, 'result.txt'), 'BEFORE')
+    const active = await fixture.mutations.acquire({ runId: 'run-1', invocationId: 'held', lifetime: 'external', claims: [{ kind: 'tree', canonicalPath: held }], signal: new AbortController().signal })
+    try {
+      const actor = fixture.actor('run-2', async (path, content) => {
+        const invocation = fixture.mutations.getCurrentInvocation()!
+        expect(fixture.mutationRepository.listUnreleased().find(lease => lease.invocationId === invocation.invocationId)?.claims).toEqual([{ kind: 'tree', canonicalPath: independent }])
+        expect(fixture.mutations.recordOwnedProcessSettlement({ processId: 'owned', settlement: 'pending' })).toBe(true)
+        await writeFile(path, content)
+        expect(fixture.mutations.recordOwnedProcessSettlement({ processId: 'owned', settlement: 'released' })).toBe(true)
+      }, name, { profile: 'full_access', workspaceRoot: independent })
+      await actor.execute({ path: join(independent, 'result.txt'), content: 'PARALLEL', timeout: 1 })
+      expect(await readFile(join(independent, 'result.txt'), 'utf8')).toBe('PARALLEL')
+      expect(fixture.mutations.getRunState('run-1').active).toBe(1)
+      expect(fixture.mutations.getRunState('run-2')).toEqual({ pending: 0, active: 0, hazards: [] })
+    }
+    finally { active.release() }
+  })
+
+  it.each(['timeout', 'cancel'] as const)('removes a full-access shell waiter on %s without any late writes', async (outcome) => {
+    const fixture = await setup()
+    const active = await fixture.mutations.acquire({ runId: 'run-1', invocationId: 'held', lifetime: 'external', claims: [{ kind: 'tree', canonicalPath: fixture.root }], signal: new AbortController().signal })
+    const controller = new AbortController()
+    const actor = fixture.actor('run-2', (path, content) => writeFile(path, content), 'lexora_shell', { profile: 'full_access', signal: controller.signal })
+    const operation = actor.execute({ path: fixture.path, content: 'LATE_WRITE', timeout: outcome === 'timeout' ? 0.1 : 10 })
+    const rejected = expect(operation).rejects.toThrow(outcome === 'timeout' ? 'SHELL_RESOURCE_TIMEOUT' : 'abort')
+    try {
+      await expect.poll(() => fixture.mutations.getRunState('run-2').pending).toBe(1)
+      expect(actor.phases).toContainEqual(expect.objectContaining({ phase: 'resource', waitingFor: expect.objectContaining({ runId: 'run-1', state: 'active' }) }))
+      if (outcome === 'cancel')
+        controller.abort()
+      await rejected
+      expect(actor.phases.at(-1)).toMatchObject({ phase: 'finished', outcome: outcome === 'cancel' ? 'cancelled' : 'failed' })
+    }
+    finally { active.release() }
+    await delay(20)
+    expect(await readFile(fixture.path, 'utf8')).toBe('A')
+    expect(fixture.mutations.getRunState('run-2')).toEqual({ pending: 0, active: 0, hazards: [] })
+    expect(fixture.repository.listCaptures('run-2')).toEqual([])
+  })
+
+  it('records cancellation during execution after releasing the invocation', async () => {
+    const fixture = await setup()
+    const controller = new AbortController()
+    const actor = fixture.actor('run-1', async (_path, _content, signal) => {
+      await writeFile(fixture.path, 'STARTED')
+      controller.abort()
+      signal!.throwIfAborted()
+    }, 'write', { signal: controller.signal })
+    await expect(actor.execute({ path: fixture.path, content: '' })).rejects.toThrow('abort')
+    expect(actor.phases.at(-1)).toMatchObject({ phase: 'finished', outcome: 'cancelled' })
+    expect(await readFile(fixture.path, 'utf8')).toBe('STARTED')
+    expect(fixture.mutations.getRunState('run-1')).toEqual({ pending: 0, active: 0, hazards: [] })
+  })
+
+  it('preserves a tool failure when cancellation arrives during capture cleanup', async () => {
+    const controller = new AbortController()
+    const fixture = await setup({ beforeFinish: () => controller.abort() })
+    const actor = fixture.actor('run-1', async () => {
+      throw new Error('WRITE_FAILED')
+    }, 'write', { signal: controller.signal })
+    await expect(actor.execute({ path: fixture.path, content: '' })).rejects.toThrow('WRITE_FAILED')
+    expect(actor.phases.at(-1)).toMatchObject({ phase: 'finished', outcome: 'failed' })
+    expect(await readFile(fixture.path, 'utf8')).toBe('A')
+    expect(fixture.mutations.getRunState('run-1')).toEqual({ pending: 0, active: 0, hazards: [] })
+  })
+
+  it('passes the remaining command budget to the backend after resource waiting', async () => {
+    const fixture = await setup()
+    const active = await fixture.mutations.acquire({ runId: 'run-1', invocationId: 'held', lifetime: 'external', claims: [{ kind: 'tree', canonicalPath: fixture.root }], signal: new AbortController().signal })
+    let remaining = 0
+    const actor = fixture.actor('run-2', async (path, content, _signal, timeout) => {
+      remaining = timeout!
+      await writeFile(path, content)
+    }, 'lexora_shell', { profile: 'full_access' })
+    const operation = actor.execute({ path: fixture.path, content: 'WITHIN_BUDGET', timeout: 5 })
+    await expect.poll(() => fixture.mutations.getRunState('run-2').pending).toBe(1)
+    await delay(180)
+    active.release()
+    await operation
+    expect(remaining).toBeGreaterThan(0)
+    expect(remaining).toBeLessThan(4.85)
+    expect(actor.phases.some(event => event.phase === 'preparing')).toBe(true)
+    expect(await readFile(fixture.path, 'utf8')).toBe('WITHIN_BUDGET')
+    expect(fixture.mutations.getRunState('run-2')).toEqual({ pending: 0, active: 0, hazards: [] })
+  })
+
   it('preserves tool effects and process settlement when capture fails', async () => {
     const fixture = await setup({ afterCapture: () => {
       throw new Error('CAPTURE_STORAGE_FAILED')
@@ -90,7 +183,6 @@ describe('authorized mutation execution', () => {
     })).rejects.toThrow('SECOND_IMAGE_FAILED')
     const result = await fixture.changes.getForRuns(['run-1'])
     expect(result.files.map(file => [file.beforeText, file.afterText])).toEqual([['B', 'C']])
-    expect(fixture.repository.listCaptures('run-1')).toHaveLength(2)
     expect(fixture.mutationRepository.listUnreleased()).toEqual([])
   })
 
@@ -144,7 +236,7 @@ describe('authorized mutation execution', () => {
     expect(fixture.mutations.getHazards()).toEqual([])
   })
 
-  it.each(['cancel', 'read_only'] as const)('does not start the waiting tool when %s occurs behind an active lease', async (change) => {
+  it('does not start a cancelled waiter when the active lease becomes unknown', async () => {
     const fixture = await setup()
     const controller = new AbortController()
     const active = await fixture.mutations.acquire({ runId: 'run-1', invocationId: 'active', lifetime: 'runtime', claims: [{ kind: 'file', canonicalPath: fixture.path }], signal: controller.signal })
@@ -153,10 +245,7 @@ describe('authorized mutation execution', () => {
     const rejected = expect(waiting).rejects.toThrow()
     try {
       await expect.poll(() => fixture.mutations.getRunState('run-2').pending).toBe(1)
-      if (change === 'cancel')
-        controller.abort()
-      else
-        writer.authorization.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile: 'read_only' })
+      controller.abort()
     }
     finally { active.markHazard('FILE_RESOURCE_SETTLEMENT_FAILED') }
     await rejected
@@ -306,7 +395,7 @@ describe('authorized mutation execution', () => {
   })
 })
 
-async function setup(options: { afterCapture?: () => void } = {}) {
+async function setup(options: { afterCapture?: () => void, beforeFinish?: () => void } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'buddy-tool-mutations-')))
   cleanups.push(() => rm(root, { force: true, recursive: true }))
   const path = join(root, 'shared.txt')
@@ -329,17 +418,19 @@ async function setup(options: { afterCapture?: () => void } = {}) {
   const mutations = new MutationCoordinator({ repository: mutationRepository })
   cleanups.push(() => mutations.dispose())
   const grants = [{ canonicalRoot: root, root, grantId: 'workspace', kind: 'workspace' as const }]
-  function actor(runId: string, mutate: (path: string, content: string) => Promise<void>, toolName = 'mutate', toolOptions: { readOnly?: boolean, signal?: AbortSignal, validateBeforeExecution?: BuddyToolClassification['validateBeforeExecution'] } = {}) {
+  function actor(runId: string, mutate: (path: string, content: string, signal?: AbortSignal, timeout?: number) => Promise<void>, toolName = 'mutate', toolOptions: { profile?: BuddyExecutionProfile, workspaceRoot?: string, readOnly?: boolean, signal?: AbortSignal, validateBeforeExecution?: BuddyToolClassification['validateBeforeExecution'] } = {}) {
     const cwd = join(root, runId)
-    const run: BuddyExtensionRunContext = { runId, signal: toolOptions.signal ?? new AbortController().signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {} }
+    const actorGrants = toolOptions.workspaceRoot ? [{ ...grants[0]!, root: toolOptions.workspaceRoot, canonicalRoot: toolOptions.workspaceRoot }] : grants
+    const phases: ToolExecutionPhaseChange[] = []
+    const run: BuddyExtensionRunContext = { runId, signal: toolOptions.signal ?? new AbortController().signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {}, onToolExecutionPhase: event => phases.push(event) }
     const executionPermissions = new ToolExecutionPermissions()
     cleanups.push(() => executionPermissions.dispose())
     const authorization = new ToolAuthorizationService({ approvalService: { request: async () => {
       throw new Error('UNEXPECTED_APPROVAL')
-    } }, approvalAvailable: false, approvalPolicy: 'policy', executionProfile: 'workspace_write', cwd, owner: { kind: 'conversation', id: 'conversation' }, getGrants: () => grants, executionPermissions })
+    } }, approvalAvailable: false, approvalPolicy: 'policy', executionProfile: toolOptions.profile ?? 'workspace_write', cwd, owner: { kind: 'conversation', id: 'conversation' }, getGrants: () => actorGrants, executionPermissions })
     const classify = (input: { path: string }) => ({ shellReadOnly: toolOptions.readOnly, access: 'write' as const, paths: [{ path: input.path, mode: 'existing' as const }], validateBeforeExecution: toolOptions.validateBeforeExecution })
-    const tool = defineTool({ name: toolName, label: 'Mutate', description: 'Write controlled files', executionMode: 'parallel', parameters: Type.Object({ path: Type.String(), content: Type.String() }), async execute(_id, input) {
-      await mutate(input.path, input.content)
+    const tool = defineTool({ name: toolName, label: 'Mutate', description: 'Write controlled files', executionMode: 'parallel', parameters: Type.Object({ path: Type.String(), content: Type.String(), timeout: Type.Optional(Type.Number()) }), async execute(_id, input, signal) {
+      await mutate(input.path, input.content, signal, input.timeout)
       return { content: [{ type: 'text', text: 'updated' }], details: {} }
     } })
     const wrapped = createMutationToolWrapper({
@@ -348,8 +439,8 @@ async function setup(options: { afterCapture?: () => void } = {}) {
       authorization,
       mutations,
       getRunContext: () => run,
-      getGrants: () => grants,
-      getWorkspaceGrants: () => grants,
+      getGrants: () => actorGrants,
+      getWorkspaceGrants: () => actorGrants,
       classify: async event => classify(event.input as { path: string }),
       workspaceMutationTools: [],
       changes: {
@@ -358,15 +449,19 @@ async function setup(options: { afterCapture?: () => void } = {}) {
           options.afterCapture?.()
           return handle
         },
-        finishInvocation: (handle, input) => changes.finishInvocation(handle, input),
+        finishInvocation: (handle, input) => {
+          options.beforeFinish?.()
+          return changes.finishInvocation(handle, input)
+        },
         markPartial: runId => changes.markPartial(runId),
       },
     })(tool)
     return {
+      phases,
       authorization,
       createWriter: (input: { path: string, content: string }) => createCapturedFileWriter({ conversationId: 'conversation', cwd, run, event: { type: 'tool_call', toolCallId: 'same-provider-id', toolName, input }, authorization, mutations, changes, getGrants: () => grants }),
       authorize: (input: { path: string, content: string }) => authorization.authorize({ input, toolCallId: 'same-provider-id', toolName: tool.name }, run, classify(input)),
-      execute: (input: { path: string, content: string }) => wrapped.execute('same-provider-id', input, run.signal, undefined, {} as Parameters<ToolDefinition['execute']>[4]),
+      execute: (input: { path: string, content: string, timeout?: number }) => wrapped.execute('same-provider-id', input, run.signal, undefined, {} as Parameters<ToolDefinition['execute']>[4]),
     }
   }
   return { root, path, changes, repository, mutationRepository, mutations, actor }

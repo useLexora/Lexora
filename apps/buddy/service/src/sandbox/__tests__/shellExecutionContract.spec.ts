@@ -12,7 +12,7 @@ import { ShellSelection } from '../ShellSelection'
 
 const profiles = ['read_only', 'workspace_write', 'full_access'] as const
 
-async function fixture(profile: BuddyExecutionProfile, platform: NodeJS.Platform, selection = true, sandbox?: Pick<ShellSandboxClient, 'exec'>) {
+async function fixture(profile: BuddyExecutionProfile, platform: NodeJS.Platform, sandbox?: Pick<ShellSandboxClient, 'exec'>) {
   let execution = resolveShellExecution(profile, platform)
   const signal = new AbortController().signal
   const tools = new Map<string, ToolDefinition>()
@@ -21,7 +21,7 @@ async function fixture(profile: BuddyExecutionProfile, platform: NodeJS.Platform
     cwd: process.cwd(),
     execution,
     getExecution: () => execution,
-    shells: selection ? new ShellSelection(descriptors, async () => descriptors) : undefined,
+    shells: new ShellSelection(descriptors, async () => descriptors),
     getGrants: () => [],
     getRunContext: () => ({ runId: 'shell-contract', signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {} }),
     authorization: { authorize: async () => { throw new Error('Unexpected network request') } },
@@ -34,7 +34,7 @@ async function fixture(profile: BuddyExecutionProfile, platform: NodeJS.Platform
     tools,
     capability,
     signal,
-    names: [execution.dialect, ...selection ? ['lexora_shell'] : []],
+    names: [execution.dialect, 'lexora_shell'],
     setProfile(profile: BuddyExecutionProfile) {
       execution = resolveShellExecution(profile, platform)
       capability.refreshExecution()
@@ -42,7 +42,22 @@ async function fixture(profile: BuddyExecutionProfile, platform: NodeJS.Platform
   }
 }
 
-describe.each(['win32', 'linux', 'darwin'] as const)('shell execution contract on %s', (platform) => {
+describe.each(['win32', 'linux'] as const)('shell execution contract on %s', (platform) => {
+  it('reports shell identity with the first update, streamed output and final result', async () => {
+    const f = await fixture('workspace_write', platform, { exec: async (_input, options) => {
+      options.onData(Buffer.from('hello'))
+      return { exitCode: 0 }
+    } })
+    for (const name of f.names) {
+      const updates: unknown[] = []
+      const result = await f.tools.get(name)!.execute('metadata', { command: 'echo hello' }, f.signal, update => updates.push(update), {} as never)
+      const shell = { id: 'system', dialect: platform === 'win32' ? 'powershell' : 'bash' }
+      expect(updates[0]).toMatchObject({ content: [], details: { shell } })
+      expect(updates.at(-1)).toMatchObject({ content: [{ type: 'text', text: 'hello' }], details: { shell } })
+      expect(result).toMatchObject({ content: [{ type: 'text', text: 'hello' }], details: { shell }, structuredContent: { shell, exit_code: 0 } })
+    }
+  })
+
   it.each(profiles)('keeps advertised inputs and effective execution consistent in %s', async (profile) => {
     const f = await fixture(profile, platform)
     for (const name of f.names) {
@@ -72,13 +87,13 @@ describe.each(['win32', 'linux', 'darwin'] as const)('shell execution contract o
     const host = f.tools.get('lexora_host_shell')!
     expect(Check(host.parameters, { command: 'query', readOnly: true })).toBe(false)
     await expect(host.execute('host', { command: 'query', readOnly: true }, f.signal, undefined, {} as never)).rejects.toThrow('SHELL_READ_ONLY_REQUIRES_SANDBOX')
-    expect(f.capability.mutationEffect?.({ type: 'tool_call', toolCallId: 'host', toolName: 'lexora_host_shell', input: { command: 'query' } }, { access: 'execute' })).toMatchObject({ kind: 'host' })
+    expect(f.capability.mutationEffect?.({ type: 'tool_call', toolCallId: 'host', toolName: 'lexora_host_shell', input: { command: 'query' } }, { access: 'execute' })).toMatchObject({ kind: 'workspace' })
   })
 
   it('keeps an already dispatched sandbox command on its original policy during a mode switch', async () => {
     const entered = Promise.withResolvers<void>()
     const release = Promise.withResolvers<void>()
-    const f = await fixture('workspace_write', platform, true, { exec: async (input, options) => {
+    const f = await fixture('workspace_write', platform, { exec: async (input, options) => {
       expect(input.readOnly).toBe(true)
       entered.resolve()
       await release.promise
@@ -96,8 +111,8 @@ describe.each(['win32', 'linux', 'darwin'] as const)('shell execution contract o
     expect(await pending).toMatchObject({ structuredContent: { exit_code: 0, output: 'completed in original sandbox' } })
   })
 
-  it.each([false, true])('refreshes both directions without changing prior declarations, selection=%s', async (selection) => {
-    const f = await fixture('workspace_write', platform, selection)
+  it('refreshes both shell entry points without changing prior declarations', async () => {
+    const f = await fixture('workspace_write', platform)
     const previous = f.tools.get(f.names[0]!)!
     f.setProfile('full_access')
     for (const name of f.names) {
