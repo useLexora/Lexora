@@ -137,71 +137,68 @@ describe('runtimeRpcServer', () => {
     })
     await new Promise(resolve => setImmediate(resolve))
 
-    expect(port.sent.at(-1)).toEqual({
-      jsonrpc: '2.0',
-      id: 'status-ready',
-      result: {
-        name: 'lexora-buddy-service',
-        protocolVersion: BUDDY_SERVICE_PROTOCOL_VERSION,
-        ready: true,
-      },
-    })
-  })
-
-  it('serves status and local state through bidirectional RPC', async () => {
-    const port = new FakeParentPort()
-    createBuddyService({ port })
-
-    port.receive({
-      jsonrpc: '2.0',
-      id: 'status-1',
-      method: 'runtime.status',
-      params: {},
-    })
-    port.receive({
-      jsonrpc: '2.0',
-      id: 'state-1',
-      method: 'runtime.localState',
-      params: {},
-    })
-    await new Promise(resolve => setImmediate(resolve))
-
-    expect(port.sent.slice(1)).toEqual([
+    expect(port.sent.slice(2)).toEqual([
       {
         jsonrpc: '2.0',
-        id: 'status-1',
+        method: 'runtime.ready',
+        params: {
+          name: 'lexora-buddy-service',
+          protocolVersion: BUDDY_SERVICE_PROTOCOL_VERSION,
+        },
+      },
+      {
+        jsonrpc: '2.0',
+        id: 'status-ready',
         result: {
           name: 'lexora-buddy-service',
           protocolVersion: BUDDY_SERVICE_PROTOCOL_VERSION,
           ready: true,
         },
       },
-      {
-        jsonrpc: '2.0',
-        id: 'state-1',
-        result: { status: 'ready' },
-      },
     ])
   })
 
-  it('acknowledges shutdown before scheduling process exit', async () => {
+  it('refuses idle-only shutdown while busy and closes task admission atomically once idle', async () => {
     const port = new FakeParentPort()
-    const scheduleShutdown = vi.fn()
-    createBuddyService({ port, scheduleShutdown })
-
-    port.receive({
-      jsonrpc: '2.0',
-      id: 'shutdown-1',
-      method: 'runtime.shutdown',
-      params: {},
-    })
+    let busy = true
+    let stopped = false
+    let turns = 0
+    const server = createBuddyService({ port, prepareIdleShutdown: () => !busy, scheduleShutdown: () => {
+      stopped = true
+    } })
+    server.onRequest('chat.startTurn', () => ({ runId: `run-${++turns}` }))
+    const send = (id: string, method: string, params: unknown = {}) => port.receive({ jsonrpc: '2.0', id, method, params })
+    send('busy', 'runtime.shutdown', { onlyIfIdle: true })
+    send('continued', 'chat.startTurn')
     await new Promise(resolve => setImmediate(resolve))
+    expect(port.sent).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'busy', result: { accepted: false } }),
+      expect.objectContaining({ id: 'continued', result: { runId: 'run-1' } }),
+    ]))
+    expect(stopped).toBe(false)
+    busy = false
+    send('idle', 'runtime.shutdown', { onlyIfIdle: true })
+    send('late', 'chat.startTurn')
+    await new Promise(resolve => setImmediate(resolve))
+    expect(port.sent).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'idle', result: { accepted: true } }),
+      expect.objectContaining({ id: 'late', error: expect.objectContaining({ data: expect.objectContaining({ code: 'RUNTIME_UNAVAILABLE' }) }) }),
+    ]))
+    expect(turns).toBe(1)
+    expect(stopped).toBe(true)
+    server.close(new Error('test completed'))
+  })
 
-    expect(port.sent[1]).toEqual({
-      jsonrpc: '2.0',
-      id: 'shutdown-1',
-      result: { accepted: true },
-    })
-    expect(scheduleShutdown).toHaveBeenCalledOnce()
+  it('does not accept an idle-only shutdown without an available idle check', async () => {
+    const port = new FakeParentPort()
+    let stopped = false
+    const server = createBuddyService({ port, scheduleShutdown: () => {
+      stopped = true
+    } })
+    port.receive({ jsonrpc: '2.0', id: 'unchecked', method: 'runtime.shutdown', params: { onlyIfIdle: true } })
+    await new Promise(resolve => setImmediate(resolve))
+    expect(port.sent.at(-1)).toMatchObject({ id: 'unchecked', result: { accepted: false } })
+    expect(stopped).toBe(false)
+    server.close(new Error('test completed'))
   })
 })

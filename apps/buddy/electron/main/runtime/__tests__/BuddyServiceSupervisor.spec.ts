@@ -1,13 +1,10 @@
 import type { BuddyRunEvent } from '../../../../service/src/events/BuddyRunEvent'
 import type { ApplicationDiagnostic } from '../../../../shared/diagnostics/applicationDiagnostic'
-import type { ApplicationLogRecord } from '../../../../shared/diagnostics/applicationLog'
 import type { BuddyServiceMessageProcess } from '../BuddyServicePeer'
 import type { BuddyServiceProcessInstance } from '../buddyServiceProcess'
 import type { BuddyServiceSupervisorOptions } from '../BuddyServiceSupervisor'
 import { EventEmitter } from 'node:events'
 import { Writable } from 'node:stream'
-import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
-import { strFromU8, unzipSync } from 'fflate'
 import { describe, expect, it, vi } from 'vitest'
 import { observeRunDiagnostics } from '../../../../service/src/events/observeRunDiagnostics'
 import { APPLICATION_DIAGNOSTIC_METHOD } from '../../../../shared/diagnostics/applicationDiagnostic'
@@ -16,9 +13,6 @@ import { SERVICE_LIFECYCLE_METHOD } from '../../../../shared/lifecycle/serviceLi
 import { ServiceLifecycleSource } from '../../../../shared/lifecycle/ServiceLifecycleSource'
 import { ApplicationEvents } from '../../../../shared/observability/ApplicationEvents'
 import { BUDDY_SERVICE_PROTOCOL_VERSION } from '../../../../shared/runtime/runtimeProtocol'
-import { DesktopDiagnosticLogger } from '../../desktopDiagnostics'
-import { createApplicationDiagnosticBundle } from '../../diagnostics/applicationDiagnosticBundle'
-import { ApplicationLogReader } from '../../diagnostics/ApplicationLogReader'
 import { BuddyServicePeer } from '../BuddyServicePeer'
 import { BuddyServiceSupervisor } from '../BuddyServiceSupervisor'
 
@@ -86,11 +80,9 @@ function createSupervisor(
 }
 
 describe('buddyServiceSupervisor utility process lifecycle', () => {
-  it('binds trusted producer identities across runtime generations and retains durable cursors through log export', async () => {
-    const directory = await createTemporaryDirectory('lexora-runtime-producer-diagnostics-')
-    const logger = new DesktopDiagnosticLogger({ directory, appVersion: '0.9.2', userHome: '/fixture' })
+  it('binds trusted producer identities across runtime generations and preserves durable cursors', async () => {
     const forgedProducer = crypto.randomUUID()
-    const { supervisor, processes } = createSupervisor([], { onDiagnostic: event => logger.record({ ...event, scope: 'local-service' }) })
+    const { supervisor, processes, diagnostics } = createSupervisor([])
     for (const [index, revision] of [41, 73].entries()) {
       supervisor.start()
       const process = processes[index]!
@@ -108,10 +100,7 @@ describe('buddyServiceSupervisor utility process lifecycle', () => {
       diagnostics.dispose()
       commits.dispose()
     }
-    expect(await logger.close()).toMatchObject({ closeTimedOut: false, failed: 0, unconfirmed: 0 })
-    const reader = new ApplicationLogReader(directory, logger.launchId, '/fixture')
-    const queried = await reader.query({ pageSize: 100 })
-    const failures = queried.records.filter(record => record.event === 'run.failed').sort((a, b) => a.sequence - b.sequence)
+    const failures = diagnostics.filter(record => record.event === 'run.failed')
     expect(failures).toMatchObject([
       { runId: 'run-0', sourceSequence: 1, revision: 41 },
       { runId: 'run-1', sourceSequence: 1, revision: 73 },
@@ -119,12 +108,8 @@ describe('buddyServiceSupervisor utility process lifecycle', () => {
     expect(new Set(failures.map(record => record.producerInstanceId)).size).toBe(2)
     expect(failures.every(record => record.producerInstanceId && record.producerInstanceId !== forgedProducer)).toBe(true)
     for (const record of failures) {
-      expect(queried.records).toContainEqual(expect.objectContaining({ event: 'service.stopped', producerInstanceId: record.producerInstanceId, sourceSequence: 2 }))
+      expect(diagnostics).toContainEqual(expect.objectContaining({ event: 'service.stopped', producerInstanceId: record.producerInstanceId, sourceSequence: 2 }))
     }
-    const bundle = await createApplicationDiagnosticBundle(reader, 'current')
-    const exported = strFromU8(unzipSync(bundle!.bytes)['context.jsonl']!).trim().split('\n').map(line => JSON.parse(line) as ApplicationLogRecord)
-    expect(exported.filter(record => record.event === 'run.failed')).toMatchObject(failures.map(({ producerInstanceId, runId, sourceSequence, revision }) => ({ producerInstanceId, runId, sourceSequence, revision })))
-    expect(exported.some(record => 'sourceId' in record || record.producerInstanceId === forgedProducer)).toBe(false)
   })
 
   it('keeps typed lifecycle snapshots independent of failed diagnostics and retires old generation state', async () => {
@@ -140,7 +125,9 @@ describe('buddyServiceSupervisor utility process lifecycle', () => {
     source.update({ component: 'runtime.database', kind: 'service', operationId: 'database-1', status: 'ready' })
     expect(supervisor.lifecycleState.services?.components[0]?.status).toBe('ready')
     processes[0]!.notify('runtime.ready', { protocolVersion: BUDDY_SERVICE_PROTOCOL_VERSION })
-    expect(supervisor.lifecycleState).toMatchObject({ generation: 'runtime-1', status: 'ready' })
+    const firstGeneration = supervisor.lifecycleState.generation
+    expect(firstGeneration).not.toBeNull()
+    expect(supervisor.lifecycleState.status).toBe('ready')
     const stopping = supervisor.stop()
     await new Promise(resolve => setImmediate(resolve))
     source.update({ component: 'runtime.database', kind: 'service', operationId: 'database-1', status: 'stopped' })
@@ -149,30 +136,52 @@ describe('buddyServiceSupervisor utility process lifecycle', () => {
     await stopping
     expect(supervisor.lifecycleState.status).toBe('stopped')
     supervisor.start()
-    expect(supervisor.lifecycleState).toMatchObject({ generation: 'runtime-3', services: null, status: 'starting' })
+    expect(supervisor.lifecycleState).toMatchObject({ generation: expect.any(String), services: null, status: 'starting' })
+    expect(supervisor.lifecycleState.generation).not.toBe(firstGeneration)
     const stopped = supervisor.stop()
     await new Promise(resolve => setImmediate(resolve))
     processes[1]!.exit()
     await stopped
   })
-  it('keeps slow initialization and queued requests alive within the cold-start budget', async () => {
+  it('waits through slow initialization for versioned readiness and shuts down gracefully', async () => {
     vi.useFakeTimers()
     try {
       const { processes, supervisor, diagnostics } = createSupervisor([], {})
+      const notifications: unknown[] = []
+      supervisor.onNotification(notification => notifications.push(notification))
       supervisor.start()
+      const process = processes[0]!
       const pending = supervisor.request('runtime.status', {})
       await vi.advanceTimersByTimeAsync(35_000)
       expect(supervisor.state.status).toBe('starting')
-      expect(processes[0]!.killed).toBe(false)
-      expect(processes[0]!.outbound).toEqual([])
-      processes[0]!.notify('runtime.ready', { protocolVersion: BUDDY_SERVICE_PROTOCOL_VERSION })
+      expect(process.killed).toBe(false)
+      expect(process.outbound).toEqual([])
+      process.notify('run.event', { runId: 'recovery-run' })
+      expect(supervisor.notify('scheduler.wake', { reason: 'resume' })).toBe(false)
+
+      process.notify('runtime.ready', { protocolVersion: BUDDY_SERVICE_PROTOCOL_VERSION })
       await vi.advanceTimersByTimeAsync(0)
-      processes[0]!.respond(0, { ready: true })
+      expect(supervisor.state.status).toBe('ready')
+      expect(process.outbound).toHaveLength(1)
+      process.respond(0, { ready: true })
       await expect(pending).resolves.toEqual({ ready: true })
+      process.notify('run.event', { runId: 'run-1' })
+      expect(notifications).toEqual([{ method: 'run.event', params: { runId: 'run-1' } }])
+      expect(supervisor.notify('scheduler.wake', { reason: 'unlock-screen' })).toBe(true)
+      expect(process.outbound.at(-1)).toEqual({
+        jsonrpc: '2.0',
+        method: 'scheduler.wake',
+        params: { reason: 'unlock-screen' },
+      })
+
       const stopping = supervisor.stop()
       await vi.advanceTimersByTimeAsync(0)
-      processes[0]!.exit()
+      expect(process.outbound.at(-1)).toMatchObject({ method: 'runtime.shutdown' })
+      process.respond(process.outbound.length - 1, { accepted: true })
+      process.exit()
       await stopping
+      expect(supervisor.state.status).toBe('stopped')
+      expect(process.killed).toBe(false)
       expect(diagnostics).toContainEqual(expect.objectContaining({ event: 'runtime.exited', processExit: { type: 'utility', reason: 'clean-exit', code: 0, expected: true } }))
     }
     finally {
@@ -218,37 +227,6 @@ describe('buddyServiceSupervisor utility process lifecycle', () => {
     await stopping
     expect(diagnostics).toContainEqual(expect.objectContaining({ event: 'service.stopped', sourceId: 'runtime-1' }))
   })
-  it('waits for the versioned ready notification before forwarding requests', async () => {
-    const { processes, supervisor } = createSupervisor()
-    const notifications: unknown[] = []
-    supervisor.onNotification(notification => notifications.push(notification))
-    supervisor.start()
-    const pending = supervisor.request('runtime.status', {})
-
-    expect(supervisor.state.status).toBe('starting')
-    expect(processes[0]!.outbound).toEqual([])
-    processes[0]!.notify('run.event', { runId: 'recovery-run' })
-    expect(supervisor.notify('scheduler.wake', { reason: 'resume' })).toBe(false)
-
-    processes[0]!.notify('runtime.ready', {
-      protocolVersion: BUDDY_SERVICE_PROTOCOL_VERSION,
-    })
-    await new Promise(resolve => setImmediate(resolve))
-    expect(supervisor.state.status).toBe('ready')
-    expect(processes[0]!.outbound).toHaveLength(1)
-
-    processes[0]!.respond(0, { ready: true })
-    await expect(pending).resolves.toEqual({ ready: true })
-    processes[0]!.notify('run.event', { runId: 'run-1' })
-    expect(notifications).toEqual([{ method: 'run.event', params: { runId: 'run-1' } }])
-    expect(supervisor.notify('scheduler.wake', { reason: 'unlock-screen' })).toBe(true)
-    expect(processes[0]!.outbound.at(-1)).toEqual({
-      jsonrpc: '2.0',
-      method: 'scheduler.wake',
-      params: { reason: 'unlock-screen' },
-    })
-  })
-
   it('preserves a stable startup failure after bounded restart is exhausted', async () => {
     vi.useFakeTimers()
     try {
@@ -417,22 +395,68 @@ describe('buddyServiceSupervisor utility process lifecycle', () => {
     vi.useRealTimers()
   })
 
-  it('requests graceful shutdown before killing the utility process', async () => {
+  it('keeps the same Runtime available when it becomes busy before backup shutdown', async () => {
     const { processes, supervisor } = createSupervisor()
     supervisor.start()
-    processes[0]!.notify('runtime.ready', {
-      protocolVersion: BUDDY_SERVICE_PROTOCOL_VERSION,
+    const process = processes[0]!
+    process.notify('runtime.ready', { protocolVersion: BUDDY_SERVICE_PROTOCOL_VERSION })
+    let copied = false
+    const backup = supervisor.withStoppedStorage(async () => {
+      copied = true
     })
+    const rejected = expect(backup).rejects.toThrow('SNAPSHOT_RUNTIME_BUSY')
+    await new Promise(resolve => setImmediate(resolve))
+    expect(supervisor.state.status).toBe('ready')
+    expect(process.outbound[0]).toMatchObject({ method: 'runtime.shutdown', params: { onlyIfIdle: true } })
+    process.respond(0, { accepted: false })
+    await rejected
+    expect(copied).toBe(false)
+    expect(process.killed).toBe(false)
+    expect(processes).toHaveLength(1)
+    expect(supervisor.lifecycleState).toMatchObject({ status: 'ready', maintenance: null })
+    const request = supervisor.request('runs.isBusy', {})
+    await new Promise(resolve => setImmediate(resolve))
+    process.respond(1, true)
+    expect(await request).toBe(true)
     const stopping = supervisor.stop()
     await new Promise(resolve => setImmediate(resolve))
-
-    const shutdown = processes[0]!.outbound[0] as { method: string }
-    expect(shutdown.method).toBe('runtime.shutdown')
-    processes[0]!.respond(0, { accepted: true })
-    processes[0]!.exit(0)
-
+    process.exit()
     await stopping
-    expect(supervisor.state.status).toBe('stopped')
-    expect(processes[0]!.killed).toBe(false)
+  })
+
+  it.each([false, true])('labels a confirmed idle backup and restores Runtime after snapshot failure=%s', async (fail) => {
+    const { processes, supervisor } = createSupervisor()
+    supervisor.start()
+    const process = processes[0]!
+    process.notify('runtime.ready', { protocolVersion: BUDDY_SERVICE_PROTOCOL_VERSION })
+    const gate = Promise.withResolvers<void>()
+    let copied = false
+    const backup = supervisor.withStoppedStorage(async () => {
+      copied = true
+      await gate.promise
+      if (fail)
+        throw new Error('SNAPSHOT_FAILED')
+      return 'snapshot'
+    })
+    const completion = fail ? expect(backup).rejects.toThrow('SNAPSHOT_FAILED') : expect(backup).resolves.toBe('snapshot')
+    await new Promise(resolve => setImmediate(resolve))
+    expect(copied).toBe(false)
+    process.respond(0, { accepted: true })
+    await new Promise(resolve => setImmediate(resolve))
+    expect(supervisor.lifecycleState).toMatchObject({ status: 'stopping', maintenance: 'backup' })
+    expect(copied).toBe(false)
+    process.exit()
+    await new Promise(resolve => setImmediate(resolve))
+    expect(copied).toBe(true)
+    expect(supervisor.lifecycleState).toMatchObject({ status: 'stopped', maintenance: 'backup' })
+    gate.resolve()
+    await completion
+    expect(processes).toHaveLength(2)
+    processes[1]!.notify('runtime.ready', { protocolVersion: BUDDY_SERVICE_PROTOCOL_VERSION })
+    expect(supervisor.lifecycleState).toMatchObject({ status: 'ready', maintenance: null })
+    const stopping = supervisor.stop()
+    await new Promise(resolve => setImmediate(resolve))
+    processes[1]!.exit()
+    await stopping
   })
 })

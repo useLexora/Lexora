@@ -1,6 +1,6 @@
 import type { Writable } from 'node:stream'
 import type { ApplicationDiagnostic } from '../../../shared/diagnostics/applicationDiagnostic'
-import type { RuntimeLifecycleChange, RuntimeLifecycleSnapshot } from '../../../shared/lifecycle/runtimeLifecycle'
+import type { RuntimeLifecycleChange, RuntimeLifecycleSnapshot, RuntimeMaintenance } from '../../../shared/lifecycle/runtimeLifecycle'
 import type { LifecycleComponent, ServiceLifecycleSnapshot } from '../../../shared/lifecycle/serviceLifecycle'
 import type { BuddyServiceSupervisorFailureCode } from '../../../shared/runtime/runtimeProtocol'
 import type { BuddyServicePeer } from './BuddyServicePeer'
@@ -15,6 +15,7 @@ import { lifecycleDiagnostic } from '../../../shared/observability/lifecycleDiag
 import {
   BUDDY_SERVICE_PROTOCOL_VERSION,
   buddyServiceFailureNotificationSchema,
+  runtimeShutdownResponseSchema,
 } from '../../../shared/runtime/runtimeProtocol'
 
 export type BuddyServiceSupervisorStatus
@@ -82,7 +83,7 @@ const RUNTIME_FAILURE_DISPOSITIONS = {
 } as const satisfies Record<BuddyServiceSupervisorFailureCode, 'offline' | 'restart'>
 
 export class BuddyServiceSupervisor {
-  #maintenance = false
+  #maintenance: RuntimeMaintenance | null = null
   #resumeAfterMaintenance = false
   readonly #bindPeer?: BuddyServiceSupervisorOptions['bindPeer']
   readonly #diagnosticOutput: Writable
@@ -153,6 +154,7 @@ export class BuddyServiceSupervisor {
       revision: this.#lifecycleRevision,
       generation: this.#connection?.operationId ?? null,
       status: this.#state.status,
+      maintenance: this.#maintenance,
       errorCode: this.#state.lastError,
       connection: this.#connection,
       services: this.#services,
@@ -182,7 +184,7 @@ export class BuddyServiceSupervisor {
     params: unknown,
     options: BuddyServiceRequestOptions = {},
   ): Promise<unknown> {
-    if (this.#maintenance)
+    if (this.#maintenance && this.#state.status !== 'ready')
       throw new BuddyServiceUnavailableError()
     const peer = await this.#waitForReadyPeer()
     return peer.request(method, params, options.timeoutMs, options.signal, options.requestId)
@@ -235,10 +237,22 @@ export class BuddyServiceSupervisor {
       return
     const intent = ++this.#intent
     this.#desiredRunning = false
-    this.#clearTimers()
-    this.#setState({ ...this.#state, status: 'stopping' })
+    if (!forMaintenance) {
+      this.#clearTimers()
+      this.#setState({ ...this.#state, status: 'stopping' })
+    }
     return this.#enqueueLifecycle(async () => {
-      const stopped = await this.#stopCurrentGeneration()
+      let stopped: boolean
+      try {
+        stopped = await this.#stopCurrentGeneration(forMaintenance)
+      }
+      catch (error) {
+        if (forMaintenance && intent === this.#intent && this.#generation?.ready) {
+          this.#desiredRunning = true
+          this.#setState({ ...this.#state, status: 'ready' })
+        }
+        throw error
+      }
       if (intent !== this.#intent || this.#desiredRunning)
         return
       if (stopped)
@@ -253,25 +267,39 @@ export class BuddyServiceSupervisor {
   async withStoppedStorage<T>(operation: () => Promise<T>): Promise<T> {
     if (this.#maintenance || this.#state.status !== 'ready')
       throw new BuddyServiceUnavailableError()
-    this.#maintenance = true
+    this.#maintenance = 'backup'
     this.#resumeAfterMaintenance = true
     try {
       await this.stop(true)
       return await operation()
     }
     finally {
-      this.#maintenance = false
+      this.#maintenance = null
       if (this.#resumeAfterMaintenance)
         this.start()
       this.#resumeAfterMaintenance = false
+      this.#publishLifecycle()
     }
   }
 
-  async #stopCurrentGeneration(): Promise<boolean> {
+  async #stopCurrentGeneration(onlyIfIdle = false): Promise<boolean> {
     const generation = this.#generation
     this.#lastShutdownClean = true
     if (!generation)
       return true
+    if (onlyIfIdle) {
+      generation.terminationRequested = true
+      try {
+        const response = await generation.peer.request('runtime.shutdown', { onlyIfIdle: true }, this.#shutdownTimeoutMs)
+        if (!runtimeShutdownResponseSchema.parse(response).accepted)
+          throw new Error('SNAPSHOT_RUNTIME_BUSY')
+      }
+      catch (error) {
+        generation.terminationRequested = false
+        throw error
+      }
+      this.#setState({ ...this.#state, status: 'stopping' })
+    }
     this.#record({ event: 'runtime.shutdown.started', level: 'info' }, generation)
     generation.terminationRequested = true
     this.#generation = null
@@ -282,7 +310,8 @@ export class BuddyServiceSupervisor {
       generation.process,
       this.#exitedProcesses.has(generation.process),
     )
-    void generation.peer.request('runtime.shutdown', {}, this.#shutdownTimeoutMs).catch(() => {})
+    if (!onlyIfIdle)
+      void generation.peer.request('runtime.shutdown', {}, this.#shutdownTimeoutMs).catch(() => {})
     let stopped = await settleWithin(exited, this.#shutdownTimeoutMs)
     const forced = !stopped
     if (!stopped) {

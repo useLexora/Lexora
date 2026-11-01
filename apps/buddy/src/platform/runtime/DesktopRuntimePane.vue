@@ -14,6 +14,7 @@ const props = withDefaults(defineProps<{
 const runtime = inject(runtimeAvailabilityKey, null)
 const { t } = useBuddyI18n(() => props.language ?? runtime?.language.value ?? 'zh-CN')
 const pending = computed(() => props.loading || (props.enabled && runtime?.loading.value) || false)
+const label = computed(() => t(props.enabled && runtime?.maintenance.value === 'backup' ? 'desktop.loading.backup' : 'desktop.loading.pane'))
 const error = computed(() => props.enabled && runtime?.failed.value ? t('desktop.loading.failed') : null)
 </script>
 
@@ -22,7 +23,7 @@ const error = computed(() => props.enabled && runtime?.failed.value ? t('desktop
     :animate="animate"
     :loading="pending"
     :error="error"
-    :label="t('desktop.loading.pane')"
+    :label="label"
     :retry-label="t('desktop.loading.retry')"
     @retry="runtime?.retry()"
   >

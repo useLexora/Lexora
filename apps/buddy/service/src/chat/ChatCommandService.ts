@@ -61,6 +61,10 @@ export class ChatCommandService {
     this.onDidCommit = this.#committed.event
   }
 
+  get hasPendingOperations(): boolean {
+    return this.#pending.size > 0
+  }
+
   execute(input: ExecuteChatCommandInput): Promise<ReturnType<typeof toTurnStart>> {
     const pending = Promise.withResolvers<ReturnType<typeof toTurnStart>>()
     this.#pending.add(pending.promise)

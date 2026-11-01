@@ -1,6 +1,9 @@
 import { z } from 'zod'
 
-export const BUDDY_SERVICE_PROTOCOL_VERSION = 20 as const
+export const BUDDY_SERVICE_PROTOCOL_VERSION = 21 as const
+
+export const runtimeShutdownRequestSchema = z.object({ onlyIfIdle: z.boolean().optional() }).strict()
+export const runtimeShutdownResponseSchema = z.object({ accepted: z.boolean() }).strict()
 
 export const BUDDY_SERVICE_FAILURE_CODES = [
   'EVENT_LOG_CORRUPTED',

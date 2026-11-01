@@ -46,6 +46,10 @@ export class ComposerDraftService {
     this.onDidCleanup = this.#cleanup.event
   }
 
+  get hasPendingOperations(): boolean {
+    return this.#pending.size > 0
+  }
+
   list(): BuddyComposerDraft[] {
     return this.#repository.list()
   }

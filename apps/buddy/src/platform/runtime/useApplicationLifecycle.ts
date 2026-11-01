@@ -6,6 +6,7 @@ export function useApplicationLifecycle(api: LexoraDesktopApi['app']['startup'])
   const state = shallowRef<ApplicationStartupState>({
     revision: -1,
     generation: null,
+    maintenance: null,
     hasBeenReady: false,
     status: 'starting',
     stages: [],

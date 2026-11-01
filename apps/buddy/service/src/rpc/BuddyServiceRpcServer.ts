@@ -10,8 +10,10 @@ import { isRoutineRpc } from '../../../shared/diagnostics/rpcDiagnosticPolicy'
 import {
   BUDDY_SERVICE_PROTOCOL_VERSION,
   buddyServiceFailureNotificationSchema,
+  runtimeShutdownRequestSchema,
 } from '../../../shared/runtime/runtimeProtocol'
 import { diagnosticContext } from '../diagnostics/diagnosticContext'
+import { BuddyServiceError } from './runtimeRequest'
 
 const SERVICE_NAME = 'lexora-buddy-service'
 
@@ -26,6 +28,7 @@ export interface CreateBuddyServiceOptions {
   announceReady?: boolean
   port: BuddyServiceParentPort
   scheduleShutdown?: () => void
+  prepareIdleShutdown?: () => boolean
   onFatalError?: (error: Error) => void
 }
 
@@ -33,6 +36,7 @@ export class BuddyServiceRpcServer implements RuntimeRpcPeerContract {
   readonly #record: ApplicationDiagnosticReporter
   readonly #peer: RuntimeRpcPeer
   #ready = false
+  #stopping = false
 
   constructor(options: { port: BuddyServiceParentPort, onFatalError?: (error: Error) => void, recordDiagnostic?: ApplicationDiagnosticReporter }) {
     this.#record = safeDiagnosticReporter(options.recordDiagnostic)
@@ -65,12 +69,18 @@ export class BuddyServiceRpcServer implements RuntimeRpcPeerContract {
     return true
   }
 
+  stopAcceptingRequests(): void {
+    this.#stopping = true
+  }
+
   onNotification(listener: (method: string, params: unknown) => void): () => void {
     return this.#peer.onNotification(listener)
   }
 
   onRequest(method: string, handler: RuntimeRequestHandler): () => void {
     return this.#peer.onRequest(method, async (params, signal, requestId) => {
+      if (this.#stopping && method !== 'runtime.shutdown')
+        throw new BuddyServiceError('RUNTIME_UNAVAILABLE')
       const operationId = requestId ?? crypto.randomUUID()
       const startedAt = performance.now()
       if (!isRoutineRpc(method))
@@ -126,7 +136,11 @@ export function createBuddyService(options: CreateBuddyServiceOptions): BuddySer
   server.onRequest('runtime.localState', () => ({
     status: server.ready ? 'ready' : 'starting',
   }))
-  server.onRequest('runtime.shutdown', () => {
+  server.onRequest('runtime.shutdown', (params) => {
+    const { onlyIfIdle } = runtimeShutdownRequestSchema.parse(params)
+    if (onlyIfIdle && (!server.ready || !options.prepareIdleShutdown?.()))
+      return { accepted: false }
+    server.stopAcceptingRequests()
     setImmediate(options.scheduleShutdown ?? (() => process.exit(0)))
     return { accepted: true }
   })

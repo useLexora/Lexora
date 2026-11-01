@@ -101,6 +101,7 @@ async function runBuddyService(): Promise<void> {
     recordDiagnostic: record,
     announceReady: false,
     port: parentPort,
+    prepareIdleShutdown: () => serviceHandle?.prepareIdleShutdown() ?? false,
     scheduleShutdown() {
       void shutdown(0)
     },

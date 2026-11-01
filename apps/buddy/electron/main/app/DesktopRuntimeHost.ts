@@ -97,8 +97,7 @@ export class DesktopRuntimeHost {
   }
 
   withStoppedStorage<T>(operation: () => Promise<T>): Promise<T> {
-    const stopped = () => this.service.withStoppedStorage(operation)
-    return this.extensionStorage ? this.extensionStorage.withStoppedStorage(stopped) : stopped()
+    return this.service.withStoppedStorage(() => this.extensionStorage ? this.extensionStorage.withStoppedStorage(operation) : operation())
   }
 
   get language(): LexoraConfig['desktop']['language'] {
