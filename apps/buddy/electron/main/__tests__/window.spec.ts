@@ -131,3 +131,28 @@ describe('desktop font permissions', () => {
       expect(permits(window.webContents, 'local-fonts', { ...details, requestingUrl: url })).toEqual([false, false])
   })
 })
+
+describe('mouse history navigation', () => {
+  it('ignores mouse back and forward so they do not change the app route', () => {
+    createDesktopWindow({
+      appName: 'Lexora',
+      iconPath: '/tmp/icon.png',
+      isQuitting: () => false,
+      rendererUrl: null,
+    })
+    const window = electron.FakeBrowserWindow.instances.at(-1)!
+    const handler = window.webContents.on.mock.calls.find(call => call[0] === 'app-command')?.[1] as ((event: { preventDefault: () => void }, command: string) => void) | undefined
+    expect(handler).toBeTypeOf('function')
+
+    const back = { preventDefault: vi.fn() }
+    const forward = { preventDefault: vi.fn() }
+    const home = { preventDefault: vi.fn() }
+    handler!(back, 'browser-backward')
+    handler!(forward, 'browser-forward')
+    handler!(home, 'browser-home')
+
+    expect(back.preventDefault).toHaveBeenCalledOnce()
+    expect(forward.preventDefault).toHaveBeenCalledOnce()
+    expect(home.preventDefault).not.toHaveBeenCalled()
+  })
+})
