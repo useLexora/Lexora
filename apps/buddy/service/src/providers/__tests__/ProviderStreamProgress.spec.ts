@@ -1,14 +1,15 @@
 import type { AssistantMessage, Model, Provider, StreamOptions } from '@earendil-works/pi-ai'
-import { createAssistantMessageEventStream, normalizeContext } from '@earendil-works/pi-ai'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createAssistantMessageEventStream, isRetryableAssistantError, normalizeContext, retryAssistantCall } from '@earendil-works/pi-ai'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { normalizeModelRequestFailure } from '../modelRequestFailure'
 import { MODEL_PROGRESS_TIMEOUT_MS, withProviderStream } from '../withProviderStream'
 
 const model: Model<'openai-completions'> = { api: 'openai-completions', provider: 'fixture', id: 'fixture', name: 'Fixture', reasoning: true, input: ['text'], baseUrl: 'https://fixture.example.test', contextWindow: 4096, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }
 const context = normalizeContext({ messages: [{ role: 'user', content: 'hello', timestamp: 1 }] })
+beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
 
 function fixture(signal?: AbortSignal) {
-  vi.useFakeTimers()
   const source = createAssistantMessageEventStream()
   const partial: AssistantMessage = { role: 'assistant', api: model.api, provider: model.provider, model: model.id, timestamp: 1, stopReason: 'stop', content: [], usage: { input: 1, output: 0, totalTokens: 1, cacheRead: 0, cacheWrite: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } }
   let options!: StreamOptions
@@ -66,12 +67,52 @@ describe('provider stream progress deadline', () => {
     f.text('partial')
     await vi.advanceTimersByTimeAsync(0)
     controller.abort()
-    expect(await f.result).toMatchObject({ stopReason: 'aborted', content: [{ type: 'text', text: 'partial' }] })
+    const result = await f.result
+    expect(result).toMatchObject({ stopReason: 'aborted', content: [{ type: 'text', text: 'partial' }] })
+    expect(isRetryableAssistantError(result)).toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it.each(['stream aborted', 'Request was aborted', undefined])('treats an upstream abort as a retryable interruption: %s', async (errorMessage) => {
+    const f = fixture()
+    await vi.advanceTimersByTimeAsync(0)
+    f.source.push({ type: 'error', reason: 'aborted', error: { ...f.partial, stopReason: 'aborted', errorMessage } })
+    const result = await f.result
+    expect(result.stopReason).toBe('error')
+    expect(normalizeModelRequestFailure(result).code).toBe('MODEL_STREAM_INCOMPLETE')
+    expect(isRetryableAssistantError(result)).toBe(true)
+    if (errorMessage)
+      expect(result.errorMessage).toContain(errorMessage)
+    expect(f.options().signal?.aborted).toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it.each([
+    { failures: 2, attempts: 3, stopReason: 'stop' },
+    { failures: 4, attempts: 4, stopReason: 'error' },
+  ])('settles $failures upstream interruptions within the retry budget', async ({ failures, attempts, stopReason }) => {
+    let requests = 0
+    const response = retryAssistantCall(() => {
+      const f = fixture()
+      if (++requests <= failures) {
+        f.source.push({ type: 'error', reason: 'aborted', error: { ...f.partial, stopReason: 'aborted', errorMessage: 'stream aborted' } })
+      }
+      else {
+        f.text('recovered answer')
+        f.done()
+      }
+      return f.result
+    }, { enabled: true, maxRetries: 3, baseDelayMs: 10 }, undefined)
+    await vi.advanceTimersByTimeAsync(100)
+    const result = await response
+    expect(result).toMatchObject({ stopReason, content: stopReason === 'stop' ? [{ type: 'text', text: 'recovered answer' }] : [] })
+    if (stopReason === 'error')
+      expect(normalizeModelRequestFailure(result).code).toBe('MODEL_STREAM_INCOMPLETE')
+    expect(requests).toBe(attempts)
     expect(vi.getTimerCount()).toBe(0)
   })
 
   it('preserves committed content when an iterator throws instead of emitting a terminal error', async () => {
-    vi.useFakeTimers()
     const partial: AssistantMessage = { role: 'assistant', api: model.api, provider: model.provider, model: model.id, timestamp: 1, stopReason: 'stop', content: [{ type: 'text', text: 'committed' }], usage: { input: 0, output: 0, totalTokens: 0, cacheRead: 0, cacheWrite: 0, cost: { input: 0, output: 0, total: 0, cacheRead: 0, cacheWrite: 0 } } }
     const stream = () => ({
       async* [Symbol.asyncIterator]() {
@@ -82,6 +123,22 @@ describe('provider stream progress deadline', () => {
     const provider = withProviderStream({ id: 'fixture', name: 'Fixture', stream, streamSimple: stream } as unknown as Provider)
     expect(await provider.stream(model, context).result()).toMatchObject({ stopReason: 'error', errorMessage: 'socket hang up', content: [{ type: 'text', text: 'committed' }] })
     expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it.each([
+    [new TypeError('fetch failed: authentication failed', { cause: Object.assign(new Error('private cause'), { code: 'ECONNRESET' }) }), true],
+    [new Error('fetch failed: CERT_HAS_EXPIRED'), false],
+    [new Error('Connection error: self-signed certificate'), false],
+  ] as const)('retains failure evidence before any partial message: %s', async (failure, retryable) => {
+    const stream: Provider['stream'] = () => {
+      throw failure
+    }
+    const provider = withProviderStream({ id: 'fixture', name: 'Fixture', auth: {}, getModels: () => [model], stream, streamSimple: stream })
+    const result = await provider.stream(model, context).result()
+    expect(result.stopReason).toBe('error')
+    expect(normalizeModelRequestFailure(result).code).toBe('MODEL_SERVICE_UNREACHABLE')
+    expect(JSON.stringify(result.diagnostics) ?? '').not.toContain('private')
+    expect(isRetryableAssistantError(result)).toBe(retryable)
   })
 
   it('counts hidden reasoning as progress before display filtering', async () => {

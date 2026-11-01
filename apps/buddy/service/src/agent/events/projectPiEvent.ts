@@ -586,7 +586,7 @@ function projectAssistantMessageEnd(
   })
   state.completedCommentaryBlockIndexes.clear()
   const modelFailure = message.stopReason === 'error'
-    ? normalizeModelRequestFailure(message.errorMessage)
+    ? normalizeModelRequestFailure(message)
     : null
   const failureCode = modelFailure?.code
     ?? (message.stopReason === 'aborted' ? 'MODEL_REQUEST_ABORTED' : undefined)

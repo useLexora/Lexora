@@ -6,6 +6,7 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { applicationDiagnosticSchema } from '../../../../shared/diagnostics/applicationDiagnostic'
 import { PiApplicationObserver } from '../../agent/events/PiApplicationObserver'
 import { diagnosticContext } from '../../diagnostics/diagnosticContext'
+import { normalizeModelRequestFailure } from '../modelRequestFailure'
 import { INFERRED_STREAM_COMPLETION, withProviderStream } from '../withProviderStream'
 
 const encoder = new TextEncoder()
@@ -176,21 +177,48 @@ describe('openAI stream completion compatibility', () => {
   })
 
   it.each([
-    [400, false],
-    [401, false],
-    [403, false],
-    [404, false],
-    [422, false],
-    [408, true],
-    [409, true],
-    [425, true],
-    [429, true],
-    [503, true],
-  ] as const)('classifies HTTP %s before matching transient-looking error text', async (status, retryable) => {
+    [400, false, 'MODEL_REQUEST_FAILED'],
+    [401, false, 'PROVIDER_AUTHENTICATION_FAILED'],
+    [403, false, 'PROVIDER_ACCESS_DENIED'],
+    [404, false, 'MODEL_SERVICE_UNREACHABLE'],
+    [422, false, 'MODEL_REQUEST_FAILED'],
+    [408, true, 'MODEL_REQUEST_TIMED_OUT'],
+    [409, true, 'MODEL_REQUEST_FAILED'],
+    [425, true, 'MODEL_REQUEST_FAILED'],
+    [429, true, 'PROVIDER_RATE_LIMITED'],
+    [503, true, 'MODEL_SERVICE_UNAVAILABLE'],
+  ] as const)('classifies HTTP %s before matching transient-looking error text', async (status, retryable, code) => {
     const result = await stream('', { fetch: async () => Response.json({ error: { message: 'Provider returned error: server overloaded (private detail)' } }, { status }) }).result()
     expect(result.stopReason).toBe('error')
     expect(isRetryableAssistantError(result)).toBe(retryable)
+    expect(normalizeModelRequestFailure(result).code).toBe(code)
     expect(diagnostics.at(-1)).toMatchObject({ event: 'provider.request.failed', providerRequest: { responseObserved: true, status, failureStage: 'http', completion: 'unknown' } })
+    expect(JSON.stringify(diagnostics)).not.toContain('private')
+  })
+
+  it.each([
+    ['CERT_HAS_EXPIRED', 'MODEL_SERVICE_UNREACHABLE', false],
+    ['CERT_NOT_YET_VALID', 'MODEL_SERVICE_UNREACHABLE', false],
+    ['CERT_REVOKED', 'MODEL_SERVICE_UNREACHABLE', false],
+    ['DEPTH_ZERO_SELF_SIGNED_CERT', 'MODEL_SERVICE_UNREACHABLE', false],
+    ['SELF_SIGNED_CERT_IN_CHAIN', 'MODEL_SERVICE_UNREACHABLE', false],
+    ['UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'MODEL_SERVICE_UNREACHABLE', false],
+    ['UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'MODEL_SERVICE_UNREACHABLE', false],
+    ['ERR_TLS_CERT_ALTNAME_INVALID', 'MODEL_SERVICE_UNREACHABLE', false],
+    ['CERTIFICATE_VERIFY_FAILED', 'MODEL_SERVICE_UNREACHABLE', false],
+    ['ECONNRESET', 'MODEL_SERVICE_UNREACHABLE', true],
+    ['ETIMEDOUT', 'MODEL_REQUEST_TIMED_OUT', true],
+  ] as const)('preserves the structured %s cause through the SDK', async (code, expected, retryable) => {
+    const result = await stream('', {
+      fetch: async () => {
+        throw new TypeError('fetch failed: authentication failed', { cause: Object.assign(new Error('private cause'), { code }) })
+      },
+    }).result()
+    expect(result.stopReason).toBe('error')
+    expect(normalizeModelRequestFailure(result).code).toBe(expected)
+    expect(isRetryableAssistantError(result)).toBe(retryable)
+    expect(diagnostics.at(-1)).toMatchObject({ event: 'provider.request.failed', providerRequest: { responseObserved: false, transportCode: code, failureStage: 'request' } })
+    expect(JSON.stringify(result.diagnostics)).not.toContain('private')
     expect(JSON.stringify(diagnostics)).not.toContain('private')
   })
 

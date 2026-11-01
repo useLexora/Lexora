@@ -21,7 +21,7 @@ export const providerRequestDiagnosticSchema = z.object({
     reconciliation: z.enum(['unchanged', 'reasoning_included', 'inconsistent']),
   }).strict().optional(),
   failureStage: z.enum(['request', 'http', 'decode', 'schema', 'stream', 'unknown']).optional(),
-  transportCode: z.enum(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET', 'CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'ERR_TLS_CERT_ALTNAME_INVALID', 'ABORTED', 'UNKNOWN']).optional(),
+  transportCode: z.enum(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET', 'CERT_HAS_EXPIRED', 'CERT_NOT_YET_VALID', 'CERT_REVOKED', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'ERR_TLS_CERT_ALTNAME_INVALID', 'CERTIFICATE_VERIFY_FAILED', 'ABORTED', 'UNKNOWN']).optional(),
 }).strict()
 
 export type ProviderRequestDiagnostic = z.infer<typeof providerRequestDiagnosticSchema>

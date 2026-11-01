@@ -175,8 +175,9 @@ describe('image reading requests', () => {
     { stopReason: 'stop' as const, content: '', code: 'IMAGE_READING_INCOMPLETE' },
     { stopReason: 'aborted' as const, content: 'partial', code: 'MODEL_REQUEST_ABORTED' },
     { stopReason: 'error' as const, content: 'partial', errorMessage: '401 invalid API key', code: 'PROVIDER_AUTHENTICATION_FAILED' },
-  ])('does not publish failed or incomplete reading as success: $code', async ({ stopReason, content, errorMessage, code }) => {
-    const f = fixture({ complete: async model => ({ ...response(model, content), stopReason, errorMessage }) })
+    { stopReason: 'error' as const, content: 'partial', errorMessage: 'authentication failed', diagnostics: [{ type: 'model.request.failure', timestamp: 1, details: { status: 503 } }], code: 'MODEL_SERVICE_UNAVAILABLE' },
+  ])('does not publish failed or incomplete reading as success: $code', async ({ stopReason, content, errorMessage, diagnostics, code }) => {
+    const f = fixture({ complete: async model => ({ ...response(model, content), stopReason, errorMessage, diagnostics }) })
     await expect(f.service.read(f.input)).rejects.toMatchObject({ code })
     expect(f.usage).toHaveLength(1)
   })

@@ -102,10 +102,13 @@ diff --git a/dist/api/transform-messages.js b/dist/api/transform-messages.js
 diff --git a/dist/utils/retry.js b/dist/utils/retry.js
 --- a/dist/utils/retry.js
 +++ b/dist/utils/retry.js
-@@ -203,6 +203,9 @@
+@@ -203,6 +203,12 @@
      if (message.stopReason !== "error" || !message.errorMessage)
          return false;
      const errorMessage = message.errorMessage;
++    const certificateError = /\b(?:CERT_HAS_EXPIRED|CERT_NOT_YET_VALID|CERT_REVOKED|DEPTH_ZERO_SELF_SIGNED_CERT|SELF_SIGNED_CERT_IN_CHAIN|UNABLE_TO_VERIFY_LEAF_SIGNATURE|UNABLE_TO_GET_ISSUER_CERT_LOCALLY|ERR_TLS_CERT_ALTNAME_INVALID|CERTIFICATE_VERIFY_FAILED)\b|certificate (?:has expired|verify failed|verification failed|validation failed)|self[- ]signed certificate/i;
++    if (certificateError.test(errorMessage) || message.diagnostics?.some((diagnostic) => certificateError.test(String(diagnostic.error?.code ?? ""))))
++        return false;
 +    const status = /^\s*(?:HTTP(?:\/[\d.]+)?\s+)?(4\d{2})\b/i.exec(errorMessage)?.[1];
 +    if (status && !["408", "409", "425", "429"].includes(status))
 +        return false;
