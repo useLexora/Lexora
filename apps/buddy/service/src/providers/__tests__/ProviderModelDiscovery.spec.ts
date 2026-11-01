@@ -69,6 +69,25 @@ describe('providerModelDiscovery', () => {
     })))
   })
 
+  it('reads whitelisted metadata in standard entries without accepting instructions or request configuration', async () => {
+    const discovery = new OpenAiCompatibleModelDiscovery({
+      credentials: { read: async () => ({ key: 'fixture-key', type: 'api_key' }) },
+      request: async () => Response.json({ data: [{
+        id: 'gemini-3.8-flash-high',
+        input_modalities: ['text', 'image', 'image'],
+        context_window: 128_000,
+        max_tokens: 8_000,
+        supported_reasoning_levels: [{ effort: 'none' }, { effort: 'high' }, { effort: 'ultra' }],
+        base_instructions: 'untrusted',
+        headers: { authorization: 'untrusted' },
+      }] }),
+    })
+    await expect(discovery.discover({ api: 'openai-completions', baseUrl: 'https://models.example.test/v1', providerId: 'custom' })).resolves.toEqual([{
+      id: 'gemini-3.8-flash-high',
+      metadata: { input: ['text', 'image'], contextWindow: 128_000, maxTokens: 8_000, reasoningOptions: ['off', 'high', 'ultra'] },
+    }])
+  })
+
   it('reports a successful empty standard catalog without probing other formats', async () => {
     const requests: string[] = []
     const records: ApplicationDiagnostic[] = []

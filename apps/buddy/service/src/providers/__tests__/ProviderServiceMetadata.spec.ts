@@ -105,6 +105,48 @@ describe('service model metadata', () => {
     expect(payload).toMatchObject({ model: directoryModel.slug })
   })
 
+  it.each([
+    ['workbuddy/deepseek-v4.1-flash', 'deepseek', 'deepseek-flash'],
+    ['gemini-3.8-flash-high', 'google', 'gemini-3.8-flash'],
+  ])('recovers %s from standard IDs and preserves its image payload and wire ID after restart', async (id, catalogProviderId, catalogModelId) => {
+    const f = await fixture()
+    f.setBody({ data: [{ id }] })
+    expect((await f.service.syncModels(connection.id))[0]).toMatchObject({ id, sourceCapabilities: { image: true }, catalogMatch: 'matched', catalog: { source: { providerId: catalogProviderId, modelId: catalogModelId } } })
+    await f.service.setModelEnabled(connection.id, id, true)
+    await f.service.setProviderEnabled(connection.id, true)
+    await f.service.setModelCapabilities(connection.id, id, { image: false })
+    await f.service.refreshModelSnapshot()
+    await f.service.dispose()
+    const { service, runtime } = await f.setup()
+    expect((await service.listModels(connection.id))[0]).toMatchObject({ id, capabilityOverrides: { image: false }, sourceCapabilities: { image: true } })
+    await service.setModelCapabilities(connection.id, id, null)
+    const resolved = service.executionModels.resolve({ providerId: connection.id, modelId: id, contextWindow: null, maxTokens: null })
+    expect(resolved).toMatchObject({ id, provider: connection.id, api: connection.api, baseUrl: connection.baseUrl, input: ['text', 'image'] })
+    let payload: unknown
+    const result = await runtime.completeSimple(resolved, { messages: [{ role: 'user', content: [{ type: 'text', text: 'Describe this image.' }, { type: 'image', data: 'fixture-image', mimeType: 'image/png' }], timestamp: 1 }] }, {
+      apiKey: 'fixture-key',
+      maxRetries: 0,
+      fetch: async (_url, init) => {
+        payload = JSON.parse(String(init?.body))
+        return new Response(`data: ${JSON.stringify({ id: 'fixture', choices: [{ index: 0, delta: { role: 'assistant', content: 'accepted' }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } })
+      },
+    })
+    expect(result.stopReason, result.errorMessage).toBe('stop')
+    expect(payload).toMatchObject({ model: id, messages: [{ role: 'user', content: [{ type: 'text', text: 'Describe this image.' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,fixture-image' } }] }] })
+  })
+
+  it('keeps standard service declarations ahead of inferred Gemini suffix metadata', async () => {
+    const f = await fixture()
+    const id = 'gemini-3.8-flash-high'
+    f.setBody({ data: [{ id, input_modalities: ['text'], context_window: 64_000, max_tokens: 8_000, supported_reasoning_levels: [{ effort: 'high' }] }] })
+    const expected = { id, capabilities: ['text', 'reasoning'], reasoningOptions: ['high'], contextWindow: 64_000, maxTokens: 8_000 }
+    expect((await f.service.syncModels(connection.id))[0]).toMatchObject(expected)
+    await f.service.refreshModelSnapshot()
+    await f.service.dispose()
+    const { service } = await f.setup()
+    expect((await service.listModels(connection.id))[0]).toMatchObject(expected)
+  })
+
   it('keeps the original catalog match while applying narrower service declarations and user overrides', async () => {
     const f = await fixture()
     const slug = 'gemini-3.8-flash'

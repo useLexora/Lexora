@@ -520,6 +520,70 @@ describe('providerService', () => {
     database.close()
   })
 
+  it('retains unanimous capabilities when token limits conflict and preserves overrides across reconciliation', async () => {
+    const runtime = new FakeModelRuntime()
+    runtime.providers = [provider('first'), provider('second')]
+    runtime.models = [
+      { ...model('first', 'shared'), input: ['text', 'image'], contextWindow: 256_000 },
+      { ...model('second', 'shared'), input: ['text', 'image'], contextWindow: 512_000 },
+    ]
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    const options = {
+      authInteractions: new AuthInteractionService(),
+      modelDiscovery: createTestModelDiscovery(() => Promise.resolve([{ id: 'relay/shared' }])),
+      modelRuntime: runtime,
+      providers: createProviderRepository(database),
+    }
+    const service = createProviderServiceForTest(options)
+    try {
+      await service.upsertCustomProvider({ id: 'relay', displayName: 'Relay', api: 'openai-completions', baseUrl: 'https://relay.example.test/v1' })
+      await service.syncModels('relay')
+      expect((await service.listModels('relay'))[0]).toMatchObject({
+        id: 'relay/shared',
+        catalogMatch: 'ambiguous',
+        metadataKnown: true,
+        capabilities: ['text', 'image'],
+        sourceContextWindow: 128_000,
+        catalog: { source: null },
+      })
+      await service.setModelEnabled('relay', 'relay/shared', true)
+      await service.setModelCapabilities('relay', 'relay/shared', { image: false })
+      await service.setModelParametersOverride('relay', 'relay/shared', { contextWindow: 64_000, maxTokens: 4_000 })
+      await service.refreshModelSnapshot()
+      await service.dispose()
+      const restored = createProviderServiceForTest(options)
+      try {
+        await restored.initializeProviders()
+        expect((await restored.listModels('relay'))[0]).toMatchObject({
+          catalogMatch: 'ambiguous',
+          enabled: true,
+          capabilities: ['text'],
+          sourceCapabilities: { image: true },
+          contextWindow: 64_000,
+          maxTokens: 4_000,
+        })
+        await restored.setModelCapabilities('relay', 'relay/shared', null)
+        expect((await restored.listModels('relay'))[0]?.capabilities).toEqual(['text', 'image'])
+        runtime.models[1] = { ...runtime.models[1]!, input: ['text'] }
+        await restored.refreshModelSnapshot()
+        expect((await restored.listModels('relay'))[0]).toMatchObject({
+          catalogMatch: 'ambiguous',
+          metadataKnown: false,
+          capabilities: ['text'],
+          contextWindow: 64_000,
+          maxTokens: 4_000,
+        })
+      }
+      finally {
+        await restored.dispose()
+      }
+    }
+    finally {
+      await service.dispose()
+      database.close()
+    }
+  })
+
   it('persists a chosen metadata source without changing the route or user overrides and retains it when missing', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'lexora-buddy-catalog-selection-'))
     databasePaths.push(directory)
