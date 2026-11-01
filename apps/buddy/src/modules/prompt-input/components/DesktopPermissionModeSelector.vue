@@ -132,9 +132,9 @@ async function confirmSetup() {
             :aria-expanded="popoverOpen"
           >
             <template #icon>
-              <DesktopIcon :component="selected.icon" />
+              <DesktopIcon :component="selected.icon" :size="16" />
             </template>
-            <span class="desktop-permission-mode-selector__trigger-label">
+            <span class="desktop-permission-mode-selector__trigger-label translate-y-px">
               {{ t(selected.label) }}
             </span>
             <NTooltip v-if="boundaryWarning" placement="top" :disabled="popoverOpen">
