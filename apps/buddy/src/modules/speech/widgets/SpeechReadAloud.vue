@@ -14,7 +14,7 @@ import { useSystemVoices } from '../useSystemVoices'
 const props = defineProps<{ language: BuddyLocale, text: string, owner: string }>()
 const { t } = useBuddyI18n(() => props.language)
 const { busy, error, play, stop } = useSpeechReadAloud({ owner: () => props.owner, text: () => props.text, language: () => props.language })
-const { catalog, selected } = useSpeechCatalog()
+const { catalog, loaded, selected } = useSpeechCatalog()
 const { voices } = useSystemVoices()
 const unavailable = computed(() => {
   if (!speechText(props.text))
@@ -29,7 +29,7 @@ const icon = computed(() => busy.value ? 'messagePlaybackStop' : disabled.value 
 </script>
 
 <template>
-  <NTooltip v-if="speechEnabled(catalog.preferences, 'speech.synthesize')" placement="bottom">
+  <NTooltip v-if="loaded && speechEnabled(catalog.preferences, 'speech.synthesize')" placement="bottom">
     <template #trigger>
       <span class="inline-flex items-center" :data-speech-owner="owner" :data-speech-playing="busy">
         <NButton quaternary size="tiny" class="buddy-icon-button" :aria-label="t(busy ? 'speech.stop' : 'speech.read')" :data-testid="`speech-read-${owner}`" :disabled="disabled" @click="busy ? stop() : play()">

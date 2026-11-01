@@ -12,7 +12,7 @@ import { useSpeechCatalog } from '../useSpeechCatalog'
 const props = defineProps<{ language: BuddyLocale, disabled?: boolean }>()
 const emit = defineEmits<{ start: [provider: SpeechProvider] }>()
 const { t } = useBuddyI18n(() => props.language)
-const { catalog, selected } = useSpeechCatalog()
+const { catalog, loaded, selected } = useSpeechCatalog()
 const unavailable = computed(() => !selected('speech.transcribe')?.supported)
 const label = computed(() => t('speech.record'))
 
@@ -24,7 +24,7 @@ function activate() {
 </script>
 
 <template>
-  <NTooltip v-if="speechEnabled(catalog.preferences, 'speech.transcribe')" placement="top">
+  <NTooltip v-if="loaded && speechEnabled(catalog.preferences, 'speech.transcribe')" placement="top">
     <template #trigger>
       <span class="inline-flex flex-none items-center">
         <NButton class="buddy-icon-button" quaternary :disabled="disabled || unavailable" :aria-label="label" data-testid="speech-record" @mousedown.prevent @click="activate">
