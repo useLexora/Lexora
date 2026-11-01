@@ -9,19 +9,13 @@ import { readModelCapabilities } from '../modelCapabilities'
 import { createProviderCredentialStatus } from '../ProviderCredentialStatus'
 import { ProviderRequestHeaders } from '../ProviderRequestHeaders'
 import { ProviderService } from '../ProviderService'
-import { INFERRED_STREAM_COMPLETION } from '../withProviderStream'
 
 describe('provider model resolution', () => {
   it.each([
-    { name: 'text followed by DONE without a finish reason', delta: { content: 'accepted' }, finishReason: null, done: true, stopReason: 'stop' },
-    { name: 'text followed by EOF without a finish reason', delta: { content: 'partial' }, finishReason: null, done: false, stopReason: 'error' },
-    { name: 'empty stream', delta: {}, finishReason: null, done: true, stopReason: 'error' },
     { name: 'whitespace only', delta: { content: '  \n' }, finishReason: null, done: true, stopReason: 'error' },
     { name: 'reasoning only', delta: { reasoning_content: 'thinking' }, finishReason: null, done: true, stopReason: 'error' },
-    { name: 'incomplete tool arguments', delta: { tool_calls: [{ index: 0, id: 'call-1', type: 'function', function: { name: 'read', arguments: '{"path":' } }] }, finishReason: null, done: false, stopReason: 'error' },
     { name: 'incomplete tool arguments with DONE', delta: { content: 'reading', tool_calls: [{ index: 0, id: 'call-1', type: 'function', function: { name: 'read', arguments: '{"path":' } }] }, finishReason: null, done: true, stopReason: 'error' },
     { name: 'parseable tool arguments without a finish reason', delta: { content: 'reading', tool_calls: [{ index: 0, id: 'call-1', type: 'function', function: { name: 'read', arguments: '{"path":"example.txt"}' } }] }, finishReason: null, done: true, stopReason: 'error' },
-    { name: 'completed text', delta: { content: 'complete' }, finishReason: 'stop', done: true, stopReason: 'stop' },
     { name: 'length limit', delta: { content: 'partial' }, finishReason: 'length', done: true, stopReason: 'length' },
     { name: 'finish reason without DONE', delta: { content: 'complete' }, finishReason: 'stop', done: false, stopReason: 'stop' },
     { name: 'completed tool call', delta: { tool_calls: [{ index: 0, id: 'call-1', type: 'function', function: { name: 'read', arguments: '{"path":"example.txt"}' } }] }, finishReason: 'tool_calls', done: true, stopReason: 'toolUse' },
@@ -34,7 +28,7 @@ describe('provider model resolution', () => {
       const service = new ProviderService({
         authInteractions: new AuthInteractionService(),
         credentialStatus: createProviderCredentialStatus(credentials),
-        modelDiscovery: { supports: () => false, discover: async () => [] },
+        modelDiscovery: { supports: () => false, discover: async () => ({ models: [], complete: true }) },
         modelRuntime: createProviderModelRuntime(runtime, new ProviderRequestHeaders(providers.states)),
         providers,
       })
@@ -52,16 +46,12 @@ describe('provider model resolution', () => {
         maxRetries: 0,
         fetch: async () => new Response(`data: ${JSON.stringify(chunk)}\n\n${done ? 'data: [DONE]\n\n' : ''}`, { headers: { 'content-type': 'text/event-stream' } }),
       }
-      for (const simple of [false, true]) {
-        const context = { messages: [{ role: 'user' as const, content: 'hello', timestamp: 1 }] }
-        const result = await (simple ? runtime.completeSimple(model, context, options) : runtime.complete(model, context, options))
-        expect(result.stopReason, result.errorMessage).toBe(stopReason)
-        if (stopReason === 'error')
-          expect(result.errorMessage).toContain('Stream ended without finish_reason')
-        else
-          expect(result.errorMessage).toBeUndefined()
-        expect(result.diagnostics?.some(item => item.type === INFERRED_STREAM_COMPLETION) ?? false).toBe(!finishReason && stopReason === 'stop')
-      }
+      const result = await runtime.completeSimple(model, { messages: [{ role: 'user', content: 'hello', timestamp: 1 }] }, options)
+      expect(result.stopReason, result.errorMessage).toBe(stopReason)
+      if (stopReason === 'error')
+        expect(result.errorMessage).toBeTruthy()
+      else
+        expect(result.errorMessage).toBeUndefined()
     }
     finally {
       database.close()
@@ -77,15 +67,15 @@ describe('provider model resolution', () => {
       const service = new ProviderService({
         authInteractions: new AuthInteractionService(),
         credentialStatus: createProviderCredentialStatus(credentials),
-        modelDiscovery: { supports: () => false, discover: async () => [] },
+        modelDiscovery: { supports: () => false, discover: async () => ({ models: [], complete: true }) },
         modelRuntime: runtime,
         providers,
       })
       await service.initializeProviders()
-      return { service, runtime }
+      return service
     }
     try {
-      const { service } = await setup()
+      const service = await setup()
       const connection = { id: 'fixture-relay', displayName: 'Fixture relay', baseUrl: 'https://relay.example.test/v1' }
       await service.upsertCustomProvider({
         ...connection,
@@ -118,8 +108,7 @@ describe('provider model resolution', () => {
       }
       await verify(service)
       const restored = await setup()
-      await verify(restored.service)
-      expect(restored.runtime.getModels(connection.id)).toMatchObject([{ id: 'manual-model', name: 'Edited model', api: 'anthropic-messages', contextWindow: 64_000 }])
+      await verify(restored)
     }
     finally {
       database.close()

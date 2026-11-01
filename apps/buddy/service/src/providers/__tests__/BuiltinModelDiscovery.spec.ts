@@ -2,7 +2,7 @@ import type { Api, Credential, Model, OAuthCredential } from '@earendil-works/pi
 import type { DatabaseSync } from 'node:sqlite'
 import type { RuntimeRpcPeerContract } from '../../../../shared/runtime/rpcPeer'
 import { Buffer } from 'node:buffer'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -20,6 +20,13 @@ afterEach(async () => {
 async function fixture() {
   const agentDirectory = await mkdtemp(join(tmpdir(), 'buddy-discovery-'))
   directories.push(agentDirectory)
+  await writeFile(join(agentDirectory, 'models.dev.json'), JSON.stringify({
+    version: 1,
+    updatedAt: '2100-01-01T00:00:00.000Z',
+    data: { fixture: { name: 'Fixture', models: {
+      'metadata-model': { name: 'Metadata model', modalities: { input: ['text'], output: ['text'] }, limit: { context: 128_000, output: 8000 } },
+    } } },
+  }))
   const database = openBuddyDatabase({ databasePath: ':memory:' })
   databases.push(database)
   const credentials = new Map<string, Credential>()

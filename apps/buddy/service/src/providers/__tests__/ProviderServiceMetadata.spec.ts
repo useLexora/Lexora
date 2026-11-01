@@ -26,7 +26,7 @@ afterEach(async () => {
     await cleanup()
 })
 
-async function fixture() {
+async function fixture(request?: typeof fetch) {
   const database = openBuddyDatabase({ databasePath: ':memory:' })
   cleanups.push(() => database.close())
   const credentials = new InMemoryCredentialStore()
@@ -34,19 +34,20 @@ async function fixture() {
   let body: unknown = { models: [directoryModel] }
   let status = 200
   let gate: Promise<void> | undefined
+  let activeRuns: Array<{ provider: string, model: string }> = []
   const discovery = new OpenAiCompatibleModelDiscovery({
     credentials,
-    request: async () => {
+    request: request ?? (async () => {
       await gate
       return Response.json(body, { status })
-    },
+    }),
   })
   const repository = createProviderRepository(database)
   const setup = async () => {
     const runtime = await ModelRuntime.create({ credentials, modelsPath: null, modelsStore: new InMemoryModelsStore(), refreshOnCreate: false })
     const snapshot: { data: unknown } = JSON.parse(readFileSync(new URL('../data/models-dev.json', import.meta.url), 'utf8'))
     const modelSnapshot = new ProviderModelSnapshotService({ fetch: async () => Response.json(snapshot.data) })
-    const service = new ProviderService({ modelSnapshot, authInteractions: new AuthInteractionService(), credentialStatus: createProviderCredentialStatus(credentials), modelDiscovery: discovery, modelRuntime: runtime, providers: repository })
+    const service = new ProviderService({ getActiveRuns: () => activeRuns, modelSnapshot, authInteractions: new AuthInteractionService(), credentialStatus: createProviderCredentialStatus(credentials), modelDiscovery: discovery, modelRuntime: runtime, providers: repository })
     cleanups.push(() => service.dispose())
     await service.initializeProviders()
     return { service, runtime }
@@ -65,6 +66,9 @@ async function fixture() {
     },
     setGate: (value: Promise<void>) => {
       gate = value
+    },
+    setActiveRuns: (value: typeof activeRuns) => {
+      activeRuns = value
     },
   }
 }
@@ -135,32 +139,96 @@ describe('service model metadata', () => {
     expect(payload).toMatchObject({ model: id, messages: [{ role: 'user', content: [{ type: 'text', text: 'Describe this image.' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,fixture-image' } }] }] })
   })
 
-  it('keeps standard service declarations ahead of inferred Gemini suffix metadata', async () => {
+  it('preserves the inferred catalog match while service declarations and user overrides take precedence across restart', async () => {
     const f = await fixture()
     const id = 'gemini-3.8-flash-high'
-    f.setBody({ data: [{ id, input_modalities: ['text'], context_window: 64_000, max_tokens: 8_000, supported_reasoning_levels: [{ effort: 'high' }] }] })
-    const expected = { id, capabilities: ['text', 'reasoning'], reasoningOptions: ['high'], contextWindow: 64_000, maxTokens: 8_000 }
+    const catalog = { source: { providerId: 'google', modelId: 'gemini-3.8-flash' } }
+    f.setBody({ data: [{ id, input_modalities: ['text'], supported_reasoning_levels: [], context_window: 64_000, max_tokens: 8_000 }] })
+    const expected = { id, catalogMatch: 'matched', capabilities: ['text'], reasoningOptions: [], contextWindow: 64_000, maxTokens: 8_000, catalog }
     expect((await f.service.syncModels(connection.id))[0]).toMatchObject(expected)
     await f.service.refreshModelSnapshot()
     await f.service.dispose()
     const { service } = await f.setup()
     expect((await service.listModels(connection.id))[0]).toMatchObject(expected)
+    await service.setModelCapabilities(connection.id, id, { image: true, reasoningOptions: ['high'] })
+    await service.refreshModelSnapshot()
+    expect((await service.listModels(connection.id))[0]).toMatchObject({ capabilities: ['text', 'image', 'reasoning'], contextWindow: 64_000, maxTokens: 8_000, catalog })
+    await service.setModelCapabilities(connection.id, id, null)
+    expect((await service.listModels(connection.id))[0]?.capabilities).toEqual(['text'])
+    f.setBody({ data: [{ id }] })
+    await service.syncModels(connection.id)
+    expect((await service.listModels(connection.id))[0]).toMatchObject({ contextWindow: 1_048_576, maxTokens: 65_536, catalog })
   })
 
-  it('keeps the original catalog match while applying narrower service declarations and user overrides', async () => {
+  it('preserves omitted states, overrides, manual models and defaults through partial pages, restart and recovery', async () => {
     const f = await fixture()
-    const slug = 'gemini-3.8-flash'
-    f.setBody({ models: [{ ...directoryModel, slug, input_modalities: ['text'], supported_reasoning_levels: [], context_window: 64_000, max_tokens: 8_000 }] })
-    const model = (await f.service.syncModels(connection.id))[0]!
-    expect(model).toMatchObject({ id: slug, catalogMatch: 'matched', capabilities: ['text'], reasoningOptions: [], contextWindow: 64_000, maxTokens: 8_000, catalog: { source: { providerId: 'google', modelId: slug } } })
-    await f.service.setModelCapabilities(connection.id, slug, { image: true, reasoningOptions: ['high'] })
-    await f.service.refreshModelSnapshot()
-    expect((await f.service.listModels(connection.id))[0]).toMatchObject({ capabilities: ['text', 'image', 'reasoning'], contextWindow: 64_000, maxTokens: 8_000 })
-    await f.service.setModelCapabilities(connection.id, slug, null)
-    expect((await f.service.listModels(connection.id))[0]?.capabilities).toEqual(['text'])
-    f.setBody({ data: [{ id: slug }] })
+    const omittedId = 'omitted-model'
+    f.setBody({ models: [directoryModel, { ...directoryModel, slug: omittedId }] })
     await f.service.syncModels(connection.id)
-    expect((await f.service.listModels(connection.id))[0]).toMatchObject({ contextWindow: 1_048_576, maxTokens: 65_536, catalog: { source: { providerId: 'google', modelId: slug } } })
+    await f.service.setModelEnabled(connection.id, omittedId, true)
+    await f.service.setProviderEnabled(connection.id, true)
+    await f.service.setModelCapabilities(connection.id, omittedId, { image: false })
+    await f.service.setModelParametersOverride(connection.id, omittedId, { contextWindow: 64_000, maxTokens: 8_000 })
+    await f.service.setDefaultModel({ providerId: connection.id, modelId: omittedId, reasoning: 'high' })
+    await f.service.upsertManualModel(connection.id, { id: 'manual', name: 'Manual model', input: ['text'], reasoning: false })
+    const omitted = f.repository.models.find(connection.id, omittedId)
+    const manual = f.repository.models.find(connection.id, 'manual')
+    const defaultModel = await f.service.getDefaultModel()
+
+    f.setBody({ data: [{ id: directoryModel.slug, name: 'Updated model' }, { id: 'new-model' }, { id: 'manual', name: 'Ignored' }], has_more: true })
+    const synced = await f.service.syncModels(connection.id)
+    expect(f.repository.models.find(connection.id, omittedId)).toEqual(omitted)
+    expect(f.repository.models.find(connection.id, 'manual')).toEqual(manual)
+    expect(await f.service.getDefaultModel()).toEqual(defaultModel)
+    expect(synced).toContainEqual(expect.objectContaining({ id: directoryModel.slug, displayName: 'Updated model', available: true }))
+    expect(synced).toContainEqual(expect.objectContaining({ id: 'new-model', available: true, enabled: false }))
+    f.setBody({ data: [], has_more: true })
+    expect(await f.service.syncModels(connection.id)).toEqual(synced)
+
+    await f.service.dispose()
+    const { service } = await f.setup()
+    expect(await service.listModels(connection.id)).toEqual(synced)
+    expect(await service.getDefaultModel()).toEqual(defaultModel)
+    f.setStatus(503)
+    await expect(service.syncModels(connection.id)).rejects.toMatchObject({ code: 'MODEL_SYNC_FAILED' })
+    expect(await service.listModels(connection.id)).toEqual(synced)
+
+    f.setStatus(200)
+    f.setBody({ data: [], has_more: false, total: 0 })
+    const empty = await service.syncModels(connection.id)
+    const unavailable = empty.filter(model => model.source === 'synced')
+    expect(unavailable).toHaveLength(3)
+    expect(unavailable.every(model => !model.available)).toBe(true)
+    expect(f.repository.models.find(connection.id, 'manual')).toEqual(manual)
+    expect(f.repository.models.find(connection.id, omittedId)).toMatchObject({ enabled: true, capabilityOverrides: { image: false }, overrideContextWindow: 64_000, overrideMaxTokens: 8_000 })
+    expect(await service.getDefaultModel()).toEqual(defaultModel)
+
+    f.setBody({ data: [{ id: directoryModel.slug }], has_more: true })
+    const partial = await service.syncModels(connection.id)
+    expect(partial).toContainEqual(expect.objectContaining({ id: directoryModel.slug, available: true }))
+    expect(partial).toContainEqual(expect.objectContaining({ id: omittedId, available: false, enabled: true }))
+  })
+
+  it('rejects late discovery when a run starts before the result is committed', async () => {
+    const started = Promise.withResolvers<void>()
+    const gate = Promise.withResolvers<void>()
+    let waiting = false
+    const f = await fixture(async () => {
+      if (!waiting)
+        return Response.json({ models: [directoryModel] })
+      started.resolve()
+      await gate.promise
+      return Response.json({ data: [], has_more: false })
+    })
+    await f.service.syncModels(connection.id)
+    const previous = await f.service.listModels(connection.id)
+    waiting = true
+    const pending = f.service.syncModels(connection.id)
+    await started.promise
+    f.setActiveRuns([{ provider: connection.id, model: directoryModel.slug }])
+    gate.resolve()
+    await expect(pending).rejects.toMatchObject({ code: 'PROVIDER_HAS_ACTIVE_RUNS' })
+    expect(await f.service.listModels(connection.id)).toEqual(previous)
   })
 
   it.each(['http', 'malformed', 'duplicate'])('keeps the last successful model states after a %s discovery failure', async (failure) => {
