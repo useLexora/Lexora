@@ -14,6 +14,7 @@ export const useSpeechCatalog = createSharedComposable(() => {
   let revision = 0
   const refresh = async () => {
     const request = ++revision
+    lastCatalog = undefined
     const next = await api.speech.catalog()
     if (request === revision) {
       lastCatalog = next
