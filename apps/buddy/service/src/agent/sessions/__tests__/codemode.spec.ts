@@ -240,6 +240,7 @@ describe('codemode runtime preference', () => {
 
   it('keeps the fifth script queued beyond 60 seconds and starts its execution deadline after admission', async () => {
     workers = new CodemodeWorkerPool()
+    workers.configure({ codemodeWorkerLimit: 4, codemodeOverflow: 'wait' })
     const fixtures = await Promise.all(Array.from({ length: 5 }, () => createFixture()))
     for (const fixture of fixtures)
       fixture.apply(true)

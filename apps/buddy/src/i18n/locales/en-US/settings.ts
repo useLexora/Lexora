@@ -50,7 +50,7 @@ export default {
   'desktop.settings.runtime.codemodeLimited': 'Limited',
   'desktop.settings.runtime.codemodeUnlimited': 'Unlimited',
   'desktop.settings.runtime.codemodeWorkerLimit': 'Concurrent scripts',
-  'desktop.settings.runtime.codemodeWorkerLimitDescription': 'Runs up to 4 scripts by default. Raising the limit admits waiting scripts; lowering it leaves running scripts uninterrupted.',
+  'desktop.settings.runtime.codemodeWorkerLimitDescription': 'Runs up to 8 scripts by default. Raising the limit admits waiting scripts; lowering it leaves running scripts uninterrupted.',
   'desktop.settings.runtime.codemodeOverflow': 'When capacity is full',
   'desktop.settings.runtime.codemodeOverflowDescription': 'Wait resumes when a slot is available and can be cancelled. Return busy immediately fails new script calls without starting them.',
   'desktop.settings.runtime.codemodeWait': 'Wait',
