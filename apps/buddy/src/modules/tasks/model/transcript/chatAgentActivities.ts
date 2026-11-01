@@ -1,6 +1,6 @@
 import type { ChatAgentCompactionNode, ChatAgentNarrationNode, ChatAgentPanelNode, ChatAgentReasoningNode, ChatAgentToolNode, ChatAgentTurnNode } from './chatAgentTurn'
 import type { ChatToolCategory, ChatToolIcon } from './chatToolRegistry'
-import { isChatToolIssue } from './chatToolDisplay'
+import { getChatToolWaitPhase, isChatToolIssue } from './chatToolDisplay'
 import { getChatToolRegistration } from './chatToolRegistry'
 
 export interface ChatAgentActivityGroup {
@@ -11,7 +11,7 @@ export interface ChatAgentActivityGroup {
   toolCount: number
   reasoningCount: number
   approvalCount: number
-  status: 'running' | 'preparing' | 'awaiting_approval' | 'interrupted' | 'completed'
+  status: 'running' | 'preparing' | 'awaiting_approval' | 'queued' | 'resource' | 'interrupted' | 'completed'
   icon: ChatToolIcon | 'reasoning'
   counts: ReadonlyArray<{ category: ChatToolCategory, count: number, files: number | null }>
 }
@@ -97,11 +97,16 @@ function summarizeGroup(id: string, nodes: ChatAgentActivityGroup['nodes']): Cha
   let approvalCount = 0
   let running = false
   let preparing = false
+  let resource = false
+  let queued = false
   let interrupted = false
   let icon: ChatAgentActivityGroup['icon'] = 'reasoning'
   for (const node of nodes) {
-    running ||= node.status === 'running'
-    preparing ||= node.status === 'preparing'
+    const waitPhase = node.kind === 'tool' ? getChatToolWaitPhase(node) : null
+    resource ||= waitPhase === 'resource'
+    queued ||= waitPhase === 'queued'
+    running ||= node.status === 'running' && !waitPhase
+    preparing ||= node.status === 'preparing' && !waitPhase
     interrupted ||= node.status === 'interrupted' || node.status === 'cancelled'
     if (node.status === 'awaiting_approval')
       approvalCount++
@@ -130,6 +135,6 @@ function summarizeGroup(id: string, nodes: ChatAgentActivityGroup['nodes']): Cha
   }
   if (reasoningCount && toolCount)
     icon = 'activity'
-  const status = running ? 'running' : preparing ? 'preparing' : approvalCount ? 'awaiting_approval' : interrupted ? 'interrupted' : 'completed'
+  const status = running ? 'running' : preparing ? 'preparing' : approvalCount ? 'awaiting_approval' : resource ? 'resource' : queued ? 'queued' : interrupted ? 'interrupted' : 'completed'
   return { id, kind: 'activity-group', nodes, issueCount, toolCount, reasoningCount, approvalCount, status, icon, counts: [...counts].map(([category, count]) => ({ category, count, files: files.get(category)?.size ?? null })) }
 }

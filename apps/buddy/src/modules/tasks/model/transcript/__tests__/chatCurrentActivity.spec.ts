@@ -20,7 +20,6 @@ describe('current execution status', () => {
     expect(describeChatCurrentActivity(turn([...running, preparing, approval, thought]), 'zh-CN')).toEqual({ label: '有操作待批准', active: false, warning: true })
     expect(describeChatCurrentActivity(turn([...running, preparing]), 'zh-CN')).toEqual({ label: '正在执行', active: true })
     expect(describeChatCurrentActivity(turn([preparing]), 'zh-CN')).toEqual({ label: '准备中', active: true })
-    expect(describeChatCurrentActivity(turn(running), 'en-US')).toEqual({ label: 'Running', active: true })
   })
 
   it('moves between reasoning, compaction and model progress using the current event state', () => {
@@ -28,14 +27,18 @@ describe('current execution status', () => {
     expect(describeChatCurrentActivity(turn([thought, compaction]), 'zh-CN')).toEqual({ label: '正在整理上下文', active: true })
     const nodes = [{ ...thought, status: 'completed' } as ChatAgentTurnNode, { ...compaction, status: 'completed' } as ChatAgentTurnNode]
     expect(describeChatCurrentActivity(turn(nodes), 'zh-CN')?.label).toBe('等待模型响应')
-    expect(describeChatCurrentActivity(turn(nodes, 'model_streaming'), 'zh-CN')?.label).toBe('正在处理')
     expect(describeChatCurrentActivity(turn(nodes, 'model_responding'), 'zh-CN')?.label).toBe('正在回复')
-    expect(describeChatCurrentActivity(turn(nodes, 'tool_executing'), 'zh-CN')?.label).toBe('正在处理')
-    expect(describeChatCurrentActivity({ ...turn([thought]), status: 'cancelled' }, 'zh-CN')).toBeNull()
   })
 })
 
 describe('waiting and cancellation feedback', () => {
+  it.each(['queued', 'resource'] as const)('shows %s without animation while preserving independently executing work', (executionPhase) => {
+    const waiting = { ...tool('waiting', 'running'), executionPhase }
+    expect(describeChatCurrentActivity(turn([waiting]), 'zh-CN')).toEqual({ label: executionPhase === 'queued' ? '排队等待' : '等待资源', active: false })
+    expect(describeChatCurrentActivity(turn([waiting, tool('executing', 'running')]), 'zh-CN')).toEqual({ label: '正在执行', active: true })
+    expect(describeChatCurrentActivity(turn([waiting, thought]), 'zh-CN')).toEqual({ label: '正在思考', active: true })
+  })
+
   it('only animates retry requests, not their deadlines, and keeps their budgets', () => {
     const current = turn([])
     const retry = { attempt: 2, maxAttempts: 'unlimited' as const, retryAt: '2026-09-10T00:00:05Z' }

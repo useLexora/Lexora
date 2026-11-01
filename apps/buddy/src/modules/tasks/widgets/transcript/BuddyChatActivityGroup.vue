@@ -35,7 +35,11 @@ const stateLabel = computed(() => props.group.status === 'running'
   ? t('desktop.chat.processToolRunning')
   : props.group.status === 'preparing'
     ? t('desktop.chat.progressPreparing')
-    : props.group.status === 'interrupted' ? t('desktop.chat.processToolInterrupted') : '')
+    : props.group.status === 'resource'
+      ? t('desktop.chat.processToolResourceWaiting')
+      : props.group.status === 'queued'
+        ? t('desktop.chat.processToolQueued')
+        : props.group.status === 'interrupted' ? t('desktop.chat.processToolInterrupted') : '')
 const singleTool = computed(() => props.group.nodes.length === 1 && props.group.toolCount === 1)
 const layout = computed(() => presentChatActivityLayout(props.group.nodes))
 const singleReasoning = computed(() => layout.value.entries.length === 1 && layout.value.entries[0]?.kind === 'reasoning')
@@ -96,7 +100,7 @@ function collapseFromBottom() {
         <BuddyChatShimmerText class="buddy-chat-activity-row__label" :mode="active ? 'continuous' : 'static'">
           {{ open ? fullSummary : summary.label }}
         </BuddyChatShimmerText>
-        <span v-if="group.status === 'interrupted'" class="buddy-chat-activity-group__status">{{ stateLabel }}</span>
+        <span v-if="group.status === 'interrupted' || group.status === 'resource' || group.status === 'queued'" class="buddy-chat-activity-group__status">{{ stateLabel }}</span>
         <span class="buddy-chat-activity-group__toggle grid w-[var(--buddy-chat-activity-icon-size)] h-[var(--buddy-chat-activity-icon-size)] flex-none place-items-center" :class="{ 'is-loading': active && !open }" aria-hidden="true">
           <BuddyChatActivitySpinner v-if="active && !open" />
           <DesktopIcon :component="ChevronRight20Regular" class="buddy-chat-activity-row__chevron" :class="{ 'is-open': open }" />

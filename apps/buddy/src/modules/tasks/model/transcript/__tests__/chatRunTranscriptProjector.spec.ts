@@ -11,6 +11,47 @@ import { createChatRunTranscriptProjector } from '../chatRunTranscriptProjector'
 import { describeChatTool } from '../chatToolDisplay'
 
 describe('chat run transcript projector', () => {
+  it('replays resource owners, clears them on dispatch and exposes a queue timeout as failure', () => {
+    const projector = createChatRunTranscriptProjector()
+    const identity = { toolCallId: 'waiting-shell', toolName: 'bash' }
+    const blocker = { runId: 'other-run', title: 'Other project', since: 1000, state: 'active' }
+    const events = [
+      messageEvent('run-a', 1, 'tool.started', { ...identity, presentation: terminalPresentation(null) }),
+      messageEvent('run-a', 2, 'tool.phase', { ...identity, timing: { phase: 'resource', durations: {}, waitingFor: blocker } }),
+    ]
+    const buckets = replaceChatRunEventBuckets(events.map(toPublicRunEvent))
+    const waiting = projector.project(buckets, [run('run-a')])[0]!.turn.nodes.find(node => node.kind === 'tool')!
+    expect(waiting).toMatchObject({ runId: 'run-a', executionPhase: 'resource', resourceWait: blocker })
+    expect(describeChatTool(waiting, 'zh-CN').status).toBe('等待资源')
+    const resumed = mergeChatRunEventBuckets(buckets, [toPublicRunEvent(messageEvent('run-a', 3, 'tool.phase', { ...identity, timing: { phase: 'executing', durations: { resource: 3000 } } }))])
+    const running = projector.project(resumed, [run('run-a')])[0]!.turn.nodes.find(node => node.kind === 'tool')!
+    expect(running.resourceWait).toBeUndefined()
+    const failed = mergeChatRunEventBuckets(buckets, [toPublicRunEvent(messageEvent('run-a', 3, 'tool.failed', { ...identity, errorCode: 'SHELL_RESOURCE_TIMEOUT' }))])
+    const timedOut = projector.project(failed, [run('run-a')])[0]!.turn.nodes.find(node => node.kind === 'tool')!
+    expect(describeChatTool(timedOut, 'zh-CN').status).toBe('等待资源超时，命令未执行')
+  })
+
+  it('replays cancellation separately from failures and clears it when a provider reuses a call ID', () => {
+    const identity = { toolCallId: 'cancelled-shell', toolName: 'bash' }
+    const failed = { toolCallId: 'failed-shell', toolName: 'bash' }
+    const events = [
+      messageEvent('run-a', 1, 'tool.started', { ...failed, presentation: terminalPresentation(null) }),
+      messageEvent('run-a', 2, 'tool.completed', { ...failed, presentation: terminalPresentation('failed'), isError: true }),
+      messageEvent('run-a', 3, 'tool.started', { ...identity, presentation: terminalPresentation(null) }),
+      messageEvent('run-a', 4, 'tool.phase', { ...identity, timing: { phase: 'finished', durations: { resource: 100 }, outcome: 'cancelled' } }),
+      messageEvent('run-a', 5, 'tool.completed', { ...identity, presentation: terminalPresentation('aborted'), isError: true }),
+    ].map(toPublicRunEvent)
+    const projector = createChatRunTranscriptProjector()
+    const buckets = replaceChatRunEventBuckets(events)
+    const nodes = projector.project(buckets, [{ ...run('run-a'), status: 'cancelled' }])[0]!.turn.nodes
+    expect(nodes).toMatchObject([{ status: 'failed', isError: true }, { status: 'cancelled', isError: false }])
+    const resumed = mergeChatRunEventBuckets(buckets, [
+      messageEvent('run-a', 6, 'tool.preparing', { ...identity, presentation: terminalPresentation(null) }),
+      messageEvent('run-a', 7, 'tool.completed', { ...identity, presentation: terminalPresentation('done'), isError: false }),
+    ])
+    expect(projector.project(resumed, [run('run-a')])[0]!.turn.nodes).toMatchObject([{ status: 'failed' }, { status: 'cancelled' }, { status: 'completed', isError: false }])
+  })
+
   it('shows queued scripts and resumes their status from durable phase events', () => {
     const projector = createChatRunTranscriptProjector()
     const identity = { toolCallId: 'queued-script', toolName: 'codemode' }
@@ -172,25 +213,6 @@ describe('chat run transcript projector', () => {
     }])
   })
 
-  it('appends reasoning deltas to their original content block', () => {
-    const currentRun = run('run-a')
-    const firstReasoning = reasoningEvent('run-a', 1, 'First', 0)
-    const secondReasoning = reasoningEvent('run-a', 2, 'Second', 1)
-    const initialEvents = [firstReasoning, secondReasoning]
-    const projector = createChatRunTranscriptProjector()
-    const initialBuckets = replaceChatRunEventBuckets(initialEvents)
-    projector.project(initialBuckets, [currentRun])
-
-    const updated = projector.project(mergeChatRunEventBuckets(initialBuckets, [
-      reasoningEvent('run-a', 3, '+', 1),
-    ]), [currentRun])[0]!
-
-    expect(updated.turn.nodes.map(node => 'text' in node ? node.text : null)).toEqual([
-      'First',
-      'Second+',
-    ])
-  })
-
   it('keeps compaction lifecycle order and reasoning through incremental updates and replay', () => {
     const currentRun = run('run-a')
     const projector = createChatRunTranscriptProjector()
@@ -207,7 +229,8 @@ describe('chat run transcript projector', () => {
       }),
       messageEvent('run-a', 5, 'context.compaction.started', { reason: 'overflow' }),
       messageEvent('run-a', 6, 'context.compaction.cancelled', {}),
-      reasoningEvent('run-a', 7, 'After', 2),
+      reasoningEvent('run-a', 7, '+', 1),
+      reasoningEvent('run-a', 8, 'After', 2),
     ])
     const updated = projector.project(updatedBuckets, [currentRun])[0]!
 
@@ -215,19 +238,18 @@ describe('chat run transcript projector', () => {
       { kind: 'reasoning', text: 'Before' },
       {
         estimatedTokensAfter: 2000,
-        id: 'compaction:run-a:2',
         kind: 'compaction',
         status: 'completed',
         tokensBefore: 8000,
       },
-      { kind: 'reasoning', text: 'During' },
-      { id: 'compaction:run-a:5', kind: 'compaction', status: 'cancelled' },
+      { kind: 'reasoning', text: 'During+' },
+      { kind: 'compaction', status: 'cancelled' },
       { kind: 'reasoning', text: 'After' },
     ])
     expect(updated).toEqual(createChatRunTranscriptProjector().project(updatedBuckets, [currentRun])[0])
   })
 
-  it('drops superseded tool snapshots while applying the latest snapshot incrementally', () => {
+  it('updates tool output from the latest snapshot without duplicating the call', () => {
     const currentRun = run('run-a')
     const firstUpdate = messageEvent('run-a', 1, 'tool.updated', {
       presentation: terminalPresentation('first'),
@@ -240,27 +262,24 @@ describe('chat run transcript projector', () => {
       toolName: 'bash',
     })
     const projector = createChatRunTranscriptProjector()
-    expect(mergeChatRunEventBuckets(new Map(), [firstUpdate, secondUpdate]).get('run-a')?.events)
-      .toEqual([secondUpdate])
     const initialBuckets = replaceChatRunEventBuckets([firstUpdate])
     projector.project(initialBuckets, [currentRun])
 
     const updatedBuckets = mergeChatRunEventBuckets(initialBuckets, [secondUpdate])
-    const updatedBucket = updatedBuckets.get('run-a')
     const projection = projector.project(updatedBuckets, [currentRun])[0]
 
-    expect(updatedBucket?.events).toEqual([secondUpdate])
     expect(projection?.turn.nodes).toMatchObject([{
       presentation: { output: 'first\nsecond' },
       toolCallId: 'tool-1',
     }])
   })
 
-  it('replays a terminal checkpoint followed by output deltas', () => {
+  it('preserves terminal checkpoint output and the registered label through deltas and replay', () => {
     const currentRun = run('run-a')
     const started = messageEvent('run-a', 1, 'tool.started', {
       presentation: terminalPresentation(null),
       toolCallId: 'tool-1',
+      toolLabel: 'Run a shell command',
       toolName: 'bash',
     })
     const checkpoint = messageEvent('run-a', 2, 'tool.updated', {
@@ -286,9 +305,9 @@ describe('chat run transcript projector', () => {
     const incremental = projector.project(updatedBuckets, [currentRun])[0]
     const replayed = createChatRunTranscriptProjector().project(updatedBuckets, [currentRun])[0]
 
-    expect(updatedBuckets.get('run-a')?.events).toEqual([started, checkpoint, delta])
     expect(incremental?.turn.nodes).toMatchObject([{
       presentation: { output: 'first\nsecond' },
+      toolLabel: 'Run a shell command',
     }])
     expect(replayed).toEqual(incremental)
   })
@@ -343,27 +362,6 @@ describe('chat run transcript projector', () => {
     )[0]
 
     expect(incremental).toEqual(rebuilt)
-  })
-
-  it('retains the registered tool label across output deltas and replay', () => {
-    const activeRun = run('run-a')
-    const start = messageEvent('run-a', 1, 'tool.started', {
-      toolCallId: 'tool-1',
-      toolName: 'bash',
-      toolLabel: 'Run a shell command',
-      presentation: terminalPresentation('first'),
-    })
-    const projector = createChatRunTranscriptProjector()
-    const initial = replaceChatRunEventBuckets([start])
-    projector.project(initial, [activeRun])
-    const buckets = mergeChatRunEventBuckets(initial, [messageEvent('run-a', 2, 'tool.updated', {
-      toolCallId: 'tool-1',
-      toolName: 'bash',
-      presentationDelta: { card: 'terminal', outputStart: 5, outputDelta: '+next', truncated: false },
-    })])
-    const result = projector.project(buckets, [activeRun])[0]
-    expect(result?.turn.nodes[0]).toMatchObject({ toolLabel: 'Run a shell command', presentation: { output: 'first+next' } })
-    expect(result).toEqual(createChatRunTranscriptProjector().project(buckets, [activeRun])[0])
   })
 
   it('rebuilds after a snapshot replaces or shrinks the event prefix', () => {

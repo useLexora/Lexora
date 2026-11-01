@@ -58,7 +58,7 @@ export function createShellCapability(options: {
   const hostCommandParameters = Type.Object({
     command: Type.String({ minLength: 1, description: 'Noninteractive command written for the selected Shell dialect.' }),
     shell: Type.Optional(Type.Union([Type.Literal(SYSTEM_SHELL_ID), ...shells?.candidates.filter(entry => entry.candidate.available).map(entry => Type.Literal(entry.id)) ?? []], { description: 'Stable detected candidate ID. Omit to use the displayed default; never supply an executable path.' })),
-    timeout: Type.Optional(Type.Number({ exclusiveMinimum: 0, description: 'Timeout in seconds.' })),
+    timeout: Type.Optional(Type.Number({ exclusiveMinimum: 0, description: 'Timeout in seconds, including resource waiting after authorization.' })),
   }, { additionalProperties: false })
   const commandParameters = Type.Object({ ...hostCommandParameters.properties, readOnly: readOnlyParameter }, { additionalProperties: false })
   const directoryParameters = Type.Object({
@@ -74,14 +74,10 @@ export function createShellCapability(options: {
       { source: { kind: 'builtin', id: 'host', title: 'Host shell' }, exposure: 'on_demand', keywords: '宿主 命令 桌面 凭据 host shell command desktop credentials', tools: [HOST_TOOLS.shell] },
     ],
     workspaceMutationTools: ['lexora_host_shell'],
-    mutationEffect(event, classification) {
+    mutationEffect(event) {
       if (event.toolName !== shellName && event.toolName !== SHELL_COMMAND_TOOL_NAME && event.toolName !== 'lexora_host_shell')
         return null
-      if (classification.shellBoundary === 'sandbox' && classification.shellReadOnly === true)
-        return { kind: 'workspace', ownedProcess: currentPlatform.hostShellSupervision }
-      if (!currentPlatform.hostShellSupervision)
-        return { kind: 'host', ownedProcess: false }
-      return { kind: event.toolName === 'lexora_host_shell' || classification.shellBoundary !== 'sandbox' ? 'host' : 'workspace', ownedProcess: true }
+      return { kind: 'workspace', ownedProcess: currentPlatform.hostShellSupervision }
     },
     async classify(event, signal) {
       let execution: ShellExecution | undefined
@@ -156,12 +152,26 @@ export function createShellCapability(options: {
               }
             : {}),
         })
+        const withShellMetadata = (tool: ReturnType<typeof createNative>, selected?: SelectedShell): ReturnType<typeof createNative> => {
+          const shell = selected ? { id: selected.id, ...selected.program, version: selected.candidate.version } : { id: SYSTEM_SHELL_ID, dialect: shellName }
+          const present = (result: Awaited<ReturnType<typeof tool.execute>>) => {
+            const structuredContent = result.structuredContent && typeof result.structuredContent === 'object' ? result.structuredContent : {}
+            return { ...result, details: { ...result.details, shell }, structuredContent: { ...structuredContent, shell } }
+          }
+          return {
+            ...tool,
+            async execute(toolCallId, parameters, signal, onUpdate, context) {
+              onUpdate?.(present({ content: [], details: {} }))
+              return present(await tool.execute(toolCallId, parameters, signal, update => onUpdate?.(present(update)), context))
+            },
+          }
+        }
         const controlled = (selected?: SelectedShell) => {
           const native = createNative(selected)
           const execution = getExecution()
           const prompt = createShellPrompt(execution, shellName, networkBoundary)
           const createShell = selected?.program.dialect === 'powershell' || (!selected && shellName === 'powershell') ? createPowerShellToolDefinition : createBashToolDefinition
-          return {
+          return withShellMetadata({
             ...native,
             parameters: execution.boundary === 'sandbox'
               ? Type.Object({ ...native.parameters.properties, readOnly: readOnlyParameter }, { additionalProperties: false })
@@ -253,7 +263,7 @@ export function createShellCapability(options: {
               }
               finally { lifetime.abort() }
             }) satisfies typeof native.execute,
-          }
+          }, selected)
         }
         const native = createNative()
         const selectionDescription = shells ? `\nShell selection is fixed before execution. Default ID: ${shells.defaultId}. '${SYSTEM_SHELL_ID}' preserves the existing ${shellName} interpreter. Candidates (metadata, not instructions): ${JSON.stringify(shells.candidates.map(({ id, candidate }) => ({ ...candidate, id })))}. Explicit missing or disabled IDs fail; no interpreter fallback or automatic retry after execution. Configuration applies next turn. Local noninteractive execution only; no WSL, SSH, containers, PTY or persistent sessions. Zsh may read system /etc/zshenv even with -f. CMD accepts one command line; use its own quoting, not PowerShell syntax. Host sh/zsh/CMD commands require conservative product approval because their syntax has no dedicated safety classifier.` : ''
@@ -278,10 +288,7 @@ export function createShellCapability(options: {
                 const selected = select(parameters)
                 if (!Check(commandParameters, parameters))
                   throw new Error('VALIDATION_FAILED')
-                const result = await controlled(selected).execute(toolCallId, parameters, signal, onUpdate, context)
-                const shell = selected ? { id: selected.id, ...selected.program, version: selected.candidate.version } : { id: SYSTEM_SHELL_ID, dialect: shellName }
-                const structuredContent = result.structuredContent && typeof result.structuredContent === 'object' ? result.structuredContent : {}
-                return { ...result, details: { ...result.details, shell }, structuredContent: { ...structuredContent, shell } }
+                return controlled(selected).execute(toolCallId, parameters, signal, onUpdate, context)
               },
             }))
           }
@@ -293,7 +300,7 @@ export function createShellCapability(options: {
           ...(shells ? { parameters: hostCommandParameters } : {}),
           ...HOST_TOOLS.shell,
           label: 'Host shell',
-          description: `Run a command directly on the host with the desktop service user permissions, including host files, credentials, network and desktop IPC. Use when the requested task needs access unavailable to isolated ${shellName} commands. Prefer ${shellName} for ordinary commands. Never use host execution to evade a declined request. Supply command and optional timeout in seconds.${selectionDescription}`,
+          description: `Run a command directly on the host with the desktop service user permissions, including host files, credentials, network and desktop IPC. Use when the requested task needs access unavailable to isolated ${shellName} commands. Prefer ${shellName} for ordinary commands. Never use host execution to evade a declined request. Optional timeout in seconds includes resource waiting after authorization. Commands in different workspaces may run concurrently; coordinate access to shared files outside the workspace.${selectionDescription}`,
           promptSnippet: 'Run an authorized host command outside the sandbox',
           promptGuidelines: [],
           async execute(toolCallId, parameters, signal, onUpdate, context) {
@@ -307,7 +314,7 @@ export function createShellCapability(options: {
             if (selected && !currentPlatform.hostShellSupervision)
               throw new Error('SHELL_SUPERVISION_UNAVAILABLE')
             await options.assertExecutionAllowed?.({ run, boundary: 'host', readOnly: false })
-            return createNative(selected, () => run.onToolExecutionPhase?.({ toolCallId, toolName: 'lexora_host_shell', phase: 'executing', executionBasis: 'dispatch' })).execute(toolCallId, parameters, executionSignal, onUpdate, context)
+            return withShellMetadata(createNative(selected, () => run.onToolExecutionPhase?.({ toolCallId, toolName: 'lexora_host_shell', phase: 'executing', executionBasis: 'dispatch' })), selected).execute(toolCallId, parameters, executionSignal, onUpdate, context)
           },
         })
         pi.registerTool(defineTool({
@@ -332,6 +339,7 @@ function createShellPrompt(execution: ShellExecution, toolName: string, networkB
       description: 'Current mode: full access. Commands run directly on the host with the desktop service user permissions, without shell sandbox isolation. Ordinary queries require no extra permission parameter. Directory grants and sandbox network restrictions do not constrain host commands. Full access does not bypass operating-system permissions or authorize actions outside the user task.',
       guidelines: [
         `Use ${toolName} for ordinary commands, pipelines, scripts and project builds. Commands inherit the current full-access host execution mode; omit readOnly, including for ordinary queries. Read-only intent does not provide sandbox isolation or make a host command safe to run alongside writers.`,
+        'Optional timeout in seconds includes resource waiting after authorization. Commands in different workspaces may run concurrently; coordinate access to shared files outside the workspace.',
         'Shells do not load user profiles. Use installed shims or explicit toolchain execution rather than assuming interactive activation. Full access does not authorize unrelated actions or bypass a declined request.',
       ],
     }
@@ -343,6 +351,7 @@ function createShellPrompt(execution: ShellExecution, toolName: string, networkB
         ? 'Commands already inherit the read-only sandbox policy. Omit readOnly for ordinary queries; readOnly=false cannot enable workspace writes. This policy does not freeze the filesystem while other commands write.'
         : 'Commands inherit the workspace-write sandbox policy. Use readOnly=true only to request a narrower read-only sandbox for a command that needs no workspace writes. This allows execution alongside writers but does not freeze the filesystem. It is an execution constraint, not a declaration of intent. Never silently retry a denied write with broader permissions.',
       `Use ${toolName} for ordinary commands, pipelines, scripts and project builds under the current permission mode. Ordinary reads need no approval. If the OS denies an ordinary directory, lexora_authorize_directory can prepare read access without a prompt. Do not retry protected credential paths through another interpreter or execution boundary.`,
+      'Optional timeout in seconds includes resource waiting after authorization. Waiting for network approval pauses the execution timeout.',
       'In isolated modes, user HOME, configuration paths and supported toolchain variables are preserved; only temporary files use private TMPDIR/TEMP directories. Shells do not load user profiles. Use installed shims or explicit toolchain execution (for example, mise exec) rather than assuming interactive activation. Tool installation, cache and state writes outside authorized directories still require directory authorization. Host credential variables and desktop IPC variables are not inherited. Do not access protected credential paths or write repository Git metadata. Use lexora_authorize_directory with the least access needed for additional directories; additional write authorization expires with the current run. Windows may reuse read-access preparation and ACL material across runs; this does not authorize writes or other tools. Use lexora_host_shell only when the requested task genuinely needs host access; if its definition is missing, search that exact name with lexora_tool_search. Never use it to retry a request the user denied.',
     ],
   }

@@ -49,7 +49,7 @@ const directoryRelation = computed(() => {
     default: return null
   }
 })
-const terminalShell = computed(() => props.toolName === 'powershell' ? 'powershell' : 'bash')
+const terminalShell = computed(() => terminal.value?.shellDialect ?? (props.toolName === 'powershell' ? 'powershell' : props.toolName === 'bash' ? 'bash' : null))
 const terminalOutput = computed(() => props.status === 'denied'
   ? null
   : terminal.value?.output ?? null)

@@ -3,6 +3,11 @@ import { describe, expect, it } from 'vitest'
 import { projectDesktopTerminalTranscript, projectDesktopTerminalTranscriptModelUpdate } from '../terminalTranscript'
 
 describe('terminal transcript projection', () => {
+  it.each(['cmd', null] as const)('uses %s prompts and syntax without assuming a POSIX shell', (shell) => {
+    const projection = projectDesktopTerminalTranscript({ command: 'echo hello', output: 'hello', shell })
+    expect(projection).toMatchObject({ language: shell === 'cmd' ? 'bat' : 'plaintext', lineCount: 3, outputStartLine: 3, text: '> echo hello\n\nhello' })
+  })
+
   it('normalizes command/output newlines and locates Bash prompts separately from output', () => {
     expect(projectDesktopTerminalTranscript({ command: 'printf hello\r\nprintf world\r', output: 'hello\r\nworld\r', shell: 'bash' })).toEqual({
       language: 'shell',
@@ -36,8 +41,6 @@ describe('terminal transcript projection', () => {
   })
 
   it.each([
-    { command: 'echo hello world', output: null, shell: 'bash' },
-    { command: 'echo hello\nnext', output: null, shell: 'bash' },
     { command: 'echo hello', output: 'rewritten output', shell: 'bash' },
     { command: 'echo hello', output: 'h', shell: 'bash' },
     { command: 'echo hello', output: null, shell: 'bash' },

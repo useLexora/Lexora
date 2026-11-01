@@ -2,7 +2,7 @@ import type { DesktopTerminalTranscriptInput, DesktopTerminalTranscriptModelUpda
 
 export function projectDesktopTerminalTranscript(input: DesktopTerminalTranscriptInput): DesktopTerminalTranscriptProjection {
   const commandLines = normalizeLineEndings(input.command).split('\n')
-  const firstPrompt = input.shell === 'powershell' ? 'PS> ' : '$ '
+  const firstPrompt = input.shell === 'powershell' ? 'PS> ' : input.shell === 'cmd' || input.shell === null ? '> ' : '$ '
   const continuationPrompt = input.shell === 'powershell' ? '>> ' : '> '
   const promptedCommand = commandLines.map((line, index) => (
     `${index === 0 ? firstPrompt : continuationPrompt}${line}`
@@ -13,7 +13,7 @@ export function projectDesktopTerminalTranscript(input: DesktopTerminalTranscrip
     ? promptedCommand.join('\n')
     : `${promptedCommand.join('\n')}\n\n${normalizedOutput}`
   return {
-    language: input.shell === 'powershell' ? 'powershell' : 'shell',
+    language: input.shell === 'powershell' ? 'powershell' : input.shell === 'cmd' ? 'bat' : input.shell === null ? 'plaintext' : 'shell',
     lineCount: text.split('\n').length,
     outputStartLine,
     promptRanges: commandLines.map((_, index) => ({

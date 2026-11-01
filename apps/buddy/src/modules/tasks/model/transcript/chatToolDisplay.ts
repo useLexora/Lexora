@@ -18,6 +18,10 @@ export function isChatToolActive(node: ChatAgentToolNode): boolean {
   return node.status === 'preparing' || node.status === 'running' || node.status === 'awaiting_approval'
 }
 
+export function getChatToolWaitPhase(node: ChatAgentToolNode): 'queued' | 'resource' | null {
+  return (node.status === 'running' || node.status === 'preparing') && (node.executionPhase === 'queued' || node.executionPhase === 'resource') ? node.executionPhase : null
+}
+
 export function isChatToolIssue(node: ChatAgentToolNode): boolean {
   return node.status === 'failed' || node.status === 'denied' || node.status === 'interrupted'
 }
@@ -96,6 +100,10 @@ function toolStatus(node: ChatAgentToolNode, language: BuddyLocale, t: BuddyTran
     return t('run.status.cancelled')
   if (node.status === 'skipped')
     return t('desktop.chat.processToolSkipped')
+  if (node.errorCode === 'SHELL_RESOURCE_TIMEOUT')
+    return t('desktop.chat.processToolResourceTimeout')
+  if (node.errorCode === 'SHELL_COMMAND_TIMEOUT')
+    return t('desktop.chat.processToolCommandTimeout')
   if (node.errorCode === 'PATH_NOT_FOUND') {
     if (node.toolName === 'ls' || node.toolName === 'find')
       return t('desktop.chat.processToolDirectoryNotFound')
@@ -115,10 +123,12 @@ function toolStatus(node: ChatAgentToolNode, language: BuddyLocale, t: BuddyTran
     return t('desktop.chat.processToolApprovalDenied')
   if (node.status === 'interrupted')
     return t('desktop.chat.processToolInterrupted')
+  if (getChatToolWaitPhase(node) === 'resource')
+    return t('desktop.chat.processToolResourceWaiting')
+  if (getChatToolWaitPhase(node) === 'queued')
+    return t('desktop.chat.processToolQueued')
   if (node.status === 'preparing')
     return t('desktop.chat.processToolPreparing')
-  if (node.status === 'running' && node.executionPhase === 'queued')
-    return t('desktop.chat.processToolQueued')
   if (node.status === 'running')
     return t('desktop.chat.processToolRunning')
   const p = node.presentation

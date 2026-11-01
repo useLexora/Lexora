@@ -478,7 +478,10 @@ export async function startBuddyService(
         options.rpc.notify(changesChanged.method, { sourceId: recoverySourceId, revision: ++recoveryRevision, conversationId: run.conversationId, runId })
     }
     const mutations = await host.start('runtime.mutations', async ({ defer }) => {
-      const service = new MutationCoordinator({ repository: createMutationRepository(options.database), evidence: mutationEvidence, resources: fileResources })
+      const service = new MutationCoordinator({ repository: createMutationRepository(options.database), evidence: mutationEvidence, resources: fileResources, getRunTitle: (runId) => {
+        const run = runs.findById(runId)
+        return run ? conversations.findById(run.conversationId)?.title ?? undefined : undefined
+      } })
       const notices = service.onDidChange(event => notifyRecovery(event.runId))
       defer(() => notices.dispose())
       defer(() => service.dispose())

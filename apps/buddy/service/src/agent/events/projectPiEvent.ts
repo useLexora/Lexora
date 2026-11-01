@@ -181,6 +181,7 @@ export function projectPiEvent(
         arguments: event.args,
         canonicalRoot: state.canonicalRoot,
         result: event.partialResult,
+        previous: previous?.presentation,
         toolName: event.toolName,
       })
       state.toolCalls.set(event.toolCallId, {
@@ -217,6 +218,7 @@ export function projectPiEvent(
         isError: event.isError,
         result: event.result,
         toolName: event.toolName,
+        previous: tool?.presentation,
       })
       const outputs = createBuddyRunOutputs({
         arguments: tool?.arguments,
@@ -314,6 +316,7 @@ function projectToolPresentationUpdate(
     || previous.description !== current.description
     || previous.exitCode !== current.exitCode
     || previous.signal !== current.signal
+    || previous.shellDialect !== current.shellDialect
     || !current.output.startsWith(previous.output)
     || crossesTerminalPresentationCheckpoint(previous.output.length, current.output.length)
   ) {

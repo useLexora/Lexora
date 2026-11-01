@@ -1,4 +1,4 @@
-export type DesktopTerminalShell = 'bash' | 'powershell'
+export type DesktopTerminalShell = import('@buddy-shared/shell/shellProgram').ShellDialect | null
 
 export interface DesktopTerminalTranscriptInput {
   command: string
@@ -7,7 +7,7 @@ export interface DesktopTerminalTranscriptInput {
 }
 
 export interface DesktopTerminalTranscriptProjection {
-  language: 'powershell' | 'shell'
+  language: 'powershell' | 'shell' | 'bat' | 'plaintext'
   lineCount: number
   outputStartLine: number | null
   promptRanges: ReadonlyArray<{

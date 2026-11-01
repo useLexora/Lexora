@@ -1,6 +1,6 @@
 import type { ToolCallEvent, ToolDefinition } from '@earendil-works/pi-coding-agent'
 import type { TSchema } from 'typebox'
-import type { ToolExecutionPhase } from '../../../../shared/runs/toolExecutionPhase'
+import type { ToolExecutionPhase, ToolExecutionTiming } from '../../../../shared/runs/toolExecutionPhase'
 import type { BuddyToolClassification, BuddyToolClassificationResult } from '../../approvals/toolClassification'
 import type { ChangeCaptureService, ChangeInvocationHandle, ChangeInvocationInput } from '../../changes/ChangeCaptureService'
 import type { MutationClaim, MutationCoordinator, MutationLease } from '../../changes/MutationCoordinator'
@@ -10,6 +10,7 @@ import type { BuddyExtensionRunContext } from './BuddyExtensionRunContext'
 import { randomUUID } from 'node:crypto'
 import { resolveFilePath } from '../../../../platform/filesystem/resolveFilePath'
 import { isToolClassificationFailure } from '../../approvals/toolClassification'
+import { ShellCommandDeadline } from '../../sandbox/ShellCommandDeadline'
 import { isShellToolName } from './piBuiltinTools'
 
 export type BuddyToolWrapper = <Parameters extends TSchema, Details>(tool: ToolDefinition<Parameters, Details>) => ToolDefinition<Parameters, Details>
@@ -49,15 +50,31 @@ export function createMutationToolWrapper(options: MutationToolOptions): BuddyTo
       const run = options.getRunContext()
       if (!run)
         throw new Error('RUN_CONTEXT_UNAVAILABLE')
-      const executionSignal = AbortSignal.any([run.signal, ...signal ? [signal] : []])
+      const deadline = isShellToolName(tool.name) || tool.name === 'lexora_host_shell' ? new ShellCommandDeadline((parameters as Record<string, unknown>).timeout) : undefined
+      const executionSignal = AbortSignal.any([run.signal, ...signal ? [signal] : [], ...deadline ? [deadline.signal] : []])
       const event: ToolCallEvent = { type: 'tool_call', toolCallId, toolName: tool.name, input: parameters as Record<string, unknown>, signal: executionSignal }
       const phase = (phase: ToolExecutionPhase) => run.onToolExecutionPhase?.({ toolCallId, toolName: tool.name, phase })
+      let outcome: ToolExecutionTiming['outcome']
+      const failureOutcome = () => run.signal.aborted || signal?.aborted ? 'cancelled' : 'failed'
+      const execute = async () => {
+        try {
+          const timeout = deadline?.startExecution()
+          const result = await tool.execute(toolCallId, timeout === undefined ? parameters : { ...parameters, timeout }, executionSignal, onUpdate, context)
+          outcome = executionSignal.aborted ? failureOutcome() : 'isError' in result && result.isError === true ? 'failed' : 'completed'
+          return result
+        }
+        catch (error) {
+          outcome = failureOutcome()
+          throw error
+        }
+      }
       let permit = options.authorization.getExecutionPermit(event, run)
       try {
         while (true) {
           executionSignal.throwIfAborted()
           if (!permit || !options.authorization.isPermitCurrent(permit, run))
             permit = await authorize(event, run, options)
+          deadline?.start()
           const plan = await resolveMutationPlan(event, run, permit, options)
           if (!plan) {
             if (!options.authorization.isPermitCurrent(permit, run))
@@ -69,10 +86,14 @@ export function createMutationToolWrapper(options: MutationToolOptions): BuddyTo
             if (!options.authorization.isPermitCurrent(permit, run))
               continue
             run.onToolExecutionPhase?.({ toolCallId, toolName: tool.name, phase: 'executing', executionBasis: 'tool' })
-            return await tool.execute(toolCallId, parameters, executionSignal, onUpdate, context)
+            return await execute()
           }
           phase('resource')
-          const lease = await options.mutations.acquire({ runId: run.runId, invocationId: randomUUID(), claims: plan.claims, lifetime: tool.name === 'write' || tool.name === 'edit' ? 'runtime' : 'external', captureBoundary: plan.scope?.kind === 'untracked', signal: executionSignal })
+          if (deadline)
+            deadline.waiting = true
+          const lease = await options.mutations.acquire({ runId: run.runId, invocationId: randomUUID(), claims: plan.claims, lifetime: tool.name === 'write' || tool.name === 'edit' ? 'runtime' : 'external', captureBoundary: plan.scope?.kind === 'untracked', signal: executionSignal, onWait: waitingFor => run.onToolExecutionPhase?.({ toolCallId, toolName: tool.name, phase: 'resource', waitingFor }) })
+          if (deadline)
+            deadline.waiting = false
           phase('preparing')
           let handle: ChangeInvocationHandle | undefined
           let started = false
@@ -116,11 +137,14 @@ export function createMutationToolWrapper(options: MutationToolOptions): BuddyTo
             executionSignal.throwIfAborted()
             started = true
             run.onToolExecutionPhase?.({ toolCallId, toolName: tool.name, phase: plan.ownedProcess ? 'preparing' : 'executing', ...plan.ownedProcess ? {} : { executionBasis: 'tool' as const } })
-            const result = await options.mutations.withInvocation(lease, () => tool.execute(toolCallId, parameters, executionSignal, onUpdate, context))
+            const result = await options.mutations.withInvocation(lease, execute)
+            executionSignal.throwIfAborted()
             isError = 'isError' in result && result.isError === true
             return result
           }
           finally {
+            if (started)
+              deadline?.dispose()
             phase('cleaning')
             const settlement = started && plan.ownedProcess && options.mutations.getInvocationSettlement(lease.invocationId) === 'unknown' ? 'unknown' : 'released'
             try {
@@ -139,8 +163,17 @@ export function createMutationToolWrapper(options: MutationToolOptions): BuddyTo
           }
         }
       }
+      catch (error) {
+        outcome ??= failureOutcome()
+        if (deadline?.signal.aborted && !run.signal.aborted && !signal?.aborted) {
+          await run.onToolExecutionDenied?.({ toolCallId, toolName: tool.name, denialCode: deadline.errorCode })
+          throw deadline.signal.reason
+        }
+        throw error
+      }
       finally {
-        phase('finished')
+        deadline?.dispose()
+        run.onToolExecutionPhase?.({ toolCallId, toolName: tool.name, phase: 'finished', outcome })
         options.authorization.releaseExecutionPermit(event, run)
       }
     },
@@ -169,7 +202,7 @@ async function stillCurrent(plan: MutationPlan, permit: ToolExecutionPermit, eve
 
 async function resolveMutationPlan(event: ToolCallEvent, run: BuddyExtensionRunContext, permit: ToolExecutionPermit, options: MutationToolOptions): Promise<MutationPlan | null> {
   const classification = permit.classification
-  const effect = options.mutationEffect?.(event, classification) ?? defaultMutationEffect(event, classification, permit, options)
+  const effect = options.mutationEffect?.(event, classification) ?? defaultMutationEffect(event, classification, options)
   if (effect.kind === 'none')
     return null
   const grants = options.getGrants(run, event.toolCallId)
@@ -210,7 +243,7 @@ async function resolveMutationPlan(event: ToolCallEvent, run: BuddyExtensionRunC
   }
 }
 
-function defaultMutationEffect(event: ToolCallEvent, classification: BuddyToolClassification, permit: ToolExecutionPermit, options: MutationToolOptions): BuddyMutationEffect {
+function defaultMutationEffect(event: ToolCallEvent, classification: BuddyToolClassification, options: MutationToolOptions): BuddyMutationEffect {
   if (event.toolName === 'lexora_authorize_directory')
     return { kind: 'none' }
   if (event.toolName === 'write' || event.toolName === 'edit') {
@@ -219,9 +252,7 @@ function defaultMutationEffect(event: ToolCallEvent, classification: BuddyToolCl
       throw new Error('VALIDATION_FAILED')
     return { kind: 'paths', paths: [{ path, mode: event.toolName === 'edit' ? 'existing' : 'create' }] }
   }
-  if (event.toolName === 'lexora_host_shell' || (isShellToolName(event.toolName) && permit.executionProfile === 'full_access'))
-    return { kind: 'host', ownedProcess: true }
-  if (isShellToolName(event.toolName))
+  if (event.toolName === 'lexora_host_shell' || isShellToolName(event.toolName))
     return { kind: 'workspace', ownedProcess: true }
   if (event.toolName.startsWith('mcp__'))
     return { kind: 'host' }

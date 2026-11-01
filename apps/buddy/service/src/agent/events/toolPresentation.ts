@@ -3,6 +3,7 @@ import type { BuddyRunOutputPayload } from '../../../../shared/runs/runOutput'
 import type { CreateBuddyToolPresentationInput } from '../../events/toolPresentationSupport'
 import { filePaths, relativeCanonicalPath } from '../../../../platform/filesystem/filePaths'
 import { redactSensitiveText, redactShellCommand } from '../../../../shared/permissions/approvalReviewPayload'
+import { shellDialectSchema } from '../../../../shared/shell/shellProgram'
 import { createOutputPresentRunOutput } from '../../artifacts/artifactToolContract'
 import { createAutomationToolPresentation } from '../../automations/automationToolContract'
 import { createBrowserToolPresentation } from '../../browser/browserToolPresentation'
@@ -77,8 +78,12 @@ function createPiToolPresentation(
   const description = readOptionalString(arguments_, 'description')
 
   if (isShellToolName(input.toolName) || input.toolName === 'lexora_host_shell') {
+    const shell = readRecord(readToolDetails(input.result)?.shell)
+    const dialect = shellDialectSchema.safeParse(shell?.dialect)
+    const shellDialect = dialect.success ? dialect.data : input.previous?.card === 'terminal' ? input.previous.shellDialect : undefined
     return {
       card: 'terminal',
+      ...(shellDialect ? { shellDialect } : {}),
       command: redactShellCommand(readString(arguments_, 'command')),
       cwd: input.canonicalRoot
         ? '.'

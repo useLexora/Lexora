@@ -10,6 +10,7 @@ export interface CreateBuddyToolPresentationInput {
   isError?: boolean
   result?: unknown
   toolName: string
+  previous?: BuddyToolPresentation
 }
 
 export function argumentNames(value: Record<string, unknown> | null): string[] {

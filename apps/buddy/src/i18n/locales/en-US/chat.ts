@@ -2,6 +2,13 @@ import type zhCN from '../zh-CN/chat'
 
 export default {
   'desktop.chat.processToolQueued': 'Waiting for capacity',
+  'desktop.chat.processToolResourceWaiting': 'Waiting for resources',
+  'desktop.chat.processToolResourceTimeout': 'Resource wait timed out; command did not start',
+  'desktop.chat.processToolCommandTimeout': 'Command timed out',
+  'desktop.chat.resourceSameRun': 'another operation in this run',
+  'desktop.chat.resourceOtherTask': 'another task',
+  'desktop.chat.resourceOwnerActive': '“{name}” has held the resource for {seconds}s',
+  'desktop.chat.resourceOwnerQueued': 'Behind “{name}”, waiting for {seconds}s',
   'desktop.chat.command.mcp': 'Check MCP status, toggle connections and reconnect.',
   'desktop.chat.attachmentImportFailed': 'Could not import the file. Retry or select the file again.',
   'desktop.chat.attachmentUnsupported': 'This file format is not supported. Choose a supported document, image, audio, or video file.',
