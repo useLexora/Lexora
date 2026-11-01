@@ -55,7 +55,7 @@ useComposerToolbarLayout(toolbar, leading, actions)
   &[data-compact~='permission'] {
     --composer-permission-width: var(--buddy-composer-control-height);
     --composer-permission-padding: 0;
-    --composer-permission-icon-margin: 0;
+    --composer-permission-gap: 0;
     --composer-permission-label-display: none;
   }
 
