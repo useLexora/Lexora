@@ -5,7 +5,7 @@ import type { JsonValue } from '../workbench/workbenchState'
 import type { ControlProposal, WorkbenchPresentation } from '../workbench/workbenchUi'
 import type { ExtensionTaskAction, ExtensionTaskActionInput, ExtensionTaskActionResult } from './extensionActionApi'
 import type { ExtensionCapabilityImpact } from './extensionCapabilities'
-import type { ExtensionCatalogSnapshot } from './extensionCatalog'
+import type { ExtensionCatalogSnapshot, ExtensionSource } from './extensionCatalog'
 import type { ExtensionCompatibilityIssue, ExtensionIncompatibleReview } from './extensionCompatibility'
 import type { ExtensionConditionsChanged, ExtensionConditionState } from './extensionConditions'
 import type { ExtensionDiagnostic } from './extensionDiagnostic'
@@ -124,7 +124,7 @@ export interface ExtensionReview {
   fileAssociations?: FileOpeningReviewChoice[]
   iconUrl?: string
   installationId?: string
-  source?: { catalog: string, artifact: string, sha256: string }
+  source?: ExtensionSource
   token: string
   manifest: ExtensionManifest
   sha256: string
@@ -171,7 +171,7 @@ export const extensionManagementSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('reviewCatalog'), id: extensionIdSchema, version: z.string().max(80) }).strict(),
   z.object({ action: z.literal('cancelInstallation'), id: z.string().uuid() }).strict(),
   z.object({ action: z.literal('selectPackage'), development: z.boolean().default(false) }).strict(),
-  z.object({ action: z.literal('install'), token: z.string().uuid(), choices: z.array(fileOpeningChoiceSchema).max(4096).optional() }).strict(),
+  z.object({ action: z.literal('install'), token: z.string().uuid(), choices: z.array(fileOpeningChoiceSchema).max(4096).optional(), acceptUnverified: z.boolean().default(false) }).strict(),
   z.object({ action: z.literal('cancelInstall'), token: z.string().uuid() }).strict(),
   z.object({ action: z.literal('enable'), id: extensionIdSchema, enabled: z.boolean() }).strict(),
   z.object({ action: z.literal('restart'), id: extensionIdSchema }).strict(),
@@ -213,7 +213,7 @@ export interface ExtensionApi {
   reviewCatalog: (id: string, version: string) => Promise<ExtensionReviewResult>
   cancelInstallation: (id: string) => Promise<void>
   selectPackage: (development?: boolean) => Promise<ExtensionReviewResult | null>
-  install: (token: string, choices?: FileOpeningChoice[]) => Promise<void>
+  install: (token: string, choices?: FileOpeningChoice[], acceptUnverified?: boolean) => Promise<void>
   cancelInstall: (token: string) => Promise<void>
   enable: (id: string, enabled: boolean) => Promise<void>
   restart: (id: string) => Promise<void>

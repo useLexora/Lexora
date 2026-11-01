@@ -147,3 +147,21 @@ const en: typeof zh = {
 export function extensionLabels(language: string) {
   return language === 'en-US' ? en : zh
 }
+
+const verificationErrors: Record<string, [string, string]> = {
+  EXTENSION_DOWNLOAD_FAILED: ['暂时无法完成插件核验，请稍后重试。', 'Could not finish verifying the plugin. Please try again later.'],
+  EXTENSION_DOWNLOAD_CHECKSUM_FAILED: ['无法核验这份插件包，请稍后重试。', 'This package could not be verified. Please try again later.'],
+  EXTENSION_DOWNLOAD_URL_DENIED: ['插件来源地址不可用，无法继续核验。', 'The package source is not allowed. Verification cannot continue.'],
+  EXTENSION_INVALID_ARCHIVE: ['插件包已损坏或格式无效，无法安装。', 'The package is damaged or invalid and cannot be installed.'],
+  EXTENSION_UNSAFE_PACKAGE: ['插件包包含不安全的内容，无法安装。', 'The package contains unsafe content and cannot be installed.'],
+  EXTENSION_UNSAFE_PATH: ['插件包包含不安全的路径，无法安装。', 'The package contains unsafe paths and cannot be installed.'],
+  EXTENSION_ARCHIVE_LIMIT: ['插件包超过大小限制，无法安装。', 'The package exceeds the size limit and cannot be installed.'],
+  EXTENSION_PACKAGE_LIMIT: ['插件内容超过大小或文件数量限制，无法安装。', 'The package exceeds the content size or file count limit.'],
+  EXTENSION_MANIFEST_INVALID: ['插件清单无效，无法安装。', 'The plugin manifest is invalid. Installation cannot continue.'],
+  EXTENSION_CATALOG_MANIFEST_MISMATCH: ['插件清单与目录记录不符，无法安装。', 'The plugin manifest does not match the catalog. Installation cannot continue.'],
+  EXTENSION_UNVERIFIED_CONFIRMATION_REQUIRED: ['请先确认插件内容不一致的风险。', 'Please acknowledge the package mismatch before installing.'],
+}
+
+export function extensionVerificationError(code: string, language: string): string {
+  return verificationErrors[code]?.[language === 'en-US' ? 1 : 0] ?? code
+}

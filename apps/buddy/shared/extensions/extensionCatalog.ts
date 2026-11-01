@@ -8,6 +8,18 @@ const httpsUrl = z.string().url().max(2048).refine((value) => {
   const url = new URL(value)
   return url.protocol === 'https:' && !url.username && !url.password
 })
+const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
+export const extensionSourceSchema = z.object({
+  catalog: z.string().url(),
+  artifact: z.string().url(),
+  sha256: sha256Schema,
+  mismatch: z.object({
+    expectedSha256: sha256Schema,
+    expectedSize: z.number().int().positive().max(EXTENSION_ARCHIVE_LIMIT),
+    actualSize: z.number().int().nonnegative().max(EXTENSION_ARCHIVE_LIMIT),
+  }).strict().optional(),
+}).strict()
+export type ExtensionSource = z.infer<typeof extensionSourceSchema>
 export const extensionCatalogListingSchema = z.object({
   manifest: extensionMetadataSchema,
   iconUrl: extensionIconUrlSchema.optional(),

@@ -62,13 +62,17 @@ async function mount(value: ExtensionReview = review, language = 'en-US', busy =
   const root = document.createElement('div')
   document.body.append(root)
   const submissions: { applyUpdate: boolean, choices: FileOpeningChoice[] }[] = []
+  const acceptances: boolean[] = []
   const cancellations: boolean[] = []
   const app = createApp({ render: () => h(DesktopExtensionInstallReview, {
     review: current.value,
     language,
     busy,
     onCancel: () => cancellations.push(true),
-    onInstall: (applyUpdate: boolean, choices: FileOpeningChoice[]) => submissions.push({ applyUpdate, choices }),
+    onInstall: (applyUpdate: boolean, choices: FileOpeningChoice[], acceptUnverified: boolean) => {
+      submissions.push({ applyUpdate, choices })
+      acceptances.push(acceptUnverified)
+    },
   }) })
   app.mount(root)
   cleanups.push(() => {
@@ -79,8 +83,38 @@ async function mount(value: ExtensionReview = review, language = 'en-US', busy =
   const content = document.querySelector<HTMLElement>('[data-testid="extension-file-associations"]')!
   const submit = () => document.querySelector<HTMLButtonElement>('[data-testid="extension-confirm-install"]')!.click()
   const dialog = document.querySelector<HTMLElement>('[data-testid="extension-install-review"]')!
-  return { content, submissions, submit, dialog, current, cancellations }
+  return { content, submissions, submit, dialog, current, cancellations, acceptances }
 }
+
+it('requires a new risk acknowledgement for each unverified review while showing its actual permissions', async () => {
+  const unverified: ExtensionReview = {
+    ...review,
+    manifest: extensionManifestSchema.parse({ ...review.manifest, permissions: { network: ['https://changed.example.com'] } }),
+    source: { catalog: 'https://example.com/catalog', artifact: 'https://example.com/plugin.zip', sha256: 'b'.repeat(64), mismatch: { expectedSha256: 'a'.repeat(64), expectedSize: 10, actualSize: 11 } },
+  }
+  const { current, submit, submissions, acceptances } = await mount(unverified)
+  const button = document.querySelector<HTMLButtonElement>('[data-testid="extension-confirm-install"]')!
+  expect(document.querySelector('[data-testid="extension-verification-warning"]')).not.toBeNull()
+  expect(document.querySelector('[data-testid="extension-review-permissions"]')?.textContent).toContain('https://changed.example.com')
+  expect(button.disabled).toBe(true)
+  submit()
+  expect(submissions).toEqual([])
+  document.querySelector<HTMLElement>('[data-testid="extension-accept-unverified"]')!.click()
+  await nextTick()
+  expect(button.disabled).toBe(false)
+  expect(button.textContent).toContain('Install anyway')
+  submit()
+  expect(acceptances).toEqual([true])
+  current.value = { ...unverified, token: 'another-review' }
+  await nextTick()
+  expect(button.disabled).toBe(true)
+  current.value = { ...review, token: 'verified-review' }
+  await nextTick()
+  expect(document.querySelector('[data-testid="extension-verification-warning"]')).toBeNull()
+  expect(button.disabled).toBe(false)
+  submit()
+  expect(acceptances).toEqual([true, false])
+})
 
 it.each(['en-US', 'zh-CN'])('reviews each requested data source separately from message access in %s', async (language) => {
   const { current } = await mount({

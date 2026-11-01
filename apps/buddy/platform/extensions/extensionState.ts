@@ -1,10 +1,11 @@
 import { z } from 'zod'
+import { extensionSourceSchema } from '../../shared/extensions/extensionCatalog'
 import { extensionIdSchema, extensionManifestSchema } from '../../shared/extensions/extensionManifest'
 import { extensionScheduleSchema } from '../../shared/extensions/extensionSchedule'
 import { fileOpeningChoiceSchema, fileOpeningDefaultsSchema, fileOpeningExtensionSchema } from '../../shared/files/fileOpening'
 
 const revisionSchema = z.string().regex(/^[a-f0-9]{64}$/)
-export const extensionSourceSchema = z.object({ catalog: z.string().url(), artifact: z.string().url(), sha256: revisionSchema }).strict()
+export { extensionSourceSchema } from '../../shared/extensions/extensionCatalog'
 export const extensionPackageSchema = z.object({ manifest: extensionManifestSchema, revision: revisionSchema, hashes: z.record(z.string(), revisionSchema), source: extensionSourceSchema.nullable().default(null) }).strict()
 export const fileOpeningRevisionSchema = z.record(fileOpeningExtensionSchema, z.object({ inline: z.number().int().nonnegative().optional(), standalone: z.number().int().nonnegative().optional() }).strict())
 const reviewedFileOpeningSchema = z.object({ choice: fileOpeningChoiceSchema, revision: z.number().int().nonnegative() }).strict()

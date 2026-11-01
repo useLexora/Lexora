@@ -3,13 +3,13 @@ import type { ExtensionReview, ExtensionReviewResult, ExtensionStatus } from '@b
 import type { ExtensionIncompatibleReview } from '@buddy-shared/extensions/extensionCompatibility'
 import type { FileOpeningChoice } from '@buddy-shared/files/fileOpening'
 import { ChevronDown16Regular, MoreHorizontal20Regular, Wand20Regular } from '@vicons/fluent'
-import { NButton, NDropdown, NEmpty, NModal, useMessage } from 'naive-ui'
+import { NAlert, NButton, NDropdown, NEmpty, NModal, useMessage } from 'naive-ui'
 import { computed, onScopeDispose, shallowRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import { useExtensionContext } from '../extensionContext'
-import { extensionLabels } from '../extensionLabels'
+import { extensionLabels, extensionVerificationError } from '../extensionLabels'
 import DesktopExtensionWorkbench from '../layouts/DesktopExtensionWorkbench.vue'
 import { useExtensionRemoval } from '../state/useExtensionRemoval'
 import { extensionErrorCode } from '../state/useExtensionState'
@@ -51,7 +51,7 @@ const message = useMessage()
 const router = useRouter()
 const selected = computed(() => installed.value.find(item => item.manifest.id === diagnostics.value))
 function showError(code: string) {
-  message.error(`${labels.value.installFailed}: ${code}`)
+  message.error(`${labels.value.installFailed}: ${extensionVerificationError(code, language.value)}`)
 }
 watch(state.error, (error) => {
   if (error)
@@ -117,13 +117,13 @@ function cancel() {
     void state.api.cancelInstall(current.token).catch(() => {})
   showNextReview()
 }
-function install(applyUpdate: boolean, choices: FileOpeningChoice[]) {
+function install(applyUpdate: boolean, choices: FileOpeningChoice[], acceptUnverified: boolean) {
   const current = review.value
   if (current && !state.busyIds.has(current.manifest.id)) {
     review.value = null
     section.value = 'installed'
     void run(async () => {
-      const installed = await state.install(current, applyUpdate, choices)
+      const installed = await state.install(current, applyUpdate, choices, acceptUnverified)
       if (installed && current.currentVersion)
         message.success(applyUpdate ? labels.value.updateApplied : labels.value.updateDeferred)
       return installed
@@ -242,6 +242,9 @@ onScopeDispose(() => {
       <p>{{ selected.manifest.author || (language === 'en-US' ? 'Unsigned' : '未署名') }}</p>
       <p><code>{{ selected.manifest.id }}</code></p>
       <p>{{ selected.source ? (language === 'en-US' ? 'Marketplace' : '插件市场') : (language === 'en-US' ? 'Local installation' : '本地安装') }}</p>
+      <NAlert v-if="selected.source?.mismatch" type="warning" data-testid="extension-unverified-installation">
+        {{ language === 'en-US' ? 'This package did not match the catalog record and was installed with your confirmation.' : '这份插件包未通过目录一致性校验，已由你确认安装。' }}
+      </NAlert>
       <p>{{ labels.version }} {{ selected.manifest.version }} · API {{ selected.manifest.apiVersion }}</p>
       <p v-if="selected.activationMs !== null">
         {{ labels.activation }} {{ selected.activationMs }} ms

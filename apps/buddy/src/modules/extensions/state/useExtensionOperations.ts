@@ -29,7 +29,7 @@ export function useExtensionOperations(api: ExtensionApi, refresh: () => Promise
     }
   }
 
-  async function install(review: ExtensionReview, applyUpdate: boolean, choices: FileOpeningChoice[] = []) {
+  async function install(review: ExtensionReview, applyUpdate: boolean, choices: FileOpeningChoice[] = [], acceptUnverified = false) {
     const id = review.manifest.id
     if (busyIds.has(id))
       return false
@@ -37,7 +37,7 @@ export function useExtensionOperations(api: ExtensionApi, refresh: () => Promise
     pendingInstalls.set(id, pending)
     try {
       const result = await runOperation(id, async () => {
-        await api.install(review.token, choices)
+        await api.install(review.token, choices, acceptUnverified)
         if (review.currentVersion && applyUpdate) {
           pendingInstalls.set(id, { ...pending, phase: 'apply-update' })
           await api.applyUpdate(id)
