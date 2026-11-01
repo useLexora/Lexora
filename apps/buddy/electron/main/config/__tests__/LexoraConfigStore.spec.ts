@@ -190,7 +190,7 @@ describe('lexoraConfigStore', () => {
 
   it('preserves concurrency choices across partial settings updates and restart', async () => {
     const { store, configPath } = await createConfigStore('[runtime]\ncodemode=false\nfuture=true\n')
-    expect((await store.read()).runtime).toMatchObject({ codemode: false, codemodeWorkerLimit: 4, codemodeOverflow: 'wait' })
+    expect((await store.read()).runtime).toMatchObject({ codemode: false, codemodeWorkerLimit: 8, codemodeOverflow: 'wait' })
     for (const codemodeWorkerLimit of [1, 16, 1000, 'unlimited'] as const) {
       await store.update({ runtime: { codemodeWorkerLimit, codemodeOverflow: 'reject' } })
       await store.update({ runtime: { modelRetryLimit: 7 } })

@@ -48,7 +48,7 @@ export default {
   'desktop.settings.runtime.codemodeLimited': '数量',
   'desktop.settings.runtime.codemodeUnlimited': '不限制',
   'desktop.settings.runtime.codemodeWorkerLimit': '并发脚本数',
-  'desktop.settings.runtime.codemodeWorkerLimitDescription': '默认同时运行 4 个脚本。提高上限会放行等待任务，降低上限不会打断已运行脚本。',
+  'desktop.settings.runtime.codemodeWorkerLimitDescription': '默认同时运行 8 个脚本。提高上限会放行等待任务，降低上限不会打断已运行脚本。',
   'desktop.settings.runtime.codemodeOverflow': '容量满时',
   'desktop.settings.runtime.codemodeOverflowDescription': '排队等待会在有空位后继续，可随时取消；返回繁忙会让新的脚本调用立即报错，脚本不会启动。',
   'desktop.settings.runtime.codemodeWait': '排队等待',

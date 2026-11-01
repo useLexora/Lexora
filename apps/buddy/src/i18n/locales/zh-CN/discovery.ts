@@ -1,6 +1,6 @@
 export default {
   'discovery.codemode-concurrency.title': '按需调整工具编排并发',
-  'discovery.codemode-concurrency.description': '在运行时设置中调整所有任务共享的脚本并发数量，默认 4 个，也可选择不限制。容量满时可排队等待或返回繁忙。',
+  'discovery.codemode-concurrency.description': '在运行时设置中调整所有任务共享的脚本并发数量，默认 8 个，也可选择不限制。容量满时可排队等待或返回繁忙。',
   'discovery.codemode-concurrency.hint': '提高并发数可让更多脚本同时工作。选择不限制前会提醒资源占用风险；排队中的脚本会在空位释放后继续。',
   'discovery.follow-up-behavior.title': '选择工作中发送消息的方式',
   'discovery.follow-up-behavior.description': '在运行时设置的“执行行为”中，选择默认补充当前工作或排队等待。排队消息仍可单独立即发送。',

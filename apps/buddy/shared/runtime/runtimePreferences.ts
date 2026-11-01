@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 export const DEFAULT_MODEL_RETRY_LIMIT = 3
-export const DEFAULT_CODEMODE_WORKER_LIMIT = 4
+export const DEFAULT_CODEMODE_WORKER_LIMIT = 8
 
 export const modelRetryLimitSchema = z.union([z.number().int().nonnegative(), z.literal('unlimited')])
 export type ModelRetryLimit = z.infer<typeof modelRetryLimitSchema>
