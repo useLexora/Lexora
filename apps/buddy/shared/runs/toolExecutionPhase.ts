@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const toolExecutionPhaseSchema = z.enum(['authorizing', 'resource', 'preparing', 'capturing', 'executing', 'approval', 'cleaning', 'finished'])
+export const toolExecutionPhaseSchema = z.enum(['authorizing', 'queued', 'resource', 'preparing', 'capturing', 'executing', 'approval', 'cleaning', 'finished'])
 export type ToolExecutionPhase = z.infer<typeof toolExecutionPhaseSchema>
 export const toolExecutionTimingSchema = z.object({
   phase: toolExecutionPhaseSchema,

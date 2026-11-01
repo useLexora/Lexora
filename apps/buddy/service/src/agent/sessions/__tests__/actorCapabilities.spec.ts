@@ -16,6 +16,7 @@ import { openBuddyDatabase } from '../../../storage/database'
 import { createSkillRepository } from '../../../storage/skillRepository'
 import { createSpaceRepository } from '../../../storage/spaceRepository'
 import { createBuddyInputReference } from '../../context/BuddyInputReference'
+import { CodemodeWorkerPool } from '../../execution/CodemodeWorkerPool'
 import { createBuddySessionExtensions } from '../../extensions/createBuddySessionExtensions'
 import { resolveBuddySessionResources } from '../../resources/BuddySessionResources'
 import { createReusableBuddySession } from '../createReusableBuddySession'
@@ -260,6 +261,7 @@ async function fixture() {
   async function open(definition: BuddyExecutionDefinition, executionKind?: ExecutionKind) {
     const resources = await resolveResources(definition, 'execution', executionKind)
     const services: BuddySessionExtensionServices = {
+      codemodeWorkers: new CodemodeWorkerPool(),
       approvalService: { request: async (input) => {
         approvals.push(input.toolName)
         return { approvalId: 'unexpected-approval', decision: 'approved_once' }

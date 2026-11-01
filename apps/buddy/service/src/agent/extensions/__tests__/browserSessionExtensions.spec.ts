@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { resolveBuddyPlatform } from '../../../../../shared/platform'
 import { createBuddyCapabilityFactory } from '../../../createBuddyCapabilityFactory'
 import { PetActionService } from '../../../pet/PetActionService'
+import { CodemodeWorkerPool } from '../../execution/CodemodeWorkerPool'
 import { createBuddySessionExtensions } from '../createBuddySessionExtensions'
 
 const directories: string[] = []
@@ -231,6 +232,7 @@ function createCompositionServices(
   }),
 ): BuddySessionExtensionServices {
   return {
+    codemodeWorkers: new CodemodeWorkerPool(),
     approvalService: { request: requestApproval },
     createCapabilities: createBuddyCapabilityFactory(resolveBuddyPlatform('linux'), {
       getRunBuddyId: () => 'default',

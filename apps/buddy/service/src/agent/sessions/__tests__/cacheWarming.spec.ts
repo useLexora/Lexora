@@ -6,6 +6,7 @@ import { createAssistantMessageEventStream, InMemoryCredentialStore } from '@ear
 import { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 import { describe, expect, it, vi } from 'vitest'
+import { DEFAULT_RUNTIME_PREFERENCES } from '../../../../../shared/runtime/runtimePreferences'
 import { createRunEventLog } from '../../../events/createRunEventLog'
 import { openBuddyDatabase } from '../../../storage/database'
 import { createUsageRepository } from '../../../storage/usageRepository'
@@ -108,7 +109,7 @@ describe('buddy cache warming', () => {
     const unsubscribe = channel.subscribe()
     let task: Promise<void> | undefined
     try {
-      reusable.applyPreferences({ cacheWarming: 'streaming', codemode: false, modelRetryLimit: 3 })
+      reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'streaming', codemode: false, modelRetryLimit: 3 })
       expect(created.session.settingsManager.getCacheWarmingMode()).toBe('off')
       expect(reusable.getCacheWarmingStatus?.()).toBe(stop === 'unsupported' ? 'unsupported' : 'idle')
       const release = await reusable.activateTurn({ generation: 0, runId: 'run-1', provider: model.provider, model: model.id, contextWindow: null, maxTokens: null, signal: new AbortController().signal, flushProjectedEvents: () => channel.flush(), onToolExecutionAuthorized: async () => {}, onToolExecutionDenied: async () => {} })
@@ -145,7 +146,7 @@ describe('buddy cache warming', () => {
         expect(warmRequests).toBe(1)
         expect(reusable.getCacheWarmingStatus?.()).toBe('refreshing')
         if (stop === 'inflight-disable')
-          reusable.applyPreferences({ cacheWarming: 'off', codemode: false, modelRetryLimit: 3 })
+          reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: false, modelRetryLimit: 3 })
         if (stop === 'inflight-abort')
           await reusable.abort()
         if (stop === 'inflight-shutdown')
@@ -176,7 +177,7 @@ describe('buddy cache warming', () => {
       expect(await usage.record({ createdAt: records[0]!.createdAt, model: model.id, provider: model.provider, purpose: 'cache_warm', runId: 'run-1', sourceEntryId: entry.id, usage: responseUsage(true) })).toBeNull()
       expect(repository.listForRun('run-1').filter(record => record.purpose === 'cache_warm')).toHaveLength(1)
       if (stop === 'disable')
-        reusable.applyPreferences({ cacheWarming: 'off', codemode: false, modelRetryLimit: 3 })
+        reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: false, modelRetryLimit: 3 })
       if (stop === 'abort')
         await reusable.abort()
       if (stop === 'model')

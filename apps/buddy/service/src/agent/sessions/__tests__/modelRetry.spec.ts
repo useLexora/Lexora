@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { createAssistantMessageEventStream, InMemoryCredentialStore } from '@earendil-works/pi-ai'
 import { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { DEFAULT_RUNTIME_PREFERENCES } from '../../../../../shared/runtime/runtimePreferences'
 import { createModelSwitchExtension } from '../../extensions/modelSwitchExtension'
 import { createReusableBuddySession } from '../createReusableBuddySession'
 import { createIsolatedBuddySession } from './isolatedBuddySession'
@@ -233,7 +234,7 @@ describe('model retry policy', () => {
       return '503 service unavailable'
     })
     let release = await fixture.activate(2)
-    fixture.reusable.applyPreferences({ cacheWarming: 'streaming', codemode: false, modelRetryLimit: 0 })
+    fixture.reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'streaming', codemode: false, modelRetryLimit: 0 })
     fixture.session.settingsManager.applyOverrides({ retry: { baseDelayMs: 1 } })
     await fixture.reusable.prompt('First run')
     expect(requests).toBe(3)
@@ -297,7 +298,7 @@ async function createFixture(failure: (model: Model<Api>) => string | undefined,
   let run = 0
   async function activate(limit?: ModelRetryLimit) {
     if (limit !== undefined)
-      reusable.applyPreferences({ cacheWarming: 'off', codemode: false, modelRetryLimit: limit })
+      reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: false, modelRetryLimit: limit })
     const release = await reusable.activateTurn({ generation: 0, runId: `retry-run-${++run}`, provider: model.provider, model: model.id, contextWindow: null, maxTokens: null, signal: new AbortController().signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {}, onToolExecutionDenied: async () => {} })
     session.settingsManager.applyOverrides({ retry: { baseDelayMs: 1 } })
     return release

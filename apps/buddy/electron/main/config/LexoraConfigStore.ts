@@ -188,6 +188,8 @@ const lexoraConfigFileSchema = z.object({
   runtime: z.object({
     cache_warming: runtimePreferencesSchema.shape.cacheWarming.default(DEFAULT_RUNTIME_PREFERENCES.cacheWarming),
     codemode: runtimePreferencesSchema.shape.codemode.default(DEFAULT_RUNTIME_PREFERENCES.codemode),
+    codemode_worker_limit: runtimePreferencesSchema.shape.codemodeWorkerLimit.default(DEFAULT_RUNTIME_PREFERENCES.codemodeWorkerLimit),
+    codemode_overflow: runtimePreferencesSchema.shape.codemodeOverflow.default(DEFAULT_RUNTIME_PREFERENCES.codemodeOverflow),
     model_retry_limit: runtimePreferencesSchema.shape.modelRetryLimit.default(DEFAULT_RUNTIME_PREFERENCES.modelRetryLimit),
   }).passthrough().prefault({}),
   browser: z.object({
@@ -410,7 +412,7 @@ function decodeConfig(value: unknown): LexoraConfig {
   }
 
   return {
-    runtime: { cacheWarming: config.runtime.cache_warming, codemode: config.runtime.codemode, modelRetryLimit: config.runtime.model_retry_limit },
+    runtime: { cacheWarming: config.runtime.cache_warming, codemode: config.runtime.codemode, modelRetryLimit: config.runtime.model_retry_limit, codemodeWorkerLimit: config.runtime.codemode_worker_limit, codemodeOverflow: config.runtime.codemode_overflow },
     browser: {
       linkOpening: config.browser.link_opening,
       screenshotDestination: config.browser.screenshot_destination,
@@ -490,7 +492,7 @@ function decodeConfig(value: unknown): LexoraConfig {
 
 function encodeConfig(config: LexoraConfig) {
   return {
-    runtime: { cache_warming: config.runtime.cacheWarming, codemode: config.runtime.codemode, model_retry_limit: config.runtime.modelRetryLimit },
+    runtime: { cache_warming: config.runtime.cacheWarming, codemode: config.runtime.codemode, model_retry_limit: config.runtime.modelRetryLimit, codemode_worker_limit: config.runtime.codemodeWorkerLimit, codemode_overflow: config.runtime.codemodeOverflow },
     browser: {
       link_opening: config.browser.linkOpening,
       screenshot_destination: config.browser.screenshotDestination,

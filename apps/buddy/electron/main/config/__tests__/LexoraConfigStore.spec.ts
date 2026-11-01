@@ -183,9 +183,23 @@ describe('lexoraConfigStore', () => {
     for (const modelRetryLimit of [0, 7, 'unlimited'] as const) {
       await store.update({ runtime: { modelRetryLimit } })
       await store.update({ desktop: { language: 'en-US' } })
-      expect((await new LexoraConfigStore({ configPath }).read()).runtime).toEqual({ cacheWarming: 'streaming', codemode: true, modelRetryLimit })
+      expect((await new LexoraConfigStore({ configPath }).read()).runtime).toMatchObject({ cacheWarming: 'streaming', codemode: true, modelRetryLimit })
     }
     expect(parse(await readFile(configPath, 'utf8'))).toMatchObject({ runtime: { future: true, model_retry_limit: 'unlimited' } })
+  })
+
+  it('preserves concurrency choices across partial settings updates and restart', async () => {
+    const { store, configPath } = await createConfigStore('[runtime]\ncodemode=false\nfuture=true\n')
+    expect((await store.read()).runtime).toMatchObject({ codemode: false, codemodeWorkerLimit: 4, codemodeOverflow: 'wait' })
+    for (const codemodeWorkerLimit of [1, 16, 1000, 'unlimited'] as const) {
+      await store.update({ runtime: { codemodeWorkerLimit, codemodeOverflow: 'reject' } })
+      await store.update({ runtime: { modelRetryLimit: 7 } })
+      await store.update({ desktop: { language: 'en-US' } })
+      expect((await new LexoraConfigStore({ configPath }).read()).runtime).toMatchObject({ codemode: false, codemodeWorkerLimit, codemodeOverflow: 'reject', modelRetryLimit: 7 })
+    }
+    expect(parse(await readFile(configPath, 'utf8'))).toMatchObject({ runtime: { future: true, codemode_worker_limit: 'unlimited', codemode_overflow: 'reject' } })
+    for (const codemodeWorkerLimit of [0, -1, 1.5])
+      await expect(store.update({ runtime: { codemodeWorkerLimit } })).rejects.toThrow()
   })
 
   it('defaults codemode on without overwriting an explicit choice across partial updates and restart', async () => {

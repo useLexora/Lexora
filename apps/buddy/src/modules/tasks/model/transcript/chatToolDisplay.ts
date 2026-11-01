@@ -117,6 +117,8 @@ function toolStatus(node: ChatAgentToolNode, language: BuddyLocale, t: BuddyTran
     return t('desktop.chat.processToolInterrupted')
   if (node.status === 'preparing')
     return t('desktop.chat.processToolPreparing')
+  if (node.status === 'running' && node.executionPhase === 'queued')
+    return t('desktop.chat.processToolQueued')
   if (node.status === 'running')
     return t('desktop.chat.processToolRunning')
   const p = node.presentation

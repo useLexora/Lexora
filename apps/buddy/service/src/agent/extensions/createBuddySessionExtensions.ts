@@ -23,6 +23,7 @@ import type { NetworkPermissionsStore } from '../../permissions/NetworkPermissio
 import type { ShellSandboxClient } from '../../sandbox/ShellSandboxClient'
 import type { ExtensionShellRegistry } from '../../sandbox/ShellSelection'
 import type { BuddyInputReferenceStore } from '../context/BuddyInputReference'
+import type { CodemodeWorkerPool } from '../execution/CodemodeWorkerPool'
 import type { ExecutionDelegationService } from '../execution/ExecutionDelegationService'
 import type { BuddyCapability, BuddyCapabilityFactory, BuddyCapabilityResourceRevision } from './BuddyCapability'
 import type { BuddyExtensionRunContext, BuddyExtensionRunContextStore } from './BuddyExtensionRunContext'
@@ -53,6 +54,7 @@ import { createModelSwitchExtension } from './modelSwitchExtension'
 import { createToolPolicyExtension } from './toolPolicyExtension'
 
 export interface BuddySessionExtensionServices {
+  codemodeWorkers: CodemodeWorkerPool
   getInputProjection?: (conversationId: string, messageId: string) => Pick<BuddyUserMessageContentV1, 'materialProjection' | 'resourceSnapshots'> | null
   networkPermissions?: NetworkPermissionsStore
   imageReading?: Pick<ImageReadingService, 'read' | 'allowsNativeInput'>
@@ -118,7 +120,24 @@ export async function createBuddySessionExtensions(
   const runContext: BuddyExtensionRunContextStore = { current: null }
   let permissionSettings: BuddyPermissionSettings = { approvalPolicy: options.approvalPolicy, executionProfile: options.executionProfile }
   let codemodeEnabled = false
-  const codemode = createCodemodeCapability(() => codemodeEnabled)
+  const codemode = createCodemodeCapability(() => codemodeEnabled, {
+    async acquireWorker(toolCallId, signal) {
+      const run = runContext.current
+      if (!run)
+        throw new Error('RUN_CONTEXT_UNAVAILABLE')
+      const release = await services.codemodeWorkers.acquire(signal, () => {
+        run.onToolExecutionPhase?.({ toolCallId, toolName: 'codemode', phase: 'queued' })
+      })
+      try {
+        run.onToolExecutionPhase?.({ toolCallId, toolName: 'codemode', phase: 'executing', executionBasis: 'tool' })
+        return release
+      }
+      catch (error) {
+        release()
+        throw error
+      }
+    },
+  })
   const fileAccessLimit = options.fileAccessLimit ?? 'inherit'
   const getExecutionProfile = () => fileAccessLimit === 'read_only' ? 'read_only' : permissionSettings.executionProfile
   const inputReferences: BuddyInputReferenceStore = { pending: null }

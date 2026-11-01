@@ -317,7 +317,7 @@ export class DesktopRuntimeHost {
     await this.#network?.apply(config.proxy)
     const previous = this.#config?.runtime
     this.#config = config
-    if (previous?.cacheWarming !== config.runtime.cacheWarming || previous?.codemode !== config.runtime.codemode || previous?.modelRetryLimit !== config.runtime.modelRetryLimit)
+    if (previous?.cacheWarming !== config.runtime.cacheWarming || previous?.codemode !== config.runtime.codemode || previous?.modelRetryLimit !== config.runtime.modelRetryLimit || previous?.codemodeWorkerLimit !== config.runtime.codemodeWorkerLimit || previous?.codemodeOverflow !== config.runtime.codemodeOverflow)
       this.#service?.notify(runtimePreferencesRpc.changed, config.runtime)
     const featureConfig = config.desktop.onboardingCompleted ? config : { ...config, pet: { ...config.pet, enabled: false } }
     await Promise.all(this.#features.map(feature => feature.applyConfig(featureConfig)))
