@@ -475,6 +475,29 @@ describe('projectPiEvent product messages', () => {
     }
   })
 
+  it('projects structured HTTP failures without disclosing request diagnostics', () => {
+    const state = createPiEventProjectionState()
+    const failedMessage: AssistantMessage = {
+      api: 'openai-completions',
+      content: [],
+      errorMessage: 'authentication failed: Bearer fixture-secret',
+      diagnostics: [{ type: 'model.request.failure', timestamp: 1, details: { status: 503 } }],
+      model: 'model-1',
+      provider: 'provider-1',
+      role: 'assistant',
+      stopReason: 'error',
+      timestamp: 1,
+      usage: emptyUsage(),
+    }
+    const projection = projectPiEvent({ message: failedMessage, type: 'message_end' }, state)
+    expect(projection).toMatchObject({
+      failureCode: 'MODEL_SERVICE_UNAVAILABLE',
+      failureMessage: 'authentication failed: Bearer [redacted]',
+    })
+    expect(JSON.stringify(projection)).not.toContain('fixture-secret')
+    expect(JSON.stringify(projection.events)).not.toContain('model.request.failure')
+  })
+
   it('projects visible reasoning blocks without provider signatures', () => {
     const state = createPiEventProjectionState()
     const partial: AssistantMessage = {

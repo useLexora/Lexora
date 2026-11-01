@@ -44,7 +44,7 @@ export class ImageReadingError extends Error {
   }
 }
 
-function imageModelFailure(message?: string): ImageReadingError {
+function imageModelFailure(message: Parameters<typeof normalizeModelRequestFailure>[0]): ImageReadingError {
   const failure = normalizeModelRequestFailure(message)
   return new ImageReadingError(failure.code === 'MODEL_REQUEST_FAILED' ? 'IMAGE_READING_FAILED' : failure.code, true, failure.message)
 }
@@ -178,7 +178,7 @@ export class ImageReadingService {
             await this.options.usage.record({ createdAt: new Date().toISOString(), model: result.model, provider: result.provider, purpose: 'tool', runId: input.runId, sourceEntryId: `image-reading:${requestId}:${index}`, usage: result.usage })
           input.signal.throwIfAborted()
           if (result.stopReason === 'error')
-            throw imageModelFailure(result.errorMessage)
+            throw imageModelFailure(result)
           if (result.stopReason === 'aborted')
             throw new ImageReadingError('MODEL_REQUEST_ABORTED')
           if (result.stopReason !== 'stop')

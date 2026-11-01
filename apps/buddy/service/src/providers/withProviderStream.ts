@@ -5,6 +5,7 @@ import { lazyStream } from '@earendil-works/pi-ai'
 import { safeDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import { diagnosticResponseType, diagnosticTransportCode } from '../../../shared/diagnostics/providerRequestDiagnostic'
 import { diagnosticContext } from '../diagnostics/diagnosticContext'
+import { MODEL_REQUEST_FAILURE_DIAGNOSTIC } from './modelRequestFailure'
 import { readOpenAiUsage, reconcileOpenAiUsage } from './providerUsage'
 
 export const MODEL_PROGRESS_TIMEOUT_MS = 5 * 60 * 1000
@@ -86,6 +87,27 @@ function complete<T extends StreamOptions>(model: Model<Api>, options: T | undef
     if (failed && !evidence.failureStage)
       evidence.failureStage = evidence.status && evidence.status >= 400 ? 'http' : evidence.doneMarker !== 'unknown' || evidence.contentEvents! > 0 ? 'stream' : 'unknown'
     report({ ...context, event: `provider.request.${cancelled ? 'cancelled' : failed ? 'failed' : 'completed'}`, level: cancelled ? 'info' : failed ? 'error' : evidence.completion === 'inferred' || evidence.usage?.reconciliation === 'inconsistent' ? 'warn' : 'info', durationMs: Math.round(performance.now() - startedAt), providerRequest: { ...evidence } })
+  }
+
+  function failureEvidence(message: AssistantMessage): AssistantMessage {
+    if (message.stopReason !== 'error')
+      return message
+    const status = evidence.status && evidence.status >= 400 ? evidence.status : undefined
+    const transportCode = evidence.transportCode
+    if (status === undefined && (!transportCode || transportCode === 'UNKNOWN'))
+      return message
+    return {
+      ...message,
+      diagnostics: [...message.diagnostics ?? [], {
+        type: MODEL_REQUEST_FAILURE_DIAGNOSTIC,
+        timestamp: Date.now(),
+        ...(transportCode && transportCode !== 'UNKNOWN' ? { error: { code: transportCode, message: 'Provider transport failure' } } : {}),
+        details: {
+          ...(status !== undefined ? { status } : {}),
+          ...(transportCode && transportCode !== 'UNKNOWN' ? { transportCode } : {}),
+        },
+      }],
+    }
   }
 
   function reconcileUsage(message: AssistantMessage): AssistantMessage {
@@ -171,6 +193,13 @@ function complete<T extends StreamOptions>(model: Model<Api>, options: T | undef
             },
           }
         }
+        if (event.type === 'error' && event.reason === 'aborted' && !options?.signal?.aborted) {
+          event = {
+            type: 'error',
+            reason: 'error',
+            error: { ...event.error, stopReason: 'error', errorMessage: [event.error.errorMessage, 'Provider stream was interrupted without a cancellation request'].filter(Boolean).join('\n') },
+          }
+        }
         if (event.type === 'done' && hasInvalidToolCallIds(event.message)) {
           event = {
             type: 'error',
@@ -181,7 +210,7 @@ function complete<T extends StreamOptions>(model: Model<Api>, options: T | undef
         if (event.type === 'done' || event.type === 'error') {
           ended = true
           clearTimeout(timer)
-          event = event.type === 'done' ? { ...event, message: reconcileUsage(event.message) } : { ...event, error: reconcileUsage(event.error) }
+          event = event.type === 'done' ? { ...event, message: reconcileUsage(event.message) } : { ...event, error: failureEvidence(reconcileUsage(event.error)) }
           const message = event.type === 'done' ? event.message : event.error
           evidence.textCharacters = message.content.reduce((count, block) => count + (block.type === 'text' ? block.text.length : 0), 0)
           evidence.toolCalls = message.content.filter(block => block.type === 'toolCall').length
@@ -195,14 +224,10 @@ function complete<T extends StreamOptions>(model: Model<Api>, options: T | undef
     }
     catch (error) {
       evidence.transportCode ??= diagnosticTransportCode(error)
-      if (!latest && !signal.aborted) {
-        recordEnd(true)
-        throw error
-      }
       ended = true
       clearTimeout(timer)
       evidence.completion = evidence.contentEvents! > 0 ? 'incomplete' : 'unknown'
-      const message = reconcileUsage({
+      const message = failureEvidence(reconcileUsage({
         ...latest ?? {
           role: 'assistant',
           api: model.api,
@@ -214,7 +239,7 @@ function complete<T extends StreamOptions>(model: Model<Api>, options: T | undef
         },
         stopReason: options?.signal?.aborted ? 'aborted' : 'error',
         errorMessage: options?.signal?.aborted ? 'Request aborted' : error instanceof Error ? error.message : String(error),
-      })
+      }))
       recordEnd(true, options?.signal?.aborted)
       yield { type: 'error', reason: options?.signal?.aborted ? 'aborted' : 'error', error: message }
     }
