@@ -3,19 +3,20 @@ import type { ExtensionInstallation } from '@buddy-shared/extensions/extensionIn
 import type { ExtensionPendingInstall } from '../state/useExtensionOperations'
 import { NButton, NEllipsis, NSpin } from 'naive-ui'
 import { computed } from 'vue'
+import { extensionVerificationError } from '../extensionLabels'
 
 const props = defineProps<{ installation: ExtensionPendingInstall, job?: ExtensionInstallation, language: string }>()
 const emit = defineEmits<{ progress: [], dismiss: [] }>()
 const en = computed(() => props.language === 'en-US')
 const label = computed(() => {
   if (props.installation.error)
-    return `${en.value ? 'Installation failed' : '安装失败'}: ${props.installation.error}`
+    return `${en.value ? 'Installation failed' : '安装失败'}: ${extensionVerificationError(props.installation.error, props.language)}`
   if (props.installation.phase === 'apply-update')
     return en.value ? 'Switching version…' : '正在切换版本…'
   const stage = props.job?.stage ?? 'compile'
   return (en.value
-    ? { download: 'Downloading…', validate: 'Validating…', review: 'Preparing installation…', compile: 'Preparing plugin…', install: 'Installing…', completed: 'Finishing installation…' }
-    : { download: '正在获取插件…', validate: '正在校验…', review: '正在准备安装…', compile: '正在准备插件…', install: '正在安装…', completed: '正在完成安装…' })[stage]
+    ? { download: 'Verifying plugin…', validate: 'Verifying plugin…', review: 'Preparing installation…', compile: 'Preparing plugin…', install: 'Installing…', completed: 'Finishing installation…' }
+    : { download: '正在核验插件…', validate: '正在核验插件…', review: '正在准备安装…', compile: '正在准备插件…', install: '正在安装…', completed: '正在完成安装…' })[stage]
 })
 </script>
 

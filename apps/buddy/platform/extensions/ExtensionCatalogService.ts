@@ -1,4 +1,4 @@
-import type { ExtensionCatalogEntry, ExtensionCatalogListing, ExtensionCatalogSnapshot } from '../../shared/extensions/extensionCatalog'
+import type { ExtensionCatalogEntry, ExtensionCatalogListing, ExtensionCatalogSnapshot, ExtensionSource } from '../../shared/extensions/extensionCatalog'
 import type { DownloadSettings } from '../../shared/network/downloadSettings'
 import { Buffer } from 'node:buffer'
 import { join } from 'node:path'
@@ -6,6 +6,7 @@ import { rcompare } from 'semver'
 import { z } from 'zod'
 import { EXTENSION_CATALOG_URL, extensionCatalogEntrySchema, extensionCatalogListingSchema, extensionCatalogSchema } from '../../shared/extensions/extensionCatalog'
 import { ExtensionCompatibilityError, extensionCompatibilityIssue } from '../../shared/extensions/extensionCompatibility'
+import { validateExtensionArchiveSize } from '../../shared/extensions/extensionPackageBudget'
 import { downloadRoutes } from '../../shared/network/downloadMirrors'
 import { downloadBytes, DownloadRouteError } from '../network/downloadBytes'
 import { publicWebUrl, readResponseBytes } from '../network/publicWebTransport'
@@ -42,7 +43,7 @@ export class ExtensionCatalogService {
     })
   }
 
-  async download(id: string, version: string, signal: AbortSignal): Promise<{ entry: ExtensionCatalogEntry, bytes: Uint8Array }> {
+  async download(id: string, version: string, signal: AbortSignal): Promise<{ entry: ExtensionCatalogEntry, bytes: Uint8Array, source: ExtensionSource }> {
     await this.list()
     if (this.#snapshot(false, null).plugins.find(item => item.manifest.id === id)?.manifest.version !== version)
       throw new Error('EXTENSION_CATALOG_ENTRY_UNAVAILABLE')
@@ -78,16 +79,22 @@ export class ExtensionCatalogService {
           },
         })) {
           length += chunk.byteLength
-          if (length > entry.artifact.size)
-            throw new DownloadRouteError('integrity')
+          validateExtensionArchiveSize(length)
           chunks.push(chunk)
         }
         const bytes = Buffer.concat(chunks, length)
         checking.throwIfAborted()
-        if (length !== entry.artifact.size || await this.#checksum(bytes, checking) !== entry.artifact.sha256)
+        const sha256 = await this.#checksum(bytes, checking)
+        const mismatch = length !== entry.artifact.size || sha256 !== entry.artifact.sha256
+        if (mismatch && route !== entry.artifact.url)
           throw new DownloadRouteError('integrity')
         checking.throwIfAborted()
-        return { entry, bytes }
+        return { entry, bytes, source: {
+          catalog: EXTENSION_CATALOG_URL,
+          artifact: entry.artifact.url,
+          sha256,
+          ...(mismatch ? { mismatch: { expectedSha256: entry.artifact.sha256, expectedSize: entry.artifact.size, actualSize: length } } : {}),
+        } }
       }
       catch (error) {
         checking.throwIfAborted()

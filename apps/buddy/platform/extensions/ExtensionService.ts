@@ -37,7 +37,6 @@ import { extensionAgentInvocationLimits, extensionAgentRequestSchema } from '../
 import { extensionAgentCapabilities } from '../../shared/extensions/extensionAgentCapabilities'
 import { EXTENSION_ARTIFACT_BYTES_LIMIT, extensionAgentResourceRequestSchema } from '../../shared/extensions/extensionAgentResources'
 import { extensionError, extensionFileOpeningInputSchema, extensionJsonSchema, extensionResourceSchema, parseExtensionRequestParams } from '../../shared/extensions/extensionApi'
-import { EXTENSION_CATALOG_URL } from '../../shared/extensions/extensionCatalog'
 import { extensionClipboardSchema, extensionClipboardWriteSchema } from '../../shared/extensions/extensionClipboard'
 import { ExtensionCompatibilityError, extensionCompatibilityIssue } from '../../shared/extensions/extensionCompatibility'
 import { extensionConditionInvalidationSchema } from '../../shared/extensions/extensionConditions'
@@ -743,10 +742,9 @@ export class ExtensionService {
     await this.initialize()
     const job = this.installations.begin(id, 'download')
     try {
-      const { entry, bytes } = await this.catalog.download(id, version, job.signal)
+      const { entry, bytes, source } = await this.catalog.download(id, version, job.signal)
       this.installations.log(job.id, 'validate', 'checksum')
       job.signal.throwIfAborted()
-      const source = { catalog: EXTENSION_CATALOG_URL, artifact: entry.artifact.url, sha256: entry.artifact.sha256 }
       const review = await this.store.reviewArchive(bytes, source, entry.manifest, job.signal)
       this.installations.identify(job.id, review.manifest.id, review.manifest.version)
       this.#reviews.set(review.token, job.id)
@@ -759,20 +757,20 @@ export class ExtensionService {
     }
   }
 
-  async install(token: string, choices?: FileOpeningChoice[]): Promise<void> {
+  async install(token: string, choices?: FileOpeningChoice[], acceptUnverified = false): Promise<void> {
     await this.initialize()
     const job = this.#reviews.get(token) ?? this.installations.begin('Plugin', 'compile').id
     try {
       const signal = this.installations.signal(job)
       this.installations.log(job, 'compile', 'checking')
-      const preparing = this.#compiling.then(() => this.store.prepare(token, this.#ports.compile, signal, message => this.installations.log(job, 'compile', message)))
+      const preparing = this.#compiling.then(() => this.store.prepare(token, this.#ports.compile, signal, message => this.installations.log(job, 'compile', message), acceptUnverified))
       this.#compiling = preparing.then(() => {}, () => {})
       const compiled = await preparing
       this.installations.log(job, 'compile', compiled ? 'compiled' : 'skipped')
       await this.#mutate(async () => {
         signal.throwIfAborted()
         this.installations.log(job, 'install', 'installing')
-        const id = await this.store.install(token, signal, choices)
+        const id = await this.store.install(token, signal, choices, acceptUnverified)
         const installed = this.store.installed[id]!
         this.#publish({ kind: 'package', action: 'installed', extensionId: id, packageRevision: installed.current.revision, ...(installed.pending ? { pendingRevision: installed.pending.revision } : {}) })
         await this.#ports.syncCapabilities?.(this.#capabilityDescriptors())

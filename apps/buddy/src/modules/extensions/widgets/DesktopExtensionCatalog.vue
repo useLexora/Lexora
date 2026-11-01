@@ -81,7 +81,7 @@ onScopeDispose(() => {
               {{ labels.applyUpdate }}
             </NButton>
             <NButton v-else size="small" :type="item.available ? 'primary' : 'default'" :loading="state.busyIds.has(item.manifest.id)" :disabled="!item.compatible || !item.available" @click="emit('install', item)">
-              {{ !item.available ? (en ? 'Installed' : '已安装') : item.installedVersion ? (en ? 'Update' : '更新') : (en ? 'Install' : '安装') }}
+              {{ state.busyIds.has(item.manifest.id) ? (en ? 'Verifying plugin…' : '正在核验插件…') : !item.available ? (en ? 'Installed' : '已安装') : item.installedVersion ? (en ? 'Update' : '更新') : (en ? 'Install' : '安装') }}
             </NButton>
             <DesktopExtensionCompatibilityHint v-if="item.incompatibility" :issue="item.incompatibility" :language="language" />
           </template>

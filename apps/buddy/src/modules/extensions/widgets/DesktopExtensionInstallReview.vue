@@ -2,7 +2,7 @@
 import type { ExtensionReview } from '@buddy-shared/extensions/extensionApi'
 import type { FileOpeningChoice, FileOpeningReviewChoice } from '@buddy-shared/files/fileOpening'
 import { Warning20Regular } from '@vicons/fluent'
-import { NButton, NCheckbox, NEllipsis, NModal, NTag } from 'naive-ui'
+import { NAlert, NButton, NCheckbox, NEllipsis, NModal, NTag } from 'naive-ui'
 import { computed, shallowRef, watch } from 'vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopPluginIcon from '@/shared/ui/icon/DesktopPluginIcon.vue'
@@ -12,10 +12,13 @@ import DesktopExtensionReviewCapabilities from './DesktopExtensionReviewCapabili
 import DesktopExtensionReviewPermissions from './DesktopExtensionReviewPermissions.vue'
 
 const props = defineProps<{ review: ExtensionReview, language: string, busy: boolean }>()
-const emit = defineEmits<{ cancel: [], install: [applyUpdate: boolean, choices: FileOpeningChoice[]] }>()
+const emit = defineEmits<{ cancel: [], install: [applyUpdate: boolean, choices: FileOpeningChoice[], acceptUnverified: boolean] }>()
 const labels = computed(() => extensionLabels(props.language))
 const english = computed(() => props.language === 'en-US')
 const applyUpdate = shallowRef(true)
+const acceptedRisk = shallowRef(false)
+const unverified = computed(() => !!props.review.source?.mismatch)
+const canInstall = computed(() => !props.busy && (!unverified.value || acceptedRisk.value))
 const associations = computed(() => props.review.fileAssociations ?? [])
 const skills = computed(() => props.review.manifest.contributes.skills.map(skill => ({
   id: skill.id,
@@ -26,6 +29,7 @@ const selectedAssociations = shallowRef(initialAssociations())
 watch(() => props.review.token, () => {
   selectedAssociations.value = initialAssociations()
   applyUpdate.value = true
+  acceptedRisk.value = false
 })
 function initialAssociations(): FileOpeningChoice[] {
   const selected = new Map<string, FileOpeningReviewChoice>()
@@ -38,10 +42,10 @@ function initialAssociations(): FileOpeningChoice[] {
     .map(({ extension, location, providerId }) => ({ extension, location, providerId }))
 }
 function install() {
-  if (props.busy)
+  if (!canInstall.value)
     return
   const changes = selectedAssociations.value.filter(selected => associations.value.some(choice => choice.extension === selected.extension && choice.location === selected.location && choice.providerId === selected.providerId && choice.currentProviderId !== selected.providerId))
-  emit('install', applyUpdate.value, changes)
+  emit('install', applyUpdate.value, changes, unverified.value && acceptedRisk.value)
 }
 const source = computed(() => props.review.development ? (english.value ? 'Development folder' : '开发目录') : props.review.source ? (english.value ? 'Lexora Marketplace' : 'Lexora 插件市场') : (english.value ? 'Local package' : '本地插件包'))
 </script>
@@ -80,6 +84,15 @@ const source = computed(() => props.review.development ? (english.value ? 'Devel
     <p v-if="review.manifest.description" class="mt-3 mb-0 text-muted text-[13px] leading-[1.65] [overflow-wrap:anywhere]">
       {{ review.manifest.description }}
     </p>
+
+    <NAlert v-if="unverified" class="mt-4" type="warning" :title="english ? 'Plugin contents differ from the catalog' : '插件内容与目录记录不一致'" data-testid="extension-verification-warning">
+      <p class="m-0">
+        {{ english ? 'This package may have been republished or tampered with. Its contents no longer match the catalog record. Review the permissions below and only continue if you trust this package.' : '这个安装包可能被重新发布或篡改，实际内容与目录收录时不同。请检查下方实际申请的权限，仅在信任这份安装包时继续。' }}
+      </p>
+      <NCheckbox v-model:checked="acceptedRisk" class="mt-3" :disabled="busy" data-testid="extension-accept-unverified">
+        {{ english ? 'I understand the risk and still want to install this package' : '我已了解风险，仍要安装这份插件包' }}
+      </NCheckbox>
+    </NAlert>
 
     <DesktopExtensionReviewCapabilities
       :key="review.token"
@@ -129,16 +142,16 @@ const source = computed(() => props.review.development ? (english.value ? 'Devel
     </div>
 
     <template #footer>
-      <div class="flex items-center gap-3">
-        <p class="m-0 mr-auto flex min-w-0 flex-1 items-start gap-1.5 text-[12px] font-medium text-warning leading-[1.6]">
+      <div class="flex items-center justify-end gap-3">
+        <p v-if="!unverified" class="m-0 mr-auto flex min-w-0 flex-1 items-start gap-1.5 text-[12px] font-medium text-warning leading-[1.6]">
           <DesktopIcon class="mt-0.5 shrink-0" :component="Warning20Regular" :size="16" aria-hidden="true" />
           {{ english ? 'Only install plugins from sources you trust.' : '请确认你信任此插件的来源。' }}
         </p>
         <NButton @click="emit('cancel')">
           {{ labels.cancel }}
         </NButton>
-        <NButton type="primary" :disabled="busy" data-testid="extension-confirm-install" @click="install">
-          {{ review.currentVersion ? (applyUpdate ? labels.updateAndApply : labels.update) : labels.confirm }}
+        <NButton :type="unverified ? 'warning' : 'primary'" :disabled="!canInstall" data-testid="extension-confirm-install" @click="install">
+          {{ unverified ? (english ? 'Install anyway' : '仍然安装') : review.currentVersion ? (applyUpdate ? labels.updateAndApply : labels.update) : labels.confirm }}
         </NButton>
       </div>
     </template>

@@ -295,7 +295,7 @@ export function registerExtensionIpc(options: {
           const result = await dialog.showOpenDialog(owner, { properties: input.development ? ['openDirectory'] : ['openFile'], ...(input.development ? {} : { filters: [{ name: 'Lexora Extension', extensions: ['lexora-extension', 'zip'] }] }) })
           return result.canceled || !result.filePaths[0] ? null : await reviewResult(() => service.review(result.filePaths[0]!, input.development))
         }
-        case 'install': return await service.install(input.token, input.choices)
+        case 'install': return await service.install(input.token, input.choices, input.acceptUnverified)
         case 'cancelInstall': return service.cancelInstall(input.token)
         case 'enable': return await service.enable(input.id, input.enabled)
         case 'restart': return await service.restart(input.id)

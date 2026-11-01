@@ -26,7 +26,7 @@ export function createExtensionApi(): ExtensionApi {
     reviewCatalog: (id, version) => request({ action: 'reviewCatalog', id, version }),
     cancelInstallation: id => request({ action: 'cancelInstallation', id }),
     selectPackage: (development = false) => request({ action: 'selectPackage', development }),
-    install: (token, choices) => request({ action: 'install', token, choices }),
+    install: (token, choices, acceptUnverified = false) => request({ action: 'install', token, choices, acceptUnverified }),
     cancelInstall: token => request({ action: 'cancelInstall', token }),
     enable: (id, enabled) => request({ action: 'enable', id, enabled }),
     restart: id => request({ action: 'restart', id }),

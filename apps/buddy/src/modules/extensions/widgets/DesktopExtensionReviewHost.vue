@@ -5,7 +5,7 @@ import type { FileOpeningChoice } from '@buddy-shared/files/fileOpening'
 import { useMessage } from 'naive-ui'
 import { onScopeDispose, shallowRef } from 'vue'
 import { useExtensionContext } from '../extensionContext'
-import { extensionLabels } from '../extensionLabels'
+import { extensionLabels, extensionVerificationError } from '../extensionLabels'
 import { extensionErrorCode } from '../state/useExtensionState'
 import DesktopExtensionIncompatibleReview from './DesktopExtensionIncompatibleReview.vue'
 import DesktopExtensionInstallReview from './DesktopExtensionInstallReview.vue'
@@ -26,19 +26,19 @@ onScopeDispose(state.api.onReview((next) => {
   review.value = 'token' in next ? next : null
 }))
 onScopeDispose(cancel)
-async function install(applyUpdate: boolean, choices: FileOpeningChoice[]) {
+async function install(applyUpdate: boolean, choices: FileOpeningChoice[], acceptUnverified: boolean) {
   if (!review.value || state.busyIds.has(review.value.manifest.id))
     return
   const current = review.value
   review.value = null
   try {
-    const installed = await state.install(current, applyUpdate, choices)
+    const installed = await state.install(current, applyUpdate, choices, acceptUnverified)
     if (installed && current.currentVersion) {
       const labels = extensionLabels(language.value)
       message.success(applyUpdate ? labels.updateApplied : labels.updateDeferred)
     }
   }
-  catch (error) { message.error(extensionErrorCode(error)) }
+  catch (error) { message.error(extensionVerificationError(extensionErrorCode(error), language.value)) }
 }
 </script>
 

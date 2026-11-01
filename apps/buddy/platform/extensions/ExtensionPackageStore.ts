@@ -138,7 +138,7 @@ export class ExtensionPackageStore {
     try {
       const inspected = await this.processPackage(request, signal)
       signal?.throwIfAborted()
-      if (expected && !isDeepStrictEqual(inspected.manifest, expected))
+      if (expected && (inspected.manifest.id !== expected.id || inspected.manifest.version !== expected.version || (!source?.mismatch && !isDeepStrictEqual(inspected.manifest, expected))))
         throw new Error('EXTENSION_CATALOG_MANIFEST_MISMATCH')
       return this.#acceptReview(inspected, development, source)
     }
@@ -180,10 +180,17 @@ export class ExtensionPackageStore {
     this.#candidates.delete(token)
   }
 
-  async prepare(token: string, compile: ExtensionCompiler | undefined, signal: AbortSignal, report: (message: string) => void): Promise<boolean> {
+  #candidate(token: string, acceptUnverified: boolean): ExtensionCandidate {
     const candidate = this.#candidates.get(token)
     if (!candidate || candidate.expires < Date.now())
       throw new Error('EXTENSION_REVIEW_EXPIRED')
+    if (candidate.package.source?.mismatch && !acceptUnverified)
+      throw new Error('EXTENSION_UNVERIFIED_CONFIRMATION_REQUIRED')
+    return candidate
+  }
+
+  async prepare(token: string, compile: ExtensionCompiler | undefined, signal: AbortSignal, report: (message: string) => void, acceptUnverified = false): Promise<boolean> {
+    const candidate = this.#candidate(token, acceptUnverified)
     signal.throwIfAborted()
     if (candidate.package.manifest.format !== 'source')
       return false
@@ -205,11 +212,9 @@ export class ExtensionPackageStore {
     return true
   }
 
-  async install(token: string, signal?: AbortSignal, choices: FileOpeningChoice[] = []): Promise<string> {
-    const candidate = this.#candidates.get(token)
+  async install(token: string, signal?: AbortSignal, choices: FileOpeningChoice[] = [], acceptUnverified = false): Promise<string> {
+    const candidate = this.#candidate(token, acceptUnverified)
     this.#candidates.delete(token)
-    if (!candidate || candidate.expires < Date.now())
-      throw new Error('EXTENSION_REVIEW_EXPIRED')
     const { package: pkg } = candidate
     const selected = new Set<string>()
     const reviewed = choices.map((raw) => {
