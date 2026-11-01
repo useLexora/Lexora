@@ -8,7 +8,7 @@ export function createStartupFixture() {
   const startup = new DesktopStartup()
   const desktop = new ServiceLifecycleSource()
   const runtimeChanges = new Emitter<RuntimeLifecycleChange>(() => {})
-  let runtime: RuntimeLifecycleSnapshot = { revision: 0, generation: null, status: 'stopped', errorCode: null, connection: null, services: null }
+  let runtime: RuntimeLifecycleSnapshot = { revision: 0, generation: null, status: 'stopped', maintenance: null, errorCode: null, connection: null, services: null }
   let renderer = new ServiceLifecycleSource()
   startup.bindDesktop(desktop.reader)
   startup.bindRuntime({ get lifecycleState() {
@@ -19,6 +19,7 @@ export function createStartupFixture() {
       revision: runtime.revision + 1,
       generation,
       status,
+      maintenance: null,
       errorCode: status === 'offline' ? 'RUNTIME_START_FAILED' : null,
       connection: { component: 'runtime.connection', kind: 'service', operationId: generation, status: status === 'ready' ? 'ready' : status === 'offline' ? 'start_failed' : 'starting' },
       services: null,

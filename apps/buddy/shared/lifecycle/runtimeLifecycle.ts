@@ -2,11 +2,13 @@ import type { Event } from '../events/Emitter'
 import type { LifecycleComponent, ServiceLifecycleSnapshot } from './serviceLifecycle'
 
 export type RuntimeLifecycleStatus = 'stopped' | 'starting' | 'ready' | 'restarting' | 'offline' | 'stopping'
+export type RuntimeMaintenance = 'backup'
 
 export interface RuntimeLifecycleSnapshot {
   readonly revision: number
   readonly generation: string | null
   readonly status: RuntimeLifecycleStatus
+  readonly maintenance: RuntimeMaintenance | null
   readonly errorCode: string | null
   readonly connection: LifecycleComponent | null
   readonly services: ServiceLifecycleSnapshot | null

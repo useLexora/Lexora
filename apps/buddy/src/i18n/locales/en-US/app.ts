@@ -18,6 +18,7 @@ export default {
   'desktop.navigation.buddies': 'Companions',
   'desktop.loading.app': 'Preparing your workspace…',
   'desktop.loading.pane': 'Loading…',
+  'desktop.loading.backup': 'Backing up data…',
   'desktop.loading.failed': 'Unable to load. Please try again.',
   'desktop.loading.retry': 'Retry',
   'desktop.loading.openStorage': 'Data and backups',

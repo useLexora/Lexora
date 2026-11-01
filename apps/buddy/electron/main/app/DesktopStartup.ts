@@ -46,6 +46,7 @@ export class DesktopStartup {
   #state: ApplicationStartupState = {
     revision: 0,
     generation: null,
+    maintenance: null,
     hasBeenReady: false,
     status: 'starting',
     stages: REQUIRED_HOSTS.map(stage => ({ stage, status: 'pending' })),
@@ -184,7 +185,7 @@ export class DesktopStartup {
     const failed = this.#failure !== null || stages.some(stage => stage.status === 'failed')
     const ready = !failed && REQUIRED_HOSTS.every(id => stages.some(stage => stage.stage === id && stage.status === 'completed'))
     const status = failed ? 'failed' : ready ? 'ready' : 'starting'
-    const next: ApplicationStartupState = { ...this.#state, generation: runtime?.generation ?? null, stages, status, hasBeenReady: this.#state.hasBeenReady || ready }
+    const next: ApplicationStartupState = { ...this.#state, generation: runtime?.generation ?? null, maintenance: runtime?.maintenance ?? null, stages, status, hasBeenReady: this.#state.hasBeenReady || ready }
     const transition: Omit<StartupChange, 'state'> = {}
     if (ready && this.#state.status !== 'ready') {
       Object.assign(transition, { transition: this.#state.hasBeenReady ? 'recovered' : 'ready', durationMs: Math.round(performance.now() - this.#startedAt) })

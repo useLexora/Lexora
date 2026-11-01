@@ -131,6 +131,10 @@ export function createChatQueueRepository(database: DatabaseSync) {
     hasPending(conversationId: string): boolean {
       return Boolean(database.prepare('SELECT 1 FROM chat_queue WHERE conversation_id = ? AND state IN (\'waiting\', \'paused\') LIMIT 1').get(conversationId))
     },
+    hasWaiting(): boolean {
+      return Boolean(database.prepare(`SELECT 1 FROM chat_queue q JOIN conversations c ON c.id = q.conversation_id
+        WHERE q.state = 'waiting' AND c.deleted_at IS NULL AND c.active_branch_id = q.branch_id LIMIT 1`).get())
+    },
     continuationScopes(): LocalChatQueueScope[] {
       return database.prepare(`SELECT DISTINCT q.conversation_id AS conversationId, q.branch_id AS branchId
         FROM chat_queue q JOIN conversations c ON c.id = q.conversation_id

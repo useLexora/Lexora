@@ -162,6 +162,10 @@ export class ChatTurnService {
     this.#options = options
   }
 
+  get hasPendingOperations(): boolean {
+    return this.#pending.size > 0
+  }
+
   start(input: BuddyStartTurnInput): Promise<BuddyTurnStart> {
     return this.#run(() => this.#start({ ...input }))
   }

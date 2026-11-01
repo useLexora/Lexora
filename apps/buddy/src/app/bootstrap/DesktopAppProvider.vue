@@ -284,7 +284,7 @@ const lifecycle = useDesktopLifecycle({
 })
 const shortcuts = useDesktopKeybindings(workbench.controller.registry, stores.applicationSettings, () => shell.appInfo.value?.platform ?? 'linux')
 const { ready } = lifecycle
-provide(runtimeAvailabilityKey, { loading: lifecycle.loading, failed: lifecycle.failed, language: stores.applicationSettings.language, retry: lifecycle.retry })
+provide(runtimeAvailabilityKey, { loading: lifecycle.loading, maintenance: lifecycle.maintenance, failed: lifecycle.failed, language: stores.applicationSettings.language, retry: lifecycle.retry })
 const navigation = useDesktopNavigation({
   router,
   ready,

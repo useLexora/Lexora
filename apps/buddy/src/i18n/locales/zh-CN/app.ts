@@ -16,6 +16,7 @@ export default {
   'desktop.navigation.buddies': '伙伴',
   'desktop.loading.app': '正在准备工作台…',
   'desktop.loading.pane': '正在加载…',
+  'desktop.loading.backup': '正在备份数据…',
   'desktop.loading.failed': '暂时无法加载，请重试。',
   'desktop.loading.retry': '重试',
   'desktop.loading.openStorage': '数据与备份',

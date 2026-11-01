@@ -28,6 +28,10 @@ export class AutomationDispatcher {
     this.onDidChange = this.#changes.event
   }
 
+  get hasPendingOperations(): boolean {
+    return this.#pending.size > 0
+  }
+
   dispatch(candidate: AutomationOccurrence): Promise<void> {
     if (this.#stopping.signal.aborted)
       return Promise.reject(new DOMException('Automation dispatch is stopping', 'AbortError'))

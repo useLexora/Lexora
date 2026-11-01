@@ -70,6 +70,10 @@ export class ChatQueueService {
     await Promise.allSettled([...this.#operations.values(), ...this.#enqueues, ...[...this.#cancellations.values()].map(cancellation => cancellation.completion)])
   }
 
+  get hasPendingOperations(): boolean {
+    return this.#operations.size > 0 || this.#enqueues.size > 0 || this.#cancellations.size > 0
+  }
+
   continuationScopes(): LocalChatQueueScope[] {
     return this.#options.queue.continuationScopes()
   }
