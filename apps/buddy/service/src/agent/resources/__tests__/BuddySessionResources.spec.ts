@@ -96,6 +96,8 @@ describe('buddySessionResources', () => {
       expect(directoryContext).toContain('wsl.exe -d Ubuntu-24.04 --cd /home/lenovo/code/Foo --exec <program> <args>')
       expect(directoryContext).toContain(String.raw`\\wsl.localhost\Ubuntu-24.04\tmp\<unique-name>.sh`)
       expect(directoryContext.match(/- \\\\wsl/g)).toHaveLength(1)
+      expect(directoryContext).toContain('When a lexora_wsl_shell tool is available, run shell commands for the working directory with it')
+      expect(directoryContext).toContain('use grep, find and ls rather than a shell script')
       expect((await resolveContext('/workspace')).revision).not.toBe(revision)
     })
 

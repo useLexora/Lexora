@@ -151,9 +151,11 @@ function createWslNotes(directories: readonly (string | undefined)[]): string[] 
   return [
     'WSL directories (reached from Windows through \\\\wsl.localhost):',
     ...entries.map(entry => `- ${entry.path} = ${entry.distribution}:${entry.linuxPath}`),
+    'When a lexora_wsl_shell tool is available, run shell commands for the working directory with it: write them for bash with Linux paths, with no wsl.exe and no script file. The rest of this section applies when it is not available and to other WSL directories.',
     'The shell tool runs on Windows, not in WSL. Run commands for these directories inside WSL, with Linux paths:',
     `  ${command} --exec <program> <args>`,
     `For pipes, variables or multi-line logic, use the write tool to save a bash script with LF line endings at \\\\wsl.localhost\\${first.distribution}\\tmp\\<unique-name>.sh, run it with ${command} --exec bash /tmp/<unique-name>.sh, then delete it.`,
+    'To search, use grep, find and ls rather than a shell script: they run inside WSL with ripgrep, so they stay fast on the whole repository and skip .git. They need ripgrep in the distribution (sudo apt install ripgrep); find lists files, not directories.',
     'Use read/write/edit for file changes. These commands run on the host outside the shell sandbox and need host approval.',
   ]
 }

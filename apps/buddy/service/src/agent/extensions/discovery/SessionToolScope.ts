@@ -9,7 +9,7 @@ import { toolCatalogId, toolCatalogPolicies } from './toolCatalog'
 import { TOOL_SEARCH_NAME } from './toolDiscoveryContract'
 
 const CONTROL_TOOLS = new Set([TOOL_SEARCH_NAME, CODEMODE_TOOL_NAME, 'lexora_agents'])
-const READ_ONLY_EXCLUDED_TOOLS = new Set(['write', 'edit', 'lexora_host_shell', 'lexora_authorize_directory'])
+const READ_ONLY_EXCLUDED_TOOLS = new Set(['write', 'edit', 'lexora_host_shell', 'lexora_wsl_shell', 'lexora_authorize_directory'])
 
 interface ScopedTool {
   readonly id: string

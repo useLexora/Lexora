@@ -235,6 +235,7 @@ import { registerWebSettingsRpc, WebSettingsService } from './web/WebSettingsSer
 import { normalizeComposerWorkspace } from './workspace/normalizeComposerWorkspace'
 import { registerWorkspaceStateRpc } from './workspace/registerWorkspaceStateRpc'
 import { WorkspaceStateService } from './workspace/WorkspaceStateService'
+import { sharedWslHosts } from './wsl/sharedWslHosts'
 
 export interface StartBuddyServiceOptions {
   record?: ApplicationDiagnosticReporter
@@ -385,6 +386,10 @@ export async function startBuddyService(
       defer(() => engine.dispose())
       await engine.ready()
       return engine
+    })
+    // The WSL search helpers are started on first use; this only closes them with the service.
+    await host.start('runtime.wsl_hosts', ({ defer }) => {
+      defer(() => sharedWslHosts.dispose())
     })
     const fileResources = new FileResourceCoordinator(fileEngine)
     const spaceFiles = await host.start('runtime.space_files', ({ defer }) => {

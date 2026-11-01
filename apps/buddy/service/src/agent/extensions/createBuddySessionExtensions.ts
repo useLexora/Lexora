@@ -35,6 +35,7 @@ import { ToolExecutionPermissions } from '../../permissions/ToolExecutionPermiss
 import { SandboxDirectoryPermissions } from '../../sandbox/SandboxDirectoryPermissions'
 import { createShellCapability } from '../../sandbox/shellCapability'
 import { resolveShellExecution } from '../../sandbox/shellExecution'
+import { createWslShellCapability } from '../../sandbox/wslShellCapability'
 import { createMutationToolWrapper } from './changeCaptureExtension'
 import { createChatQueueExtension } from './chatQueueExtension'
 import { createCodemodeCapability } from './codemodeExtension'
@@ -223,6 +224,11 @@ export async function createBuddySessionExtensions(
       assertExecutionAllowed: ({ run }) => services.delegation?.assertShellExecutionAllowed(run.runId),
     })
     capabilities.push(shellCapability)
+    capabilities.push(createWslShellCapability({
+      cwd: options.canonicalRoot,
+      getRunContext: () => runContext.current,
+      assertExecutionAllowed: ({ run }) => services.delegation?.assertShellExecutionAllowed(run.runId),
+    }))
     if (services.delegation) {
       capabilities.push(createDelegationCapability({
         service: services.delegation,

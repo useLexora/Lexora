@@ -325,6 +325,34 @@ describe('permissionEngine', () => {
     })
   })
 
+  it('treats a command in WSL as a host command that a Windows sandbox cannot confine', async () => {
+    const fixture = await createFixture()
+    const engine = createEngine(fixture.home)
+    const command = { command: 'git status --short' }
+
+    await expect(engine.decide(request(fixture, { arguments: command, profile: 'read_only', toolName: 'lexora_wsl_shell' })))
+      .resolves
+      .toMatchObject({ code: 'READ_ONLY_PROFILE', type: 'deny' })
+    // Even a command that a shell policy would call safe is asked about, as with lexora_host_shell.
+    for (const toolName of ['lexora_host_shell', 'lexora_wsl_shell']) {
+      await expect(engine.decide(request(fixture, { arguments: command, profile: 'workspace_write', toolName })))
+        .resolves
+        .toMatchObject({ shell: { reason: 'sandbox-bypass' }, type: 'ask' })
+    }
+    await expect(engine.decide(request(fixture, { arguments: command, profile: 'full_access', toolName: 'lexora_wsl_shell' })))
+      .resolves
+      .toEqual({ type: 'allow' })
+    // Full access is full access under every approval policy, as for the other shells.
+    await expect(engine.decide(request(fixture, { approvalPolicy: 'manual', arguments: command, profile: 'full_access', toolName: 'lexora_wsl_shell' })))
+      .resolves
+      .toEqual({ type: 'allow' })
+    for (const arguments_ of [{}, { command: 42 }, { command: ' ' }]) {
+      await expect(engine.decide(request(fixture, { arguments: arguments_, profile: 'full_access', toolName: 'lexora_wsl_shell' })))
+        .resolves
+        .toMatchObject({ code: 'VALIDATION_FAILED', type: 'deny' })
+    }
+  })
+
   it('automatically approves unknown capabilities and system mutations only in full access', async () => {
     const fixture = await createFixture()
     const engine = createEngine(fixture.home)
