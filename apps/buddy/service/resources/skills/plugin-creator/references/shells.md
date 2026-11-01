@@ -1,6 +1,6 @@
 # 本机命令解释器
 
-此能力要求 `apiVersion: 4`、`engines.lexora: ">=0.14.0 <1.0.0"` 和独立的 `permissions.shells: true`。API 1–3 插件仍可使用原有能力；只增加版本范围不能让旧 API 3 宿主识别这项能力。
+此能力要求 `apiVersion: 4`、`engines.lexora: ">=0.14.0"` 和独立的 `permissions.shells: true`。API 1–3 插件仍可使用原有能力；只增加版本范围不能让旧 API 3 宿主识别这项能力。
 
 插件声明候选和设置映射，Lexora 检测并执行；插件不获得进程、任意命令或配置写权限。只支持本机已有解释器的非交互命令，不安装解释器，不使用 WSL、PTY 或交互终端。
 
