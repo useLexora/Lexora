@@ -182,3 +182,115 @@ it('retains a browser viewport while hidden without exposing input or focus', as
     layout.dispose()
   }
 })
+
+function transition(type: 'transitionrun' | 'transitionend' | 'transitioncancel', target: Element, propertyName = 'width') {
+  target.dispatchEvent(Object.assign(new Event(type, { bubbles: true }), { propertyName }))
+}
+
+function movableAnchor() {
+  const layout = new SurfaceLayoutController()
+  const sidebar = document.createElement('div')
+  const anchor = document.createElement('div')
+  const surface = document.createElement('iframe')
+  document.body.append(sidebar, anchor, surface)
+  const position = { left: 190, measured: 0 }
+  anchor.getBoundingClientRect = () => {
+    position.measured++
+    return new DOMRect(position.left, 0, 700, 400)
+  }
+  layout.attach(surface, { anchor, visible: true, interactive: true, layer: 'content' })
+  layout.start()
+  return { layout, sidebar, surface, position }
+}
+
+it('follows an anchor that a sibling transition moves without resizing it, and settles at the end', async () => {
+  const { layout, sidebar, surface, position } = movableAnchor()
+  try {
+    await vi.advanceTimersByTimeAsync(20)
+    expect(surface.style.left).toBe('190px')
+    transition('transitionrun', sidebar)
+    position.left = 100
+    await vi.advanceTimersByTimeAsync(16)
+    expect(surface.style.left).toBe('100px')
+    position.left = 40
+    await vi.advanceTimersByTimeAsync(16)
+    expect(surface.style.left).toBe('40px')
+    position.left = 0
+    transition('transitionend', sidebar)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(surface.style.left).toBe('0px')
+    await vi.advanceTimersByTimeAsync(16)
+    expect(vi.getTimerCount()).toBe(0)
+  }
+  finally {
+    layout.dispose()
+  }
+})
+
+it('keeps following until every overlapping layout transition has ended or been cancelled', async () => {
+  const { layout, sidebar, surface, position } = movableAnchor()
+  try {
+    await vi.advanceTimersByTimeAsync(20)
+    expect(surface.style.left).toBe('190px')
+    transition('transitionrun', sidebar, 'width')
+    transition('transitionrun', sidebar, 'opacity')
+    transition('transitionrun', sidebar, 'transform')
+    transition('transitionend', sidebar, 'width')
+    position.left = 60
+    await vi.advanceTimersByTimeAsync(32)
+    expect(surface.style.left).toBe('60px')
+    transition('transitioncancel', sidebar, 'transform')
+    await vi.advanceTimersByTimeAsync(32)
+    expect(vi.getTimerCount()).toBe(0)
+  }
+  finally {
+    layout.dispose()
+  }
+})
+
+it('ignores transitions that cannot move an anchor', async () => {
+  const { layout, sidebar, surface, position } = movableAnchor()
+  try {
+    await vi.advanceTimersByTimeAsync(20)
+    transition('transitionrun', sidebar, 'background-color')
+    transition('transitionrun', sidebar, 'opacity')
+    position.left = 0
+    await vi.advanceTimersByTimeAsync(100)
+    expect(surface.style.left).toBe('190px')
+    expect(vi.getTimerCount()).toBe(0)
+  }
+  finally {
+    layout.dispose()
+  }
+})
+
+it('stops following when the transitioning element is removed without reporting its end', async () => {
+  const { layout, sidebar, position } = movableAnchor()
+  try {
+    await vi.advanceTimersByTimeAsync(20)
+    transition('transitionrun', sidebar)
+    sidebar.remove()
+    await vi.advanceTimersByTimeAsync(16)
+    const measured = position.measured
+    await vi.advanceTimersByTimeAsync(100)
+    expect(position.measured).toBe(measured)
+    expect(vi.getTimerCount()).toBe(0)
+  }
+  finally {
+    layout.dispose()
+  }
+})
+
+it('stops following and listening when disposed during a transition', async () => {
+  const { layout, sidebar, position } = movableAnchor()
+  await vi.advanceTimersByTimeAsync(20)
+  transition('transitionrun', sidebar)
+  layout.dispose()
+  expect(vi.getTimerCount()).toBe(0)
+  const measured = position.measured
+  transition('transitionrun', sidebar)
+  await vi.advanceTimersByTimeAsync(100)
+  expect(position.measured).toBe(measured)
+  expect(vi.getTimerCount()).toBe(0)
+})

@@ -6,14 +6,19 @@ interface SurfaceEntry {
   observed: HTMLElement[]
 }
 
+// A transition on a sibling can move an anchor without resizing it or touching its ancestors.
+const LAYOUT_TRANSITION = /^(?:width|height|(?:min|max)-(?:width|height)|left|right|top|bottom|inset|margin|padding|flex|(?:row-|column-)?gap|grid|transform|translate|scale|rotate)(?:-|$)/
+
 export class SurfaceLayoutController implements SurfaceLayout {
   readonly #entries = new Map<HTMLElement, SurfaceEntry>()
   readonly #observed = new Map<HTMLElement, number>()
+  readonly #transitions = new Map<Element, number>()
   #resize: ResizeObserver | null = null
   #mutation: MutationObserver | null = null
   #observationChanged = true
   #queued = false
   #started = false
+  #frame = 0
 
   start(): void {
     if (this.#started)
@@ -24,6 +29,9 @@ export class SurfaceLayoutController implements SurfaceLayout {
     for (const element of this.#observed.keys()) this.#resize.observe(element)
     window.addEventListener('resize', this.invalidate)
     document.addEventListener('scroll', this.invalidate, true)
+    document.addEventListener('transitionrun', this.#transitionStarted, true)
+    document.addEventListener('transitionend', this.#transitionStopped, true)
+    document.addEventListener('transitioncancel', this.#transitionStopped, true)
     this.invalidate()
   }
 
@@ -75,10 +83,58 @@ export class SurfaceLayoutController implements SurfaceLayout {
     })
   }
 
+  readonly #transitionStarted = (event: Event): void => {
+    const target = this.#layoutTransitionTarget(event)
+    if (!target)
+      return
+    this.#transitions.set(target, (this.#transitions.get(target) ?? 0) + 1)
+    this.#follow()
+  }
+
+  readonly #transitionStopped = (event: Event): void => {
+    const target = this.#layoutTransitionTarget(event)
+    if (!target)
+      return
+    const count = (this.#transitions.get(target) ?? 0) - 1
+    if (count > 0)
+      this.#transitions.set(target, count)
+    else
+      this.#transitions.delete(target)
+    this.invalidate()
+  }
+
+  #layoutTransitionTarget(event: Event): Element | null {
+    const { propertyName, pseudoElement } = event as TransitionEvent
+    return !pseudoElement && event.target instanceof Element && LAYOUT_TRANSITION.test(propertyName) ? event.target : null
+  }
+
+  // Measure once per frame while a layout transition runs, so surfaces follow the animation instead of jumping at its end.
+  #follow(): void {
+    if (this.#frame || !this.#started)
+      return
+    this.#frame = requestAnimationFrame(() => {
+      this.#frame = 0
+      // An element removed mid-transition may never report transitionend or transitioncancel.
+      for (const element of this.#transitions.keys()) {
+        if (!element.isConnected)
+          this.#transitions.delete(element)
+      }
+      this.invalidate()
+      if (this.#transitions.size)
+        this.#follow()
+    })
+  }
+
   dispose(): void {
     this.#started = false
     window.removeEventListener('resize', this.invalidate)
     document.removeEventListener('scroll', this.invalidate, true)
+    document.removeEventListener('transitionrun', this.#transitionStarted, true)
+    document.removeEventListener('transitionend', this.#transitionStopped, true)
+    document.removeEventListener('transitioncancel', this.#transitionStopped, true)
+    cancelAnimationFrame(this.#frame)
+    this.#frame = 0
+    this.#transitions.clear()
     this.#resize?.disconnect()
     this.#resize = null
     this.#mutation?.disconnect()
