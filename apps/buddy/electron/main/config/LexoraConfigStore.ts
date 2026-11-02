@@ -190,7 +190,7 @@ const petConfigSchema = z.object({
 const lexoraConfigFileSchema = z.object({
   runtime: z.object({
     cache_warming: runtimePreferencesSchema.shape.cacheWarming.default(DEFAULT_RUNTIME_PREFERENCES.cacheWarming),
-    codemode: runtimePreferencesSchema.shape.codemode.default(DEFAULT_RUNTIME_PREFERENCES.codemode),
+    codemode: z.preprocess(value => typeof value === 'boolean' ? value ? 'on' : 'off' : value, runtimePreferencesSchema.shape.codemode.default(DEFAULT_RUNTIME_PREFERENCES.codemode)),
     codemode_worker_limit: runtimePreferencesSchema.shape.codemodeWorkerLimit.default(DEFAULT_RUNTIME_PREFERENCES.codemodeWorkerLimit),
     codemode_overflow: runtimePreferencesSchema.shape.codemodeOverflow.default(DEFAULT_RUNTIME_PREFERENCES.codemodeOverflow),
     model_retry_limit: runtimePreferencesSchema.shape.modelRetryLimit.default(DEFAULT_RUNTIME_PREFERENCES.modelRetryLimit),

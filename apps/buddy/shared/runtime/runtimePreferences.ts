@@ -8,10 +8,12 @@ export type ModelRetryLimit = z.infer<typeof modelRetryLimitSchema>
 export const codemodeWorkerLimitSchema = z.union([z.number().int().positive(), z.literal('unlimited')])
 export type CodemodeWorkerLimit = z.infer<typeof codemodeWorkerLimitSchema>
 export const codemodeOverflowSchema = z.enum(['wait', 'reject'])
+export const codemodeModeSchema = z.enum(['off', 'on', 'only'])
+export type CodemodeMode = z.infer<typeof codemodeModeSchema>
 
 export const runtimePreferencesSchema = z.object({
   cacheWarming: z.enum(['off', 'streaming']),
-  codemode: z.boolean(),
+  codemode: codemodeModeSchema,
   codemodeWorkerLimit: codemodeWorkerLimitSchema,
   codemodeOverflow: codemodeOverflowSchema,
   modelRetryLimit: modelRetryLimitSchema,
@@ -21,7 +23,7 @@ export type RuntimePreferences = z.infer<typeof runtimePreferencesSchema>
 
 export const DEFAULT_RUNTIME_PREFERENCES: RuntimePreferences = {
   cacheWarming: 'off',
-  codemode: true,
+  codemode: 'on',
   codemodeWorkerLimit: DEFAULT_CODEMODE_WORKER_LIMIT,
   codemodeOverflow: 'wait',
   modelRetryLimit: DEFAULT_MODEL_RETRY_LIMIT,

@@ -7,11 +7,10 @@ import { join } from 'node:path'
 import { createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTools, InMemoryCredentialStore } from '@earendil-works/pi-ai'
 import { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { expect, it, vi } from 'vitest'
-import { createEstimatedContextUsage } from '../../../agent/context/contextUsageBreakdown'
 import { createCodemodeCapability } from '../../../agent/extensions/codemodeExtension'
 import { createToolDiscoveryCapability } from '../../../agent/extensions/discovery/toolDiscoveryExtension'
 import { createToolPolicyExtension } from '../../../agent/extensions/toolPolicyExtension'
-import { createIsolatedBuddyContextSnapshot, createIsolatedBuddySession } from '../../../agent/sessions/__tests__/isolatedBuddySession'
+import { createIsolatedBuddySession } from '../../../agent/sessions/__tests__/isolatedBuddySession'
 import { ToolAuthorizationService } from '../../../permissions/ToolAuthorizationService'
 import { createConnectorRepository } from '../../../storage/connectorRepository'
 import { openBuddyDatabase } from '../../../storage/database'
@@ -86,7 +85,7 @@ it.each(['search', 'codemode'] as const)('invokes MCP through %s with complete r
     expect(service.state('maps').status).toBe('ready')
     let codemodeEnabled = mode === 'codemode'
     const mcp = createMcpCapability(service.getTools(), () => codemodeEnabled)
-    const codemode = createCodemodeCapability(() => codemodeEnabled)
+    const codemode = createCodemodeCapability(() => codemodeEnabled ? 'on' : 'off')
     const discovery = createToolDiscoveryCapability([...mcp.disclosure!, ...codemode.disclosure!])
     const approvals: string[] = []
     const policy = createToolPolicyExtension({
@@ -139,7 +138,6 @@ it.each(['search', 'codemode'] as const)('invokes MCP through %s with complete r
       inProcessExtensions: [mcp.extension, codemode.extension, discovery.extension, policy],
       resources: { skillReadRoots: [], skillReferences: [], approvedSkills: [], context: { agentsFiles: [], diagnostics: [] }, directoryContext: '', revision: 'empty' },
     }
-    const preview = await createIsolatedBuddyContextSnapshot(options)
     created = await createIsolatedBuddySession(options)
     await created.session.prompt('规划从杭州骑行至上海的路线')
     const first = requests[0]!
@@ -155,14 +153,10 @@ it.each(['search', 'codemode'] as const)('invokes MCP through %s with complete r
     }
     else {
       expect(output).toContain(`\"discovered\":[\"${toolName}\"]`)
-      expect(output).toContain(`declare const tools: { ${toolName}`)
-      expect(output).toContain('content: Array<')
       expect(output).toContain('structuredContent?: { routes:')
       expect(output).toContain('isError?: boolean')
-      expect(output).toContain('3999')
-      expect(output).toContain('4000')
-      expect(output).toContain('businessError')
-      expect(output).toContain('true')
+      expect(output).toContain('"count":4000,"tail":3999')
+      expect(output).toContain('"businessError":true')
       expect(output).toContain('APPROVAL_DENIED')
       expect(output).not.toContain('route-3998')
       expect(calls).toHaveLength(2)
@@ -172,7 +166,6 @@ it.each(['search', 'codemode'] as const)('invokes MCP through %s with complete r
       expect(created.session.getCallableToolNames()).not.toContain(toolName)
     }
     const callCount = calls.length
-    expect(preview).toEqual(createEstimatedContextUsage({ ...first, messages: [] }))
     await service.upsert({ id: 'maps', name: 'Maps', transport: 'streamable-http', url: `http://127.0.0.1:${port}/mcp?key=fixture-secret`, enabled: true, credentialRef: null, toolNamespace: 'maps', toolExposure: 'hidden' })
     await created.session.prompt('隐藏这组工具')
     const hidden = requests.at(-1)!

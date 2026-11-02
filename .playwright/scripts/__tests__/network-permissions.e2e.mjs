@@ -5,7 +5,7 @@ import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { expect, test, useSyntheticCredentialStorage } from '../fixtures/electron.mjs'
 
-test('real network requests enforce saved access, file download, redirects and manual takeover', async ({ buddy }, testInfo) => {
+test('real network requests enforce saved access, file download, redirects and manual takeover', async ({ buddy }) => {
   const requests = []
   const hits = []
   const server = createServer(async (request, response) => {
@@ -71,7 +71,7 @@ test('real network requests enforce saved access, file download, redirects and m
       }
       await providers.setDefaultModel({ providerId: 'permission-fixture', modelId: 'permission-fixture', reasoning: null })
     }, `http://127.0.0.1:${server.address().port}/v1`)
-    await desktop.page.evaluate(server => window.lexoraDesktop.settings.update({ proxy: { mode: 'custom', server }, runtime: { codemode: false } }), `http://127.0.0.1:${server.address().port}`)
+    await desktop.page.evaluate(server => window.lexoraDesktop.settings.update({ proxy: { mode: 'custom', server }, runtime: { codemode: 'off' } }), `http://127.0.0.1:${server.address().port}`)
     await desktop.page.reload()
     const send = async (text) => {
       await desktop.page.locator('.desktop-chat-composer__prosemirror:visible').fill(text)
@@ -100,7 +100,6 @@ test('real network requests enforce saved access, file download, redirects and m
 
     await send('Fetch another page and save access.')
     await expect(card).toBeVisible()
-    await desktop.page.screenshot({ path: testInfo.outputPath('network-approval.png'), animations: 'disabled' })
     await card.locator('.desktop-approval-card__scope-button').click()
     await desktop.page.locator('.n-dropdown-menu:visible').getByText('允许并保存网站权限', { exact: true }).click()
     await expect.poll(completed).toBe(2)
@@ -183,6 +182,8 @@ test('real network requests enforce saved access, file download, redirects and m
     await expect(card).toBeHidden()
     expect(JSON.stringify(requests.at(-1).messages)).toContain('NETWORK_PERMISSION_DENIED')
 
+    await desktop.page.getByTestId('context-panel-toggle').click()
+    await desktop.page.getByTestId('task-context-panel').getByRole('tab', { name: 'Redirect fixture', exact: true }).last().click()
     const address = desktop.page.getByTestId('browser-address')
     await address.fill('http://permission.example.test/manual')
     await address.press('Enter')

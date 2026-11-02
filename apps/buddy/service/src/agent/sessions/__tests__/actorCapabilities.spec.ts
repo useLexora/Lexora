@@ -293,7 +293,7 @@ async function fixture() {
       getPendingInput: () => extensions.inputReferences.pending,
     })
     cleanup.push(() => created.shutdown('quit'))
-    const reusable = createReusableBuddySession({ session: created.session, shutdown: created.shutdown, assertModelAccess: async () => model, runContext: extensions.runContext, inputReferences: extensions.inputReferences, materializeInput: async input => [{ type: 'text', text: input.prompt }], skillReferences: resources.availableSkillReferences, setCodemodeEnabled: extensions.setCodemodeEnabled })
+    const reusable = createReusableBuddySession({ session: created.session, shutdown: created.shutdown, assertModelAccess: async () => model, runContext: extensions.runContext, inputReferences: extensions.inputReferences, materializeInput: async input => [{ type: 'text', text: input.prompt }], skillReferences: resources.availableSkillReferences, setCodemodeMode: extensions.setCodemodeMode })
     cleanup.push(() => reusable.shutdown('quit'))
     let turn = 0
     return {

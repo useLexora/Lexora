@@ -1,6 +1,7 @@
 import type { Api, AssistantMessage, Model, ToolCall } from '@earendil-works/pi-ai'
 import type { BuddySettings } from '../../../../../../shared/buddies/buddySettings'
 import type { BuddyExecutionProfile } from '../../../../../../shared/permissions/executionProfile'
+import type { CodemodeMode } from '../../../../../../shared/runtime/runtimePreferences'
 import type { BuddyCapability } from '../../BuddyCapability'
 import type { BuddySessionExtensionServices } from '../../createBuddySessionExtensions'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
@@ -34,10 +35,10 @@ afterEach(async () => {
 })
 
 describe('role tool scope in real Pi sessions', () => {
-  it.each([false, true])('updates shell schemas and guidelines between requests and after recovery, codemode=%s', async (codemode) => {
+  it.each(['off', 'on', 'only'] as const)('updates shell schemas and guidelines between requests and after recovery, codemode=%s', async (codemode) => {
     const f = await fixture({ executionProfile: 'workspace_write', codemode, shells: true })
     const search = { name: 'lexora_tool_search', arguments: { toolNames: ['lexora_host_shell', 'lexora_shell'] } }
-    const call = codemode ? scriptCall(search.name, search.arguments) : search
+    const call = codemode !== 'off' ? scriptCall(search.name, search.arguments) : search
     await f.turn(call, () => f.extensions.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile: 'full_access' }))
     const instructions = (request: typeof f.requests[number]) => [request.prompt, ...JSON.parse(request.tools).map((tool: { description: string }) => tool.description)].join('\n')
     expect(instructions(f.requests[0]!)).toContain('Use readOnly=true only')
@@ -47,7 +48,7 @@ describe('role tool scope in real Pi sessions', () => {
     await f.turn(call)
     expect(f.lastResult()).toContain('Current mode: full access')
     expect(f.lastResult()).not.toContain('Current mode: workspace-write')
-    if (!codemode) {
+    if (codemode === 'off') {
       const initial = JSON.parse(f.requests[0]!.tools).find((tool: { name: string }) => tool.name === 'lexora_shell')
       const current = JSON.parse(f.requests.at(-1)!.tools).find((tool: { name: string }) => tool.name === 'lexora_shell')
       expect(initial.parameters.properties).toHaveProperty('readOnly')
@@ -66,7 +67,7 @@ describe('role tool scope in real Pi sessions', () => {
     await resumed.turn(call)
     expect(resumed.lastResult()).toContain('Current mode: workspace-write')
     expect(resumed.lastResult()).not.toContain('Current mode: full access')
-    if (codemode) {
+    if (codemode !== 'off') {
       await resumed.turn({ name: 'codemode', arguments: { code: 'text(await describeTool("lexora_shell"));' } })
       expect(resumed.lastResult()).toMatch(/readOnly\??:/)
     }
@@ -107,7 +108,7 @@ describe('role tool scope in real Pi sessions', () => {
     expect(resumed.approved).toEqual(['lexora_host_shell'])
   })
 
-  it.each([false, true])('writes and reads outside grants and sensitive locations across full-access recovery, codemode=%s', async (codemode) => {
+  it.each(['off', 'on', 'only'] as const)('writes and reads outside grants and sensitive locations across full-access recovery, codemode=%s', async (codemode) => {
     const outside = await realpath(await mkdtemp(join(tmpdir(), 'buddy-full-access-')))
     cleanups.push(() => rm(outside, { recursive: true, force: true }))
     const home = vi.spyOn(userHomePaths, 'resolveUserHomePaths').mockReturnValue([outside])
@@ -117,7 +118,7 @@ describe('role tool scope in real Pi sessions', () => {
     await mkdir(join(outside, '.ssh'))
     const f = await fixture({ executionProfile: 'full_access', codemode })
     const invoke = async (session: typeof f, name: string, arguments_: ToolCall['arguments']) => {
-      await session.turn(codemode ? scriptCall(name, arguments_) : { name, arguments: arguments_ })
+      await session.turn(codemode !== 'off' ? scriptCall(name, arguments_) : { name, arguments: arguments_ })
     }
     for (const path of [join(outside, 'document.txt'), join(outside, '.ssh', 'fixture.txt')]) {
       await invoke(f, 'write', { path, content: 'synthetic full-access content' })
@@ -215,7 +216,7 @@ describe('role tool scope in real Pi sessions', () => {
   })
 })
 
-async function fixture(options: { tools?: BuddySettings['tools'], fileAccessLimit?: BuddySettings['limits']['fileAccess'], executionProfile?: BuddyExecutionProfile, root?: string, piSessionFile?: string, codemode?: boolean, shells?: boolean } = {}) {
+async function fixture(options: { tools?: BuddySettings['tools'], fileAccessLimit?: BuddySettings['limits']['fileAccess'], executionProfile?: BuddyExecutionProfile, root?: string, piSessionFile?: string, codemode?: CodemodeMode, shells?: boolean } = {}) {
   const root = options.root ?? await realpath(await mkdtemp(join(tmpdir(), 'buddy-tool-scope-')))
   if (!options.root)
     cleanups.push(() => rm(root, { recursive: true, force: true }))
@@ -303,7 +304,7 @@ async function fixture(options: { tools?: BuddySettings['tools'], fileAccessLimi
   }
   const extensions = await createBuddySessionExtensions({ canonicalRoot: root, conversationId: 'scope-conversation', approvalPolicy: 'policy', executionProfile, grants: [{ canonicalRoot: root, root, grantId: 'scope-workspace', kind: 'workspace' }], services, sessionMode: 'interactive', signal: new AbortController().signal, spaceId: null, toolScope: options.tools, fileAccessLimit: options.fileAccessLimit })
   cleanups.push(() => extensions.dispose())
-  extensions.setCodemodeEnabled(options.codemode ?? true)
+  extensions.setCodemodeMode(options.codemode ?? 'on')
   const created = await createIsolatedBuddySession({
     canonicalRoot: root,
     cwd: root,

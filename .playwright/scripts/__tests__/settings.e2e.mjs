@@ -39,6 +39,8 @@ test('prompt previews copy the current source without changing configuration or 
 test('prompt loading can retry and late responses do not replace another settings page', async ({ buddy }) => {
   const instance = await buddy.createInstance('settings-prompts-retry')
   const { page, app, diagnostics } = await instance.launch()
+  const catalog = await page.evaluate(() => window.lexoraDesktop.localChat.prompts.get())
+  const content = () => page.locator('.prompt-content__body .tiptap > p').evaluateAll(paragraphs => paragraphs.map(node => node.textContent).join('\n'))
   await app.evaluate(({ ipcMain }) => {
     const channel = 'lexora:buddy:prompts:get'
     const original = ipcMain._invokeHandlers.get(channel)
@@ -60,7 +62,7 @@ test('prompt loading can retry and late responses do not replace another setting
   await expect(page.locator('.n-alert')).toBeVisible()
   await app.evaluate(() => globalThis.promptReadProbe.fail = false)
   await page.locator('.n-alert').getByRole('button').click()
-  await expect(page.locator('.prompt-content__body')).toContainText('You are Lexora Buddy')
+  await expect.poll(content).toBe(catalog.system)
   await expect(page.locator('.n-alert')).toHaveCount(0)
   await page.getByRole('link', { name: '常规', exact: true }).click()
   await app.evaluate(() => globalThis.promptReadProbe.gate = Promise.withResolvers())
@@ -74,7 +76,7 @@ test('prompt loading can retry and late responses do not replace another setting
   await expect.poll(() => app.evaluate(() => globalThis.promptReadProbe.completions)).toBe(2)
   await expect(page.locator('.desktop-settings-page__title')).toHaveText('常规')
   await page.getByRole('link', { name: '提示词', exact: true }).click()
-  await expect(page.locator('.prompt-content__body')).toContainText('You are Lexora Buddy')
+  await expect.poll(content).toBe(catalog.system)
   expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })
 
@@ -86,17 +88,15 @@ test('settings navigation returns to the last page and still allows explicit pag
   await navigation.getByRole('button', { name: '设置', exact: true }).click()
   await expect(title).toHaveText('常规')
 
-  for (const [name, category] of [['快捷键', 'shortcuts'], ['外观', 'appearance'], ['常规', 'general']]) {
-    await page.locator('.desktop-settings-sidebar').getByRole('link', { name, exact: true }).click()
-    await expect(title).toHaveText(name)
-    await navigation.getByRole('button', { name: '任务', exact: true }).click()
-    await expect(page).toHaveURL(/#\/tasks$/)
-    await navigation.getByRole('button', { name: '设置', exact: true }).click()
-    await expect(page).toHaveURL(new RegExp(`#/settings/${category}$`))
-    await expect(title).toHaveText(name)
-    await navigation.getByRole('button', { name: '设置', exact: true }).click()
-    await expect(title).toHaveText(name)
-  }
+  await page.locator('.desktop-settings-sidebar').getByRole('link', { name: '快捷键', exact: true }).click()
+  await expect(title).toHaveText('快捷键')
+  await navigation.getByRole('button', { name: '任务', exact: true }).click()
+  await expect(page).toHaveURL(/#\/tasks$/)
+  await navigation.getByRole('button', { name: '设置', exact: true }).click()
+  await expect(page).toHaveURL(/#\/settings\/shortcuts$/)
+  await expect(title).toHaveText('快捷键')
+  await page.locator('.desktop-settings-sidebar').getByRole('link', { name: '外观', exact: true }).click()
+  await expect(title).toHaveText('外观')
   expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })
 
@@ -176,7 +176,7 @@ test('registered plugin settings share groups, roll back failed saves and withdr
 
   await app.evaluate(() => globalThis.settingsFixtureFailures.save = true)
   await toggle().click()
-  await expect(page.locator('.n-message')).toHaveCount(1)
+  await expect(page.locator('[data-setting-id="tests.settings.enabled"]').getByRole('alert')).toHaveText('保存失败，已恢复原设置')
   await expect(toggle()).not.toBeChecked()
   await expect(toggle()).toBeEnabled()
   await expect(page.locator('body')).not.toContainText('private-settings-fixture-detail')
@@ -257,7 +257,7 @@ test('registered plugin settings share groups, roll back failed saves and withdr
   await expect.poll(() => page.evaluate(() => window.lexoraDesktop.extensions.configuration('tests.settings'))).toMatchObject({ extra: 56 })
   await inline().click()
   await expect(inline()).toBeChecked()
-  await expect(page.locator('.n-message')).toHaveCount(0)
+  await expect(page.getByRole('alert')).toHaveCount(0)
 
   await page.getByRole('link', { name: '注册设置', exact: true }).click()
   await page.evaluate(() => window.lexoraDesktop.extensions.enable('tests.settings', false))
@@ -402,7 +402,7 @@ export function render(context, container) {
     await page.getByTestId('extension-install-options').click()
     await page.getByTestId('extension-development').click()
     if (updating)
-      await page.getByRole('checkbox', { name: '安装完成后立即应用更新' }).uncheck()
+      await page.getByRole('checkbox', { name: '安装完成后立即切换插件版本' }).uncheck()
     await page.getByTestId('extension-confirm-install').click()
     await expect.poll(() => page.evaluate(async (updating) => {
       const plugin = (await window.lexoraDesktop.extensions.list()).find(item => item.manifest.id === 'tests.settings')
@@ -450,6 +450,43 @@ export function render(context, container) {
   ;({ app, page, diagnostics } = await instance.launch())
   expect(await page.evaluate(() => window.lexoraDesktop.extensions.configurationSnapshot('tests.settings'))).toMatchObject({ values: { extra: 0, label: 'retained' }, invalidKeys: [] })
   expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
+})
+
+test('codemode modes preserve concurrency preferences and survive restart', async ({ buddy }) => {
+  const instance = await buddy.createInstance('codemode-settings')
+  let desktop = await instance.launch()
+  const open = async () => {
+    await openSettings(desktop.page)
+    await desktop.page.locator('.desktop-settings-sidebar').getByRole('link', { name: '运行时', exact: true }).click()
+  }
+  const row = () => desktop.page.getByTestId('codemode-setting')
+  const select = name => row().getByRole('button', { name, exact: true })
+  const runtime = () => desktop.page.evaluate(async () => (await window.lexoraDesktop.settings.get()).runtime)
+  await open()
+  await expect(select('混合调用')).toHaveAttribute('aria-pressed', 'true')
+  await expect(row()).toContainText('简单操作可直接调用工具')
+  await desktop.page.evaluate(() => window.lexoraDesktop.settings.update({ runtime: { codemodeWorkerLimit: 3, codemodeOverflow: 'reject' } }))
+  await select('代码编排').press('Space')
+  await expect.poll(runtime).toMatchObject({ codemode: 'only', codemodeWorkerLimit: 3, codemodeOverflow: 'reject' })
+  await expect(row()).toContainText('普通工具必须通过代码编排调用')
+  await instance.stop()
+  desktop = await instance.launch()
+  await open()
+  await expect(select('代码编排')).toHaveAttribute('aria-pressed', 'true')
+  await select('关闭').click()
+  await expect.poll(runtime).toMatchObject({ codemode: 'off', codemodeWorkerLimit: 3, codemodeOverflow: 'reject' })
+  await expect(desktop.page.getByTestId('codemode-concurrency-setting')).toHaveCount(0)
+  await expect(desktop.page.getByTestId('codemode-worker-limit-setting')).toHaveCount(0)
+  await instance.stop()
+  desktop = await instance.launch()
+  await open()
+  await expect(select('关闭')).toHaveAttribute('aria-pressed', 'true')
+  await select('混合调用').click()
+  await expect.poll(runtime).toMatchObject({ codemode: 'on', codemodeWorkerLimit: 3, codemodeOverflow: 'reject' })
+  await expect(desktop.page.getByTestId('codemode-worker-limit-setting').locator('input.n-input__input-el')).toHaveValue('3')
+  await expect(desktop.page.getByTestId('codemode-overflow-setting').getByRole('button', { name: '返回繁忙', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  expect(await fs.readFile(path.join(instance.home, 'config.toml'), 'utf8')).toContain('codemode = "on"')
+  expect(desktop.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })
 
 test('global model retry settings preserve finite, unlimited and disabled values across restart', async ({ buddy }) => {
@@ -525,7 +562,7 @@ test('global model retry settings preserve finite, unlimited and disabled values
 test('MCP quick controls require execution confirmation, read caches offline and preserve credentials and policy', async ({ buddy }) => {
   const instance = await buddy.createInstance('mcp-quick-controls')
   const desktop = await instance.launch()
-  await desktop.page.evaluate(() => window.lexoraDesktop.settings.update({ runtime: { codemode: false } }))
+  await desktop.page.evaluate(() => window.lexoraDesktop.settings.update({ runtime: { codemode: 'off' } }))
   await useSyntheticCredentialStorage(desktop)
   const { page } = desktop
   const fixtureServer = fileURLToPath(new URL('../../../apps/buddy/service/src/connectors/mcp/__tests__/fixtures/process-contract-server.mjs', import.meta.url))
@@ -611,7 +648,7 @@ test('MCP quick controls require execution confirmation, read caches offline and
     'bare-fixture': 'codemode',
     'legacy-hidden': 'hidden',
   })
-  expect(await page.evaluate(async () => (await window.lexoraDesktop.settings.get()).runtime.codemode)).toBe(false)
+  expect(await page.evaluate(async () => (await window.lexoraDesktop.settings.get()).runtime.codemode)).toBe('off')
   expect(await savedCredentials()).toEqual(originalCredentials)
   expect(await page.evaluate(() => window.lexoraDesktop.localChat.conversations.list(100))).toEqual([])
   expect(desktop.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])

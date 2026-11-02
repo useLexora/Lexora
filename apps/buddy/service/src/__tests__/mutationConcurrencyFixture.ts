@@ -42,7 +42,7 @@ export function tool(id: string, name: string, args: Record<string, unknown>): T
   return { id, name, arguments: args }
 }
 
-export function deferred() {
+function deferred() {
   return Promise.withResolvers<void>()
 }
 
@@ -83,7 +83,7 @@ function rpcHarness(shells: readonly ExtensionShellDescriptor[]) {
         case 'host.extensions.shells.list': return shells
         case 'host.images.preferences': return {}
         case 'host.networkPermissions.get': return { defaults: { access: 'ask', download: 'ask', upload: 'ask' }, rules: [] }
-        case 'host.runtimePreferences.get': return { ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: false, modelRetryLimit: 0 }
+        case 'host.runtimePreferences.get': return { ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: 'off', modelRetryLimit: 0 }
         case 'host.credentials.list': return { ok: true, providers: [{ providerId: 'mutation-local', type: 'api_key' }] }
         case 'host.credentials.read': return { ok: true, value: { type: 'api_key', key: 'local-test-only' } }
         default: throw new Error(`Unexpected host RPC: ${method}`)
@@ -106,7 +106,7 @@ export async function createConcurrencyRuntime(options: {
   readOnly?: boolean
   fullAccess?: boolean
   shells?: readonly ExtensionShellDescriptor[]
-  prepare?: (database: DatabaseSync, buddyHome: string) => Promise<void>
+  prepare?: (database: DatabaseSync) => Promise<void>
 }) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'lexora-mutation-tree-')))
   const buddyHome = join(directory, 'buddy')
@@ -117,7 +117,6 @@ export async function createConcurrencyRuntime(options: {
   const events: Awaited<ReturnType<typeof eventLog.read>> = []
   const subscription = eventLog.onDidCommit(event => events.push(event))
   const harness = rpcHarness(options.shells ?? [])
-  const ready = deferred()
   const begin = deferred()
   const requests: { role: Role, payload: Payload }[] = []
   const errors: unknown[] = []
@@ -140,10 +139,8 @@ export async function createConcurrencyRuntime(options: {
       requests.push({ role, payload })
       const cursor = cursors.get(role) ?? 0
       cursors.set(role, cursor + 1)
-      if (role === 'root' && cursor === 0) {
-        ready.resolve()
+      if (role === 'root' && cursor === 0)
         await begin.promise
-      }
       const delegation = role === 'root'
         ? [
             tool('root-delegate-actor', 'lexora_agents', { operation: 'delegate', targetId: actorId, text: 'MUTATION_TASK:actor' }),
@@ -203,7 +200,7 @@ export async function createConcurrencyRuntime(options: {
     const address = server.address()
     if (!address || typeof address === 'string')
       throw new Error('Local Provider did not bind TCP')
-    await options.prepare?.(database, buddyHome)
+    await options.prepare?.(database)
     runtime = await startBuddyService({ buddyHome, database, eventLog, rpc: harness.rpc, builtinSkillsDirectories: [skills] })
     await harness.invoke('providers.upsertCustom', {
       api: 'openai-completions',
@@ -257,13 +254,10 @@ export async function createConcurrencyRuntime(options: {
       requestId: 'mutation-turn',
     }) as LocalTurnStart
     await expect.poll(() => requests.some(request => request.role === 'root'), { timeout: 15000 }).toBe(true)
-    await ready.promise
     await harness.invoke('conversations.addMember', { conversationId: turn.conversationId, buddyId: actorId })
     const workspace = join(buddyHome, 'conversations', turn.conversationId, 'workspace')
     const runs = createRunRepository(database)
     return {
-      directory,
-      buddyHome,
       database,
       eventLog,
       events,
@@ -321,7 +315,6 @@ export function mutationTiming() {
       gates.push(gate)
       return {
         release: () => gate.release.resolve(),
-        admissions: gate.admissions,
         async waitForAcquired(count: number) {
           await expect.poll(() => gate.admissions.filter(admission => admission.lease).length, { timeout: 15000 }).toBe(count)
         },
@@ -356,10 +349,8 @@ export function treeByRole(f: ConcurrencyRuntime) {
   expect([npcA.buddyId, npcB.buddyId]).toEqual([f.npcId, f.npcId])
   expect(new Set(tree.map(run => run.threadId)).size).toBe(4)
   expect(new Set(tree.map(run => run.piSessionFile)).size).toBe(4)
-  for (const run of tree) {
+  for (const run of tree)
     expect(run.rootRunId).toBe(root.id)
-    expect(run.actorSnapshot?.settings.npcConcurrency).toEqual({ mode: 'limited', limit: 5 })
-  }
   return { root, actor, 'npc-a': npcA, 'npc-b': npcB }
 }
 

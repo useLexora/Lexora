@@ -90,10 +90,10 @@ describe('lexoraConfigStore', () => {
 
   it('preserves independent preferences, ordered pins and unknown fields across partial writes and restart', async () => {
     const { configPath, store } = await createConfigStore('[api]\nbase_url="https://lexora.example"\n[desktop]\nnotify_when_focused=true\nsidebar_collapsed=true\nfuture_setting=true\n[desktop.chat]\nwelcome="none"\nfuture=true\n[desktop.typography]\nfuture=true\n[desktop.task_sidebar]\nfuture=true\n[browser]\nfuture=true\n')
-    expect((await store.read()).runtime).toMatchObject({ codemode: true, modelRetryLimit: 3 })
+    expect((await store.read()).runtime).toMatchObject({ codemode: 'on', modelRetryLimit: 3 })
     const profile = { userName: 'Alice', deviceName: 'Alice-Laptop', avatar: 'data:image/png;base64,abc' }
     const preferences = {
-      runtime: { cacheWarming: 'streaming', codemode: false },
+      runtime: { cacheWarming: 'streaming', codemode: 'off' },
       browser: { linkOpening: 'system', screenshotDestination: 'clipboard', defaultZoomFactor: 1.25, freezeBackground: false, freezeForeground: true, freezeDelaySeconds: 120 },
       proxy: { mode: 'custom', server: 'http://127.0.0.1:7890' },
       desktop: {
@@ -172,14 +172,31 @@ describe('lexoraConfigStore', () => {
     }
   })
 
+  it.each([
+    ['', 'on'],
+    ['true', 'on'],
+    ['false', 'off'],
+    ['"on"', 'on'],
+    ['"only"', 'only'],
+    ['"off"', 'off'],
+  ] as const)('migrates Codemode %s to %s without rewriting on read or losing other preferences', async (stored, expected) => {
+    const content = `[runtime]\n${stored ? `codemode=${stored}\n` : ''}codemode_worker_limit=3\ncodemode_overflow="reject"\nfuture=true\n`
+    const { store, configPath } = await createConfigStore(content)
+    expect((await store.read()).runtime).toMatchObject({ codemode: expected, codemodeWorkerLimit: 3, codemodeOverflow: 'reject' })
+    expect(await readFile(configPath, 'utf8')).toBe(content)
+    await store.update({ desktop: { language: 'en-US' } })
+    expect(parse(await readFile(configPath, 'utf8'))).toMatchObject({ runtime: { codemode: expected, future: true } })
+    expect((await new LexoraConfigStore({ configPath }).read()).runtime.codemode).toBe(expected)
+  })
+
   it('preserves disabled runtime options and finite or unlimited limits across partial writes and restart', async () => {
     const { store, configPath } = await createConfigStore('[runtime]\ncache_warming="streaming"\ncodemode=false\nfuture=true\n')
-    expect((await store.read()).runtime).toMatchObject({ codemode: false, codemodeWorkerLimit: 8, codemodeOverflow: 'wait', modelRetryLimit: 3 })
+    expect((await store.read()).runtime).toMatchObject({ codemode: 'off', codemodeWorkerLimit: 8, codemodeOverflow: 'wait', modelRetryLimit: 3 })
     for (const [modelRetryLimit, codemodeWorkerLimit] of [[0, 1], [7, 16], ['unlimited', 'unlimited']] as const) {
       await store.update({ runtime: { modelRetryLimit, codemodeWorkerLimit, codemodeOverflow: 'reject' } })
       await store.update({ desktop: { language: 'en-US' } })
       expect((await new LexoraConfigStore({ configPath }).read()).runtime)
-        .toMatchObject({ cacheWarming: 'streaming', codemode: false, modelRetryLimit, codemodeWorkerLimit, codemodeOverflow: 'reject' })
+        .toMatchObject({ cacheWarming: 'streaming', codemode: 'off', modelRetryLimit, codemodeWorkerLimit, codemodeOverflow: 'reject' })
     }
     expect(parse(await readFile(configPath, 'utf8'))).toMatchObject({ runtime: { future: true, model_retry_limit: 'unlimited', codemode_worker_limit: 'unlimited', codemode_overflow: 'reject' } })
   })
@@ -277,6 +294,7 @@ text = "保留我的内容"
     expect(await new LexoraConfigStore({ configPath }).read()).toEqual(previous)
     for (const content of [
       '[desktop\ntheme="dark"',
+      '[runtime]\ncodemode="automatic"\n',
       '[desktop]\nsubtask_notifications_enabled="false"\n',
       '[desktop]\nnavigation_layout="sidebar"\n',
       '[desktop.chat]\npaste_text_as_attachment="false"\n',

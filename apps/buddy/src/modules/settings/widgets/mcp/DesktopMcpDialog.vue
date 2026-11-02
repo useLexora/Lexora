@@ -24,7 +24,7 @@ const { executionConfirmation } = actions
 const toolList = shallowRef<{ id: string, tools: readonly ConnectorToolSummary[] } | null>(null)
 const toolConnector = computed(() => mcp.connectors.value.find(connector => connector.id === toolList.value?.id))
 const connectors = computed(() => [...mcp.connectors.value].sort((a, b) => Number(b.enabled && !!b.runtime.errorCode) - Number(a.enabled && !!a.runtime.errorCode) || Number(b.enabled) - Number(a.enabled)))
-const codemodeEnabled = computed(() => applicationSettings.config.value?.runtime.codemode ?? false)
+const codemodeEnabled = computed(() => (applicationSettings.config.value?.runtime.codemode ?? 'off') !== 'off')
 
 onMounted(async () => {
   await ready

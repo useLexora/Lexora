@@ -148,6 +148,7 @@ test('live model selection resumes retries and regeneration while permissions re
     await expect(page.locator('.desktop-permission-mode-selector__trigger:visible')).toContainText('本机只读')
     const regenerate = page.getByTestId(`regenerate-run-${first.id}`)
     await expect(regenerate).toBeVisible()
+    await page.locator('.buddy-chat-message').filter({ has: regenerate }).hover()
     await regenerate.click()
     await expect.poll(() => read(db => db.prepare('SELECT COUNT(*) AS count FROM runs WHERE status = ?').get('completed').count)).toBe(2)
     expect(requests.at(-1).model).toBe('model-b')
@@ -364,7 +365,7 @@ test('switching model and effort during a tool batch immediately supplements the
     await useSyntheticCredentialStorage(desktop)
     const models = await page.evaluate(async (baseUrl) => {
       const api = window.lexoraDesktop.localChat
-      await window.lexoraDesktop.settings.update({ desktop: { language: 'zh-CN' }, runtime: { codemode: false, modelRetryLimit: 0 } })
+      await window.lexoraDesktop.settings.update({ desktop: { language: 'zh-CN' }, runtime: { codemode: 'off', modelRetryLimit: 0 } })
       await api.providers.upsertCustom({ id: 'hot-model-fixture', displayName: 'Hot model fixture', api: 'openai-completions', baseUrl, enabled: true, models: ['a', 'b'].map(suffix => ({ id: `hot-model-${suffix}`, name: `Hot Model ${suffix.toUpperCase()}`, input: ['text'], reasoning: true, contextWindow: 128000, maxTokens: 2048 })) })
       const stop = api.providers.onAuthChallenge((challenge) => {
         if (challenge.providerId === 'hot-model-fixture' && challenge.type === 'secret')

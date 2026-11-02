@@ -198,7 +198,7 @@ export class ContextUsageSnapshotService implements ContextUsageSnapshotReader {
       services: this.#options.sessionExtensionServices,
     })
     try {
-      extensions.setCodemodeEnabled(runtimePreferences?.codemode ?? DEFAULT_RUNTIME_PREFERENCES.codemode)
+      extensions.setCodemodeMode(runtimePreferences?.codemode ?? DEFAULT_RUNTIME_PREFERENCES.codemode)
       const sessionManager = conversation
         ? followup
           ? await this.#options.tree.snapshot(conversation.id, branchId, blueprint.canonicalRoot, source!.runId!, 'after', threadId!, source!.id)

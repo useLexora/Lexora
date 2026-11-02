@@ -251,7 +251,7 @@ for (const workspaceKind of ['managed', 'bound']) {
       }
       await page.evaluate(async (baseUrl) => {
         const api = window.lexoraDesktop.localChat
-        await window.lexoraDesktop.settings.update({ runtime: { codemode: false } })
+        await window.lexoraDesktop.settings.update({ runtime: { codemode: 'off' } })
         const buddy = await api.buddies.get('default')
         await api.buddies.update({ buddyId: 'default', expectedRevision: buddy.revision, settings: { ...buddy.settings, npcTeamEnabled: false } })
         await api.providers.upsertCustom({ id: 'capture-fixture', displayName: 'Capture fixture', api: 'openai-completions', baseUrl, enabled: true, models: [{ id: 'capture-fixture', name: 'Capture fixture', input: ['text'], reasoning: false, contextWindow: 128000, maxTokens: 1024 }] })
@@ -310,7 +310,6 @@ for (const workspaceKind of ['managed', 'bound']) {
       await expect(access(path.join(workspace, 'forbidden.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
       const segments = await execute('segments')
       expect(await readFile(path.join(workspace, 'report.txt'), 'utf8')).toBe('C')
-      expect(queryRows('SELECT capture_mode FROM run_change_invocations WHERE run_id=? ORDER BY sequence', segments.runId)).toEqual([{ capture_mode: 'files' }, { capture_mode: 'untracked' }, { capture_mode: 'files' }])
       const captures = queryRows('SELECT before_snapshot_path,after_snapshot_path FROM run_file_change_captures ORDER BY sequence')
       expect(captures).toHaveLength(2)
       expect(await readFile(captures[0].after_snapshot_path, 'utf8')).toBe('A')

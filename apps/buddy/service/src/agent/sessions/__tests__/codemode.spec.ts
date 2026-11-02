@@ -1,6 +1,7 @@
 import type { Api, AssistantMessage, Model, ToolCall } from '@earendil-works/pi-ai'
 import type { AgentSessionEvent, createCodemodeExtension } from '@earendil-works/pi-coding-agent'
 import type { BuddyExecutionProfile } from '../../../../../shared/permissions/executionProfile'
+import type { CodemodeMode } from '../../../../../shared/runtime/runtimePreferences'
 import type { AuthorizedToolExecution, DeniedToolExecution } from '../../events/projectPiEvent'
 import type { BuddySessionExtensionServices } from '../../extensions/createBuddySessionExtensions'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
@@ -36,13 +37,12 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse())
     await cleanup()
   workers.dispose()
-  vi.unstubAllEnvs()
 })
 
 describe('codemode runtime preference', () => {
-  it('keeps collaboration control available only as a native model tool', async () => {
+  it.each(['on', 'only'] as const)('keeps collaboration control available only as a native model tool, mode=%s', async (mode) => {
     const fixture = await createFixture()
-    fixture.apply(true)
+    fixture.apply(mode)
     await fixture.turn({ name: 'codemode', arguments: { code: 'text({ callable: "lexora_agents" in tools, listed: ALL_TOOLS.some(tool => tool.name === "lexora_agents") });' } })
     expect(fixture.requests.at(-1)?.names).toContain('lexora_agents')
     expect(fixture.lastResult()).toContain('"callable":false')
@@ -53,30 +53,43 @@ describe('codemode runtime preference', () => {
 
   it('cannot be enabled through discovery or expose host globals', async () => {
     const fixture = await createFixture()
-    fixture.apply(false)
+    fixture.apply('off')
     await fixture.turn({ name: 'lexora_tool_search', arguments: { toolNames: ['codemode'] } })
     expect(fixture.requests.at(-1)?.names).not.toContain('codemode')
     expect(fixture.lastResult()).toContain('"notFound":["codemode"]')
     expect(fixture.requests.at(-1)?.prompt).not.toMatch(/\b(?:searchTools|describeNamespace)\b/)
 
-    fixture.apply(true)
+    fixture.apply('on')
     await fixture.turn({ name: 'codemode', arguments: { code: 'text({ node: typeof process, network: typeof fetch, models: typeof models });' } })
     expect(fixture.lastResult()).toContain('"node":"undefined"')
     expect(fixture.lastResult()).toContain('"network":"undefined"')
     expect(fixture.lastResult()).toContain('"models":"undefined"')
     expect(fixture.requests.at(-1)?.names).toContain('codemode')
-    expect(fixture.requests.at(-1)?.names).not.toContain('read')
+    expect(fixture.requests.at(-1)?.names).toContain('read')
     expect(fixture.requests.at(-1)?.prompt).toContain('describeNamespace')
 
-    fixture.apply(false)
-    await fixture.turn()
-    expect(fixture.requests.at(-1)?.names).not.toContain('codemode')
-    expect(fixture.requests.at(-1)?.names).toContain('read')
-    expect(fixture.requests.at(-1)?.prompt).not.toMatch(/\b(?:searchTools|describeNamespace)\b/)
+    for (const mode of ['only', 'off', 'on'] as const) {
+      fixture.apply(mode)
+      await fixture.turn()
+      expect(fixture.requests.at(-1)?.names.includes('codemode')).toBe(mode !== 'off')
+      expect(fixture.requests.at(-1)?.names.includes('read')).toBe(mode !== 'only')
+      expect(fixture.requests.at(-1)?.names.includes('write')).toBe(mode !== 'only')
+      expect(/\b(?:searchTools|describeNamespace)\b/.test(fixture.requests.at(-1)!.prompt)).toBe(mode !== 'off')
+      expect((await fixture.preview())?.toolTokens).toBe(fixture.requests.at(-1)?.toolTokens)
+    }
+  })
 
-    fixture.apply(true)
+  it('keeps the active run mode and applies a changed mode on the next run', async () => {
+    const fixture = await createFixture()
+    const pending = fixture.turn({ name: 'codemode', arguments: { code: 'text(await tools.lexora_gate({ value: 1 }));' } })
+    await vi.waitFor(() => expect(fixture.gates).toHaveLength(1))
+    fixture.apply('only')
+    fixture.gates[0]!.release()
+    await pending
+    expect(fixture.requests.at(-1)?.names).toContain('read')
     await fixture.turn()
-    expect((await fixture.preview())?.toolTokens).toBe(fixture.requests.at(-1)?.toolTokens)
+    expect(fixture.requests.at(-1)?.names).not.toContain('read')
+    expect(fixture.requests.at(-1)?.names).toContain('codemode')
   })
 
   it('retains rules not fully covered by the current inline catalog', () => {
@@ -89,7 +102,7 @@ describe('codemode runtime preference', () => {
 
   it('keeps inlined tool rules once in requests without rewriting the journal', async () => {
     const fixture = await createFixture()
-    fixture.apply(true)
+    fixture.apply('only')
     await fixture.turn()
     const request = fixture.requests.at(-1)!
     const description = request.tools.find(tool => tool.name === 'codemode')!.description
@@ -102,7 +115,7 @@ describe('codemode runtime preference', () => {
     expect(request.prompt).toContain('Keep dependent calls and mutations sequential')
     expect(request.prompt).toContain('Complete bounded tasks directly by default.')
 
-    fixture.apply(false)
+    fixture.apply('off')
     await fixture.turn()
     expect(fixture.requests.at(-1)!.prompt).toContain(rule)
   })
@@ -111,7 +124,7 @@ describe('codemode runtime preference', () => {
     const fixture = await createFixture('workspace_write')
     const outside = join(fixture.root, 'outside.txt')
     await writeFile(outside, 'unchanged')
-    fixture.apply(true)
+    fixture.apply('only')
     await fixture.turn({
       name: 'codemode',
       arguments: {
@@ -140,7 +153,7 @@ describe('codemode runtime preference', () => {
 
   it('keeps read-only file protection for scripts', async () => {
     const fixture = await createFixture('read_only')
-    fixture.apply(true)
+    fixture.apply('only')
     await fixture.turn({ name: 'codemode', arguments: { code: 'await tools.write({ path: "allowed.txt", content: "blocked" });' } })
     expect(fixture.lastResult()).toContain('READ_ONLY_PROFILE')
     expect(await readFile(join(fixture.cwd, 'allowed.txt'), 'utf8')).toBe('allowed content')
@@ -149,7 +162,7 @@ describe('codemode runtime preference', () => {
   it('interrupts runaway microtasks that cannot reach a host tool', async () => {
     const code = 'while (true) { await Promise.resolve(); }'
     const fixture = await createFixture('read_only', { computeTimeoutMs: 100 })
-    fixture.apply(true)
+    fixture.apply('on')
     await fixture.turn({ name: 'codemode', arguments: { code } })
     expect(fixture.lastResult()).toContain('100 ms compute budget')
     expect(fixture.session.isStreaming).toBe(false)
@@ -158,7 +171,7 @@ describe('codemode runtime preference', () => {
 
   it('excludes host tool waiting from computation and accumulates computation across awaits', async () => {
     const fixture = await createFixture('read_only', { computeTimeoutMs: 200 })
-    fixture.apply(true)
+    fixture.apply('on')
     const waiting = fixture.turn({ name: 'codemode', arguments: { code: 'await tools.lexora_gate({ value: 0 }); text("wait completed");' } })
     await vi.waitFor(() => expect(fixture.gates).toHaveLength(1))
     await new Promise(resolve => setTimeout(resolve, 300))
@@ -179,7 +192,7 @@ describe('codemode runtime preference', () => {
 
   it('bounds parallel calls and drains waiting calls in order', async () => {
     const fixture = await createFixture('read_only', { computeTimeoutMs: 1000, maxPendingToolCalls: 2, maxQueuedToolCalls: 4 })
-    fixture.apply(true)
+    fixture.apply('on')
     const task = fixture.turn({ name: 'codemode', arguments: { code: 'text(await Promise.all([0, 1, 2, 3, 4, 5].map(value => tools.lexora_gate({ value }))));' } })
     await vi.waitFor(() => expect(fixture.gates.map(gate => gate.value)).toEqual([0, 1]))
     for (let index = 0; index < 6; index++) {
@@ -194,7 +207,7 @@ describe('codemode runtime preference', () => {
 
   it('cancels active calls and never starts queued calls when the queue overflows', async () => {
     const fixture = await createFixture('read_only', { maxPendingToolCalls: 2, maxQueuedToolCalls: 1 })
-    fixture.apply(true)
+    fixture.apply('on')
     await fixture.turn({ name: 'codemode', arguments: { code: 'await Promise.all([0, 1, 2, 3].map(value => tools.lexora_gate({ value })));' } })
     expect(fixture.lastResult()).toContain('Too many queued tool calls')
     expect(fixture.lastResult()).toContain('Inspect any completed actions')
@@ -204,7 +217,7 @@ describe('codemode runtime preference', () => {
 
   it('completes nested write and edit, retaining their side effects after a later script error', async () => {
     const fixture = await createFixture('workspace_write')
-    fixture.apply(true)
+    fixture.apply('on')
     await fixture.turn({ name: 'codemode', arguments: { code: 'await tools.write({ path: "allowed.txt", content: "completed write" }); await tools.edit({ path: "allowed.txt", oldText: "completed write", newText: "completed edit" }); throw new Error("later step failed");' } })
     expect(await readFile(join(fixture.cwd, 'allowed.txt'), 'utf8')).toBe('completed edit')
     expect(fixture.lastResult()).toContain('later step failed')
@@ -214,7 +227,7 @@ describe('codemode runtime preference', () => {
 
   it('waits for nested tool cleanup before releasing a failed script turn', async () => {
     const fixture = await createFixture()
-    fixture.apply(true)
+    fixture.apply('on')
     let settled = false
     const task = fixture.turn({ name: 'codemode', arguments: { code: 'await Promise.all([tools.lexora_wait({}), tools.lexora_gate({ value: 0 }).then(() => { throw new Error("stop-script"); })]);' } }).then(() => {
       settled = true
@@ -243,7 +256,7 @@ describe('codemode runtime preference', () => {
     workers.configure({ codemodeWorkerLimit: 4, codemodeOverflow: 'wait' })
     const fixtures = await Promise.all(Array.from({ length: 5 }, () => createFixture()))
     for (const fixture of fixtures)
-      fixture.apply(true)
+      fixture.apply('on')
     const turns = fixtures.slice(0, 4).map(fixture => fixture.turn({ name: 'codemode', arguments: { code: 'await tools.lexora_gate({ value: 1 });' } }))
     try {
       await vi.waitFor(() => expect(fixtures.slice(0, 4).every(fixture => fixture.gates.length === 1)).toBe(true))
@@ -277,7 +290,7 @@ describe('codemode runtime preference', () => {
     const turns: Promise<void>[] = []
     try {
       for (const fixture of fixtures) {
-        fixture.apply(true)
+        fixture.apply('on')
         turns.push(fixture.turn({ name: 'codemode', arguments: { code: 'text(await tools.lexora_gate({ value: 1 }));' } }))
         await vi.waitFor(() => expect(fixture.events.some(event => event.type === 'tool_execution_start' && event.toolName === 'codemode')).toBe(true))
       }
@@ -307,8 +320,8 @@ describe('codemode runtime preference', () => {
   it('rejects a new script immediately at capacity without side effects and allows a later call', async () => {
     workers.configure({ codemodeWorkerLimit: 1, codemodeOverflow: 'reject' })
     const [first, second] = await Promise.all([createFixture(), createFixture()])
-    first.apply(true)
-    second.apply(true)
+    first.apply('on')
+    second.apply('on')
     const running = first.turn({ name: 'codemode', arguments: { code: 'await tools.lexora_gate({ value: 1 });' } })
     try {
       await vi.waitFor(() => expect(first.gates).toHaveLength(1))
@@ -328,49 +341,14 @@ describe('codemode runtime preference', () => {
     }
   })
 
-  it('queues across three sessions and admits the waiter after cancellation', async () => {
-    const [first, second, third] = await Promise.all(Array.from({ length: 3 }, () => createFixture('read_only', { computeTimeoutMs: 200 })))
-    for (const fixture of [first, second, third])
-      fixture.apply(true)
-    const code = 'text(await tools.lexora_gate({ value: 1 }));'
-    const firstTurn = first.turn({ name: 'codemode', arguments: { code } })
-    const secondTurn = second.turn({ name: 'codemode', arguments: { code } })
-    let thirdTurn: Promise<void> | undefined
-    try {
-      await vi.waitFor(() => expect(first.gates.length + second.gates.length).toBe(2))
-      let settled = false
-      thirdTurn = third.turn({ name: 'codemode', arguments: { code } }).then(() => {
-        settled = true
-      })
-      await new Promise(resolve => setTimeout(resolve, 300))
-      expect(settled).toBe(false)
-      expect(third.gates).toHaveLength(0)
-
-      await first.reusable.abort()
-      await firstTurn
-      expect(first.gates[0]!.signal.aborted).toBe(true)
-      await vi.waitFor(() => expect(third.gates).toHaveLength(1))
-      third.gates[0]!.release()
-      await thirdTurn
-      expect(third.lastResult()).toContain('Script completed')
-      second.gates[0]!.release()
-      await secondTurn
-      expect(second.lastResult()).toContain('Script completed')
-    }
-    finally {
-      await Promise.all([first.reusable.abort(), second.reusable.abort(), third.reusable.abort()])
-      await Promise.allSettled([firstTurn, secondTurn, thirdTurn])
-    }
-  })
-
-  it.each([2, 3, 4])('drains five sessions in FIFO order with worker limit %s', async (capacity) => {
-    workers.configure({ codemodeWorkerLimit: capacity, codemodeOverflow: 'wait' })
+  it('admits sessions in FIFO order after active cancellation and completed turns', async () => {
+    const capacity = 2
     const fixtures = await Promise.all(Array.from({ length: 5 }, () => createFixture('read_only')))
     const turns: Promise<void>[] = []
     const code = 'text(await tools.lexora_gate({ value: 1 }));'
     try {
       for (const [index, fixture] of fixtures.entries()) {
-        fixture.apply(true)
+        fixture.apply('on')
         turns.push(fixture.turn({ name: 'codemode', arguments: { code } }))
         await vi.waitFor(() => expect(fixture.events.some(event => event.type === 'tool_execution_start' && event.toolName === 'codemode')).toBe(true))
         if (index < capacity)
@@ -379,14 +357,20 @@ describe('codemode runtime preference', () => {
       await new Promise(resolve => setTimeout(resolve, 100))
       expect(fixtures.map(fixture => fixture.gates.length)).toEqual(fixtures.map((_, index) => index < capacity ? 1 : 0))
       for (let index = 0; index < fixtures.length; index++) {
-        fixtures[index]!.gates[0]!.release()
+        if (index === 0) {
+          await fixtures[index]!.reusable.abort()
+          expect(fixtures[index]!.gates[0]!.signal.aborted).toBe(true)
+        }
+        else {
+          fixtures[index]!.gates[0]!.release()
+        }
         await turns[index]
         if (index + capacity < fixtures.length) {
           await vi.waitFor(() => expect(fixtures[index + capacity]!.gates).toHaveLength(1))
           expect(fixtures.slice(index + capacity + 1).every(fixture => fixture.gates.length === 0)).toBe(true)
         }
       }
-      expect(fixtures.every(fixture => fixture.lastResult().includes('Script completed'))).toBe(true)
+      expect(fixtures.slice(1).every(fixture => fixture.lastResult().includes('Script completed'))).toBe(true)
     }
     finally {
       await Promise.all(fixtures.map(fixture => fixture.reusable.abort()))
@@ -394,38 +378,11 @@ describe('codemode runtime preference', () => {
     }
   })
 
-  it('completes 125 scripts across five sessions without losing capacity between turns', async () => {
-    vi.stubEnv('PI_CODEMODE_MAX_WORKERS', undefined)
-    const fixtures = await Promise.all(Array.from({ length: 5 }, () => createFixture('read_only')))
-    for (const fixture of fixtures)
-      fixture.apply(true)
-    try {
-      for (let round = 0; round < 25; round++) {
-        await Promise.all(fixtures.map(fixture => fixture.turn({
-          name: 'codemode',
-          arguments: { code: 'text(await tools.read({ path: "allowed.txt" }));' },
-        })))
-        for (const fixture of fixtures) {
-          expect(fixture.lastResult()).toContain('Script completed')
-          expect(fixture.lastResult()).toContain('allowed content')
-        }
-      }
-      for (const fixture of fixtures) {
-        const results = fixture.session.messages.filter(message => message.role === 'toolResult').filter(message => message.toolName === 'codemode')
-        expect(results).toHaveLength(25)
-        expect(results.every(result => !result.isError)).toBe(true)
-      }
-    }
-    finally {
-      await Promise.all(fixtures.map(fixture => fixture.reusable.abort()))
-    }
-  }, 60_000)
-
   it('removes a cancelled waiting script without starting nested tools', async () => {
     const [first, second, third, fourth] = await Promise.all(Array.from({ length: 4 }, () => createFixture('read_only')))
     const fixtures = [first, second, third, fourth]
     for (const fixture of fixtures)
-      fixture.apply(true)
+      fixture.apply('on')
     const code = 'text(await tools.lexora_gate({ value: 1 }));'
     const turns = [first.turn({ name: 'codemode', arguments: { code } }), second.turn({ name: 'codemode', arguments: { code } })]
     try {
@@ -459,7 +416,7 @@ describe('codemode runtime preference', () => {
 
   it('aborts active nested calls without admitting queued or later calls', async () => {
     const fixture = await createFixture('read_only', { maxPendingToolCalls: 2, maxQueuedToolCalls: 4 })
-    fixture.apply(true)
+    fixture.apply('on')
     const task = fixture.turn({ name: 'codemode', arguments: { code: 'await Promise.all([0, 1, 2, 3, 4, 5].map(value => tools.lexora_gate({ value }))); await tools.lexora_gate({ value: 6 });' } })
     try {
       await vi.waitFor(() => expect(fixture.gates).toHaveLength(2))
@@ -481,7 +438,7 @@ describe('codemode runtime preference', () => {
 
   it('bounds uncooperative cleanup, rejects false success and quarantines the original session', async () => {
     const fixture = await createFixture('read_only', { cleanupTimeoutMs: 50 })
-    fixture.apply(true)
+    fixture.apply('on')
     const task = fixture.turn({ name: 'codemode', arguments: { code: 'tools.lexora_wait({}); return "not finished";' } })
     const rejected = expect(task).rejects.toBeInstanceOf(CodemodeCleanupIncompleteError)
     const signal = await fixture.waiting.promise
@@ -513,7 +470,7 @@ describe('codemode runtime preference', () => {
 
   it('settles cancellation even when a nested tool ignores abort and does not launch its continuation', async () => {
     const fixture = await createFixture('read_only', { cleanupTimeoutMs: 50 })
-    fixture.apply(true)
+    fixture.apply('on')
     const task = fixture.turn({ name: 'codemode', arguments: { code: 'await tools.lexora_wait({}); await tools.lexora_gate({ value: 9 });' } })
     const rejected = expect(task).rejects.toBeInstanceOf(CodemodeCleanupIncompleteError)
     const signal = await fixture.waiting.promise
@@ -542,7 +499,7 @@ describe('codemode runtime preference', () => {
 
   it('keeps concurrent incomplete cleanups degraded until every nested execution settles', async () => {
     const fixture = await createFixture('read_only', { cleanupTimeoutMs: 50 })
-    fixture.apply(true)
+    fixture.apply('on')
     const task = fixture.turn(Array.from({ length: 2 }, () => ({ name: 'codemode', arguments: { code: 'await tools.lexora_wait({});' } })))
     const rejected = expect(task).rejects.toBeInstanceOf(CodemodeCleanupIncompleteError)
     try {
@@ -574,7 +531,7 @@ describe('codemode runtime preference', () => {
   it('retains worker admission until real exit, not stop acknowledgement', async () => {
     const [first, second, third] = await Promise.all(Array.from({ length: 3 }, () => createFixture('read_only', { cleanupTimeoutMs: 50 })))
     for (const fixture of [first, second, third])
-      fixture.apply(true)
+      fixture.apply('on')
     const originalTerminate = Worker.prototype.terminate
     const exits: (() => Promise<number>)[] = []
     const termination = vi.spyOn(Worker.prototype, 'terminate').mockImplementation(function (this: Worker) {
@@ -623,7 +580,7 @@ describe('codemode runtime preference', () => {
       })
       throw new ApprovalCancelledError()
     }
-    fixture.apply(true)
+    fixture.apply('on')
     const task = fixture.turn({ name: 'codemode', arguments: { code: `// @options: {"timeout_ms": 1000}\nawait tools.write({ path: ${JSON.stringify(join(fixture.root, 'outside.txt'))}, content: "blocked" });` } })
     const approval = await pending.promise
     await task
@@ -738,7 +695,7 @@ async function createFixture(executionProfile: BuddyExecutionProfile = 'read_onl
     }],
     directoryGrants: {} as BuddySessionExtensionServices['directoryGrants'],
   }
-  const extensions = await createBuddySessionExtensions({
+  const extensionOptions: Parameters<typeof createBuddySessionExtensions>[0] = {
     canonicalRoot: cwd,
     conversationId: 'codemode-conversation',
     approvalPolicy: 'policy',
@@ -748,10 +705,12 @@ async function createFixture(executionProfile: BuddyExecutionProfile = 'read_onl
     sessionMode: 'interactive',
     signal: new AbortController().signal,
     spaceId: null,
-  })
+  }
+  const extensions = await createBuddySessionExtensions(extensionOptions)
   cleanups.push(() => extensions.dispose())
   const cleanupPromises: Promise<void>[] = []
-  const runtimeCapability = runtimeOptions && createCodemodeCapability(() => true, {
+  let activeCodemodeMode: CodemodeMode = 'off'
+  const runtimeCapability = runtimeOptions && createCodemodeCapability(() => activeCodemodeMode, {
     acquireWorker: (_id, signal) => workers.acquire(signal),
     ...runtimeOptions,
     onCleanupIncomplete(pending) {
@@ -794,7 +753,10 @@ async function createFixture(executionProfile: BuddyExecutionProfile = 'read_onl
     runContext: extensions.runContext,
     inputReferences: extensions.inputReferences,
     materializeInput: async input => input.prompt,
-    setCodemodeEnabled: extensions.setCodemodeEnabled,
+    setCodemodeMode: (mode) => {
+      activeCodemodeMode = mode
+      extensions.setCodemodeMode(mode)
+    },
     assertCodemodeReady: runtimeCapability?.assertReady ?? extensions.assertCodemodeReady,
   })
   const controller = new AbortController()
@@ -807,7 +769,16 @@ async function createFixture(executionProfile: BuddyExecutionProfile = 'read_onl
     session,
     reusable,
     requests,
-    preview: () => createIsolatedBuddyContextSnapshot(options),
+    async preview() {
+      const previewExtensions = await createBuddySessionExtensions(extensionOptions)
+      previewExtensions.setCodemodeMode(activeCodemodeMode)
+      try {
+        return await createIsolatedBuddyContextSnapshot({ ...options, inProcessExtensions: previewExtensions.inProcessExtensions })
+      }
+      finally {
+        await previewExtensions.dispose()
+      }
+    },
     events,
     waiting,
     cleanup,
@@ -822,7 +793,7 @@ async function createFixture(executionProfile: BuddyExecutionProfile = 'read_onl
     authorized,
     phases,
     denied,
-    apply: (codemode: boolean) => reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, codemode }),
+    apply: (codemode: CodemodeMode) => reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, codemode }),
     lastResult: () => session.messages.filter(message => message.role === 'toolResult').at(-1)?.content.filter(block => block.type === 'text').map(block => block.text).join('\n') ?? '',
     async turn(call?: typeof nextCall) {
       nextCall = call

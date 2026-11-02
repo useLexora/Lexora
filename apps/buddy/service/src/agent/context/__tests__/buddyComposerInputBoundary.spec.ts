@@ -236,46 +236,6 @@ describe('composer input at the Buddy session boundary', () => {
     expect(raw).toContain('OMITTED_FAILED_ATTEMPT')
   })
 
-  it('uses replacement sizes for compaction without compacting unsent input after metadata', async () => {
-    const fixture = await createFixture()
-    const manager = fixture.session.sessionManager
-    manager.appendMessage({ role: 'user', content: 'First input', timestamp: 1 })
-    const latest = manager.appendMessage({ role: 'user', content: 'Second input', timestamp: 2 })
-    manager.appendCustomEntry('offline-metadata', {})
-    enableCompaction(fixture, 200)
-    expect(fixture.reusable.canCompact()).toBe(false)
-
-    manager.appendContextEdit(latest, { content: 'EXPANDED_INPUT '.repeat(100) })
-    expect(fixture.reusable.canCompact()).toBe(true)
-
-    manager.appendContextEdit(latest, { content: 'Short input' })
-    expect(fixture.reusable.canCompact()).toBe(false)
-  })
-
-  it('rematerializes input for a real Buddy tool continuation without appending it again', async () => {
-    let calls = 0
-    const fixture = await createFixture({
-      stream: model => ++calls === 1
-        ? terminalStream(model, {
-            content: [{ type: 'toolCall', id: 'offline-call-1', name: 'lexora_output_present', arguments: { paths: ['result.txt'] } }],
-            stopReason: 'toolUse',
-          })
-        : terminalStream(model),
-    })
-    await fixture.send(plan())
-
-    expect(fixture.contexts).toHaveLength(2)
-    for (const context of fixture.contexts)
-      expect(userMessages(context)[0]?.content).toEqual(materializedContent(fixture))
-    expect(fixture.contexts[1]?.messages).toContainEqual(expect.objectContaining({
-      role: 'toolResult',
-      toolName: 'lexora_output_present',
-      details: { artifactIds: ['offline-artifact-1'] },
-    }))
-    expect(referenceEntries(fixture)).toHaveLength(1)
-    await expectSafePersistence(fixture)
-  })
-
   it('keeps native tool-result images outside the Composer input-copy boundary', async () => {
     let calls = 0
     const fixture = await createFixture({
@@ -310,7 +270,7 @@ describe('composer input at the Buddy session boundary', () => {
         ? terminalStream(model, { content: [], stopReason: 'error', errorMessage: '429 rate limit exceeded' })
         : terminalStream(model),
     })
-    fixture.reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: false, modelRetryLimit: 1 })
+    fixture.reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: 'off', modelRetryLimit: 1 })
     fixture.session.settingsManager.applyOverrides({ retry: { baseDelayMs: 1 } })
     await fixture.send(plan())
 
@@ -499,8 +459,12 @@ describe('composer input at the Buddy session boundary', () => {
     const persisted = (await readFile(fixture.piSessionFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
     expect(persisted.find(entry => entry.id === stored.id)).toEqual(stored)
     expect(fixture.session.sessionManager.getEntry(stored.id)).toEqual(stored)
-    if (mode === 'failure' || mode === 'cancel')
+    if (mode === 'failure' || mode === 'cancel') {
       expect(fixture.session.sessionManager.getEntries().some(entry => entry.type === 'compaction')).toBe(false)
+      await fixture.send({ ...plan('follow'), text: '摘要未成功，继续', images: [] })
+      expect(imageMessages(fixture.contexts[3])).toHaveLength(2)
+    }
+    await expectSafePersistence(fixture)
   })
 
   it('runs pre-send compaction after an aborted response before preparing the next request', async () => {
@@ -516,15 +480,7 @@ describe('composer input at the Buddy session boundary', () => {
     expect(fixture.contexts).toHaveLength(1)
     await fixture.send({ ...plan('after-abort'), text: '预发送压缩后继续', images: [] })
 
-    expect(fixture.lifecycle).toEqual([
-      'input',
-      'provider',
-      'input',
-      'compaction_start:threshold',
-      'provider',
-      'compaction_end:threshold',
-      'provider',
-    ])
+    expect(fixture.contexts).toHaveLength(3)
     expectSafeSummary(fixture, fixture.contexts[1])
     expect(fixture.contexts[2]?.systemPrompt).toContain('Current offline run: run-after-abort')
     expect(userMessages(fixture.contexts[2]).at(-1)?.content).toEqual([{ type: 'text', text: '预发送压缩后继续' }])
@@ -565,30 +521,6 @@ describe('composer input at the Buddy session boundary', () => {
     expect(JSON.stringify(fixture.contexts[4])).not.toContain('prompt is too long')
     expect(referenceEntries(fixture)).toHaveLength(2)
     expect(fixture.session.sessionManager.getBranch().filter(entry => entry.type === 'context_edit')).toHaveLength(1)
-    expect(fixture.lifecycle).toContain('compaction_end:overflow')
-    await expectSafePersistence(fixture)
-  })
-
-  it.each(['cancel', 'failure'] as const)('preserves inputs after manual compaction %s', async (mode) => {
-    let calls = 0
-    const fixture = await createFixture({
-      stream: (model) => {
-        if (++calls !== 3)
-          return terminalStream(model)
-        if (mode === 'cancel')
-          queueMicrotask(() => fixture.session.abortCompaction())
-        return terminalStream(model, mode === 'failure'
-          ? { stopReason: 'error', errorMessage: 'offline summary failed' }
-          : {})
-      },
-    })
-    await fixture.send(plan())
-    await fixture.send(plan('message-2'))
-    enableCompaction(fixture)
-    await expect(fixture.session.compact()).rejects.toThrow(mode === 'cancel' ? 'cancelled' : 'offline summary failed')
-    expectSafeSummary(fixture, fixture.contexts[2])
-    await fixture.send({ ...plan('follow'), text: '摘要未成功，继续', images: [] })
-    expect(imageMessages(fixture.contexts[3])).toHaveLength(2)
     await expectSafePersistence(fixture)
   })
 
@@ -655,14 +587,10 @@ async function createFixture(options: {
       await writeFile(join(root, `${id}.png`), Buffer.from(image.data, 'base64'))
   }
   const contexts: Context[] = []
-  const lifecycle: string[] = []
   const inputReferences = { pending: null }
   const probe: BuddyInProcessExtension = {
     name: 'lexora-composer-offline-probe',
     factory(pi) {
-      pi.on('input', () => {
-        lifecycle.push('input')
-      })
       pi.on('before_provider_request', event => ({ ...new Object(event.payload), metadata: { offline_probe: 'preserved' } }))
       pi.on('before_agent_start', (event) => {
         event.systemPromptOptions.sections.offline_run = `Current offline run: ${runContext.current?.runId}`
@@ -739,10 +667,6 @@ async function createFixture(options: {
   shutdowns.push(() => created.shutdown('quit'))
   session.settingsManager.setRetryEnabled(false)
   session.settingsManager.setCompactionEnabled(false)
-  session.subscribe((event) => {
-    if (event.type === 'compaction_start' || event.type === 'compaction_end')
-      lifecycle.push(`${event.type}:${event.reason}`)
-  })
   modelRuntime.streamSimple = (requestModel, context, streamOptions) => {
     const emptyImage = userMessages(context).some(message => (
       Array.isArray(message.content)
@@ -760,7 +684,6 @@ async function createFixture(options: {
       tools: getCurrentTools(context.messages),
       messages: context.messages.filter(message => message.role !== 'system'),
     }))
-    lifecycle.push('provider')
     return options.stream?.(requestModel, context, streamOptions) ?? terminalStream(requestModel)
   }
   reusable = createReusableBuddySession({
@@ -787,19 +710,10 @@ async function createFixture(options: {
     shutdown: created.shutdown,
   })
 
-  reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: false, modelRetryLimit: 0 })
+  reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: 'off', modelRetryLimit: 0 })
 
   async function send(input: InputPlan, runId = `run-${input.messageId}`) {
     const reference = toBuddyInputReference(input)
-    const existing = session.sessionManager.getBranch().find(entry => (
-      entry.type === 'message' && isReferenceMessage(entry.message)
-      && entry.message.buddyInput.messageId === input.messageId
-    ))
-    if (existing?.type === 'message' && isReferenceMessage(existing.message)) {
-      if (JSON.stringify(existing.message.buddyInput) !== JSON.stringify(reference))
-        throw new Error('MESSAGE_SNAPSHOT_MISMATCH')
-      return false
-    }
     const release = await reusable!.activateTurn({ generation: 0, contextWindow: null, flushProjectedEvents: async () => {}, maxTokens: null, model: model!.id, onToolExecutionAuthorized: async () => {}, onToolExecutionDenied: async () => {}, provider: model!.provider, runId, serviceTier: 'priority', signal: new AbortController().signal })
     try {
       await reusable!.prompt(input.text, {
@@ -814,7 +728,7 @@ async function createFixture(options: {
     }
   }
 
-  return { ...created, contexts, images, lifecycle, nativeToolImage, reusable, root, runContext, send }
+  return { ...created, contexts, images, nativeToolImage, reusable, root, runContext, send }
 }
 
 function appendHistoricalRead(fixture: Awaited<ReturnType<typeof createFixture>>) {

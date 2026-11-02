@@ -87,7 +87,7 @@ describe('execution continuation through real Pi sessions', () => {
     }
   })
 
-  it.each(['agent_end', 'agent_settled'] as const)('delivers steering arriving at the native %s boundary exactly once', async (boundary) => {
+  it.each(['agent_end', 'agent_settled'] as const)('delivers %s steering once and drains queued input before closing without children', async (boundary) => {
     const f = await fixture()
     const mailbox = createMailbox(f)
     mailbox.finishChildren()
@@ -98,20 +98,6 @@ describe('execution continuation through real Pi sessions', () => {
       sent = true
       expect(f.active()!.steer!(() => createBuddyInputReference({ messageId: 'boundary', prompt: 'BOUNDARY_INPUT', images: [] }))).toBe(true)
     })
-    try {
-      expect(await f.execute(mailbox.port)).toMatchObject({ status: 'completed' })
-      expect(f.requests).toHaveLength(2)
-      expect(JSON.stringify(f.requests[1])).toContain('BOUNDARY_INPUT')
-      const journal = (await readFile(f.file, 'utf8')).split('\n')
-      expect(journal.filter(line => line.includes('"messageId":"boundary"'))).toHaveLength(1)
-    }
-    finally { unsubscribe() }
-  })
-
-  it('drains an ordinary queued input before closing even without children', async () => {
-    const f = await fixture()
-    const mailbox = createMailbox(f)
-    mailbox.finishChildren()
     let delivered = false
     mailbox.port.followUp = async () => {
       if (delivered)
@@ -119,10 +105,16 @@ describe('execution continuation through real Pi sessions', () => {
       delivered = true
       return f.active()!.followUp!(() => createBuddyInputReference({ messageId: 'queued', prompt: 'QUEUED_BEFORE_CLOSE', images: [] }))
     }
-    expect(await f.execute(mailbox.port)).toMatchObject({ status: 'completed' })
-    expect(f.requests).toHaveLength(2)
-    expect(JSON.stringify(f.requests[1])).toContain('QUEUED_BEFORE_CLOSE')
-    expect(f.checkpoints()).toEqual(['before', 'after'])
+    try {
+      expect(await f.execute(mailbox.port)).toMatchObject({ status: 'completed' })
+      expect(f.requests).toHaveLength(3)
+      expect(JSON.stringify(f.requests[1])).toContain('BOUNDARY_INPUT')
+      expect(JSON.stringify(f.requests[2])).toContain('QUEUED_BEFORE_CLOSE')
+      const journal = (await readFile(f.file, 'utf8')).split('\n')
+      expect(journal.filter(line => line.includes('"messageId":"boundary"'))).toHaveLength(1)
+      expect(f.checkpoints()).toEqual(['before', 'after'])
+    }
+    finally { unsubscribe() }
   })
 
   it('does not resume an accepted idle input after cancellation', async () => {
@@ -351,49 +343,41 @@ describe('execution continuation through real Pi sessions', () => {
     }
   })
 
-  it('does not accept a native tool delivery when its journal cannot be synchronized', async () => {
+  it.each(['native', 'idle'] as const)('does not acknowledge %s delivery when its journal cannot be synchronized', async (mode) => {
     let delivered: ExecutionMailboxMessage
-    const f = await fixture({ delegationReply: () => {
-      const details = { updates: [delivered] }
-      return { details, content: [{ type: 'text', text: JSON.stringify(details) }] }
-    } })
-    delivered = f.message('unflushed-native', 'Native result must remain unacknowledged')
+    const f = await fixture(mode === 'native'
+      ? { delegationReply: () => {
+          const details = { updates: [delivered] }
+          return { details, content: [{ type: 'text', text: JSON.stringify(details) }] }
+        } }
+      : {})
+    delivered = f.message('unflushed-result', 'Do not acknowledge this input')
     const mailbox = createMailbox(f)
-    mailbox.send(delivered)
-    mailbox.finishChildren()
+    if (mode === 'native') {
+      mailbox.send(delivered)
+      mailbox.finishChildren()
+    }
     let interrupted = false
     f.session.subscribe((event) => {
-      if (!interrupted && event.type === 'message_end' && event.message.role === 'toolResult' && event.message.toolName === 'lexora_agents') {
-        interrupted = true
-        renameSync(f.file, `${f.file}.saved`)
-        mkdirSync(f.file)
-      }
-    })
-    await expect(f.execute(mailbox.port)).resolves.toMatchObject({ status: 'failed', errorCode: 'SESSION_STORAGE_UNAVAILABLE' })
-    expect(mailbox.accepted).toEqual([])
-    expect(mailbox.consumed).toEqual([])
-    expect(f.runs.findById(f.run.id)?.piSessionFile).toBeNull()
-  })
-
-  it('does not acknowledge a source marker when its journal cannot be synchronized', async () => {
-    const f = await fixture()
-    const mailbox = createMailbox(f)
-    let interrupted = false
-    f.session.subscribe((event) => {
-      if (!interrupted && event.type === 'message_end' && event.message.role === 'custom' && event.message.customType === EXECUTION_MAILBOX_ENTRY_TYPE) {
+      if (!interrupted && event.type === 'message_end' && (mode === 'native'
+        ? event.message.role === 'toolResult' && event.message.toolName === 'lexora_agents'
+        : event.message.role === 'custom' && event.message.customType === EXECUTION_MAILBOX_ENTRY_TYPE)) {
         interrupted = true
         renameSync(f.file, `${f.file}.saved`)
         mkdirSync(f.file)
       }
     })
     const completion = f.execute(mailbox.port)
-    await mailbox.waiting.promise
-    mailbox.send(f.message('unflushed-result', 'Do not acknowledge this input'))
-    mailbox.finishChildren()
+    if (mode === 'idle') {
+      await mailbox.waiting.promise
+      mailbox.send(delivered)
+      mailbox.finishChildren()
+    }
     await expect(completion).resolves.toMatchObject({ status: 'failed', errorCode: 'SESSION_STORAGE_UNAVAILABLE' })
     expect(mailbox.accepted).toEqual([])
     expect(mailbox.consumed).toEqual([])
-    expect(f.requests).toHaveLength(1)
+    if (mode === 'idle')
+      expect(f.requests).toHaveLength(1)
     expect(f.runs.findById(f.run.id)?.piSessionFile).toBeNull()
   })
 
@@ -491,7 +475,7 @@ async function fixture(options: { compact?: () => void, pending?: () => Executio
         return options.pending!().filter(message => !delivered.some(entry => entry.message.messageId === message.messageId))
       }
     : undefined, assertModelAccess: async () => model, runContext, inputReferences, materializeInput: async input => [{ type: 'text', text: input.prompt }], tree: cursor })
-  reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: false, modelRetryLimit: 0 })
+  reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: 'off', modelRetryLimit: 0 })
   const sessions = new BuddySessionRegistry<typeof reusable>()
   const piEvents = new PiEventBridge({ eventLog, usage: new UsageService({ eventLog, repository: createUsageRepository(database) }) })
   const executor = new PiTurnExecutor({ eventLog, piEvents, continuity: new RunContinuityService(runs), sessions, sessionFactory: async () => ({ session: reusable, piSessionFile: created.piSessionFile }) })
