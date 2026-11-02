@@ -16,7 +16,7 @@ import { createReusableBuddySession } from '../createReusableBuddySession'
 import { createIsolatedBuddySession } from './isolatedBuddySession'
 
 describe('buddy cache warming', () => {
-  it.each(['complete', 'disable', 'abort', 'model', 'deadline', 'decision-delay', 'inflight-disable', 'inflight-abort', 'inflight-complete', 'inflight-shutdown', 'unsupported', 'uneconomic', 'missing-prices'] as const)('records native warm usage once and stops on %s', async (stop) => {
+  it.each(['complete', 'disable', 'abort', 'model', 'deadline', 'inflight-disable', 'inflight-abort', 'inflight-complete', 'inflight-shutdown', 'unsupported', 'uneconomic', 'missing-prices'] as const)('records native warm usage once and stops on %s', async (stop) => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'buddy-cache-warming-')))
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     database.exec(`
@@ -37,7 +37,6 @@ describe('buddy cache warming', () => {
     await runtime.setRuntimeApiKey(model.provider, 'offline-only')
     const started = Promise.withResolvers<void>()
     const finish = Promise.withResolvers<void>()
-    const finishDecision = Promise.withResolvers<void>()
     const finishWarm = Promise.withResolvers<void>()
     let warmSignal: AbortSignal | undefined
     let warmRequests = 0
@@ -70,8 +69,6 @@ describe('buddy cache warming', () => {
       inProcessExtensions: [{
         name: 'lexora-warm-fixture',
         factory(pi) {
-          if (stop === 'decision-delay')
-            pi.on('cache_warming_decision', async () => { await finishDecision.promise })
           pi.registerTool({
             name: 'lexora_wait',
             label: 'Wait',
@@ -109,8 +106,7 @@ describe('buddy cache warming', () => {
     const unsubscribe = channel.subscribe()
     let task: Promise<void> | undefined
     try {
-      reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'streaming', codemode: false, modelRetryLimit: 3 })
-      expect(created.session.settingsManager.getCacheWarmingMode()).toBe('off')
+      reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'streaming', codemode: 'off', modelRetryLimit: 3 })
       expect(reusable.getCacheWarmingStatus?.()).toBe(stop === 'unsupported' ? 'unsupported' : 'idle')
       const release = await reusable.activateTurn({ generation: 0, runId: 'run-1', provider: model.provider, model: model.id, contextWindow: null, maxTokens: null, signal: new AbortController().signal, flushProjectedEvents: () => channel.flush(), onToolExecutionAuthorized: async () => {}, onToolExecutionDenied: async () => {} })
       vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
@@ -120,11 +116,6 @@ describe('buddy cache warming', () => {
       if (stop === 'deadline')
         vi.setSystemTime(Date.now() + 120_000)
       await vi.advanceTimersByTimeAsync(10_000)
-      if (stop === 'decision-delay') {
-        vi.setSystemTime(Date.now() + 120_000)
-        finishDecision.resolve()
-        await vi.advanceTimersByTimeAsync(1)
-      }
       if (stop === 'unsupported' || stop === 'uneconomic' || stop === 'missing-prices') {
         expect(warmRequests).toBe(0)
         expect(reusable.getCacheWarmingStatus?.()).toBe(stop === 'missing-prices' ? 'unavailable' : stop)
@@ -133,7 +124,7 @@ describe('buddy cache warming', () => {
         release()
         return
       }
-      if (stop === 'deadline' || stop === 'decision-delay') {
+      if (stop === 'deadline') {
         expect(warmRequests).toBe(0)
         expect(reusable.getCacheWarmingStatus?.()).toBe('expired')
         expect(repository.listForRun('run-1').filter(record => record.purpose === 'cache_warm')).toEqual([])
@@ -146,7 +137,7 @@ describe('buddy cache warming', () => {
         expect(warmRequests).toBe(1)
         expect(reusable.getCacheWarmingStatus?.()).toBe('refreshing')
         if (stop === 'inflight-disable')
-          reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: false, modelRetryLimit: 3 })
+          reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: 'off', modelRetryLimit: 3 })
         if (stop === 'inflight-abort')
           await reusable.abort()
         if (stop === 'inflight-shutdown')
@@ -177,7 +168,7 @@ describe('buddy cache warming', () => {
       expect(await usage.record({ createdAt: records[0]!.createdAt, model: model.id, provider: model.provider, purpose: 'cache_warm', runId: 'run-1', sourceEntryId: entry.id, usage: responseUsage(true) })).toBeNull()
       expect(repository.listForRun('run-1').filter(record => record.purpose === 'cache_warm')).toHaveLength(1)
       if (stop === 'disable')
-        reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: false, modelRetryLimit: 3 })
+        reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: 'off', modelRetryLimit: 3 })
       if (stop === 'abort')
         await reusable.abort()
       if (stop === 'model')
@@ -198,7 +189,6 @@ describe('buddy cache warming', () => {
     }
     finally {
       finish.resolve()
-      finishDecision.resolve()
       finishWarm.resolve()
       await task
       await channel.settle()

@@ -13,7 +13,7 @@ import { attachPageDiagnostics, ROOT, serializeError } from './shared.mjs'
 const repoRoot = ROOT
 const buddyRoot = path.join(repoRoot, 'apps/buddy')
 const require = createRequire(path.join(buddyRoot, 'package.json'))
-const defaultConfig = '[desktop]\nlanguage = "zh-CN"\ntheme = "light"\nnotifications_enabled = false\nlaunch_at_login = false\n[pet]\nenabled = false\n[proxy]\nmode = "direct"\nserver = ""\n'
+const defaultConfig = '[desktop]\nlanguage = "zh-CN"\ntheme = "light"\nfeature_announcements_enabled = false\nnotifications_enabled = false\nlaunch_at_login = false\n[pet]\nenabled = false\n[proxy]\nmode = "direct"\nserver = ""\n'
 
 export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP_PATH ?? buddyRoot, executablePath = process.env.LEXORA_TEST_EXECUTABLE_PATH, rendererUrl, runId = process.env.LEXORA_TEST_RUN_ID, dataRoot = path.join(homedir(), '.lexora-test'), artifactRoot, passwordStore } = {}) {
   if (rendererUrl) {

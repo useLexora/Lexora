@@ -191,7 +191,7 @@ export class BuddySessionFactory {
             : { approvalPolicy: blueprint.approvalPolicy, executionProfile: blueprint.executionProfile })
         },
         updatePermissionSettings: settings => extensions.updatePermissionSettings(restrictPermissions(settings)),
-        setCodemodeEnabled: extensions.setCodemodeEnabled,
+        setCodemodeMode: extensions.setCodemodeMode,
         assertCodemodeReady: extensions.assertCodemodeReady,
         skillReferences: blueprint.resources.availableSkillReferences ?? blueprint.resources.skillReferences,
         tree,

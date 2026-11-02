@@ -62,6 +62,16 @@ Model selection is associated with companions. Set a default model in a companio
 
 A fast model may suit simple organization. Images, complex material, and tool use need appropriate model capabilities. Check the actual configuration and service documentation rather than relying on the name.
 
+## Tool calling mode
+
+Open **Settings → Runtime → Tool calling mode** to choose a mode:
+
+- **Mixed**: call tools directly for simple actions, or use code to batch queries and filter results.
+- **Code orchestration**: ordinary tools must be called through scripts, requiring a model that reliably generates valid code.
+- **Off**: disable code orchestration and call available tools directly.
+
+Mode changes apply from the next run, and all calls follow task permissions. After upgrading, previously enabled configurations use Mixed mode; previously disabled configurations remain off. Select Code orchestration to keep calling ordinary tools exclusively through scripts.
+
 ## Inspect usage and resolve connection problems
 
 **Settings → Usage** shows the usage Lexora records, including task and model breakdowns. Your provider's console remains authoritative for billing and quotas.

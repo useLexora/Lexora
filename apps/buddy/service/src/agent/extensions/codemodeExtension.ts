@@ -1,3 +1,4 @@
+import type { CodemodeMode } from '../../../../shared/runtime/runtimePreferences'
 import type { BuddyCapability } from './BuddyCapability'
 import { createCodemodeExtension } from '@earendil-works/pi-coding-agent'
 
@@ -14,7 +15,7 @@ export class CodemodeCleanupIncompleteError extends Error {
 type CodemodeRuntimeOptions = NonNullable<Parameters<typeof createCodemodeExtension>[0]>['runtime']
 
 export function createCodemodeCapability(
-  isEnabled: () => boolean,
+  getMode: () => CodemodeMode,
   runtime?: CodemodeRuntimeOptions,
 ): BuddyCapability & { assertReady: () => void } {
   let poisoned = false
@@ -24,7 +25,7 @@ export function createCodemodeCapability(
       throw new CodemodeCleanupIncompleteError()
   }
   const extension = createCodemodeExtension({
-    mode: 'only',
+    get mode() { return getMode() === 'only' ? 'only' : 'on' },
     models: false,
     runtime: {
       computeTimeoutMs: 30_000,
@@ -60,7 +61,7 @@ export function createCodemodeCapability(
       exposure: 'direct',
       keywords: 'JavaScript parallel batch filter tools',
       tools: [{ name: CODEMODE_TOOL_NAME }],
-      available: isEnabled,
+      available: () => getMode() !== 'off',
     }],
   }
 }

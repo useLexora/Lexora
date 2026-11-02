@@ -8,6 +8,7 @@ import type { BuddyApprovalPolicy } from '../../../../shared/permissions/approva
 import type { BuddyExecutionProfile } from '../../../../shared/permissions/executionProfile'
 import type { BuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
 import type { BuddySessionMode } from '../../../../shared/permissions/sessionMode'
+import type { CodemodeMode } from '../../../../shared/runtime/runtimePreferences'
 import type { ApprovalService } from '../../approvals/ApprovalService'
 import type { BuddyToolClassificationResult } from '../../approvals/toolClassification'
 import type { AttachmentService } from '../../attachments/AttachmentService'
@@ -97,7 +98,7 @@ export interface CreateBuddySessionExtensionsOptions {
 export interface BuddySessionExtensions {
   getPermissionSettings: () => BuddyPermissionSettings
   updatePermissionSettings: (settings: BuddyPermissionSettings) => void
-  setCodemodeEnabled: (enabled: boolean) => void
+  setCodemodeMode: (mode: CodemodeMode) => void
   assertCodemodeReady: () => void
   toolCapabilities: Pick<SessionToolCapabilities, 'onDidChange' | 'snapshot'>
   dispose: () => Promise<void>
@@ -119,8 +120,8 @@ export async function createBuddySessionExtensions(
   const sandboxDirectories = new SandboxDirectoryPermissions()
   const runContext: BuddyExtensionRunContextStore = { current: null }
   let permissionSettings: BuddyPermissionSettings = { approvalPolicy: options.approvalPolicy, executionProfile: options.executionProfile }
-  let codemodeEnabled = false
-  const codemode = createCodemodeCapability(() => codemodeEnabled, {
+  let codemodeMode: CodemodeMode = 'off'
+  const codemode = createCodemodeCapability(() => codemodeMode, {
     async acquireWorker(toolCallId, signal) {
       const run = runContext.current
       if (!run)
@@ -219,7 +220,7 @@ export async function createBuddySessionExtensions(
         if (denial)
           throw Object.assign(new Error(denial), { toolCallBlockReason: denial })
       },
-      isCodemodeEnabled: () => codemodeEnabled,
+      isCodemodeEnabled: () => codemodeMode !== 'off',
       conversationId: options.conversationId,
       get executionProfile() { return getExecutionProfile() },
       cwd: options.canonicalRoot,
@@ -335,7 +336,7 @@ export async function createBuddySessionExtensions(
         authorization.updatePermissionSettings(settings)
         shellCapability.refreshExecution()
       },
-      setCodemodeEnabled: enabled => codemodeEnabled = enabled,
+      setCodemodeMode: mode => codemodeMode = mode,
       assertCodemodeReady: codemode.assertReady,
       dispose,
       resourceRevisions,

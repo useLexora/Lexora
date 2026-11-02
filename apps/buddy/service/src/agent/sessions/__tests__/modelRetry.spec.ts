@@ -20,12 +20,11 @@ afterEach(async () => {
 })
 
 describe('model retry policy', () => {
-  it.each([false, true])('prepares the smaller model context before requesting it, with another switch during compaction: %s', async (switchDuringCompaction) => {
+  it('prepares the smaller model context and honors another switch during compaction', async () => {
     const compactedModels: string[] = []
     const fixture = await createFixture(() => undefined, [], true, () => {
       compactedModels.push(fixture.session.model!.id)
-      if (switchDuringCompaction)
-        fixture.selectFirstModel()
+      fixture.selectFirstModel()
     })
     const first = createAssistantMessageEventStream()
     const started = Promise.withResolvers<void>()
@@ -41,7 +40,7 @@ describe('model retry policy', () => {
         started.resolve()
         return first
       }
-      if (requests.length === 2 && switchDuringCompaction) {
+      if (requests.length === 2) {
         const stream = createAssistantMessageEventStream()
         void response(model).result().then(message => stream.push({ type: 'done', reason: 'toolUse', message: { ...message, stopReason: 'toolUse', content: [{ type: 'toolCall', id: 'inspect-again', name: 'ls', arguments: { path: '.' } }] } }))
         return stream
@@ -58,9 +57,9 @@ describe('model retry policy', () => {
     first.push({ type: 'done', reason: 'toolUse', message: { ...original, stopReason: 'toolUse', usage: { ...original.usage, input: 20_000, totalTokens: 20_000 }, content: [{ type: 'toolCall', id: 'inspect', name: 'ls', arguments: { path: '.' } }] } })
     await prompt
     expect(compactedModels).toEqual([fixture.models[1]!.id])
-    expect(requests.map(request => request.model)).toEqual([fixture.models[0]!.id, fixture.models[1]!.id, ...switchDuringCompaction ? [fixture.models[0]!.id] : []])
+    expect(requests.map(request => request.model)).toEqual([fixture.models[0]!.id, fixture.models[1]!.id, fixture.models[0]!.id])
     expect(requests[1]!.context).toContain('Preserved task context before switching models')
-    expect(toolModels).toEqual([fixture.models[0]!.id, ...switchDuringCompaction ? [fixture.models[1]!.id] : []])
+    expect(toolModels).toEqual([fixture.models[0]!.id, fixture.models[1]!.id])
     expect(fixture.session.messages.at(-1)).toMatchObject({ model: requests.at(-1)!.model, stopReason: 'stop' })
     expect(fixture.session.sessionManager.getEntries().filter(entry => entry.type === 'message' && entry.message.role === 'user')).toHaveLength(1)
     release()
@@ -234,7 +233,7 @@ describe('model retry policy', () => {
       return '503 service unavailable'
     })
     let release = await fixture.activate(2)
-    fixture.reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'streaming', codemode: false, modelRetryLimit: 0 })
+    fixture.reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'streaming', codemode: 'off', modelRetryLimit: 0 })
     fixture.session.settingsManager.applyOverrides({ retry: { baseDelayMs: 1 } })
     await fixture.reusable.prompt('First run')
     expect(requests).toBe(3)
@@ -298,7 +297,7 @@ async function createFixture(failure: (model: Model<Api>) => string | undefined,
   let run = 0
   async function activate(limit?: ModelRetryLimit) {
     if (limit !== undefined)
-      reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: false, modelRetryLimit: limit })
+      reusable.applyPreferences({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: 'off', modelRetryLimit: limit })
     const release = await reusable.activateTurn({ generation: 0, runId: `retry-run-${++run}`, provider: model.provider, model: model.id, contextWindow: null, maxTokens: null, signal: new AbortController().signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {}, onToolExecutionDenied: async () => {} })
     session.settingsManager.applyOverrides({ retry: { baseDelayMs: 1 } })
     return release

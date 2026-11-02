@@ -941,67 +941,6 @@ describe('buddy runtime cross-subsystem contract', () => {
       .toContain('Private compacted context')
   })
 
-  it('builds a read-only context snapshot through the runtime capability', async () => {
-    const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-buddy-context-usage-')))
-    directories.push(root)
-    const buddyHome = join(root, 'buddy')
-    const builtinSkillsDirectory = join(root, 'skills')
-    await mkdir(builtinSkillsDirectory, { recursive: true })
-    const database = openTrackedDatabase(join(buddyHome, 'buddy.sqlite3'))
-    const eventLog = createRunEventLog({
-      conversationsDirectory: join(buddyHome, 'conversations'),
-      database,
-    })
-    const provider = await startLocalModelProvider()
-    const harness = createRuntimeRpcHarness({
-      'offline-provider': { key: 'test-api-key', type: 'api_key' },
-    })
-    const runtime = await startBuddyService({
-      buddyHome,
-      builtinSkillsDirectories: [builtinSkillsDirectory],
-      database,
-      eventLog,
-      rpc: harness.rpc,
-    })
-
-    try {
-      await harness.invoke('providers.upsertCustom', offlineProviderConfig(provider.baseUrl))
-      const request = {
-        branchId: null,
-        conversationId: null,
-        draftId: 'draft-context-usage',
-        approvalPolicy: 'policy' as const,
-        executionProfile: 'workspace_write',
-        modelSelection: {
-          modelId: 'offline-model',
-          providerId: 'offline-provider',
-          reasoning: null,
-          serviceTier: null,
-        },
-        spaceId: null,
-      }
-      const snapshot = await harness.invoke(
-        'context.usageSnapshot',
-        request,
-      ) as LocalContextUsageSnapshot
-
-      if (snapshot.status !== 'ready')
-        throw new Error('Expected a ready draft context snapshot')
-      expect(snapshot).toMatchObject({
-        contextWindow: 16_384,
-        modelId: 'offline-model',
-        providerId: 'offline-provider',
-      })
-      expect(provider.requests).toEqual([])
-      expect(createConversationRepository(database).listRecent()).toEqual([])
-      expect(createRunRepository(database).listRecent()).toEqual([])
-    }
-    finally {
-      await runtime.dispose()
-      await eventLog.close()
-    }
-  })
-
   it('continues the same Pi history in the new space without moving previous work files', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-buddy-move-space-')))
     directories.push(root)
@@ -1048,7 +987,7 @@ describe('buddy runtime cross-subsystem contract', () => {
     }
   })
 
-  it('forks edited and regenerated chat turns while preserving idempotent replay', async () => {
+  it('previews draft context without writes, then forks edited and regenerated turns with idempotent replay', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-buddy-chat-turns-')))
     directories.push(root)
     const buddyHome = join(root, 'buddy')
@@ -1073,6 +1012,29 @@ describe('buddy runtime cross-subsystem contract', () => {
 
     try {
       await harness.invoke('providers.upsertCustom', offlineProviderConfig(provider.baseUrl))
+      const snapshot = await harness.invoke('context.usageSnapshot', {
+        branchId: null,
+        conversationId: null,
+        draftId: 'draft-context-usage',
+        approvalPolicy: 'policy',
+        executionProfile: 'workspace_write',
+        modelSelection: {
+          modelId: 'offline-model',
+          providerId: 'offline-provider',
+          reasoning: null,
+          serviceTier: null,
+        },
+        spaceId: null,
+      }) as LocalContextUsageSnapshot
+      expect(snapshot).toMatchObject({
+        status: 'ready',
+        contextWindow: 16_384,
+        modelId: 'offline-model',
+        providerId: 'offline-provider',
+      })
+      expect(provider.requests).toEqual([])
+      expect(createConversationRepository(database).listRecent()).toEqual([])
+      expect(createRunRepository(database).listRecent()).toEqual([])
       const first = await service.runtime.startTurn(await turnRequest(harness, {
         content: 'Original user input',
         requestId: 'chat-fork-start',
@@ -1455,7 +1417,6 @@ function readRecord(value: unknown): Record<string, unknown> | null {
 interface RuntimeRpcHarness {
   invoke: (method: string, params: unknown) => Promise<unknown>
   notifyRuntime: (method: string, params: unknown) => void
-  notifications: Array<{ method: string, params: unknown }>
   rpc: BuddyServiceRpcServer
 }
 
@@ -1468,13 +1429,9 @@ function createRuntimeRpcHarness(
   const credentials = new Map(Object.entries(initialCredentials).map(([providerId, credential]) =>
     [providerId, structuredClone(credential)],
   ))
-  const secrets = new Map<string, unknown>()
-  const notifications: Array<{ method: string, params: unknown }> = []
   const rpc = {
     close() {},
-    notify(method: string, params: unknown) {
-      notifications.push({ method, params })
-    },
+    notify() {},
     onNotification(listener: (method: string, params: unknown) => void) {
       notificationListeners.add(listener)
       return () => notificationListeners.delete(listener)
@@ -1485,13 +1442,9 @@ function createRuntimeRpcHarness(
     },
     async request(method: string, params: unknown, _timeout?: number | null, signal = new AbortController().signal, requestId?: string) {
       const input = params as {
-        credential?: Credential
-        id?: string
-        namespace?: string
         providerId?: string
         requestId?: string
         url?: string
-        value?: unknown
       }
       if (method === 'extensions.agent.list' || method === 'extensions.skills.list' || method === 'host.extensions.shells.list')
         return Promise.resolve([])
@@ -1519,7 +1472,7 @@ function createRuntimeRpcHarness(
       if (method === 'host.images.preferences')
         return Promise.resolve({})
       if (method === 'host.runtimePreferences.get')
-        return Promise.resolve({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: false, modelRetryLimit: 3 })
+        return Promise.resolve({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: 'off', modelRetryLimit: 3 })
       if (method === 'host.credentials.list') {
         return Promise.resolve({
           ok: true,
@@ -1535,33 +1488,6 @@ function createRuntimeRpcHarness(
           value: structuredClone(credentials.get(input.providerId ?? '') ?? null),
         })
       }
-      if (method === 'host.credentials.write' && input.providerId && input.credential) {
-        credentials.set(input.providerId, structuredClone(input.credential))
-        return Promise.resolve({ ok: true })
-      }
-      if (method === 'host.credentials.delete' && input.providerId) {
-        credentials.delete(input.providerId)
-        return Promise.resolve({ ok: true })
-      }
-      if (method === 'host.secrets.read' && input.namespace === 'connectors' && input.id) {
-        return Promise.resolve({
-          ok: true,
-          value: structuredClone(secrets.get(input.id) ?? null),
-        })
-      }
-      if (
-        method === 'host.secrets.write'
-        && input.namespace === 'connectors'
-        && input.id
-        && input.value
-      ) {
-        secrets.set(input.id, structuredClone(input.value))
-        return Promise.resolve({ ok: true })
-      }
-      if (method === 'host.secrets.delete' && input.namespace === 'connectors' && input.id) {
-        secrets.delete(input.id)
-        return Promise.resolve({ ok: true })
-      }
       return Promise.reject(new Error(`Unexpected host request: ${method}`))
     },
   } as unknown as BuddyServiceRpcServer
@@ -1576,7 +1502,6 @@ function createRuntimeRpcHarness(
       for (const listener of notificationListeners)
         listener(method, params)
     },
-    notifications,
     rpc,
   }
 }

@@ -47,7 +47,7 @@ export interface CreateReusableBuddySessionOptions {
   getImagePreferences?: (signal: AbortSignal) => Promise<ImagePreferences>
   getPermissionSettings?: (runId: string) => BuddyPermissionSettings
   updatePermissionSettings?: (settings: BuddyPermissionSettings) => void
-  setCodemodeEnabled?: (enabled: boolean) => void
+  setCodemodeMode?: (mode: RuntimePreferences['codemode']) => void
   assertCodemodeReady?: () => void
   skillReferences?: readonly SkillReference[]
   tree?: BuddyConversationTreeCursor
@@ -436,7 +436,7 @@ export function createReusableBuddySession(
       turnRetryLimit = preferences.modelRetryLimit
       retryOffset = 0
       pendingRetryOffset = null
-      options.setCodemodeEnabled?.(preferences.codemode)
+      options.setCodemodeMode?.(preferences.codemode)
       options.runContext.current = {
         actorIdentity: input.actorIdentity ? Object.freeze({ ...input.actorIdentity }) : undefined,
         deferQueuedInputs: input.deferQueuedInputs,
