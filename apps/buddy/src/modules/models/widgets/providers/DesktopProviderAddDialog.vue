@@ -2,7 +2,7 @@
 import type { ModelProvidersStore } from '@/modules/models/state/typing'
 import { providerRequestHeadersSchema } from '@buddy-shared/providers/providerHeaders'
 
-import { Add20Regular } from '@vicons/fluent'
+import { Add20Regular, Search20Regular } from '@vicons/fluent'
 import { NButton, NCard, NCollapse, NCollapseItem, NEmpty, NForm, NInput, NModal, NSpace, NStep, NSteps, NSwitch, NTabPane, NTabs, NTooltip } from 'naive-ui'
 import { computed, nextTick, shallowRef, toRef, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
@@ -36,10 +36,12 @@ const {
   reservedCustomIds,
   updateCustomForm,
   filteredProviders,
+  filteredProviderModels,
   furthestStep,
   goToPreviousStep,
   login,
   manualFormKey,
+  modelQuery,
   navigateToReachedStep,
   openManualModelDialog,
   providerModels,
@@ -223,12 +225,27 @@ async function connect(authType: 'api_key' | 'oauth') {
             </div>
           </div>
 
+          <div class="desktop-provider-add-dialog__model-toolbar flex items-center">
+            <NInput
+              v-model:value="modelQuery"
+              class="flex-1"
+              size="small"
+              clearable
+              :placeholder="t('desktop.chat.searchModels')"
+              :aria-label="t('desktop.chat.searchModels')"
+            >
+              <template #prefix>
+                <DesktopIcon :component="Search20Regular" />
+              </template>
+            </NInput>
+          </div>
+
           <div class="desktop-provider-add-dialog__models min-h-0 overflow-auto">
             <div class="sticky z-1 top-0 flex min-h-10 items-center justify-between border-b-1 border-b-solid border-b-border bg-surface text-muted text-[0.7rem] font-600 py-[0.55rem] px-[0.8rem]">
               <span>{{ t('desktop.providers.modelColumn') }}</span>
               <span>{{ t('desktop.providers.enabledColumn') }}</span>
             </div>
-            <div v-for="model in providerModels" :key="model.modelId" class="desktop-provider-add-dialog__model-row">
+            <div v-for="model in filteredProviderModels" :key="model.modelId" class="desktop-provider-add-dialog__model-row">
               <div>
                 <strong>{{ model.displayName }}</strong>
                 <small>{{ model.modelId }}</small>
@@ -241,6 +258,9 @@ async function connect(authType: 'api_key' | 'oauth') {
                 @update:value="toggleModel(model.modelId, $event)"
               />
             </div>
+            <p v-if="!filteredProviderModels.length" class="m-0 py-8 text-center text-muted text-sm" role="status">
+              {{ t(providerModels.length ? 'desktop.chat.noMatchingModels' : 'desktop.providers.noModels') }}
+            </p>
           </div>
         </div>
       </div>
@@ -347,7 +367,12 @@ async function connect(authType: 'api_key' | 'oauth') {
   width: 100%;
   min-height: 0;
   flex: 1;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.desktop-provider-add-dialog__model-toolbar {
+  display: flex;
+  align-items: center;
 }
 
 .desktop-provider-add-dialog__provider-list-frame,

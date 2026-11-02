@@ -106,6 +106,73 @@ describe('provider settings prop reactivity', () => {
     expect(document.body.querySelector('.desktop-provider-add-dialog .n-empty')).not.toBeNull()
   })
 
+  it('filters wizard models by name and id and resets the query when reopened', async () => {
+    const store = createStore('Alpha')
+    store.providers.value = [{ ...provider('Alpha'), modelCount: 4 }]
+    store.registeredModels.value = [
+      { ...model('Alpha One'), modelId: 'alpha-one' },
+      { ...model('Beta Two'), modelId: 'beta-two' },
+      { ...model('Gamma Three'), modelId: 'gamma-three' },
+      { ...model('Other Provider'), modelId: 'other', providerId: 'other' },
+    ]
+    const show = shallowRef(true)
+    const root = document.createElement('div')
+    document.body.append(root)
+    const app = createApp({
+      setup: () => () => h(DesktopProviderAddDialog, {
+        'onUpdate:show': (visible: boolean) => {
+          show.value = visible
+        },
+        'providerSettings': store,
+        'resumeProviderId': 'service',
+        'show': show.value,
+      }),
+    })
+    app.mount(root)
+    cleanups.push(() => {
+      app.unmount()
+      root.remove()
+    })
+    await nextTick()
+
+    const searchInput = document.body.querySelector('.desktop-provider-add-dialog__model-toolbar input') as HTMLInputElement
+    expect(searchInput).not.toBeNull()
+    expect(document.body.querySelectorAll('.desktop-provider-add-dialog__model-row')).toHaveLength(3)
+
+    for (const [query, expected] of [['Beta', 'Beta Two'], ['BETA-TWO', 'Beta Two'], ['Gamma', 'Gamma Three']] as const) {
+      searchInput.value = query
+      searchInput.dispatchEvent(new Event('input', { bubbles: true }))
+      await nextTick()
+      const matchedRows = [...document.body.querySelectorAll('.desktop-provider-add-dialog__model-row')]
+      expect(matchedRows).toHaveLength(1)
+      expect(matchedRows[0]?.textContent).toContain(expected)
+    }
+
+    searchInput.value = 'no-such-model'
+    searchInput.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    expect(document.body.querySelectorAll('.desktop-provider-add-dialog__model-row')).toHaveLength(0)
+    expect(document.body.querySelector('.desktop-provider-add-dialog__models [role="status"]')?.textContent)
+      .toContain(translateBuddy('zh-CN', 'desktop.chat.noMatchingModels'))
+
+    searchInput.value = ''
+    searchInput.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    expect(document.body.querySelectorAll('.desktop-provider-add-dialog__model-row')).toHaveLength(3)
+
+    searchInput.value = 'Alpha'
+    searchInput.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    expect(document.body.querySelectorAll('.desktop-provider-add-dialog__model-row')).toHaveLength(1)
+    show.value = false
+    await nextTick()
+    show.value = true
+    await nextTick()
+    const reopenedSearch = document.body.querySelector('.desktop-provider-add-dialog__model-toolbar input') as HTMLInputElement
+    expect(reopenedSearch.value).toBe('')
+    expect(document.body.querySelectorAll('.desktop-provider-add-dialog__model-row')).toHaveLength(3)
+  })
+
   it('saves model parameters and provider connections through the replacement store', async () => {
     const first = createStore('Alpha')
     const second = createStore('Beta')
