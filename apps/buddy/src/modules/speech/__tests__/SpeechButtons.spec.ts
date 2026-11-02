@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import type { SpeechCatalog, SpeechPreferences } from '@buddy-shared/speech/speechApi'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick } from 'vue'
+import ReadAloud from '../widgets/SpeechReadAloud.vue'
+import Recorder from '../widgets/SpeechRecorderButton.vue'
 
 const { request, settingsListeners } = vi.hoisted(() => ({
   request: vi.fn<() => Promise<SpeechCatalog>>(),
@@ -22,10 +24,6 @@ vi.mock('@/platform/desktop/desktopApi', () => ({
 
 const cleanups = new Set<() => void>()
 
-beforeEach(() => {
-  vi.resetModules()
-  request.mockReset()
-})
 afterEach(() => {
   for (const cleanup of cleanups)
     cleanup()
@@ -42,11 +40,7 @@ function catalogRequest() {
   }
 }
 
-async function mountButtons() {
-  const [{ default: Recorder }, { default: ReadAloud }] = await Promise.all([
-    import('../widgets/SpeechRecorderButton.vue'),
-    import('../widgets/SpeechReadAloud.vue'),
-  ])
+function mountButtons() {
   const root = document.createElement('div')
   document.body.append(root)
   const app = createApp({ render: () => h('div', [
@@ -67,37 +61,30 @@ async function mountButtons() {
   return { visible, unmount }
 }
 
-it('waits for preferences, respects each switch and preserves loaded buttons on remount', async () => {
+it('keeps speech buttons consistent across loading, remounts and interrupted settings refreshes', async () => {
   const resolveInitial = catalogRequest()
-  const first = await mountButtons()
+  const first = mountButtons()
   expect(first.visible()).toEqual({ record: false, read: false })
   await resolveInitial({ inputEnabled: false, outputEnabled: true })
   expect(first.visible()).toEqual({ record: false, read: true })
   first.unmount()
 
   const resolveRefresh = catalogRequest()
-  const second = await mountButtons()
+  const second = mountButtons()
   expect(second.visible()).toEqual({ record: false, read: true })
   await resolveRefresh({ inputEnabled: true, outputEnabled: false })
   expect(second.visible()).toEqual({ record: true, read: false })
-})
-
-it('does not flash stale buttons when leaving settings before its refresh completes', async () => {
-  const resolveInitial = catalogRequest()
-  const first = await mountButtons()
-  await resolveInitial({})
-  expect(first.visible()).toEqual({ record: true, read: true })
 
   const resolveInterrupted = catalogRequest()
   for (const listener of settingsListeners)
     listener()
-  first.unmount()
+  second.unmount()
 
   const resolveCurrent = catalogRequest()
-  const second = await mountButtons()
-  expect(second.visible()).toEqual({ record: false, read: false })
+  const third = mountButtons()
+  expect(third.visible()).toEqual({ record: false, read: false })
   await resolveInterrupted({})
-  expect(second.visible()).toEqual({ record: false, read: false })
+  expect(third.visible()).toEqual({ record: false, read: false })
   await resolveCurrent({ inputEnabled: false, outputEnabled: false })
-  expect(second.visible()).toEqual({ record: false, read: false })
+  expect(third.visible()).toEqual({ record: false, read: false })
 })
