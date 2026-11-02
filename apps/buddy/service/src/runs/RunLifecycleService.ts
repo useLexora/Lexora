@@ -1,6 +1,6 @@
 import type { ApplicationDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { AppendBuddyRunEventInput } from '../events/BuddyRunEvent'
-import type { RunEventAvailability, RunEventMaintenance, RunEventWriter } from '../events/RunEventPorts'
+import type { RunEventAvailability, RunEventWriter } from '../events/RunEventPorts'
 import type { RunPurpose, RunRecord, RunStatus } from '../storage/runRecord'
 import type { RunRepository } from '../storage/runRepository'
 import { safeDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
@@ -39,7 +39,6 @@ export interface FinalizeRunInput {
 export interface RunLifecycleServiceOptions {
   record?: ApplicationDiagnosticReporter
   eventLog: Pick<RunEventWriter, 'append' | 'appendBatch'>
-    & Pick<RunEventMaintenance, 'compactTerminalRun'>
     & Partial<Pick<RunEventAvailability, 'assertRunWritable' | 'assertRunExecutable'>>
   repository: Pick<
     RunRepository,
@@ -146,15 +145,12 @@ export class RunLifecycleService {
       status = 'failed'
       errorCode = 'EVENT_LOG_FAILED'
     }
-    if (!this.#repository.reconcileTerminal(
-      input.runId,
-      status,
-      input.completedAt,
-      errorCode,
-    )) {
-      throw new BuddyAgentRunError('RUN_STATE_MISMATCH')
+    let run = this.#requireRun(input.runId)
+    if (run.status !== status || run.completedAt !== input.completedAt || run.errorCode !== errorCode) {
+      if (!this.#repository.reconcileTerminal(input.runId, status, input.completedAt, errorCode))
+        throw new BuddyAgentRunError('RUN_STATE_MISMATCH')
+      run = this.#requireRun(input.runId)
     }
-    const run = this.#requireRun(input.runId)
     if (!terminalEventPersisted) {
       this.#reconciled.fire(copyEventSnapshot({
         runId: run.id,
@@ -164,15 +160,6 @@ export class RunLifecycleService {
         status,
         completedAt: input.completedAt,
       }))
-    }
-    if (terminalEventPersisted) {
-      try {
-        await this.#eventLog.compactTerminalRun(input.runId)
-      }
-      catch (error) {
-        if (error instanceof RunEventLogUnavailableError)
-          throw error
-      }
     }
     return run
   }

@@ -104,6 +104,7 @@ function restoredCapabilityIds(target: DatabaseSync, source: DatabaseSync, scope
 
 export function mergeBackupDatabase(target: DatabaseSync, source: DatabaseSync, scopes: readonly BackupScope[]): { added: number, updated: number, dependencies: number } {
   const counts = { added: 0, updated: 0, dependencies: 0 }
+  const restoredProviders = new Set<string>()
   target.exec('PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE')
   try {
     const capabilities = restoredCapabilityIds(target, source, scopes)
@@ -132,6 +133,11 @@ export function mergeBackupDatabase(target: DatabaseSync, source: DatabaseSync, 
         const existing = find.get(...key)
         if (existing && !selected && table !== 'extension_capabilities')
           continue
+        if (scope === 'providers') {
+          const providerId = row.provider_id ?? (table === 'provider_configs' || table === 'builtin_provider_configs' ? row.id : undefined)
+          if (typeof providerId === 'string')
+            restoredProviders.add(providerId)
+        }
         const values = names.map(name => row[name] as SQLInputValue)
         if (existing) {
           update.run(...values, ...key)
@@ -148,6 +154,9 @@ export function mergeBackupDatabase(target: DatabaseSync, source: DatabaseSync, 
     }
     for (const trigger of triggers)
       target.exec(String(trigger.sql))
+    const invalidateProvider = target.prepare('DELETE FROM provider_resolution_checkpoints WHERE provider_id = ?')
+    for (const providerId of restoredProviders)
+      invalidateProvider.run(providerId)
     reconcileRestoredTaskState(target, source)
     if (target.prepare('PRAGMA foreign_key_check').all().length)
       throw storageError('SNAPSHOT_DEPENDENCY_CONFLICT')

@@ -1,49 +1,35 @@
 import type { Api, Model, Provider } from '@earendil-works/pi-ai'
 import { describe, expect, it } from 'vitest'
+import { ModelsDevCatalog } from '../ModelsDevCatalog'
 import { ProviderCatalogMatcher } from '../ProviderCatalogMatcher'
 
 describe('providerCatalogMatcher', () => {
-  it('requires selection when otherwise equal metadata disagrees on tool calling', () => {
-    const matcher = new ProviderCatalogMatcher(catalogRuntime([
-      { ...model('first', 'shared', 'https://first.example.test'), toolCall: false },
-      { ...model('second', 'shared', 'https://second.example.test'), toolCall: true },
-    ]))
-    const input = { api: 'openai-completions', baseUrl: 'https://relay.example.test', modelId: 'shared' }
-    expect(matcher.match(input)).toMatchObject({ status: 'ambiguous' })
-    expect(matcher.match({ ...input, selection: { providerId: 'second', modelId: 'shared' } }))
-      .toMatchObject({ status: 'matched', model: { provider: 'second', toolCall: true } })
+  it('reuses content-identical catalogs and replaces indexed candidates when metadata changes', () => {
+    const raw = (context: number) => ({ vendor: { name: 'Vendor', api: 'https://vendor.example.test', models: {
+      shared: { name: 'Shared', modalities: { input: ['text'], output: ['text'] }, limit: { context, output: 4096 } },
+    } } })
+    let current = new ModelsDevCatalog(raw(32_000))
+    const matcher = new ProviderCatalogMatcher({ getFingerprint: () => current.getFingerprint(), getModels: id => current.getModels(id), getProviders: () => current.getProviders() })
+    const input = { api: 'openai-completions', baseUrl: 'https://vendor.example.test', modelId: 'shared' }
+    const first = matcher.match(input)
+    expect(first).toMatchObject({ status: 'matched', model: { contextWindow: 32_000 } })
+    current = new ModelsDevCatalog(raw(32_000))
+    expect(matcher.match(input)).toBe(first)
+    current = new ModelsDevCatalog(raw(64_000))
+    expect(matcher.match(input)).toMatchObject({ status: 'matched', model: { contextWindow: 64_000 } })
+    expect(matcher.find({ providerId: 'vendor', modelId: 'shared' })?.contextWindow).toBe(64_000)
   })
 
-  it('uses API, model ID and normalized endpoint to select one built-in model', () => {
-    const runtime = catalogRuntime([
-      model('openai', 'shared', 'https://api.openai.com/v1'),
-      model('proxy', 'shared', 'https://proxy.example.test/v1/'),
-    ])
-    const matcher = new ProviderCatalogMatcher(runtime)
-
-    expect(matcher.match({
-      api: 'openai-responses',
-      baseUrl: 'https://proxy.example.test',
-      modelId: 'shared',
-    })).toMatchObject({ model: { provider: 'proxy' }, status: 'matched' })
-  })
-
-  it('keeps candidates with conflicting capabilities for explicit selection', () => {
-    const matcher = new ProviderCatalogMatcher(catalogRuntime([
-      model('first', 'shared', 'https://first.example.test'),
-      { ...model('second', 'shared', 'https://second.example.test'), input: ['text', 'image'] },
-    ]))
-
-    expect(matcher.match({
-      api: 'openai-responses',
-      baseUrl: 'https://custom.example.test/v1',
-      modelId: 'shared',
-    })).toMatchObject({ status: 'ambiguous', candidates: [{ provider: 'first' }, { provider: 'second' }] })
-    expect(matcher.match({
-      api: 'openai-responses',
-      baseUrl: 'https://custom.example.test/v1',
-      modelId: 'missing',
-    })).toEqual({ candidates: [], status: 'unmatched' })
+  it('requires selection when otherwise equal metadata disagrees on input or tool capabilities', () => {
+    for (const capabilities of [{ input: ['text', 'image'] as Array<'text' | 'image'> }, { toolCall: true }]) {
+      const first = { ...model('first', 'shared', 'https://first.example.test'), toolCall: false }
+      const second = { ...model('second', 'shared', 'https://second.example.test'), toolCall: false, ...capabilities }
+      const matcher = new ProviderCatalogMatcher(catalogRuntime([first, second]))
+      const input = { api: 'openai-completions', baseUrl: 'https://relay.example.test', modelId: 'shared' }
+      expect(matcher.match(input)).toMatchObject({ status: 'ambiguous', candidates: [{ provider: 'first' }, { provider: 'second' }] })
+      expect(matcher.match({ ...input, selection: { providerId: 'second', modelId: 'shared' } }))
+        .toMatchObject({ status: 'matched', model: second })
+    }
   })
 
   it('collapses equal capabilities deterministically without treating reseller prices as capability conflicts', () => {
@@ -56,14 +42,14 @@ describe('providerCatalogMatcher', () => {
     }
   })
 
-  it('prefers the endpoint over the original vendor and the original vendor over resellers', () => {
+  it('prefers the normalized endpoint over the original vendor and the original vendor over resellers', () => {
     const matcher = new ProviderCatalogMatcher(catalogRuntime([
-      model('proxy', 'deepseek-v4-flash', 'https://proxy.example.test'),
+      model('proxy', 'deepseek-v4-flash', 'https://proxy.example.test/v1/'),
       { ...model('deepseek', 'deepseek-v4-flash', 'https://api.deepseek.test'), contextWindow: 256_000 },
     ]))
     expect(matcher.match({ api: 'openai-responses', baseUrl: 'https://custom.example.test', modelId: 'deepseek-v4-flash' }))
       .toMatchObject({ status: 'matched', model: { provider: 'deepseek' } })
-    expect(matcher.match({ api: 'openai-responses', baseUrl: 'https://proxy.example.test/v1', modelId: 'deepseek-v4-flash' }))
+    expect(matcher.match({ api: 'openai-responses', baseUrl: 'https://proxy.example.test', modelId: 'deepseek-v4-flash' }))
       .toMatchObject({ status: 'matched', model: { provider: 'proxy' } })
   })
 
@@ -112,14 +98,18 @@ describe('providerCatalogMatcher', () => {
     expect(untrusted.match(input)).toMatchObject({ status: 'unmatched' })
   })
 
-  it.each(['minimal', 'low', 'medium', 'high'])('recovers Gemini %s suffix metadata only when the full ID is absent', (effort) => {
+  it('recovers Gemini effort suffix metadata only when the full ID is absent', () => {
     const official = { ...model('google', 'gemini-3.8-flash', 'https://google.test'), input: ['text', 'image'] as Array<'text' | 'image'> }
-    const input = { api: 'openai-completions', baseUrl: 'https://relay.test', modelId: `cpa/gemini-3.8-flash-${effort}` }
-    expect(new ProviderCatalogMatcher(catalogRuntime([official])).match(input)).toMatchObject({ status: 'matched', model: official })
-    const exact = model('reseller', input.modelId, input.baseUrl)
-    expect(new ProviderCatalogMatcher(catalogRuntime([official, exact])).match(input)).toMatchObject({ status: 'matched', model: exact })
+    const matcher = new ProviderCatalogMatcher(catalogRuntime([official]))
+    const connection = { api: 'openai-completions', baseUrl: 'https://relay.test' }
+    for (const effort of ['minimal', 'low', 'medium', 'high']) {
+      const input = { ...connection, modelId: `cpa/gemini-3.8-flash-${effort}` }
+      expect(matcher.match(input), effort).toMatchObject({ status: 'matched', model: official })
+      const exact = model('reseller', input.modelId, input.baseUrl)
+      expect(new ProviderCatalogMatcher(catalogRuntime([official, exact])).match(input), effort).toMatchObject({ status: 'matched', model: exact })
+    }
     for (const modelId of ['gemini-3.8-flash-lite-high', 'gemini-3.8-flash-0901-high', 'gemini-3.8-flash-preview', 'gemini-3.8-flash-ultra', 'gemini-3.8-flash-high-high'])
-      expect(new ProviderCatalogMatcher(catalogRuntime([official])).match({ ...input, modelId }), modelId).toMatchObject({ status: 'unmatched' })
+      expect(matcher.match({ ...connection, modelId }), modelId).toEqual({ candidates: [], status: 'unmatched' })
   })
 
   it('retains unanimous fields without choosing a provider or voting away conflicts', () => {

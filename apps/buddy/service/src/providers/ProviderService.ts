@@ -1,6 +1,8 @@
 import type {
+  Api,
   AuthType,
   LoginOptions,
+  Model,
   Provider,
 } from '@earendil-works/pi-ai'
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent'
@@ -18,6 +20,7 @@ import type {
   ProviderConfigRepository,
 } from '../storage/providerConfigRepository'
 import type { ProviderRepository } from '../storage/providerRepository'
+import type { ProviderResolutionRepository } from '../storage/providerResolutionRepository'
 import type { ProviderStateRepository } from '../storage/providerStateRepository'
 import type { AuthInteractionService } from './AuthInteractionService'
 import type { CredentialChange, HostCredentialStore } from './HostCredentialStore'
@@ -36,6 +39,7 @@ import { Emitter } from '../../../shared/events/Emitter'
 import { providerRequestHeadersSchema } from '../../../shared/providers/providerHeaders'
 import { customProviderInputSchema, defaultModelSchema, providerDisplayNameSchema } from '../../../shared/providers/providerInput'
 import { createBuiltinProviderInstance } from './createBuiltinProviderInstance'
+import { MODEL_RESOLUTION_VERSION, modelResolutionFingerprint } from './modelResolution'
 import { ProviderExecutionModelResolver } from './ProviderExecutionModelResolver'
 import {
   ProviderAuthenticationRequiredError,
@@ -63,9 +67,10 @@ export interface ProviderModelRuntime extends ProviderModelCatalogRuntime {
   getAvailable: ModelRuntime['getAvailable']
 }
 
-type ModelSnapshot = Pick<ProviderModelSnapshotService, 'initialize' | 'getModels' | 'getProviders' | 'getStatus' | 'refresh'> & Partial<Pick<ProviderModelSnapshotService, 'onDidChange' | 'dispose' | 'getMediaModels'>>
+type ModelSnapshot = Pick<ProviderModelSnapshotService, 'initialize' | 'getModels' | 'getProviders' | 'getStatus' | 'refresh'> & Partial<Pick<ProviderModelSnapshotService, 'onDidChange' | 'dispose' | 'getMediaModels' | 'getFingerprint'>>
 
 export interface ProviderServiceOptions {
+  resolutionRepository?: ProviderResolutionRepository
   loginOptions?: LoginOptions
   requestHeaders?: ProviderRequestHeaders
   createBuiltinSource?: (providerId: string) => Provider | undefined
@@ -82,6 +87,10 @@ export interface ProviderServiceOptions {
 }
 
 export class ProviderService {
+  readonly #resolutionRepository: ProviderResolutionRepository | undefined
+  readonly #resolutions = new Emitter<{ readonly providerId: string, readonly restored: boolean }>(() => console.error('PROVIDER_RESOLUTION_OBSERVER_FAILED'))
+  readonly onDidResolve = this.#resolutions.event
+  #operationGeneration = 0
   readonly #loginOptions: LoginOptions | undefined
   readonly #requestHeaders: ProviderRequestHeaders
   readonly #builtins: BuiltinProviderConfigRepository
@@ -126,6 +135,7 @@ export class ProviderService {
   }
 
   constructor(options: ProviderServiceOptions) {
+    this.#resolutionRepository = options.resolutionRepository
     this.#loginOptions = options.loginOptions
     this.#requestHeaders = options.requestHeaders ?? new ProviderRequestHeaders(options.providers.states)
     this.#builtins = options.providers.builtins
@@ -162,57 +172,61 @@ export class ProviderService {
       sessionRuntime: options.sessionRuntime,
       states: options.providers.states,
     })
-    this.#state = new ProviderState(() => this.#capture())
+    this.#state = new ProviderState(() => this.#capture(), { deferInitialRead: true })
   }
 
   async initializeProviders(): Promise<void> {
-    return this.#operate('initializeProviders', async () => {
+    return this.#operate('initializeProviders', async (generation) => {
       await this.#modelSnapshot.initialize()
-      const customProviderIds = new Set<string>()
-      for (const provider of this.#configs.list()) {
-        customProviderIds.add(provider.id)
-        this.#state.commit('initialize', () => {
-          this.#ensureProviderState(provider.id, provider.enabled)
-          this.#modelCatalog.seedStoredCustomModels(provider)
-          this.#modelCatalog.reconcileSyncedModelMetadata(provider)
-        })
-        this.#applyCatalog(provider.id, () => this.#modelCatalog.registerCustomProvider(provider))
-      }
-      const credentialProviderIds = new Set((await this.#credentialStatus.listOrEmpty())
-        .map(credential => credential.providerId))
+      const credentialProviderIds = new Set((await this.#credentialStatus.listOrEmpty()).map(credential => credential.providerId))
+      this.#assertOperationCurrent(generation)
+      const customProviders = this.#configs.list()
+      const customProviderIds = new Set(customProviders.map(provider => provider.id))
+      const instances = new Map(this.#builtins.list().map(instance => [instance.id, instance]))
       for (const provider of this.#builtinTemplates.values()) {
         const ids = provider.id === 'azure' ? [provider.id, 'azure-openai-responses'] : [provider.id]
         for (const id of ids) {
-          if (customProviderIds.has(id)
+          if (instances.has(id) || customProviderIds.has(id)
             || (!this.#states.findByProviderId(id) && !credentialProviderIds.has(id))) {
             continue
           }
-          this.#state.commit('initialize', () => {
-            this.#ensureProviderState(id, false)
-            if (!this.#builtins.findById(id)) {
-              const now = new Date().toISOString()
-              this.#builtins.upsert({
-                id,
-                builtinProviderId: provider.id,
-                displayName: null,
-                createdAt: now,
-                updatedAt: now,
-              })
-            }
-          })
+          const now = new Date().toISOString()
+          instances.set(id, { id, builtinProviderId: provider.id, displayName: null, createdAt: now, updatedAt: now })
         }
       }
-      const instances = this.#builtins.list()
-      for (const instance of instances) {
-        this.#state.commit('initialize', () => this.#ensureProviderState(instance.id, false))
+      for (const instance of instances.values())
         this.#registerBuiltinInstance(instance)
+      if (instances.size)
+        await this.#modelRuntime.refresh({ signal: this.#shutdown.signal, allowNetwork: false, providers: [...instances.keys()] })
+      const prepared = new Map<string, readonly Model<Api>[]>()
+      for (const instance of instances.values()) {
+        if (this.#modelRuntime.getProvider(instance.id)) {
+          prepared.set(instance.id, credentialProviderIds.has(instance.id)
+            ? await this.#modelRuntime.getAvailable(instance.id)
+            : this.#modelRuntime.getModels(instance.id))
+        }
       }
-      if (instances.length)
-        await this.#modelRuntime.refresh({ signal: this.#shutdown.signal, allowNetwork: false, providers: instances.map(instance => instance.id) })
-      for (const instance of instances) {
-        if (this.#modelRuntime.getProvider(instance.id))
-          await this.#reconcileBuiltinModels(instance, credentialProviderIds.has(instance.id))
-      }
+      this.#assertOperationCurrent(generation)
+      this.#state.commit('initialize', () => {
+        for (const provider of customProviders) {
+          this.#ensureProviderState(provider.id, provider.enabled)
+          this.#restoreResolution(provider.id, { kind: 'custom', api: provider.api, baseUrl: provider.baseUrl, models: provider.models }, () => {
+            this.#modelCatalog.seedStoredCustomModels(provider)
+            this.#modelCatalog.reconcileSyncedModelMetadata(provider)
+          })
+          this.#applyCatalog(provider.id, () => this.#modelCatalog.registerCustomProvider(provider))
+        }
+        for (const instance of instances.values()) {
+          this.#ensureProviderState(instance.id, false)
+          if (!this.#builtins.findById(instance.id))
+            this.#builtins.upsert(instance)
+          const models = prepared.get(instance.id)
+          if (!models)
+            continue
+          const authenticated = credentialProviderIds.has(instance.id)
+          this.#restoreResolution(instance.id, this.#builtinResolutionInput(instance, authenticated, models), () => this.#commitBuiltinModels(instance, authenticated, models, true))
+        }
+      })
     })
   }
 
@@ -570,7 +584,7 @@ export class ProviderService {
   }
 
   async syncModels(providerId: string): Promise<readonly BuddyModel[]> {
-    return this.#operate('syncModels', async () => {
+    return this.#operate('syncModels', async (generation) => {
       if (!this.#states.findByProviderId(providerId))
         throw new ProviderUnavailableError()
       const custom = this.#configs.findById(providerId)
@@ -585,6 +599,7 @@ export class ProviderService {
         const result = await this.#modelRuntime.refresh({ signal: this.#shutdown.signal, allowNetwork: true, force: true, providers: [providerId] })
         if (result.aborted || result.errors.size)
           throw new ProviderModelSyncError()
+        this.#assertOperationCurrent(generation)
         if (JSON.stringify(this.#builtins.findById(providerId)) !== JSON.stringify(instance))
           throw new ProviderUnavailableError()
         this.#assertProviderIdle(providerId)
@@ -600,6 +615,7 @@ export class ProviderService {
         baseUrl: custom.baseUrl,
         providerId,
       })
+      this.#assertOperationCurrent(generation)
       if (JSON.stringify(this.#configs.findById(providerId)) !== JSON.stringify(custom))
         throw new ProviderUnavailableError()
       this.#assertProviderIdle(providerId)
@@ -668,6 +684,7 @@ export class ProviderService {
       this.#state.commit('configuration', () => {
         this.#clearDefaultForProvider(providerId)
         this.#modelCatalog.removeForProvider(providerId)
+        this.#resolutionRepository?.remove(providerId)
         this.#states.remove(providerId)
         const builtin = this.#builtins.findById(providerId)
         if (builtin) {
@@ -736,10 +753,12 @@ export class ProviderService {
 
   #ensureProviderState(providerId: string, enabled: boolean): void {
     const current = this.#states.findByProviderId(providerId)
+    if (current)
+      return
     const now = new Date().toISOString()
     this.#states.upsert({
-      createdAt: current?.createdAt ?? now,
-      enabled: current?.enabled ?? enabled,
+      createdAt: now,
+      enabled,
       providerId,
       updatedAt: now,
     })
@@ -767,21 +786,73 @@ export class ProviderService {
   }
 
   async #reconcileBuiltinModels(instance: BuiltinProviderConfigRecord, authenticated: boolean): Promise<void> {
+    const generation = this.#operationGeneration
     await this.#credentialStatus.listOrEmpty()
     const models = authenticated
       ? await this.#modelRuntime.getAvailable(instance.id)
       : this.#modelRuntime.getModels(instance.id)
-    if (!this.#builtins.findById(instance.id))
+    this.#assertOperationCurrent(generation)
+    if (JSON.stringify(this.#builtins.findById(instance.id)) !== JSON.stringify(instance))
       throw new ProviderUnavailableError()
-    this.#state.commit('discovery', () => {
-      this.#modelCatalog.reconcileBuiltinModels(instance.id, instance.builtinProviderId, {
-        models,
-        metadataOnly: !authenticated && this.#modelCatalog.hasModels(instance.id),
-      })
-      const baseUrl = this.#modelRuntime.getProvider(instance.id)?.baseUrl
-      if (baseUrl)
-        this.#modelCatalog.reconcileCatalogModels(instance.id, baseUrl, instance.builtinProviderId)
+    this.#state.commit('discovery', () => this.#restoreResolution(instance.id, this.#builtinResolutionInput(instance, authenticated, models), () => this.#commitBuiltinModels(instance, authenticated, models), true))
+  }
+
+  #commitBuiltinModels(instance: BuiltinProviderConfigRecord, authenticated: boolean, models: readonly Model<Api>[], preserveUnchanged = false): void {
+    this.#modelCatalog.reconcileBuiltinModels(instance.id, instance.builtinProviderId, {
+      models,
+      metadataOnly: !authenticated && this.#modelCatalog.hasModels(instance.id),
+      preserveUnchanged,
     })
+    const baseUrl = this.#modelRuntime.getProvider(instance.id)?.baseUrl
+    if (baseUrl)
+      this.#modelCatalog.reconcileCatalogModels(instance.id, baseUrl, instance.builtinProviderId, preserveUnchanged)
+  }
+
+  #builtinResolutionInput(instance: BuiltinProviderConfigRecord, authenticated: boolean, models: readonly Model<Api>[]) {
+    return {
+      kind: 'builtin',
+      builtinProviderId: instance.builtinProviderId,
+      authenticated,
+      credentialType: this.#credentialStatus.type(instance.id),
+      baseUrl: this.#modelRuntime.getProvider(instance.id)?.baseUrl,
+      channel: Boolean(this.#modelRuntime.getProvider(instance.id)?.auth.oauth),
+      models: models.map(model => ({
+        id: model.id,
+        name: model.name,
+        api: model.api,
+        baseUrl: model.baseUrl,
+        input: model.input,
+        reasoning: model.reasoning,
+        thinkingLevelMap: model.thinkingLevelMap,
+        contextWindow: model.contextWindow,
+        maxTokens: model.maxTokens,
+        cost: model.cost,
+        compat: model.compat,
+        samplingParams: model.samplingParams,
+      })).sort((a, b) => a.id.localeCompare(b.id)),
+    }
+  }
+
+  #restoreResolution(providerId: string, input: unknown, reconcile: () => void, force = false): void {
+    const fingerprint = modelResolutionFingerprint({ version: MODEL_RESOLUTION_VERSION, catalog: this.#modelCatalog.getFingerprint(), input })
+    const restored = !force && this.#resolutionRepository?.find(providerId) === fingerprint
+    if (!restored) {
+      const apply = () => {
+        reconcile()
+        this.#modelCatalog.prepareResolutions(providerId)
+      }
+      if (this.#resolutionRepository)
+        this.#resolutionRepository.commit(providerId, fingerprint, apply)
+      else
+        apply()
+    }
+    this.#resolutions.fire(Object.freeze({ providerId, restored }))
+  }
+
+  #assertOperationCurrent(generation: number): void {
+    this.#shutdown.signal.throwIfAborted()
+    if (generation !== this.#operationGeneration)
+      throw new ProviderUnavailableError()
   }
 
   #capture() {
@@ -794,7 +865,7 @@ export class ProviderService {
         presentation: { name: custom.get(id)?.displayName ?? builtin.get(id)?.displayName, description: custom.get(id)?.description },
         execution: { api: custom.get(id)?.api, baseUrl: custom.get(id)?.baseUrl, builtin: builtin.get(id)?.builtinProviderId, headers: this.#requestHeaders.list(id) },
       })),
-      models: this.#modelCatalog.list().map(model => ({ model, execution: { ...this.#modelCatalog.executionSnapshot(model.providerId, model.id), serviceTiers: this.executionModels.getServiceTiers({ providerId: model.providerId, modelId: model.id, api: model.api }) } })),
+      models: this.#modelCatalog.capture().map(({ model, execution }) => ({ model, execution: { ...execution, serviceTiers: this.executionModels.getServiceTiers({ providerId: model.providerId, modelId: model.id, api: model.api }) } })),
       defaultModel: (() => {
         const value = this.#defaultModel.find()
         return value ? { providerId: value.providerId, modelId: value.modelId, reasoning: value.reasoning } : null
@@ -813,6 +884,9 @@ export class ProviderService {
     try {
       this.#shutdown.signal.throwIfAborted()
       apply()
+      const custom = this.#configs.findById(providerId)
+      if (custom && this.#resolutionRepository)
+        this.#restoreResolution(providerId, { kind: 'custom', api: custom.api, baseUrl: custom.baseUrl, models: custom.models }, () => {})
       this.#applications.fire(Object.freeze({ ...identity, stage: 'applied' }))
     }
     catch (error) {
@@ -851,6 +925,7 @@ export class ProviderService {
 
   dispose(): Promise<void> {
     this.#disposal ??= this.quiesce().finally(() => {
+      this.#resolutions.dispose()
       this.#operations.dispose()
       this.#applications.dispose()
       this.#state.dispose()
@@ -858,13 +933,16 @@ export class ProviderService {
     return this.#disposal
   }
 
-  #operate<T>(operation: string, work: () => Promise<T>): Promise<T> {
+  #operate<T>(operation: string, work: (generation: number) => Promise<T>): Promise<T> {
     if (this.#stopping)
       return Promise.reject(new ProviderUnavailableError())
     const operationId = randomUUID()
+    const generation = ++this.#operationGeneration
     const result = Promise.resolve().then(() => {
       this.#shutdown.signal.throwIfAborted()
-      return work()
+      if (operation === 'initializeProviders')
+        this.#assertOperationCurrent(generation)
+      return work(generation)
     }).then((value) => {
       this.#operations.fire(Object.freeze({ operationId, operation, stage: 'completed' }))
       return value

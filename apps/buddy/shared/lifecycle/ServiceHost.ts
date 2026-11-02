@@ -1,4 +1,4 @@
-import type { LifecycleComponent, ServiceLifecycleReader } from './serviceLifecycle'
+import type { LifecycleComponent, LifecycleProgress, ServiceLifecycleReader } from './serviceLifecycle'
 import { readLifecycleFailure } from './lifecycleFailure'
 import { lifecycleComponentSchema } from './serviceLifecycle'
 import { ServiceLifecycleSource } from './ServiceLifecycleSource'
@@ -7,6 +7,7 @@ type Cleanup = () => void | Promise<void>
 
 export interface ServiceScope {
   defer: (cleanup: Cleanup) => void
+  reportProgress: (progress: LifecycleProgress) => void
 }
 
 interface Component {
@@ -34,7 +35,7 @@ export class ServiceHost {
     return this.#start(id, initialize, dependencies, 'service')
   }
 
-  step<T>(id: string, initialize: () => T | Promise<T>, dependencies: readonly string[] = []): Promise<T> {
+  step<T>(id: string, initialize: (scope: Pick<ServiceScope, 'reportProgress'>) => T | Promise<T>, dependencies: readonly string[] = []): Promise<T> {
     return this.#start(id, initialize, dependencies, 'operation')
   }
 
@@ -59,6 +60,7 @@ export class ServiceHost {
     const startedAt = performance.now()
     const pending = Promise.resolve().then(() => initialize({
       defer: cleanup => component.cleanups.push(cleanup),
+      reportProgress: progress => this.#lifecycle.updateProgress(component.id, component.operationId, progress),
     })).then((value) => {
       component.status = 'ready'
       if (kind === 'operation' || !this.#stopping)

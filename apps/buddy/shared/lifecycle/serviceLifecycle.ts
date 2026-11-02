@@ -5,12 +5,18 @@ import { lifecycleFailureSchema } from './lifecycleFailure'
 
 export const SERVICE_LIFECYCLE_METHOD = 'runtime.lifecycle'
 export const lifecycleIdentitySchema = z.string().regex(/^\w[\w:.-]{0,191}$/)
+export const lifecycleProgressSchema = z.object({
+  completed: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+}).strict().refine(progress => progress.completed <= progress.total, 'Progress exceeds total')
+
 export const lifecycleComponentSchema = z.object({
   component: z.string().regex(/^[a-z][a-z\d._-]{0,95}$/),
   kind: z.enum(['service', 'operation']),
   status: z.enum(['registered', 'starting', 'ready', 'start_failed', 'stopping', 'stopped', 'stop_failed']),
   operationId: lifecycleIdentitySchema,
   durationMs: z.number().finite().nonnegative().optional(),
+  progress: lifecycleProgressSchema.optional(),
   failure: lifecycleFailureSchema.optional(),
 }).strict().superRefine((component, context) => {
   if (component.kind === 'operation' && !['starting', 'ready', 'start_failed'].includes(component.status))
@@ -37,6 +43,7 @@ export const rendererLifecycleReportSchema = z.object({
   change: serviceLifecycleChangeSchema,
 }).strict()
 
+export type LifecycleProgress = EventSnapshot<z.infer<typeof lifecycleProgressSchema>>
 export type LifecycleComponent = EventSnapshot<z.infer<typeof lifecycleComponentSchema>>
 export type ServiceLifecycleSnapshot = EventSnapshot<z.infer<typeof serviceLifecycleSnapshotSchema>>
 export type ServiceLifecycleChange = EventSnapshot<z.infer<typeof serviceLifecycleChangeSchema>>

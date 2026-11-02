@@ -1,6 +1,7 @@
 import type { ModelCatalogReference } from '../../../shared/providers/providerCatalog'
 import type { CatalogModel, ModelMetadataCatalog } from './ModelsDevCatalog'
 import { serializeModelMetadata } from './modelMetadata'
+import { modelCatalogFingerprint } from './modelResolution'
 
 export type CatalogModelDefaults = Partial<Pick<CatalogModel, 'input' | 'reasoning' | 'thinkingLevelMap' | 'contextWindow' | 'maxTokens' | 'pdfInput' | 'audioInput' | 'videoInput' | 'toolCall' | 'baseUrl'>>
 
@@ -40,25 +41,74 @@ const MODEL_ORIGINS: ReadonlyArray<{ pattern: RegExp, providers: readonly string
 
 export class ProviderCatalogMatcher {
   readonly #runtime: ModelMetadataCatalog
+  #fingerprint: string | undefined
+  readonly #names = new Map<string, string>()
+  readonly #models = new Map<string, CatalogModel>()
+  readonly #identities = new Map<string, Set<CatalogModel>>()
+  readonly #matches = new Map<string, ProviderCatalogMatch>()
 
   constructor(runtime: ModelMetadataCatalog) {
     this.#runtime = runtime
   }
 
   providerName(providerId: string): string {
-    return this.#runtime.getProviders().find(provider => provider.id === providerId)?.name ?? providerId
+    this.#index()
+    return this.#names.get(providerId) ?? providerId
+  }
+
+  getFingerprint(): string {
+    return this.#runtime.getFingerprint?.() ?? modelCatalogFingerprint(this.#runtime)
+  }
+
+  #index(): void {
+    const fingerprint = this.getFingerprint()
+    if (this.#fingerprint === fingerprint)
+      return
+    this.#fingerprint = fingerprint
+    this.#names.clear()
+    this.#models.clear()
+    this.#identities.clear()
+    this.#matches.clear()
+    for (const provider of this.#runtime.getProviders()) {
+      this.#names.set(provider.id, provider.name)
+      for (const model of this.#runtime.getModels(provider.id)) {
+        this.#models.set(JSON.stringify([model.provider, model.id]), model)
+        const id = model.id.trim().toLowerCase()
+        const keys = [catalogModelKey(id)]
+        const name = model.name.trim().toLowerCase().replace(/\s+/gu, '-')
+        if (!/\d/u.test(id) && modelOrigins(name).includes(model.provider))
+          keys.push(name, name.replace(/-(?:\d{8}|\d{4})$/u, ''))
+        for (const key of keys) {
+          const models = this.#identities.get(key) ?? new Set<CatalogModel>()
+          models.add(model)
+          this.#identities.set(key, models)
+        }
+      }
+    }
   }
 
   match(input: CatalogMatchInput): ProviderCatalogMatch {
-    const available = this.#runtime.getProviders().flatMap(provider => this.#runtime.getModels(provider.id))
+    this.#index()
+    const key = serializeModelMetadata(input)
+    const existing = this.#matches.get(key)
+    if (existing)
+      return existing
+    const result = this.#match(input)
+    if (this.#matches.size >= 2048)
+      this.#matches.delete(this.#matches.keys().next().value!)
+    this.#matches.set(key, result)
+    return result
+  }
+
+  #match(input: CatalogMatchInput): ProviderCatalogMatch {
     const requested = input.modelId.trim().toLowerCase()
     let identity = requested
-    let matches = matchIdentity(available, identity)
+    let matches = matchIdentity([...(this.#identities.get(catalogModelKey(identity)) ?? [])], identity)
     if (!matches.length) {
       const thinkingAlias = catalogModelKey(requested).match(/^(gemini-\d[\w.-]*)-(?:minimal|low|medium|high)$/u)?.[1]
       if (thinkingAlias) {
         identity = thinkingAlias
-        matches = matchIdentity(available, identity)
+        matches = matchIdentity([...(this.#identities.get(catalogModelKey(identity)) ?? [])], identity)
       }
     }
     const candidates = matches.map(match => match.model)
@@ -102,7 +152,8 @@ export class ProviderCatalogMatcher {
   }
 
   find(reference: ModelCatalogReference): CatalogModel | undefined {
-    return this.#runtime.getModels(reference.providerId).find(model => model.id === reference.modelId)
+    this.#index()
+    return this.#models.get(JSON.stringify([reference.providerId, reference.modelId]))
   }
 }
 

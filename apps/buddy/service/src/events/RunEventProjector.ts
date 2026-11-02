@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { BuddyRunEvent } from './BuddyRunEvent'
-import type { RunEventCheckpoint } from './RunEventRecovery'
+import type { RunEventCheckpoint, RunEventRecoveryRun } from './RunEventRecovery'
 import { z } from 'zod'
 import { BUDDY_ATTACHMENT_COUNT_LIMIT } from '../../../shared/conversation/attachmentPolicy'
 import { MAX_BUDDY_MESSAGE_TEXT_LENGTH } from '../../../shared/conversation/buddyMessageContent'
@@ -14,6 +14,8 @@ import { projectConversationPublication } from '../storage/conversationPublicati
 import { withTransaction } from '../storage/database'
 import { createMailboxRepository } from '../storage/mailboxRepository'
 import { buddyRunIdSchema, terminalRunStatus } from './BuddyRunEvent'
+import { RunEventQueries } from './RunEventQueries'
+import { canCertifyBootstrapCheckpoint, RUN_EVENT_COMPACTION_VERSION, RUN_EVENT_PROJECTION_VERSION } from './RunEventRecovery'
 
 const messageIdSchema = z.string().min(1).max(256)
 const approvalRequestPayloadSchema = z.object({
@@ -109,20 +111,42 @@ export class RunEventProjector {
     this.#database = database
   }
 
-  project(events: readonly BuddyRunEvent[]): number {
-    return withTransaction(this.#database, () => events.reduce(
-      (count, event) => count + this.#project(event),
-      0,
-    ))
+  project(events: readonly BuddyRunEvent[], checkpoint?: RunEventCheckpoint): number {
+    return withTransaction(this.#database, () => {
+      const count = events.reduce((count, event) => count + this.#project(event), 0)
+      if (checkpoint)
+        this.#publishCheckpoint(events[0]!.runId, checkpoint)
+      return count
+    })
+  }
+
+  certifyBootstrapCheckpoint(run: RunEventRecoveryRun & { checkpoint: RunEventCheckpoint }): boolean {
+    return withTransaction(this.#database, () => {
+      const current = new RunEventQueries(this.#database).findRecoveryRun(run.runId)
+      if (!current
+        || !canCertifyBootstrapCheckpoint(current, run.checkpoint.fileFingerprint)
+        || current.checkpoint.lastSequence !== run.checkpoint.lastSequence
+        || current.conversationId !== run.conversationId
+        || current.status !== run.status) {
+        return false
+      }
+      this.#completeRecovery(run.runId)
+      return true
+    })
   }
 
   invalidateCheckpoint(runId: string): void {
-    this.#database.prepare('DELETE FROM run_event_checkpoints WHERE run_id = ?').run(runId)
+    withTransaction(this.#database, () => this.#invalidateCheckpointRows(runId))
   }
 
-  rebuild(runId: string, events: readonly BuddyRunEvent[], checkpoint?: RunEventCheckpoint): number {
+  #invalidateCheckpointRows(runId: string): void {
+    this.#database.prepare('DELETE FROM run_event_checkpoints WHERE run_id = ?').run(runId)
+    this.#database.prepare('UPDATE run_event_maintenance SET recovery_pending = 1, compaction_pending = 1, revision = revision + 1 WHERE run_id = ?').run(runId)
+  }
+
+  rebuild(runId: string, events: readonly BuddyRunEvent[], checkpoint?: RunEventCheckpoint | null): number {
     return withTransaction(this.#database, () => {
-      this.invalidateCheckpoint(runId)
+      this.#invalidateCheckpointRows(runId)
       const mailbox = createMailboxRepository(this.#database)
       mailbox.resetOwnedFacts(runId)
       const executionKind = readExecutionKind(this.#database, runId)
@@ -152,25 +176,45 @@ export class RunEventProjector {
         if (!messageIds.has(message.id))
           remove.run(message.id, runId)
       }
-      if (checkpoint) {
-        this.#database.prepare(`
-          INSERT INTO run_event_checkpoints (run_id, last_sequence, projection_version, file_fingerprint)
-          SELECT ?, ?, ?, ? FROM runs
-          WHERE id = ? AND status IN ('completed', 'failed', 'cancelled')
-        `).run(runId, checkpoint.lastSequence, checkpoint.projectionVersion, checkpoint.fileFingerprint, runId)
-      }
+      if (checkpoint)
+        this.#publishCheckpoint(runId, checkpoint)
+      else if (checkpoint === null && events.length === 0)
+        this.#completeRecovery(runId)
       return count
     })
   }
 
-  removeEventRows(runId: string, sequences: readonly number[]): void {
+  removeEventRows(runId: string, sequences: readonly number[], checkpoint?: RunEventCheckpoint | null): void {
     withTransaction(this.#database, () => {
       const remove = this.#database.prepare(`
         DELETE FROM run_events WHERE run_id = ? AND sequence = ?
       `)
       for (const sequence of sequences)
         remove.run(runId, sequence)
+      if (checkpoint !== undefined) {
+        if (checkpoint)
+          this.#publishCheckpoint(runId, checkpoint)
+        else
+          this.#completeRecovery(runId)
+        this.#database.prepare('UPDATE run_event_maintenance SET compaction_pending = 0, compaction_version = ? WHERE run_id = ?')
+          .run(RUN_EVENT_COMPACTION_VERSION, runId)
+      }
     })
+  }
+
+  #publishCheckpoint(runId: string, checkpoint: RunEventCheckpoint): void {
+    this.#database.prepare(`
+      INSERT INTO run_event_checkpoints (run_id, last_sequence, projection_version, file_fingerprint)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT (run_id) DO UPDATE SET last_sequence = excluded.last_sequence,
+        projection_version = excluded.projection_version, file_fingerprint = excluded.file_fingerprint
+    `).run(runId, checkpoint.lastSequence, checkpoint.projectionVersion, checkpoint.fileFingerprint)
+    this.#completeRecovery(runId)
+  }
+
+  #completeRecovery(runId: string): void {
+    this.#database.prepare('UPDATE run_event_maintenance SET recovery_pending = 0, projection_version = ? WHERE run_id = ?')
+      .run(RUN_EVENT_PROJECTION_VERSION, runId)
   }
 
   validateNewFacts(events: readonly BuddyRunEvent[]): void {

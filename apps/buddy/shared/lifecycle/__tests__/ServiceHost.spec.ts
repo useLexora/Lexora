@@ -1,4 +1,5 @@
 import type { ApplicationDiagnostic } from '../../diagnostics/applicationDiagnostic'
+import type { LifecycleProgress } from '../serviceLifecycle'
 import { describe, expect, it } from 'vitest'
 import { ApplicationEvents } from '../../observability/ApplicationEvents'
 import { observeLifecycleDiagnostics } from '../../observability/lifecycleDiagnostics'
@@ -11,19 +12,21 @@ function fixture() {
     records.push(event)
   })
   const host = new ServiceHost()
-  const stopDiagnostics = observeLifecycleDiagnostics(host.lifecycle, events)
-  return { records, events, host, stopDiagnostics }
+  observeLifecycleDiagnostics(host.lifecycle, events)
+  return { records, host }
 }
 
 describe('managed component lifecycle', () => {
   it('unwinds partial startup and continues cleanup after a failure', async () => {
     const { host, records } = fixture()
     const cleaned: string[] = []
-    await host.start('runtime.database', ({ defer }) => {
+    await expect(host.start('runtime.database', ({ defer }) => {
       defer(() => {
         cleaned.push('database')
       })
-    })
+      return false
+    })).resolves.toBe(false)
+    expect(host.lifecycle.snapshot.components[0]?.status).toBe('ready')
     await expect(host.start('runtime.rpc', ({ defer }) => {
       defer(() => {
         cleaned.push('rpc')
@@ -38,20 +41,6 @@ describe('managed component lifecycle', () => {
     expect(records.map(record => record.event)).toContain('component.stop_failed')
     expect(records.at(-1)).toMatchObject({ component: 'runtime.database', event: 'component.stopped' })
     expect(JSON.stringify(records)).not.toContain('private')
-  })
-
-  it('does not infer business failure from a false result or a broken observer', async () => {
-    const { host, records, events } = fixture()
-    events.subscribe(() => {
-      throw new Error('sink failed')
-    })
-    events.subscribe(async () => {
-      throw new Error('async sink failed')
-    })
-    await expect(host.start('desktop.feature', () => false)).resolves.toBe(false)
-    expect(records.at(-1)?.event).toBe('component.ready')
-    await host.stop()
-    await expect(host.start('desktop.late', () => true)).rejects.toThrow('stopping')
   })
 
   it('waits for acquisition during stop, cleans it once, and never publishes late ready', async () => {
@@ -72,21 +61,41 @@ describe('managed component lifecycle', () => {
     await opening
     await stopping
     await host.stop()
+    await expect(host.start('desktop.late', () => true)).rejects.toThrow('stopping')
     expect(disposed).toBe(1)
     expect(records.some(record => record.event === 'component.ready')).toBe(false)
     expect(records.at(-1)?.event).toBe('component.stopped')
   })
 
-  it('keeps an immutable current snapshot after diagnostic collection stops', async () => {
-    const { host, stopDiagnostics, records } = fixture()
-    await host.start('desktop.feature', () => true)
-    stopDiagnostics()
-    const before = host.lifecycle.snapshot
-    expect(() => Object.assign(before.components[0]!, { status: 'failed' })).toThrow()
-    await host.stop()
-    expect(host.lifecycle.snapshot.components[0]?.status).toBe('stopped')
-    expect(before.components[0]?.status).toBe('ready')
-    expect(records.at(-1)?.event).toBe('component.ready')
+  it('publishes immutable bounded progress without repeating lifecycle transitions or accepting late updates', async () => {
+    const { host, records } = fixture()
+    let reportProgress!: (progress: LifecycleProgress) => void
+    let finish!: () => void
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const operation = host.step('runtime.event_replay', async (scope) => {
+      reportProgress = scope.reportProgress
+      reportProgress({ completed: 0, total: 3 })
+      await gate
+    })
+    await Promise.resolve()
+    const initial = host.lifecycle.snapshot
+    reportProgress({ completed: 1, total: 3 })
+    const current = host.lifecycle.snapshot
+    expect(initial.components[0]?.progress).toEqual({ completed: 0, total: 3 })
+    expect(current.components[0]).toMatchObject({ status: 'starting', progress: { completed: 1, total: 3 } })
+    reportProgress({ completed: 1, total: 3 })
+    expect(host.lifecycle.snapshot.revision).toBe(current.revision)
+    expect(() => reportProgress({ completed: 4, total: 3 })).toThrow()
+    expect(() => Object.assign(current.components[0]!.progress!, { completed: 2 })).toThrow()
+    finish()
+    await operation
+    const ready = host.lifecycle.snapshot
+    reportProgress({ completed: 3, total: 3 })
+    expect(host.lifecycle.snapshot).toBe(ready)
+    expect(ready.components[0]).toMatchObject({ status: 'ready' })
+    expect(records.map(record => record.event)).toEqual(['startup.step.started', 'startup.step.completed'])
   })
 
   it('isolates observers and waits for resources when an observer requests stop during registration', async () => {

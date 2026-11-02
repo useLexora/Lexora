@@ -4,10 +4,11 @@ import type {
   BuddyRunEvent,
   ListBuddyRunEventsOptions,
 } from './BuddyRunEvent'
+import type { RunEventMaintenanceOptions, RunEventMaintenanceSummary } from './RunEventMaintenanceService'
 import type { RunEventLogPort } from './RunEventPorts'
 import type { RunEventProjector } from './RunEventProjector'
 import type { RunEventQueries } from './RunEventQueries'
-import type { RunEventCheckpoint, RunEventRecoveryFailure, RunEventRecoverySummary } from './RunEventRecovery'
+import type { RunEventCheckpoint, RunEventRecoveryFailure, RunEventRecoveryOptions, RunEventRecoverySummary } from './RunEventRecovery'
 import type { RunEventStore } from './RunEventStore'
 import { performance } from 'node:perf_hooks'
 import { Emitter } from '../../../shared/events/Emitter'
@@ -24,26 +25,30 @@ import {
   RunEventCheckpointError,
   RunEventCorruptionError,
   RunEventLogFatalError,
+  RunEventMaintenanceRetryableError,
   RunEventProjectionError,
 } from './RunEventFailure'
-import { canReuseRunEventCheckpoint, RUN_EVENT_PROJECTION_VERSION } from './RunEventRecovery'
+import { RunEventMaintenanceService } from './RunEventMaintenanceService'
+import { canCertifyBootstrapCheckpoint, canReuseRunEventCheckpoint, RUN_EVENT_PROJECTION_VERSION } from './RunEventRecovery'
 
 export interface RunEventLogCallbacks {
   onObserverError?: (error: unknown) => void
   onFatalFailure?: (error: RunEventLogFatalError) => void
   onRecovery?: (summary: Readonly<RunEventRecoverySummary>) => void
+  onMaintenance?: (summary: Readonly<RunEventMaintenanceSummary>) => void
   onRunQuarantined?: (failure: Readonly<RunEventRecoveryFailure>) => void
 }
 
 export type RunEventProjectorPort = Pick<
   RunEventProjector,
-  'invalidateCheckpoint' | 'project' | 'rebuild' | 'removeEventRows' | 'validateNewFacts'
+  'certifyBootstrapCheckpoint' | 'invalidateCheckpoint' | 'project' | 'rebuild' | 'removeEventRows' | 'validateNewFacts'
 >
 
 export type RunEventQueryPort = Pick<
   RunEventQueries,
   | 'findConversationId'
   | 'findLatest'
+  | 'findRecoveryRun'
   | 'hasCheckpoint'
   | 'hasProjectedEvents'
   | 'isTerminalRun'
@@ -54,6 +59,8 @@ export type RunEventQueryPort = Pick<
   | 'listForRuns'
   | 'listToolCounts'
   | 'listRunIds'
+  | 'maintenanceRevision'
+  | 'read'
 >
 
 export type RunEventStorePort = Pick<
@@ -76,7 +83,7 @@ export class RunEventLogClosedError extends Error {
 
 export class RunEventLog implements RunEventLogPort {
   readonly #nextSequences = new Map<string, number>()
-  readonly #compactionCheckedRuns = new Map<string, RunEventCheckpoint>()
+  readonly #maintenance: RunEventMaintenanceService
   readonly #committed: Emitter<EventSnapshot<BuddyRunEvent>>
   readonly onDidCommit: RunEventLogPort['onDidCommit']
   readonly #quarantineChanges: Emitter<Readonly<RunEventRecoveryFailure>>
@@ -89,6 +96,7 @@ export class RunEventLog implements RunEventLogPort {
   readonly #queries: RunEventQueryPort
   readonly #store: RunEventStorePort
   readonly #tails = new Map<string, Promise<void>>()
+  #compactionTail: Promise<void> = Promise.resolve()
   #closePromise: Promise<void> | null = null
   #closed = false
   #fatalFailure: RunEventLogFatalError | null = null
@@ -104,6 +112,20 @@ export class RunEventLog implements RunEventLogPort {
     this.#projector = options.projector
     this.#queries = options.queries
     this.#store = options.store
+    this.#maintenance = new RunEventMaintenanceService({
+      list: (after, limit) => this.#queries.listCompactableTerminalRunIds(after, limit),
+      compact: runId => this.compactTerminalRun(runId),
+      onSummary: options.onMaintenance,
+      onFailure: (error) => {
+        if (error instanceof RunEventCorruptionError || error instanceof RunEventMaintenanceRetryableError)
+          return true
+        try {
+          this.#fail(error instanceof RunEventLogFatalError ? error : new RunEventCheckpointError('maintenance', { cause: error }))
+        }
+        catch {}
+        return false
+      },
+    })
   }
 
   get state(): RunEventLogPort['state'] {
@@ -144,11 +166,8 @@ export class RunEventLog implements RunEventLogPort {
     if (inputs.some(input => input.runId !== runId))
       return Promise.reject(new Error('Lexora Buddy event batch must belong to one run'))
     return this.#enqueueMutation(runId, async () => {
-      let nextSequence = this.#nextSequences.get(runId)
-      if (nextSequence === undefined) {
-        const existing = await this.#readAndRepair(runId)
-        nextSequence = nextEventSequence(existing)
-      }
+      await this.#ensureProjection(runId)
+      const nextSequence = this.#nextSequences.get(runId) ?? 1
       const events = inputs.map((input, index) => buddyRunEventSchema.parse(JSON.parse(JSON.stringify({
         runId,
         sequence: nextSequence + index,
@@ -161,19 +180,43 @@ export class RunEventLog implements RunEventLogPort {
       this.#assertRunAvailable(runId)
       this.#projector.validateNewFacts(events)
       this.#invalidateCheckpoint(runId)
+      const revision = this.#databaseOperation(runId, () => this.#queries.maintenanceRevision(runId))
       await this.#runStoreOperation(() => this.#store.append(events))
       this.#nextSequences.set(runId, nextSequence + events.length)
-      await this.#projectCommitted(events)
+      const fingerprint = await this.#fingerprint(runId)
+      if (fingerprint === null)
+        this.#quarantine(new RunEventCorruptionError(runId))
+      if (revision !== this.#databaseOperation(runId, () => this.#queries.maintenanceRevision(runId))) {
+        await this.#replay(runId)
+      }
+      else {
+        await this.#projectCommitted(events, {
+          fileFingerprint: fingerprint,
+          lastSequence: nextSequence + events.length - 1,
+          projectionVersion: RUN_EVENT_PROJECTION_VERSION,
+        })
+      }
       for (const event of committed)
         this.#committed.fire(event)
+      this.#maintenance.wake()
       return events
     })
   }
 
-  read(runId: string): Promise<BuddyRunEvent[]> {
-    return this.#enqueue(runId, () => {
+  verifyRun(runId: string): Promise<void> {
+    return this.#enqueue(runId, async () => {
       this.#assertRunAvailable(runId)
-      return this.#readAndRepair(runId)
+      await this.#ensureProjection(runId)
+    })
+  }
+
+  read(runId: string): Promise<BuddyRunEvent[]> {
+    return this.#enqueue(runId, async () => {
+      this.#assertRunAvailable(runId)
+      if (this.#fatalFailure)
+        return this.#readAndRepair(runId)
+      await this.#ensureProjection(runId)
+      return this.#queries.read(runId)
     })
   }
 
@@ -181,6 +224,7 @@ export class RunEventLog implements RunEventLogPort {
     const types = [...eventTypes]
     return this.#enqueue(runId, async () => {
       this.#assertRunAvailable(runId)
+      await this.#ensureProjection(runId)
       return this.#queries.findLatest(runId, types)
     })
   }
@@ -188,6 +232,7 @@ export class RunEventLog implements RunEventLogPort {
   list(runId: string, options: ListBuddyRunEventsOptions = {}): Promise<BuddyRunEvent[]> {
     return this.#enqueue(runId, async () => {
       this.#assertRunAvailable(runId)
+      await this.#ensureProjection(runId)
       return this.#queries.list(runId, options)
     })
   }
@@ -214,7 +259,7 @@ export class RunEventLog implements RunEventLogPort {
     return this.#enqueue(runId, () => this.#replay(runId))
   }
 
-  async recoverAll(options: { force?: boolean } = {}): Promise<Readonly<RunEventRecoverySummary>> {
+  async recoverAll(options: RunEventRecoveryOptions = {}): Promise<Readonly<RunEventRecoverySummary>> {
     this.#assertOpen()
     const started = performance.now()
     const summary: RunEventRecoverySummary = {
@@ -230,31 +275,47 @@ export class RunEventLog implements RunEventLogPort {
       failed: 0,
       failures: [],
     }
+    let completed = 0
+    let total: number | undefined
+    let reportedCompleted = -1
+    let lastProgressAt = started
+    const reportProgress = (force = false) => {
+      if (!options.onProgress || total === undefined || completed === reportedCompleted)
+        return
+      const now = performance.now()
+      if (!force && now - lastProgressAt < 250)
+        return
+      reportedCompleted = completed
+      lastProgressAt = now
+      try {
+        options.onProgress(Object.freeze({ completed, total }))
+      }
+      catch {}
+    }
     try {
       const enumerationStarted = performance.now()
-      const runs = this.#queries.listRecoveryRuns()
-      const conversations = new Map(runs.map(run => [run.runId, run.conversationId]))
-      const persisted = new Set(await this.#runStoreOperation(() => (
-        this.#store.listPersistedRunIds(runs.map(run => run.runId), conversations)
-      )))
+      const runs = this.#databaseOperation('recovery', () => this.#queries.listRecoveryRuns(options))
+      total = runs.length
+      reportProgress(true)
+      if (options.force) {
+        await this.#runStoreOperation(() => this.#store.listPersistedRunIds(
+          runs.map(run => run.runId),
+          new Map(runs.map(run => [run.runId, run.conversationId])),
+        ))
+      }
       summary.enumerationMs = performance.now() - enumerationStarted
       for (const run of runs) {
         try {
-          if (!persisted.has(run.runId)) {
-            await this.#enqueue(run.runId, async () => {
-              this.#invalidateCheckpoint(run.runId)
-              if (run.projectedLastSequence > 0)
-                this.#quarantine(new RunEventCorruptionError(run.runId))
-            })
-            continue
-          }
           await this.#enqueue(run.runId, async () => {
             summary.scanned++
             const fingerprint = await this.#fingerprint(run.runId, run.conversationId, summary)
-            if (!options.force && !this.#fatalFailure && !this.#quarantined.has(run.runId) && canReuseRunEventCheckpoint(run, fingerprint)
-              && this.#queries.hasCheckpoint(run.runId, run.checkpoint)) {
+            if (this.#reuseEmptyRun(run.runId, fingerprint, run.checkpoint)) {
+              summary.skipped++
+              return
+            }
+            if (!options.force && canCertifyBootstrapCheckpoint(run, fingerprint)
+              && this.#databaseOperation(run.runId, () => this.#projector.certifyBootstrapCheckpoint(run))) {
               this.#nextSequences.set(run.runId, run.checkpoint.lastSequence + 1)
-              this.#compactionCheckedRuns.set(run.runId, run.checkpoint)
               summary.skipped++
               return
             }
@@ -267,6 +328,8 @@ export class RunEventLog implements RunEventLogPort {
             throw error
           summary.failed++
         }
+        completed++
+        reportProgress()
       }
       summary.failures = this.getRecoveryFailures()
       summary.failed = Math.max(summary.failed, summary.failures.length)
@@ -277,6 +340,7 @@ export class RunEventLog implements RunEventLogPort {
       throw error
     }
     finally {
+      reportProgress(true)
       summary.durationMs = performance.now() - started
       summary.failures = this.getRecoveryFailures()
       try {
@@ -287,29 +351,40 @@ export class RunEventLog implements RunEventLogPort {
   }
 
   compactTerminalRun(runId: string): Promise<number> {
-    return this.#enqueueMutation(runId, () => this.#compactTerminalRun(runId))
+    const result = this.#compactionTail.then(() => this.#enqueueMutation(runId, () => this.#compactTerminalRun(runId)))
+    this.#compactionTail = result.then(() => undefined, () => undefined)
+    return result
   }
 
   async compactTerminalRuns(): Promise<number> {
     this.#assertMutationAllowed()
     let removed = 0
-    for (const runId of this.#queries.listCompactableTerminalRunIds()) {
-      try {
-        removed += await this.#enqueueMutation(runId, async () => {
-          const checked = this.#compactionCheckedRuns.get(runId)
-          if (checked && this.#queries.hasCheckpoint(runId, checked)
-            && await this.#fingerprint(runId) === checked.fileFingerprint) {
-            return 0
-          }
-          return this.#compactTerminalRun(runId)
-        })
-      }
-      catch (error) {
-        if (!(error instanceof RunEventCorruptionError))
-          throw error
+    let cursor = ''
+    while (true) {
+      const candidates = this.#databaseOperation('maintenance', () => this.#queries.listCompactableTerminalRunIds(cursor))
+      if (!candidates.length)
+        break
+      for (const runId of candidates) {
+        cursor = runId
+        try {
+          removed += await this.compactTerminalRun(runId)
+        }
+        catch (error) {
+          if (!(error instanceof RunEventCorruptionError))
+            throw error
+        }
       }
     }
     return removed
+  }
+
+  startMaintenance(options: RunEventMaintenanceOptions = {}): void {
+    this.#assertMutationAllowed()
+    this.#maintenance.start(options)
+  }
+
+  stopMaintenance(): Promise<void> {
+    return this.#maintenance.stop()
   }
 
   async replayAll(): Promise<number> {
@@ -324,7 +399,7 @@ export class RunEventLog implements RunEventLogPort {
     if (this.#closePromise)
       return this.#closePromise
     this.#closed = true
-    this.#closePromise = Promise.all(this.#tails.values()).then(() => {
+    this.#closePromise = Promise.all([this.stopMaintenance(), this.#compactionTail, ...this.#tails.values()]).then(() => {
       this.#committed.dispose()
       this.#quarantineChanges.dispose()
     })
@@ -352,10 +427,10 @@ export class RunEventLog implements RunEventLogPort {
     summary?: RunEventRecoverySummary,
     knownFingerprint?: string | null,
   ): Promise<number> {
+    this.#invalidateCheckpoint(runId)
     const before = knownFingerprint === undefined ? await this.#fingerprint(runId, conversationId, summary) : knownFingerprint
     const readStarted = performance.now()
     const events = await this.#readAndRepair(runId, conversationId)
-    const compacted = createRunEventCompactionPlan(events).removed.length === 0
     if (summary)
       summary.readMs += performance.now() - readStarted
     const after = await this.#fingerprint(runId, conversationId, summary)
@@ -363,9 +438,9 @@ export class RunEventLog implements RunEventLogPort {
     if (quarantined && (events.length === 0 || after === null || before !== after))
       throw quarantined.error
     // Repairs or concurrent external changes are not certified by this read.
-    const checkpoint = after !== null && before === after && compacted
+    const checkpoint = after !== null && before === after
       ? { fileFingerprint: after, lastSequence: nextEventSequence(events) - 1, projectionVersion: RUN_EVENT_PROJECTION_VERSION }
-      : undefined
+      : before === null && after === null ? null : undefined
     const projectionStarted = performance.now()
     const count = this.#rebuildProjection(runId, events, checkpoint)
     this.#nextSequences.set(runId, nextEventSequence(events))
@@ -373,6 +448,42 @@ export class RunEventLog implements RunEventLogPort {
     if (summary)
       summary.projectionMs += performance.now() - projectionStarted
     return count
+  }
+
+  async #ensureProjection(runId: string): Promise<void> {
+    const run = this.#databaseOperation(runId, () => this.#queries.findRecoveryRun(runId))
+    if (!run)
+      return
+    const fingerprint = await this.#fingerprint(runId, run.conversationId)
+    if (this.#reuseEmptyRun(runId, fingerprint, run.checkpoint))
+      return
+    if (canReuseRunEventCheckpoint(run, fingerprint)
+      && this.#databaseOperation(runId, () => this.#queries.hasCheckpoint(runId, run.checkpoint))) {
+      this.#nextSequences.set(runId, run.checkpoint.lastSequence + 1)
+      return
+    }
+    await this.#replay(runId, run.conversationId, undefined, fingerprint)
+  }
+
+  #reuseEmptyRun(runId: string, fingerprint: string | null, checkpoint: RunEventCheckpoint | null): boolean {
+    if (fingerprint !== null)
+      return false
+    if ((checkpoint?.lastSequence ?? 0) > 0 || this.#databaseOperation(runId, () => this.#queries.hasProjectedEvents(runId)))
+      this.#quarantine(new RunEventCorruptionError(runId))
+    this.#assertRunAvailable(runId)
+    this.#invalidateCheckpoint(runId)
+    this.#databaseOperation(runId, () => this.#projector.removeEventRows(runId, [], null))
+    this.#nextSequences.set(runId, 1)
+    return true
+  }
+
+  #databaseOperation<T>(runId: string, operation: () => T): T {
+    try {
+      return operation()
+    }
+    catch (cause) {
+      this.#fail(new RunEventCheckpointError(runId, { cause }))
+    }
   }
 
   async #fingerprint(runId: string, conversationId?: string, summary?: RunEventRecoverySummary): Promise<string | null> {
@@ -389,26 +500,55 @@ export class RunEventLog implements RunEventLogPort {
   async #compactTerminalRun(runId: string): Promise<number> {
     if (!this.#isTerminalRun(runId))
       return 0
+    await this.#ensureProjection(runId)
+    if (!this.#isTerminalRun(runId))
+      return 0
+    const revision = this.#databaseOperation(runId, () => this.#queries.maintenanceRevision(runId))
+    const before = await this.#fingerprint(runId)
     const events = await this.#readAndRepair(runId)
-    if (!events.some(event => isTerminalRunEventType(event.type)))
+    if (before !== await this.#fingerprint(runId))
       return 0
-    const { removed, retained } = createRunEventCompactionPlan(events)
-    if (removed.length === 0)
+    if (revision !== this.#databaseOperation(runId, () => this.#queries.maintenanceRevision(runId))) {
+      await this.#replay(runId)
       return 0
-    await this.#runStoreOperation(() => this.#store.replace(runId, retained, events))
-    try {
-      this.#projector.removeEventRows(runId, removed.map(event => event.sequence))
     }
-    catch {
-      this.#rebuildProjection(runId, retained)
+    if (before === null) {
+      this.#databaseOperation(runId, () => this.#projector.removeEventRows(runId, [], null))
+      return 0
+    }
+    const { removed, retained } = events.some(event => isTerminalRunEventType(event.type))
+      ? createRunEventCompactionPlan(events)
+      : { removed: [], retained: events }
+    let replacementRevision = revision
+    if (removed.length) {
+      this.#invalidateCheckpoint(runId)
+      replacementRevision = this.#databaseOperation(runId, () => this.#queries.maintenanceRevision(runId))
+      await this.#runStoreOperation(() => this.#store.replace(runId, retained, events))
+    }
+    const fingerprint = await this.#fingerprint(runId)
+    if (fingerprint === null)
+      this.#quarantine(new RunEventCorruptionError(runId))
+    if (replacementRevision !== this.#databaseOperation(runId, () => this.#queries.maintenanceRevision(runId))) {
+      await this.#replay(runId)
+      return removed.length
+    }
+    try {
+      this.#projector.removeEventRows(runId, removed.map(event => event.sequence), {
+        fileFingerprint: fingerprint,
+        lastSequence: nextEventSequence(retained) - 1,
+        projectionVersion: RUN_EVENT_PROJECTION_VERSION,
+      })
+    }
+    catch (cause) {
+      this.#fail(new RunEventProjectionError(runId, retained, { cause }))
     }
     this.#nextSequences.set(runId, nextEventSequence(retained))
     return removed.length
   }
 
-  async #projectCommitted(events: readonly BuddyRunEvent[]): Promise<void> {
+  async #projectCommitted(events: readonly BuddyRunEvent[], checkpoint: RunEventCheckpoint): Promise<void> {
     try {
-      this.#projector.project(events)
+      this.#projector.project(events, checkpoint)
       return
     }
     catch {}
@@ -428,12 +568,9 @@ export class RunEventLog implements RunEventLogPort {
     }
   }
 
-  #rebuildProjection(runId: string, events: readonly BuddyRunEvent[], checkpoint?: RunEventCheckpoint): number {
+  #rebuildProjection(runId: string, events: readonly BuddyRunEvent[], checkpoint?: RunEventCheckpoint | null): number {
     try {
-      const count = this.#projector.rebuild(runId, events, checkpoint)
-      if (checkpoint && this.#queries.hasCheckpoint(runId, checkpoint))
-        this.#compactionCheckedRuns.set(runId, checkpoint)
-      return count
+      return this.#projector.rebuild(runId, events, checkpoint)
     }
     catch (cause) {
       this.#fail(new RunEventProjectionError(runId, events, { cause }))
@@ -452,7 +589,6 @@ export class RunEventLog implements RunEventLogPort {
   }
 
   #invalidateCheckpoint(runId: string): void {
-    this.#compactionCheckedRuns.delete(runId)
     try {
       this.#projector.invalidateCheckpoint(runId)
     }
@@ -462,9 +598,8 @@ export class RunEventLog implements RunEventLogPort {
   }
 
   async #readAndRepair(runId: string, conversationId?: string): Promise<BuddyRunEvent[]> {
-    this.#invalidateCheckpoint(runId)
-    const events = await this.#runStoreOperation(() => this.#store.readAndRepair(runId, conversationId))
-    if (!events.length && this.#queries.hasProjectedEvents(runId))
+    const events = await this.#runStoreOperation(() => this.#store.readAndRepair(runId, conversationId, () => this.#invalidateCheckpoint(runId)))
+    if (!events.length && this.#databaseOperation(runId, () => this.#queries.hasProjectedEvents(runId)))
       this.#quarantine(new RunEventCorruptionError(runId))
     return events
   }
@@ -484,7 +619,7 @@ export class RunEventLog implements RunEventLogPort {
 
   #quarantine(error: RunEventCorruptionError): never {
     this.#nextSequences.delete(error.runId)
-    this.#compactionCheckedRuns.delete(error.runId)
+    this.#invalidateCheckpoint(error.runId)
     let entry = this.#quarantined.get(error.runId)
     if (!entry) {
       const failure = Object.freeze({

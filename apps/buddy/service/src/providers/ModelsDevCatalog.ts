@@ -2,6 +2,7 @@ import type { Api, Model } from '@earendil-works/pi-ai'
 import type { ProviderModelType } from '../../../shared/providers/providerModelType'
 import { BUDDY_THINKING_LEVELS } from '../../../shared/conversation/modelSelection'
 import { freezeEventSnapshot } from '../../../shared/events/eventSnapshot'
+import { modelCatalogFingerprint } from './modelResolution'
 
 export interface CatalogModel {
   id: string
@@ -34,6 +35,7 @@ export interface CatalogMediaModel {
 }
 
 export interface ModelMetadataCatalog {
+  getFingerprint?: () => string
   getMediaModels?: (providerId?: string) => readonly CatalogMediaModel[]
   getModels: (providerId?: string) => readonly CatalogModel[]
   getProviders: () => ReadonlyArray<{ id: string, name: string }>
@@ -50,6 +52,11 @@ export class ModelsDevCatalog implements ModelMetadataCatalog {
   readonly #models: CatalogModel[] = []
   readonly #mediaModels: CatalogMediaModel[] = []
   readonly #byProvider = new Map<string, CatalogModel[]>()
+  #fingerprint: string | undefined
+
+  getFingerprint(): string {
+    return this.#fingerprint ??= modelCatalogFingerprint(this)
+  }
 
   constructor(data: unknown) {
     if (!isRecord(data))

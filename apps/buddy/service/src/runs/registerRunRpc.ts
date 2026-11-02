@@ -8,13 +8,14 @@ import { runsStatusRpc } from '../../../shared/runs/conversationStatusApi'
 import { toPublicRunEvent } from '../../../shared/runs/publicRunEvent'
 import { runsRpc } from '../../../shared/runs/runApi'
 import { runsMetricsRpc } from '../../../shared/runs/taskMetricsApi'
+import { RunEventCorruptionError } from '../events/RunEventFailure'
 import { BuddyServiceError, registerRuntimeRequest } from '../rpc/runtimeRequest'
 import { toPublicRun } from './publicRun'
 
 export interface RegisterRunRpcOptions {
   statistics: Pick<ConversationStatusService, 'metrics' | 'status'>
   isBusy: () => boolean
-  eventLog: Pick<RunEventReader, 'list' | 'listForConversation'> & Partial<Pick<RunEventAvailability, 'getRecoveryFailures'>>
+  eventLog: Pick<RunEventReader, 'list' | 'listForConversation' | 'verifyRun'> & Partial<Pick<RunEventAvailability, 'getRecoveryFailures'>>
   inputs: Pick<RunInputRepository, 'findByRunId'>
   repository: Pick<
     RunRepository,
@@ -47,7 +48,7 @@ export function registerRunRpc(options: RegisterRunRpcOptions): () => void {
       return publicRun(run)
     }),
     registerRuntimeRequest(options.rpc, runsRpc.listEvents, async (input) => {
-      const events = 'conversationId' in input
+      let events = 'conversationId' in input
         ? options.eventLog.listForConversation(input.conversationId, {
             limit: input.limit ?? 500,
           })
@@ -55,6 +56,19 @@ export function registerRunRpc(options: RegisterRunRpcOptions): () => void {
             afterSequence: input.afterSequence,
             limit: input.limit ?? 500,
           })
+      if ('conversationId' in input) {
+        const runIds = new Set(events.map(event => event.runId))
+        for (const runId of runIds) {
+          try {
+            await options.eventLog.verifyRun(runId)
+          }
+          catch (error) {
+            if (!(error instanceof RunEventCorruptionError))
+              throw error
+          }
+        }
+        events = options.eventLog.listForConversation(input.conversationId, { limit: input.limit ?? 500 }).filter(event => runIds.has(event.runId))
+      }
       return events.map(toPublicRunEvent)
     }),
   ]

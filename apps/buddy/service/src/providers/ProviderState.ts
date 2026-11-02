@@ -29,9 +29,9 @@ export class ProviderState {
   #catalogRevision = 0
   #depth = 0
 
-  constructor(read: () => ProviderStateInput) {
+  constructor(read: () => ProviderStateInput, options: { deferInitialRead?: boolean } = {}) {
     this.#read = read
-    this.#current = copyEventSnapshot(read())
+    this.#current = copyEventSnapshot(options.deferInitialRead ? { providers: [], models: [], defaultModel: null } : read())
   }
 
   get snapshot() {

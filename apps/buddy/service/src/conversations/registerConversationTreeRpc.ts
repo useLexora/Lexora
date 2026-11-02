@@ -36,7 +36,7 @@ export function registerConversationTreeRpc(options: Pick<RegisterConversationRp
       attachments: options.attachments.listForConversation(conversationId),
       outputs: projectRunOutputs(repository.listOutputEvents(conversationId), options.artifacts.listForConversation(conversationId)),
     })
-  }), registerRuntimeRequest(options.rpc, conversationTreeRpc.detail, (input) => {
+  }), registerRuntimeRequest(options.rpc, conversationTreeRpc.detail, async (input) => {
     requireConversation(input.conversationId)
     const attachments = options.attachments.listForConversation(input.conversationId)
     if (input.kind === 'question') {
@@ -52,7 +52,12 @@ export function registerConversationTreeRpc(options: Pick<RegisterConversationRp
         nextCursor: null,
       }
     }
-    const run = options.runs.findById(input.runId)
+    let run = options.runs.findById(input.runId)
+    if (!run || run.conversationId !== input.conversationId || run.purpose === 'conversation.compaction')
+      throw new BuddyServiceError('VALIDATION_FAILED')
+    await options.eventLog.verifyRun(run.id)
+    requireConversation(input.conversationId)
+    run = options.runs.findById(input.runId)
     if (!run || run.conversationId !== input.conversationId || run.purpose === 'conversation.compaction')
       throw new BuddyServiceError('VALIDATION_FAILED')
     const events = options.eventLog.listForRuns([run.id])

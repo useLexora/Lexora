@@ -1,7 +1,7 @@
 import type { AttachmentService } from '../attachments/AttachmentService'
 import type { ChangeCaptureService } from '../changes/ChangeCaptureService'
 import type { BuddyRunEvent } from '../events/BuddyRunEvent'
-import type { RunEventAvailability } from '../events/RunEventPorts'
+import type { RunEventAvailability, RunEventReader } from '../events/RunEventPorts'
 import type { RuntimeRequestRegistrar } from '../rpc/runtimeRequest'
 import type {
   ArtifactRepository,
@@ -19,6 +19,7 @@ import { toPublicRunEvent } from '../../../shared/runs/publicRunEvent'
 import {
   withMessageAttachments,
 } from '../attachments/publicAttachment'
+import { RunEventCorruptionError } from '../events/RunEventFailure'
 import { BuddyServiceError, registerRuntimeRequest } from '../rpc/runtimeRequest'
 import { toPublicRun } from '../runs/publicRun'
 import {
@@ -46,7 +47,7 @@ export interface RegisterConversationRpcOptions {
   conversations: ConversationRpcRepository
   metadata: Pick<ConversationMetadataService, 'rename' | 'setPermissionSettings' | 'setModelSelection' | 'getModelControls' | 'listMembers' | 'addMember' | 'removeMember' | 'setBuddy' | 'moveToSpace' | 'activateBranch'>
   deleteConversation: (conversationId: string) => Promise<boolean>
-  eventLog: { listForRuns: (runIds: readonly string[]) => BuddyRunEvent[] } & Partial<Pick<RunEventAvailability, 'getRecoveryFailures'>>
+  eventLog: { listForRuns: (runIds: readonly string[]) => BuddyRunEvent[] } & Pick<RunEventReader, 'verifyRun'> & Partial<Pick<RunEventAvailability, 'getRecoveryFailures'>>
   isDeleting: (conversationId: string) => boolean
   rpc: RuntimeRequestRegistrar
   runInputs: Pick<RunInputRepository, 'findByRunId'>
@@ -103,10 +104,10 @@ export function registerConversationRpc(options: RegisterConversationRpcOptions)
       throw new BuddyServiceError('VALIDATION_FAILED')
     return options.conversations.listBranches(input.conversationId)
   }))
-  disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.listMessages, (input) => {
+  disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.listMessages, async (input) => {
     const conversation = requireActiveConversation(options, input.conversationId)
     const branchId = input.branchId ?? requireValue(conversation.activeBranchId)
-    const page = options.conversations.listMessagePage(
+    const readPage = () => options.conversations.listMessagePage(
       input.conversationId,
       branchId,
       {
@@ -119,6 +120,8 @@ export function registerConversationRpc(options: RegisterConversationRpcOptions)
         limit: input.limit ?? 100,
       },
     )
+    const page = await readVerifiedHistoryPage(options, readPage, page => page.items.flatMap(item => item.runId ? [item.runId] : []))
+    requireActiveConversation(options, input.conversationId)
     return {
       items: withMessageAttachments(
         page.items,
@@ -133,10 +136,10 @@ export function registerConversationRpc(options: RegisterConversationRpcOptions)
         : null,
     }
   }))
-  disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.listTimeline, (input) => {
+  disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.listTimeline, async (input) => {
     const conversation = requireActiveConversation(options, input.conversationId)
     const branchId = input.branchId ?? requireValue(conversation.activeBranchId)
-    const page = options.conversations.listTimelinePage(
+    const readPage = () => options.conversations.listTimelinePage(
       input.conversationId,
       branchId,
       {
@@ -149,16 +152,20 @@ export function registerConversationRpc(options: RegisterConversationRpcOptions)
         limit: input.limit ?? 100,
       },
     )
+    const readTimeline = () => {
+      const page = readPage()
+      const messages = page.items.filter(item => item.kind === 'message')
+      const runs = options.runs.listForTimeline(input.conversationId, branchId, messages.filter(item => item.role === 'user').map(item => item.id), messages.flatMap(item => item.runId ? [item.runId] : []))
+      return { page, runs }
+    }
+    const { page, runs } = await readVerifiedHistoryPage(options, readTimeline, ({ page, runs }) => [
+      ...runs.map(run => run.id),
+      ...page.items.flatMap(item => item.kind === 'message' && item.runId ? [item.runId] : []),
+    ], true)
+    requireActiveConversation(options, input.conversationId)
     const items = withMessageAttachments(
       page.items,
       options.attachments.listForConversation(input.conversationId),
-    )
-    const messageItems = items.filter(item => item.kind === 'message')
-    const runs = options.runs.listForTimeline(
-      input.conversationId,
-      branchId,
-      messageItems.filter(item => item.role === 'user').map(item => item.id),
-      messageItems.flatMap(item => item.runId ? [item.runId] : []),
     )
     const runEvents = options.eventLog.listForRuns(runs.map(run => run.id))
     const runIds = runs.map(run => run.id)
@@ -186,6 +193,33 @@ export function registerConversationRpc(options: RegisterConversationRpcOptions)
   }))
 
   return () => disposers.splice(0).forEach(dispose => dispose())
+}
+
+async function readVerifiedHistoryPage<T>(
+  options: Pick<RegisterConversationRpcOptions, 'eventLog'>,
+  read: () => T,
+  runIds: (page: T) => readonly string[],
+  tolerateCorruption = false,
+): Promise<T> {
+  const verified = new Set<string>()
+  for (let attempt = 0; attempt < 3; attempt++) {
+    for (const runId of new Set(runIds(read()))) {
+      if (verified.has(runId))
+        continue
+      try {
+        await options.eventLog.verifyRun(runId)
+      }
+      catch (error) {
+        if (!tolerateCorruption || !(error instanceof RunEventCorruptionError))
+          throw error
+      }
+      verified.add(runId)
+    }
+    const page = read()
+    if (runIds(page).every(runId => verified.has(runId)))
+      return page
+  }
+  throw new BuddyServiceError('VALIDATION_FAILED')
 }
 
 function requireActiveConversation(

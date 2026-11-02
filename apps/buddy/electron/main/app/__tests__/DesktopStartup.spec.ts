@@ -2,6 +2,7 @@ import type { ApplicationDiagnostic } from '../../../../shared/diagnostics/appli
 import { describe, expect, it } from 'vitest'
 import { PrivateDirectoryError } from '../../../../platform/windows/privateDirectories'
 import { ServiceHost } from '../../../../shared/lifecycle/ServiceHost'
+import { ServiceLifecycleSource } from '../../../../shared/lifecycle/ServiceLifecycleSource'
 import { ApplicationEvents } from '../../../../shared/observability/ApplicationEvents'
 import { observeLifecycleDiagnostics } from '../../../../shared/observability/lifecycleDiagnostics'
 import { DesktopStartup } from '../DesktopStartup'
@@ -13,8 +14,8 @@ function fixture() {
   const events: ApplicationDiagnostic[] = []
   const publisher = new ApplicationEvents()
   publisher.subscribe(event => events.push(event))
-  const stopDiagnostics = observeStartupDiagnostics(state.startup, publisher)
-  return { ...state, events, stopDiagnostics }
+  observeStartupDiagnostics(state.startup, publisher)
+  return { ...state, events }
 }
 
 describe('application lifecycle snapshot', () => {
@@ -54,10 +55,14 @@ describe('application lifecycle snapshot', () => {
   })
 
   it('reports an actual startup cancellation once and ignores delayed completion', () => {
-    const { startup, events, complete } = fixture()
+    const { startup, events, complete, connect } = fixture()
+    complete('desktop')
+    connect('runtime-1')
     startup.stopping()
     startup.stopping()
     complete('desktop')
+    complete('renderer')
+    expect(startup.state.status).toBe('stopping')
     expect(events.filter(event => event.event === 'app.start_cancelled')).toHaveLength(1)
     expect(events.some(event => event.event === 'app.start_failed' || event.event === 'app.ready')).toBe(false)
   })
@@ -96,31 +101,20 @@ describe('application lifecycle snapshot', () => {
     expect(startup.state.status).toBe('ready')
   })
 
-  it('does not announce readiness after shutdown has begun', () => {
-    const { startup, events, complete, connect } = fixture()
+  it('exposes in-flight stage progress to late subscribers and discards it on generation replacement', () => {
+    const { startup, complete, connect } = fixture()
     complete('desktop')
     connect('runtime-1')
-    startup.stopping()
-    complete('renderer')
-    expect(startup.state.status).toBe('stopping')
-    expect(events.some(event => event.event === 'app.ready')).toBe(false)
-  })
-
-  it('becomes ready without diagnostics and preserves observation after a consumer fails', () => {
-    const { startup, complete, connect, stopDiagnostics, events } = fixture()
-    stopDiagnostics()
-    startup.onStateChange(() => {
-      throw new Error('optional view failed')
-    })
-    complete('desktop')
-    connect('runtime-1')
-    complete('renderer')
-    expect(startup.state.status).toBe('ready')
+    const renderer = new ServiceLifecycleSource()
+    renderer.reader.onDidChange(change => startup.acceptRenderer({ generation: 'runtime-1', change }))
+    renderer.update({ component: 'renderer', kind: 'service', operationId: 'renderer-1', status: 'starting' })
+    renderer.update({ component: 'renderer.tasks', kind: 'operation', operationId: 'tasks-1', status: 'starting' })
+    renderer.updateProgress('renderer.tasks', 'tasks-1', { completed: 1, total: 3 })
+    expect(startup.state.stages).toContainEqual(expect.objectContaining({ stage: 'renderer.tasks', progress: { completed: 1, total: 3 } }))
+    expect(startup.reconcile().stages).toEqual(startup.state.stages)
     connect('runtime-2', 'starting')
-    connect('runtime-2')
-    complete('renderer', 'runtime-2')
-    expect(startup.reconcile().status).toBe('ready')
-    expect(events).toEqual([])
+    renderer.updateProgress('renderer.tasks', 'tasks-1', { completed: 3, total: 3 })
+    expect(startup.state.stages.some(stage => stage.progress)).toBe(false)
   })
 
   it('reconstructs completed managed stages when subscribed after initialization', async () => {

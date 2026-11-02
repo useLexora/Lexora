@@ -168,6 +168,7 @@ export class DesktopStartup {
       status: COMPONENT_STATUSES[component.status],
       operationId: component.operationId,
       ...(component.durationMs === undefined ? {} : { durationMs: component.durationMs }),
+      ...(component.progress ? { progress: component.progress } : {}),
       ...(component.failure?.errorCode ? { errorCode: component.failure.errorCode } : {}),
     }))
     for (const required of REQUIRED_HOSTS) {

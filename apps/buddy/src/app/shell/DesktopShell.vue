@@ -118,6 +118,7 @@ function showTasks() {
         <DesktopStartupScreen
           v-if="startupVisible"
           :failed="bindings.lifecycle.failed.value"
+          :stages="bindings.lifecycle.state.value.stages"
           :language="language"
           @retry="bindings.lifecycle.retry()"
           @open-logs="router.push(desktopRouteLocations.settings('logs'))"

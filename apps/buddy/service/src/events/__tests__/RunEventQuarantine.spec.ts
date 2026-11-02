@@ -63,12 +63,10 @@ describe('run event quarantine', () => {
     expect(await readFile(f.file('child'), 'utf8')).toBe(damaged)
     expect(f.database.prepare('SELECT * FROM run_events WHERE run_id = ?').all('child')).toEqual(before)
     await expect(f.events.append({ runId: 'healthy-run', type: 'audit.after', payload: {} })).resolves.toMatchObject({ sequence: 2 })
-    for (const runId of ['child']) {
-      await expect(f.events.append({ runId, type: 'run.completed', payload: {} })).rejects.toBeInstanceOf(RunEventCorruptionError)
-      await expect(f.events.read(runId)).rejects.toBeInstanceOf(RunEventCorruptionError)
-      await expect(f.events.list(runId)).rejects.toBeInstanceOf(RunEventCorruptionError)
-      expect(() => f.events.assertRunWritable(runId)).toThrow(RunEventCorruptionError)
-    }
+    await expect(f.events.append({ runId: 'child', type: 'run.completed', payload: {} })).rejects.toBeInstanceOf(RunEventCorruptionError)
+    await expect(f.events.read('child')).rejects.toMatchObject({ code: 'EVENT_LOG_CORRUPTED', commitState: 'not_applicable', runId: 'child' })
+    await expect(f.events.list('child')).rejects.toBeInstanceOf(RunEventCorruptionError)
+    expect(() => f.events.assertRunWritable('child')).toThrow(RunEventCorruptionError)
     await expect(f.events.append({ runId: 'root', type: 'audit.after', payload: {} })).resolves.toMatchObject({ sequence: 2 })
     expect(await f.events.read('root')).toHaveLength(2)
     expect(f.events.listForConversation('conversation').map(event => event.runId)).toEqual(['root', 'root'])
@@ -77,6 +75,9 @@ describe('run event quarantine', () => {
     await expect(f.events.replayAll()).rejects.toBeInstanceOf(RunEventCorruptionError)
     expect(f.events.getRecoveryFailures()).toHaveLength(1)
     expect(f.runs.findById('root')?.status).toBe('running')
+    expect(await f.events.recoverAll()).toMatchObject({ failed: 1 })
+    expect(f.database.prepare('SELECT * FROM run_event_checkpoints WHERE run_id = ?').get('child')).toBeUndefined()
+    expect(await readFile(f.file('child'), 'utf8')).toBe(damaged)
   })
 
   it('excludes quarantined roots before limiting aggregate history and keeps recorded tool counts', async () => {
@@ -101,7 +102,7 @@ describe('run event quarantine', () => {
     }
     await appendFile(f.file('child'), '{broken}\n')
     const damaged = await readFile(f.file('child'), 'utf8')
-    expect(await f.events.recoverAll()).toMatchObject({ failed: 1 })
+    expect(await f.events.recoverAll({ force: true })).toMatchObject({ failed: 1 })
     expect(await f.events.compactTerminalRuns()).toBe(1)
     expect(await f.events.list('healthy-run')).toHaveLength(3)
     expect(await readFile(f.file('child'), 'utf8')).toBe(damaged)
@@ -181,43 +182,7 @@ describe('run event quarantine', () => {
     expect(f.events.getRecoveryFailures()).toHaveLength(1)
   })
 
-  it('preflights the whole execution tree before recovering interrupted runs, and recovers unrelated automation runs', async () => {
-    const f = await fixture()
-    await appendFile(f.file('child'), '{broken}\n')
-    const damaged = await readFile(f.file('child'), 'utf8')
-    const captured: string[] = []
-    const cancellable: string[] = []
-    const lifecycle = new RunLifecycleService({ eventLog: f.events, repository: f.runs })
-    const recovery = new RunRecoveryService({
-      conversations: f.conversations,
-      eventLog: f.events,
-      lifecycle,
-      repository: f.runs,
-      captureInterruptedChanges: async (runId) => { captured.push(runId) },
-      cancelPendingApprovals: async (canRecover) => {
-        for (const runId of ['root', 'child', 'healthy-run']) {
-          if (canRecover(runId))
-            cancellable.push(runId)
-        }
-        return cancellable.length
-      },
-      usage: { record: async () => { throw new Error('Unexpected compaction') } },
-    })
-    expect(await recovery.recoverInterruptedRuns()).toBe(3)
-    expect(captured.toSorted()).toEqual(['healthy-run', 'root'])
-    expect(cancellable).toEqual(['root', 'healthy-run'])
-    expect(f.runs.findById('healthy-run')).toMatchObject({ status: 'failed', errorCode: 'RUNTIME_RESTARTED' })
-    expect(f.runs.findById('root')).toMatchObject({ status: 'failed', errorCode: 'RUNTIME_RESTARTED' })
-    expect(f.runs.findById('child')).toMatchObject({ status: 'failed', errorCode: 'EVENT_LOG_CORRUPTED' })
-    expect(f.executions.find('root')).toMatchObject({ phase: 'closed', cleanupState: 'degraded', cleanupErrorCode: 'EVENT_LOG_CORRUPTED' })
-    expect(f.executions.find('child')).toMatchObject({ phase: 'closed', cleanupState: 'degraded' })
-    expect(await readFile(f.file('root'), 'utf8')).toContain('run.failed')
-    expect(await readFile(f.file('child'), 'utf8')).toBe(damaged)
-    expect(await recovery.recoverInterruptedRuns()).toBe(0)
-    await lifecycle.dispose()
-  })
-
-  it('cancels stale approvals without inventing events in a quarantined log', async () => {
+  it('preflights interrupted trees and cancels stale approvals without writing corrupt logs', async () => {
     const f = await fixture()
     const repository = createApprovalRepository(f.database)
     const approvals = new ApprovalService({ eventLog: f.events, repository })
@@ -236,20 +201,29 @@ describe('run event quarantine', () => {
     }
     await appendFile(f.file('child'), '{broken}\n')
     const damaged = await readFile(f.file('child'), 'utf8')
-    await f.events.recoverAll()
+    const captured: string[] = []
     const lifecycle = new RunLifecycleService({ eventLog: f.events, repository: f.runs })
     const recovery = new RunRecoveryService({
       conversations: f.conversations,
       eventLog: f.events,
       lifecycle,
       repository: f.runs,
+      captureInterruptedChanges: async (runId) => { captured.push(runId) },
       cancelPendingApprovals: canRecover => approvals.cancelPendingApprovals('recovery', canRecover),
       usage: { record: async () => { throw new Error('Unexpected compaction') } },
     })
     expect(await recovery.recoverInterruptedRuns()).toBe(3)
+    expect(captured.toSorted()).toEqual(['healthy-run', 'root'])
+    expect(f.runs.findById('healthy-run')).toMatchObject({ status: 'failed', errorCode: 'RUNTIME_RESTARTED' })
+    expect(f.runs.findById('root')).toMatchObject({ status: 'failed', errorCode: 'RUNTIME_RESTARTED' })
+    expect(f.runs.findById('child')).toMatchObject({ status: 'failed', errorCode: 'EVENT_LOG_CORRUPTED' })
+    expect(f.executions.find('root')).toMatchObject({ phase: 'closed', cleanupState: 'degraded', cleanupErrorCode: 'EVENT_LOG_CORRUPTED' })
+    expect(f.executions.find('child')).toMatchObject({ phase: 'closed', cleanupState: 'degraded' })
+    expect(await readFile(f.file('root'), 'utf8')).toContain('run.failed')
+    expect(await readFile(f.file('child'), 'utf8')).toBe(damaged)
+    expect(await recovery.recoverInterruptedRuns()).toBe(0)
     expect(repository.findById('approval-child')?.status).toBe('cancelled')
     expect(repository.findById('approval-healthy-run')?.status).toBe('cancelled')
-    expect(await readFile(f.file('child'), 'utf8')).toBe(damaged)
     await lifecycle.dispose()
     await expect(approvals.dispose()).resolves.toBeUndefined()
     expect(repository.findById('approval-child')?.status).toBe('cancelled')
