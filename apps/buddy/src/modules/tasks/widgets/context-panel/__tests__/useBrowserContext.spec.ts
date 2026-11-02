@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import type { DesktopBrowserApi, DesktopBrowserState } from '@buddy-electron/shared/desktopApi'
+import { browserAgentTabId } from '@buddy-shared/browser/session'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, effectScope, h, nextTick, shallowRef } from 'vue'
 import { deferred } from '../../../../../../__tests__/deferred'
@@ -14,8 +15,8 @@ function browserState(url = 'https://example.com/'): DesktopBrowserState {
   return { zoomFactor: 1, canGoBack: false, canGoForward: false, controller: 'human', controlEpoch: 0, conversationId: 'conversation', error: null, pageId: 'page', profileMode: 'default', security: { kind: 'blank', origin: null }, sessionId: 'session', status: 'ready', title: '', url, visible: true }
 }
 
-function mountBrowser(ensureSession = async () => browserState()) {
-  const state = shallowRef<DesktopBrowserState | null>(null)
+function mountBrowser(ensureSession: DesktopBrowserApi['ensureSession'] = async () => browserState(), initialState: DesktopBrowserState | null = null, tabId?: string) {
+  const state = shallowRef<DesktopBrowserState | null>(initialState)
   let hook!: ReturnType<typeof useBrowserContextSurface>
   const api = {
     ensureSession: vi.fn(ensureSession),
@@ -36,6 +37,7 @@ function mountBrowser(ensureSession = async () => browserState()) {
       },
       api: api as unknown as DesktopBrowserApi,
       conversationId: shallowRef('conversation'),
+      tabId: shallowRef(tabId),
       guestHost: { show() {}, hide() {} },
       surfaceElement: shallowRef(document.createElement('div')),
     })
@@ -76,10 +78,35 @@ describe('browser context ownership', () => {
     expect(hook.failed.value).toBe(false)
   })
 
-  it('accepts a profile replacement adopted by the resource owner', async () => {
-    const { api, hook } = mountBrowser()
+  it('preserves the owner page through human control and profile replacement', async () => {
+    const key = browserAgentTabId('child-run')
+    let hostState: DesktopBrowserState = {
+      ...browserState(),
+      sessionId: 'child-session',
+      controller: 'agent',
+      owner: { runId: 'child-run', buddyId: 'child' },
+    }
+    const ensure: DesktopBrowserApi['ensureSession'] = async (conversationId, tabId) => {
+      if (conversationId !== hostState.conversationId || tabId !== key)
+        throw new Error('BROWSER_SESSION_NOT_FOUND')
+      return hostState
+    }
+    const { api, hook } = mountBrowser(ensure, hostState, key)
     await nextTick()
-    const replacement = { ...browserState(), sessionId: 'private-session', pageId: 'private-page', profileMode: 'incognito' as const }
+    api.takeControl.mockImplementation(async (sessionId: string) => {
+      if (sessionId !== hostState.sessionId)
+        throw new Error('BROWSER_SESSION_NOT_FOUND')
+      hostState = { ...hostState, controller: 'human', controlEpoch: hostState.controlEpoch + 1 }
+      return hostState
+    })
+    expect(await hook.takeControl()).toBe(true)
+    expect(hook.state.value).toMatchObject({
+      sessionId: 'child-session',
+      controller: 'human',
+      owner: { runId: 'child-run', buddyId: 'child' },
+    })
+    expect(hook.failed.value).toBe(false)
+    const replacement = { ...hostState, sessionId: 'private-session', pageId: 'private-page', profileMode: 'incognito' as const }
     api.setProfileMode.mockResolvedValue(replacement)
     expect(await hook.setProfileMode('incognito')).toBe(true)
     expect(hook.state.value).toEqual(replacement)

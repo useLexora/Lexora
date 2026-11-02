@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-export type BrowserSessionProtection = 'runtime' | 'surface' | 'tab'
+export type BrowserSessionProtection = 'operation' | 'runtime' | 'surface' | 'tab'
 export type BrowserSessionTeardownReason = 'closed' | 'disposed' | 'evicted'
 
 export interface BrowserSessionFactoryContext {
@@ -10,7 +10,7 @@ export interface BrowserSessionFactoryContext {
 
 export interface BrowserSessionFactoryResult<Session> {
   session: Session
-  teardown: (reason: BrowserSessionTeardownReason) => void
+  teardown: (reason: BrowserSessionTeardownReason) => void | Promise<void>
 }
 
 interface BrowserSessionEntry<Session> extends BrowserSessionFactoryContext {
@@ -18,7 +18,7 @@ interface BrowserSessionEntry<Session> extends BrowserSessionFactoryContext {
   lastUsed: number
   protections: Set<BrowserSessionProtection>
   session: Session
-  teardown: (reason: BrowserSessionTeardownReason) => void
+  teardown: (reason: BrowserSessionTeardownReason) => void | Promise<void>
 }
 
 interface BrowserSessionRegistryOptions {
@@ -38,6 +38,7 @@ export class BrowserSessionRegistryError extends Error {
 export class BrowserSessionRegistry<Session> {
   readonly #byTab = new Map<string, BrowserSessionEntry<Session>>()
   readonly #bySessionId = new Map<string, BrowserSessionEntry<Session>>()
+  readonly #retiring = new Set<Promise<void>>()
   readonly #createId: () => string
   readonly #maxSessions: number
   #clock = 0
@@ -68,19 +69,23 @@ export class BrowserSessionRegistry<Session> {
     }
 
     const evictionCandidate = this.#findEvictionCandidate()
-    if (this.#bySessionId.size >= this.#maxSessions && !evictionCandidate)
-      throw new BrowserSessionRegistryError()
+    if (this.#bySessionId.size + this.#retiring.size >= this.#maxSessions) {
+      if (this.#retiring.size > 0)
+        throw new BrowserSessionRegistryError()
+      if (evictionCandidate)
+        this.#removeEntry(evictionCandidate, 'evicted')
+      if (this.#bySessionId.size + this.#retiring.size >= this.#maxSessions)
+        throw new BrowserSessionRegistryError()
+    }
 
     const sessionId = this.#createId()
     const created = createSession({ conversationId, sessionId })
-    if (evictionCandidate)
-      this.#removeEntry(evictionCandidate, 'evicted')
 
     const entry: BrowserSessionEntry<Session> = {
       tabId,
       conversationId,
       lastUsed: ++this.#clock,
-      protections: new Set(tabId === 'default' ? [] : ['tab']),
+      protections: new Set(tabId === 'default' || tabId.startsWith('agent:') ? [] : ['tab']),
       session: created.session,
       sessionId,
       teardown: created.teardown,
@@ -95,7 +100,11 @@ export class BrowserSessionRegistry<Session> {
   }
 
   getByConversation(conversationId: string): Session | undefined {
-    return this.#byTab.get(JSON.stringify([conversationId, 'default']))?.session
+    return this.getByTab(conversationId, 'default')
+  }
+
+  getByTab(conversationId: string | null, tabId: string): Session | undefined {
+    return this.#byTab.get(JSON.stringify([conversationId, tabId]))?.session
   }
 
   getTabId(sessionId: string): string | undefined {
@@ -152,7 +161,7 @@ export class BrowserSessionRegistry<Session> {
   }
 
   #findEvictionCandidate(): BrowserSessionEntry<Session> | undefined {
-    if (this.#bySessionId.size < this.#maxSessions)
+    if (this.#bySessionId.size + this.#retiring.size < this.#maxSessions)
       return undefined
     return [...this.#bySessionId.values()]
       .filter(entry => entry.protections.size === 0)
@@ -166,7 +175,11 @@ export class BrowserSessionRegistry<Session> {
   ): void {
     this.#byTab.delete(JSON.stringify([entry.conversationId, entry.tabId]))
     this.#bySessionId.delete(entry.sessionId)
-    entry.teardown(reason)
+    const cleanup = entry.teardown(reason)
+    if (cleanup) {
+      this.#retiring.add(cleanup)
+      void cleanup.then(() => this.#retiring.delete(cleanup), () => {})
+    }
   }
 
   #touchEntry(entry: BrowserSessionEntry<Session>): void {

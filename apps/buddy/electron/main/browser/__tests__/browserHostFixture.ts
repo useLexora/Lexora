@@ -23,6 +23,7 @@ export function createFixture(options: { operations?: BrowserOperationGuard, get
   const onStateChanged = vi.fn()
   const onSessionClosed = vi.fn()
   const host = new BrowserHost({
+    maxSessions: 4,
     ...options,
     createId: () => ids.shift()!,
     createPage: createPage as never,
@@ -87,7 +88,12 @@ class FakeWebContents extends EventEmitter {
   getZoomFactor = () => this.zoomFactor
   setZoomFactor = (factor: number) => { this.zoomFactor = factor }
   setZoomMode = vi.fn()
-  readonly close = vi.fn()
+  destroyed = false
+  readonly close = vi.fn(() => {
+    this.destroyed = true
+    this.emit('destroyed')
+  })
+
   readonly capturePage = vi.fn(async () => ({
     getSize: () => ({ height: 600, width: 800 }),
     toPNG: () => Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]),
@@ -147,6 +153,10 @@ class FakeWebContents extends EventEmitter {
   }
 
   isDestroyed(): boolean {
+    return this.destroyed
+  }
+
+  isLoading(): boolean {
     return false
   }
 }

@@ -91,12 +91,14 @@ const browserOpenWaitSpec = Type.Union([
 export const browserOpenToolParameters = Type.Union([
   Type.Object({
     kind: Type.Literal('url'),
+    background: Type.Optional(Type.Boolean({ description: 'Defaults to true. Set false only when the user needs to view or take over this execution\'s page; opening in the background does not change the visible page.' })),
     until: Type.Optional(browserOpenWaitSpec),
     url: browserUrl,
   }, { additionalProperties: false }),
   Type.Object({
     entryPath: browserEntryPath,
     kind: Type.Literal('local-file'),
+    background: Type.Optional(Type.Boolean({ description: 'Defaults to true; false presents this execution\'s page to the user.' })),
     until: Type.Optional(browserOpenWaitSpec),
   }, { additionalProperties: false }),
 ], { type: 'object' })

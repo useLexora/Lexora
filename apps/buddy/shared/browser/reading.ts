@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { BROWSER_MAX_OBSERVATION_TEXT_BYTES, browserElementRefSchema, browserFrameIdSchema, browserIdSchema, browserRuntimeUrlSchema } from './primitives'
+import { browserPageOwnerSchema } from './session'
 
 export const BROWSER_MAX_READ_ITEMS = 100
 export const browserReadModeSchema = z.enum(['text', 'links', 'tables'])
@@ -23,6 +24,7 @@ export const browserReadOptionsSchema = z.object({
 })
 
 export const browserReadParamsSchema = browserReadOptionsSchema.safeExtend({
+  owner: browserPageOwnerSchema.optional(),
   pageId: browserIdSchema,
   sessionId: browserIdSchema,
 })

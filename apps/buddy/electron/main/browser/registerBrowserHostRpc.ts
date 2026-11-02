@@ -14,6 +14,7 @@ import {
   browserAcquireControlResultSchema,
   browserActParamsSchema,
   browserActResultSchema,
+  browserCancelParamsSchema,
   browserCloseResultSchema,
   browserErrorCodeSchema,
   browserFailureReasonSchema,
@@ -38,8 +39,19 @@ import {
   browserAdapterLeaseSchema,
 } from '../../../shared/browser/browserAdapterProtocol'
 import { createHostNetworkAuthorizer } from '../../../shared/network/networkAuthorization'
+import { BrowserHostError } from './BrowserHostError'
 import { redactBrowserRuntimeUrl } from './browserPrivacy'
 import { browserRecovery, projectBrowserState } from './browserRuntimeProjection'
+
+function releaseOpenControl(host: BrowserHost, lease: Parameters<BrowserHost['releaseControl']>[0]): void {
+  try {
+    host.releaseControl(lease)
+  }
+  catch (error) {
+    if (!(error instanceof BrowserHostError) || !['BROWSER_CONTROL_REQUIRED', 'BROWSER_TARGET_STALE', 'BROWSER_SESSION_NOT_FOUND'].includes(error.code))
+      throw error
+  }
+}
 
 interface BrowserResultSchema {
   parse: (value: unknown) => unknown
@@ -59,21 +71,29 @@ export function registerBrowserHostRpc(
       const input = browserOpenParamsSchema.parse(params)
       return runBrowserHostOperation(
         async () => {
+          signal?.throwIfAborted()
           const host = requireBrowserHost(options.getHost())
-          const session = host.ensureSession(input.conversationId)
-          return host.withNetworkAuthorization(session.sessionId, createHostNetworkAuthorizer(peer, requestId, signal), signal, async () => {
-            const state = await (input.target.kind === 'url'
-              ? host.navigate(session.sessionId, input.target.url, 'document-ready')
-              : host.openLocalFile(session.sessionId, {
-                  entryPath: input.target.entryPath,
-                  rootPath: input.target.rootPath,
-                }, 'document-ready'))
-            const until = input.until ? await host.waitFor(session.sessionId, input.until) : undefined
-            return {
-              state: input.until ? host.getState(session.sessionId) : state,
-              ...(input.until ? { until } : {}),
+          const session = host.ensureAgentSession(input.conversationId, input.owner)
+          const until = await host.withNetworkAuthorization(session.sessionId, createHostNetworkAuthorizer(peer, requestId, signal), signal, async () => {
+            const lease = host.acquireControl({ owner: input.owner, sessionId: session.sessionId, pageId: session.pageId })
+            const assertControl = () => host.assertControl(lease)
+            try {
+              await (input.target.kind === 'url'
+                ? host.navigate(session.sessionId, input.target.url, 'document-ready', assertControl)
+                : host.openLocalFile(session.sessionId, {
+                    entryPath: input.target.entryPath,
+                    rootPath: input.target.rootPath,
+                  }, 'document-ready', assertControl))
+              assertControl()
+              const until = input.until ? await host.waitFor(session.sessionId, input.until) : undefined
+              assertControl()
+              return until
+            }
+            finally {
+              releaseOpenControl(host, lease)
             }
           })
+          return { state: host.getState(session.sessionId), ...(input.until ? { until } : {}) }
         },
         result => ({
           ok: true,
@@ -89,6 +109,7 @@ export function registerBrowserHostRpc(
       return runBrowserHostOperation(
         () => {
           const host = requireBrowserHost(options.getHost())
+          host.assertOwner(input.sessionId, input.owner)
           return host.withNetworkAuthorization(input.sessionId, createHostNetworkAuthorizer(peer, requestId, signal), signal, () => host.observe(input))
         },
         observation => ({
@@ -104,6 +125,7 @@ export function registerBrowserHostRpc(
       return runBrowserHostOperation(
         () => {
           const host = requireBrowserHost(options.getHost())
+          host.assertOwner(input.sessionId, input.owner)
           return host.withNetworkAuthorization(input.sessionId, createHostNetworkAuthorizer(peer, requestId, signal), signal, () => host.read(input))
         },
         content => ({ content, ok: true }),
@@ -125,6 +147,7 @@ export function registerBrowserHostRpc(
       return runBrowserHostOperation(
         () => {
           const host = requireBrowserHost(options.getHost())
+          host.assertOwner(input.sessionId, input.owner)
           return host.withNetworkAuthorization(input.sessionId, createHostNetworkAuthorizer(peer, requestId, signal), signal, () => host.act(input))
         },
         result => ({
@@ -167,7 +190,11 @@ export function registerBrowserHostRpc(
     peer.onRequest('host.browser.getState', async (params) => {
       const input = browserSessionParamsSchema.parse(params)
       return runBrowserHostOperation(
-        () => requireBrowserHost(options.getHost()).getState(input.sessionId),
+        () => {
+          const host = requireBrowserHost(options.getHost())
+          host.assertOwner(input.sessionId, input.owner)
+          return host.getState(input.sessionId)
+        },
         state => ({ ok: true, state: projectBrowserState(state) }),
         browserStateResultSchema,
         'read_again',
@@ -176,7 +203,20 @@ export function registerBrowserHostRpc(
     peer.onRequest('host.browser.close', async (params) => {
       const input = browserSessionParamsSchema.parse(params)
       return runBrowserHostOperation(
-        () => requireBrowserHost(options.getHost()).close(input.sessionId),
+        () => {
+          const host = requireBrowserHost(options.getHost())
+          host.assertOwner(input.sessionId, input.owner)
+          return host.close(input.sessionId)
+        },
+        () => ({ ok: true }),
+        browserCloseResultSchema,
+        null,
+      )
+    }),
+    peer.onRequest('host.browser.cancel', async (params) => {
+      const input = browserCancelParamsSchema.parse(params)
+      return runBrowserHostOperation(
+        () => requireBrowserHost(options.getHost()).cancelExecution(input.conversationId, input.owner),
         () => ({ ok: true }),
         browserCloseResultSchema,
         null,

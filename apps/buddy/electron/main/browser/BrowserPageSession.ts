@@ -3,8 +3,10 @@ import type { EventEmitter } from 'node:events'
 import type { BrowserErrorCode } from '../../../shared/browser'
 import type { DesktopBrowserError, DesktopBrowserGuestDescriptor, DesktopBrowserProfileMode, DesktopBrowserState } from '../../../shared/browser/browserDesktopApi'
 import type { BrowserLocateElementInput, BrowserPickResult } from '../../../shared/browser/browserSelection'
+import type { BrowserPageOwner } from '../../../shared/browser/session'
 import type { BrowserOperationGuard } from './BrowserOperationGuard'
 import type { BrowserSecurityPage, BrowserSecuritySession } from './BrowserSecurityPolicy'
+import { DESKTOP_BROWSER_ERROR_CODES } from '../../../shared/browser/browserDesktopApi'
 import { browserZoomFactorSchema, stepBrowserZoom } from '../../../shared/browser/browserPreferences'
 import { BrowserDebugger } from './BrowserDebugger'
 import { BrowserElementPicker } from './BrowserElementPicker'
@@ -26,13 +28,14 @@ export interface BrowserPage extends BrowserSecurityPage {
     getSize: () => { height: number, width: number }
     toPNG: () => Uint8Array
   }>
-  close: () => void
+  close: WebContents['close']
   focus: () => void
   sendInputEvent: WebContents['sendInputEvent']
   insertText: WebContents['insertText']
   getTitle: () => string
   getURL: () => string
   isDestroyed: () => boolean
+  isLoading: WebContents['isLoading']
   loadURL: (url: string) => Promise<unknown>
   navigationHistory: {
     canGoBack: () => boolean
@@ -51,6 +54,7 @@ export interface BrowserPage extends BrowserSecurityPage {
 }
 
 export interface BrowserSessionState {
+  owner?: BrowserPageOwner
   documentVersion?: number
   zoomFactor: number
   canGoBack: boolean
@@ -75,6 +79,8 @@ interface BrowserPageDeferred {
 }
 
 interface BrowserPageSessionOptions {
+  operationTimeoutMs?: number
+  cleanupTimeoutMs?: number
   getFreezeDelay: (visible: boolean) => number | null
   onActivityError: () => void
   createId: () => string
@@ -95,9 +101,13 @@ export class BrowserPageSession {
   agentActionDepth = 0
   readonly descriptor: DesktopBrowserGuestDescriptor
   #listeners: Array<() => void> = []
+  #securityListeners: Array<() => void> = []
   mainFrameCommitSequence: number | null = null
   documentReadySequence: number | null = null
-  #activeOperations = 0
+  readonly #activeOperations = new Map<BrowserPage, number>()
+  #drained = Promise.resolve()
+  #cleanupResult: Promise<void> | null = null
+  readonly #destroyedPages = new WeakSet<BrowserPage>()
   #backgroundThrottling = true
   documentVersion = 0
   elementPicker: BrowserElementPicker | null = null
@@ -126,7 +136,7 @@ export class BrowserPageSession {
       return { status: 'unavailable' }
     this.#pickRequest = requestId
     try {
-      return await this.runWhileActive(() => this.#pickRequest === requestId ? picker.start(requestId) : Promise.resolve({ status: 'cancelled' } as const))
+      return await this.runWhileActive(() => this.#pickRequest === requestId ? picker.start(requestId) : Promise.resolve({ status: 'cancelled' } as const), { timeoutMs: null })
     }
     finally {
       if (this.#pickRequest === requestId)
@@ -166,6 +176,8 @@ export class BrowserPageSession {
   }
 
   publish(): void {
+    if (!this.#options.isCurrent())
+      return
     void this.updateActivity().catch(this.#options.onActivityError)
     this.#options.onStateChanged({ ...snapshot(this.state), documentVersion: this.documentVersion })
   }
@@ -180,34 +192,68 @@ export class BrowserPageSession {
   }
 
   resumePage(): Promise<void> {
+    if (this.#connection?.disposed)
+      return Promise.reject(new BrowserHostError('BROWSER_PAGE_FAILED', 'Browser guest is being released'))
     return this.#activity?.resume() ?? Promise.resolve()
   }
 
-  async runWhileActive<T>(operation: () => Promise<T>): Promise<T> {
-    this.#activeOperations += 1
+  async runWhileActive<T>(operation: () => Promise<T>, options: { timeoutMs?: number | null } = {}): Promise<T> {
+    const page = this.requirePage()
+    const connection = this.#connection!
+    const activity = this.#activity
+    this.#activeOperations.set(page, (this.#activeOperations.get(page) ?? 0) + 1)
     try {
       this.#updateBackgroundThrottling()
-      return await (this.#activity?.run(operation) ?? operation())
+      return await connection.run(() => activity?.run(() => connection.run(operation, options)) ?? operation(), options)
     }
     finally {
-      this.#activeOperations -= 1
-      this.#updateBackgroundThrottling()
+      const remaining = this.#activeOperations.get(page)! - 1
+      if (remaining === 0)
+        this.#activeOperations.delete(page)
+      else
+        this.#activeOperations.set(page, remaining)
+      if (this.page === page)
+        this.#updateBackgroundThrottling()
     }
+  }
+
+  abortOperations(reason: Error = new BrowserHostError('BROWSER_PAGE_FAILED', 'Browser page operation was cancelled')): Promise<void> {
+    const connection = this.#connection
+    if (!connection || (!connection.disposed && !connection.hasPendingOperations))
+      return this.waitForCleanup()
+    connection.dispose(reason)
+    return this.waitForCleanup()
+  }
+
+  waitForCleanup(): Promise<void> {
+    return this.#cleanupResult ?? Promise.resolve()
+  }
+
+  whenIdle(): Promise<void> {
+    return this.#drained
   }
 
   #updateBackgroundThrottling(): void {
     const page = this.page
-    if (!page || page.isDestroyed())
+    if (!page || page.isDestroyed() || this.#connection?.disposed)
       return
-    const allowed = this.state.controller === 'agent' || this.#activeOperations > 0 ? false : this.#backgroundThrottling
+    const allowed = this.state.controller === 'agent' || (this.#activeOperations.get(page) ?? 0) > 0 ? false : this.#backgroundThrottling
     if (page.getBackgroundThrottling() !== allowed)
       page.setBackgroundThrottling(allowed)
   }
 
   attach(page: BrowserPage): void {
+    if (this.page)
+      throw new BrowserHostError('BROWSER_PAGE_FAILED', 'Browser guest has not been released')
+    if (!this.#options.isCurrent() || page.isDestroyed())
+      throw new BrowserHostError('BROWSER_PAGE_FAILED', 'Browser guest cannot be attached')
     this.page = page
+    this.#cleanupResult = null
     this.#backgroundThrottling = page.getBackgroundThrottling()
-    this.#connection = new BrowserDebugger(page.debugger)
+    this.#connection = new BrowserDebugger(page.debugger, {
+      operationTimeoutMs: this.#options.operationTimeoutMs,
+      onAbort: reason => this.#destroyPage(page, reason),
+    })
     this.elementPicker = new BrowserElementPicker(this.#connection, () => page.getZoomFactor())
     this.#listen(page.debugger, 'message', (_event: unknown, method: string, params: Record<string, unknown>) => {
       this.elementPicker?.handleDebuggerMessage(method, params)
@@ -239,6 +285,8 @@ export class BrowserPageSession {
       authorizeNetwork: this.networkAuthorization.authorize,
       connection: this.#connection,
       onCertificateError: ({ error, url }) => {
+        if (this.#connection?.disposed || this.page !== page)
+          return
         this.state.error = {
           code: 'BROWSER_CERTIFICATE_ERROR',
           message: error,
@@ -248,6 +296,8 @@ export class BrowserPageSession {
         this.publish()
       },
       onPermissionDenied: () => {
+        if (this.#connection?.disposed || this.page !== page)
+          return
         this.state.error = {
           code: 'BROWSER_PERMISSION_DENIED',
           message: 'Browser permission request was denied',
@@ -255,7 +305,7 @@ export class BrowserPageSession {
         this.publish()
       },
       onRequestBlocked: (details) => {
-        if (details.resourceType !== 'mainFrame')
+        if (details.resourceType !== 'mainFrame' || this.#connection?.disposed || this.page !== page)
           return
         this.state.error = {
           code: 'BROWSER_NAVIGATION_BLOCKED',
@@ -423,6 +473,10 @@ export class BrowserPageSession {
       },
     )
     const blockUnsafeNavigation = (event: { preventDefault: () => void }, url: string) => {
+      if (this.#connection?.disposed) {
+        event.preventDefault()
+        return
+      }
       if (normalizeBrowserUrl(url))
         return
       event.preventDefault()
@@ -434,8 +488,8 @@ export class BrowserPageSession {
       this.state.status = 'error'
       this.publish()
     }
-    this.#listen(page, 'will-navigate', blockUnsafeNavigation)
-    this.#listen(page, 'will-redirect', blockUnsafeNavigation)
+    this.#listen(page, 'will-navigate', blockUnsafeNavigation, true)
+    this.#listen(page, 'will-redirect', blockUnsafeNavigation, true)
     this.#listen(
       page,
       'did-fail-load',
@@ -494,23 +548,9 @@ export class BrowserPageSession {
       this.publish()
     })
     this.#listen(page, 'destroyed', () => {
-      if (!this.#options.isCurrent() || this.page !== page)
-        return
-      this.releasePage()
-      this.pageReady = createBrowserPageDeferred()
-      this.shouldClearBootstrapHistory = true
-      this.state.canGoBack = false
-      this.state.canGoForward = false
-      this.state.error = {
-        code: 'BROWSER_PAGE_CRASHED',
-        message: 'Browser guest was detached from the Desktop renderer',
-      }
-      this.state.pageId = this.#options.createId()
-      this.state.status = 'error'
-      this.state.title = ''
-      this.state.url = 'about:blank'
-      this.publish()
-      this.#options.onGuestChanged('detached')
+      this.#destroyedPages.add(page)
+      if (this.page === page)
+        this.releasePage(new BrowserHostError('BROWSER_PAGE_CRASHED', 'Browser guest was detached from the Desktop renderer'))
     })
   }
 
@@ -518,10 +558,12 @@ export class BrowserPageSession {
     page: BrowserPage | BrowserPage['debugger'],
     event: string,
     listener: (...args: Args) => void,
+    retainDuringCleanup = false,
   ): void {
     const emitter = page as Pick<EventEmitter, 'on' | 'off'>
     emitter.on(event, listener)
-    this.#listeners.push(() => emitter.off(event, listener))
+    const listeners = retainDuringCleanup ? this.#securityListeners : this.#listeners
+    listeners.push(() => emitter.off(event, listener))
   }
 
   removeBootstrapHistory(): void {
@@ -556,7 +598,94 @@ export class BrowserPageSession {
       this.state.url = normalizedPageUrl
   }
 
-  releasePage(): void {
+  releasePage(reason: Error = new BrowserHostError('BROWSER_PAGE_FAILED', 'Browser guest was released')): void {
+    this.#connection?.dispose(reason)
+  }
+
+  #destroyPage(page: BrowserPage, reason: Error): Promise<void> {
+    const error: DesktopBrowserError = {
+      code: reason instanceof BrowserHostError
+        ? DESKTOP_BROWSER_ERROR_CODES.find(code => code === reason.code) ?? 'BROWSER_PAGE_FAILED'
+        : 'BROWSER_PAGE_FAILED',
+      message: reason.message,
+    }
+    let resolve!: () => void
+    const destroyed = new Promise<void>((resolveDestroyed) => {
+      resolve = resolveDestroyed
+    })
+    this.#drained = destroyed
+    this.#cleanupResult = new Promise<void>((resolveCleanup, rejectCleanup) => {
+      const timer = setTimeout(() => {
+        rejectCleanup(new BrowserHostError(
+          'BROWSER_PAGE_UNRESPONSIVE',
+          'Browser guest destruction could not be confirmed; the page remains quarantined',
+        ))
+      }, this.#options.cleanupTimeoutMs ?? 5_000)
+      void destroyed.then(() => {
+        clearTimeout(timer)
+        resolveCleanup()
+      })
+    })
+    void this.#cleanupResult.catch(this.#options.onActivityError)
+    let confirmed = false
+    const onDestroyed = () => {
+      if (confirmed)
+        return
+      confirmed = true
+      this.#destroyedPages.add(page)
+      page.off('destroyed', onDestroyed)
+      this.#releaseSecurity()
+      resolve()
+      if (this.page === page) {
+        this.page = null
+        this.#connection = null
+        this.#cleanupResult = null
+        this.pageReady.reject(reason)
+        this.pageReady = createBrowserPageDeferred()
+        this.shouldClearBootstrapHistory = true
+        this.activeNavigationSequence = null
+        this.navigationSequence += 1
+        this.mainFrameCommitSequence = null
+        this.documentReadySequence = null
+        if (this.#options.isCurrent()) {
+          this.state.canGoBack = false
+          this.state.canGoForward = false
+          this.state.error = { ...error }
+          this.state.pageId = this.#options.createId()
+          this.state.status = 'error'
+          this.state.title = ''
+          this.state.url = 'about:blank'
+          this.publish()
+          this.#options.onGuestChanged('detached')
+        }
+      }
+    }
+    page.on('destroyed', onDestroyed)
+    this.securityPolicy?.quarantine()
+    this.#releaseResources()
+    if (this.#options.isCurrent()) {
+      this.state.error = { ...error }
+      this.state.status = 'error'
+      this.publish()
+    }
+    if (page.isDestroyed() || this.#destroyedPages.has(page)) {
+      onDestroyed()
+      return destroyed
+    }
+    try {
+      page.stop()
+    }
+    catch {}
+    try {
+      page.close({ waitForBeforeUnload: false })
+    }
+    catch {}
+    if (page.isDestroyed())
+      onDestroyed()
+    return destroyed
+  }
+
+  #releaseResources(): void {
     this.networkAuthorization.dispose()
     this.invalidateElementReferences()
     this.elementPicker?.dispose()
@@ -564,20 +693,10 @@ export class BrowserPageSession {
     this.#activity?.dispose()
     this.#activity = null
     try {
-      this.securityPolicy?.dispose()
-    }
-    catch {}
-    this.securityPolicy = null
-    try {
       this.semanticDriver?.dispose()
     }
     catch {}
     this.semanticDriver = null
-    try {
-      this.#connection?.dispose()
-    }
-    catch {}
-    this.#connection = null
     for (const removeListener of this.#listeners) {
       try {
         removeListener()
@@ -585,12 +704,26 @@ export class BrowserPageSession {
       catch {}
     }
     this.#listeners = []
-    this.page = null
+  }
+
+  #releaseSecurity(): void {
+    try {
+      this.securityPolicy?.dispose()
+    }
+    catch {}
+    this.securityPolicy = null
+    for (const removeListener of this.#securityListeners) {
+      try {
+        removeListener()
+      }
+      catch {}
+    }
+    this.#securityListeners = []
   }
 
   requirePage(): BrowserPage {
     const page = this.page
-    if (!page || page.isDestroyed()) {
+    if (!page || page.isDestroyed() || this.#connection?.disposed) {
       throw new BrowserHostError(
         'BROWSER_PAGE_FAILED',
         'Browser guest is not attached',

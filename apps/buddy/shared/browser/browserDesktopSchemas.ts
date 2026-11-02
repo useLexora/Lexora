@@ -4,6 +4,7 @@ import { taskFileTargetSchema } from '../files/taskFileApi'
 import { DESKTOP_BROWSER_ERROR_CODES, DESKTOP_BROWSER_PROFILE_MODES, DESKTOP_BROWSER_SECURITY_KINDS } from './browserDesktopApi'
 import { browserZoomFactorSchema } from './browserPreferences'
 import { BROWSER_FAILURE_REASONS } from './primitives'
+import { browserPageOwnerSchema } from './session'
 
 const browserConversationIdSchema = z.string().trim().min(1).max(128)
 const browserSessionIdSchema = z.uuid()
@@ -39,7 +40,7 @@ const browserOriginSchema = z.string().min(1).max(4_096).refine((value) => {
 })
 
 export const browserEnsureSessionInputSchema: z.ZodType<DesktopBrowserEnsureSessionInput>
-  = z.object({ conversationId: browserConversationIdSchema.nullable(), tabId: z.string().trim().min(1).max(128).optional() }).strict().refine(input => input.conversationId !== null || Boolean(input.tabId && input.tabId !== 'default'))
+  = z.object({ conversationId: browserConversationIdSchema.nullable(), tabId: z.string().trim().min(1).max(134).optional() }).strict().refine(input => input.conversationId !== null || Boolean(input.tabId && input.tabId !== 'default'))
 
 export const browserNavigateInputSchema: z.ZodType<DesktopBrowserNavigateInput> = z.object({
   sessionId: browserSessionIdSchema,
@@ -65,12 +66,14 @@ export const browserAttachGuestInputSchema: z.ZodType<DesktopBrowserAttachGuestI
 
 export const desktopBrowserGuestDescriptorSchema: z.ZodType<DesktopBrowserGuestDescriptor>
   = z.object({
+    owner: browserPageOwnerSchema.optional(),
+    conversationId: browserConversationIdSchema.optional(),
     partition: z.string().trim().min(1).max(256),
     sessionId: browserSessionIdSchema,
   }).strict()
 
 export const desktopBrowserGuestDescriptorsSchema = z.array(desktopBrowserGuestDescriptorSchema)
-  .max(4)
+  .max(16)
 
 export const browserSetSurfaceInputSchema: z.ZodType<DesktopBrowserSetSurfaceInput>
   = z.object({
@@ -106,6 +109,7 @@ const desktopBrowserSecurityStateSchema: z.ZodType<DesktopBrowserSecurityState>
   ])
 
 export const desktopBrowserStateSchema: z.ZodType<DesktopBrowserState> = z.object({
+  owner: browserPageOwnerSchema.optional(),
   documentVersion: z.number().int().nonnegative().optional(),
   zoomFactor: browserZoomFactorSchema,
   canGoBack: z.boolean(),

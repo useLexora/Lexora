@@ -34,6 +34,7 @@ export interface BuddyCapabilityContext {
   executionProfile: BuddyExecutionProfile
   cwd: string
   getRunId: () => string | undefined
+  getActorId?: () => string | undefined
   getImagePreferences?: () => ImagePreferencesSnapshot | undefined
   isCodemodeEnabled?: () => boolean
   grants: readonly DirectoryGrant[]

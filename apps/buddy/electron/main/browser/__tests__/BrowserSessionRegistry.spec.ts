@@ -5,6 +5,37 @@ import {
 } from '../BrowserSessionRegistry'
 
 describe('browserSessionRegistry', () => {
+  it('keeps retiring and quarantined pages in the admission budget', async () => {
+    const fixture = createFixture(1)
+    const first = fixture.ensure('first')
+    const cleanup = Promise.withResolvers<void>()
+    fixture.teardownBySessionId.get(first.sessionId)!.mockReturnValue(cleanup.promise)
+    fixture.registry.remove(first.sessionId)
+    expect(fixture.registry.values()).toEqual([])
+    expect(() => fixture.ensure('second')).toThrowError(BrowserSessionRegistryError)
+    cleanup.resolve()
+    await cleanup.promise
+    const second = fixture.ensure('second')
+    fixture.teardownBySessionId.get(second.sessionId)!.mockReturnValue(Promise.reject(new Error('unconfirmed')))
+    fixture.registry.remove(second.sessionId)
+    await Promise.resolve()
+    expect(() => fixture.ensure('third')).toThrowError(BrowserSessionRegistryError)
+  })
+
+  it('does not evict more pages while a previous eviction is still draining', async () => {
+    const fixture = createFixture(2)
+    const first = fixture.ensure('first')
+    const second = fixture.ensure('second')
+    const cleanup = Promise.withResolvers<void>()
+    fixture.teardownBySessionId.get(first.sessionId)!.mockReturnValue(cleanup.promise)
+    expect(() => fixture.ensure('third')).toThrowError(BrowserSessionRegistryError)
+    expect(() => fixture.ensure('third')).toThrowError(BrowserSessionRegistryError)
+    expect(fixture.registry.values()).toEqual([second])
+    cleanup.resolve()
+    await cleanup.promise
+    expect(fixture.ensure('third').conversationId).toBe('third')
+  })
+
   it('retains standalone tabs without creating a conversation session', () => {
     const fixture = createFixture()
     const first = fixture.registry.ensure(null, fixture.createSession, 'manual-1')

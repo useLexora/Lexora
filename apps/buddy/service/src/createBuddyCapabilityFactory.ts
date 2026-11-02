@@ -98,6 +98,13 @@ export function createBuddyCapabilityFactory(
         getGrants: () => context.grants,
         getExecutionGrants: context.getExecutionGrants,
         host: services.browserHost,
+        getOwner: () => {
+          const runId = context.getRunId()
+          const buddyId = context.getActorId?.()
+          if (!runId || !buddyId)
+            throw new Error('RUN_CONTEXT_UNAVAILABLE')
+          return { runId, buddyId }
+        },
         onOpening: context.sessionMode === 'interactive'
           ? async () => {
             const runId = context.getRunId()

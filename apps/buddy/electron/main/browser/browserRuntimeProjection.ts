@@ -5,6 +5,7 @@ import { redactBrowserRuntimeUrl } from './browserPrivacy'
 
 export function projectBrowserState(state: DesktopBrowserState) {
   return browserStateSnapshotSchema.parse({
+    ...(state.owner ? { owner: state.owner } : {}),
     canGoBack: state.canGoBack,
     canGoForward: state.canGoForward,
     controller: state.controller,
