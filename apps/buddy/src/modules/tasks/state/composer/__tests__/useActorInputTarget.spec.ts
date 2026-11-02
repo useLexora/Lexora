@@ -10,6 +10,7 @@ afterEach(() => cleanups.splice(0).forEach(cleanup => cleanup()))
 function execution(runId: string, overrides: Partial<LocalExecution> = {}): LocalExecution {
   return {
     runId,
+    threadId: `thread-${runId}`,
     rootRunId: 'root',
     parentRunId: 'root',
     buddyId: 'partner',

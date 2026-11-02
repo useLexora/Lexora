@@ -29,6 +29,7 @@ const run: LocalRun = {
 function execution(runId: string, overrides: Partial<LocalExecution> = {}): LocalExecution {
   return {
     runId,
+    threadId: `thread-${runId}`,
     rootRunId: run.id,
     parentRunId: run.id,
     buddyId: 'partner',

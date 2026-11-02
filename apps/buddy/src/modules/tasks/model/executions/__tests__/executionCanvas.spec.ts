@@ -7,6 +7,7 @@ import { projectExecutionGroups, projectTaskPartners } from '../executionGroups'
 function execution(runId: string, overrides: Partial<LocalExecution> = {}): LocalExecution {
   return {
     runId,
+    threadId: `thread-${runId}`,
     rootRunId: 'root',
     parentRunId: 'root',
     buddyId: runId,

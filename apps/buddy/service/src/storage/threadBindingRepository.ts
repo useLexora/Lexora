@@ -1,5 +1,8 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { randomUUID } from 'node:crypto'
+import { actorThreadId } from '../../../shared/conversation/actorThread'
+
+export { actorThreadId } from '../../../shared/conversation/actorThread'
 
 export interface ExecutionThreadRecord {
   id: string
@@ -13,10 +16,6 @@ export interface ExecutionThreadBinding {
   threadId: string
   sessionFile: string
   rootEntryId: string
-}
-
-export function actorThreadId(conversationId: string, actorId: string): string {
-  return `actor:${JSON.stringify([conversationId, actorId])}`
 }
 
 export function createThreadBindingRepository(database: DatabaseSync) {

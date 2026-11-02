@@ -25,6 +25,7 @@ export const executionQuestionPresentationSchema = z.object({
 }).strict()
 export const executionPresentationSchema = z.object({
   runId: idSchema,
+  threadId: idSchema,
   rootRunId: idSchema,
   parentRunId: idSchema.nullable(),
   buddyId: idSchema,

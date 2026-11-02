@@ -28,6 +28,7 @@ function reply(runId: string, id = 'reply'): ChatTranscriptMessageRow {
 function execution(runId: string, rootRunId = 'root'): LocalExecution {
   return {
     runId,
+    threadId: `thread-${runId}`,
     rootRunId,
     parentRunId: rootRunId,
     buddyId: runId,

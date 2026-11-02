@@ -22,6 +22,7 @@ function fixture(kind: LocalExecution['kind'] = 'root') {
   }
   const execution: LocalExecution = {
     runId: run.id,
+    threadId: 'thread',
     rootRunId: kind === 'root' ? run.id : 'root',
     parentRunId: kind === 'root' ? null : 'root',
     buddyId: run.buddyId,

@@ -1,8 +1,18 @@
+import type { LocalContextUsageSnapshot } from '@buddy-shared/conversation/contextApi'
 import type { LocalRuntimeModelOption } from '@buddy-shared/providers/providerApi'
 import type { LocalRunEvent } from '@buddy-shared/runs/runApi'
 
 import { describe, expect, it } from 'vitest'
-import { createChatContextUsage } from '../chatContextUsage'
+import { createChatContextUsage as projectContextUsage, updateChatContextUsage } from '../chatContextUsage'
+
+function createChatContextUsage(input: {
+  events: readonly LocalRunEvent[]
+  snapshot?: LocalContextUsageSnapshot
+  models: readonly LocalRuntimeModelOption[]
+  selectedModel: LocalRuntimeModelOption | null
+}) {
+  return projectContextUsage({ ...input, state: updateChatContextUsage(null, input) })
+}
 
 describe('createChatContextUsage', () => {
   it('follows live snapshots through startup, stale events and pending compaction', () => {
@@ -50,6 +60,7 @@ describe('createChatContextUsage', () => {
         modelId: model.modelId,
         providerId: model.providerId,
         status: 'pending',
+        reason: 'compaction',
       },
     })).toMatchObject({
       contextWindow: 200_000,

@@ -270,6 +270,7 @@ export class ExecutionPresentationService {
       : { kind: 'path' as const, path: claim.canonicalPath }))
     return {
       runId: run.id,
+      threadId: run.threadId,
       rootRunId: run.rootRunId,
       parentRunId: run.parentRunId,
       buddyId: run.buddyId,

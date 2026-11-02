@@ -3,6 +3,7 @@ import type { LocalContextUsageSnapshotRequest } from '@buddy-shared/conversatio
 import type { ExtensionViewInput } from '@buddy-shared/extensions/extensionApi'
 import type { TaskWorkspacePool } from '../TaskWorkspacePool'
 import type { TaskCapability } from '@/modules/tasks/contracts'
+import type { ChatContextUsage } from '@/modules/tasks/model/runs/typing'
 import type { WorkbenchController } from '@/workbench/services/WorkbenchController'
 import { Emitter } from '@buddy-shared/events/Emitter'
 import { expect, it } from 'vitest'
@@ -13,7 +14,8 @@ function fixture() {
   const branch = shallowRef('branch-a')
   const runtime = shallowRef({ status: 'ready' })
   const contextTarget = shallowRef<LocalContextUsageSnapshotRequest | null>({ actorId: 'actor-a', runId: 'run-a', conversationId: 'task-a', branchId: 'branch-a', draftId: 'draft-a', approvalPolicy: 'policy', executionProfile: 'workspace_write', spaceId: null, modelSelection: { providerId: 'provider', modelId: 'model', reasoning: null, serviceTier: null } })
-  const task = { contextTarget, session: { activeTaskId: shallowRef('task-a') }, workspace: { session: { activeBranchId: branch }, restoration: { state: shallowRef('ready') }, status: { runtimeState: runtime } } } as unknown as TaskCapability
+  const contextUsage = shallowRef<ChatContextUsage | null>({ status: 'ready', modelId: 'model', providerId: 'provider', modelName: 'Model', contextWindow: 100, totalTokens: 40, percent: 40, recordedAt: '2026-10-13T00:00:00.000Z', segments: [] })
+  const task = { contextTarget, session: { activeTaskId: shallowRef('task-a') }, workspace: { composer: { contextUsage }, session: { activeBranchId: branch }, restoration: { state: shallowRef('ready') }, status: { runtimeState: runtime } } } as unknown as TaskCapability
   const changes = new Emitter<void>(() => {})
   const poolChanges = new Emitter<void>(() => {})
   const metricsChanges = new Emitter<{ conversationId: string, revision: number }>(() => {})
@@ -23,7 +25,7 @@ function fixture() {
     metrics: async (input: { conversationId: string, branchId: string }) => ({ ...input, turns: 2, steps: 3, tokens: { inputTokens: 10, outputTokens: 20, cacheReadTokens: 30, cacheWriteTokens: 0 }, throughput: { samples: 0, tokensPerSecond: null } }),
     onMetricsChanged: (listener: (event: { conversationId: string, revision: number }) => void) => metricsChanges.event(listener).dispose,
   }, context: { getUsageSnapshot: async () => ({ status: 'ready', totalTokens: 40, contextWindow: 100 }) } } as unknown as LocalChatApi
-  return { port: createWorkbenchDataPort({ api, controller, pool }), contextTarget, branch, runtime, metricsChanges, input: (instanceId?: string) => ({ instanceId } as ExtensionViewInput) }
+  return { port: createWorkbenchDataPort({ api, controller, pool }), contextTarget, contextUsage, branch, runtime, metricsChanges, input: (instanceId?: string) => ({ instanceId } as ExtensionViewInput) }
 }
 
 it('reads the explicitly associated pane, never the globally active pane or an unbound/file view', async () => {
@@ -42,6 +44,22 @@ it('keeps context execution identity separate from task aggregate scope', async 
   f.contextTarget.value = { ...f.contextTarget.value!, branchId: 'other-branch' }
   expect(f.port.binding(f.input('task-pane'), 'context.usage')).toBeNull()
 })
+it('shares retained composer usage with status views and notifies new values or invalidation', async () => {
+  const f = fixture()
+  const updates: string[] = []
+  const stop = f.port.observeChanges(f.input('task-pane'), () => updates.push(f.port.binding(f.input('task-pane'), 'context.usage')!.key))
+  try {
+    f.contextTarget.value = { ...f.contextTarget.value!, runId: 'next-run' }
+    expect(await f.port.binding(f.input('task-pane'), 'context.usage')!.read()).toMatchObject({ status: 'ready', value: { runId: 'next-run', tokens: 40 } })
+    f.contextUsage.value = { ...f.contextUsage.value!, totalTokens: 50, percent: 50 }
+    expect(await f.port.binding(f.input('task-pane'), 'context.usage')!.read()).toMatchObject({ status: 'ready', value: { tokens: 50, percent: 50 } })
+    f.contextUsage.value = null
+    expect(await f.port.binding(f.input('task-pane'), 'context.usage')!.read()).toEqual({ source: 'context.usage', status: 'unavailable', value: null })
+    expect(updates).toHaveLength(3)
+  }
+  finally { stop() }
+})
+
 it('notifies bound scope changes synchronously and stops observing when released', async () => {
   const f = fixture()
   const seen: Array<string | null> = []
