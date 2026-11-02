@@ -90,6 +90,7 @@ describe('openAiImageGenerationService', () => {
     }), { headers: { 'x-request-id': 'req_image_fixture' } })
     await expect(streamedService(response).generate({ inputImages: [], model: codexModel(), prompt: 'fixture', signal: new AbortController().signal })).rejects.toMatchObject({
       code: 'IMAGE_GENERATION_FAILED',
+      outcome: 'failed',
       diagnostic: { providerCode: 'provider_failure', requestId: 'req_image_fixture' },
       message: 'Lexora Buddy image generation failed',
     })
@@ -200,6 +201,7 @@ describe('openAiImageGenerationService', () => {
     const response = Response.json({ status: 'failed', output: [imageItem], error: { code: 'provider_failure', message: 'private failure' } })
     await expect(streamedService(response).generate({ inputImages: [], model: openAiModel(), prompt: 'fixture', signal: new AbortController().signal })).rejects.toMatchObject({
       code: 'IMAGE_GENERATION_FAILED',
+      outcome: 'failed',
       diagnostic: { providerCode: 'provider_failure' },
     })
   })
@@ -485,6 +487,41 @@ describe('openAiImageGenerationService', () => {
     })).rejects.toMatchObject({ code: 'IMAGE_GENERATION_RESPONSE_TOO_LARGE' })
     expect(cancelled).toBe(true)
     expect(pulls).toBeLessThan(50)
+  })
+  it.each([
+    ['ENOTFOUND', 'failed'],
+    ['ECONNREFUSED', 'failed'],
+    ['UND_ERR_CONNECT_TIMEOUT', 'failed'],
+    ['ECONNRESET', 'unknown'],
+    ['UND_ERR_HEADERS_TIMEOUT', 'unknown'],
+  ] as const)('classifies submission transport %s without leaking private details', async (code, outcome) => {
+    const requestId = '12345678-1234-4234-8234-123456789012'
+    const service = new OpenAiImageGenerationService({
+      fetch: async () => { throw new TypeError('private endpoint and token', { cause: Object.assign(new Error('private transport'), { code }) }) },
+      resolveCredentialMetadata: () => ({ type: 'api_key', revision: 1 }),
+      modelRuntime: { getAuth: async () => ({ auth: { apiKey: 'private-key' } }) },
+    })
+    await expect(service.generate({ requestId, inputImages: [], model: openAiModel(), prompt: 'fixture', signal: new AbortController().signal })).rejects.toMatchObject({ outcome, retryable: false, diagnostic: { stage: 'submitting', transportCode: code, localRequestId: requestId } })
+  })
+
+  it('retains response phase, content type and the last SSE event after an incomplete stream', async () => {
+    const response = new Response(sse({ type: 'response.in_progress', response: { id: 'resp_fixture', status: 'in_progress' } }), { headers: { 'content-type': 'text/event-stream', 'x-request-id': 'req_fixture' } })
+    await expect(streamedService(response).generate({ inputImages: [], model: codexModel(), prompt: 'fixture', signal: new AbortController().signal })).rejects.toMatchObject({ code: 'IMAGE_GENERATION_INCOMPLETE', outcome: 'unknown', diagnostic: { stage: 'receiving', httpStatus: 200, responseType: 'sse', requestId: 'req_fixture', responseId: 'resp_fixture', lastEvent: 'response.in_progress' } })
+  })
+
+  it('keeps a known HTTP rejection when its JSON error body never finishes', async () => {
+    vi.useFakeTimers()
+    let cancelled = false
+    const response = new Response(new ReadableStream({ cancel() {
+      cancelled = true
+    } }), { status: 403, headers: { 'content-type': 'application/json' } })
+    const pending = streamedService(response).generate({ inputImages: [], model: codexModel(), prompt: 'fixture', signal: new AbortController().signal })
+    const assertion = expect(pending).rejects.toMatchObject({ code: 'PROVIDER_ACCESS_DENIED', outcome: 'failed', diagnostic: { httpStatus: 403, responseType: 'json' } })
+    await vi.waitFor(() => expect(response.body?.locked).toBe(true))
+    await vi.advanceTimersByTimeAsync(1500)
+    await assertion
+    expect(cancelled).toBe(true)
+    vi.useRealTimers()
   })
 })
 

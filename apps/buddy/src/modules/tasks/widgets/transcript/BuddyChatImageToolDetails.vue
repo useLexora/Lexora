@@ -10,6 +10,19 @@ const props = defineProps<{
 }>()
 
 const { t } = useBuddyI18n(() => props.language)
+const failureText = computed(() => {
+  const { status, failure } = props.presentation
+  if (status === 'running' || status === 'completed')
+    return ''
+  const outcome = status === 'blocked' ? 'blocked' : failure?.outcome ?? 'failed'
+  const lines = [t(`images.result.${outcome}Hint`)]
+  const diagnostic = failure?.diagnostic
+  if (diagnostic?.stage && diagnostic.stage !== 'blocked')
+    lines.push(t(`images.stage.${diagnostic.stage}`))
+  if (diagnostic?.httpStatus)
+    lines.push(t(status === 'blocked' ? 'images.originalHttpStatus' : 'images.httpStatus', { status: diagnostic.httpStatus }))
+  return lines.join('\n')
+})
 const outputs = computed(() => props.presentation.artifactIds.map(artifactId => ({
   artifactId,
   url: `lexora-artifact://preview/${encodeURIComponent(artifactId)}`,
@@ -36,8 +49,9 @@ const referenceLabel = computed(() => {
         {{ t('desktop.chat.processToolImageModel', { model: `${presentation.source.title} · ${presentation.source.owner}` }) }}
       </small>
     </section>
-    <section v-if="outputs.length" class="buddy-chat-image-tool-details__section is-output min-w-0 overflow-hidden border-1 border-solid border-border rounded-micro bg-raised">
+    <section v-if="failureText || outputs.length" class="buddy-chat-image-tool-details__section is-output min-w-0 overflow-hidden border-1 border-solid border-border rounded-micro bg-raised">
       <header>{{ t('desktop.chat.processToolOutput') }}</header>
+      <pre v-if="failureText" role="status"><code>{{ failureText }}</code></pre>
       <figure
         v-for="output in outputs"
         :key="output.artifactId"
@@ -86,6 +100,19 @@ const referenceLabel = computed(() => {
     color: var(--buddy-text-muted);
     font-size: var(--buddy-chat-caption-font-size);
     padding: 0 0.75rem 0.625rem;
+  }
+
+  > pre {
+    max-height: 15rem;
+    margin: 0;
+    overflow: auto;
+    color: var(--buddy-chat-code-color);
+    font-family: var(--buddy-font-mono);
+    font-size: var(--buddy-chat-code-font-size);
+    line-height: var(--buddy-chat-code-line-height);
+    padding: 0.625rem 0.75rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
 
   &.is-output {

@@ -1,10 +1,13 @@
 import type { Model } from '@earendil-works/pi-ai'
+import type { ProviderService } from '../../providers/ProviderService'
 import type { ImageGenerationServiceOptions } from '../ImageGenerationService'
 import type { ImageOperationEvent } from '../ImageOperationLifecycle'
 import { Buffer } from 'node:buffer'
+import { randomUUID } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { ArtifactPublicationError } from '../../artifacts/ArtifactService'
 import { ImageGenerationService } from '../ImageGenerationService'
+import { RoutedImageGateway } from '../RoutedImageGateway'
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAFElEQVR4AQEJAPb/AAD/AP//AAD/EPgD/UE7EkoAAAAASUVORK5CYII=', 'base64')
 const image = { type: 'image' as const, mimeType: 'image/png', data: 'fixture' }
@@ -57,8 +60,53 @@ describe('conversation image generation', () => {
     } }, imageGenerationGateway: { supports: () => true, generate: async () => ({ images: [{ bytes: new Uint8Array(png), mimeType: 'image/png' }], responseId: 'private-response' }) } })
     const events: ImageOperationEvent[] = []
     service.onDidChange(event => events.push(event))
-    await expect(service.generate({ outputPath: 'private.png', prompt: 'private prompt' }, model, new AbortController().signal)).rejects.toMatchObject({ receipt: { outcome: 'partial' } })
+    await expect(service.generate({ outputPath: 'private.png', prompt: 'private prompt' }, model, new AbortController().signal)).rejects.toMatchObject({ outcome: 'partial', artifactIds: ['generated-1'], diagnostic: { stage: 'publishing', responseId: 'private-response' }, cause: { receipt: { outcome: 'partial' } } })
     expect(events.at(-1)).toMatchObject({ phase: 'settled', outcome: 'partial', artifactIds: ['generated-1'], publication: { written: 2, operationId: 'publication-1' } })
+    await service.dispose()
+  })
+
+  it('retains published artifacts when writing the final receipt fails', async () => {
+    const source = { listConversationArtifacts: () => [], listForConversation: () => [], materializeConversationImages: async () => ({ images: [], records: [] }) }
+    const request = { conversationId: randomUUID(), runId: randomUUID(), requestId: randomUUID() }
+    let saved: unknown
+    const service = new ImageGenerationService({
+      conversationId: request.conversationId,
+      cwd: '/workspace',
+      grants: [],
+      attachmentService: source,
+      artifactService: { ...source, registerGeneratedImages: async () => [{ id: 'generated-1', currentPath: '/workspace/result.png', mimeType: 'image/png' }] },
+      imageGenerationGateway: { supports: () => true, generate: async () => ({ images: [{ bytes: new Uint8Array(png), mimeType: 'image/png' }], responseId: 'response-1' }) },
+      requests: { completed: async () => null, begin: async () => ({ kind: 'started', receipt: {
+        request,
+        submitted: false,
+        attempt: async () => {},
+        submitting: async () => {},
+        complete: async () => { throw new Error('receipt disk failure') },
+        fail: async (failure, artifactIds) => { saved = { failure, artifactIds } },
+      } }) },
+    })
+    await expect(service.generate({ outputPath: 'result.png', prompt: 'Create' }, model, new AbortController().signal, [], undefined, { runId: request.runId, toolCallId: 'fixture' })).rejects.toMatchObject({ outcome: 'partial', artifactIds: ['generated-1'], request, diagnostic: { stage: 'publishing', responseId: 'response-1' } })
+    expect(saved).toMatchObject({ failure: { outcome: 'partial', diagnostic: { responseId: 'response-1' } }, artifactIds: ['generated-1'] })
+    await service.dispose()
+  })
+
+  it('replays completed work even when latest references or the selected provider have changed', async () => {
+    const request = { conversationId: randomUUID(), runId: randomUUID(), requestId: randomUUID() }
+    const result = { artifactIds: ['generated-1'], outputs: [{ artifactId: 'generated-1', path: '/workspace/result.png', mimeType: 'image/png' }], responseId: 'response-1' }
+    const unavailable = async (): Promise<never> => {
+      throw new Error('The current provider or reference is unavailable')
+    }
+    const source = { listConversationArtifacts: () => [], listForConversation: () => [], materializeConversationImages: unavailable }
+    const service = new ImageGenerationService({
+      conversationId: request.conversationId,
+      cwd: '/workspace',
+      grants: [],
+      attachmentService: source,
+      artifactService: { ...source, registerGeneratedImages: unavailable },
+      imageGenerationGateway: { supports: () => false, generate: unavailable },
+      requests: { completed: async () => ({ request, result }), begin: unavailable },
+    })
+    await expect(service.generate({ outputPath: 'result.png', prompt: 'Edit', reference: { mode: 'latest' } }, model, new AbortController().signal, [], undefined, { runId: request.runId, toolCallId: 'fixture' })).resolves.toEqual({ ...result, request })
     await service.dispose()
   })
 
@@ -156,6 +204,31 @@ describe('conversation image generation', () => {
     })
     await expect(service.generate({ outputPath: 'result.png', prompt: 'Edit', reference: { mode: 'resources', resourceIds: ['restricted-reference'] } }, model, new AbortController().signal)).rejects.toMatchObject({ code: 'IMAGE_GENERATION_REFERENCE_UNAVAILABLE', outcome: 'failed', retryable: false })
     expect(submitted).toBe(false)
+  })
+
+  it('publishes a valid opaque image unchanged when requested size and transparency are not met', async () => {
+    const source = { listConversationArtifacts: () => [], listForConversation: () => [], materializeConversationImages: async () => ({ images: [], records: [] }) }
+    const gateway = new RoutedImageGateway({
+      native: { supports: () => true, generate: async () => ({ images: [{ bytes: new Uint8Array(png), mimeType: 'image/png' }], responseId: 'response-different-size' }) },
+      providers: { listModels: async () => [] } as unknown as ProviderService,
+      preferences: async () => ({ generate: { mode: 'native', target: null, fallbacks: [] } }),
+    })
+    let published: Uint8Array | undefined
+    const service = new ImageGenerationService({
+      conversationId: 'conversation-1',
+      cwd: '/workspace',
+      grants: [],
+      attachmentService: source,
+      artifactService: { ...source, registerGeneratedImages: async ({ images }) => {
+        published = images[0]!.bytes
+        return [{ id: 'generated-1', currentPath: '/workspace/result.png', mimeType: 'image/png' }]
+      } },
+      imageGenerationGateway: gateway,
+    })
+    const result = await service.generate({ outputPath: 'result.png', prompt: 'Create', output: { size: '1024x1024', background: 'transparent', quality: 'high' } }, model, new AbortController().signal)
+    expect(result).toMatchObject({ artifactIds: ['generated-1'], outputs: [{ artifactId: 'generated-1', path: '/workspace/result.png', mimeType: 'image/png' }], responseId: 'response-different-size' })
+    expect(Buffer.from(published!)).toEqual(png)
+    expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([2, 1])
   })
 
   it('rejects a PNG signature without decodable pixels before publication with unknown outcome', async () => {

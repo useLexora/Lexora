@@ -2,7 +2,6 @@ import type { Api, Model } from '@earendil-works/pi-ai'
 import type { ImageCandidate, ImageCatalog, ImagePreferences, ImageSupport, ImageTarget } from '../../../shared/images/imagePreferences'
 import type { ProviderService } from '../providers/ProviderService'
 import type { ImageGenerationDescription, ImageGenerationGateway, ImageGenerationInput, ImageGenerationResult, ImageGenerationRoute } from './ImageGenerationGateway'
-import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { imageOutputOptionsSchema, imagePolicyTargets, resolveImagePolicy } from '../../../shared/images/imagePreferences'
 import { ImageGenerationError } from './ImageGenerationGateway'
@@ -113,6 +112,8 @@ export class RoutedImageGateway implements ImageGenerationGateway {
             throw new ImageGenerationError('IMAGE_GENERATION_UNSUPPORTED', { retryable: true })
           title = plugin.title
           owner = plugin.owner
+          await input.onSubmitting?.()
+          input.signal.throwIfAborted()
           result = await this.options.plugins.generate(target, { ...input, requestId, output, onSubmitted })
         }
         else {
@@ -143,11 +144,6 @@ export class RoutedImageGateway implements ImageGenerationGateway {
             owner = model.provider
             result = await this.options.native.generate({ ...input, model, requestId, output, onSubmitted })
           }
-        }
-        if (output.size !== 'auto') {
-          const [width, height] = output.size.split('x').map(Number)
-          if (result.images.some(image => image.bytes.byteLength < 24 || Buffer.from(image.bytes).readUInt32BE(16) !== width || Buffer.from(image.bytes).readUInt32BE(20) !== height))
-            throw new ImageGenerationError('IMAGE_GENERATION_INVALID_RESPONSE')
         }
         return { ...result, source: { target, requestId, attempt: index + 1, title, owner } }
       }

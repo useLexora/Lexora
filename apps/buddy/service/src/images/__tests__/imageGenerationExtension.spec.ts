@@ -137,6 +137,7 @@ describe('imageGenerationExtension', () => {
   it.each([
     ['IMAGE_GENERATION_REFERENCE_UNAVAILABLE', 'failed', 'No image request was submitted'],
     ['IMAGE_GENERATION_INVALID_RESPONSE', 'unknown', 'do not automatically repeat'],
+    ['IMAGE_GENERATION_BLOCKED', 'unknown', 'Inspect any existing artifacts before choosing another approach'],
   ] as const)('distinguishes reference preparation failure from an unknown provider result: %s', async (code, outcome, recovery) => {
     let tool: ToolDefinition | undefined
     createImageGenerationExtension({

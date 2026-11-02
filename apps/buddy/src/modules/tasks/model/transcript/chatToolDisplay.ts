@@ -85,7 +85,7 @@ function toolTarget(node: ChatAgentToolNode, t: BuddyTranslate): string {
     case 'connector': return p.connector
     case 'browser': return p.origin ?? ''
     case 'pet': return p.macro
-    case 'image': return p.generatedCount === null ? '' : t('desktop.chat.processToolImageCount', { count: p.generatedCount })
+    case 'image': return p.status !== 'completed' || p.generatedCount === null ? '' : t('desktop.chat.processToolImageCount', { count: p.generatedCount })
     case 'automation': return p.name ?? (p.itemCount === null ? '' : t('desktop.chat.processToolAutomationCount', { count: p.itemCount }))
     case 'system': return ['action-expired', 'target-ambiguous', 'target-changed', 'target-not-found'].includes(p.status ?? '')
       ? ''
@@ -132,6 +132,8 @@ function toolStatus(node: ChatAgentToolNode, language: BuddyLocale, t: BuddyTran
   if (node.status === 'running')
     return t('desktop.chat.processToolRunning')
   const p = node.presentation
+  if (p.card === 'image' && ['unknown', 'partial', 'blocked'].includes(p.status))
+    return t(`images.result.${p.status as 'unknown' | 'partial' | 'blocked'}`)
   if (p.card === 'system')
     return translateSystemToolStatus(language, p.status)
   if (node.status === 'failed') {

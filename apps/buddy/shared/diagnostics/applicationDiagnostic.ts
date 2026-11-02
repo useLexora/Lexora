@@ -2,6 +2,7 @@ import type { LifecycleFailure } from '../lifecycle/lifecycleFailure'
 import { z } from 'zod'
 import { extensionDiagnosticSchema } from '../extensions/extensionDiagnostic'
 import { extensionIdSchema } from '../extensions/extensionManifest'
+import { imageGenerationDiagnosticSchema } from '../images/imageGeneration'
 import { readLifecycleFailure } from '../lifecycle/lifecycleFailure'
 import { webResourceFactSchema } from '../network/webProtocol'
 import { sandboxProcessStateSchema } from '../permissions/sandboxLifecycle'
@@ -49,6 +50,7 @@ export const applicationDiagnosticSchema = z.object({
   errorType: z.string().regex(/^[a-z]\w{0,95}$/i).optional(),
   failure: z.union([privateDirectoryFailureSchema, desktopBootstrapFailureSchema, networkStartupFailureSchema, credentialVaultFailureSchema]).optional(),
   providerRequest: providerRequestDiagnosticSchema.optional(),
+  imageGeneration: imageGenerationDiagnosticSchema.optional(),
   extensionRequest: extensionDiagnosticSchema.optional(),
   performanceSample: performanceSampleSchema.optional(),
   cpuProfile: cpuProfileSummarySchema.optional(),

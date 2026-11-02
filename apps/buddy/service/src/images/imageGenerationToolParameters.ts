@@ -50,7 +50,7 @@ export function createImageGenerationParameters(description?: ImageGenerationDes
 }
 
 export function describeImageGeneration(description?: ImageGenerationDescription): string {
-  const base = 'Generate images through the configured image policy independently of the chat model. Images are saved and shown in the conversation.'
+  const base = 'Generate images through the configured image policy independently of the chat model. Valid returned images are saved and shown in the conversation even when the backend ignores requested size, background or quality. These parameters are requests, not guarantees. Inspect the saved outputs before claiming exact dimensions, transparency or other requested properties; use post-processing when needed.'
   if (!description)
     return `${base} Backend capabilities have not been declared; accepted adapter parameters do not guarantee backend support for generation, editing or transparency.`
   const routes = (operation: 'generate' | 'edit') => description[operation].length

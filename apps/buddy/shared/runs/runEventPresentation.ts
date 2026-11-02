@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { BROWSER_ACTION_KINDS } from '../browser'
 import { BUDDY_ATTACHMENT_COUNT_LIMIT } from '../conversation/attachmentPolicy'
+import { imageGenerationFailureSchema, imageRequestRefSchema } from '../images/imageGeneration'
 import { imageSourceSchema } from '../images/imagePreferences'
 import { shellDialectSchema } from '../shell/shellProgram'
 
@@ -85,7 +86,9 @@ export const buddyToolPresentationSchema = z.discriminatedUnion('card', [
         mode: z.literal('latest'),
       }).strict(),
     ]).nullable(),
-    status: z.enum(['completed', 'failed', 'running']),
+    status: z.enum(['completed', 'failed', 'running', 'unknown', 'partial', 'blocked']),
+    failure: imageGenerationFailureSchema.optional(),
+    request: imageRequestRefSchema.optional(),
   }).strict(),
   z.object({
     card: z.literal('pet'),

@@ -1,10 +1,11 @@
 import type { ToolCallEvent } from '@earendil-works/pi-coding-agent'
+import type { ImageGenerationErrorDiagnostic, ImageGenerationOutcome, ImageRequestRef } from '../../../shared/images/imageGeneration'
 import type { BuddyToolPresentation } from '../../../shared/runs/runEventPresentation'
 import type { BuddyRunOutputPayload } from '../../../shared/runs/runOutput'
 import type { BuddyToolClassification } from '../approvals/toolClassification'
 import type { CreateBuddyToolPresentationInput } from '../events/toolPresentationSupport'
-import type { ImageGenerationErrorDiagnostic } from './ImageGenerationGateway'
 import { BUDDY_ATTACHMENT_COUNT_LIMIT } from '../../../shared/conversation/attachmentPolicy'
+import { imageGenerationFailureSchema, imageRequestRefSchema, readImageDiagnostic } from '../../../shared/images/imageGeneration'
 import { imageSourceSchema } from '../../../shared/images/imagePreferences'
 import {
   readOptionalString,
@@ -19,7 +20,8 @@ export interface ImageGenerationToolDetails {
   code?: string
   diagnostic?: ImageGenerationErrorDiagnostic
   outputs?: Array<{ artifactId: string, path: string, mimeType: string }>
-  outcome?: 'failed' | 'unknown'
+  outcome?: ImageGenerationOutcome
+  request?: ImageRequestRef
   responseId: string | null
   source?: Extract<BuddyToolPresentation, { card: 'image' }>['source']
 }
@@ -63,8 +65,11 @@ export function createImageGenerationToolPresentation(
     return null
   const arguments_ = readRecord(input.arguments)
   const details = readImageGenerationToolDetails(input.result)
+  const failure = imageGenerationFailureSchema.safeParse({ code: details?.code, outcome: details?.outcome, diagnostic: details?.diagnostic ?? null })
   return {
     artifactIds: details?.artifactIds ?? [],
+    ...(failure.success ? { failure: failure.data } : {}),
+    ...(details?.request ? { request: details.request } : {}),
     card: 'image',
     description: readOptionalString(arguments_, 'description'),
     generatedCount: details?.artifactIds.length ?? null,
@@ -74,7 +79,7 @@ export function createImageGenerationToolPresentation(
     status: input.result === undefined
       ? 'running'
       : input.isError
-        ? 'failed'
+        ? details?.code === 'IMAGE_GENERATION_BLOCKED' ? 'blocked' : details?.outcome ?? 'failed'
         : 'completed',
   }
 }
@@ -89,32 +94,19 @@ export function readImageGenerationToolDetails(value: unknown): ImageGenerationT
         (id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 256,
       ))].slice(0, BUDDY_ATTACHMENT_COUNT_LIMIT)
     : []
-  const diagnostic = readDiagnostic(details.diagnostic)
+  const diagnostic = readImageDiagnostic(details.diagnostic)
+  const request = imageRequestRefSchema.safeParse(details.request)
   const source = imageSourceSchema.safeParse(details.source)
   return {
     artifactIds,
+    ...(['failed', 'unknown', 'partial'].includes(details.outcome as string) ? { outcome: details.outcome as ImageGenerationOutcome } : {}),
+    ...(request.success ? { request: request.data } : {}),
     ...(typeof details.code === 'string' && details.code ? { code: details.code } : {}),
     ...(diagnostic ? { diagnostic } : {}),
     ...(source.success ? { source: source.data } : {}),
     responseId: typeof details.responseId === 'string' && details.responseId
       ? details.responseId
       : null,
-  }
-}
-
-function readDiagnostic(value: unknown): ImageGenerationErrorDiagnostic | null {
-  const diagnostic = readRecord(value)
-  if (!diagnostic)
-    return null
-  const providerCode = readBoundedString(diagnostic.providerCode)
-  const providerParameter = readBoundedString(diagnostic.providerParameter)
-  const requestId = readBoundedString(diagnostic.requestId)
-  if (!providerCode && !providerParameter && !requestId)
-    return null
-  return {
-    ...(providerCode ? { providerCode } : {}),
-    ...(providerParameter ? { providerParameter } : {}),
-    ...(requestId ? { requestId } : {}),
   }
 }
 
@@ -135,18 +127,4 @@ function readImageReference(
   return resourceIds.length > 0
     ? { mode: 'resources', resourceIds }
     : null
-}
-
-function readBoundedString(value: unknown): string | null {
-  if (typeof value !== 'string')
-    return null
-  const result = value.trim()
-  return result && result.length <= 256 && isDiagnosticToken(result)
-    ? result
-    : null
-}
-
-function isDiagnosticToken(value: string): boolean {
-  const allowedCharacters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-[]:/'
-  return [...value].every(character => allowedCharacters.includes(character))
 }
