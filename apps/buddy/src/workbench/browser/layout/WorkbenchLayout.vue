@@ -93,6 +93,7 @@ const {
       v-if="$slots.sidebar"
       ref="sidebar"
       class="desktop-workbench-layout__sidebar relative flex min-w-0 min-h-0 flex-none overflow-hidden"
+      data-workbench-layout-transition="width"
       data-theme-surface="layout"
       :class="sidebarVisible() ? 'w-workspace-sidebar opacity-100' : 'is-collapsed w-0 opacity-0 pointer-events-none invisible'"
       :aria-hidden="!sidebarVisible()"

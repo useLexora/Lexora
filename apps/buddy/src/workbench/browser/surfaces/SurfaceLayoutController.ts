@@ -6,9 +6,6 @@ interface SurfaceEntry {
   observed: HTMLElement[]
 }
 
-// A transition on a sibling can move an anchor without resizing it or touching its ancestors.
-const LAYOUT_TRANSITION = /^(?:width|height|(?:min|max)-(?:width|height)|left|right|top|bottom|inset|margin|padding|flex|(?:row-|column-)?gap|grid|transform|translate|scale|rotate)(?:-|$)/
-
 export class SurfaceLayoutController implements SurfaceLayout {
   readonly #entries = new Map<HTMLElement, SurfaceEntry>()
   readonly #observed = new Map<HTMLElement, number>()
@@ -100,29 +97,42 @@ export class SurfaceLayoutController implements SurfaceLayout {
       this.#transitions.set(target, count)
     else
       this.#transitions.delete(target)
-    this.invalidate()
+    if (target.parentElement)
+      this.#layoutScopes([target.parentElement])
+    if (!this.#transitions.size) {
+      cancelAnimationFrame(this.#frame)
+      this.#frame = 0
+    }
   }
 
   #layoutTransitionTarget(event: Event): Element | null {
     const { propertyName, pseudoElement } = event as TransitionEvent
-    return !pseudoElement && event.target instanceof Element && LAYOUT_TRANSITION.test(propertyName) ? event.target : null
+    return !pseudoElement && event.target instanceof Element && event.target.getAttribute('data-workbench-layout-transition') === propertyName ? event.target : null
   }
 
-  // Measure once per frame while a layout transition runs, so surfaces follow the animation instead of jumping at its end.
   #follow(): void {
     if (this.#frame || !this.#started)
       return
     this.#frame = requestAnimationFrame(() => {
       this.#frame = 0
-      // An element removed mid-transition may never report transitionend or transitioncancel.
+      const scopes = new Set<Element>()
       for (const element of this.#transitions.keys()) {
-        if (!element.isConnected)
+        if (!element.isConnected || !element.parentElement)
           this.#transitions.delete(element)
+        else
+          scopes.add(element.parentElement)
       }
-      this.invalidate()
+      this.#layoutScopes([...scopes])
       if (this.#transitions.size)
         this.#follow()
     })
+  }
+
+  #layoutScopes(scopes: readonly Element[]): void {
+    for (const entry of this.#entries.values()) {
+      if (entry.options.visible && entry.options.anchor && scopes.some(scope => scope.contains(entry.options.anchor)))
+        this.#layout(entry)
+    }
   }
 
   dispose(): void {
