@@ -9,6 +9,12 @@ export function reconcileRestoredTaskState(target: DatabaseSync, source: Databas
   for (const row of source.prepare('SELECT conversation.id, COALESCE(head.sequence, 0) AS sequence FROM conversations conversation LEFT JOIN conversation_public_heads head ON head.conversation_id = conversation.id').iterate())
     updateHead.run(row.id!, row.sequence!, row.id!)
   const invalidate = target.prepare('DELETE FROM run_event_checkpoints WHERE run_id = ?')
-  for (const row of source.prepare('SELECT id FROM runs').iterate())
+  const pending = target.prepare(`
+    INSERT INTO run_event_maintenance (run_id) VALUES (?)
+    ON CONFLICT(run_id) DO UPDATE SET recovery_pending = 1, compaction_pending = 1, revision = revision + 1
+  `)
+  for (const row of source.prepare('SELECT id FROM runs').iterate()) {
     invalidate.run(row.id!)
+    pending.run(row.id!)
+  }
 }

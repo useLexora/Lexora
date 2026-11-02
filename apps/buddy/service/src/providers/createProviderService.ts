@@ -9,6 +9,7 @@ import { registerBunOAuthFlows } from '@earendil-works/pi-ai/bun-oauth'
 import { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { providerNotifications } from '../../../shared/providers/providerApi'
 import { createProviderRepository } from '../storage/providerRepository'
+import { createProviderResolutionRepository } from '../storage/providerResolutionRepository'
 import { createWorkspaceRepository } from '../storage/workspaceRepository'
 import { AuthInteractionService } from './AuthInteractionService'
 import { createProviderLoginOptions } from './createProviderLoginOptions'
@@ -67,9 +68,11 @@ export async function createProviderService(
     modelRuntime: providerRuntime,
     requestHeaders,
     providers,
+    resolutionRepository: createProviderResolutionRepository(options.database),
     snapshotPath: join(options.agentDirectory, 'models.dev.json'),
     sessionRuntime: modelRuntime,
   })
+  service.onDidResolve(event => options.record?.({ event: `provider.resolution.${event.restored ? 'restored' : 'rebuilt'}`, level: 'info', count: 1 }))
   service.onDidCommit(event => options.peer.notify(providerNotifications.changed.method, { source: 'catalog', revision: event.revision }))
   service.onDidChangeMetadata((event) => {
     if (event.kind === 'refresh-completed' || event.kind === 'refresh-failed' || event.kind === 'accepted')

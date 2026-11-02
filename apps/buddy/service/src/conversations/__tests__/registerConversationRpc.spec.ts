@@ -4,6 +4,7 @@ import type { RuntimeRequestRegistrar } from '../../rpc/runtimeRequest'
 import type { RegisterConversationRpcOptions } from '../registerConversationRpc'
 import { afterEach, describe, expect, it } from 'vitest'
 import { conversationResponseSchemas } from '../../../../shared/conversation/conversationApi'
+import { RunEventCorruptionError } from '../../events/RunEventFailure'
 import { RunEventProjector } from '../../events/RunEventProjector'
 import { createBuddyRepository } from '../../storage/buddyRepository'
 import { createConversationRepository } from '../../storage/conversationRepository'
@@ -20,7 +21,7 @@ afterEach(() => {
 })
 
 describe('registerConversationRpc', () => {
-  it('owns conversation mutations, lifecycle effects and the persisted model-selection shape', async () => {
+  it('persists explicit model selection without resolved token limits and rejects invalid reads', async () => {
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     databases.push(database)
     const conversations = createConversationRepository(database)
@@ -33,56 +34,16 @@ describe('registerConversationRpc', () => {
       spaceId: null,
       title: 'Original title',
     })
-    conversations.createBranch({
-      activate: false,
-      conversationId: 'conversation-1',
-      createdAt: '2026-08-27T00:01:00.000Z',
-      forkedFromMessageId: null,
-      id: 'branch-2',
-      parentBranchId: null,
-    })
-    const effects: string[] = []
     const harness = createRpcHarness()
     registerConversationRpc({
       ...emptyConversationDependencies(conversations),
-      async deleteConversation(conversationId) {
-        effects.push(`delete:${conversationId}`)
-        return conversations.markDeleted(conversationId, '2026-08-27T00:05:00.000Z')
-      },
       rpc: harness.rpc,
       metadata: new ConversationMetadataService({
         repository: conversations,
         resolveModelSelection: async selection => ({ ...selection, contextWindow: 128_000, maxTokens: 16_384 }),
-        sessions: {
-          async invalidateConversation(conversationId) {
-            effects.push(`session:${conversationId}`)
-            return { pending: 0, degraded: 0 }
-          },
-        },
+        sessions: { invalidateConversation: async () => ({ pending: 0, degraded: 0 }) },
       }),
     })
-
-    await expect(harness.invoke('conversations.list', {}))
-      .resolves
-      .toEqual([expect.objectContaining({ id: 'conversation-1' })])
-    await expect(harness.invoke('conversations.rename', {
-      conversationId: 'conversation-1',
-      title: '  Renamed conversation  ',
-    })).resolves.toMatchObject({ title: 'Renamed conversation' })
-    await expect(harness.invoke('conversations.setPermissionSettings', {
-      conversationId: 'conversation-1',
-      approvalPolicy: 'manual',
-      executionProfile: 'workspace_write',
-    })).resolves.toMatchObject({
-      approvalPolicy: 'manual',
-      executionProfile: 'workspace_write',
-    })
-    await expect(harness.invoke('conversations.setPermissionSettings', {
-      conversationId: 'conversation-1',
-      approvalPolicy: 'manual',
-      executionProfile: 'workspace_write',
-    })).resolves.toMatchObject({ approvalPolicy: 'manual' })
-    expect(effects).toEqual(['session:conversation-1'])
 
     const modelSelection = {
       modelId: 'model-1',
@@ -100,17 +61,7 @@ describe('registerConversationRpc', () => {
     expect(JSON.parse(storedSelection.model_selection_json)).toEqual(modelSelection)
     expect(storedSelection.model_selection_source).toBe('explicit')
 
-    await expect(harness.invoke('conversations.activateBranch', {
-      branchId: 'branch-2',
-      conversationId: 'conversation-1',
-    })).resolves.toMatchObject({ activeBranchId: 'branch-2' })
-    await expect(harness.invoke('conversations.listBranches', {
-      conversationId: 'conversation-1',
-    })).resolves.toHaveLength(2)
-    await expect(harness.invoke('conversations.delete', {
-      conversationId: 'conversation-1',
-    })).resolves.toBe(true)
-    expect(effects).toEqual(['session:conversation-1', 'delete:conversation-1'])
+    conversations.markDeleted('conversation-1', '2026-08-27T00:05:00.000Z')
     await expect(harness.invoke('conversations.get', {
       conversationId: 'conversation-1',
     })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
@@ -234,7 +185,7 @@ describe('registerConversationRpc', () => {
           storedPath: '/private/input.json',
         }],
       },
-      eventLog: { listForRuns: runIds => runIds.includes(run.id) ? [toolEvent, outputEvent] : [] },
+      eventLog: { verifyRun: async () => {}, listForRuns: runIds => runIds.includes(run.id) ? [toolEvent, outputEvent] : [] },
       rpc: harness.rpc,
       runInputs: {
         findByRunId: () => ({
@@ -301,6 +252,38 @@ describe('registerConversationRpc', () => {
   })
 })
 
+it('checks newly exposed history when repairing a stale projection changes the current page', async () => {
+  const database = openBuddyDatabase({ databasePath: ':memory:' })
+  databases.push(database)
+  const conversations = createConversationRepository(database)
+  const runs = createRunRepository(database)
+  const now = '2026-11-02T00:00:00.000Z'
+  conversations.create({ id: 'history', branchId: 'branch', createdAt: now, approvalPolicy: 'policy', executionProfile: 'workspace_write', spaceId: null, title: 'History' })
+  for (const [id, createdAt] of [['bad', '2026-11-02T00:01:00.000Z'], ['stale', '2026-11-02T00:02:00.000Z']] as const) {
+    runs.create({ id, conversationId: 'history', branchId: 'branch', triggeringMessageId: 'input', provider: 'fixture', model: 'model', purpose: 'chat', status: 'completed', startedAt: createdAt, completedAt: createdAt, approvalPolicy: 'policy', executionProfile: 'workspace_write', piSessionFile: null })
+    conversations.createMessage({ id: `${id}-message`, conversationId: 'history', branchId: 'branch', role: 'assistant', runId: id, createdAt, content: { text: id } })
+  }
+  const harness = createRpcHarness()
+  registerConversationRpc({
+    ...emptyConversationDependencies(conversations),
+    rpc: harness.rpc,
+    eventLog: {
+      listForRuns: () => [],
+      async verifyRun(runId) {
+        if (runId === 'stale')
+          database.prepare('DELETE FROM messages WHERE id = ?').run('stale-message')
+        else
+          throw new RunEventCorruptionError(runId)
+      },
+    },
+  })
+  await expect(harness.invoke('conversations.listMessages', { conversationId: 'history', limit: 1 }))
+    .rejects
+    .toMatchObject({ code: 'EVENT_LOG_CORRUPTED' })
+  expect(conversations.findMessageById('stale-message')).toBeNull()
+  expect(conversations.findMessageById('bad-message')?.content).toEqual({ text: 'bad' })
+})
+
 function emptyConversationDependencies(
   conversations: ReturnType<typeof createConversationRepository>,
 ): Omit<RegisterConversationRpcOptions, 'rpc'> {
@@ -312,7 +295,7 @@ function emptyConversationDependencies(
     changes: { listSummariesForRuns: () => [] },
     conversations,
     deleteConversation: () => Promise.resolve(false),
-    eventLog: { listForRuns: () => [] },
+    eventLog: { verifyRun: async () => {}, listForRuns: () => [] },
     isDeleting: () => false,
     metadata: new ConversationMetadataService({ repository: conversations, resolveModelSelection: selection => Promise.resolve(selection), sessions: { invalidateConversation: () => Promise.resolve({ pending: 0, degraded: 0 }) } }),
     runInputs: { findByRunId: () => null },

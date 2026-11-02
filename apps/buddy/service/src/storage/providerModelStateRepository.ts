@@ -4,13 +4,29 @@ import type { ModelCapabilityOverrides } from '../../../shared/providers/provide
 import type { ModelCatalogReference } from '../../../shared/providers/providerCatalog'
 import type { ServiceModelMetadata } from '../../../shared/providers/providerDiscovery'
 import type { ProviderModelType } from '../../../shared/providers/providerModelType'
+import { z } from 'zod'
 import { modelCapabilityOverridesSchema } from '../../../shared/providers/providerCapabilities'
 import { modelCatalogReferenceSchema } from '../../../shared/providers/providerCatalog'
 import { serviceModelMetadataSchema } from '../../../shared/providers/providerDiscovery'
 
 export type ProviderModelSource = 'builtin' | 'manual' | 'synced'
 
+export const providerModelResolutionSchema = z.object({
+  version: z.literal(1),
+  inputFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
+  catalogMatch: z.enum(['matched', 'ambiguous', 'unmatched', 'not_applicable']),
+  candidates: z.array(modelCatalogReferenceSchema),
+  ambiguousMetadataKnown: z.boolean(),
+  pdfInput: z.boolean(),
+  audioInput: z.boolean(),
+  videoInput: z.boolean(),
+  toolCall: z.boolean().optional(),
+})
+
+export type ProviderModelResolution = z.infer<typeof providerModelResolutionSchema>
+
 export interface ProviderModelStateRecord {
+  resolution?: ProviderModelResolution | null
   type?: ProviderModelType
   typeOverride?: ProviderModelType | null
   providerId: string
@@ -52,6 +68,7 @@ export interface ProviderModelStateRepository {
 }
 
 interface ProviderModelStateRow {
+  resolution_json: string | null
   model_type: ProviderModelType
   type_override: ProviderModelType | null
   provider_id: string
@@ -111,9 +128,10 @@ export function createProviderModelStateRepository(
       source_revision, acknowledged_source_revision, source, enabled, available,
       last_seen_at, created_at, updated_at, thinking_level_map_json,
       sampling_params_json, compat_json, catalog_provider_id, source_fingerprint,
-      catalog_model_id, catalog_selection_json, capability_overrides_json, service_metadata_json, model_type, type_override
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      catalog_model_id, catalog_selection_json, capability_overrides_json, service_metadata_json, model_type, type_override, resolution_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (provider_id, model_id) DO UPDATE SET
+      resolution_json = excluded.resolution_json,
       model_type = excluded.model_type,
       type_override = excluded.type_override,
       display_name = excluded.display_name,
@@ -190,6 +208,7 @@ export function createProviderModelStateRepository(
         serializeJson(record.serviceMetadata),
         record.type ?? 'chat',
         record.typeOverride ?? null,
+        serializeJson(record.resolution ? providerModelResolutionSchema.parse(record.resolution) : null),
       )
       return requireProviderModelState(find.get(record.providerId, record.modelId))
     },
@@ -205,6 +224,7 @@ function requireProviderModelState(value: unknown): ProviderModelStateRecord {
 
 function toProviderModelState(row: ProviderModelStateRow): ProviderModelStateRecord {
   return {
+    resolution: row.resolution_json ? providerModelResolutionSchema.safeParse(JSON.parse(row.resolution_json)).data ?? null : null,
     type: row.model_type,
     typeOverride: row.type_override,
     providerId: row.provider_id,

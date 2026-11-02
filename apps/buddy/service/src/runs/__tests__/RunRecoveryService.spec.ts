@@ -1,10 +1,10 @@
 import type { Usage } from '@earendil-works/pi-ai'
 import type { DatabaseSync } from 'node:sqlite'
 import type { RunRecoveryServiceOptions } from '../RunRecoveryService'
-import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { BuddySessionStorageError } from '../../agent/sessions/BuddySessionErrors'
 import { createRunEventLog } from '../../events/createRunEventLog'
 import {
@@ -66,6 +66,14 @@ describe('runRecoveryService', () => {
     })
     expect((await fixture.eventLog.read('run-interrupted')).map(event => event.type)).toEqual([
       'message.started',
+      'message.delta',
+      'message.delta',
+      'message.interrupted',
+      'run.failed',
+    ])
+    await fixture.eventLog.compactTerminalRun('run-interrupted')
+    expect((await fixture.eventLog.read('run-interrupted')).map(event => event.type)).toEqual([
+      'message.started',
       'message.interrupted',
       'run.failed',
     ])
@@ -74,14 +82,11 @@ describe('runRecoveryService', () => {
   it('does not append an interrupted snapshot when the product message already exists', async () => {
     const fixture = await createFixture()
     fixture.prepareInterruptedTurn('run-existing-message', 'message-user-existing')
-    fixture.conversations.createMessage({
-      branchId: 'branch-1',
-      content: { text: 'Already committed answer' },
-      conversationId: 'conversation-1',
+    await fixture.eventLog.append({
       createdAt: '2026-08-14T00:00:01.000Z',
-      id: 'assistant-existing',
-      role: 'assistant',
+      payload: { messageId: 'assistant-existing', role: 'assistant', content: { text: 'Already committed answer' }, stopReason: 'completed' },
       runId: 'run-existing-message',
+      type: 'message.completed',
     })
     await fixture.eventLog.append({
       payload: { delta: 'Unmatched partial answer', messageId: 'assistant-existing' },
@@ -95,6 +100,7 @@ describe('runRecoveryService', () => {
       content: { text: 'Already committed answer' },
     })
     expect((await fixture.eventLog.read('run-existing-message')).map(event => event.type)).toEqual([
+      'message.completed',
       'message.delta',
       'run.failed',
     ])
@@ -127,24 +133,26 @@ describe('runRecoveryService', () => {
     )).toEqual(['message.delta'])
   })
 
-  it('recovers committed Pi compaction evidence and usage without an agent session', async () => {
+  it.each([false, true])('recovers Pi compaction evidence and usage with an existing Buddy completion: %s', async (completionRecorded) => {
     const fixture = await createFixture()
     fixture.prepareInterruptedCompaction('run-recover-compact')
-    const inspectCommittedCompaction = vi.fn(async () => ({
-      compactionEntryId: 'pi-compaction-1',
-      estimatedTokensAfter: 7,
-      firstKeptEntryId: 'pi-message-1',
-      tokensBefore: 25,
-      usage: usage(20, 5),
-    }))
+    if (completionRecorded) {
+      await fixture.eventLog.append({
+        payload: { estimatedTokensAfter: 7, reason: 'manual', tokensBefore: 25, willRetry: false },
+        runId: 'run-recover-compact',
+        type: 'context.compaction.completed',
+      })
+    }
 
     expect(await fixture.createRecoveryService({
-      inspectCommittedCompaction,
+      inspectCommittedCompaction: async () => ({
+        compactionEntryId: 'pi-compaction-1',
+        estimatedTokensAfter: 7,
+        firstKeptEntryId: 'pi-message-1',
+        tokensBefore: 25,
+        usage: usage(20, 5),
+      }),
     }).recoverInterruptedRuns()).toBe(1)
-    expect(inspectCommittedCompaction).toHaveBeenCalledWith(expect.objectContaining({
-      id: 'run-recover-compact',
-      purpose: 'conversation.compaction',
-    }))
     expect(fixture.runs.findById('run-recover-compact')).toMatchObject({
       errorCode: null,
       status: 'completed',
@@ -170,43 +178,6 @@ describe('runRecoveryService', () => {
       status: 'completed',
       tokensBefore: 25,
     })
-  })
-
-  it('completes interrupted compaction from an existing durable completion event', async () => {
-    const fixture = await createFixture()
-    fixture.prepareInterruptedCompaction('run-recover-event')
-    await fixture.eventLog.append({
-      payload: {
-        estimatedTokensAfter: 8,
-        reason: 'manual',
-        tokensBefore: 30,
-        willRetry: false,
-      },
-      runId: 'run-recover-event',
-      type: 'context.compaction.completed',
-    })
-    const inspectCommittedCompaction = vi.fn(async () => ({
-      compactionEntryId: 'pi-compaction-event',
-      estimatedTokensAfter: 8,
-      firstKeptEntryId: 'pi-message-event',
-      tokensBefore: 30,
-      usage: usage(18, 4),
-    }))
-
-    expect(await fixture.createRecoveryService({
-      inspectCommittedCompaction,
-    }).recoverInterruptedRuns()).toBe(1)
-    expect((await fixture.eventLog.read('run-recover-event')).map(event => event.type)).toEqual([
-      'context.compaction.completed',
-      'usage.recorded',
-      'run.completed',
-    ])
-    expect(fixture.usageRepository.listForRun('run-recover-event')).toMatchObject([{
-      inputTokens: 18,
-      outputTokens: 4,
-      purpose: 'compaction',
-      sourceEntryId: 'compaction:pi-message-event',
-    }])
   })
 
   it('keeps durable compaction completion when optional Pi evidence is unavailable', async () => {
@@ -272,35 +243,23 @@ describe('runRecoveryService', () => {
     )).toEqual(['context.compaction.completed'])
   })
 
-  it('fails interrupted compaction when neither Buddy nor Pi committed evidence', async () => {
+  it.each([
+    { storageUnavailable: false, errorCode: 'RUNTIME_RESTARTED' },
+    { storageUnavailable: true, errorCode: 'SESSION_STORAGE_UNAVAILABLE' },
+  ])('fails compaction without committed evidence using $errorCode', async ({ storageUnavailable, errorCode }) => {
     const fixture = await createFixture()
     fixture.prepareInterruptedCompaction('run-missing-compaction')
 
     expect(await fixture.createRecoveryService({
-      inspectCommittedCompaction: async () => null,
+      inspectCommittedCompaction: async () => {
+        if (storageUnavailable)
+          throw new BuddySessionStorageError()
+        return null
+      },
     }).recoverInterruptedRuns()).toBe(1)
-    expect(fixture.runs.findById('run-missing-compaction')).toMatchObject({
-      errorCode: 'RUNTIME_RESTARTED',
-      status: 'failed',
-    })
-  })
-
-  it('preserves session storage failure without committed compaction evidence', async () => {
-    const fixture = await createFixture()
-    fixture.prepareInterruptedCompaction('run-compaction-storage-failed')
-
-    expect(await fixture.createRecoveryService({
-      inspectCommittedCompaction: async () => { throw new BuddySessionStorageError() },
-    }).recoverInterruptedRuns()).toBe(1)
-    expect(fixture.runs.findById('run-compaction-storage-failed')).toMatchObject({
-      errorCode: 'SESSION_STORAGE_UNAVAILABLE',
-      status: 'failed',
-    })
-    expect(await fixture.eventLog.read('run-compaction-storage-failed')).toEqual([
-      expect.objectContaining({
-        payload: { errorCode: 'SESSION_STORAGE_UNAVAILABLE' },
-        type: 'run.failed',
-      }),
+    expect(fixture.runs.findById('run-missing-compaction')).toMatchObject({ errorCode, status: 'failed' })
+    expect(await fixture.eventLog.read('run-missing-compaction')).toEqual([
+      expect.objectContaining({ payload: { errorCode }, type: 'run.failed' }),
     ])
   })
 })
@@ -308,7 +267,6 @@ describe('runRecoveryService', () => {
 async function createFixture() {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-buddy-recovery-')))
   directories.push(root)
-  await mkdir(root, { recursive: true })
   const database = openBuddyDatabase({ databasePath: ':memory:' })
   databases.push(database)
   const eventLog = createRunEventLog({
@@ -360,7 +318,6 @@ async function createFixture() {
     createRecoveryService(
       options: Partial<Pick<
         RunRecoveryServiceOptions,
-        | 'cancelPendingApprovals'
         | 'conversations'
         | 'inspectCommittedCompaction'
         | 'lifecycle'

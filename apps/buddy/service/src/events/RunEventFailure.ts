@@ -66,6 +66,13 @@ export class RunEventProjectionError extends RunEventLogFatalError {
   }
 }
 
+export class RunEventMaintenanceRetryableError extends Error {
+  constructor(cause: unknown) {
+    super('Lexora Buddy event maintenance could not prepare a replacement', { cause })
+    this.name = 'RunEventMaintenanceRetryableError'
+  }
+}
+
 export class RunEventStorageError extends RunEventLogFatalError {
   readonly code = 'EVENT_STORAGE_FAILED'
   readonly commitState: 'committed' | 'not_applicable' | 'unknown'

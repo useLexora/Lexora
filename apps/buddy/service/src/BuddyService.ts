@@ -250,6 +250,7 @@ export interface StartBuddyServiceOptions {
 }
 
 export interface BuddyServiceHandle {
+  startMaintenance: () => void
   dispose: () => Promise<void>
   prepareIdleShutdown: () => boolean
   runtime: BuddyRuntime
@@ -1592,7 +1593,6 @@ export async function startBuddyService(
       await conversationLifecycle.recoverPendingDeletions()
       const count = await runRecoveryService.recoverInterruptedRuns()
       record({ event: 'runtime.runs_recovered', level: 'info', count })
-      await options.eventLog.compactTerminalRuns()
     })
 
     await host.start('runtime.rpc', ({ defer }) => {
@@ -1781,10 +1781,19 @@ export async function startBuddyService(
       return scheduler.start()
     }, ['runtime.rpc', 'runtime.execution'])
     return {
-      dispose: () => host.stop().finally(stopLifecycleDiagnostics),
+      startMaintenance: () => options.eventLog.startMaintenance({ isBusy }),
+      async dispose() {
+        try {
+          await options.eventLog.stopMaintenance()
+        }
+        finally {
+          await host.stop().finally(stopLifecycleDiagnostics)
+        }
+      },
       prepareIdleShutdown() {
         if (isBusy())
           return false
+        void options.eventLog.stopMaintenance().catch(() => record({ event: 'runtime.maintenance.stop_failed', level: 'error' }))
         void composerDraftService.dispose()
         void chatTurnService.dispose()
         void chatCommandService.dispose()

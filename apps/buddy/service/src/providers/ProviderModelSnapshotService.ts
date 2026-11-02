@@ -1,6 +1,6 @@
 import type { ModelMetadataCatalog } from './ModelsDevCatalog'
 import { Buffer } from 'node:buffer'
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
@@ -73,7 +73,7 @@ export class ProviderModelSnapshotService implements ModelMetadataCatalog {
     this.#generatedAt = snapshot.updatedAt
     this.#updatedAt = snapshot.updatedAt
     this.#catalog = new ModelsDevCatalog(snapshot.data)
-    this.#fingerprint = catalogFingerprint(this.#catalog)
+    this.#fingerprint = this.#catalog.getFingerprint()
   }
 
   async initialize(): Promise<void> {
@@ -92,6 +92,10 @@ export class ProviderModelSnapshotService implements ModelMetadataCatalog {
     catch {
 
     }
+  }
+
+  getFingerprint(): string {
+    return this.#fingerprint
   }
 
   getMediaModels(providerId?: string) {
@@ -207,7 +211,7 @@ export class ProviderModelSnapshotService implements ModelMetadataCatalog {
   }
 
   #accept(catalog: ModelsDevCatalog, updatedAt: string, operationId: string): void {
-    const fingerprint = catalogFingerprint(catalog)
+    const fingerprint = catalog.getFingerprint()
     const changed = fingerprint !== this.#fingerprint
     const sourceChanged = this.#source !== 'remote'
     this.#fingerprint = fingerprint
@@ -224,10 +228,6 @@ export class ProviderModelSnapshotService implements ModelMetadataCatalog {
   #publish(kind: ModelMetadataChange['kind'], operationId: string, committed?: ModelsDevCatalog): void {
     this.#changes.fire(copyEventSnapshot({ revision: ++this.#revision, catalogRevision: this.#catalogRevision, operationId, kind, source: committed ? 'remote' : this.#source, modelCount: (committed ?? this).getModels().length, providerCount: (committed ?? this).getProviders().length }))
   }
-}
-
-function catalogFingerprint(catalog: ModelsDevCatalog): string {
-  return createHash('sha256').update(JSON.stringify({ mediaModels: [...catalog.getMediaModels()].sort((a, b) => a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id)), providers: [...catalog.getProviders()].sort((a, b) => a.id.localeCompare(b.id)), models: [...catalog.getModels()].sort((a, b) => a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id)) })).digest('hex')
 }
 
 function parseSnapshot(value: unknown): Snapshot {

@@ -41,7 +41,7 @@ describe('conversation tree queries', () => {
         artifacts: { listForConversation: () => [] },
         changes: { listSummariesForRuns: () => [] },
         runInputs: { findByRunId: () => null },
-        eventLog: { listForRuns: () => [] },
+        eventLog: { verifyRun: async () => {}, listForRuns: () => [] },
       })
       const invoke = async (method: string, input: unknown) => await handlers.get(method)!(input)
       const overview = conversationTreeSchema.parse(await invoke('conversations.getTree', { conversationId: 'conversation' }))

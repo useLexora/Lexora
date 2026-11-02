@@ -1,5 +1,5 @@
-// Bump when projection semantics or the compaction plan become incompatible.
 export const RUN_EVENT_PROJECTION_VERSION = 3
+export const RUN_EVENT_COMPACTION_VERSION = 1
 
 export interface RunEventCheckpoint {
   fileFingerprint: string
@@ -8,6 +8,7 @@ export interface RunEventCheckpoint {
 }
 
 export interface RunEventRecoveryRun {
+  bootstrapPending: boolean
   checkpoint: RunEventCheckpoint | null
   conversationId: string
   projectedLastSequence: number
@@ -19,6 +20,16 @@ export interface RunEventRecoveryFailure {
   code: 'EVENT_LOG_CORRUPTED'
   conversationId: string | null
   runId: string
+}
+
+export interface RunEventRecoveryProgress {
+  completed: number
+  total: number
+}
+
+export interface RunEventRecoveryOptions {
+  force?: boolean
+  onProgress?: (progress: Readonly<RunEventRecoveryProgress>) => void
 }
 
 export interface RunEventRecoverySummary {
@@ -40,8 +51,7 @@ export function canReuseRunEventCheckpoint(
   fileFingerprint: string | null,
 ): run is RunEventRecoveryRun & { checkpoint: RunEventCheckpoint } {
   const checkpoint = run.checkpoint
-  return isTerminalRecoveryRun(run.status)
-    && checkpoint !== null
+  return checkpoint !== null
     && checkpoint.projectionVersion === RUN_EVENT_PROJECTION_VERSION
     && Number.isSafeInteger(checkpoint.lastSequence)
     && checkpoint.lastSequence >= 0
@@ -49,6 +59,15 @@ export function canReuseRunEventCheckpoint(
     && checkpoint.lastSequence === run.projectedLastSequence
     && fileFingerprint !== null
     && checkpoint.fileFingerprint === fileFingerprint
+}
+
+export function canCertifyBootstrapCheckpoint(
+  run: RunEventRecoveryRun,
+  fileFingerprint: string | null,
+): run is RunEventRecoveryRun & { checkpoint: RunEventCheckpoint } {
+  return run.bootstrapPending
+    && isTerminalRecoveryRun(run.status)
+    && canReuseRunEventCheckpoint(run, fileFingerprint)
 }
 
 export function isTerminalRecoveryRun(status: string): boolean {

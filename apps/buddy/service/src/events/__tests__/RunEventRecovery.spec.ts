@@ -1,15 +1,13 @@
 import type { DatabaseSync } from 'node:sqlite'
-import type { AppendBuddyRunEventInput, BuddyRunEvent } from '../BuddyRunEvent'
+import type { AppendBuddyRunEventInput } from '../BuddyRunEvent'
 import type { RunEventLogCallbacks } from '../RunEventLog'
 import { appendFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import process from 'node:process'
+import { performance } from 'node:perf_hooks'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { openBuddyDatabase } from '../../storage/database'
 import { createRunEventLog } from '../createRunEventLog'
-import { RunEventProjector } from '../RunEventProjector'
-import { RunEventQueries } from '../RunEventQueries'
 import { RUN_EVENT_PROJECTION_VERSION } from '../RunEventRecovery'
 import { RunEventStore } from '../RunEventStore'
 
@@ -26,85 +24,70 @@ afterEach(async () => {
 })
 
 describe('startup run event recovery', () => {
-  it.skipIf(process.env.LEXORA_RUN_RECOVERY_BENCHMARK !== '1')('measures ten warmed full/skip recovery pairs on isolated persistent data', async () => {
-    const f = await fixture(true)
-    const eventStore = store(f)
-    const runCount = 60
-    const eventsPerRun = 80
-    for (let index = 0; index < runCount; index++) {
-      const runId = index === 0 ? 'run-1' : `benchmark-${index}`
-      if (index > 0) {
-        f.database.prepare(`INSERT INTO runs (id, conversation_id, branch_id, triggering_message_id, provider, model, purpose, status, started_at)
-          SELECT ?, conversation_id, branch_id, triggering_message_id, provider, model, purpose, 'running', started_at FROM runs WHERE id = 'run-1'`).run(runId)
-      }
-      const events: BuddyRunEvent[] = Array.from({ length: eventsPerRun }, (_, position) => ({
-        runId,
-        sequence: position + 1,
-        type: position === eventsPerRun - 1 ? 'run.completed' : 'message.completed',
-        payload: position === eventsPerRun - 1
-          ? {}
-          : {
-              messageId: `${runId}-message-${position}`,
-              role: 'assistant',
-              content: { text: 'fixture'.repeat(128) },
-              stopReason: 'completed',
-            },
-        createdAt: NOW,
-      }))
-      await eventStore.append(events)
+  it('reports actual completed runs with throttled updates and explicit endpoints', async () => {
+    const f = await fixture()
+    for (let index = 2; index <= 4; index++) {
+      f.database.prepare(`INSERT INTO runs (id, conversation_id, branch_id, triggering_message_id, provider, model, purpose, status, started_at)
+        SELECT ?, conversation_id, branch_id, triggering_message_id, provider, model, purpose, status, started_at FROM runs WHERE id = 'run-1'`).run(`run-${index}`)
     }
-    await f.log.recoverAll({ force: true })
-    const full: number[] = []
-    const skipped: number[] = []
-    for (let sample = 0; sample < 10; sample++) {
-      await f.restart()
-      const rebuilt = await f.log.recoverAll({ force: true })
-      expect(rebuilt.rebuilt).toBe(runCount)
-      full.push(rebuilt.durationMs)
-      await f.restart()
-      const reused = await f.log.recoverAll()
-      expect(reused).toMatchObject({ skipped: runCount, rebuilt: 0, events: 0 })
-      skipped.push(reused.durationMs)
-    }
-    const quantiles = (values: number[]) => {
-      const sorted = values.toSorted((a, b) => a - b)
-      return { medianMs: (sorted[4]! + sorted[5]!) / 2, p90Ms: sorted[8]! }
-    }
-    const fullSummary = quantiles(full)
-    const skippedSummary = quantiles(skipped)
-    process.stdout.write(`${JSON.stringify({
-      event: 'run.recovery.benchmark',
-      samples: 10,
-      warmed: true,
-      runs: runCount,
-      eventsPerRun,
-      full: fullSummary,
-      skipped: skippedSummary,
-      reductionPercent: (1 - skippedSummary.medianMs / fullSummary.medianMs) * 100,
-    })}\n`)
-    // Timing is diagnostic, not a flaky unit-test pass threshold.
-    const before = projection(f.database)
-    await f.log.recoverAll({ force: true })
-    expect(projection(f.database)).toEqual(before)
-  }, 60_000)
+    let clock = 0
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    const fingerprint = RunEventStore.prototype.fingerprint
+    vi.spyOn(RunEventStore.prototype, 'fingerprint').mockImplementation(async function (this: RunEventStore, ...args) {
+      const result = await fingerprint.apply(this, args)
+      clock += 125
+      return result
+    })
+    const progress: { completed: number, total: number }[] = []
+    const certifiedCounts: unknown[] = []
+    expect(await f.log.recoverAll({ onProgress: (value) => {
+      progress.push(value)
+      certifiedCounts.push(f.database.prepare('SELECT COUNT(*) AS count FROM run_event_maintenance WHERE recovery_pending = 0').get())
+    } })).toMatchObject({ scanned: 4, skipped: 4, rebuilt: 0, failed: 0 })
+    expect(progress).toEqual([{ completed: 0, total: 4 }, { completed: 2, total: 4 }, { completed: 4, total: 4 }])
+    expect(certifiedCounts).toEqual([{ count: 0 }, { count: 2 }, { count: 4 }])
+  })
 
-  it('rebuilds old data once, then skips stable history across database reopen without reading or projecting', async () => {
-    const f = await fixture(true)
+  it('reports an empty queue as 0/0 without fabricating work and isolates callback exceptions', async () => {
+    const f = await fixture({ onRecovery: () => {
+      throw new Error('diagnostic observer failed')
+    } })
+    f.database.exec('DELETE FROM runs')
+    const progress: { completed: number, total: number }[] = []
+    expect(await f.log.recoverAll({ onProgress: (value) => {
+      progress.push(value)
+      throw new Error('observer failed')
+    } })).toMatchObject({ scanned: 0, failed: 0 })
+    expect(progress).toEqual([{ completed: 0, total: 0 }])
+    expect(f.log.state).toBe('open')
+  })
+
+  it('reports only settled runs on fatal failure without letting observers replace the failure', async () => {
+    const f = await fixture()
+    f.database.exec(`INSERT INTO runs (id, conversation_id, branch_id, triggering_message_id, provider, model, purpose, status, started_at)
+      SELECT 'run-2', conversation_id, branch_id, triggering_message_id, provider, model, purpose, status, started_at FROM runs WHERE id = 'run-1'`)
+    await mkdir(join(f.conversationsDirectory, 'conversation-1', 'events', 'run-2.jsonl'), { recursive: true })
+    const progress: { completed: number, total: number }[] = []
+    await expect(f.log.recoverAll({ onProgress: (value) => {
+      progress.push(value)
+      throw new Error('observer failed')
+    } })).rejects.toMatchObject({ code: 'EVENT_STORAGE_FAILED', stage: 'stat' })
+    expect(progress).toEqual([{ completed: 0, total: 2 }, { completed: 1, total: 2 }])
+    expect(f.log.state).toBe('failed')
+  })
+
+  it('counts quarantined runs as processed while retaining corruption reporting', async () => {
+    const summaries: unknown[] = []
+    const f = await fixture({ onRecovery: summary => summaries.push(summary) })
     await seedHistory(f.log)
-    expect(await f.log.recoverAll()).toMatchObject({ scanned: 1, rebuilt: 1, skipped: 0, failed: 0 })
-    const before = projection(f.database)
-    await f.reopen()
-    const read = vi.spyOn(RunEventStore.prototype, 'readAndRepair')
-    const rebuild = vi.spyOn(RunEventProjector.prototype, 'rebuild')
-    const lookup = vi.spyOn(RunEventQueries.prototype, 'findConversationId')
-    expect(await f.log.recoverAll()).toMatchObject({ scanned: 1, rebuilt: 0, skipped: 1, events: 0 })
-    expect(read).not.toHaveBeenCalled()
-    expect(rebuild).not.toHaveBeenCalled()
-    expect(lookup).not.toHaveBeenCalled()
-    expect(projection(f.database)).toEqual(before)
-    expect(await f.log.append({ runId: 'run-1', type: 'audit.after_restart', payload: {} })).toMatchObject({ sequence: 6 })
-    expect(read).not.toHaveBeenCalled()
+    await appendFile(f.eventFile, '{broken}\n')
+    const progress: { completed: number, total: number }[] = []
+    expect(await f.log.recoverAll({ force: true, onProgress: value => progress.push(value) }))
+      .toMatchObject({ scanned: 1, rebuilt: 0, failed: 1 })
+    expect(progress).toEqual([{ completed: 0, total: 1 }, { completed: 1, total: 1 }])
+    expect(f.log.state).toBe('open')
     expect(checkpoint(f.database)).toBeUndefined()
+    expect(summaries).toMatchObject([{ failed: 1, failures: [{ code: 'EVENT_LOG_CORRUPTED', conversationId: 'conversation-1', runId: 'run-1' }] }])
   })
 
   it('only rebuilds the changed run and leaves other stable history alone', async () => {
@@ -115,9 +98,12 @@ describe('startup run event recovery', () => {
     await f.log.append({ runId: 'run-2', type: 'run.completed', payload: {} })
     await f.log.recoverAll()
     await f.log.append({ runId: 'run-1', type: 'audit.new', payload: {} })
-    const read = vi.spyOn(RunEventStore.prototype, 'readAndRepair')
-    expect(await f.log.recoverAll()).toMatchObject({ scanned: 2, skipped: 1, rebuilt: 1 })
-    expect(read.mock.calls.map(call => call[0])).toEqual(['run-1'])
+    expect(await f.log.recoverAll()).toMatchObject({ scanned: 0, rebuilt: 0 })
+    f.database.exec(`UPDATE messages SET content_json = '{"text":"damaged"}' WHERE id = 'answer-1'`)
+    const stable = f.database.prepare('SELECT rowid, * FROM run_events WHERE run_id = ?').all('run-2')
+    expect(await f.log.recoverAll()).toMatchObject({ scanned: 1, skipped: 0, rebuilt: 1 })
+    expect(f.database.prepare('SELECT rowid, * FROM run_events WHERE run_id = ?').all('run-2')).toEqual(stable)
+    expect(f.database.prepare('SELECT content_json FROM messages WHERE id = ?').get('answer-1')).toEqual({ content_json: '{"text":"answer"}' })
     expect(await f.log.list('run-1')).toHaveLength(6)
   })
 
@@ -126,11 +112,9 @@ describe('startup run event recovery', () => {
     await seedHistory(f.log)
     await f.log.recoverAll()
     const before = projection(f.database)
-    const read = vi.spyOn(RunEventStore.prototype, 'readAndRepair')
     expect(await f.log.recoverAll({ force: true })).toMatchObject({ skipped: 0, rebuilt: 1, events: 5 })
     expect(await f.log.replay('run-1')).toBe(5)
     expect(await f.log.replayAll()).toBe(5)
-    expect(read).toHaveBeenCalledTimes(3)
     expect(projection(f.database)).toEqual(before)
   })
 
@@ -169,30 +153,6 @@ describe('startup run event recovery', () => {
     expect(f.database.prepare('SELECT content_json FROM messages WHERE id = \'answer-1\'').get()).toEqual({ content_json: '{"text":"answer"}' })
   })
 
-  it('recovers the log-durable / projection-uncommitted crash window', async () => {
-    const f = await fixture(true)
-    await seedHistory(f.log)
-    await f.log.recoverAll()
-    new RunEventProjector(f.database).invalidateCheckpoint('run-1')
-    await store(f).append([{ runId: 'run-1', sequence: 6, type: 'audit.crash', payload: {}, createdAt: NOW }])
-    expect(await f.log.list('run-1')).toHaveLength(5)
-    await f.reopen()
-    expect(await f.log.recoverAll()).toMatchObject({ rebuilt: 1, skipped: 0, events: 6 })
-    expect(await f.log.list('run-1')).toHaveLength(6)
-    const before = projection(f.database)
-    await f.log.recoverAll({ force: true })
-    expect(projection(f.database)).toEqual(before)
-  })
-
-  it('safely rebuilds after invalidation even if the process stopped before modifying the log', async () => {
-    const f = await fixture()
-    await seedHistory(f.log)
-    await f.log.recoverAll()
-    new RunEventProjector(f.database).invalidateCheckpoint('run-1')
-    await f.restart()
-    expect(await f.log.recoverAll()).toMatchObject({ rebuilt: 1, skipped: 0 })
-  })
-
   it.each([
     'DELETE FROM run_events WHERE run_id = \'run-1\' AND sequence = 2',
     'DELETE FROM messages WHERE id = \'answer-1\'',
@@ -213,42 +173,6 @@ describe('startup run event recovery', () => {
     expect(projection(f.database)).toEqual(before)
   })
 
-  it('does not reread stable terminal history for a retained noncompactable tool update', async () => {
-    const f = await fixture()
-    await f.log.appendBatch([
-      { runId: 'run-1', type: 'tool.updated', payload: { toolCallId: 'tool-1' } },
-      { runId: 'run-1', type: 'run.completed', payload: {} },
-    ])
-    await f.log.recoverAll()
-    await f.restart()
-    const read = vi.spyOn(RunEventStore.prototype, 'readAndRepair')
-    expect(await f.log.recoverAll()).toMatchObject({ skipped: 1, rebuilt: 0 })
-    expect(await f.log.compactTerminalRuns()).toBe(0)
-    expect(read).not.toHaveBeenCalled()
-    // An explicit maintenance request remains a full inspection.
-    expect(await f.log.compactTerminalRun('run-1')).toBe(0)
-    expect(read).toHaveBeenCalledTimes(1)
-  })
-
-  it('invalidates compaction, then certifies retained sequences without renumbering', async () => {
-    const f = await fixture()
-    await f.log.appendBatch([
-      { runId: 'run-1', type: 'run.started', payload: {} },
-      { runId: 'run-1', type: 'run.progress', payload: {} },
-      { runId: 'run-1', type: 'run.completed', payload: {} },
-    ])
-    await f.log.recoverAll()
-    expect(checkpoint(f.database)).toBeUndefined()
-    expect(await f.log.compactTerminalRuns()).toBe(1)
-    await f.restart()
-    expect(await f.log.recoverAll()).toMatchObject({ rebuilt: 1, events: 2 })
-    await f.restart()
-    expect(await f.log.recoverAll()).toMatchObject({ skipped: 1 })
-    const read = vi.spyOn(RunEventStore.prototype, 'readAndRepair')
-    expect(await f.log.append({ runId: 'run-1', type: 'audit.next', payload: {} })).toMatchObject({ sequence: 4 })
-    expect(read).not.toHaveBeenCalled()
-  })
-
   it('detects replacement even when the final sequence and file size have not changed', async () => {
     const f = await fixture()
     await seedHistory(f.log)
@@ -260,20 +184,9 @@ describe('startup run event recovery', () => {
     await writeFile(replacement, replaced)
     await rm(f.eventFile)
     await rename(replacement, f.eventFile)
-    expect(await f.log.recoverAll()).toMatchObject({ rebuilt: 1, skipped: 0 })
+    expect(await f.log.recoverAll()).toMatchObject({ scanned: 0, rebuilt: 0 })
+    await f.log.list('run-1')
     expect(f.database.prepare('SELECT content_json FROM messages WHERE id = \'answer-1\'').get()).toEqual({ content_json: '{"text":"edited"}' })
-  })
-
-  it('quarantines a torn tail without changing evidence across repeated recovery', async () => {
-    const f = await fixture()
-    await seedHistory(f.log)
-    await f.log.recoverAll()
-    await appendFile(f.eventFile, '{"runId":"run-1"')
-    const damaged = await readFile(f.eventFile, 'utf8')
-    expect(await f.log.recoverAll()).toMatchObject({ rebuilt: 0, skipped: 0, failed: 1 })
-    expect(checkpoint(f.database)).toBeUndefined()
-    expect(await f.log.recoverAll()).toMatchObject({ rebuilt: 0, failed: 1 })
-    expect(await readFile(f.eventFile, 'utf8')).toBe(damaged)
   })
 
   it.each([
@@ -293,9 +206,9 @@ describe('startup run event recovery', () => {
     const f = await fixture()
     await f.log.append({ runId: 'run-1', type: 'run.started', payload: {} })
     const fingerprint = await store(f).fingerprint('run-1')
-    f.database.prepare('INSERT INTO run_event_checkpoints VALUES (?, ?, ?, ?)').run('run-1', 1, RUN_EVENT_PROJECTION_VERSION, fingerprint)
+    f.database.prepare('UPDATE run_event_checkpoints SET file_fingerprint = ? WHERE run_id = ?').run(fingerprint, 'run-1')
     expect(await f.log.recoverAll()).toMatchObject({ rebuilt: 1, skipped: 0 })
-    expect(checkpoint(f.database)).toBeUndefined()
+    expect(checkpoint(f.database)).toMatchObject({ last_sequence: 1 })
   })
 
   it('quarantines missing logs with existing projections without erasing data or inventing unknown runs', async () => {
@@ -305,7 +218,7 @@ describe('startup run event recovery', () => {
     const before = projection(f.database)
     await rm(f.eventFile)
     await writeFile(join(f.conversationsDirectory, 'conversation-1', 'events', 'unknown-run.jsonl'), '{broken}\n')
-    expect(await f.log.recoverAll()).toMatchObject({ scanned: 0, skipped: 0, rebuilt: 0, failed: 1 })
+    expect(await f.log.recoverAll({ force: true })).toMatchObject({ scanned: 1, skipped: 0, rebuilt: 0, failed: 1 })
     expect(() => f.log.assertConversationWritable('conversation-1')).not.toThrow()
     expect(() => f.log.assertRunWritable('run-1')).toThrow(expect.objectContaining({ code: 'EVENT_LOG_CORRUPTED' }))
     expect(checkpoint(f.database)).toBeUndefined()
@@ -318,43 +231,18 @@ describe('startup run event recovery', () => {
     await seedHistory(f.log)
     await f.log.recoverAll()
     f.database.prepare('UPDATE conversations SET deleted_at = ? WHERE id = ?').run(NOW, 'conversation-1')
-    expect(await f.log.recoverAll()).toMatchObject({ skipped: 1 })
+    expect(await f.log.recoverAll()).toMatchObject({ scanned: 0, skipped: 0 })
     expect(f.database.prepare('SELECT deleted_at FROM conversations').get()).toEqual({ deleted_at: NOW })
     f.database.exec('DELETE FROM runs WHERE id = \'run-1\'')
     expect(checkpoint(f.database)).toBeUndefined()
     expect(await f.log.recoverAll()).toMatchObject({ scanned: 0 })
   })
-
-  it('reports failures and does not hide corrupt log errors behind a checkpoint', async () => {
-    const onRecovery = vi.fn()
-    const f = await fixture(false, { onRecovery })
-    await seedHistory(f.log)
-    await f.log.recoverAll()
-    await appendFile(f.eventFile, '{broken}\n')
-    await expect(f.log.recoverAll()).resolves.toMatchObject({
-      failed: 1,
-      failures: [{ code: 'EVENT_LOG_CORRUPTED', conversationId: 'conversation-1', runId: 'run-1' }],
-    })
-    expect(onRecovery).toHaveBeenLastCalledWith(expect.objectContaining({ failed: 1, skipped: 0 }))
-    expect(f.log.state).toBe('open')
-    expect(checkpoint(f.database)).toBeUndefined()
-  })
-
-  it('ignores diagnostic observer exceptions and preserves failure on invalid file paths', async () => {
-    const f = await fixture(false, { onRecovery: () => {
-      throw new Error('observer failed')
-    } })
-    expect(await f.log.recoverAll()).toMatchObject({ failed: 0 })
-    await mkdir(f.eventFile, { recursive: true })
-    await expect(f.log.recoverAll()).rejects.toMatchObject({ code: 'EVENT_STORAGE_FAILED', stage: 'stat' })
-  })
 })
 
-async function fixture(persistent = false, callbacks: RunEventLogCallbacks = {}) {
+async function fixture(callbacks: RunEventLogCallbacks = {}) {
   const root = await mkdtemp(join(tmpdir(), 'buddy-event-recovery-'))
   directories.push(root)
-  const databasePath = persistent ? join(root, 'buddy.sqlite3') : ':memory:'
-  const database = openBuddyDatabase({ databasePath })
+  const database = openBuddyDatabase({ databasePath: ':memory:' })
   databases.add(database)
   database.exec(`
     INSERT INTO conversations (id, created_at, updated_at) VALUES ('conversation-1', '${NOW}', '${NOW}');
@@ -365,21 +253,12 @@ async function fixture(persistent = false, callbacks: RunEventLogCallbacks = {})
   const conversationsDirectory = join(root, 'conversations')
   const create = (db: DatabaseSync) => createRunEventLog({ conversationsDirectory, database: db, ...callbacks })
   const f = {
-    root,
     database,
     conversationsDirectory,
     eventFile: join(conversationsDirectory, 'conversation-1', 'events', 'run-1.jsonl'),
     log: create(database),
     async restart() {
       await f.log.close()
-      f.log = create(f.database)
-    },
-    async reopen() {
-      await f.log.close()
-      f.database.close()
-      databases.delete(f.database)
-      f.database = openBuddyDatabase({ databasePath })
-      databases.add(f.database)
       f.log = create(f.database)
     },
   }

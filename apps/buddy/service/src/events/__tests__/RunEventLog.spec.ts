@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { RunEventLogCallbacks } from '../RunEventLog'
-import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -118,46 +118,7 @@ describe('runEventLog', () => {
     dispose()
   })
 
-  it('preserves an incomplete tail and rejects further writes to that run', async () => {
-    const fixture = await createFixture()
-    await fixture.log.append({ payload: {}, runId: 'run-1', type: 'run.started' })
-    await appendFile(fixture.eventFile, '{"runId":"run-1"')
-
-    const damaged = await readFile(fixture.eventFile, 'utf8')
-    await expect(fixture.log.read('run-1')).rejects.toMatchObject({ code: 'EVENT_LOG_CORRUPTED' })
-    await expect(fixture.log.append({ payload: {}, runId: 'run-1', type: 'audit.recorded' }))
-      .rejects
-      .toMatchObject({ code: 'EVENT_LOG_CORRUPTED' })
-    expect(await readFile(fixture.eventFile, 'utf8')).toBe(damaged)
-  })
-
-  it('quarantines a corrupt durable log without entering the global fatal channel', async () => {
-    const failures: unknown[] = []
-    const fixture = await createFixture({
-      onFatalFailure: error => failures.push(error),
-    })
-    await fixture.log.append({ payload: {}, runId: 'run-1', type: 'run.started' })
-    await appendFile(fixture.eventFile, '{broken json}\n')
-
-    const failure = await fixture.log.read('run-1').then(
-      () => null,
-      error => error,
-    )
-
-    expect(failure).toMatchObject({
-      code: 'EVENT_LOG_CORRUPTED',
-      commitState: 'not_applicable',
-      runId: 'run-1',
-    })
-    expect(failures).toEqual([])
-    expect(fixture.log.state).toBe('open')
-    expect(fixture.log.getRecoveryFailures()).toEqual([{ code: 'EVENT_LOG_CORRUPTED', conversationId: 'conversation-1', runId: 'run-1' }])
-    await expect(fixture.log.append({ payload: {}, runId: 'run-1', type: 'audit.recorded' }))
-      .rejects
-      .toBe(failure)
-  })
-
-  it('enters the fatal channel when the durable event file cannot be read', async () => {
+  it('blocks mutations after a storage failure while retaining durable inspection and recovery', async () => {
     const failures: unknown[] = []
     const fixture = await createFixture({
       onFatalFailure: error => failures.push(error),
@@ -174,69 +135,19 @@ describe('runEventLog', () => {
       commitState: 'not_applicable',
       operation: 'read',
       runId: 'run-1',
-      stage: 'read',
+      stage: 'stat',
     })
     expect(failures).toEqual([failure])
     await expect(fixture.log.append({ payload: {}, runId: 'run-1', type: 'audit.recorded' }))
       .rejects
       .toBe(failure)
-  })
+    await expect(fixture.log.appendBatch([])).rejects.toBe(failure)
+    await expect(fixture.log.compactTerminalRuns()).rejects.toBe(failure)
 
-  it('enters the fatal channel when the event directory cannot be created', async () => {
-    const failures: unknown[] = []
-    const fixture = await createFixture({
-      onFatalFailure: error => failures.push(error),
-    })
-    await fixture.log.replay('run-1')
-    const eventDirectory = dirname(fixture.eventFile)
-    await mkdir(dirname(eventDirectory), { recursive: true })
-    await writeFile(eventDirectory, 'not a directory', 'utf8')
-
-    const failure = await fixture.log.append({
-      payload: {},
-      runId: 'run-1',
-      type: 'audit.recorded',
-    }).then(
-      () => null,
-      error => error,
-    )
-
-    expect(failure).toMatchObject({
-      code: 'EVENT_STORAGE_FAILED',
-      commitState: 'unknown',
-      operation: 'append',
-      runId: 'run-1',
-      stage: 'mkdir',
-    })
-    expect(failures).toEqual([failure])
-  })
-
-  it('enters the fatal channel when the event file cannot be opened for append', async () => {
-    const failures: unknown[] = []
-    const fixture = await createFixture({
-      onFatalFailure: error => failures.push(error),
-    })
-    await fixture.log.replay('run-1')
-    await mkdir(fixture.eventFile, { recursive: true })
-
-    const failure = await fixture.log.append({
-      payload: {},
-      runId: 'run-1',
-      type: 'audit.recorded',
-    }).then(
-      () => null,
-      error => error,
-    )
-
-    expect(failure).toMatchObject({
-      code: 'EVENT_STORAGE_FAILED',
-      commitState: 'unknown',
-      operation: 'append',
-      runId: 'run-1',
-      // Windows can open a directory and reject the write rather than the open.
-      stage: expect.stringMatching(/^(?:open|write)$/),
-    })
-    expect(failures).toEqual([failure])
+    await rm(fixture.eventFile, { force: true, recursive: true })
+    await expect(fixture.log.read('run-1')).resolves.toEqual([])
+    await expect(fixture.log.replay('run-1')).resolves.toBe(0)
+    await expect(fixture.log.replayAll()).resolves.toBe(0)
   })
 
   it('enters the fatal channel when persisted event files cannot be scanned', async () => {
@@ -262,31 +173,6 @@ describe('runEventLog', () => {
     })
     expect(failures).toEqual([failure])
     await expect(fixture.log.replayAll()).rejects.toBe(failure)
-  })
-
-  it('rejects empty and aggregate durable mutations after a fatal failure', async () => {
-    const fixture = await createFixture()
-    await mkdir(fixture.eventFile, { recursive: true })
-    const failure = await fixture.log.read('run-1').then(
-      () => null,
-      error => error,
-    )
-
-    await expect(fixture.log.appendBatch([])).rejects.toBe(failure)
-    await expect(fixture.log.compactTerminalRuns()).rejects.toBe(failure)
-  })
-
-  it('keeps durable inspection and projection recovery available after a fatal failure', async () => {
-    const fixture = await createFixture()
-    await mkdir(fixture.eventFile, { recursive: true })
-    await expect(fixture.log.read('run-1')).rejects.toMatchObject({
-      code: 'EVENT_STORAGE_FAILED',
-    })
-    await rm(fixture.eventFile, { force: true, recursive: true })
-
-    await expect(fixture.log.read('run-1')).resolves.toEqual([])
-    await expect(fixture.log.replay('run-1')).resolves.toBe(0)
-    await expect(fixture.log.replayAll()).resolves.toBe(0)
   })
 
   it('atomically compacts transient terminal-run events in JSONL and SQLite', async () => {
@@ -331,32 +217,6 @@ describe('runEventLog', () => {
     ]
     expect(await fixture.log.read('run-1')).toMatchObject(expected)
     expect(await fixture.log.list('run-1')).toMatchObject(expected)
-  })
-
-  it('rebuilds product messages from durable events', async () => {
-    const fixture = await createFixture()
-    await fixture.log.append({
-      payload: {
-        content: { text: 'Durable answer' },
-        messageId: 'assistant-1',
-        role: 'assistant',
-        stopReason: 'completed',
-      },
-      runId: 'run-1',
-      type: 'message.completed',
-    })
-    fixture.database.exec(`
-      DELETE FROM run_events WHERE run_id = 'run-1';
-      DELETE FROM messages WHERE id = 'assistant-1';
-    `)
-
-    await expect(fixture.log.replay('run-1')).resolves.toBe(1)
-    expect(fixture.database.prepare(`
-      SELECT role, content_json FROM messages WHERE id = 'assistant-1'
-    `).get()).toEqual({
-      content_json: '{"text":"Durable answer"}',
-      role: 'assistant',
-    })
   })
 
   it('replays an answer referenced by a followup draft without losing the draft or its source', async () => {

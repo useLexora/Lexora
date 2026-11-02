@@ -130,6 +130,14 @@ async function runBuddyService(): Promise<void> {
         conversationsDirectory: join(buddyHome, 'conversations'),
         database: openedDatabase,
         onObserverError: error => record({ event: 'run.observer_failed', level: 'warn', errorCode: readDiagnosticErrorCode(error) }),
+        onMaintenance: (summary) => {
+          if (!summary.checked && !summary.failed)
+            return
+          record({ event: 'run.maintenance.checked', level: 'info', durationMs: summary.durationMs, count: summary.checked })
+          record({ event: 'run.maintenance.removed', level: 'info', count: summary.removed })
+          if (summary.failed)
+            record({ event: 'run.maintenance.failed', level: 'warn', count: summary.failed })
+        },
         onRecovery: (summary) => {
           record({ event: 'run.recovery.enumerated', level: 'info', durationMs: summary.enumerationMs, count: summary.scanned })
           record({ event: 'run.recovery.inspected', level: 'info', durationMs: summary.inspectionMs, count: summary.scanned })
@@ -167,8 +175,9 @@ async function runBuddyService(): Promise<void> {
       })
       return log
     }, ['runtime.database'])
-    await host.step('runtime.event_replay', () => eventLog!.recoverAll({
+    await host.step('runtime.event_replay', ({ reportProgress }) => eventLog!.recoverAll({
       force: process.env.LEXORA_BUDDY_EVENT_RECOVERY === 'full',
+      onProgress: reportProgress,
     }))
     await host.start('runtime.services', async ({ defer }) => {
       serviceHandle = await startBuddyService({
@@ -183,6 +192,7 @@ async function runBuddyService(): Promise<void> {
       defer(() => serviceHandle!.dispose())
     })
     notifyBuddyServiceReady(serviceServer)
+    serviceHandle!.startMaintenance()
   }
   catch (error) {
     notifyFailure(readBuddyServiceFailureCode(error))

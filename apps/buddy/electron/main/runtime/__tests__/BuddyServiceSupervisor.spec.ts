@@ -124,6 +124,9 @@ describe('buddyServiceSupervisor utility process lifecycle', () => {
     source.reader.onDidChange(change => processes[0]!.notify(SERVICE_LIFECYCLE_METHOD, change))
     source.update({ component: 'runtime.database', kind: 'service', operationId: 'database-1', status: 'ready' })
     expect(supervisor.lifecycleState.services?.components[0]?.status).toBe('ready')
+    source.update({ component: 'runtime.event_replay', kind: 'operation', operationId: 'recovery-1', status: 'starting' })
+    source.updateProgress('runtime.event_replay', 'recovery-1', { completed: 2, total: 5 })
+    expect(supervisor.lifecycleState.services?.components[1]).toMatchObject({ status: 'starting', progress: { completed: 2, total: 5 } })
     processes[0]!.notify('runtime.ready', { protocolVersion: BUDDY_SERVICE_PROTOCOL_VERSION })
     const firstGeneration = supervisor.lifecycleState.generation
     expect(firstGeneration).not.toBeNull()

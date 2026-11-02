@@ -1,4 +1,5 @@
 import type { RuntimeMaintenance } from '../lifecycle/runtimeLifecycle'
+import type { LifecycleProgress } from '../lifecycle/serviceLifecycle'
 
 export interface ApplicationStartupState {
   revision: number
@@ -11,6 +12,7 @@ export interface ApplicationStartupState {
     status: 'pending' | 'running' | 'completed' | 'failed' | 'stopping' | 'stopped'
     operationId?: string
     durationMs?: number
+    progress?: LifecycleProgress
     errorCode?: string
   }>
 }

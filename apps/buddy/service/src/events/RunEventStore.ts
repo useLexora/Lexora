@@ -18,6 +18,7 @@ import { buddyRunEventSchema, buddyRunIdSchema } from './BuddyRunEvent'
 import {
   RunEventCorruptionError,
   runEventFailureScope,
+  RunEventMaintenanceRetryableError,
   RunEventStorageError,
 } from './RunEventFailure'
 
@@ -109,7 +110,7 @@ export class RunEventStore {
     }
   }
 
-  async readAndRepair(runId: string, conversationId?: string): Promise<BuddyRunEvent[]> {
+  async readAndRepair(runId: string, conversationId?: string, beforeRepair?: () => void): Promise<BuddyRunEvent[]> {
     const path = this.#eventPath(runId, conversationId)
     const readScope = runEventFailureScope(runId)
     let content: string
@@ -136,6 +137,7 @@ export class RunEventStore {
     }
     const scope = runEventFailureScope(runId, events)
     if (content.length > 0 && !content.endsWith('\n')) {
+      beforeRepair?.()
       const appendPosition = Buffer.byteLength(content, 'utf8')
       await this.#repairEventFile(scope, 'write', file => (
         file.write('\n', appendPosition, 'utf8').then(() => undefined)
@@ -151,13 +153,12 @@ export class RunEventStore {
   ): Promise<void> {
     const scope = runEventFailureScope(runId, replacedEvents)
     const eventDirectory = this.#eventDirectory(runId)
-    await runStorageStage(
-      scope,
-      'compact',
-      'mkdir',
-      'unknown',
-      () => mkdir(eventDirectory, { mode: 0o700, recursive: true }),
-    )
+    try {
+      await mkdir(eventDirectory, { mode: 0o700, recursive: true })
+    }
+    catch (cause) {
+      throw new RunEventMaintenanceRetryableError(cause)
+    }
     const path = this.#eventPath(runId)
     const temporaryPath = join(
       eventDirectory,
@@ -172,7 +173,7 @@ export class RunEventStore {
     }
     catch (error) {
       await removeFileIfExists(temporaryPath).catch(() => {})
-      throw error
+      throw new RunEventMaintenanceRetryableError(error)
     }
     try {
       await rename(temporaryPath, path)

@@ -76,7 +76,12 @@ export function relocateDatabaseReferences(database: DatabaseSync, source: strin
           database.prepare(`UPDATE "${table}" SET ${changes.map(([name]) => `"${name}" = ?`).join(',')} WHERE rowid = ?`).run(...changes.map(([, value]) => value), row.__storage_rowid!)
       }
     }
-    database.exec('DELETE FROM run_event_checkpoints')
+    database.exec(`
+      DELETE FROM run_event_checkpoints;
+      INSERT INTO run_event_maintenance (run_id) SELECT id FROM runs WHERE 1
+      ON CONFLICT(run_id) DO UPDATE SET recovery_pending = 1, compaction_pending = 1, revision = revision + 1;
+      DELETE FROM provider_resolution_checkpoints;
+    `)
     if (database.prepare('PRAGMA foreign_key_check').all().length)
       throw storageError('STORAGE_DATABASE_INVALID')
     database.exec('COMMIT')
