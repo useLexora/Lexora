@@ -182,3 +182,92 @@ it('retains a browser viewport while hidden without exposing input or focus', as
     layout.dispose()
   }
 })
+
+function transition(type: 'transitionrun' | 'transitionend' | 'transitioncancel', target: Element, propertyName = 'width') {
+  target.dispatchEvent(Object.assign(new Event(type, { bubbles: true }), { propertyName }))
+}
+
+function movableAnchor(layout = new SurfaceLayoutController()) {
+  const scope = document.createElement('section')
+  const sidebar = document.createElement('div')
+  const anchor = document.createElement('div')
+  const surface = document.createElement('iframe')
+  sidebar.dataset.workbenchLayoutTransition = 'width'
+  scope.append(sidebar, anchor)
+  document.body.append(scope, surface)
+  const position = { left: 190, measured: 0 }
+  anchor.getBoundingClientRect = () => {
+    position.measured++
+    return new DOMRect(position.left, 0, 700, 400)
+  }
+  layout.attach(surface, { anchor, visible: true, interactive: true, layer: 'content' })
+  layout.start()
+  return { layout, scope, sidebar, surface, position }
+}
+
+it('follows declared sibling layout transitions without measuring unrelated animations or scopes', async () => {
+  const { layout, sidebar, surface, position } = movableAnchor()
+  const other = movableAnchor(layout)
+  const label = document.createElement('span')
+  sidebar.append(label)
+  try {
+    await vi.advanceTimersByTimeAsync(20)
+    const measured = position.measured
+    const otherMeasured = other.position.measured
+    transition('transitionrun', label, 'transform')
+    transition('transitionrun', sidebar, 'opacity')
+    transition('transitionend', label, 'transform')
+    await vi.advanceTimersByTimeAsync(32)
+    expect(position.measured).toBe(measured)
+    expect(vi.getTimerCount()).toBe(0)
+
+    transition('transitionrun', sidebar)
+    position.left = 100
+    await vi.advanceTimersByTimeAsync(16)
+    expect(surface.style.left).toBe('100px')
+    position.left = 40
+    await vi.advanceTimersByTimeAsync(16)
+    expect(surface.style.left).toBe('40px')
+    position.left = 0
+    transition('transitionend', sidebar)
+    expect(surface.style.left).toBe('0px')
+    expect(other.position.measured).toBe(otherMeasured)
+    expect(vi.getTimerCount()).toBe(0)
+  }
+  finally {
+    layout.dispose()
+  }
+})
+
+it('settles interrupted transitions and releases frame work when detached or disposed', async () => {
+  const { layout, scope, sidebar, surface, position } = movableAnchor()
+  try {
+    await vi.advanceTimersByTimeAsync(20)
+    transition('transitionrun', sidebar)
+    transition('transitionrun', sidebar)
+    transition('transitioncancel', sidebar)
+    position.left = 60
+    await vi.advanceTimersByTimeAsync(16)
+    expect(surface.style.left).toBe('60px')
+    position.left = 40
+    transition('transitioncancel', sidebar)
+    expect(surface.style.left).toBe('40px')
+    expect(vi.getTimerCount()).toBe(0)
+
+    transition('transitionrun', sidebar)
+    sidebar.remove()
+    await vi.advanceTimersByTimeAsync(16)
+    expect(vi.getTimerCount()).toBe(0)
+    scope.append(sidebar)
+    transition('transitionrun', sidebar)
+    layout.dispose()
+    const measured = position.measured
+    transition('transitionrun', sidebar)
+    await vi.advanceTimersByTimeAsync(32)
+    expect(position.measured).toBe(measured)
+    expect(vi.getTimerCount()).toBe(0)
+  }
+  finally {
+    layout.dispose()
+  }
+})

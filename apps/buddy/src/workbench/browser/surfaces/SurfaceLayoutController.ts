@@ -9,11 +9,13 @@ interface SurfaceEntry {
 export class SurfaceLayoutController implements SurfaceLayout {
   readonly #entries = new Map<HTMLElement, SurfaceEntry>()
   readonly #observed = new Map<HTMLElement, number>()
+  readonly #transitions = new Map<Element, number>()
   #resize: ResizeObserver | null = null
   #mutation: MutationObserver | null = null
   #observationChanged = true
   #queued = false
   #started = false
+  #frame = 0
 
   start(): void {
     if (this.#started)
@@ -24,6 +26,9 @@ export class SurfaceLayoutController implements SurfaceLayout {
     for (const element of this.#observed.keys()) this.#resize.observe(element)
     window.addEventListener('resize', this.invalidate)
     document.addEventListener('scroll', this.invalidate, true)
+    document.addEventListener('transitionrun', this.#transitionStarted, true)
+    document.addEventListener('transitionend', this.#transitionStopped, true)
+    document.addEventListener('transitioncancel', this.#transitionStopped, true)
     this.invalidate()
   }
 
@@ -75,10 +80,71 @@ export class SurfaceLayoutController implements SurfaceLayout {
     })
   }
 
+  readonly #transitionStarted = (event: Event): void => {
+    const target = this.#layoutTransitionTarget(event)
+    if (!target)
+      return
+    this.#transitions.set(target, (this.#transitions.get(target) ?? 0) + 1)
+    this.#follow()
+  }
+
+  readonly #transitionStopped = (event: Event): void => {
+    const target = this.#layoutTransitionTarget(event)
+    if (!target)
+      return
+    const count = (this.#transitions.get(target) ?? 0) - 1
+    if (count > 0)
+      this.#transitions.set(target, count)
+    else
+      this.#transitions.delete(target)
+    if (target.parentElement)
+      this.#layoutScopes([target.parentElement])
+    if (!this.#transitions.size) {
+      cancelAnimationFrame(this.#frame)
+      this.#frame = 0
+    }
+  }
+
+  #layoutTransitionTarget(event: Event): Element | null {
+    const { propertyName, pseudoElement } = event as TransitionEvent
+    return !pseudoElement && event.target instanceof Element && event.target.getAttribute('data-workbench-layout-transition') === propertyName ? event.target : null
+  }
+
+  #follow(): void {
+    if (this.#frame || !this.#started)
+      return
+    this.#frame = requestAnimationFrame(() => {
+      this.#frame = 0
+      const scopes = new Set<Element>()
+      for (const element of this.#transitions.keys()) {
+        if (!element.isConnected || !element.parentElement)
+          this.#transitions.delete(element)
+        else
+          scopes.add(element.parentElement)
+      }
+      this.#layoutScopes([...scopes])
+      if (this.#transitions.size)
+        this.#follow()
+    })
+  }
+
+  #layoutScopes(scopes: readonly Element[]): void {
+    for (const entry of this.#entries.values()) {
+      if (entry.options.visible && entry.options.anchor && scopes.some(scope => scope.contains(entry.options.anchor)))
+        this.#layout(entry)
+    }
+  }
+
   dispose(): void {
     this.#started = false
     window.removeEventListener('resize', this.invalidate)
     document.removeEventListener('scroll', this.invalidate, true)
+    document.removeEventListener('transitionrun', this.#transitionStarted, true)
+    document.removeEventListener('transitionend', this.#transitionStopped, true)
+    document.removeEventListener('transitioncancel', this.#transitionStopped, true)
+    cancelAnimationFrame(this.#frame)
+    this.#frame = 0
+    this.#transitions.clear()
     this.#resize?.disconnect()
     this.#resize = null
     this.#mutation?.disconnect()
