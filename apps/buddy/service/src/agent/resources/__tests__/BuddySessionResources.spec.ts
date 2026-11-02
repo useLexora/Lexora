@@ -73,4 +73,41 @@ describe('buddySessionResources', () => {
     expect(unchanged.revision).toBe(first.revision)
     expect(changed.revision).not.toBe(first.revision)
   })
+
+  describe('wsl directories', () => {
+    const skills = {
+      materializeForSpace: async () => [],
+      loadForSpace: async () => ({ diagnostics: [], readRoots: [], references: [], paths: [], revision: 'skills', skills: [] }),
+    }
+    const resolveContext = async (root: string, additional: string[] = []) => (await resolveBuddySessionResources({
+      additionalDirectories: additional.map(canonicalRoot => ({ canonicalRoot })),
+      canonicalRoot: root,
+      cwd: root,
+      loadDirectoryContext: false,
+      primaryDirectory: { canonicalRoot: root },
+      skills,
+      spaceId: 'space-1',
+    }))
+    const wslRoot = String.raw`\\wsl.localhost\Ubuntu-24.04\home\lenovo\code\Foo`
+
+    it('tells the agent to run commands through wsl.exe with the Linux path', async () => {
+      const { directoryContext, revision } = await resolveContext(wslRoot)
+      expect(directoryContext).toContain(`- ${wslRoot} = Ubuntu-24.04:/home/lenovo/code/Foo`)
+      expect(directoryContext).toContain('wsl.exe -d Ubuntu-24.04 --cd /home/lenovo/code/Foo --exec <program> <args>')
+      expect(directoryContext).toContain(String.raw`\\wsl.localhost\Ubuntu-24.04\tmp\<unique-name>.sh`)
+      expect(directoryContext.match(/- \\\\wsl/g)).toHaveLength(1)
+      expect((await resolveContext('/workspace')).revision).not.toBe(revision)
+    })
+
+    it('also notes a WSL directory that is only an additional directory', async () => {
+      const { directoryContext } = await resolveContext('/workspace', [String.raw`\\wsl$\Debian\var\log`])
+      expect(directoryContext).toContain('= Debian:/var/log')
+      expect(directoryContext).toContain('wsl.exe -d Debian --cd /var/log --exec')
+    })
+
+    it('leaves the directory context of other spaces unchanged', async () => {
+      const { directoryContext } = await resolveContext('/workspace', ['/data'])
+      expect(directoryContext).toBe(['Working directory: /workspace', 'Primary Space directory: /workspace', 'Additional authorized directories (access only; not preloaded as context):', '- /data', 'Inspect an additional directory only when the task requires files from it.'].join('\n'))
+    })
+  })
 })

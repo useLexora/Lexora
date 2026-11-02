@@ -5,6 +5,7 @@ import type { ExecutionKind } from '../../storage/runRecord'
 import type { BoundedContextFilesResult } from './loadBoundedContextFiles'
 import { createHash } from 'node:crypto'
 import { dirname } from 'node:path'
+import { parseWslPath } from '../../../../shared/files/wslPath'
 import { SkillError } from '../../skills/skillFiles'
 import { formatBuddySkillPrompt } from '../../skills/SkillService'
 
@@ -133,5 +134,26 @@ function createDirectoryContext(
           'Inspect an additional directory only when the task requires files from it.',
         ]
       : ['Additional authorized directories: none.']),
+    ...createWslNotes([workingDirectory, primaryDirectory?.canonicalRoot, ...additionalDirectories.map(directory => directory.canonicalRoot)]),
   ].join('\n')
+}
+
+// The shell tool runs on Windows, so commands for a WSL directory must go through wsl.exe; nothing enforces it, the prompt only asks.
+function createWslNotes(directories: readonly (string | undefined)[]): string[] {
+  const entries = [...new Set(directories)].flatMap((path) => {
+    const wsl = path ? parseWslPath(path) : null
+    return path && wsl ? [{ path, ...wsl }] : []
+  })
+  const [first] = entries
+  if (!first)
+    return []
+  const command = `wsl.exe -d ${first.distribution} --cd ${first.linuxPath}`
+  return [
+    'WSL directories (reached from Windows through \\\\wsl.localhost):',
+    ...entries.map(entry => `- ${entry.path} = ${entry.distribution}:${entry.linuxPath}`),
+    'The shell tool runs on Windows, not in WSL. Run commands for these directories inside WSL, with Linux paths:',
+    `  ${command} --exec <program> <args>`,
+    `For pipes, variables or multi-line logic, use the write tool to save a bash script with LF line endings at \\\\wsl.localhost\\${first.distribution}\\tmp\\<unique-name>.sh, run it with ${command} --exec bash /tmp/<unique-name>.sh, then delete it.`,
+    'Use read/write/edit for file changes. These commands run on the host outside the shell sandbox and need host approval.',
+  ]
 }

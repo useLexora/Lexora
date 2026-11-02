@@ -4,11 +4,13 @@ import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
 import type { SelectOption } from 'naive-ui'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type {
+  SpaceDirectorySource,
   TaskSpaceInput,
 } from '@/modules/tasks/state/task-index/typing'
 import { NAlert, NButton, NForm, NFormItem, NInput, NModal, NSelect } from 'naive-ui'
-import { computed, h, shallowRef, watch } from 'vue'
+import { computed, h, onMounted, shallowRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import { loadWslDistributions } from '@/platform/desktop/wslDistributions'
 import DesktopSpaceAppearancePicker from '../space/DesktopSpaceAppearancePicker.vue'
 import DesktopSpaceAdditionalDirectoriesField from './DesktopSpaceAdditionalDirectoriesField.vue'
 import DesktopSpacePrimaryDirectoryField from './DesktopSpacePrimaryDirectoryField.vue'
@@ -17,7 +19,7 @@ import { useSpaceEditor } from './useSpaceEditor'
 const props = defineProps<{
   language: BuddyLocale
   space: LocalSpace | null
-  selectDirectory: () => Promise<string | null>
+  selectDirectory: (source?: SpaceDirectorySource) => Promise<string | null>
   save: (input: TaskSpaceInput) => Promise<boolean>
   show: boolean
 }>()
@@ -26,13 +28,18 @@ const emit = defineEmits<{
 }>()
 const { t } = useBuddyI18n(() => props.language)
 const appearanceOpen = shallowRef(false)
+// The system folder dialog does not list WSL, so each installed distribution becomes its own place to pick from.
+const wslDistributions = shallowRef<string[]>([])
+onMounted(async () => {
+  wslDistributions.value = await loadWslDistributions()
+})
 watch(() => props.show, () => {
   appearanceOpen.value = false
 })
 const { canSave, directoryChangeBlocked, directoryEditingDisabled, failed, form, save: confirm, saving, selectingDirectory, selectPrimaryDirectory, selectAdditionalDirectory, removeAdditionalDirectory } = useSpaceEditor({
   show: () => props.show,
   space: () => props.space,
-  selectDirectory: () => props.selectDirectory(),
+  selectDirectory: source => props.selectDirectory(source),
   save: input => props.save(input),
   onSaved: () => emit('update:show', false),
 })
@@ -105,6 +112,7 @@ function renderMemoryLabel(option: SelectOption, selected: boolean) {
           :disabled="directoryEditingDisabled || saving || selectingDirectory"
           :language="language"
           :primary-directory="form.primaryDirectory"
+          :wsl-distributions="wslDistributions"
           @remove-primary="form.primaryDirectory = null"
           @select-primary="selectPrimaryDirectory"
         />
@@ -115,6 +123,7 @@ function renderMemoryLabel(option: SelectOption, selected: boolean) {
           :disabled="directoryEditingDisabled || saving || selectingDirectory"
           :limit-reached="form.additionalDirectories.length + Number(Boolean(form.primaryDirectory)) >= 32"
           :language="language"
+          :wsl-distributions="wslDistributions"
           @add="selectAdditionalDirectory"
           @remove="removeAdditionalDirectory"
         />

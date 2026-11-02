@@ -25,7 +25,8 @@ export function createSpacesApi(): Pick<LocalChatApi, 'spaces'> {
       list: limit => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.spacesList, { limit }),
       searchFiles: (spaceId, query) =>
         ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.spacesSearchFiles, { spaceId, query }),
-      selectDirectory: () => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.spacesSelectDirectory),
+      selectDirectory: source => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.spacesSelectDirectory, source ? { source } : undefined),
+      wslDistributions: () => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.spacesWslDistributions),
       update: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.spacesUpdate, input),
     }),
   }
