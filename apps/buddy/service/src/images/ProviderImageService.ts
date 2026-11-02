@@ -1,8 +1,9 @@
 import type { ProviderService } from '../providers/ProviderService'
-import type { ImageGenerationInput, ImageGenerationResult } from './ImageGenerationGateway'
+import type { ImageGenerationErrorDiagnostic, ImageGenerationInput, ImageGenerationResult } from './ImageGenerationGateway'
 import { Buffer } from 'node:buffer'
 import { imageOutputOptionsSchema } from '../../../shared/images/imagePreferences'
 import { ImageGenerationError } from './ImageGenerationGateway'
+import { imageHttpFailure, imageResponseDiagnostic, imageTransportFailure } from './imageHttpDiagnostic'
 import { decodePng, readBoundedResponse } from './imageResponseBody'
 
 export class ProviderImageService {
@@ -61,13 +62,15 @@ export class ProviderImageService {
       body = JSON.stringify(fields)
     }
     const endpoint = `${request.baseUrl.replace(/\/$/, '')}/images/${input.inputImages.length ? 'edits' : 'generations'}`
+    const diagnostic: ImageGenerationErrorDiagnostic = { stage: 'submitting', localRequestId: input.requestId }
+    await input.onSubmitting?.()
+    input.signal.throwIfAborted()
     try {
       const response = await this.fetch(endpoint, { method: 'POST', headers, body, signal: input.signal, redirect: 'error' })
-      if (!response.ok) {
-        await response.body?.cancel()
-        throw new ImageGenerationError(response.status === 401 ? 'PROVIDER_AUTHENTICATION_FAILED' : response.status === 403 ? 'PROVIDER_ACCESS_DENIED' : response.status === 429 ? 'PROVIDER_RATE_LIMITED' : 'IMAGE_GENERATION_FAILED', { retryable: [400, 401, 403, 404, 422, 429].includes(response.status) })
-      }
-      const responseId = response.headers.get('x-request-id')
+      Object.assign(diagnostic, imageResponseDiagnostic(response))
+      if (!response.ok)
+        throw await imageHttpFailure(response, input.signal)
+      const responseId = diagnostic.requestId ?? null
       if (responseId) {
         try {
           await input.onSubmitted?.(responseId)
@@ -85,8 +88,8 @@ export class ProviderImageService {
     catch (cause) {
       input.signal.throwIfAborted()
       if (cause instanceof ImageGenerationError)
-        throw cause
-      throw new ImageGenerationError('IMAGE_GENERATION_INCOMPLETE', { cause })
+        throw new ImageGenerationError(cause.code, { ...cause, cause, diagnostic: { ...diagnostic, ...cause.diagnostic } })
+      throw imageTransportFailure(cause, diagnostic)
     }
   }
 }

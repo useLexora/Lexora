@@ -3,11 +3,14 @@ import type { ImageOutputOptions, ImagePreferencesSnapshot } from '../../../shar
 import type { CapturedFileWriter } from '../changes/CapturedFileWriter'
 import type { DirectoryGrant } from '../directories/resolveGrantedPath'
 import type { ImageGenerationGateway } from './ImageGenerationGateway'
-import type { ImageRequestReceipt, ImageRequestStore } from './ImageRequestStore'
-import { randomUUID } from 'node:crypto'
+import type { ImageRequestStore } from './ImageRequestStore'
+import { createHash, randomUUID } from 'node:crypto'
+import { extname, resolve } from 'node:path'
+import { diagnosticTransportCode } from '../../../shared/diagnostics/providerRequestDiagnostic'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
+import { imageOutputOptionsSchema } from '../../../shared/images/imagePreferences'
 import { ArtifactPublicationError } from '../artifacts/ArtifactService'
-import { ImageGenerationError } from './ImageGenerationGateway'
+import { ImageGenerationError, readImageGenerationError } from './ImageGenerationGateway'
 import { ImageOperationLifecycle } from './ImageOperationLifecycle'
 import { validateGeneratedImages } from './imageResponseBody'
 
@@ -27,7 +30,7 @@ interface ConversationImageSource {
 }
 
 export interface ImageGenerationServiceOptions {
-  requests?: ImageRequestStore
+  requests?: Pick<ImageRequestStore, 'begin' | 'completed'>
   artifactService: ConversationImageSource & {
     listConversationArtifacts: (conversationId: string) => Array<{ id: string, kind: string, mimeType: string, createdAt: string, updatedAt: string }>
     registerGeneratedImages: (input: {
@@ -81,6 +84,9 @@ export class ImageGenerationService {
     const preferences = this.#options.getImagePreferences?.()
     return this.#operations.run({ conversationId: this.#options.conversationId, kind: 'generation', signal }, async (progress) => {
       signal.throwIfAborted()
+      const completed = invocation && await this.#options.requests?.completed(this.#options.conversationId, invocation.runId, invocation.toolCallId)
+      if (completed)
+        return { value: { ...completed.result, request: completed.request }, artifactIds: completed.result.artifactIds }
       if (!this.supports(model))
         throw new ImageGenerationError('IMAGE_GENERATION_UNSUPPORTED', { outcome: 'failed' })
       let references: { artifactIds: string[], images: ImageContent[] } = { artifactIds: [], images: [] }
@@ -95,22 +101,45 @@ export class ImageGenerationService {
       signal.throwIfAborted()
       if (request.reference && !references.images.length)
         throw new ImageGenerationError('IMAGE_GENERATION_REFERENCE_UNAVAILABLE', { outcome: 'failed' })
-      const receipt = invocation && this.#options.requests ? await this.#options.requests.begin(this.#options.conversationId, invocation.runId, invocation.toolCallId) : undefined
+      const output = imageOutputOptionsSchema.parse(request.output ?? {})
+      const destination = resolve(this.#options.cwd, request.outputPath.trim())
+      const hash = (value: string) => createHash('sha256').update(value).digest('hex')
+      const begun = invocation && this.#options.requests
+        ? await this.#options.requests.begin(this.#options.conversationId, invocation.runId, invocation.toolCallId, {
+            fingerprint: hash(JSON.stringify({ prompt: request.prompt.trim(), output, references: references.images.map(image => ({ mimeType: image.mimeType, digest: hash(image.data) })) })),
+            destination: hash(extname(destination) ? destination : `${destination}.png`),
+          })
+        : undefined
+      if (begun?.kind === 'completed')
+        return { value: { ...begun.result, request: begun.request }, artifactIds: begun.result.artifactIds }
+      const receipt = begun?.receipt
+      let submitted = false
+      let responseId: string | null = null
+      let artifactIds: string[] = []
+      let stage: 'preparing' | 'submitting' | 'receiving' | 'publishing' = 'preparing'
       try {
         progress('processing')
         const generated = await this.#options.imageGenerationGateway.generate({
-          requestId: receipt?.id ?? randomUUID(),
+          requestId: receipt?.request.requestId ?? randomUUID(),
+          onSubmitting: async () => {
+            await receipt?.submitting()
+            submitted = true
+            stage = 'submitting'
+          },
           onAttempt: receipt?.attempt,
-          output: request.output,
+          output,
           preferences,
           inputImages: references.images,
           model,
           prompt: request.prompt.trim(),
           signal,
         })
+        responseId = generated.responseId
+        stage = 'receiving'
         await validateGeneratedImages(generated.images, signal)
         progress('result-received')
         signal.throwIfAborted()
+        stage = 'publishing'
         progress('publishing')
         signal?.throwIfAborted()
         const artifacts = await this.#options.artifactService.registerGeneratedImages({
@@ -121,25 +150,24 @@ export class ImageGenerationService {
           outputPath: request.outputPath.trim(),
           sourceArtifactId: references.artifactIds.at(-1) ?? null,
         }, writeFiles)
-        const artifactIds = artifacts.map(artifact => artifact.id)
+        artifactIds = artifacts.map(artifact => artifact.id)
         const outputs = artifacts.map(artifact => ({ artifactId: artifact.id, path: artifact.currentPath, mimeType: artifact.mimeType }))
-        await receipt?.settle('completed', artifactIds, generated.responseId)
-        return { value: { artifactIds, outputs, responseId: generated.responseId, ...(generated.source ? { source: generated.source } : {}) }, artifactIds }
+        const result = { artifactIds, outputs, responseId: generated.responseId, ...(generated.source ? { source: generated.source } : {}) }
+        await receipt?.complete(result)
+        return { value: { ...result, ...(receipt ? { request: receipt.request } : {}) }, artifactIds }
       }
       catch (error) {
-        await this.#settleFailure(receipt, error)
-        throw error
+        const publication = error instanceof ArtifactPublicationError ? error.receipt : undefined
+        const failure = error instanceof ImageGenerationError
+          ? readImageGenerationError(error)
+          : { code: 'IMAGE_GENERATION_FAILED' as const, outcome: stage === 'publishing' ? 'partial' as const : submitted || stage !== 'preparing' ? 'unknown' as const : 'failed' as const, diagnostic: { transportCode: diagnosticTransportCode(error) } }
+        const diagnostic = { stage, ...(responseId ? { responseId } : {}), ...(receipt ? { localRequestId: receipt.request.requestId } : {}), ...failure.diagnostic }
+        const normalized = new ImageGenerationError(failure.code, { cause: error, outcome: failure.outcome, diagnostic, request: receipt?.request, artifactIds: publication?.artifactIds ?? artifactIds })
+        await receipt?.fail({ code: normalized.code, outcome: normalized.outcome, diagnostic: normalized.diagnostic }, normalized.artifactIds)
+        signal.throwIfAborted()
+        throw normalized
       }
     })
-  }
-
-  async #settleFailure(receipt: ImageRequestReceipt | undefined, error: unknown) {
-    if (!receipt)
-      return
-    if (error instanceof ArtifactPublicationError)
-      await receipt.settle('partial', [...error.receipt.artifactIds])
-    else
-      await receipt.settle(error instanceof ImageGenerationError ? error.outcome : 'unknown')
   }
 
   dispose(): Promise<void> {

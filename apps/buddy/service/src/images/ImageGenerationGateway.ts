@@ -1,29 +1,13 @@
 import type { Api, ImageContent, Model } from '@earendil-works/pi-ai'
+import type { ImageGenerationErrorCode, ImageGenerationErrorDiagnostic, ImageGenerationOutcome, ImageRequestRef } from '../../../shared/images/imageGeneration'
 import type { ImageOutputOptions, ImagePreferencesSnapshot, ImageSource, ImageSupport, ImageTarget } from '../../../shared/images/imagePreferences'
+import { readImageDiagnostic } from '../../../shared/images/imageGeneration'
 
-export const IMAGE_GENERATION_ERROR_CODES = [
-  'IMAGE_GENERATION_FAILED',
-  'IMAGE_GENERATION_BUSY',
-  'IMAGE_GENERATION_RESOURCE_EXHAUSTED',
-  'IMAGE_GENERATION_INCOMPLETE',
-  'IMAGE_GENERATION_INVALID_RESPONSE',
-  'IMAGE_GENERATION_RESPONSE_TOO_LARGE',
-  'IMAGE_GENERATION_REFERENCE_UNAVAILABLE',
-  'IMAGE_GENERATION_UNSUPPORTED',
-  'PROVIDER_ACCESS_DENIED',
-  'PROVIDER_AUTHENTICATION_FAILED',
-  'PROVIDER_RATE_LIMITED',
-] as const
-
-export type ImageGenerationErrorCode = typeof IMAGE_GENERATION_ERROR_CODES[number]
-
-export interface ImageGenerationErrorDiagnostic {
-  providerCode?: string
-  providerParameter?: string
-  requestId?: string
-}
+export { IMAGE_GENERATION_ERROR_CODES } from '../../../shared/images/imageGeneration'
+export type { ImageGenerationErrorCode, ImageGenerationErrorDiagnostic } from '../../../shared/images/imageGeneration'
 
 export interface ImageGenerationInput {
+  onSubmitting?: () => Promise<void>
   onAttempt?: (target: ImageTarget, attempt: number, backendRequestId?: string) => Promise<void>
   onSubmitted?: (backendRequestId: string) => Promise<void>
 
@@ -62,29 +46,35 @@ export interface ImageGenerationDescription {
 
 export class ImageGenerationError extends Error {
   readonly retryable: boolean
-  readonly outcome: 'failed' | 'unknown'
+  readonly outcome: ImageGenerationOutcome
   readonly code: ImageGenerationErrorCode
   readonly diagnostic: ImageGenerationErrorDiagnostic | null
+  readonly request?: ImageRequestRef
+  readonly artifactIds: string[]
 
   constructor(
     code: ImageGenerationErrorCode,
-    options?: ErrorOptions & { diagnostic?: ImageGenerationErrorDiagnostic, retryable?: boolean, outcome?: 'failed' | 'unknown' },
+    options?: ErrorOptions & { diagnostic?: ImageGenerationErrorDiagnostic, retryable?: boolean, outcome?: ImageGenerationOutcome, request?: ImageRequestRef, artifactIds?: readonly string[] },
   ) {
     super('Lexora Buddy image generation failed', { cause: options?.cause })
     this.name = 'ImageGenerationError'
-    this.outcome = code === 'IMAGE_GENERATION_INCOMPLETE' ? 'unknown' : options?.outcome ?? (options?.retryable ? 'failed' : 'unknown')
+    this.outcome = options?.outcome ?? (['IMAGE_GENERATION_INCOMPLETE', 'IMAGE_GENERATION_BLOCKED', 'IMAGE_GENERATION_INVALID_RESPONSE', 'IMAGE_GENERATION_RESPONSE_TOO_LARGE'].includes(code) ? 'unknown' : 'failed')
     this.retryable = this.outcome === 'failed' && (options?.retryable ?? false)
     this.code = code
-    this.diagnostic = options?.diagnostic ?? null
+    this.diagnostic = readImageDiagnostic(options?.diagnostic)
+    this.request = options?.request
+    this.artifactIds = [...options?.artifactIds ?? []]
   }
 }
 
 export function readImageGenerationError(error: unknown): {
   code: ImageGenerationErrorCode
   diagnostic: ImageGenerationErrorDiagnostic | null
-  outcome: 'failed' | 'unknown'
+  outcome: ImageGenerationOutcome
+  request?: ImageRequestRef
+  artifactIds?: string[]
 } {
   return error instanceof ImageGenerationError
-    ? { code: error.code, diagnostic: error.diagnostic, outcome: error.outcome }
+    ? { code: error.code, diagnostic: error.diagnostic, outcome: error.outcome, artifactIds: error.artifactIds, ...(error.request ? { request: error.request } : {}) }
     : { code: 'IMAGE_GENERATION_FAILED', diagnostic: null, outcome: 'unknown' }
 }

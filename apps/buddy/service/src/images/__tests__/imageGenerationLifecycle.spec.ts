@@ -143,12 +143,12 @@ describe('image generation through the Pi session', () => {
       await vi.waitFor(() => expect(closed.toSorted()).toEqual(requests.toSorted()))
       expect(published).toEqual(['success.png'])
       expect(operations.filter(event => event.phase === 'settled').map(event => event.outcome).toSorted()).toEqual(
-        ending === 'cancel' ? ['cancelled', 'completed', 'failed'] : ['completed', 'failed', 'failed'],
+        ending === 'cancel' ? ['cancelled', 'completed', 'failed'] : ['completed', 'failed', 'unknown'],
       )
       expect(projected.filter(event => event.type === 'tool.completed')).toEqual(expect.arrayContaining([
         expect.objectContaining({ payload: expect.objectContaining({ toolCallId: 'image-success', isError: false, presentation: expect.objectContaining({ card: 'image', status: 'completed', generatedCount: 1 }) }) }),
         expect.objectContaining({ payload: expect.objectContaining({ toolCallId: 'image-failure', isError: true, presentation: expect.objectContaining({ card: 'image', status: 'failed', generatedCount: 0 }) }) }),
-        expect.objectContaining({ payload: expect.objectContaining({ toolCallId: 'image-pending', isError: true, presentation: expect.objectContaining({ card: 'image', status: 'failed' }) }) }),
+        expect.objectContaining({ payload: expect.objectContaining({ toolCallId: 'image-pending', isError: true, presentation: expect.objectContaining({ card: 'image', status: ending === 'cancel' ? 'failed' : 'unknown' }) }) }),
       ]))
       expect(projected.filter(event => event.type === 'output.produced')).toHaveLength(1)
       expect(state.toolCalls.size).toBe(0)

@@ -11,7 +11,9 @@ import type {
   ImageGenerationResult,
 } from './ImageGenerationGateway'
 import { Buffer } from 'node:buffer'
+import { imageGenerationDiagnosticSchema, readImageDiagnostic } from '../../../shared/images/imageGeneration'
 import { ImageGenerationError } from './ImageGenerationGateway'
+import { imageHttpFailure, imageResponseDiagnostic, imageTransportFailure } from './imageHttpDiagnostic'
 import { decodePng, readBoundedResponse, readResponseChunks } from './imageResponseBody'
 
 export interface OpenAiImageGenerationServiceOptions {
@@ -63,6 +65,9 @@ export class OpenAiImageGenerationService implements ImageGenerationGateway {
     const codex = input.model.api === 'openai-codex-responses'
     const headers = createHeaders(input.model, auth, codex)
     const endpoint = resolveEndpoint(input.model, auth, codex)
+    const diagnostic: ImageGenerationErrorDiagnostic = { stage: 'submitting', localRequestId: input.requestId }
+    await input.onSubmitting?.()
+    input.signal.throwIfAborted()
     const response = await this.#fetch(endpoint, {
       body: JSON.stringify(createRequestBody(input, codex)),
       headers,
@@ -70,40 +75,38 @@ export class OpenAiImageGenerationService implements ImageGenerationGateway {
       signal: input.signal,
     }).catch((cause: unknown) => {
       input.signal.throwIfAborted()
-      throw new ImageGenerationError('IMAGE_GENERATION_INCOMPLETE', { cause, diagnostic: input.requestId ? { requestId: input.requestId } : undefined })
+      throw imageTransportFailure(cause, diagnostic)
     })
-    const backendRequestId = readProviderErrorDiagnostic(response, null)?.requestId
+    Object.assign(diagnostic, imageResponseDiagnostic(response))
+    if (!response.ok) {
+      const failure = await imageHttpFailure(response, input.signal)
+      throw new ImageGenerationError(failure.code, { ...failure, diagnostic: { ...diagnostic, ...failure.diagnostic } })
+    }
+    const backendRequestId = diagnostic.requestId
     if (backendRequestId && input.onSubmitted) {
       try {
         await input.onSubmitted(backendRequestId)
       }
       catch (error) {
         await response.body?.cancel().catch(() => {})
-        throw error
+        throw new ImageGenerationError('IMAGE_GENERATION_INCOMPLETE', { cause: error, diagnostic })
       }
-    }
-    if (!response.ok) {
-      const body = await readBoundedResponse(response, input.signal)
-      throw new ImageGenerationError(normalizeProviderError(response.status), {
-        diagnostic: readProviderErrorDiagnostic(response, body),
-        retryable: [400, 401, 403, 404, 429].includes(response.status),
-      })
     }
 
     let output: ImageGenerationResult
     try {
       output = codex
-        ? await readSseOutput(response, input.signal)
+        ? await readSseOutput(response, input.signal, diagnostic)
         : parseJsonOutput(await readBoundedResponse(response, input.signal), response)
     }
     catch (error) {
       input.signal.throwIfAborted()
       if (error instanceof ImageGenerationError)
-        throw error
-      throw new ImageGenerationError('IMAGE_GENERATION_INCOMPLETE', { cause: error, diagnostic: readProviderErrorDiagnostic(response, null) })
+        throw new ImageGenerationError(error.code, { ...error, cause: error, diagnostic: { ...diagnostic, ...error.diagnostic } })
+      throw imageTransportFailure(error, diagnostic)
     }
     if (output.images.length === 0)
-      throw new ImageGenerationError('IMAGE_GENERATION_FAILED')
+      throw new ImageGenerationError('IMAGE_GENERATION_FAILED', { diagnostic })
     return output
   }
 
@@ -223,14 +226,16 @@ function parseJsonOutput(body: string, response: Response): ImageGenerationResul
   }
 }
 
-async function readSseOutput(response: Response, signal: AbortSignal): Promise<ImageGenerationResult> {
+async function readSseOutput(response: Response, signal: AbortSignal, diagnostic: ImageGenerationErrorDiagnostic): Promise<ImageGenerationResult> {
   const outputItems: unknown[] = []
   let responseId: string | null = null
   for await (const data of readSseData(readResponseChunks(response, signal))) {
     if (!data.trim())
       continue
-    if (data.trim() === '[DONE]')
+    if (data.trim() === '[DONE]') {
+      diagnostic.lastEvent = '[DONE]'
       return { images: extractImages(outputItems), responseId }
+    }
     let event: unknown
     try {
       event = JSON.parse(data)
@@ -244,6 +249,9 @@ async function readSseOutput(response: Response, signal: AbortSignal): Promise<I
     const result = readRecord(eventRecord.response)
     responseId = readString(result, 'id') ?? responseId
     const type = eventRecord.type
+    const lastEvent = imageGenerationDiagnosticSchema.shape.lastEvent.safeParse(type)
+    diagnostic.lastEvent = lastEvent.success ? lastEvent.data : 'other'
+    Object.assign(diagnostic, readImageDiagnostic({ responseId }))
     if (type === 'error' || type === 'response.failed' || type === 'response.incomplete' || type === 'response.cancelled' || eventRecord.error || result?.error) {
       throw new ImageGenerationError('IMAGE_GENERATION_FAILED', {
         diagnostic: readProviderErrorDiagnostic(response, result ?? eventRecord),
@@ -316,53 +324,8 @@ function extractImages(output: unknown): ImageGenerationResult['images'] {
   })
 }
 
-function normalizeProviderError(status: number) {
-  if (status === 401)
-    return 'PROVIDER_AUTHENTICATION_FAILED'
-  if (status === 403)
-    return 'PROVIDER_ACCESS_DENIED'
-  if (status === 429)
-    return 'PROVIDER_RATE_LIMITED'
-  return 'IMAGE_GENERATION_FAILED'
-}
-
-function readProviderErrorDiagnostic(
-  response: Response,
-  body: unknown,
-): ImageGenerationErrorDiagnostic | undefined {
-  let record = readRecord(body)
-  try {
-    if (typeof body === 'string')
-      record = readRecord(JSON.parse(body))
-  }
-  catch {}
-  const error = readRecord(record?.error) ?? record
-  const providerCode = readDiagnosticValue(error?.code)
-  const providerParameter = readDiagnosticValue(error?.param)
-    ?? readDiagnosticValue(error?.parameter)
-  const requestId = readDiagnosticValue(response.headers.get('x-request-id'))
-    ?? readDiagnosticValue(response.headers.get('openai-request-id'))
-  if (!providerCode && !providerParameter && !requestId)
-    return undefined
-  return {
-    ...(providerCode ? { providerCode } : {}),
-    ...(providerParameter ? { providerParameter } : {}),
-    ...(requestId ? { requestId } : {}),
-  }
-}
-
-function readDiagnosticValue(value: unknown): string | null {
-  if (typeof value !== 'string')
-    return null
-  const result = value.trim()
-  return result && result.length <= 256 && isDiagnosticToken(result)
-    ? result
-    : null
-}
-
-function isDiagnosticToken(value: string): boolean {
-  const allowedCharacters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-[]:/'
-  return [...value].every(character => allowedCharacters.includes(character))
+function readProviderErrorDiagnostic(response: Response, body: unknown): ImageGenerationErrorDiagnostic {
+  return imageResponseDiagnostic(response, body)
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {
