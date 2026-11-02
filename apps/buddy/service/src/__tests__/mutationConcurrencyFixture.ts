@@ -2,6 +2,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { LocalBuddy } from '../../../shared/buddies/buddyApi'
 import type { LocalTurnStart } from '../../../shared/conversation/chatApi'
 import type { ExtensionShellDescriptor } from '../../../shared/extensions/extensionShell'
+import type { MutationLease } from '../changes/MutationCoordinator'
 import type { BuddyServiceRpcServer } from '../rpc/BuddyServiceRpcServer'
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
@@ -301,23 +302,29 @@ export type ConcurrencyRuntime = Awaited<ReturnType<typeof createConcurrencyRunt
 export function mutationTiming() {
   const original = MutationCoordinator.prototype.acquire
   type Admission = Parameters<MutationCoordinator['acquire']>[0]
-  const gates: { match: (input: Admission) => boolean, release: ReturnType<typeof deferred>, admissions: { input: Admission, coordinator: MutationCoordinator }[] }[] = []
+  interface ObservedAdmission { input: Admission, coordinator: MutationCoordinator, lease?: MutationLease }
+  const gates: { match: (input: Admission) => boolean, release: ReturnType<typeof deferred>, admissions: ObservedAdmission[] }[] = []
   const spy = vi.spyOn(MutationCoordinator.prototype, 'acquire').mockImplementation(async function (this: MutationCoordinator, input) {
     const gate = gates.find(gate => gate.match(input))
     const acquiring = original.call(this, input)
-    gate?.admissions.push({ input, coordinator: this })
+    const admission: ObservedAdmission = { input, coordinator: this }
+    gate?.admissions.push(admission)
     const lease = await acquiring
+    admission.lease = lease
     if (gate)
       await gate.release.promise
     return lease
   })
   return {
     gate(match: (input: Admission) => boolean) {
-      const gate = { match, release: deferred(), admissions: [] as { input: Admission, coordinator: MutationCoordinator }[] }
+      const gate = { match, release: deferred(), admissions: [] as ObservedAdmission[] }
       gates.push(gate)
       return {
         release: () => gate.release.resolve(),
         admissions: gate.admissions,
+        async waitForAcquired(count: number) {
+          await expect.poll(() => gate.admissions.filter(admission => admission.lease).length, { timeout: 15000 }).toBe(count)
+        },
         async waitFor(active: number, pending: number) {
           await expect.poll(() => {
             const states = [...new Map(gate.admissions.map(({ input, coordinator }) => [input.runId, coordinator.getRunState(input.runId)])).values()]
@@ -356,7 +363,7 @@ export function treeByRole(f: ConcurrencyRuntime) {
   return { root, actor, 'npc-a': npcA, 'npc-b': npcB }
 }
 
-export async function assertDurableTree(f: ConcurrencyRuntime, cancelled: Role[] = []) {
+export async function assertDurableTree(f: ConcurrencyRuntime, cancelled: Role[] = [], partial: Role[] = []) {
   const tree = treeByRole(f)
   for (const role of roles) {
     const run = tree[role]
@@ -373,7 +380,10 @@ export async function assertDurableTree(f: ConcurrencyRuntime, cancelled: Role[]
     }
   }
   expect(f.database.prepare('SELECT COUNT(*) AS count FROM run_mutation_leases WHERE run_id IN (?, ?, ?, ?) AND status <> \'released\'').get(...Object.values(tree).map(run => run.id))?.count).toBe(0)
-  expect(f.database.prepare('SELECT COUNT(*) AS count FROM run_change_invocations WHERE status = \'pending\' OR (tool_name IN (\'write\', \'edit\') AND status <> \'completed\')').get()?.count).toBe(0)
+  expect(f.database.prepare('SELECT COUNT(*) AS count FROM run_change_invocations WHERE status = \'pending\'').get()?.count).toBe(0)
+  const partialRuns = partial.map(role => tree[role].id)
+  for (const invocation of f.database.prepare('SELECT run_id, status FROM run_change_invocations WHERE tool_name IN (\'write\', \'edit\')').all())
+    expect(invocation.status).toBe(partialRuns.includes(String(invocation.run_id)) ? 'partial' : 'completed')
   return tree
 }
 

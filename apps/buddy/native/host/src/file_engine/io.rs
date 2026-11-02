@@ -2,7 +2,7 @@ use super::{
     protocol::{Error, MAX_TEXT, Result},
     resources::{Root, identity, relative},
 };
-use cap_std::fs::{Dir, OpenOptions};
+use cap_std::fs::{Dir, DirBuilder, OpenOptions};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -157,8 +157,15 @@ pub fn create_bytes(root: &Root, path: &str, bytes: &[u8], id: &str) -> Result<(
         })?)
     })()
     .map_err(|error| Error::NotApplied(Box::new(error)))?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
     let mut file = parent
-        .open_with(&temporary, OpenOptions::new().write(true).create_new(true))
+        .open_with(&temporary, &options)
         .map_err(creation_error)?;
     (|| {
         let name = path.file_name().ok_or(Error::Invalid)?;
@@ -169,6 +176,17 @@ pub fn create_bytes(root: &Root, path: &str, bytes: &[u8], id: &str) -> Result<(
         sync_dir(&parent)
     })()
     .map_err(|_: Error| Error::Recovery)
+}
+
+pub fn create_directory(dir: &Dir, path: &Path, recursive: bool) -> std::io::Result<()> {
+    let mut builder = DirBuilder::new();
+    builder.recursive(recursive);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    dir.create_dir_with(path, &builder)
 }
 
 pub fn creation_error(error: std::io::Error) -> Error {

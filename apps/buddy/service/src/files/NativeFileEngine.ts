@@ -2,8 +2,11 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { ZodType } from 'zod'
 import { Buffer } from 'node:buffer'
 import { spawn } from 'node:child_process'
+import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
+import { join } from 'node:path'
 import process from 'node:process'
 import { z } from 'zod'
+import { readNativeBoundedFile } from '../../../platform/filesystem/nativeBoundedFile'
 import { Emitter } from '../../../shared/events/Emitter'
 import { directoryPageSchema } from '../../../shared/files/filePreview'
 
@@ -107,6 +110,22 @@ export class NativeFileEngine {
   }
 
   async ready(): Promise<void> { await this.#connect() }
+
+  async withStagingDirectory<T>(operation: (directory: string, root: string) => Promise<T>): Promise<T> {
+    await this.ready()
+    const path = join(this.#directory, 'publication')
+    await mkdir(path, { recursive: true, mode: 0o700 })
+    const root = await realpath(path)
+    const directory = await mkdtemp(join(root, 'operation-'))
+    try {
+      return await operation(directory, root)
+    }
+    finally { await rm(directory, { recursive: true, force: true }) }
+  }
+
+  readBytes(root: string, path: string, maxBytes: number, signal?: AbortSignal) {
+    return readNativeBoundedFile(root, path, maxBytes, signal, this.#executable)
+  }
 
   async register(key: string, path: string, watch = false) {
     const connection = await this.#connect()

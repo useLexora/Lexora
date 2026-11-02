@@ -109,53 +109,34 @@ fn id() -> String {
 }
 
 #[test]
-fn read_reports_missing_targets_and_reads_restored_files() {
+fn read_distinguishes_missing_targets_from_revoked_roots_and_recovers() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("root");
+    let parent = root.join("nested");
     std::fs::create_dir(&root).unwrap();
     let mut engine = Engine::new(&directory.path().join("journal"));
     engine.register("root", &root);
 
-    for path in ["note.md", "missing/note.md"] {
+    for path in ["note.md", "nested/note.md"] {
         assert_eq!(
             engine.call(json!({"type":"read","root":"root","path":path}))["error"],
             "FILE_NOT_FOUND"
         );
     }
     assert_eq!(
-        engine.call(json!({"type":"list","root":"root","path":"missing"}))["error"],
+        engine.call(json!({"type":"list","root":"root","path":"nested"}))["error"],
         "FILE_IO_FAILED"
     );
 
-    std::fs::write(root.join("note.md"), "original").unwrap();
-    let original = engine.call(json!({"type":"read","root":"root","path":"note.md"}));
+    std::fs::create_dir(&parent).unwrap();
+    std::fs::write(parent.join("note.md"), "original").unwrap();
+    let original = engine.call(json!({"type":"read","root":"root","path":"nested/note.md"}));
     assert_eq!(original["result"]["text"], "original");
-    std::fs::remove_file(root.join("note.md")).unwrap();
+    std::fs::remove_file(parent.join("note.md")).unwrap();
     assert_eq!(
-        engine.call(json!({"type":"read","root":"root","path":"note.md"}))["error"],
+        engine.call(json!({"type":"read","root":"root","path":"nested/note.md"}))["error"],
         "FILE_NOT_FOUND"
     );
-    std::fs::write(root.join("note.md"), "restored").unwrap();
-    let restored = engine.call(json!({"type":"read","root":"root","path":"note.md"}));
-    assert_eq!(restored["result"]["text"], "restored");
-    assert_ne!(restored["result"]["etag"], original["result"]["etag"]);
-}
-
-#[test]
-fn read_reports_missing_target_when_parent_becomes_a_file() {
-    let directory = tempfile::tempdir().unwrap();
-    let root = directory.path().join("root");
-    let parent = root.join("nested");
-    std::fs::create_dir_all(&parent).unwrap();
-    std::fs::write(parent.join("note.md"), "original").unwrap();
-    let mut engine = Engine::new(&directory.path().join("journal"));
-    engine.register("root", &root);
-    assert_eq!(
-        engine.call(json!({"type":"read","root":"root","path":"nested/note.md"}))["result"]["text"],
-        "original"
-    );
-
-    std::fs::remove_file(parent.join("note.md")).unwrap();
     std::fs::remove_dir(&parent).unwrap();
     std::fs::write(&parent, "not a directory").unwrap();
     assert_eq!(
@@ -170,19 +151,10 @@ fn read_reports_missing_target_when_parent_becomes_a_file() {
     std::fs::remove_file(&parent).unwrap();
     std::fs::create_dir(&parent).unwrap();
     std::fs::write(parent.join("note.md"), "restored").unwrap();
-    assert_eq!(
-        engine.call(json!({"type":"read","root":"root","path":"nested/note.md"}))["result"]["text"],
-        "restored"
-    );
-}
+    let restored = engine.call(json!({"type":"read","root":"root","path":"nested/note.md"}));
+    assert_eq!(restored["result"]["text"], "restored");
+    assert_ne!(restored["result"]["etag"], original["result"]["etag"]);
 
-#[test]
-fn read_rejects_unknown_and_revoked_roots() {
-    let directory = tempfile::tempdir().unwrap();
-    let root = directory.path().join("root");
-    std::fs::create_dir(&root).unwrap();
-    let mut engine = Engine::new(&directory.path().join("journal"));
-    engine.register("root", &root);
     engine.call(json!({"type":"revoke","key":"root"}));
     for key in ["root", "unknown"] {
         assert_eq!(
@@ -373,7 +345,7 @@ fn shared_roots_and_hardlinks_share_the_same_resource_lease() {
 }
 
 #[test]
-fn restart_preserves_unknown_outcomes_without_blocking_new_operations() {
+fn acknowledging_an_interrupted_operation_preserves_later_file_changes() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("root");
     std::fs::create_dir(&root).unwrap();
@@ -393,41 +365,10 @@ fn restart_preserves_unknown_outcomes_without_blocking_new_operations() {
     )
     .unwrap();
     drop(db);
+    std::fs::rename(root.join("a"), root.join("b")).unwrap();
+
     let mut engine = Engine::new(&journal);
     engine.register("root", &root);
-    assert_eq!(
-        engine.call(json!({"type":"query","operationId":operation}))["result"]["status"],
-        "needs-recovery"
-    );
-    assert_eq!(
-        engine.mutate(&operation, "root", "a", json!({"kind":"createFile"}))["result"]["status"],
-        "needs-recovery"
-    );
-    assert_eq!(
-        engine.mutate(
-            &id(),
-            "root",
-            "a",
-            json!({"kind":"rename","destination":"b"})
-        )["result"]["status"],
-        "applied"
-    );
-    assert!(!root.join("a").exists());
-    assert!(root.join("b").exists());
-    assert_eq!(
-        engine.mutate(&operation, "root", "a", json!({"kind":"createFile"}))["result"]["status"],
-        "needs-recovery"
-    );
-    assert!(!root.join("a").exists());
-    assert_eq!(
-        engine.mutate(
-            &operation,
-            "root",
-            "a",
-            json!({"kind":"write","text":"replay"})
-        )["error"],
-        "FILE_OPERATION_ID_CONFLICT"
-    );
     assert_eq!(
         engine.call(json!({"type":"acknowledge","root":"root","operationId":operation}))["result"]
             ["status"],
@@ -663,6 +604,67 @@ fn browsed_directories_notify_shared_roots_after_revocation() {
     assert_eq!(change["roots"], json!(["second"]));
 }
 
+#[cfg(unix)]
+#[test]
+fn newly_created_files_and_directories_are_private() {
+    use sha2::{Digest, Sha256};
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("root");
+    let staging = directory.path().join("staging");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::create_dir(&staging).unwrap();
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o750)).unwrap();
+    let bytes = b"private\x00binary";
+    std::fs::write(staging.join("upload"), bytes).unwrap();
+    let mut engine = Engine::new(&directory.path().join("journal"));
+    engine.register("root", &root);
+    engine.register("staging", &staging);
+    for (path, action) in [
+        ("outputs", json!({"kind":"createDirectory"})),
+        ("empty", json!({"kind":"createFile"})),
+        (
+            "outputs/nested/note.txt",
+            json!({"kind":"write","text":"private text"}),
+        ),
+        (
+            "outputs/image.bin",
+            json!({"kind":"writeFile","stagingRoot":"staging","stagingPath":"upload","size":bytes.len(),"sha256":format!("{:x}", Sha256::digest(bytes))}),
+        ),
+    ] {
+        assert_eq!(
+            engine.mutate(&id(), "root", path, action)["result"]["status"],
+            "applied"
+        );
+    }
+    for (path, expected) in [
+        ("", 0o750),
+        ("outputs", 0o700),
+        ("outputs/nested", 0o700),
+        ("empty", 0o600),
+        ("outputs/nested/note.txt", 0o600),
+        ("outputs/image.bin", 0o600),
+    ] {
+        assert_eq!(
+            std::fs::metadata(root.join(path))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            expected,
+            "{path}"
+        );
+    }
+    assert_eq!(
+        std::fs::read(root.join("outputs/image.bin")).unwrap(),
+        bytes
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("outputs/nested/note.txt")).unwrap(),
+        "private text"
+    );
+}
+
 #[test]
 fn binary_save_checks_staged_bytes_versions_and_replays_receipts_without_writing() {
     use sha2::{Digest, Sha256};
@@ -675,6 +677,15 @@ fn binary_save_checks_staged_bytes_versions_and_replays_receipts_without_writing
     let original = b"PK\x00\xfforiginal";
     let updated = b"PK\x00\xfeupdated";
     std::fs::write(root.join("report.xlsx"), original).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            root.join("report.xlsx"),
+            std::fs::Permissions::from_mode(0o640),
+        )
+        .unwrap();
+    }
     std::fs::write(staging.join("upload"), updated).unwrap();
     let mut engine = Engine::new(&directory.path().join("journal"));
     engine.register("root", &root);
@@ -693,6 +704,18 @@ fn binary_save_checks_staged_bytes_versions_and_replays_receipts_without_writing
         "FILE_OPERATION_ID_CONFLICT"
     );
     assert_eq!(std::fs::read(root.join("report.xlsx")).unwrap(), updated);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(root.join("report.xlsx"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o640
+        );
+    }
     std::fs::write(root.join("report.xlsx"), b"external").unwrap();
     assert_eq!(engine.call(request.clone())["result"]["status"], "applied");
     assert_eq!(

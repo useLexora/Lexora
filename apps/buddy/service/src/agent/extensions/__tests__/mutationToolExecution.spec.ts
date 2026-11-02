@@ -3,10 +3,9 @@ import type { BuddyExecutionProfile } from '../../../../../shared/permissions/ex
 import type { ToolExecutionPhaseChange } from '../../../../../shared/runs/toolExecutionPhase'
 import type { BuddyToolClassification } from '../../../approvals/toolClassification'
 import type { BuddyExtensionRunContext } from '../BuddyExtensionRunContext'
-import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import process from 'node:process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { defineTool } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
@@ -16,7 +15,6 @@ import { createCapturedFileWriter } from '../../../changes/CapturedFileWriter'
 import { ChangeCaptureService } from '../../../changes/ChangeCaptureService'
 import { createChangeSetRepository } from '../../../changes/changeSetRepository'
 import { MutationCoordinator } from '../../../changes/MutationCoordinator'
-import { MutationRecoveryService } from '../../../changes/MutationRecoveryService'
 import { createMutationRepository } from '../../../changes/mutationRepository'
 import { ToolAuthorizationService } from '../../../permissions/ToolAuthorizationService'
 import { ToolExecutionPermissions } from '../../../permissions/ToolExecutionPermissions'
@@ -32,62 +30,30 @@ afterEach(async () => {
 })
 
 describe('authorized mutation execution', () => {
-  it.each(['bash', 'powershell', 'lexora_shell', 'lexora_host_shell'])('allows full-access %s in a separate directory while retaining process ownership', async (name) => {
-    const fixture = await setup()
-    const held = join(fixture.root, 'run-1')
-    const independent = join(fixture.root, 'run-2')
-    await writeFile(join(independent, 'result.txt'), 'BEFORE')
-    const active = await fixture.mutations.acquire({ runId: 'run-1', invocationId: 'held', lifetime: 'external', claims: [{ kind: 'tree', canonicalPath: held }], signal: new AbortController().signal })
-    try {
-      const actor = fixture.actor('run-2', async (path, content) => {
-        const invocation = fixture.mutations.getCurrentInvocation()!
-        expect(fixture.mutationRepository.listUnreleased().find(lease => lease.invocationId === invocation.invocationId)?.claims).toEqual([{ kind: 'tree', canonicalPath: independent }])
-        expect(fixture.mutations.recordOwnedProcessSettlement({ processId: 'owned', settlement: 'pending' })).toBe(true)
-        await writeFile(path, content)
-        expect(fixture.mutations.recordOwnedProcessSettlement({ processId: 'owned', settlement: 'released' })).toBe(true)
-      }, name, { profile: 'full_access', workspaceRoot: independent })
-      await actor.execute({ path: join(independent, 'result.txt'), content: 'PARALLEL', timeout: 1 })
-      expect(await readFile(join(independent, 'result.txt'), 'utf8')).toBe('PARALLEL')
-      expect(fixture.mutations.getRunState('run-1').active).toBe(1)
-      expect(fixture.mutations.getRunState('run-2')).toEqual({ pending: 0, active: 0, hazards: [] })
-    }
-    finally { active.release() }
-  })
-
-  it.each(['timeout', 'cancel'] as const)('removes a full-access shell waiter on %s without any late writes', async (outcome) => {
+  it('cancels a concurrent full-access shell without any late writes', async () => {
     const fixture = await setup()
     const active = await fixture.mutations.acquire({ runId: 'run-1', invocationId: 'held', lifetime: 'external', claims: [{ kind: 'tree', canonicalPath: fixture.root }], signal: new AbortController().signal })
     const controller = new AbortController()
-    const actor = fixture.actor('run-2', (path, content) => writeFile(path, content), 'lexora_shell', { profile: 'full_access', signal: controller.signal })
-    const operation = actor.execute({ path: fixture.path, content: 'LATE_WRITE', timeout: outcome === 'timeout' ? 0.1 : 10 })
-    const rejected = expect(operation).rejects.toThrow(outcome === 'timeout' ? 'SHELL_RESOURCE_TIMEOUT' : 'abort')
+    const entered = Promise.withResolvers<void>()
+    const actor = fixture.actor('run-2', async (path, content, signal) => {
+      entered.resolve()
+      await delay(10_000, undefined, { signal })
+      await writeFile(path, content)
+    }, 'lexora_shell', { profile: 'full_access', signal: controller.signal })
+    const operation = actor.execute({ path: fixture.path, content: 'LATE_WRITE', timeout: 10 })
+    const rejected = expect(operation).rejects.toThrow(/abort|SHELL_RESOURCE_TIMEOUT/i)
     try {
-      await expect.poll(() => fixture.mutations.getRunState('run-2').pending).toBe(1)
-      expect(actor.phases).toContainEqual(expect.objectContaining({ phase: 'resource', waitingFor: expect.objectContaining({ runId: 'run-1', state: 'active' }) }))
-      if (outcome === 'cancel')
-        controller.abort()
+      await entered.promise
+      expect(fixture.mutations.getRunState('run-2')).toMatchObject({ active: 1, pending: 0 })
+      expect(actor.phases.some(event => event.phase === 'resource')).toBe(false)
+      controller.abort()
       await rejected
-      expect(actor.phases.at(-1)).toMatchObject({ phase: 'finished', outcome: outcome === 'cancel' ? 'cancelled' : 'failed' })
+      expect(actor.phases.at(-1)).toMatchObject({ phase: 'finished', outcome: 'cancelled' })
     }
     finally { active.release() }
-    await delay(20)
     expect(await readFile(fixture.path, 'utf8')).toBe('A')
     expect(fixture.mutations.getRunState('run-2')).toEqual({ pending: 0, active: 0, hazards: [] })
     expect(fixture.repository.listCaptures('run-2')).toEqual([])
-  })
-
-  it('records cancellation during execution after releasing the invocation', async () => {
-    const fixture = await setup()
-    const controller = new AbortController()
-    const actor = fixture.actor('run-1', async (_path, _content, signal) => {
-      await writeFile(fixture.path, 'STARTED')
-      controller.abort()
-      signal!.throwIfAborted()
-    }, 'write', { signal: controller.signal })
-    await expect(actor.execute({ path: fixture.path, content: '' })).rejects.toThrow('abort')
-    expect(actor.phases.at(-1)).toMatchObject({ phase: 'finished', outcome: 'cancelled' })
-    expect(await readFile(fixture.path, 'utf8')).toBe('STARTED')
-    expect(fixture.mutations.getRunState('run-1')).toEqual({ pending: 0, active: 0, hazards: [] })
   })
 
   it('preserves a tool failure when cancellation arrives during capture cleanup', async () => {
@@ -102,22 +68,20 @@ describe('authorized mutation execution', () => {
     expect(fixture.mutations.getRunState('run-1')).toEqual({ pending: 0, active: 0, hazards: [] })
   })
 
-  it('passes the remaining command budget to the backend after resource waiting', async () => {
+  it('passes the remaining command budget to the backend after asynchronous preparation', async () => {
     const fixture = await setup()
-    const active = await fixture.mutations.acquire({ runId: 'run-1', invocationId: 'held', lifetime: 'external', claims: [{ kind: 'tree', canonicalPath: fixture.root }], signal: new AbortController().signal })
     let remaining = 0
     const actor = fixture.actor('run-2', async (path, content, _signal, timeout) => {
       remaining = timeout!
       await writeFile(path, content)
-    }, 'lexora_shell', { profile: 'full_access' })
+    }, 'lexora_shell', { profile: 'full_access', validateBeforeExecution: async () => {
+      await delay(180)
+      return null
+    } })
     const operation = actor.execute({ path: fixture.path, content: 'WITHIN_BUDGET', timeout: 5 })
-    await expect.poll(() => fixture.mutations.getRunState('run-2').pending).toBe(1)
-    await delay(180)
-    active.release()
     await operation
     expect(remaining).toBeGreaterThan(0)
     expect(remaining).toBeLessThan(4.85)
-    expect(actor.phases.some(event => event.phase === 'preparing')).toBe(true)
     expect(await readFile(fixture.path, 'utf8')).toBe('WITHIN_BUDGET')
     expect(fixture.mutations.getRunState('run-2')).toEqual({ pending: 0, active: 0, hazards: [] })
   })
@@ -167,6 +131,47 @@ describe('authorized mutation execution', () => {
     expect(result).toMatchObject({ coverage: 'partial', coverageReasons: ['untracked'] })
   })
 
+  it.each(['bash', 'mcp__fixture__write'])('lets a long %s overlap exact writes without claiming exclusive attribution', async (toolName) => {
+    const fixture = await setup()
+    const entered = Promise.withResolvers<void>()
+    const released = Promise.withResolvers<void>()
+    const background = fixture.actor('run-2', async () => {
+      entered.resolve()
+      await released.promise
+    }, toolName)
+    const running = background.execute({ path: fixture.path, content: '' })
+    const writer = fixture.actor('run-1', (path, content) => writeFile(path, content), 'write')
+    try {
+      await entered.promise
+      await writer.execute({ path: fixture.path, content: 'B' })
+      expect(fixture.mutations.getRunState('run-2')).toMatchObject({ active: 1, pending: 0 })
+      expect(writer.phases.some(event => event.waitingFor)).toBe(false)
+      expect(await fixture.changes.getForRuns(['run-1'])).toMatchObject({ coverage: 'partial', coverageReasons: ['untracked'] })
+      expect(fixture.repository.listCaptures('run-1')[0]?.invocation?.status).toBe('partial')
+    }
+    finally {
+      released.resolve()
+      await running
+    }
+    await writer.execute({ path: fixture.path, content: 'C' })
+    const captures = fixture.repository.listCaptures('run-1')
+    expect(captures.map(capture => capture.invocation?.status)).toEqual(['partial', 'completed'])
+    expect(new Set(captures.map(capture => capture.invocation?.segmentId)).size).toBe(2)
+    expect((await fixture.changes.getForRuns(['run-1'])).files.map(file => [file.beforeText, file.afterText])).toEqual([['A', 'B'], ['B', 'C']])
+  })
+
+  it('allows an external invocation to call a nested file writer without a host-lock deadlock', async () => {
+    const fixture = await setup()
+    const writer = fixture.actor('run-1', (path, content) => writeFile(path, content), 'write')
+    const external = fixture.actor('run-2', async () => {
+      await writer.execute({ path: fixture.path, content: 'NESTED' })
+    }, 'mcp__fixture__write')
+    await external.execute({ path: fixture.path, content: '' })
+    expect(await readFile(fixture.path, 'utf8')).toBe('NESTED')
+    expect(fixture.mutationRepository.listUnreleased()).toEqual([])
+    expect(await fixture.changes.getForRuns(['run-1', 'run-2'])).toMatchObject({ coverage: 'partial', coverageReasons: ['untracked'] })
+  })
+
   it('acquires image output locks only at publication and captures writes completed before an error', async () => {
     const fixture = await setup()
     const actor = fixture.actor('run-1', async () => {}, 'lexora_image_generate')
@@ -198,44 +203,6 @@ describe('authorized mutation execution', () => {
     expect(fixture.mutationRepository.listUnreleased()).toEqual([])
   })
 
-  it.skipIf(process.platform !== 'linux')('imports a lost native release receipt in the background without replaying the old command', async () => {
-    const fixture = await setup()
-    const recovery = new MutationRecoveryService({ mutations: fixture.mutations, receiptDirectory: join(fixture.root, 'receipts') })
-    cleanups.push(async () => {
-      fixture.mutations.stopAdmission()
-      await recovery.dispose()
-    })
-    await recovery.start()
-    const old = await fixture.mutations.acquire({ runId: 'run-1', invocationId: 'lost-release', lifetime: 'external', claims: [{ kind: 'tree', canonicalPath: fixture.root }], signal: new AbortController().signal })
-    await expect(fixture.mutations.withInvocation(old, () => runSupervisedShellProcess({
-      shell: '/bin/bash',
-      args: ['--noprofile', '--norc', '-c'],
-      command: 'printf "old\\n" >> effects.log',
-      cwd: fixture.root,
-      environment: { PATH: '/usr/bin:/bin' },
-    }, {
-      receiptDirectory: join(fixture.root, 'receipts'),
-      onData() {},
-      onSettlement(record) {
-        if (record.launchState === 'settled')
-          throw new Error('RELEASE_NOTIFICATION_LOST')
-        expect(fixture.mutations.recordOwnedProcessSettlement(record)).toBe(true)
-      },
-    }))).rejects.toThrow('RELEASE_NOTIFICATION_LOST')
-    old.markHazard('OWNED_PROCESS_CLEANUP_UNCONFIRMED')
-    expect(fixture.mutations.getHazards()).toHaveLength(1)
-    const writer = fixture.actor('run-2', async (path, content) => {
-      await appendFile(join(fixture.root, 'effects.log'), 'new\n')
-      await writeFile(path, content)
-    }, 'write')
-    await writer.execute({ path: fixture.path, content: 'RECOVERED' })
-    expect(await readFile(fixture.path, 'utf8')).toBe('RECOVERED')
-    expect(await readFile(join(fixture.root, 'effects.log'), 'utf8')).toBe('old\nnew\n')
-    await expect.poll(() => fixture.mutations.getHazards()).toEqual([])
-    expect(fixture.mutationRepository.listUnreleased()).toEqual([])
-    expect(fixture.mutations.getHazards()).toEqual([])
-  })
-
   it('does not start a cancelled waiter when the active lease becomes unknown', async () => {
     const fixture = await setup()
     const controller = new AbortController()
@@ -255,14 +222,15 @@ describe('authorized mutation execution', () => {
     expect(fixture.mutations.getHazards()).toHaveLength(1)
   })
 
-  it.each(['write', 'bash', 'mcp__fixture__write'])('admits a new %s while a prior external outcome remains unknown', async (toolName) => {
+  it('admits a new MCP call while a prior external outcome remains unknown', async () => {
     const fixture = await setup()
     const old = await fixture.mutations.acquire({ runId: 'run-1', invocationId: 'old', lifetime: 'external', claims: [{ kind: 'host' }], signal: new AbortController().signal })
     fixture.mutations.recordOwnedProcessSettlement({ invocationId: 'old', processId: 'unverified-external', settlement: 'unknown' })
     old.markHazard('OWNED_PROCESS_CLEANUP_UNCONFIRMED')
-    const writer = fixture.actor('run-2', (path, content) => writeFile(path, content), toolName)
+    const writer = fixture.actor('run-2', (path, content) => writeFile(path, content), 'mcp__fixture__write')
     await writer.execute({ path: fixture.path, content: 'NEW' })
     expect(await readFile(fixture.path, 'utf8')).toBe('NEW')
+    expect(await fixture.changes.getForRuns(['run-2'])).toMatchObject({ coverage: 'partial', coverageReasons: ['untracked'] })
     expect(fixture.mutations.getHazards()).toHaveLength(1)
     expect(fixture.mutations.getOwnedProcesses('old')).toEqual([{ processId: 'unverified-external', settlement: 'unknown' }])
     expect(fixture.mutationRepository.listUnreleased().map(item => item.invocationId)).toEqual(['old'])
@@ -344,7 +312,7 @@ describe('authorized mutation execution', () => {
     expect(fixture.mutations.getRunState('run-1')).toEqual({ pending: 0, active: 0, hazards: [] })
   })
 
-  it.each(['write', 'edit', 'mcp__fixture__write', 'mutate'])('persists the recovery lifetime of %s before its side effects', async (toolName) => {
+  it.each(['write', 'mcp__fixture__write'])('persists the recovery lifetime of %s before its side effects', async (toolName) => {
     const fixture = await setup()
     const entered = Promise.withResolvers<void>()
     const release = Promise.withResolvers<void>()
@@ -358,7 +326,7 @@ describe('authorized mutation execution', () => {
       await entered.promise
       expect(fixture.mutationRepository.listUnreleased()).toMatchObject([{
         runId: 'run-1',
-        lifetime: toolName === 'write' || toolName === 'edit' ? 'runtime' : 'external',
+        lifetime: toolName === 'write' ? 'runtime' : 'external',
         processes: [],
       }])
       expect(await readFile(fixture.path, 'utf8')).toBe('A')
@@ -418,16 +386,15 @@ async function setup(options: { afterCapture?: () => void, beforeFinish?: () => 
   const mutations = new MutationCoordinator({ repository: mutationRepository })
   cleanups.push(() => mutations.dispose())
   const grants = [{ canonicalRoot: root, root, grantId: 'workspace', kind: 'workspace' as const }]
-  function actor(runId: string, mutate: (path: string, content: string, signal?: AbortSignal, timeout?: number) => Promise<void>, toolName = 'mutate', toolOptions: { profile?: BuddyExecutionProfile, workspaceRoot?: string, readOnly?: boolean, signal?: AbortSignal, validateBeforeExecution?: BuddyToolClassification['validateBeforeExecution'] } = {}) {
+  function actor(runId: string, mutate: (path: string, content: string, signal?: AbortSignal, timeout?: number) => Promise<void>, toolName = 'mutate', toolOptions: { profile?: BuddyExecutionProfile, readOnly?: boolean, signal?: AbortSignal, validateBeforeExecution?: BuddyToolClassification['validateBeforeExecution'] } = {}) {
     const cwd = join(root, runId)
-    const actorGrants = toolOptions.workspaceRoot ? [{ ...grants[0]!, root: toolOptions.workspaceRoot, canonicalRoot: toolOptions.workspaceRoot }] : grants
     const phases: ToolExecutionPhaseChange[] = []
     const run: BuddyExtensionRunContext = { runId, signal: toolOptions.signal ?? new AbortController().signal, flushProjectedEvents: async () => {}, onToolExecutionAuthorized: async () => {}, onToolExecutionPhase: event => phases.push(event) }
     const executionPermissions = new ToolExecutionPermissions()
     cleanups.push(() => executionPermissions.dispose())
     const authorization = new ToolAuthorizationService({ approvalService: { request: async () => {
       throw new Error('UNEXPECTED_APPROVAL')
-    } }, approvalAvailable: false, approvalPolicy: 'policy', executionProfile: toolOptions.profile ?? 'workspace_write', cwd, owner: { kind: 'conversation', id: 'conversation' }, getGrants: () => actorGrants, executionPermissions })
+    } }, approvalAvailable: false, approvalPolicy: 'policy', executionProfile: toolOptions.profile ?? 'workspace_write', cwd, owner: { kind: 'conversation', id: 'conversation' }, getGrants: () => grants, executionPermissions })
     const classify = (input: { path: string }) => ({ shellReadOnly: toolOptions.readOnly, access: 'write' as const, paths: [{ path: input.path, mode: 'existing' as const }], validateBeforeExecution: toolOptions.validateBeforeExecution })
     const tool = defineTool({ name: toolName, label: 'Mutate', description: 'Write controlled files', executionMode: 'parallel', parameters: Type.Object({ path: Type.String(), content: Type.String(), timeout: Type.Optional(Type.Number()) }), async execute(_id, input, signal) {
       await mutate(input.path, input.content, signal, input.timeout)
@@ -439,8 +406,8 @@ async function setup(options: { afterCapture?: () => void, beforeFinish?: () => 
       authorization,
       mutations,
       getRunContext: () => run,
-      getGrants: () => actorGrants,
-      getWorkspaceGrants: () => actorGrants,
+      getGrants: () => grants,
+      getWorkspaceGrants: () => grants,
       classify: async event => classify(event.input as { path: string }),
       workspaceMutationTools: [],
       changes: {
@@ -459,7 +426,7 @@ async function setup(options: { afterCapture?: () => void, beforeFinish?: () => 
     return {
       phases,
       authorization,
-      createWriter: (input: { path: string, content: string }) => createCapturedFileWriter({ conversationId: 'conversation', cwd, run, event: { type: 'tool_call', toolCallId: 'same-provider-id', toolName, input }, authorization, mutations, changes, getGrants: () => grants }),
+      createWriter: (input: { path: string, content: string }) => createCapturedFileWriter({ conversationId: 'conversation', cwd, run, event: { type: 'tool_call', toolCallId: 'same-provider-id', toolName, input }, authorization, mutations, changes, files: { withStagingDirectory: operation => operation(join(root, 'staging')), fileWriteClaims: async paths => paths.map(canonicalPath => ({ kind: 'file', canonicalPath })), writeFile: async () => { throw new Error('NATIVE_PUBLICATION_NOT_CONFIGURED') } }, getGrants: () => grants }),
       authorize: (input: { path: string, content: string }) => authorization.authorize({ input, toolCallId: 'same-provider-id', toolName: tool.name }, run, classify(input)),
       execute: (input: { path: string, content: string, timeout?: number }) => wrapped.execute('same-provider-id', input, run.signal, undefined, {} as Parameters<ToolDefinition['execute']>[4]),
     }

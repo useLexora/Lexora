@@ -37,10 +37,52 @@ describe('mutation ownership', () => {
     expect(mutations.getRunState('waiting')).toEqual({ pending: 0, active: 0, hazards: [] })
   })
 
+  it('observes unknown writers without taking native locks or delaying exact writers, while retaining lifecycle and overlap boundaries', async () => {
+    const nativeOwners = new Set<string>()
+    const mutations = new MutationCoordinator({ resources: {
+      acquire: async (id) => { nativeOwners.add(id) },
+      release: async (id) => { nativeOwners.delete(id) },
+      reconcile: async () => {},
+    } })
+    coordinators.push(mutations)
+    const input = { lifetime: 'runtime' as const, signal: new AbortController().signal, claims: [{ kind: 'file' as const, canonicalPath: '/workspace/a.txt' }] }
+    const first = await mutations.acquire({ ...input, runId: 'first', invocationId: 'first' })
+    const waiting = mutations.acquire({ ...input, runId: 'second', invocationId: 'second' })
+    const background = await mutations.acquire({ ...input, runId: 'shell', invocationId: 'shell', lifetime: 'external', coordination: 'observe', captureBoundary: true, claims: [{ kind: 'tree', canonicalPath: '/workspace' }] })
+    expect(nativeOwners).toEqual(new Set(['first']))
+    expect(first.hasConcurrentChanges()).toBe(true)
+    expect(background.hasConcurrentChanges()).toBe(true)
+    let ended = false
+    const stable = mutations.waitForRun('shell').then(() => {
+      ended = true
+    })
+    expect(mutations.recordOwnedProcessSettlement({ invocationId: 'shell', processId: 'process', settlement: 'pending' })).toBe(true)
+    first.release()
+    const second = await waiting
+    expect(ended).toBe(false)
+    expect(second.hasConcurrentChanges()).toBe(true)
+    expect(nativeOwners).toEqual(new Set(['second']))
+    second.release()
+    const elsewhere = await mutations.acquire({ ...input, runId: 'elsewhere', invocationId: 'elsewhere', claims: [{ kind: 'file', canonicalPath: '/other/a.txt' }] })
+    expect(elsewhere.hasConcurrentChanges()).toBe(false)
+    elsewhere.release()
+    mutations.recordOwnedProcessSettlement({ invocationId: 'shell', processId: 'process', settlement: 'released' })
+    background.release()
+    await stable
+    expect(mutations.recordOwnedProcessSettlement({ invocationId: 'shell', processId: 'late-process', settlement: 'pending' })).toBe(false)
+    const resumed = await mutations.acquire({ ...input, runId: 'second', invocationId: 'resumed' })
+    expect(resumed.hasConcurrentChanges()).toBe(false)
+    expect(resumed.segmentId).not.toBe(second.segmentId)
+    resumed.release()
+    await mutations.waitForSettlements()
+    expect(nativeOwners.size).toBe(0)
+    expect(mutations.getRunState('shell')).toEqual({ pending: 0, active: 0, hazards: [] })
+  })
+
   it('keeps historical external outcomes across database reopen while admitting only new identities', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mutation-reopen-'))
     const databasePath = join(root, 'buddy.sqlite3')
-    const input = { lifetime: 'external' as const, claims: [{ kind: 'host' as const }], signal: new AbortController().signal }
+    const input = { lifetime: 'external' as const, coordination: 'observe' as const, captureBoundary: true, claims: [{ kind: 'host' as const }], signal: new AbortController().signal }
     let database = openBuddyDatabase({ databasePath })
     try {
       const first = new MutationCoordinator({ repository: createMutationRepository(database) })
@@ -60,6 +102,7 @@ describe('mutation ownership', () => {
       try {
         const before = repository.listUnreleased()
         const next = await restored.acquire({ ...input, runId: 'next', invocationId: 'next' })
+        expect(next.hasConcurrentChanges()).toBe(true)
         next.release()
         expect(repository.listUnreleased()).toEqual(before)
         expect(restored.getRunState('unreported').hazards).toMatchObject([{ invocationId: 'unreported', reason: 'MUTATION_INTERRUPTED' }])
@@ -148,12 +191,19 @@ describe('mutation ownership', () => {
     coordinators.push(mutations)
     const input = { lifetime: 'external' as const, claims: [{ kind: 'host' as const }], signal: new AbortController().signal }
     const lease = await mutations.acquire({ ...input, runId: 'first', invocationId: 'first' })
-    lease.release()
+    let settled = false
+    const settlement = lease.release().then(() => {
+      settled = true
+    })
     expect(mutations.recordOwnedProcessSettlement({ invocationId: 'first', processId: 'late-process', settlement: 'pending' })).toBe(false)
     const waiting = mutations.acquire({ ...input, runId: 'next', invocationId: 'next' })
     expect(mutations.getRunState('next')).toMatchObject({ active: 0, pending: 1 })
+    await Promise.resolve()
+    expect(settled).toBe(false)
     released.resolve()
     const next = await waiting
+    await settlement
+    expect(settled).toBe(true)
     next.release()
     await mutations.waitForSettlements()
     expect(mutations.getRunState('first')).toMatchObject({ active: 0, hazards: [] })
@@ -238,21 +288,23 @@ describe('mutation ownership', () => {
     finally { database.close() }
   })
 
-  it('preserves same-execution continuity but splits root, child and resumed root ownership', async () => {
+  it('keeps new captures uncertain while an observed process has no release proof and restores complete attribution afterwards', async () => {
     const mutations = setup()
-    const input = { lifetime: 'runtime' as const, claims: [{ kind: 'file' as const, canonicalPath: '/workspace/file.txt' }], signal: new AbortController().signal }
-    const first = await mutations.acquire({ ...input, runId: 'root', invocationId: 'root-1' })
-    const same = mutations.acquire({ ...input, runId: 'root', invocationId: 'root-2' })
-    expect(mutations.getRunState('root')).toMatchObject({ active: 1, pending: 1 })
-    first.release()
-    const second = await same
-    expect(second.segmentId).toBe(first.segmentId)
-    second.release()
-    const child = await mutations.acquire({ ...input, runId: 'child', invocationId: 'child-1' })
-    child.release()
-    const resumed = await mutations.acquire({ ...input, runId: 'root', invocationId: 'root-3' })
-    expect(new Set([first.segmentId, child.segmentId, resumed.segmentId]).size).toBe(3)
-    expect(resumed.sequence).toBeGreaterThan(child.sequence)
+    const input = { lifetime: 'external' as const, signal: new AbortController().signal, claims: [{ kind: 'tree' as const, canonicalPath: '/workspace' }] }
+    const shell = await mutations.acquire({ ...input, runId: 'shell', invocationId: 'shell', coordination: 'observe', captureBoundary: true })
+    mutations.recordOwnedProcessSettlement({ invocationId: 'shell', processId: 'process', settlement: 'unknown' })
+    shell.markHazard('OWNED_PROCESS_CLEANUP_UNCONFIRMED')
+    const exact = { ...input, runId: 'file', lifetime: 'runtime' as const, claims: [{ kind: 'file' as const, canonicalPath: '/workspace/a.txt' }] }
+    const file = await mutations.acquire({ ...exact, invocationId: 'file' })
+    expect(file.hasConcurrentChanges()).toBe(true)
+    expect(mutations.getRunState('file')).toMatchObject({ active: 1, pending: 0 })
+    file.release()
+    mutations.recordOwnedProcessSettlement({ invocationId: 'shell', processId: 'process', settlement: 'released' })
+    await mutations.waitForSettlements()
+    expect(mutations.getHazards()).toEqual([])
+    const resumed = await mutations.acquire({ ...exact, invocationId: 'resumed' })
+    expect(resumed.hasConcurrentChanges()).toBe(false)
+    expect(resumed.segmentId).not.toBe(file.segmentId)
     resumed.release()
   })
 })

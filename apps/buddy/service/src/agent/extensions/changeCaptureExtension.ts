@@ -3,7 +3,7 @@ import type { TSchema } from 'typebox'
 import type { ToolExecutionPhase, ToolExecutionTiming } from '../../../../shared/runs/toolExecutionPhase'
 import type { BuddyToolClassification, BuddyToolClassificationResult } from '../../approvals/toolClassification'
 import type { ChangeCaptureService, ChangeInvocationHandle, ChangeInvocationInput } from '../../changes/ChangeCaptureService'
-import type { MutationClaim, MutationCoordinator, MutationLease } from '../../changes/MutationCoordinator'
+import type { MutationClaim, MutationCoordination, MutationCoordinator, MutationLease } from '../../changes/MutationCoordinator'
 import type { DirectoryGrant } from '../../directories/resolveGrantedPath'
 import type { ToolAuthorizationService, ToolExecutionPermit } from '../../permissions/ToolAuthorizationService'
 import type { BuddyExtensionRunContext } from './BuddyExtensionRunContext'
@@ -23,6 +23,7 @@ export type BuddyMutationEffect
 
 interface MutationPlan {
   claims: readonly MutationClaim[]
+  coordination: MutationCoordination
   scope: ChangeInvocationInput['scope'] | null
   grants: readonly DirectoryGrant[]
   coverage: 'complete' | 'partial'
@@ -88,10 +89,10 @@ export function createMutationToolWrapper(options: MutationToolOptions): BuddyTo
             run.onToolExecutionPhase?.({ toolCallId, toolName: tool.name, phase: 'executing', executionBasis: 'tool' })
             return await execute()
           }
-          phase('resource')
+          phase(plan.coordination === 'exclusive' ? 'resource' : 'preparing')
           if (deadline)
             deadline.waiting = true
-          const lease = await options.mutations.acquire({ runId: run.runId, invocationId: randomUUID(), claims: plan.claims, lifetime: tool.name === 'write' || tool.name === 'edit' ? 'runtime' : 'external', captureBoundary: plan.scope?.kind === 'untracked', signal: executionSignal, onWait: waitingFor => run.onToolExecutionPhase?.({ toolCallId, toolName: tool.name, phase: 'resource', waitingFor }) })
+          const lease = await options.mutations.acquire({ runId: run.runId, invocationId: randomUUID(), claims: plan.claims, coordination: plan.coordination, lifetime: tool.name === 'write' || tool.name === 'edit' ? 'runtime' : 'external', captureBoundary: plan.scope?.kind === 'untracked', signal: executionSignal, onWait: waitingFor => run.onToolExecutionPhase?.({ toolCallId, toolName: tool.name, phase: 'resource', waitingFor }) })
           if (deadline)
             deadline.waiting = false
           phase('preparing')
@@ -152,13 +153,13 @@ export function createMutationToolWrapper(options: MutationToolOptions): BuddyTo
                 try {
                   if (plan.scope?.kind === 'files')
                     phase('capturing')
-                  await options.changes.finishInvocation(handle, { isError, started, settlement })
+                  await options.changes.finishInvocation(handle, { isError, started, settlement, hasConcurrentChanges: lease.hasConcurrentChanges })
                 }
                 catch { await markPartial(options, run.runId) }
               }
             }
             finally {
-              releaseMutation(lease, settlement)
+              await releaseMutation(lease, settlement)
             }
           }
         }
@@ -213,6 +214,7 @@ async function resolveMutationPlan(event: ToolCallEvent, run: BuddyExtensionRunC
     if (resolutions.every(path => !path.isDirectory)) {
       return {
         claims: resolutions.map(path => ({ kind: 'file', canonicalPath: path.canonicalPath })),
+        coordination: 'exclusive',
         scope: { kind: 'files', paths: resolutions.map(path => path.canonicalPath) },
         grants,
         coverage: 'complete',
@@ -221,6 +223,7 @@ async function resolveMutationPlan(event: ToolCallEvent, run: BuddyExtensionRunC
     }
     return {
       claims: resolutions.map(path => ({ kind: path.isDirectory ? 'tree' : 'file', canonicalPath: path.canonicalPath })),
+      coordination: 'exclusive',
       scope: { kind: 'untracked' },
       grants,
       coverage: 'complete',
@@ -228,15 +231,18 @@ async function resolveMutationPlan(event: ToolCallEvent, run: BuddyExtensionRunC
     }
   }
 
-  const workspace = effect.kind === 'workspace' && (permit.executionProfile === 'read_only' || classification.shellReadOnly === true) ? [] : options.getWorkspaceGrants(run)
+  const host = effect.kind === 'host' || permit.executionProfile === 'full_access' || event.toolName === 'lexora_host_shell'
+  const readOnly = !host && (permit.executionProfile === 'read_only' || classification.shellReadOnly === true)
+  const workspace = host || readOnly ? [] : options.getWorkspaceGrants(run)
   for (const grant of workspace) {
     const current = await resolveFilePath(grant.canonicalRoot, 'existing')
     if (!current.isDirectory || current.canonicalPath !== grant.canonicalRoot)
       throw new Error('DIRECTORY_GRANT_CHANGED')
   }
   return {
-    claims: effect.kind === 'host' ? [{ kind: 'host' }] : workspace.map(grant => ({ kind: 'tree', canonicalPath: grant.canonicalRoot })),
-    scope: effect.kind === 'workspace' && !workspace.length ? null : { kind: 'untracked' },
+    claims: host ? [{ kind: 'host' }] : workspace.map(grant => ({ kind: 'tree', canonicalPath: grant.canonicalRoot })),
+    coordination: 'observe',
+    scope: readOnly ? null : { kind: 'untracked' },
     grants: workspace,
     coverage: 'complete',
     ownedProcess: effect.ownedProcess === true,
@@ -272,9 +278,6 @@ async function markPartial(options: MutationToolOptions, runId: string): Promise
   catch {}
 }
 
-function releaseMutation(lease: MutationLease, settlement: 'released' | 'unknown'): void {
-  if (settlement === 'unknown')
-    lease.markHazard('OWNED_PROCESS_CLEANUP_UNCONFIRMED')
-  else
-    lease.release()
+function releaseMutation(lease: MutationLease, settlement: 'released' | 'unknown'): Promise<void> {
+  return settlement === 'unknown' ? lease.markHazard('OWNED_PROCESS_CLEANUP_UNCONFIRMED') : lease.release()
 }
