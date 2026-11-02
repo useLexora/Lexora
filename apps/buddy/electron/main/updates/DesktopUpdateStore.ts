@@ -3,7 +3,7 @@ import { mkdir, open, readFile, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { fileStorage } from '../../../platform/filesystem/fileStorage'
-import { desktopUpdateResultSchema, desktopVersionSchema } from '../../shared/desktopUpdates'
+import { desktopUpdateChannelSchema, desktopUpdateResultSchema, desktopVersionSchema } from '../../shared/desktopUpdates'
 
 const timestamp = z.number().int().nonnegative().nullable()
 const version = desktopVersionSchema.nullable()
@@ -18,17 +18,22 @@ const legacyRecordSchema = z.object({
   result: desktopUpdateResultSchema.nullable(),
 }).strict()
 
-const updateRecordSchema = legacyRecordSchema.extend({
+const previousRecordSchema = legacyRecordSchema.extend({
   version: z.literal(2),
   lastSuccessfulCheckAt: timestamp,
   checkFailed: z.boolean(),
   snoozedReminder: z.object({ version: desktopVersionSchema, until: z.number().int().nonnegative(), reminded: z.boolean().default(false) }).strict().nullable(),
 }).strict()
 
+const updateRecordSchema = previousRecordSchema.extend({
+  version: z.literal(3),
+  channel: desktopUpdateChannelSchema,
+}).strict()
+
 export type DesktopUpdateRecord = z.infer<typeof updateRecordSchema>
 
 export function emptyUpdateRecord(): DesktopUpdateRecord {
-  return { version: 2, lastCheckedAt: null, lastSuccessfulCheckAt: null, checkFailed: false, snoozedReminder: null, lastNotifiedAt: null, notifiedVersion: null, ignoredVersion: null, seenVersion: null, discoveredAt: null, result: null }
+  return { version: 3, channel: 'stable', lastCheckedAt: null, lastSuccessfulCheckAt: null, checkFailed: false, snoozedReminder: null, lastNotifiedAt: null, notifiedVersion: null, ignoredVersion: null, seenVersion: null, discoveredAt: null, result: null }
 }
 
 export class DesktopUpdateStore {
@@ -46,8 +51,10 @@ export class DesktopUpdateStore {
       const input = JSON.parse(await readFile(path, 'utf8'))
       if (input?.version === 1) {
         const legacy = legacyRecordSchema.parse(input)
-        return { ...legacy, version: 2, lastSuccessfulCheckAt: legacy.result ? legacy.discoveredAt : null, checkFailed: false, snoozedReminder: null }
+        return { ...legacy, version: 3, channel: 'stable', lastSuccessfulCheckAt: legacy.result ? legacy.discoveredAt : null, checkFailed: false, snoozedReminder: null }
       }
+      if (input?.version === 2)
+        return { ...previousRecordSchema.parse(input), version: 3, channel: 'stable' }
       return updateRecordSchema.parse(input)
     }
     catch (error) {

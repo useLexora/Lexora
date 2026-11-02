@@ -54,6 +54,68 @@ async function discover(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe('desktop update ownership and notification policy', () => {
+  it('invalidates the old channel immediately and rejects late checks after switching', async () => {
+    const entered = deferred<void>()
+    const beta = deferred<DesktopUpdateCheckResult>()
+    const f = await fixture({ channel: 'beta', check: async (_signal, channel) => {
+      if (channel === 'beta') {
+        entered.resolve()
+        return beta.promise
+      }
+      return release('1.1.0')
+    } })
+    const pending = f.service.check(false)
+    await entered.promise
+    const switching = f.service.setChannel('stable')
+    expect(f.service.state).toMatchObject({ channel: 'stable', result: null, notification: null, reminderDueAt: null })
+    await switching
+    await f.service.check(false)
+    beta.resolve(release('2.0.0-beta.1'))
+    await expect(pending).rejects.toThrow()
+    expect(f.service.state).toMatchObject({ channel: 'stable', result: { latestVersion: '1.1.0' } })
+    expect(f.saved()).toMatchObject({ channel: 'stable', result: { latestVersion: '1.1.0' } })
+  })
+
+  it('rejects an old check even if its successful result was already being persisted during the switch', async () => {
+    const entered = deferred<void>()
+    const finish = deferred<void>()
+    let saved = emptyUpdateRecord()
+    const f = await fixture({ channel: 'beta', check: async () => release('2.0.0-beta.1'), store: {
+      read: async () => saved,
+      write: async (record) => {
+        if (record.result?.latestVersion === '2.0.0-beta.1') {
+          entered.resolve()
+          await finish.promise
+        }
+        saved = structuredClone(record)
+      },
+    } })
+    const pending = f.service.check()
+    await entered.promise
+    const switching = f.service.setChannel('stable')
+    finish.resolve()
+    await expect(pending).rejects.toThrow()
+    await switching
+    expect(f.service.state).toMatchObject({ channel: 'stable', result: null })
+    expect(saved).toMatchObject({ channel: 'stable', result: null })
+  })
+
+  it('isolates Beta results and opt-outs while consuming stable reminders independently', async () => {
+    const initial = { ...emptyUpdateRecord(), channel: 'beta' as const, result: release('2.0.0-beta.1'), ignoredVersion: '2.0.0-beta.1', seenVersion: '2.0.0-beta.1', notifiedVersion: '2.0.0-beta.1', lastNotifiedAt: Date.now() - UPDATE_REMINDER_INTERVAL }
+    const f = await fixture({ channel: 'stable' }, initial)
+    expect(f.service.state).toMatchObject({ channel: 'stable', result: null, ignoredVersion: null, notification: null })
+    await f.service.check(false)
+    expect(f.service.state.notification).toMatchObject({ attention: 'unseen', payload: { version: '1.1.0' } })
+    expect(f.saved().ignoredVersion).toBe('2.0.0-beta.1')
+    expect((await f.service.takeReminder())?.latestVersion).toBe('1.1.0')
+    await f.service.acknowledge({ action: 'reminded', version: '1.1.0' })
+    expect(f.saved().notifiedVersion).toBe('1.1.0')
+    expect(f.service.state.reminderDueAt).toBeNull()
+    expect(await f.service.takeReminder()).toBeNull()
+    await f.service.setChannel('beta')
+    expect(f.service.state.ignoredVersion).toBe('2.0.0-beta.1')
+  })
+
   it('persists explicit reminder deferral across restarts, waits for idle, and does not consume it with stale display acknowledgements', async () => {
     const f = await fixture()
     await discover(f)
@@ -82,10 +144,12 @@ describe('desktop update ownership and notification policy', () => {
     expect(restarted.service.state.reminderDueAt).toBeNull()
   })
 
-  it('honors and cancels explicit reminders with automatic checking disabled without starting any background check', async () => {
+  it('allows channel selection and explicit reminders without background checks after opt-out', async () => {
     const f = await fixture({ enabled: false })
+    await f.service.setChannel('beta')
     await vi.advanceTimersByTimeAsync(UPDATE_CHECK_INTERVAL * 2)
-    expect(f.saved().lastCheckedAt).toBeNull()
+    expect(f.saved()).toMatchObject({ channel: 'beta', lastCheckedAt: null, result: null })
+    expect(f.errors).toEqual([])
     await f.service.check()
     const checkedAt = f.service.state.lastCheckedAt
     await f.service.acknowledge({ action: 'snooze', version: '1.1.0', delay: '30-minutes' })

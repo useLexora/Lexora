@@ -15,8 +15,8 @@ const repoRoot = resolve(import.meta.dirname, '../../..')
 function requireReleaseIdentity(release, metadata) {
   if (!Number.isSafeInteger(release?.id) || release.id <= 0
     || release.tag_name !== metadata.releaseTag
-    || typeof release.draft !== 'boolean' || release.prerelease !== false) {
-    throw new Error('Release must match the selected stable version')
+    || typeof release.draft !== 'boolean' || release.prerelease !== metadata.prerelease) {
+    throw new Error('Release must match the selected version and release channel')
   }
 }
 
@@ -144,7 +144,8 @@ function stageRelease(commit) {
         name: `Lexora ${metadata.version}`,
         body: createReleaseNotesDraft(generated.body),
         draft: true,
-        prerelease: false,
+        prerelease: metadata.prerelease,
+        ...(metadata.prerelease ? { make_latest: 'false' } : {}),
       },
     })
   }
@@ -217,7 +218,7 @@ async function publishRelease(commit) {
     if (release.draft) {
       api(`${endpoint}/releases/${release.id}`, {
         method: 'PATCH',
-        body: { draft: false, make_latest: 'legacy' },
+        body: { draft: false, prerelease: metadata.prerelease, make_latest: metadata.prerelease ? 'false' : 'legacy' },
       })
     }
     else {

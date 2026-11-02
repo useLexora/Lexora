@@ -2,7 +2,7 @@
 import type { DesktopUpdateManualInstallation } from '@buddy-electron/shared/desktopUpdates'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { Checkmark20Regular, Copy20Regular, FolderOpen20Regular } from '@vicons/fluent'
-import { NButton, NModal, NScrollbar } from 'naive-ui'
+import { NButton, NModal, NScrollbar, NTag } from 'naive-ui'
 import { shallowRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
@@ -58,8 +58,11 @@ async function copyCommand() {
     <NScrollbar class="min-h-0" style="max-height: calc(100vh - 12rem)">
       <div class="min-w-0 pr-[4px]">
         <header class="pb-[20px]">
-          <h2 class="m-0 text-[18px] leading-[1.4] text-strong font-600">
+          <h2 class="m-0 flex flex-wrap items-center gap-2 text-[18px] leading-[1.4] text-strong font-600 [overflow-wrap:anywhere]">
             Lexora Buddy {{ installation.version }}
+            <NTag v-if="/-beta\.\d+$/.test(installation.version)" size="small" type="warning" :bordered="false">
+              {{ t('desktop.update.betaTag') }}
+            </NTag>
           </h2>
           <p class="mt-[6px] mb-0 text-muted text-[13px] leading-[1.7]">
             {{ t(failed ? 'desktop.update.installStepsFailed' : 'desktop.update.installStepsDescription', { manager: installation.manager }) }}

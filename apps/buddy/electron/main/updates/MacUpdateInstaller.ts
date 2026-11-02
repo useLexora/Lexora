@@ -9,6 +9,9 @@ import { createServer } from 'node:http'
 import { homedir } from 'node:os'
 import { join, relative } from 'node:path'
 import { autoUpdater } from 'electron'
+import { SemVer } from 'semver'
+import buddyVersion from '../../../buddy.version.json'
+import { isDesktopBetaVersion } from '../../shared/desktopUpdates'
 
 export class MacUpdateInstaller {
   #updater: import('electron-updater').MacUpdater | null = null
@@ -68,7 +71,10 @@ export class MacUpdateInstaller {
       if (!this.#updater) {
         const { default: library } = await waitFor(import('electron-updater'), signal)
         signal.throwIfAborted()
-        const updater = new library.MacUpdater()
+        class ProductVersionMacUpdater extends library.MacUpdater {
+          override readonly currentVersion = new SemVer(buddyVersion.version)
+        }
+        const updater = new ProductVersionMacUpdater()
         updater.on('login', (authInfo, callback) => {
           if (!this.#authenticateProxy(authInfo, (username, password) => callback(username ?? '', password ?? '')))
             callback('', '')
@@ -83,7 +89,9 @@ export class MacUpdateInstaller {
         this.#updater = updater
       }
       const updater = this.#updater
-      updater.setFeedURL({ provider: 'generic', url: `http://127.0.0.1:${address.port}/${token}/`, useMultipleRangeRequest: false })
+      updater.allowPrerelease = isDesktopBetaVersion(update.version)
+      updater.allowDowngrade = false
+      updater.setFeedURL({ provider: 'generic', channel: 'latest', url: `http://127.0.0.1:${address.port}/${token}/`, useMultipleRangeRequest: false })
       signal.throwIfAborted()
       const result = await waitFor(updater.checkForUpdates(), signal)
       if (result?.updateInfo.version !== update.version)

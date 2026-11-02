@@ -8,6 +8,7 @@ import { useBuddyI18n } from '@/i18n/buddyI18n'
 const props = defineProps<{ result: DesktopUpdateCheckResult, language: BuddyLocale, pending: boolean }>()
 const emit = defineEmits<{ open: [], ignore: [version: string], dismiss: [], snooze: [version: string, delay: '30-minutes' | 'tomorrow'] }>()
 const { t } = useBuddyI18n(() => props.language)
+const beta = computed(() => /-beta\.\d+$/.test(props.result.latestVersion))
 const options = computed(() => [
   { key: 'close', label: t('desktop.update.dismiss') },
   { key: '30-minutes', label: t('desktop.update.remindIn30Minutes') },
@@ -27,7 +28,7 @@ function select(key: string) {
 
 <template>
   <aside class="desktop-update-reminder fixed z-1900 right-[20px] bottom-[20px] w-[min(340px,_calc(100vw_-_40px))] shadow-soft" data-testid="update-reminder" aria-live="polite">
-    <NAlert :theme-overrides="{ color: 'var(--buddy-surface-raised)' }" :title="t('desktop.update.notificationTitle', { version: result.latestVersion })" :show-icon="false" closable @close="emit('dismiss')">
+    <NAlert :theme-overrides="{ color: 'var(--buddy-surface-raised)' }" :title="t(beta ? 'desktop.update.betaNotificationTitle' : 'desktop.update.notificationTitle', { version: result.latestVersion })" :show-icon="false" closable @close="emit('dismiss')">
       <p class="mt-[4px] mr-0 mb-[12px] ml-0 text-muted text-[12px] leading-[1.6]">
         {{ t('desktop.update.notificationDescription') }}
       </p>

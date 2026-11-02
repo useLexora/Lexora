@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version on master to build into a draft; no existing tag or Release
+        description: Version on master (x.y.z or x.y.z-beta.N); no existing tag or Release
         type: string
         required: true
   push:

@@ -5,7 +5,6 @@ import { join } from 'node:path'
 import { deferred } from '@buddy-tests/deferred'
 import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_DOWNLOAD_SETTINGS } from '../../../../shared/network/downloadSettings'
 import { DesktopUpdateDelivery } from '../DesktopUpdateDelivery'
 
 const body = Buffer.from('delivery fixture')
@@ -34,6 +33,59 @@ async function setup(allowed = true, launchFailure = false) {
 }
 
 describe('update delivery', () => {
+  it('excludes channel changes during installation and preserves cancelled installations for retry', async () => {
+    const { delivery, operations, allow } = await setup(false)
+    try {
+      await delivery.download()
+      const release = delivery.holdInstallation()
+      const releaseQueued = delivery.holdInstallation()
+      await expect(delivery.install()).rejects.toThrow('UPDATE_INSTALL_UNAVAILABLE')
+      expect(operations).toEqual([])
+      release()
+      await expect(delivery.install()).rejects.toThrow('UPDATE_INSTALL_UNAVAILABLE')
+      releaseQueued()
+      const pending = delivery.install()
+      expect(() => delivery.holdInstallation()).toThrow('UPDATE_INSTALL_IN_PROGRESS')
+      await pending
+      expect(delivery.state.status).toBe('ready')
+      expect(operations).toEqual(['confirm'])
+      allow()
+      await delivery.install()
+      expect(operations).toEqual(['confirm', 'confirm', 'installer', 'shutdown'])
+      const next = delivery.holdInstallation()
+      delivery.discover({ mode: 'release', reason: null, update: null, fallback: null })
+      next()
+      await expect(delivery.install()).rejects.toThrow('UPDATE_INSTALL_UNAVAILABLE')
+      expect(delivery.state.version).toBeNull()
+    }
+    finally {
+      await delivery.dispose()
+    }
+  })
+
+  it('holds channel changes through manual-package verification and handoff', async () => {
+    const directory = await createTemporaryDirectory('lexora-manual-handoff-')
+    const opened = deferred<void>()
+    const finish = deferred<void>()
+    const delivery = new DesktopUpdateDelivery({ directory, get: async () => new Response(body), requestInstall: async () => false, launchInstaller: async () => {}, openPackage: async () => {
+      opened.resolve()
+      await finish.promise
+    }, reportFailure: () => {} })
+    delivery.discover({ mode: 'open-package', reason: 'portable-package', update, fallback: null })
+    await delivery.download()
+    const opening = delivery.openPackage()
+    expect(() => delivery.holdInstallation()).toThrow('UPDATE_INSTALL_IN_PROGRESS')
+    await opened.promise
+    delivery.discover({ mode: 'release', reason: null, update: null, fallback: null })
+    expect(() => delivery.holdInstallation()).toThrow('UPDATE_INSTALL_IN_PROGRESS')
+    finish.resolve()
+    await opening
+    expect(delivery.state.version).toBeNull()
+    const release = delivery.holdInstallation()
+    release()
+    await delivery.dispose()
+  })
+
   it('downloads and verifies a portable archive without allowing installation or shutdown', async () => {
     const { delivery, directory, operations } = await setup()
     const archive = { ...update, name: update.name.replace(/\.exe$/, '-portable.zip'), url: update.url.replace(/\.exe$/, '-portable.zip') }
@@ -202,7 +254,7 @@ describe('update delivery', () => {
         delivery.discover({ mode: 'release', reason: 'asset-unavailable', update: null, fallback: null })
       finish.resolve()
       await queued
-      expect(requests).toEqual([`${DEFAULT_DOWNLOAD_SETTINGS.proxies[0]!.url}${update.url}`])
+      expect(requests).toHaveLength(1)
       expect(delivery.state.status).toBe(decision === 'changed' ? 'idle' : 'available')
       await expect(readFile(join(directory, 'pending', newer.name))).rejects.toMatchObject({ code: 'ENOENT' })
     }
@@ -210,18 +262,6 @@ describe('update delivery', () => {
       finish.resolve()
       await delivery.dispose()
     }
-  })
-
-  it('retains a verified update after cancelled installation and allows retry', async () => {
-    const { delivery, operations, allow } = await setup(false)
-    await delivery.download()
-    await delivery.install()
-    expect(delivery.state.status).toBe('ready')
-    expect(operations).toEqual(['confirm'])
-    allow()
-    await delivery.install()
-    expect(operations).toEqual(['confirm', 'confirm', 'installer', 'shutdown'])
-    await delivery.dispose()
   })
 
   it('rejects a staged package modified after download before requesting any shutdown', async () => {

@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Next Lexora version (x.y.z)
+        description: Next Lexora version (x.y.z or x.y.z-beta.N)
         required: true
         type: string
 

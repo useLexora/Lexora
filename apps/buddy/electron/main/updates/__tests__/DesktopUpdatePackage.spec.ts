@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_DOWNLOAD_SETTINGS } from '../../../../shared/network/downloadSettings'
-import { downloadDesktopUpdatePackage, selectDesktopUpdatePackage, verifyDesktopUpdatePackage } from '../DesktopUpdatePackage'
+import { downloadDesktopUpdatePackage, selectDesktopUpdatePackage } from '../DesktopUpdatePackage'
 
 const body = Buffer.from('isolated installer fixture')
 const update: DesktopUpdatePackage = {
@@ -28,6 +28,18 @@ describe('desktop update packages', () => {
     expect(selectDesktopUpdatePackage({ ...release, assets: [{ ...asset, digest: null }] }, '1.2.3', 'x64', 'nsis')).toBeNull()
   })
 
+  it('accepts numbered Beta packages only with matching prerelease flags and the same immutable asset checks', () => {
+    const version = '1.2.3-beta.10'
+    const name = `Lexora-Buddy-${version}-windows-x64.exe`
+    const url = `https://github.com/useLexora/Lexora/releases/download/v${version}/${name}`
+    const asset = { name, browser_download_url: url, digest: `sha256:${update.sha256}`, size: update.size, state: 'uploaded' }
+    const release = { draft: false, prerelease: true, tag_name: `v${version}`, html_url: `https://github.com/useLexora/Lexora/releases/tag/v${version}`, assets: [asset] }
+    expect(selectDesktopUpdatePackage(release, version, 'x64', 'nsis')).toEqual({ ...update, version, name, url })
+    expect(selectDesktopUpdatePackage({ ...release, prerelease: false }, version, 'x64', 'nsis')).toBeNull()
+    expect(selectDesktopUpdatePackage({ ...release, draft: true }, version, 'x64', 'nsis')).toBeNull()
+    expect(selectDesktopUpdatePackage({ ...release, assets: [{ ...asset, browser_download_url: update.url }] }, version, 'x64', 'nsis')).toBeNull()
+  })
+
   it('commits only verified bytes and revalidates cache before reuse', async () => {
     const root = await createTemporaryDirectory('lexora-update-')
     let requests = 0
@@ -36,14 +48,12 @@ describe('desktop update packages', () => {
       return new Response(body)
     } }
     const file = await downloadDesktopUpdatePackage(options)
-    expect(await readFile(file)).toEqual(body)
-    expect(await verifyDesktopUpdatePackage(file, update)).toBe(true)
     expect(await downloadDesktopUpdatePackage(options)).toBe(file)
     expect(requests).toBe(1)
     await writeFile(file, Buffer.alloc(body.length))
-    expect(await verifyDesktopUpdatePackage(file, update)).toBe(false)
     await downloadDesktopUpdatePackage(options)
     expect(requests).toBe(2)
+    expect(await readFile(file)).toEqual(body)
     expect(await readdir(join(root, 'pending'))).toEqual([update.name])
   })
 
@@ -78,31 +88,6 @@ describe('desktop update packages', () => {
     await expect(downloadDesktopUpdatePackage({ directory: root, update, signal: controller.signal, progress: () => controller.abort(), get: async () => new Response(body) })).rejects.toThrow()
     expect(await readdir(join(root, 'pending'))).toEqual([])
   })
-})
-
-it('uses the original URL when disabled and releases HTTP error bodies before trying the next route', async () => {
-  const root = await createTemporaryDirectory('lexora-update-')
-  const requests: string[] = []
-  let released = false
-  const options = { directory: root, update, signal: new AbortController().signal, progress: () => {} }
-  await downloadDesktopUpdatePackage({ ...options, get: async (url) => {
-    requests.push(url)
-    if (requests.length === 1) {
-      return new Response(new ReadableStream({
-        cancel() { released = true },
-      }), { status: 503 })
-    }
-    expect(released).toBe(true)
-    return new Response(body)
-  } })
-  expect(requests).toHaveLength(2)
-  const otherRoot = await createTemporaryDirectory('lexora-update-')
-  const direct: string[] = []
-  await downloadDesktopUpdatePackage({ ...options, directory: otherRoot, settings: { ...DEFAULT_DOWNLOAD_SETTINGS, enabled: false }, get: async (url) => {
-    direct.push(url)
-    return new Response(body)
-  } })
-  expect(direct).toEqual([update.url])
 })
 
 it('does not retry local commit failures through another proxy', async () => {

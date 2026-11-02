@@ -9,14 +9,16 @@ import { CPU_ARCHITECTURE, OPERATING_SYSTEM } from '../../../apps/buddy/shared/p
 import { writeOutput } from '../../shared/cli-output.mjs'
 import { readBuddyReleaseMetadata } from './artifacts.mjs'
 import { assertNativeExecutable, verifyNativeHostFiles } from './native-host.mjs'
+import { desktopNativeVersions } from './native-version.mjs'
 import { excludedPlatformResources, platformResources } from './platform-definition.mjs'
+import { readBuddyProductMetadata } from './release-metadata.mjs'
 import { verifySearchToolFiles } from './search-tools.mjs'
 import { verifyShellSandboxFiles } from './shell-sandbox.mjs'
 import { resolveBuildTarget } from './targets.mjs'
 
 const repoRoot = resolve(import.meta.dirname, '../../..')
 
-export function verifyDesktopResources(directory, targetId) {
+export function verifyDesktopResources(directory, targetId, cwd = repoRoot) {
   const platform = resolveBuildTarget(targetId)
   const platformId = platform.platform
   const executablePath = join(directory, platformId === OPERATING_SYSTEM.MacOS ? 'Contents/MacOS/lexora-buddy' : platformId === OPERATING_SYSTEM.Windows ? 'Lexora Buddy.exe' : 'lexora-buddy')
@@ -38,12 +40,37 @@ export function verifyDesktopResources(directory, targetId) {
     throw new Error(`${platformId} Desktop must not contain the Linux shell sandbox`)
   if (platform.features.includes('nativePet'))
     assertNativeExecutable(readFileSync(join(resources, 'native-pet/lexora-buddy-pet')), platform, 'native pet')
+  const { version, prerelease } = readBuddyProductMetadata(cwd)
+  if (prerelease)
+    verifyDesktopNativeVersion(directory, executablePath, platformId, version)
   return { executablePath, resources }
+}
+
+function verifyDesktopNativeVersion(directory, executablePath, platform, version) {
+  const native = desktopNativeVersions(version)
+  if (platform === OPERATING_SYSTEM.MacOS) {
+    for (const [key, value] of Object.entries({ CFBundleShortVersionString: native.macos.shortVersion, CFBundleVersion: native.macos.bundleVersion })) {
+      const actual = execFileSync('/usr/libexec/PlistBuddy', ['-c', `Print :${key}`, join(directory, 'Contents/Info.plist')], { encoding: 'utf8' }).trim()
+      if (actual !== value)
+        throw new Error(`macOS ${key} must be ${value}`)
+    }
+  }
+  else if (platform === OPERATING_SYSTEM.Windows) {
+    const actual = JSON.parse(execFileSync('powershell.exe', [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      '$ErrorActionPreference = "Stop"; [System.Diagnostics.FileVersionInfo]::GetVersionInfo($env:LEXORA_VERIFY_EXECUTABLE) | Select-Object FileVersion, ProductVersion | ConvertTo-Json -Compress',
+    ], { encoding: 'utf8', env: { ...process.env, LEXORA_VERIFY_EXECUTABLE: executablePath }, timeout: 30_000 }))
+    if (actual.FileVersion !== native.windows || actual.ProductVersion !== version)
+      throw new Error('Windows file/product versions do not match Buddy metadata')
+  }
 }
 
 export function verifyDesktopDirectory(directory, targetId, cwd = repoRoot) {
   const platform = resolveBuildTarget(targetId)
-  const { executablePath, resources } = verifyDesktopResources(directory, targetId)
+  const { executablePath, resources } = verifyDesktopResources(directory, targetId, cwd)
   const require = createRequire(join(cwd, 'apps/buddy/package.json'))
   const builder = createRequire(require.resolve('electron-builder'))
   const asar = createRequire(builder.resolve('app-builder-lib'))('@electron/asar')
@@ -124,11 +151,12 @@ export function verifyLinuxMetadata(target, content, version, buildTarget) {
     if (match)
       fields.set(match[1], [...fields.get(match[1]) ?? [], match[2].trim()])
   }
+  const native = desktopNativeVersions(version)
   const expected = deb
-    ? { Package: 'lexora-buddy', Version: version, Architecture: buildTarget.architecture === CPU_ARCHITECTURE.X64 ? 'amd64' : 'arm64' }
+    ? { Package: 'lexora-buddy', Version: native.deb, Architecture: buildTarget.architecture === CPU_ARCHITECTURE.X64 ? 'amd64' : 'arm64' }
     : rpm
-      ? { Package: 'lexora-buddy', Version: version, Release: '1', Architecture: buildTarget.architecture === CPU_ARCHITECTURE.X64 ? 'x86_64' : 'aarch64' }
-      : { pkgname: 'lexora-buddy', pkgver: `${version}-1`, arch: buildTarget.architecture === CPU_ARCHITECTURE.X64 ? 'x86_64' : 'aarch64' }
+      ? { Package: 'lexora-buddy', Version: native.rpm.version, Release: native.rpm.release, Architecture: buildTarget.architecture === CPU_ARCHITECTURE.X64 ? 'x86_64' : 'aarch64' }
+      : { pkgname: 'lexora-buddy', pkgver: `${native.pacman}-1`, arch: buildTarget.architecture === CPU_ARCHITECTURE.X64 ? 'x86_64' : 'aarch64' }
   for (const [key, value] of Object.entries(expected)) {
     if (fields.get(key)?.[0] !== value)
       throw new Error(`${target} ${key} must be ${value}`)

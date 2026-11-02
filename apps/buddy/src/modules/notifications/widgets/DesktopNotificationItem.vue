@@ -24,7 +24,7 @@ const dateFormatter = computed(() => new Intl.DateTimeFormat(props.language, {
 }))
 const title = computed(() => {
   if (props.notification.kind === 'app.update-available')
-    return t('desktop.update.notificationTitle', { version: props.notification.payload.version })
+    return t(/-beta\.\d+$/.test(props.notification.payload.version) ? 'desktop.update.betaNotificationTitle' : 'desktop.update.notificationTitle', { version: props.notification.payload.version })
   if (props.notification.kind === 'model.source-parameters-updated') {
     return t('desktop.notifications.modelSourceUpdatedTitle', {
       count: props.notification.payload.modelCount,

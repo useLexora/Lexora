@@ -4,7 +4,7 @@ import { expect, it, vi } from 'vitest'
 import { useDesktopUpdates } from '../useDesktopUpdates'
 
 const result: DesktopUpdateCheckResult = { currentVersion: '1.0.0', latestVersion: '1.1.0', status: 'update_available', releaseUrl: 'https://github.com/useLexora/Lexora/releases/tag/v1.1.0', releaseNotes: 'Update' }
-const empty: DesktopUpdateState = { revision: 0, checking: false, enabled: true, lastCheckedAt: null, lastSuccessfulCheckAt: null, checkFailed: false, ignoredVersion: null, result: null, notification: null, reminderDueAt: null }
+const empty: DesktopUpdateState = { channel: 'stable', revision: 0, checking: false, enabled: true, lastCheckedAt: null, lastSuccessfulCheckAt: null, checkFailed: false, ignoredVersion: null, result: null, notification: null, reminderDueAt: null }
 
 it('does not let a late startup snapshot overwrite newer availability or re-enable disabled notifications', async () => {
   const loading = deferred<DesktopUpdateState>()
@@ -60,7 +60,7 @@ it('keeps manual errors retryable and discards replies after closing or disposal
   expect(store.details.value).toBeNull()
 })
 
-it.each(['newer', 'closed'] as const)('refreshes missing package details without replacing the viewed release (%s)', async (outcome) => {
+it.each(['newer', 'closed', 'channel-changed'] as const)('refreshes missing package details without replacing the viewed release (%s)', async (outcome) => {
   const response = deferred<DesktopUpdateCheckResult>()
   const started = deferred<void>()
   let emit = (_state: DesktopUpdateState) => {}
@@ -94,10 +94,10 @@ it.each(['newer', 'closed'] as const)('refreshes missing package details without
   if (outcome === 'closed')
     store.closeDetails()
   const latest: DesktopUpdateCheckResult = { ...result, latestVersion: '1.2.0', releaseUrl: 'https://github.com/useLexora/Lexora/releases/tag/v1.2.0', releaseNotes: 'New release' }
-  emit({ ...cached, revision: 2, result: latest, delivery: { mode: 'restart', reason: null, version: latest.latestVersion, status: 'available', progressPercent: 0 } })
+  emit({ ...cached, channel: outcome === 'channel-changed' ? 'beta' : 'stable', revision: 2, result: latest, delivery: { mode: 'restart', reason: null, version: latest.latestVersion, status: 'available', progressPercent: 0 } })
   response.resolve(latest)
   await opening
-  expect(store.details.value).toEqual(outcome === 'closed' ? null : result)
+  expect(store.details.value).toEqual(outcome === 'newer' ? result : null)
   expect(store.state.value?.result?.latestVersion).toBe(latest.latestVersion)
   store.dispose()
 })

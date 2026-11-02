@@ -1,10 +1,12 @@
 import type { DesktopUpdateCheckResult } from '../shared/desktopApi'
+import type { DesktopUpdateChannel } from '../shared/desktopUpdates'
 import { readResponseBytes } from '../../platform/network/publicWebTransport'
-import { compareDesktopVersions, desktopUpdateResultSchema, desktopVersionSchema } from '../shared/desktopUpdates'
-import { isLexoraReleaseUrl, RELEASES_API_URL } from '../shared/productLinks'
+import { compareDesktopVersions, desktopUpdateResultSchema, desktopVersionSchema, isDesktopBetaVersion, isDesktopVersionAllowed } from '../shared/desktopUpdates'
+import { isLexoraReleaseUrl, RELEASES_API_URL, REPOSITORY_URL } from '../shared/productLinks'
 
 export interface CheckForDesktopUpdateOptions {
   currentVersion: string
+  channel?: DesktopUpdateChannel
   signal?: AbortSignal
   fetchRelease?: (url: string, init?: RequestInit) => Promise<Response>
   onRelease?: (release: GithubRelease, version: string) => void
@@ -35,18 +37,35 @@ export async function checkForDesktopUpdate(
 ): Promise<DesktopUpdateCheckResult> {
   try {
     const timeout = AbortSignal.timeout(15_000)
-    const response = await (options.fetchRelease ?? fetch)(RELEASES_API_URL, {
-      signal: options.signal ? AbortSignal.any([options.signal, timeout]) : timeout,
-      headers: {
-        'accept': 'application/vnd.github+json',
-        'user-agent': 'Lexora-Buddy',
-      },
-    })
-    if (!response.ok)
-      throw new Error(`GitHub release request failed with ${response.status}`)
-
-    const body = await readResponseBytes(response, 4 * 1024 * 1024)
-    const release = parseLatestBuddyRelease(JSON.parse(new TextDecoder().decode(body)))
+    const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout
+    const releases: unknown[] = []
+    let remainingBytes = 4 * 1024 * 1024
+    for (let page = 1; ; page++) {
+      signal.throwIfAborted()
+      const url = page === 1 ? RELEASES_API_URL : `${RELEASES_API_URL}&page=${page}`
+      const response = await (options.fetchRelease ?? fetch)(url, {
+        signal,
+        headers: {
+          'accept': 'application/vnd.github+json',
+          'user-agent': 'Lexora-Buddy',
+        },
+      })
+      if (!response.ok)
+        throw new Error(`GitHub release request failed with ${response.status}`)
+      const body = await readResponseBytes(response, remainingBytes)
+      remainingBytes -= body.byteLength
+      const batch: unknown = JSON.parse(new TextDecoder().decode(body))
+      if (!Array.isArray(batch))
+        throw new Error('GitHub release response is invalid')
+      releases.push(...batch)
+      const next = response.headers.get('link')?.match(/<([^>]+)>;\s*rel="next"/)?.[1]
+      if (!next)
+        break
+      if (page >= 10)
+        throw new Error('GitHub release listing is incomplete')
+    }
+    signal.throwIfAborted()
+    const release = parseLatestBuddyRelease(releases, options.channel ?? 'stable')
     const current = desktopVersionSchema.parse(options.currentVersion)
     options.onRelease?.(release.metadata, release.version)
     return desktopUpdateResultSchema.parse({
@@ -64,7 +83,7 @@ export async function checkForDesktopUpdate(
   }
 }
 
-function parseLatestBuddyRelease(value: unknown): {
+function parseLatestBuddyRelease(value: unknown, channel: DesktopUpdateChannel): {
   metadata: GithubRelease
   version: string
 } {
@@ -77,7 +96,7 @@ function parseLatestBuddyRelease(value: unknown): {
     const release = candidate as Partial<GithubRelease>
     if (
       release.draft !== false
-      || release.prerelease !== false
+      || typeof release.prerelease !== 'boolean'
       || typeof release.tag_name !== 'string'
       || !release.tag_name.startsWith(RELEASE_TAG_PREFIX)
       || typeof release.html_url !== 'string'
@@ -87,10 +106,12 @@ function parseLatestBuddyRelease(value: unknown): {
     }
 
     try {
-      return [{
-        metadata: release as GithubRelease,
-        version: desktopVersionSchema.parse(release.tag_name.slice(RELEASE_TAG_PREFIX.length)),
-      }]
+      const version = desktopVersionSchema.parse(release.tag_name.slice(RELEASE_TAG_PREFIX.length))
+      if (!isDesktopVersionAllowed(version, channel) || release.prerelease !== isDesktopBetaVersion(version)
+        || release.html_url !== `${REPOSITORY_URL}/releases/tag/v${version}`) {
+        return []
+      }
+      return [{ metadata: release as GithubRelease, version }]
     }
     catch {
       return []

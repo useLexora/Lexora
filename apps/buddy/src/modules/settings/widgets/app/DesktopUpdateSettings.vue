@@ -1,19 +1,55 @@
 <script setup lang="ts">
-import type { DesktopUpdateCapabilities } from '@buddy-electron/shared/desktopUpdates'
+import type { DesktopUpdateCapabilities, DesktopUpdateChannel } from '@buddy-electron/shared/desktopUpdates'
 import type { ApplicationSettingsProps } from './typing'
-import { NButton, NTag, NTooltip, useMessage } from 'naive-ui'
-import { computed, shallowRef } from 'vue'
+import { NButton, NSpin, NTag, NTooltip, useDialog, useMessage } from 'naive-ui'
+import { computed, onScopeDispose, shallowRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { useDesktopUpdatesContext } from '@/modules/updates'
+import DesktopSegmentedControl from '@/shared/ui/segmented-control/DesktopSegmentedControl.vue'
+import { useSettingMutation } from '../../state/useSettingMutation'
 import DesktopSettingRow from '../shared/DesktopSettingRow.vue'
 import DesktopSettingsGroup from '../shared/DesktopSettingsGroup.vue'
 import DesktopApplicationToggle from './DesktopApplicationToggle.vue'
 import DesktopUpdateCacheSettings from './DesktopUpdateCacheSettings.vue'
 
-const props = defineProps<ApplicationSettingsProps & { capabilities?: DesktopUpdateCapabilities }>()
+const props = defineProps<ApplicationSettingsProps & { capabilities?: DesktopUpdateCapabilities, currentVersion?: string }>()
 const { t } = useBuddyI18n(() => props.language)
 const updates = useDesktopUpdatesContext()
 const message = useMessage()
+const dialog = useDialog()
+let disposed = false
+let confirmation: ReturnType<typeof dialog.warning> | null = null
+const { pending, save } = useSettingMutation<'updateChannel'>(
+  patch => props.updateSettings(patch),
+  () => {
+    if (!disposed)
+      message.error(t('desktop.settings.saveFailed'))
+  },
+)
+const channel = computed(() => props.config?.desktop.updateChannel ?? 'stable')
+const installing = computed(() => updates.state.value?.delivery?.status === 'installing')
+const channelPending = computed(() => pending.value.has('updateChannel'))
+const channelOptions = computed(() => [
+  { label: t('desktop.update.channelStable'), value: 'stable' as const },
+  { label: t('desktop.update.channelBeta'), value: 'beta' as const },
+])
+const channelDescription = computed(() => t(channel.value === 'beta'
+  ? 'desktop.update.channelBetaDescription'
+  : /-beta\.\d+$/.test(props.currentVersion ?? '') ? 'desktop.update.channelStableFromBeta' : 'desktop.update.channelStableDescription'))
+watch([channelPending, installing], ([saving, installing]) => {
+  if (!confirmation)
+    return
+  confirmation.loading = saving
+  confirmation.positiveButtonProps = { disabled: saving || installing }
+  confirmation.negativeButtonProps = { disabled: saving }
+  confirmation.closable = !saving
+  confirmation.maskClosable = !saving
+  confirmation.closeOnEsc = !saving
+})
+onScopeDispose(() => {
+  disposed = true
+  confirmation?.destroy()
+})
 const restoring = shallowRef(false)
 const ignoredVersion = computed(() => updates.state.value?.ignoredVersion ?? null)
 const downloadDirectory = computed(() => updates.state.value?.downloadDirectory ?? null)
@@ -27,6 +63,27 @@ const checkedAtDescription = computed(() => {
   const timestamp = updates.state.value?.lastSuccessfulCheckAt
   return timestamp == null ? t('desktop.update.neverChecked') : t('desktop.update.successfulCheckAt', { time: new Intl.DateTimeFormat(props.language, { dateStyle: 'medium', timeStyle: 'short' }).format(timestamp) })
 })
+
+function selectChannel(updateChannel: DesktopUpdateChannel) {
+  if (!props.config || disposed || installing.value || channelPending.value || confirmation || updateChannel === channel.value)
+    return
+  if (updateChannel === 'stable') {
+    void save('updateChannel', { desktop: { updateChannel } })
+    return
+  }
+  confirmation = dialog.warning({
+    title: t('desktop.update.joinBetaTitle'),
+    content: t('desktop.update.joinBetaDescription'),
+    positiveText: t('desktop.update.joinBeta'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: () => {
+      if (disposed || installing.value || channelPending.value)
+        return false
+      return save('updateChannel', { desktop: { updateChannel: 'beta' } })
+    },
+    onAfterLeave: () => { confirmation = null },
+  })
+}
 
 async function restore() {
   if (restoring.value || !ignoredVersion.value)
@@ -59,6 +116,18 @@ async function retryCheck() {
       {{ t('desktop.update.settings') }}
     </h3>
     <DesktopSettingsGroup class="[container-type:inline-size] [--setting-row-py:0.9rem] [--setting-control-min:0px] [--setting-control-max:max-content]">
+      <DesktopSettingRow v-if="config" :label="t('desktop.update.channel')" :description="channelDescription" :disabled="installing" toggle data-testid="update-channel-setting">
+        <template #hint>
+          <small v-if="installing" class="text-muted text-[0.7rem] leading-[1.5]" role="status">{{ t('desktop.update.channelInstalling') }}</small>
+        </template>
+        <template #default="{ controlAttrs }">
+          <DesktopSegmentedControl
+            v-bind="controlAttrs" :options="channelOptions" :model-value="channel" :disabled="installing || channelPending" :aria-disabled="installing || channelPending"
+            @update:model-value="selectChannel"
+          />
+          <NSpin v-if="channelPending" size="small" />
+        </template>
+      </DesktopSettingRow>
       <DesktopApplicationToggle
         field="updateNotificationsEnabled"
         :label="t('desktop.update.autoCheck')"

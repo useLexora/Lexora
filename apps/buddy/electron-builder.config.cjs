@@ -3,6 +3,7 @@ const process = require('node:process')
 const { desktopArtifactName } = require('../../packaging/buddy/release/artifacts.mjs')
 const { macosSigningMode } = require('../../packaging/buddy/release/macos.mjs')
 const { nativeHostResources } = require('../../packaging/buddy/release/native-host.mjs')
+const { withDesktopNativeVersion } = require('../../packaging/buddy/release/native-version.mjs')
 const { excludedDependencyFiles, platformResources } = require('../../packaging/buddy/release/platform-definition.mjs')
 const { resolveBuildTarget } = require('../../packaging/buddy/release/targets.mjs')
 const { OPERATING_SYSTEM } = require('./shared/platform/identifiers.ts')
@@ -10,7 +11,7 @@ const { OPERATING_SYSTEM } = require('./shared/platform/identifiers.ts')
 const target = resolveBuildTarget()
 const resources = platformResources(target)
 const packageFormat = process.env.LEXORA_BUDDY_PACKAGE_FORMAT ?? target.packageFormats[0]
-const { sourceDateEpoch } = require('./buddy.version.json')
+const { version, sourceDateEpoch } = require('./buddy.version.json')
 const { desktopName, productName: displayName } = require('./package.json')
 
 process.env.SOURCE_DATE_EPOCH ??= String(sourceDateEpoch)
@@ -25,7 +26,7 @@ if (target.platform === OPERATING_SYSTEM.Windows) {
 const macro = name => `$${`{${name}}`}`
 const signedMacos = macosSigningMode() === 'developer-id'
 
-module.exports = {
+module.exports = withDesktopNativeVersion({
   appId: desktopName,
   extraMetadata: {
     desktopDistribution: { schemaVersion: 1, format: packageFormat === 'macos-zip' ? 'dmg' : packageFormat, architecture: target.architecture, signing: target.platform === OPERATING_SYSTEM.MacOS ? (signedMacos ? 'developer-id' : 'ad-hoc') : 'none' },
@@ -195,4 +196,4 @@ module.exports = {
     ],
   },
   artifactName: desktopArtifactName(target, packageFormat, macro('version')),
-}
+}, version, target)

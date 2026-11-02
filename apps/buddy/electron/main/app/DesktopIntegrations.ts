@@ -340,6 +340,7 @@ export class DesktopIntegrations {
       getSandboxStatus: () => this.#runtime.getSandboxStatus(),
       setupSandbox: () => this.#runtime.setupSandbox(),
       checkForUpdates: updates.check,
+      beginConfigUpdate: patch => updates.beginChannelChange(patch.desktop?.updateChannel),
       updateCapabilities: updates.capabilities,
       configPath: paths.configPath,
       runtimeProfile: paths.profile,

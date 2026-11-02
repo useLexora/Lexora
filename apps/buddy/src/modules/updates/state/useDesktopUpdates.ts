@@ -10,8 +10,11 @@ export function useDesktopUpdates(app: Pick<LexoraDesktopApi['app'], 'checkForUp
   const stop = app.updates.onChanged(apply)
 
   function apply(next: DesktopUpdateState) {
-    if (!disposed && (!state.value || next.revision >= state.value.revision))
+    if (!disposed && (!state.value || next.revision >= state.value.revision)) {
+      if (state.value && state.value.channel !== next.channel)
+        closeDetails()
       state.value = next
+    }
   }
 
   async function load() {

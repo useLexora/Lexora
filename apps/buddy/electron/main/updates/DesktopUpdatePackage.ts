@@ -9,7 +9,7 @@ import { z } from 'zod'
 import { downloadBytes, DownloadRouteError } from '../../../platform/network/downloadBytes'
 import { downloadRoutes } from '../../../shared/network/downloadMirrors'
 import { desktopUpdateArtifactName } from '../../shared/desktopDistribution'
-import { desktopVersionSchema } from '../../shared/desktopUpdates'
+import { desktopVersionSchema, isDesktopBetaVersion } from '../../shared/desktopUpdates'
 import { isLexoraReleaseUrl } from '../../shared/productLinks'
 
 const assetSchema = z.object({
@@ -32,7 +32,7 @@ export type DesktopUpdatePackage = z.infer<typeof desktopUpdatePackageSchema>
 
 export function selectDesktopUpdatePackage(release: GithubRelease, version: string, architecture: DesktopDistribution['architecture'], format: DesktopPackageFormat): DesktopUpdatePackage | null {
   desktopVersionSchema.parse(version)
-  if (!['x64', 'arm64'].includes(architecture) || !Array.isArray(release.assets) || release.draft || release.prerelease || release.tag_name !== `v${version}`)
+  if (!['x64', 'arm64'].includes(architecture) || !Array.isArray(release.assets) || release.draft || release.prerelease !== isDesktopBetaVersion(version) || release.tag_name !== `v${version}`)
     return null
   const name = desktopUpdateArtifactName(format, architecture, version)
   const matches = release.assets.filter(asset => asset && typeof asset === 'object' && asset.name === name)

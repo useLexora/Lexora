@@ -33,19 +33,51 @@ async function fixture() {
   } }
 }
 
-it('restores a verified installer after relaunch and permits installation offline', async () => {
+it('restores verified Beta packages offline and recognizes their files for explicit cleanup', async () => {
+  const f = await fixture()
+  const version = '1.2.3-beta.10'
+  const name = `Lexora-Buddy-${version}-windows-x64.exe`
+  const beta = { ...update, version, name, url: `https://github.com/useLexora/Lexora/releases/download/v${version}/${name}` }
+  const first = new DesktopUpdateDelivery(f.options)
+  first.discover({ ...plan, update: beta })
+  await first.download()
+  await first.dispose()
+  f.offline()
+  const second = new DesktopUpdateDelivery(f.options)
+  await second.restore(version)
+  expect(second.state).toMatchObject({ status: 'ready', version, downloadedBytes: body.length, totalBytes: body.length })
+  await second.install()
+  expect(f.installed).toEqual([join(f.directory, 'pending', name)])
+  expect(await readFile(f.installed[0]!)).toEqual(body)
+  await second.dispose()
+  expect(await f.cache.summary()).toEqual({ bytes: body.length, files: 1 })
+  await f.cache.clear()
+  expect(await f.cache.summary()).toEqual({ bytes: 0, files: 0 })
+})
+
+it('does not resurrect a cached installation target after its discovery was invalidated', async () => {
   const f = await fixture()
   const first = new DesktopUpdateDelivery(f.options)
   first.discover(plan)
   await first.download()
   await first.dispose()
-  f.offline()
+  const entered = deferred<void>()
+  const finish = deferred<void>()
+  const read = f.cache.readPlan.bind(f.cache)
+  f.cache.readPlan = async (version) => {
+    const cached = await read(version)
+    entered.resolve()
+    await finish.promise
+    return cached
+  }
   const second = new DesktopUpdateDelivery(f.options)
-  await second.restore(update.version)
-  expect(second.state).toMatchObject({ status: 'ready', version: update.version, downloadedBytes: body.length, totalBytes: body.length })
-  await second.install()
-  expect(f.installed).toEqual([join(f.directory, 'pending', update.name)])
-  expect(await readFile(f.installed[0]!)).toEqual(body)
+  const restoring = second.restore(update.version)
+  await entered.promise
+  second.discover({ mode: 'release', reason: null, update: null, fallback: null })
+  finish.resolve()
+  await restoring
+  expect(second.state.version).toBeNull()
+  await expect(second.install()).rejects.toThrow('UPDATE_INSTALL_UNAVAILABLE')
   await second.dispose()
 })
 
