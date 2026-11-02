@@ -1,12 +1,17 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { CapturedFileWriter } from '../../changes/CapturedFileWriter'
 import type { DirectoryGrant } from '../../directories/resolveGrantedPath'
 import type { ArtifactEvent } from '../ArtifactService'
 import { Buffer } from 'node:buffer'
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
+import { MutationCoordinator } from '../../changes/MutationCoordinator'
+import { FileResourceCoordinator } from '../../files/FileResourceCoordinator'
+import { NativeFileEngine } from '../../files/NativeFileEngine'
 import { TaskFileAccess } from '../../files/TaskFileAccess'
 import { TaskFileService } from '../../files/TaskFileService'
 import { createArtifactRepository } from '../../storage/artifactRepository'
@@ -20,14 +25,27 @@ import { ArtifactService } from '../ArtifactService'
 
 const databases: DatabaseSync[] = []
 const directories: string[] = []
+const publications: ReturnType<typeof createArtifactPublicationFixture>[] = []
 
 afterEach(async () => {
+  for (const publication of publications.splice(0))
+    await publication.dispose()
   for (const database of databases.splice(0))
     database.close()
   await Promise.all(directories.splice(0).map(path => rm(path, { force: true, recursive: true })))
 })
 
 describe('artifactService', () => {
+  it('refuses generated publication without a controlled file writer', async () => {
+    const f = await createFixture()
+    const image = join(f.workspace, 'unsafe.png')
+    const file = join(f.workspace, 'unsafe.bin')
+    await expect(f.service.registerGeneratedImages({ conversationId: 'conversation-1', cwd: f.workspace, grants: f.grants, outputPath: image, sourceArtifactId: null, images: [{ bytes: Uint8Array.of(1), mimeType: 'image/png' }] })).rejects.toMatchObject({ code: 'ARTIFACT_PUBLICATION_FAILED' })
+    await expect(f.service.registerGeneratedFile({ conversationId: 'conversation-1', cwd: f.workspace, grants: f.grants, outputPath: file, bytes: Uint8Array.of(1), assertCurrent: () => {} })).rejects.toMatchObject({ code: 'ARTIFACT_PUBLICATION_FAILED' })
+    await expect(readFile(image)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(file)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('materializes an image reference only within current grants and rejects revoked or replaced files', async () => {
     const fixture = await createFixture()
     const conversationGrants = createConversationDirectoryGrantRepository(fixture.database)
@@ -52,34 +70,42 @@ describe('artifactService', () => {
     await expect(service.materializeConversationImages('conversation-1', [artifact!.id], access)).rejects.toMatchObject({ code: 'DIRECTORY_NOT_AUTHORIZED' })
   })
 
-  it('publishes an independent generated file and refuses revoked publication before promotion', async () => {
+  it('publishes an independent file with a long multibyte name and refuses revoked publication or overwrite', async () => {
     const f = await createFixture()
-    const path = join(f.workspace, 'outputs', 'document.docx')
+    const name = `${'文'.repeat(75)}.docx`
+    const path = join(f.workspace, 'outputs', name)
     const bytes = Uint8Array.of(80, 75, 3, 4)
-    const record = await f.service.registerGeneratedFile({ conversationId: 'conversation-1', cwd: f.workspace, grants: f.grants, outputPath: path, bytes, assertCurrent: () => {} })
+    const record = await f.service.registerGeneratedFile({ conversationId: 'conversation-1', cwd: f.workspace, grants: f.grants, outputPath: path, bytes, assertCurrent: () => {} }, f.writeFiles)
     bytes[0] = 0
     expect(await readFile(record.currentPath)).toEqual(Buffer.from([80, 75, 3, 4]))
-    expect(f.repository.findById(record.id)).toMatchObject({ name: 'document.docx', conversationId: 'conversation-1', sizeBytes: 4 })
-    let checks = 0
+    expect(f.repository.findById(record.id)).toMatchObject({ name, conversationId: 'conversation-1', sizeBytes: 4 })
+    let current = true
+    const revokeBeforeWrite: CapturedFileWriter = (paths, write) => f.writeFiles(paths, publish => write((input) => {
+      current = false
+      return publish(input)
+    }))
     const revoked = join(f.workspace, 'outputs', 'revoked.docx')
     await expect(f.service.registerGeneratedFile({ conversationId: 'conversation-1', cwd: f.workspace, grants: f.grants, outputPath: revoked, bytes, assertCurrent: () => {
-      if (++checks === 3)
+      if (!current)
         throw new Error('revoked')
-    } })).rejects.toMatchObject({ receipt: { outcome: 'failed', written: 0, artifactIds: [] } })
+    } }, revokeBeforeWrite)).rejects.toMatchObject({ receipt: { outcome: 'partial', written: 0, unconfirmedWrites: 1, artifactIds: [] } })
     await expect(readFile(revoked)).rejects.toMatchObject({ code: 'ENOENT' })
     expect(f.repository.listForConversation('conversation-1')).toHaveLength(1)
-    await expect(f.service.registerGeneratedFile({ conversationId: 'conversation-1', cwd: f.workspace, grants: f.grants, outputPath: path, bytes, assertCurrent: () => {} })).rejects.toThrow()
+    await expect(f.service.registerGeneratedFile({ conversationId: 'conversation-1', cwd: f.workspace, grants: f.grants, outputPath: path, bytes, assertCurrent: () => {} }, f.writeFiles)).rejects.toThrow()
     expect(await readFile(path)).toEqual(Buffer.from([80, 75, 3, 4]))
   })
 
-  it.each([`${'a'.repeat(216)}.txt`, `${'文'.repeat(75)}.txt`])('publishes a long filename without lengthening its temporary basename: %s', async (name) => {
-    const fixture = await createFixture()
-    const outputPath = join(fixture.workspace, name)
-    const bytes = Buffer.from('Generated content')
-    const artifact = await fixture.service.registerGeneratedFile({ conversationId: 'conversation-1', cwd: fixture.workspace, grants: fixture.grants, outputPath, bytes, assertCurrent: () => {} })
-    expect(await readFile(outputPath)).toEqual(bytes)
-    expect(fixture.repository.findById(artifact.id)).toMatchObject({ currentPath: outputPath, name, sizeBytes: bytes.length })
-    expect(await readdir(fixture.workspace)).toEqual([name])
+  it('retains a partial receipt when native publication applies before its response is lost', async () => {
+    const f = await createFixture()
+    const path = join(f.workspace, 'applied.bin')
+    const bytes = Uint8Array.of(0, 1, 2)
+    const lostResponse: CapturedFileWriter = (paths, write) => f.writeFiles(paths, publish => write(async (input) => {
+      await publish(input)
+      throw new Error('PUBLICATION_RESPONSE_LOST')
+    }))
+    await expect(f.service.registerGeneratedFile({ conversationId: 'conversation-1', cwd: f.workspace, grants: f.grants, outputPath: path, bytes, assertCurrent: () => {} }, lostResponse)).rejects.toMatchObject({ receipt: { outcome: 'partial', written: 0, unconfirmedWrites: 1, artifactIds: [], stage: 'file' } })
+    expect(await readFile(path)).toEqual(Buffer.from(bytes))
+    expect(f.repository.listForConversation('conversation-1')).toEqual([])
   })
 
   it('retains historical HTML artifact access after moving into a Space without granting the old workspace to new links', async () => {
@@ -172,7 +198,7 @@ describe('artifactService', () => {
       throw new Error('observer detail')
     })
     service.onDidChange(event => events.push(event))
-    await expect(service.registerGeneratedImages({ conversationId: 'conversation-1', cwd: fixture.workspace, grants: fixture.grants, outputPath: 'result.png', sourceArtifactId: null, images: [{ bytes: Uint8Array.of(1), mimeType: 'image/png' }, { bytes: Uint8Array.of(2), mimeType: 'image/png' }] })).rejects.toMatchObject({ receipt: { outcome: 'partial', written: 2, unconfirmedWrites: 0, stage: 'catalogue', artifactIds: [expect.any(String)] } })
+    await expect(service.registerGeneratedImages({ conversationId: 'conversation-1', cwd: fixture.workspace, grants: fixture.grants, outputPath: 'result.png', sourceArtifactId: null, images: [{ bytes: Uint8Array.of(1), mimeType: 'image/png' }, { bytes: Uint8Array.of(2), mimeType: 'image/png' }] }, fixture.writeFiles)).rejects.toMatchObject({ receipt: { outcome: 'partial', written: 2, unconfirmedWrites: 0, stage: 'catalogue', artifactIds: [expect.any(String)] } })
     expect(events.map(event => event.kind)).toEqual(['file-written', 'file-written', 'catalogue-committed', 'batch-settled'])
     const receipt = events.at(-1)!.receipt
     expect(fixture.repository.listForConversation('conversation-1').map(record => record.id)).toEqual(receipt.artifactIds)
@@ -186,7 +212,7 @@ describe('artifactService', () => {
   it('reports an unsuccessful file write separately from confirmed writes', async () => {
     const fixture = await createFixture()
     await mkdir(join(fixture.workspace, 'result-2.png'))
-    await expect(fixture.service.registerGeneratedImages({ conversationId: 'conversation-1', cwd: fixture.workspace, grants: fixture.grants, outputPath: 'result.png', sourceArtifactId: null, images: [{ bytes: Uint8Array.of(1), mimeType: 'image/png' }, { bytes: Uint8Array.of(2), mimeType: 'image/png' }] })).rejects.toMatchObject({ receipt: { outcome: 'partial', written: 1, unconfirmedWrites: 1, artifactIds: [], stage: 'file' } })
+    await expect(fixture.service.registerGeneratedImages({ conversationId: 'conversation-1', cwd: fixture.workspace, grants: fixture.grants, outputPath: 'result.png', sourceArtifactId: null, images: [{ bytes: Uint8Array.of(1), mimeType: 'image/png' }, { bytes: Uint8Array.of(2), mimeType: 'image/png' }] }, fixture.writeFiles)).rejects.toMatchObject({ receipt: { outcome: 'partial', written: 1, unconfirmedWrites: 1, artifactIds: [], stage: 'file' } })
     expect(await readFile(join(fixture.workspace, 'result.png'))).toEqual(Buffer.from([1]))
     expect(fixture.repository.listForConversation('conversation-1')).toEqual([])
   })
@@ -196,7 +222,7 @@ describe('artifactService', () => {
     const bytes = Uint8Array.of(1, 2, 3)
     const events: ArtifactEvent[] = []
     fixture.service.onDidChange(event => events.push(event))
-    const pending = fixture.service.registerGeneratedImages({ conversationId: 'conversation-1', cwd: fixture.workspace, grants: fixture.grants, outputPath: 'result.png', sourceArtifactId: null, images: [{ bytes, mimeType: 'image/png' }] })
+    const pending = fixture.service.registerGeneratedImages({ conversationId: 'conversation-1', cwd: fixture.workspace, grants: fixture.grants, outputPath: 'result.png', sourceArtifactId: null, images: [{ bytes, mimeType: 'image/png' }] }, fixture.writeFiles)
     bytes.fill(9)
     fixture.grants[0]!.canonicalRoot = fixture.root
     fixture.grants.length = 0
@@ -208,7 +234,7 @@ describe('artifactService', () => {
     await expect(fixture.service.presentOutputs({ conversationId: 'conversation-1', cwd: fixture.workspace, grants: [], paths: [artifact!.currentPath] })).rejects.toMatchObject({ code: 'ARTIFACT_SERVICE_STOPPED' })
   })
 
-  it('presents explicitly selected files and directories as separate outputs', async () => {
+  it('presents only explicitly selected, authorized files and directories as separate outputs', async () => {
     const fixture = await createFixture()
     const directoryPath = join(fixture.workspace, 'site')
     const filePath = join(directoryPath, 'index.html')
@@ -240,6 +266,14 @@ describe('artifactService', () => {
         sizeBytes: 0,
       }),
     ])
+    const sourcePath = join(fixture.root, 'outside.svg')
+    await writeFile(sourcePath, '<svg></svg>')
+    await expect(fixture.service.presentOutputs({
+      conversationId: 'conversation-1',
+      cwd: fixture.workspace,
+      grants: fixture.grants,
+      paths: [sourcePath],
+    })).rejects.toMatchObject({ code: 'PATH_OUTSIDE_GRANTED_DIRECTORY' })
     expect(fixture.service.listConversationArtifacts('conversation-1')).toHaveLength(2)
   })
 
@@ -267,19 +301,6 @@ describe('artifactService', () => {
     await expect(fixture.service.readText(artifact!.id)).rejects.toMatchObject({ code: 'FILE_NOT_FOUND' })
   })
 
-  it('rejects an output outside the granted directories', async () => {
-    const fixture = await createFixture()
-    const sourcePath = join(fixture.root, 'outside.svg')
-    await writeFile(sourcePath, '<svg></svg>')
-
-    await expect(fixture.service.presentOutputs({
-      conversationId: 'conversation-1',
-      cwd: fixture.workspace,
-      grants: fixture.grants,
-      paths: [sourcePath],
-    })).rejects.toMatchObject({ code: 'PATH_OUTSIDE_GRANTED_DIRECTORY' })
-  })
-
   it('writes and updates generated images without deleting files when their conversation is hidden', async () => {
     const fixture = await createFixture()
     const first = await fixture.service.registerGeneratedImages({
@@ -292,7 +313,7 @@ describe('artifactService', () => {
       ],
       outputPath: 'images/avatar.png',
       sourceArtifactId: null,
-    })
+    }, fixture.writeFiles)
 
     expect(first.map(artifact => artifact.relativePath)).toEqual([
       'images/avatar.png',
@@ -309,7 +330,7 @@ describe('artifactService', () => {
       images: [{ bytes: Uint8Array.from([7, 8, 9]), mimeType: 'image/png' }],
       outputPath: 'images/avatar.png',
       sourceArtifactId: first[0]!.id,
-    })
+    }, fixture.writeFiles)
 
     expect(updated!.id).toBe(first[0]!.id)
     expect(updated!.sourceArtifactId).toBeNull()
@@ -345,6 +366,8 @@ async function createFixture() {
     createdAt: '2026-08-27T00:00:00.000Z',
   })
   const repository = createArtifactRepository(database)
+  const publication = createArtifactPublicationFixture(root)
+  publications.push(publication)
   const grants: DirectoryGrant[] = [{
     canonicalRoot: workspace,
     grantId: 'workspace-1',
@@ -355,8 +378,30 @@ async function createFixture() {
     database,
     grants,
     repository,
+    writeFiles: publication.writeFiles,
     root,
     service: new ArtifactService({ repository }),
     workspace,
   }
+}
+
+function createArtifactPublicationFixture(root: string) {
+  const signal = new AbortController().signal
+  const engine = new NativeFileEngine(join(root, 'file-journal'))
+  const files = new FileResourceCoordinator(engine)
+  const mutations = new MutationCoordinator({ resources: files })
+  const writeFiles: CapturedFileWriter = (paths, write) => files.withStagingDirectory(async (stagingDirectory) => {
+    const claims = await files.fileWriteClaims(paths)
+    const lease = await mutations.acquire({ runId: 'publication-test', invocationId: randomUUID(), lifetime: 'runtime', claims: [...claims, { kind: 'tree', canonicalPath: stagingDirectory }], signal })
+    try {
+      await write(input => files.writeFile(lease.invocationId, stagingDirectory, input, signal))
+    }
+    finally {
+      await lease.release()
+    }
+  })
+  return { writeFiles, async dispose() {
+    await mutations.dispose()
+    await engine.dispose()
+  } }
 }

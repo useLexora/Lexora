@@ -1,13 +1,14 @@
 import type { ToolCallEvent } from '@earendil-works/pi-coding-agent'
 import type { BuddyExtensionRunContext } from '../agent/extensions/BuddyExtensionRunContext'
 import type { DirectoryGrant } from '../directories/resolveGrantedPath'
+import type { FilePublication, FileResourceCoordinator } from '../files/FileResourceCoordinator'
 import type { ToolAuthorizationService } from '../permissions/ToolAuthorizationService'
 import type { ChangeCaptureService, ChangeInvocationHandle } from './ChangeCaptureService'
 import type { MutationCoordinator } from './MutationCoordinator'
 import { randomUUID } from 'node:crypto'
 import { resolveFilePath } from '../../../platform/filesystem/resolveFilePath'
 
-export type CapturedFileWriter = (paths: readonly string[], write: () => Promise<void>) => Promise<void>
+export type CapturedFileWriter = (paths: readonly string[], write: (publish: (input: FilePublication) => Promise<void>) => Promise<void>) => Promise<void>
 export type CapturedFileWriterFactory = (event: ToolCallEvent) => CapturedFileWriter
 
 export function createCapturedFileWriter(options: {
@@ -17,6 +18,7 @@ export function createCapturedFileWriter(options: {
   event: ToolCallEvent
   authorization: ToolAuthorizationService
   mutations: MutationCoordinator
+  files: Pick<FileResourceCoordinator, 'withStagingDirectory' | 'fileWriteClaims' | 'writeFile'>
   changes: Pick<ChangeCaptureService, 'beginInvocation' | 'finishInvocation' | 'markPartial'>
   getGrants: () => readonly DirectoryGrant[]
 }): CapturedFileWriter {
@@ -35,13 +37,14 @@ export function createCapturedFileWriter(options: {
       throw new Error('TOOL_AUTHORIZATION_UNAVAILABLE')
   }
   const partial = () => changes.markPartial({ conversationId: options.conversationId, runId: run.runId }).catch(() => {})
-  return async (paths, write) => {
+  return async (paths, write) => options.files.withStagingDirectory(async (stagingDirectory) => {
     await validate()
     const targets = await Promise.all(paths.map(path => resolveFilePath(path, 'create', options.cwd)))
     if (targets.some(path => path.isDirectory))
       throw new Error('VALIDATION_FAILED')
     run.onToolExecutionPhase?.({ toolCallId: event.toolCallId, toolName: event.toolName, phase: 'resource' })
-    const lease = await mutations.acquire({ runId: run.runId, invocationId: randomUUID(), lifetime: 'runtime', claims: targets.map(path => ({ kind: 'file', canonicalPath: path.canonicalPath })), signal })
+    const claims = await options.files.fileWriteClaims(targets.map(path => path.canonicalPath))
+    const lease = await mutations.acquire({ runId: run.runId, invocationId: randomUUID(), lifetime: 'runtime', claims: [...claims, { kind: 'tree', canonicalPath: stagingDirectory }], signal })
     let handle: ChangeInvocationHandle | undefined
     let isError = true
     try {
@@ -58,16 +61,23 @@ export function createCapturedFileWriter(options: {
       }
       await validate()
       run.onToolExecutionPhase?.({ toolCallId: event.toolCallId, toolName: event.toolName, phase: 'executing', executionBasis: 'tool' })
-      await mutations.withInvocation(lease, write)
+      await mutations.withInvocation(lease, () => write(async (input) => {
+        await validate()
+        await options.files.writeFile(lease.invocationId, stagingDirectory, { ...input, assertCurrent: async () => {
+          await validate()
+          await input.assertCurrent?.()
+          await validate()
+        } }, signal)
+      }))
       isError = false
     }
     finally {
       run.onToolExecutionPhase?.({ toolCallId: event.toolCallId, toolName: event.toolName, phase: 'capturing' })
       try {
         if (handle)
-          await changes.finishInvocation(handle, { isError }).catch(partial)
+          await changes.finishInvocation(handle, { isError, hasConcurrentChanges: lease.hasConcurrentChanges }).catch(partial)
       }
-      finally { lease.release() }
+      finally { await lease.release() }
     }
-  }
+  })
 }

@@ -302,7 +302,7 @@ pub fn execute(
                         .filter(|path| !path.as_os_str().is_empty())
                     {
                         may_have_changes = true;
-                        root.dir.create_dir_all(parent)?;
+                        io::create_directory(&root.dir, parent, true)?;
                         io::sync_dir(&root.dir)?;
                     }
                     io::create_text(&root, &request.path, text, &request.operation_id)?;
@@ -343,8 +343,7 @@ pub fn execute(
                 Ok(json!({}))
             }
             Action::CreateDirectory => {
-                root.dir
-                    .create_dir(&request.path)
+                io::create_directory(&root.dir, Path::new(&request.path), false)
                     .map_err(io::creation_error)?;
                 may_have_changes = true;
                 let path = relative(&request.path)?;

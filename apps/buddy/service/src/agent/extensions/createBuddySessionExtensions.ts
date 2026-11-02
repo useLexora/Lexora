@@ -198,7 +198,7 @@ export async function createBuddySessionExtensions(
         const run = runContext.current
         if (!run)
           throw new Error('RUN_CONTEXT_UNAVAILABLE')
-        return createCapturedFileWriter({ conversationId: options.conversationId, cwd: options.canonicalRoot, run, event, authorization, mutations: services.mutations, changes: services.changeCaptureService, getGrants: () => [...grants.snapshot, ...executionPermissions.get(run, event.toolCallId)] })
+        return createCapturedFileWriter({ conversationId: options.conversationId, cwd: options.canonicalRoot, run, event, authorization, mutations: services.mutations, files: services.fileResources, changes: services.changeCaptureService, getGrants: () => [...grants.snapshot, ...executionPermissions.get(run, event.toolCallId)] })
       },
       authorizeNetwork: async (input) => {
         const run = runContext.current

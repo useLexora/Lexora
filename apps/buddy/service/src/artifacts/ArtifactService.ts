@@ -8,13 +8,12 @@ import type {
 } from '../storage/artifactRepository'
 import type { ArtifactFileAccess } from './ArtifactFileAccess'
 import { randomUUID } from 'node:crypto'
-import { link, mkdir, open, readFile, stat, unlink, writeFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import {
   basename,
   dirname,
   extname,
   isAbsolute,
-  join,
   resolve,
   sep,
 } from 'node:path'
@@ -132,40 +131,16 @@ export class ArtifactService {
       const location = await resolveArtifactLocation(request.grants, request.outputPath, 'create')
       if (isSensitivePath(location.relativePath))
         throw new ArtifactError('ARTIFACT_SENSITIVE_PATH')
-      const write = async () => {
-        await input.assertCurrent()
-        await mkdir(dirname(location.canonicalPath), { mode: 0o700, recursive: true })
-        if ((await resolveArtifactLocation(request.grants, request.outputPath, 'create')).canonicalPath !== location.canonicalPath)
-          throw new ArtifactError('DIRECTORY_NOT_AUTHORIZED')
-        const temporary = join(dirname(location.canonicalPath), `${randomUUID()}.tmp`)
-        try {
-          const handle = await open(temporary, 'wx', 0o600)
-          try {
-            let written = 0
-            for await (const chunk of bytes instanceof Uint8Array ? [bytes] : bytes) {
-              written += chunk.byteLength
-              if (written > size!)
-                throw new ArtifactError('ARTIFACT_SIZE_LIMIT')
-              await handle.writeFile(chunk)
-            }
-            if (written !== size)
-              throw new ArtifactError('ARTIFACT_SIZE_LIMIT')
-            await handle.sync()
-          }
-          finally { await handle.close() }
-          await input.assertCurrent()
-          batch.stage = 'file'
-          if ((await resolveArtifactLocation(request.grants, request.outputPath, 'create')).canonicalPath !== location.canonicalPath)
-            throw new ArtifactError('DIRECTORY_NOT_AUTHORIZED')
-          await link(temporary, location.canonicalPath)
-          batch.written++
-          this.#publish(batch, 'file-written')
-        }
-        finally { await unlink(temporary).catch(() => {}) }
-      }
-      if (writeFiles)
-        await writeFiles([location.canonicalPath], write)
-      else await write()
+      if (!writeFiles)
+        throw new ArtifactError('ARTIFACT_PUBLICATION_FAILED')
+      await writeFiles([location.canonicalPath], async (publish) => {
+        batch.stage = 'file'
+        batch.unconfirmedWrites++
+        await publish({ path: location.canonicalPath, bytes, size: size!, assertCurrent: input.assertCurrent })
+        batch.unconfirmedWrites--
+        batch.written++
+        this.#publish(batch, 'file-written')
+      })
       await input.assertCurrent()
       batch.stage = 'catalogue'
       const [record] = await this.#presentOutputs({ ...request, paths: [location.canonicalPath] }, batch)
@@ -327,25 +302,21 @@ export class ArtifactService {
     if (new Set(outputPaths).size !== outputPaths.length)
       throw new ArtifactError('VALIDATION_FAILED')
 
-    const write = async () => {
+    if (!writeFiles)
+      throw new ArtifactError('ARTIFACT_PUBLICATION_FAILED')
+    await writeFiles(outputPaths, async (publish) => {
       for (const [index, image] of input.images.entries()) {
-        const outputPath = outputPaths[index]!
-        const location = await resolveArtifactLocation(input.grants, outputPath, 'create')
+        const location = await resolveArtifactLocation(input.grants, outputPaths[index]!, 'create')
         if (isSensitivePath(location.relativePath))
           throw new ArtifactError('ARTIFACT_SENSITIVE_PATH')
         batch.stage = 'file'
-        await mkdir(dirname(location.canonicalPath), { mode: 0o700, recursive: true })
         batch.unconfirmedWrites += 1
-        await writeFile(location.canonicalPath, image.bytes, { mode: 0o600 })
+        await publish({ path: location.canonicalPath, bytes: image.bytes, size: image.bytes.byteLength, overwrite: true })
         batch.unconfirmedWrites -= 1
         batch.written += 1
         this.#publish(batch, 'file-written')
       }
-    }
-    if (writeFiles)
-      await writeFiles(outputPaths, write)
-    else
-      await write()
+    })
     batch.stage = 'catalogue'
     return this.#presentOutputs({
       conversationId: input.conversationId,

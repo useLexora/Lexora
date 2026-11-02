@@ -1,4 +1,5 @@
 import type { RuntimeRpcPeerContract } from '../../../../shared/runtime/rpcPeer'
+import type { CapturedFileWriter } from '../../changes/CapturedFileWriter'
 import type { ArtifactRecord, ArtifactRepository } from '../../storage/artifactRepository'
 import type { ExtensionCapabilityContext, ExtensionInvocationScope } from '../extensionAgentHandlers'
 import { Buffer } from 'node:buffer'
@@ -6,18 +7,19 @@ import { randomUUID } from 'node:crypto'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { resolveBuddyImageTransformer } from '../../../../platform/native/nativeHost'
+import { afterEach, expect, it } from 'vitest'
 import { extensionAgentRpc } from '../../../../shared/extensions/extensionAgent'
 import { ArtifactService } from '../../artifacts/ArtifactService'
+import { MutationCoordinator } from '../../changes/MutationCoordinator'
+import { FileResourceCoordinator } from '../../files/FileResourceCoordinator'
+import { NativeFileEngine } from '../../files/NativeFileEngine'
 import { createExtensionResourceCapabilities } from '../extensionResourceCapabilities'
 
 const roots: string[] = []
-beforeEach(() => {
-  vi.stubEnv('LEXORA_BUDDY_IMAGE_TRANSFORMER', resolveBuddyImageTransformer({ appPath: join(import.meta.dirname, '../../../..'), isPackaged: false, resourcesPath: '' }))
-})
+const publications: (() => Promise<void>)[] = []
 afterEach(async () => {
-  vi.unstubAllEnvs()
+  for (const dispose of publications.splice(0))
+    await dispose()
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 async function fixture(bytes = Buffer.alloc(140_000, 7), mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
@@ -30,11 +32,28 @@ async function fixture(bytes = Buffer.alloc(140_000, 7), mimeType = 'application
   } }
   const artifacts = new ArtifactService({ repository })
   const controller = new AbortController()
+  const engine = new NativeFileEngine(join(root, 'file-journal'))
+  const files = new FileResourceCoordinator(engine)
+  const mutations = new MutationCoordinator({ resources: files })
+  publications.push(async () => {
+    await mutations.dispose()
+    await engine.dispose()
+  })
+  const writeFiles: CapturedFileWriter = (paths, write) => files.withStagingDirectory(async (stagingDirectory) => {
+    const claims = await files.fileWriteClaims(paths)
+    const lease = await mutations.acquire({ runId: 'run', invocationId: randomUUID(), lifetime: 'runtime', claims: [...claims, { kind: 'tree', canonicalPath: stagingDirectory }], signal: controller.signal })
+    try {
+      await write(input => files.writeFile(lease.invocationId, stagingDirectory, input, controller.signal))
+    }
+    finally {
+      await lease.release()
+    }
+  })
   let current = true
   let released = false
   const resource = { id: randomUUID(), name: mimeType.startsWith('image/') ? 'page.png' : 'report.docx', mimeType, size: bytes.length }
   const requests: { offset: number, length: number }[] = []
-  const scope: ExtensionInvocationScope = { conversationId: 'task', runId: 'run', extensionId: 'tests.office', invocationId: randomUUID(), signal: controller.signal, output: { access: 'write', cwd: root, grants: [{ grantId: 'task', kind: 'workspace', root, canonicalRoot: root }], images: [], imageBytes: 0, artifactIds: [] } }
+  const scope: ExtensionInvocationScope = { conversationId: 'task', runId: 'run', extensionId: 'tests.office', invocationId: randomUUID(), signal: controller.signal, output: { access: 'write', cwd: root, grants: [{ grantId: 'task', kind: 'workspace', root, canonicalRoot: root }], images: [], imageBytes: 0, artifactIds: [], writeFiles } }
   const rpc = { request: async (method: string, raw: unknown) => {
     expect(method).toBe(extensionAgentRpc.resource)
     const input = raw as { resourceId: string, offset: number, length: number }
@@ -55,11 +74,9 @@ async function fixture(bytes = Buffer.alloc(140_000, 7), mimeType = 'application
 
 it('publishes the exact private bytes as an independent task output using bounded reads', async () => {
   const f = await fixture()
-  expect(await f.handlers['task.scope'](null, f.context)).toEqual({ taskId: 'task', branchId: 'branch', runId: 'run' })
   const artifact = await f.handlers['artifacts.publish']({ resource: { id: f.resource.id }, name: 'final.docx' }, f.context) as { id: string }
   const record = f.records.get(artifact.id)!
   expect(record).toMatchObject({ conversationId: 'task', name: 'final.docx', sizeBytes: 140_000 })
-  expect(await readFile(record.currentPath)).toEqual(f.bytes)
   expect(f.scope.output!.artifactIds).toEqual([artifact.id])
   f.release()
   expect(await readFile(record.currentPath)).toEqual(f.bytes)

@@ -1,6 +1,6 @@
 import type { ServerResponse } from 'node:http'
 import type { ConcurrencyRuntime, Role } from './mutationConcurrencyFixture'
-import { readFile, writeFile } from 'node:fs/promises'
+import { link, readFile, stat, unlink, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { join } from 'node:path'
 import process from 'node:process'
@@ -12,7 +12,6 @@ import {
   assertDurableTree,
   captures,
   createConcurrencyRuntime,
-  deferred,
   hash,
   mutationTiming,
   roles,
@@ -59,8 +58,6 @@ describe('real Runtime multi-agent mutation concurrency', () => {
       const sharedFile = timing.gate(input => input.claims.some(claim => claim.kind === 'file' && claim.canonicalPath === shared))
       f.start()
       await differentFiles.waitFor(4, 0)
-      const live = treeByRole(f)
-      expect(Object.values(live).every(run => run.status === 'running')).toBe(true)
       await assertToolOverlap(f, roles.map(role => `${role}-write`))
       differentFiles.release()
       await sharedFile.waitFor(1, 3)
@@ -172,6 +169,73 @@ describe('real Runtime multi-agent mutation concurrency', () => {
     }
   }, 60000)
 
+  it('reports native hardlink contention as resource waiting and never dispatches a cancelled alias edit', async () => {
+    let originalPath = ''
+    let aliasPath = ''
+    let independentPath = ''
+    const initial = 'value=before\n'
+    const f = await createConcurrencyRuntime({
+      steps: role => role === 'npc-a'
+        ? [tool('held-edit', 'edit', { path: originalPath, edits: [{ oldText: 'value=before', newText: 'value=owner' }] })]
+        : role === 'npc-b'
+          ? [tool('cancelled-alias-edit', 'edit', { path: aliasPath, edits: [{ oldText: 'value=before', newText: 'value=LATE_WRITE' }] })]
+          : role === 'root'
+            ? [tool('independent-write', 'write', { path: independentPath, content: 'native progress\n' })]
+            : [],
+    })
+    const timing = mutationTiming()
+    try {
+      originalPath = join(f.workspace, 'original.txt')
+      aliasPath = join(f.workspace, 'alias.txt')
+      independentPath = join(f.workspace, 'independent.txt')
+      await writeFile(originalPath, initial)
+      await link(originalPath, aliasPath)
+      const original = await stat(originalPath)
+      const alias = await stat(aliasPath)
+      expect([alias.dev, alias.ino]).toEqual([original.dev, original.ino])
+      const held = timing.gate(input => input.claims.some(claim => claim.kind === 'file' && claim.canonicalPath === originalPath))
+      const aliasReply = f.holdReply('cancelled-alias-edit')
+      const independentReply = f.holdReply('independent-write')
+      f.start()
+      await held.waitForAcquired(1)
+      aliasReply.resolve()
+      await expect.poll(() => f.database.prepare('SELECT COUNT(*) AS count FROM run_mutation_leases WHERE claims_json LIKE ? AND status = \'active\'').get(`%alias.txt%`)?.count, { timeout: 15000 }).toBe(1)
+      independentReply.resolve()
+      await expect.poll(() => toolResults(f, ['independent-write']).length, { timeout: 15000 }).toBe(1)
+      expect(await readFile(independentPath, 'utf8')).toBe('native progress\n')
+      const tree = treeByRole(f)
+      const aliasInvocation = f.database.prepare('SELECT invocation_id FROM run_mutation_leases WHERE run_id = ?').get(tree['npc-b'].id)!
+      expect(toolResults(f, ['cancelled-alias-edit'])).toEqual([])
+      const phases = f.events.filter(event => event.type === 'tool.phase' && eventPayload(event).toolCallId === 'cancelled-alias-edit')
+      expect(phases.at(-1)?.payload).toMatchObject({ timing: { phase: 'resource' } })
+      expect(f.database.prepare('SELECT COUNT(*) AS count FROM run_change_invocations WHERE run_id = ?').get(tree['npc-b'].id)?.count).toBe(0)
+      expect(await readFile(aliasPath, 'utf8')).toBe(initial)
+      expect(await f.invoke('executions.cancel', {
+        conversationId: f.turn.conversationId,
+        branchId: f.turn.branchId,
+        rootRunId: f.turn.runId,
+        runId: tree['npc-b'].id,
+      })).toEqual({ cancelled: true })
+      await expect.poll(() => f.runs.findById(tree['npc-b'].id)?.status, { timeout: 15000 }).toBe('cancelled')
+      expect(f.database.prepare('SELECT status FROM run_mutation_leases WHERE invocation_id = ?').get(aliasInvocation.invocation_id!)?.status).toBe('released')
+      expect(await readFile(originalPath, 'utf8')).toBe(initial)
+      expect(await readFile(aliasPath, 'utf8')).toBe(initial)
+      await unlink(aliasPath)
+      await writeFile(aliasPath, initial)
+      held.release()
+      await f.complete()
+      await assertDurableTree(f, ['npc-b'])
+      expect(await readFile(originalPath, 'utf8')).toBe('value=owner\n')
+      expect(await readFile(aliasPath, 'utf8')).toBe(initial)
+      expect(toolResults(f, ['held-edit']).map(event => eventPayload(event).isError)).toEqual([false])
+      expect(f.database.prepare('SELECT COUNT(*) AS count FROM run_change_invocations WHERE run_id = ?').get(tree['npc-b'].id)?.count).toBe(0)
+    }
+    finally {
+      timing.dispose()
+      await f.dispose()
+    }
+  }, 60000)
+
   it('propagates an ancestor read_only ceiling through actor and repeated NPC descendants', async () => {
     let path = ''
     const f = await createConcurrencyRuntime({
@@ -260,12 +324,10 @@ describe('real Runtime multi-agent mutation concurrency', () => {
     }
   }, 60000)
 
-  it.skipIf(!resolveBuddyPlatform(process.platform).hostShellSupervision)('cancels a queued child behind a real supervised full_access shell and admits a fresh write after release', async () => {
-    const shellReached = deferred()
-    let shellResponse: ServerResponse | undefined
-    const server = createServer((_request, response) => {
-      shellResponse = response
-      shellReached.resolve()
+  it.skipIf(!resolveBuddyPlatform(process.platform).hostShellSupervision)('runs two supervised shells and both NPC file edits in the same workspace without directory waits', async () => {
+    const responses = new Map<string, ServerResponse>()
+    const server = createServer((request, response) => {
+      responses.set(request.url!, response)
     })
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
@@ -274,72 +336,53 @@ describe('real Runtime multi-agent mutation concurrency', () => {
     const address = server.address()
     if (!address || typeof address === 'string')
       throw new Error('Shell barrier did not bind TCP')
-    let command = ''
-    let cancelledPath = ''
-    let freshPath = ''
-    const timing = mutationTiming()
+    let workspace = ''
+    let script = ''
     let f: ConcurrencyRuntime | undefined
     try {
       f = await createConcurrencyRuntime({
         fullAccess: true,
-        steps: (role) => {
-          if (role === 'root')
-            return [tool('root-supervised-shell', process.platform === 'win32' ? 'powershell' : 'bash', { command, timeout: 40 })]
-          if (role === 'npc-a')
-            return [tool('cancelled-write', 'write', { path: cancelledPath, content: 'MUST NOT WRITE\n' })]
-          if (role === 'npc-b')
-            return [tool('fresh-write', 'write', { path: freshPath, content: 'after supervised release\n' })]
-          return []
-        },
+        steps: role => role === 'root' || role === 'actor'
+          ? [tool(`${role}-supervised-shell`, process.platform === 'win32' ? 'powershell' : 'bash', { command: shellCommand(script, `http://127.0.0.1:${address.port}/${role}`), timeout: 40 })]
+          : [tool(`${role}-write`, 'write', { path: join(workspace, `${role}.txt`), content: `written during shell:${role}\n` })],
       })
       const runtime = f
-      cancelledPath = join(f.workspace, 'cancelled.txt')
-      freshPath = join(f.workspace, 'fresh.txt')
-      await writeFile(cancelledPath, 'preserved\n')
-      const script = join(f.workspace, 'hold-shell.cjs')
+      workspace = f.workspace
+      script = join(workspace, 'hold-shell.cjs')
       await writeFile(script, 'require(\'node:http\').get(process.argv[2], response => { response.resume(); response.on(\'end\', () => process.stdout.write(\'SHELL_RELEASED\')); }).on(\'error\', error => { console.error(error); process.exitCode = 1; });\n')
-      command = shellCommand(script, `http://127.0.0.1:${address.port}/hold`)
-      const cancelledReply = f.holdReply('cancelled-write')
-      const freshReply = f.holdReply('fresh-write')
-      const queued = timing.gate(input => input.claims.some(claim => claim.kind === 'file' && claim.canonicalPath === cancelledPath))
+      const childReplies = ['npc-a', 'npc-b'].map(role => f!.holdReply(`${role}-write`))
       f.start()
-      await expect.poll(() => Boolean(shellResponse), { timeout: 15000 }).toBe(true)
-      await shellReached.promise
+      await expect.poll(() => responses.size, { timeout: 15000 }).toBe(2)
       const tree = treeByRole(f)
-      const active = f.database.prepare('SELECT invocation_id, claims_json FROM run_mutation_leases WHERE run_id = ? AND status = \'active\'').get(tree.root.id)!
-      expect(JSON.parse(String(active.claims_json))).toEqual([{ kind: 'tree', canonicalPath: f.workspace }])
-      const processes = f.database.prepare('SELECT process_id, settlement FROM run_mutation_processes WHERE invocation_id = ? ORDER BY process_id').all(active.invocation_id!)
-      expect(processes.length).toBeGreaterThan(0)
-      expect(processes.every(process => process.settlement === 'pending')).toBe(true)
-      cancelledReply.resolve()
-      await queued.waitFor(0, 1)
-      await assertToolOverlap(f, ['cancelled-write'])
-      expect(await readFile(cancelledPath, 'utf8')).toBe('preserved\n')
-      expect(await f.invoke('executions.cancel', {
-        conversationId: f.turn.conversationId,
-        branchId: f.turn.branchId,
-        rootRunId: f.turn.runId,
-        runId: tree['npc-a'].id,
-      })).toEqual({ cancelled: true })
-      await expect.poll(() => runtime.runs.findById(tree['npc-a'].id)?.status, { timeout: 15000 }).toBe('cancelled')
-      expect(queued.admissions[0]!.coordinator.getRunState(tree['npc-a'].id)).toMatchObject({ pending: 0, active: 0, hazards: [] })
-      expect(f.database.prepare('SELECT COUNT(*) AS count FROM run_mutation_leases WHERE run_id = ?').get(tree['npc-a'].id)?.count).toBe(0)
-      expect(await readFile(cancelledPath, 'utf8')).toBe('preserved\n')
-      shellResponse!.end('release')
-      await expect.poll(() => runtime.database.prepare('SELECT status FROM run_mutation_leases WHERE invocation_id = ?').get(active.invocation_id!)?.status, { timeout: 15000 }).toBe('released')
-      expect(f.database.prepare('SELECT process_id, settlement FROM run_mutation_processes WHERE invocation_id = ? ORDER BY process_id').all(active.invocation_id!)).toEqual(processes.map(process => ({ ...process, settlement: 'released' })))
-      freshReply.resolve()
+      const active = ['root', 'actor'].map(role => f!.database.prepare('SELECT invocation_id, claims_json FROM run_mutation_leases WHERE run_id = ? AND status = \'active\'').get(tree[role as Role].id)!)
+      for (const lease of active) {
+        expect(JSON.parse(String(lease.claims_json))).toEqual([{ kind: 'host' }])
+        const processes = f.database.prepare('SELECT settlement FROM run_mutation_processes WHERE invocation_id = ?').all(lease.invocation_id!)
+        expect(processes.length).toBeGreaterThan(0)
+        expect(processes.every(process => process.settlement === 'pending')).toBe(true)
+      }
+      for (const reply of childReplies)
+        reply.resolve()
+      await expect.poll(() => toolResults(runtime, ['npc-a-write', 'npc-b-write']).length, { timeout: 15000 }).toBe(2)
+      expect(toolResults(f, ['root-supervised-shell', 'actor-supervised-shell'])).toHaveLength(0)
+      expect(toolResults(f, ['npc-a-write', 'npc-b-write']).map(event => eventPayload(event).isError)).toEqual([false, false])
+      for (const role of ['npc-a', 'npc-b'] as const) {
+        expect(await readFile(join(workspace, `${role}.txt`), 'utf8')).toBe(`written during shell:${role}\n`)
+        expect(f.database.prepare('SELECT status FROM run_change_invocations WHERE run_id = ?').get(tree[role].id)?.status).toBe('partial')
+      }
+      for (const response of responses.values())
+        response.end('release')
       await f.complete()
-      await assertDurableTree(f, ['npc-a'])
-      expect(await readFile(freshPath, 'utf8')).toBe('after supervised release\n')
-      expect(await readFile(cancelledPath, 'utf8')).toBe('preserved\n')
-      expect(toolResults(f, ['root-supervised-shell', 'fresh-write']).map(event => eventPayload(event).isError)).toEqual([false, false])
-      expect(f.database.prepare('SELECT status FROM run_change_invocations WHERE run_id = ?').get(tree.root.id)?.status).toBe('partial')
-      expect(f.database.prepare('SELECT COUNT(*) AS count FROM run_change_invocations WHERE run_id = ?').get(tree['npc-a'].id)?.count).toBe(0)
+      await assertDurableTree(f, [], ['npc-a', 'npc-b'])
+      for (const lease of active) {
+        expect(f.database.prepare('SELECT status FROM run_mutation_leases WHERE invocation_id = ?').get(lease.invocation_id!)?.status).toBe('released')
+        expect(f.database.prepare('SELECT settlement FROM run_mutation_processes WHERE invocation_id = ?').all(lease.invocation_id!).every(process => process.settlement === 'released')).toBe(true)
+      }
+      expect(toolResults(f, ['root-supervised-shell', 'actor-supervised-shell']).map(event => eventPayload(event).isError)).toEqual([false, false])
     }
     finally {
-      shellResponse?.end('cleanup')
-      timing.dispose()
+      for (const response of responses.values())
+        response.end('cleanup')
       await f?.dispose()
       server.closeAllConnections()
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))

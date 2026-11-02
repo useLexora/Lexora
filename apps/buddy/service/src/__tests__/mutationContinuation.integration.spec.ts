@@ -48,7 +48,7 @@ it.skipIf(!resolveBuddyPlatform(process.platform).hostShellSupervision)('starts 
     expect(await f.invoke('changes.recovery.list', { conversationId: f.turn.conversationId })).toEqual([])
     f.start()
     await f.complete()
-    await assertDurableTree(f)
+    await assertDurableTree(f, [], [...roles])
     for (const role of roles)
       expect(await readFile(join(workspace, `${role}.txt`), 'utf8')).toBe(`continued:${role}\n`)
     expect(await readFile(marker, 'utf8')).toBe('new-effect\n')
@@ -59,6 +59,11 @@ it.skipIf(!resolveBuddyPlatform(process.platform).hostShellSupervision)('starts 
     expect(notices.map(item => item.invocationId).sort()).toEqual([...invocationIds].sort())
     expect(notices.every(item => item.status === 'unknown' && item.taskTitle === 'Legacy interrupted fixture')).toBe(true)
     const affectedRunIds = f.runs.listTree(f.turn.runId).map(run => run.id).sort()
+    for (const runId of affectedRunIds) {
+      const capture = f.database.prepare('SELECT coverage, coverage_reasons_json FROM run_change_sets WHERE run_id = ?').get(runId)!
+      expect(capture.coverage).toBe('partial')
+      expect(JSON.parse(String(capture.coverage_reasons_json))).toContain('untracked')
+    }
     for (const invocationId of invocationIds) {
       const overlaps = f.database.prepare('SELECT related_run_id, reason FROM run_mutation_evidence WHERE invocation_id = ? AND related_run_id IS NOT NULL').all(invocationId)
       expect(overlaps.map(item => item.related_run_id).sort()).toEqual(affectedRunIds)

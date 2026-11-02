@@ -13,6 +13,7 @@ export type MutationClaim
     | { kind: 'host' }
 
 export type MutationLifetime = 'runtime' | 'external'
+export type MutationCoordination = 'exclusive' | 'observe'
 
 export interface MutationIdentity {
   runId: string
@@ -36,8 +37,11 @@ export interface MutationLease extends MutationIdentity {
   lifetime: MutationLifetime
   sequence: number
   claims: readonly MutationClaim[]
-  release: () => void
-  markHazard: (reason: string) => void
+  coordination: MutationCoordination
+  captureBoundary: boolean
+  hasConcurrentChanges: () => boolean
+  release: () => Promise<void>
+  markHazard: (reason: string) => Promise<void>
 }
 
 interface PendingMutation extends MutationIdentity {
@@ -45,6 +49,7 @@ interface PendingMutation extends MutationIdentity {
   onWait?: (blocker: ToolResourceBlocker) => void
   lastBlocker?: string
   captureBoundary: boolean
+  coordination: MutationCoordination
   claims: readonly MutationClaim[]
   lifetime: MutationLifetime
   signal: AbortSignal
@@ -66,6 +71,7 @@ export class MutationCoordinatorError extends Error {
 export class MutationCoordinator {
   readonly #active = new Map<string, MutationLease>()
   readonly #closing = new Set<string>()
+  readonly #overlapping = new Set<string>()
   readonly #hazards = new Map<string, MutationHazard>()
   readonly #pending: PendingMutation[] = []
   readonly #invocation = new AsyncLocalStorage<MutationLease>()
@@ -103,7 +109,7 @@ export class MutationCoordinator {
     }
   }
 
-  async acquire(input: MutationIdentity & { claims: readonly MutationClaim[], lifetime: MutationLifetime, captureBoundary?: boolean, signal: AbortSignal, onWait?: (blocker: ToolResourceBlocker) => void }): Promise<MutationLease> {
+  async acquire(input: MutationIdentity & { claims: readonly MutationClaim[], lifetime: MutationLifetime, coordination?: MutationCoordination, captureBoundary?: boolean, signal: AbortSignal, onWait?: (blocker: ToolResourceBlocker) => void }): Promise<MutationLease> {
     if (this.#disposed)
       return Promise.reject(new MutationCoordinatorError('MUTATION_COORDINATOR_STOPPED'))
     input.signal.throwIfAborted()
@@ -115,6 +121,7 @@ export class MutationCoordinator {
         queuedAt: Date.now(),
         onWait: input.onWait,
         captureBoundary: input.captureBoundary === true,
+        coordination: input.coordination ?? 'exclusive',
         runId: input.runId,
         invocationId: input.invocationId,
         claims,
@@ -141,13 +148,13 @@ export class MutationCoordinator {
       this.#drain()
     })
     try {
-      if (lease.claims.length)
+      if (lease.coordination === 'exclusive' && lease.claims.length)
         await this.#resources?.acquire(lease.invocationId, lease.claims, lease.lifetime, input.signal)
       input.signal.throwIfAborted()
       return lease
     }
     catch (error) {
-      lease.release()
+      await lease.release()
       throw error
     }
   }
@@ -273,6 +280,11 @@ export class MutationCoordinator {
     if (this.#active.has(hazard.invocationId))
       throw new MutationCoordinatorError('MUTATION_INVOCATION_CONFLICT')
     this.#hazards.set(hazard.invocationId, copyEventSnapshot({ ...hazard, claims: normalizeClaims(hazard.claims) }))
+    for (const lease of this.#active.values()) {
+      if (claimsOverlap(lease.claims, hazard.claims))
+        this.#overlapping.add(lease.invocationId)
+    }
+    this.#lastWriter = undefined
     this.#publish(hazard.runId)
     this.#drain()
     this.#requestRecovery(hazard.invocationId)
@@ -348,8 +360,10 @@ export class MutationCoordinator {
   #drain(): void {
     for (let index = 0; index < this.#pending.length;) {
       const pending = this.#pending[index]!
-      const blocker = [...this.#active.values()].find(lease => claimsOverlap(lease.claims, pending.claims))
-        ?? this.#pending.slice(0, index).find(earlier => claimsOverlap(earlier.claims, pending.claims))
+      const blocker = pending.coordination === 'exclusive'
+        ? [...this.#active.values()].find(lease => lease.coordination === 'exclusive' && claimsOverlap(lease.claims, pending.claims))
+        ?? this.#pending.slice(0, index).find(earlier => earlier.coordination === 'exclusive' && claimsOverlap(earlier.claims, pending.claims))
+        : undefined
       if (blocker) {
         const state = 'acquiredAt' in blocker ? 'active' : 'queued'
         const key = `${state}:${blocker.invocationId}`
@@ -365,9 +379,13 @@ export class MutationCoordinator {
       }
       this.#pending.splice(index, 1)
       pending.unsubscribe()
-      const segmentId = !pending.captureBoundary && this.#lastWriter?.runId === pending.runId ? this.#lastWriter.segmentId : randomUUID()
+      const concurrent = [...this.#active.values()].filter(lease => (lease.captureBoundary || pending.captureBoundary) && claimsOverlap(lease.claims, pending.claims))
+      const uncertain = concurrent.length > 0 || [...this.#hazards.values()].some(hazard => claimsOverlap(hazard.claims, pending.claims))
+      const captureBoundary = pending.captureBoundary || uncertain
+      const segmentId = !captureBoundary && this.#lastWriter?.runId === pending.runId ? this.#lastWriter.segmentId : randomUUID()
       if (pending.claims.length)
-        this.#lastWriter = pending.captureBoundary ? undefined : { runId: pending.runId, segmentId }
+        this.#lastWriter = captureBoundary ? undefined : { runId: pending.runId, segmentId }
+      const settled = Promise.withResolvers<void>()
       const lease: MutationLease = {
         acquiredAt: Date.now(),
         runId: pending.runId,
@@ -375,9 +393,18 @@ export class MutationCoordinator {
         segmentId,
         sequence: ++this.#sequence,
         claims: pending.claims,
+        coordination: pending.coordination,
+        captureBoundary: pending.captureBoundary,
+        hasConcurrentChanges: () => this.#overlapping.has(pending.invocationId),
         lifetime: pending.lifetime,
-        release: () => this.#release(lease),
-        markHazard: reason => this.#release(lease, reason),
+        release: () => {
+          this.#release(lease, settled.resolve)
+          return settled.promise
+        },
+        markHazard: (reason) => {
+          this.#release(lease, settled.resolve, reason)
+          return settled.promise
+        },
       }
       try {
         this.#repository?.createLease(lease)
@@ -388,6 +415,10 @@ export class MutationCoordinator {
         continue
       }
       this.#active.set(lease.invocationId, lease)
+      for (const other of concurrent)
+        this.#overlapping.add(other.invocationId)
+      if (uncertain)
+        this.#overlapping.add(lease.invocationId)
       this.#recordOverlaps(lease)
       pending.resolve(lease)
       this.#publish(lease.runId)
@@ -406,7 +437,7 @@ export class MutationCoordinator {
     catch { console.error('MUTATION_OVERLAP_RECORD_FAILED') }
   }
 
-  #release(lease: MutationLease, hazard?: string): void {
+  #release(lease: MutationLease, onSettled: () => void, hazard?: string): void {
     if (this.#active.get(lease.invocationId) !== lease || this.#closing.has(lease.invocationId))
       return
     this.#closing.add(lease.invocationId)
@@ -421,6 +452,9 @@ export class MutationCoordinator {
     const finish = (reason?: string) => {
       this.#closing.delete(lease.invocationId)
       this.#active.delete(lease.invocationId)
+      this.#overlapping.delete(lease.invocationId)
+      if (lease.captureBoundary && lease.claims.length)
+        this.#lastWriter = undefined
       if (reason) {
         this.#hazards.set(lease.invocationId, copyEventSnapshot({
           runId: lease.runId,
@@ -436,8 +470,9 @@ export class MutationCoordinator {
       this.#drain()
       if (reason)
         this.#requestRecovery(lease.invocationId)
+      onSettled()
     }
-    if (!this.#resources || !lease.claims.length) {
+    if (!this.#resources || lease.coordination === 'observe' || !lease.claims.length) {
       finish(hazard)
       return
     }

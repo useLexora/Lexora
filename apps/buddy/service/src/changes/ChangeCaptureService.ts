@@ -145,7 +145,7 @@ export class ChangeCaptureService {
     }, request.conversationId)
   }
 
-  finishInvocation(handle: ChangeInvocationHandle, outcome: { isError: boolean, started?: boolean, settlement?: 'released' | 'unknown' }): Promise<{ complete: boolean }> {
+  finishInvocation(handle: ChangeInvocationHandle, outcome: { isError: boolean, started?: boolean, settlement?: 'released' | 'unknown', hasConcurrentChanges?: () => boolean }): Promise<{ complete: boolean }> {
     return this.#operate(handle.runId, 'after', async () => {
       const record = this.#repository.findInvocation(handle.invocationId)
       if (!record || record.runId !== handle.runId)
@@ -158,13 +158,14 @@ export class ChangeCaptureService {
       try {
         for (const captureId of pending.captures)
           await this.#finishFileTool({ ...input, captureId, isError: outcome.isError })
-        if (input.scope.kind === 'untracked' && outcome.started !== false) {
+        const concurrent = outcome.hasConcurrentChanges?.() === true
+        if ((input.scope.kind === 'untracked' && outcome.started !== false) || concurrent) {
           complete = false
           await this.#markPartial(input, 'untracked')
         }
         if (outcome.settlement === 'unknown')
           await this.#markPartial(input, 'interrupted')
-        else if (!complete && input.scope.kind !== 'untracked')
+        else if (!complete && input.scope.kind !== 'untracked' && !concurrent)
           await this.#markPartial(input)
         this.#repository.completeInvocation(handle.invocationId, complete ? 'completed' : 'partial', new Date().toISOString())
         this.#refreshFileCount(handle.runId, new Date().toISOString())
