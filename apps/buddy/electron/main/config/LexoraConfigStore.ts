@@ -33,6 +33,7 @@ import { DEFAULT_DESKTOP_CHAT_PREFERENCES, DEFAULT_DESKTOP_CHAT_WELCOME_ITEMS, D
 
 import { desktopChatWelcomeItemsSchema } from '../../shared/desktopApiSchemas'
 import { isPresetWelcomeId, normalizeDesktopChatWelcomePreference } from '../../shared/desktopChatWelcome'
+import { desktopUpdateChannelSchema } from '../../shared/desktopUpdates'
 import { isWelcomeCompanionImageDataUrl, welcomeCompanionImageSchema, welcomeCompanionImagesSchema } from '../../shared/welcomeCompanionImage'
 
 function migrateWelcomeItems(value: unknown): unknown {
@@ -123,6 +124,7 @@ const desktopConfigSchema = z.object({
   subtask_notifications_enabled: z.boolean().default(true),
   update_notifications_enabled: z.boolean().default(true),
   auto_download_updates: z.boolean().default(true),
+  update_channel: desktopUpdateChannelSchema.default('stable'),
   local_backup_limit: localBackupLimitSchema.default(DEFAULT_LOCAL_BACKUP_LIMIT),
   notify_when_focused: z.boolean().default(false),
   sidebar_collapsed: z.boolean().default(false),
@@ -165,6 +167,7 @@ const desktopConfigSchema = z.object({
   subtask_notifications_enabled: true,
   update_notifications_enabled: true,
   auto_download_updates: true,
+  update_channel: 'stable',
   local_backup_limit: DEFAULT_LOCAL_BACKUP_LIMIT,
   notify_when_focused: false,
   sidebar_collapsed: false,
@@ -469,6 +472,7 @@ function decodeConfig(value: unknown): LexoraConfig {
       subtaskNotificationsEnabled: config.desktop.subtask_notifications_enabled,
       updateNotificationsEnabled: config.desktop.update_notifications_enabled,
       autoDownloadUpdates: config.desktop.auto_download_updates,
+      updateChannel: config.desktop.update_channel,
       localBackupLimit: config.desktop.local_backup_limit,
       notifyWhenFocused: config.desktop.notify_when_focused,
       sidebarCollapsed: config.desktop.sidebar_collapsed,
@@ -549,6 +553,7 @@ function encodeConfig(config: LexoraConfig) {
       subtask_notifications_enabled: config.desktop.subtaskNotificationsEnabled,
       update_notifications_enabled: config.desktop.updateNotificationsEnabled,
       auto_download_updates: config.desktop.autoDownloadUpdates,
+      update_channel: config.desktop.updateChannel,
       local_backup_limit: config.desktop.localBackupLimit,
       notify_when_focused: config.desktop.notifyWhenFocused,
       sidebar_collapsed: config.desktop.sidebarCollapsed,
@@ -590,6 +595,7 @@ function mergeConfig(current: LexoraConfig, patch: LexoraConfigPatch): LexoraCon
       ...patch.desktop,
       featureDiscovery: featureDiscoverySchema.parse(patch.desktop?.featureDiscovery ?? current.desktop.featureDiscovery),
       localBackupLimit: localBackupLimitSchema.parse(patch.desktop?.localBackupLimit ?? current.desktop.localBackupLimit),
+      updateChannel: desktopUpdateChannelSchema.parse(patch.desktop?.updateChannel ?? current.desktop.updateChannel),
       notificationSound: notificationSoundPreferencesSchema.parse({
         ...current.desktop.notificationSound,
         ...notificationSoundPreferencesPatchSchema.parse(patch.desktop?.notificationSound ?? {}),

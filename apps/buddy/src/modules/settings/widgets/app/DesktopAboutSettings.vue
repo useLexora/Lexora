@@ -18,6 +18,8 @@ const message = useMessage()
 const updates = useDesktopUpdatesContext()
 const checking = computed(() => updates.state.value?.checking ?? false)
 const updateResult = computed(() => updates.state.value?.result ?? null)
+const installedBeta = computed(() => /-beta\.\d+$/.test(props.appInfo?.version ?? ''))
+const availableBeta = computed(() => /-beta\.\d+$/.test(updateResult.value?.latestVersion ?? ''))
 
 async function checkForUpdates() {
   if (checking.value)
@@ -48,6 +50,9 @@ async function openLink(action: () => Promise<unknown>) {
         <h2>Lexora Buddy</h2>
         <div class="desktop-about-settings__version m-0 text-muted text-[0.8rem]">
           <span>{{ t('desktop.about.version', { version: appInfo?.version ?? '—' }) }}</span>
+          <NTag v-if="installedBeta" size="small" type="warning" :bordered="false" data-testid="installed-beta-tag">
+            {{ t('desktop.update.betaTag') }}
+          </NTag>
           <NTag v-if="updateResult?.status === 'up_to_date' && !updates.state.value?.checkFailed" size="small" type="success" :bordered="false" role="status">
             {{ t('desktop.update.latestTag') }}
           </NTag>
@@ -71,6 +76,9 @@ async function openLink(action: () => Promise<unknown>) {
     <div v-if="updateResult?.status === 'update_available'" class="desktop-about-settings__update text-fg text-[0.8rem]" role="status">
       <span>{{ t(updates.state.value?.ignoredVersion === updateResult.latestVersion ? 'desktop.update.skippedTag' : 'desktop.update.available') }}</span>
       <span>{{ t('desktop.about.version', { version: updateResult.latestVersion }) }}</span>
+      <NTag v-if="availableBeta" size="small" type="warning" :bordered="false">
+        {{ t('desktop.update.betaTag') }}
+      </NTag>
       <NButton text type="primary" @click="openLink(updates.openDetails)">
         {{ t('desktop.update.view') }}
       </NButton>

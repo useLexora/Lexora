@@ -218,6 +218,7 @@ export interface LexoraConfig {
     subtaskNotificationsEnabled: boolean
     updateNotificationsEnabled: boolean
     autoDownloadUpdates: boolean
+    updateChannel: import('./desktopUpdates').DesktopUpdateChannel
     localBackupLimit: number
     notifyWhenFocused: boolean
     profile: DesktopUserProfileConfig

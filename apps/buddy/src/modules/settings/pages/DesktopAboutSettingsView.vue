@@ -23,6 +23,7 @@ const { t } = useBuddyI18n(language)
       :language="language"
       :update-settings="updateSettings"
       :capabilities="appInfo?.updateCapabilities"
+      :current-version="appInfo?.version"
     />
     <section class="desktop-onboarding-settings grid gap-[0.8rem]">
       <h3 class="m-0 text-fg text-[0.85rem] font-600">

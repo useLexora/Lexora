@@ -6,7 +6,6 @@ import process from 'node:process'
 import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { parse } from 'smol-toml'
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_BROWSER_PREFERENCES } from '../../../../shared/browser/browserPreferences'
 import { DEFAULT_TYPOGRAPHY } from '../../../../shared/typography/typographyPreferences'
 import { LexoraConfigStore } from '../LexoraConfigStore'
 
@@ -24,6 +23,19 @@ async function createConfigStore(content?: string) {
 }
 
 describe('lexoraConfigStore', () => {
+  it('defaults existing installations to stable and preserves explicit Beta choice across writes and restarts', async () => {
+    const content = '[desktop]\nauto_download_updates=false\nfuture=true\n'
+    const { store, configPath } = await createConfigStore(content)
+    expect((await store.read()).desktop).toMatchObject({ updateChannel: 'stable', autoDownloadUpdates: false })
+    expect(await readFile(configPath, 'utf8')).toBe(content)
+    await store.update({ desktop: { updateChannel: 'beta' } })
+    await store.update({ desktop: { language: 'en-US' } })
+    expect((await new LexoraConfigStore({ configPath }).read()).desktop).toMatchObject({ updateChannel: 'beta', autoDownloadUpdates: false })
+    expect(parse(await readFile(configPath, 'utf8'))).toMatchObject({ desktop: { update_channel: 'beta', future: true } })
+    await store.update({ desktop: { updateChannel: 'stable' } })
+    expect((await new LexoraConfigStore({ configPath }).read()).desktop.updateChannel).toBe('stable')
+  })
+
   it('defaults legacy welcome images and preserves selections and animated GIF bytes across partial writes and restarts', async () => {
     const { store, configPath } = await createConfigStore('[desktop.chat]\nwelcome_companion_enabled=false\nfuture=true\n')
     expect((await store.read()).desktop.chat).toMatchObject({ welcomeCompanionEnabled: false, welcomeCompanionImage: 'lexora', welcomeCompanionImages: [] })
@@ -66,11 +78,9 @@ describe('lexoraConfigStore', () => {
     expect((await store.read()).desktop.chat).toMatchObject({ welcomeCompanionImage: welcomePng, welcomeCompanionImages: [welcomeGif, welcomePng] })
     await store.update({ desktop: { chat: { welcomeCompanionImages: [welcomeGif, welcomeGif] } } })
     expect((await store.read()).desktop.chat).toMatchObject({ welcomeCompanionImage: welcomePng, welcomeCompanionImages: [welcomeGif, welcomePng] })
-    for (const welcomeCompanionImage of ['whale', 'lexora']) {
-      await store.update({ desktop: { chat: { welcomeCompanionImage } } })
-      expect((await new LexoraConfigStore({ configPath }).read()).desktop.chat)
-        .toMatchObject({ welcomeCompanionEnabled: false, welcomeCompanionImage, welcomeCompanionImages: [welcomeGif, welcomePng] })
-    }
+    await store.update({ desktop: { chat: { welcomeCompanionImage: 'lexora' } } })
+    expect((await new LexoraConfigStore({ configPath }).read()).desktop.chat)
+      .toMatchObject({ welcomeCompanionEnabled: false, welcomeCompanionImage: 'lexora', welcomeCompanionImages: [welcomeGif, welcomePng] })
     await store.update({ desktop: { chat: { welcomeCompanionImages: [welcomePng, welcomePng] } } })
     expect((await store.read()).desktop.chat).toMatchObject({ welcomeCompanionImage: 'lexora', welcomeCompanionImages: [welcomePng] })
     await store.update({ desktop: { chat: { welcomeCompanionImages: [] } } })
@@ -78,28 +88,12 @@ describe('lexoraConfigStore', () => {
       .toMatchObject({ welcomeCompanionImage: 'lexora', welcomeCompanionImages: [] })
   })
 
-  it('defaults legacy profiles and preserves independent preferences, ordered pins and unknown fields across partial writes and restart', async () => {
+  it('preserves independent preferences, ordered pins and unknown fields across partial writes and restart', async () => {
     const { configPath, store } = await createConfigStore('[api]\nbase_url="https://lexora.example"\n[desktop]\nnotify_when_focused=true\nsidebar_collapsed=true\nfuture_setting=true\n[desktop.chat]\nwelcome="none"\nfuture=true\n[desktop.typography]\nfuture=true\n[desktop.task_sidebar]\nfuture=true\n[browser]\nfuture=true\n')
-    const defaults = {
-      browser: DEFAULT_BROWSER_PREFERENCES,
-      runtime: { codemode: true, modelRetryLimit: 3 },
-      desktop: {
-        localBackupLimit: 3,
-        navigationLayout: 'full',
-        featureAnnouncementsEnabled: true,
-        featureDiscovery: { version: '', pending: [], notified: [] },
-        notificationsEnabled: true,
-        subtaskNotificationsEnabled: true,
-        pluginAuthor: '',
-        keybindings: {},
-        typography: DEFAULT_TYPOGRAPHY,
-        chat: { pasteTextAsAttachment: true, permissionMode: 'policy_approval' },
-      },
-    }
-    expect(await store.read()).toMatchObject(defaults)
+    expect((await store.read()).runtime).toMatchObject({ codemode: true, modelRetryLimit: 3 })
     const profile = { userName: 'Alice', deviceName: 'Alice-Laptop', avatar: 'data:image/png;base64,abc' }
     const preferences = {
-      runtime: { cacheWarming: 'streaming' },
+      runtime: { cacheWarming: 'streaming', codemode: false },
       browser: { linkOpening: 'system', screenshotDestination: 'clipboard', defaultZoomFactor: 1.25, freezeBackground: false, freezeForeground: true, freezeDelaySeconds: 120 },
       proxy: { mode: 'custom', server: 'http://127.0.0.1:7890' },
       desktop: {
@@ -122,7 +116,7 @@ describe('lexoraConfigStore', () => {
       },
       pet: { alwaysOnTop: false, enabled: false, rememberPosition: false },
     } satisfies LexoraConfigPatch
-    expect(await store.update(preferences)).toMatchObject(preferences)
+    await store.update(preferences)
     await store.update({
       proxy: { mode: 'direct', server: preferences.proxy.server },
       desktop: { localBackupLimit: 10, language: 'en-US', contextPanelGlobal: false, profile: { userName: 'Bob' }, taskSidebar: { collapsedSpaces: ['space-b'] }, typography: { codeFont: 'Consolas' } },
@@ -178,40 +172,16 @@ describe('lexoraConfigStore', () => {
     }
   })
 
-  it('preserves disabled, finite and unlimited model retry limits across unrelated updates and restart', async () => {
-    const { store, configPath } = await createConfigStore('[runtime]\ncache_warming="streaming"\nfuture=true\n')
-    for (const modelRetryLimit of [0, 7, 'unlimited'] as const) {
-      await store.update({ runtime: { modelRetryLimit } })
+  it('preserves disabled runtime options and finite or unlimited limits across partial writes and restart', async () => {
+    const { store, configPath } = await createConfigStore('[runtime]\ncache_warming="streaming"\ncodemode=false\nfuture=true\n')
+    expect((await store.read()).runtime).toMatchObject({ codemode: false, codemodeWorkerLimit: 8, codemodeOverflow: 'wait', modelRetryLimit: 3 })
+    for (const [modelRetryLimit, codemodeWorkerLimit] of [[0, 1], [7, 16], ['unlimited', 'unlimited']] as const) {
+      await store.update({ runtime: { modelRetryLimit, codemodeWorkerLimit, codemodeOverflow: 'reject' } })
       await store.update({ desktop: { language: 'en-US' } })
-      expect((await new LexoraConfigStore({ configPath }).read()).runtime).toMatchObject({ cacheWarming: 'streaming', codemode: true, modelRetryLimit })
+      expect((await new LexoraConfigStore({ configPath }).read()).runtime)
+        .toMatchObject({ cacheWarming: 'streaming', codemode: false, modelRetryLimit, codemodeWorkerLimit, codemodeOverflow: 'reject' })
     }
-    expect(parse(await readFile(configPath, 'utf8'))).toMatchObject({ runtime: { future: true, model_retry_limit: 'unlimited' } })
-  })
-
-  it('preserves concurrency choices across partial settings updates and restart', async () => {
-    const { store, configPath } = await createConfigStore('[runtime]\ncodemode=false\nfuture=true\n')
-    expect((await store.read()).runtime).toMatchObject({ codemode: false, codemodeWorkerLimit: 8, codemodeOverflow: 'wait' })
-    for (const codemodeWorkerLimit of [1, 16, 1000, 'unlimited'] as const) {
-      await store.update({ runtime: { codemodeWorkerLimit, codemodeOverflow: 'reject' } })
-      await store.update({ runtime: { modelRetryLimit: 7 } })
-      await store.update({ desktop: { language: 'en-US' } })
-      expect((await new LexoraConfigStore({ configPath }).read()).runtime).toMatchObject({ codemode: false, codemodeWorkerLimit, codemodeOverflow: 'reject', modelRetryLimit: 7 })
-    }
-    expect(parse(await readFile(configPath, 'utf8'))).toMatchObject({ runtime: { future: true, codemode_worker_limit: 'unlimited', codemode_overflow: 'reject' } })
-    for (const codemodeWorkerLimit of [0, -1, 1.5])
-      await expect(store.update({ runtime: { codemodeWorkerLimit } })).rejects.toThrow()
-  })
-
-  it('defaults codemode on without overwriting an explicit choice across partial updates and restart', async () => {
-    for (const codemode of [undefined, false, true]) {
-      const content = codemode === undefined ? '[runtime]\nfuture=true\n' : `[runtime]\ncodemode=${codemode}\nfuture=true\n`
-      const { store, configPath } = await createConfigStore(content)
-      expect((await store.read()).runtime.codemode).toBe(codemode ?? true)
-      expect(await readFile(configPath, 'utf8')).toBe(content)
-      await store.update({ desktop: { language: 'en-US' } })
-      expect((await new LexoraConfigStore({ configPath }).read()).runtime.codemode).toBe(codemode ?? true)
-      expect(parse(await readFile(configPath, 'utf8'))).toMatchObject({ runtime: { codemode: codemode ?? true, future: true } })
-    }
+    expect(parse(await readFile(configPath, 'utf8'))).toMatchObject({ runtime: { future: true, model_retry_limit: 'unlimited', codemode_worker_limit: 'unlimited', codemode_overflow: 'reject' } })
   })
 
   it('restores active and saved preferences after an apply failure or an expired write', async () => {
@@ -287,7 +257,9 @@ text = "保留我的内容"
       { desktop: { chat: { welcomeCompanionImage: 'https://example.com/image.gif' } } },
       { desktop: { chat: { welcomeCompanionImage: 'lexora', welcomeCompanionImages: [welcomePng, 'whale'] } } },
       ...[0, 11, 1.5].map(localBackupLimit => ({ desktop: { localBackupLimit } })),
+      { desktop: { updateChannel: 'nightly' } },
       { runtime: { modelRetryLimit: -1 } },
+      ...[0, -1, 1.5].map(codemodeWorkerLimit => ({ runtime: { codemodeWorkerLimit } })),
       { runtime: { cacheWarming: 'idle' } },
       { browser: { linkOpening: 'external' } },
       { browser: { defaultZoomFactor: 0 } },

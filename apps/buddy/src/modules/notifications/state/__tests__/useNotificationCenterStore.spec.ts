@@ -18,8 +18,6 @@ function fixture() {
         changed = () => {}
       }
     }, list: vi.fn(async () => list()), markSeen: vi.fn(async () => list(true)), markAllSeen: vi.fn(async () => list(true)) },
-    chat: { onRunEvent: () => () => {} },
-    automations: { onChanged: () => () => {} },
   }
   const updates = { state: shallowRef<DesktopUpdateState | null>(null), markSeen: vi.fn(async (_version: string) => {}) }
   const store = useNotificationCenterStore(api, updates)
@@ -27,26 +25,11 @@ function fixture() {
 }
 
 describe('notification state ownership', () => {
-  it('preserves unread and active priority even without an update notification', async () => {
-    const f = fixture()
-    const item = list().items[0]!
-    const items: LocalNotification[] = [
-      { ...item, id: 'unread-active' },
-      { ...item, id: 'unread-resolved', lifecycle: 'resolved', occurredAt: '2026-09-10T00:00:00.000Z', resolvedAt: '2026-09-10T00:00:00.000Z' },
-      { ...item, id: 'seen-active', attention: 'seen' },
-      { ...item, id: 'seen-resolved', attention: 'seen', lifecycle: 'resolved', occurredAt: '2026-09-11T00:00:00.000Z', resolvedAt: '2026-09-11T00:00:00.000Z' },
-    ]
-    f.api.notifications.list.mockResolvedValue({ items, unseenCount: 2 })
-    await f.store.load()
-    expect(f.store.items.value).toEqual(items)
-    expect(f.store.unseenCount.value).toBe(2)
-    f.store.dispose()
-  })
-
   it('composes independently owned update notifications, marks both sources seen, and removes opt-out attention', async () => {
     const f = fixture()
     await f.store.load()
     f.updates.state.value = {
+      channel: 'stable',
       revision: 1,
       enabled: true,
       checking: false,

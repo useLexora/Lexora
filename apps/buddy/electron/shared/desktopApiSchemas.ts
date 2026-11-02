@@ -22,6 +22,7 @@ import {
   DESKTOP_TASK_SIDEBAR_SECTIONS,
 } from './desktopApi'
 import { DESKTOP_CHAT_WELCOME_MAX_ITEMS, DESKTOP_CHAT_WELCOME_MAX_LENGTH, DESKTOP_CHAT_WELCOME_VARIANT_IDS } from './desktopChatWelcome'
+import { desktopUpdateChannelSchema } from './desktopUpdates'
 import { isLexoraReleaseUrl } from './productLinks'
 import { welcomeCompanionImageSchema, welcomeCompanionImagesSchema } from './welcomeCompanionImage'
 
@@ -123,6 +124,7 @@ export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({
     subtaskNotificationsEnabled: z.boolean().optional(),
     updateNotificationsEnabled: z.boolean().optional(),
     autoDownloadUpdates: z.boolean().optional(),
+    updateChannel: desktopUpdateChannelSchema.optional(),
     localBackupLimit: localBackupLimitSchema.optional(),
     notifyWhenFocused: z.boolean().optional(),
     sidebarCollapsed: z.boolean().optional(),

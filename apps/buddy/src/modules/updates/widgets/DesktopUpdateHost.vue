@@ -89,6 +89,7 @@ function versionedAction(operation: (version: string) => Promise<unknown>) {
     :show="details !== null && !installationVisible"
     :result="details"
     :delivery="delivery"
+    :channel="state?.channel"
     :ignored="state?.ignoredVersion === details?.latestVersion"
     :check-failed="state?.checkFailed"
     :reminder-deferred-until="state?.result?.latestVersion === details?.latestVersion ? state?.reminderDeferredUntil : null"

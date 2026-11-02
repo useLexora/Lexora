@@ -1,3 +1,4 @@
+import type { DesktopUpdateChannel } from '../../shared/desktopUpdates'
 import type { DesktopRuntimeHost } from '../app/DesktopRuntimeHost'
 import type { DesktopWindowHost } from '../app/DesktopWindowHost'
 import type { DesktopEnvironment } from '../app/typing'
@@ -6,10 +7,11 @@ import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import process from 'node:process'
 import { app, ipcMain, shell } from 'electron'
+import buddyVersion from '../../../buddy.version.json'
 import { resolveBuddyProcessControl } from '../../../platform/native/nativeHost'
 import { runsRpc } from '../../../shared/runs/runApi'
 import { DESKTOP_IPC_CHANNELS } from '../../shared/desktopApi'
-import { compareDesktopVersions, desktopUpdateActionSchema, desktopUpdateTargetSchema } from '../../shared/desktopUpdates'
+import { compareDesktopVersions, desktopUpdateActionSchema, desktopUpdateTargetSchema, isDesktopVersionAllowed } from '../../shared/desktopUpdates'
 import { checkForDesktopUpdate } from '../desktopUpdateService'
 import { assertTrustedSender } from '../ipc'
 import { DesktopUpdateCache } from './DesktopUpdateCache'
@@ -42,7 +44,7 @@ export function registerDesktopUpdates(environment: DesktopEnvironment, runtime:
   }
   const delivery = new DesktopUpdateDelivery({
     directory,
-    cache: directory ? new DesktopUpdateCache(directory, policy, app.getVersion()) : undefined,
+    cache: directory ? new DesktopUpdateCache(directory, policy, buddyVersion.version) : undefined,
     get: runtime.network.download,
     getDownloadSettings: () => runtime.config?.downloads,
     requestInstall,
@@ -71,15 +73,17 @@ export function registerDesktopUpdates(environment: DesktopEnvironment, runtime:
   })
   const service = runtime.service
   const updates = new DesktopUpdates({
-    currentVersion: app.getVersion(),
+    currentVersion: buddyVersion.version,
+    channel: runtime.config?.desktop.updateChannel ?? 'stable',
     automatic: automaticCheck,
     enabled: !!runtime.config?.desktop.onboardingCompleted && runtime.config.desktop.updateNotificationsEnabled,
     store: new DesktopUpdateStore(environment.paths.buddyHome),
-    check: signal => checkForDesktopUpdate({
-      currentVersion: app.getVersion(),
+    check: (signal, channel) => checkForDesktopUpdate({
+      currentVersion: buddyVersion.version,
+      channel,
       fetchRelease: runtime.network.get,
       signal,
-      onRelease: (release, version) => delivery.discover(compareDesktopVersions(version, app.getVersion()) > 0 || (version === app.getVersion() && version === policy.linuxInstallation.failedVersion) ? policy.resolve(release, version) : { mode: 'release', reason: null, update: null, fallback: null }),
+      onRelease: (release, version) => delivery.discover(compareDesktopVersions(version, buddyVersion.version) > 0 || (version === buddyVersion.version && version === policy.linuxInstallation.failedVersion) ? policy.resolve(release, version) : { mode: 'release', reason: null, update: null, fallback: null }),
     }),
     canPresent: () => environment.startup.state.status === 'ready' && !!windows.window?.isFocused() && windows.window.isVisible(),
     isIdle: async () => {
@@ -118,6 +122,10 @@ export function registerDesktopUpdates(environment: DesktopEnvironment, runtime:
   const config = runtime.configStore.onDidChange((change) => {
     if (change.kind === 'committed') {
       automaticDownload = change.config.desktop.autoDownloadUpdates
+      if (change.config.desktop.updateChannel !== updates.state.channel) {
+        delivery.discover({ mode: 'release', reason: null, update: null, fallback: null })
+        void updates.setChannel(change.config.desktop.updateChannel).catch(() => environment.events.publish({ component: 'desktop.updates', event: 'update.channel.failed', level: 'warn', errorCode: 'UPDATE_STATE_UNAVAILABLE' }))
+      }
       updates.setEnabled(change.config.desktop.onboardingCompleted && change.config.desktop.updateNotificationsEnabled)
       reconcile()
     }
@@ -131,7 +139,7 @@ export function registerDesktopUpdates(environment: DesktopEnvironment, runtime:
   })
   const stopStartup = environment.startup.onStateChange(state => updates.setReady(state.status === 'ready'))
   updates.setReady(environment.startup.state.status === 'ready')
-  const initialization = updates.start().then(() => delivery.restore(updates.state.result?.status === 'update_available' ? updates.state.result.latestVersion : policy.linuxInstallation.failedVersion === app.getVersion() ? app.getVersion() : null))
+  const initialization = updates.start().then(() => delivery.restore(updates.state.result?.status === 'update_available' ? updates.state.result.latestVersion : policy.linuxInstallation.failedVersion === buddyVersion.version && isDesktopVersionAllowed(buddyVersion.version, updates.state.channel) ? buddyVersion.version : null))
   const channels: string[] = [DESKTOP_IPC_CHANNELS.appUpdatesState, DESKTOP_IPC_CHANNELS.appUpdatesAcknowledge, DESKTOP_IPC_CHANNELS.appUpdatesTakeReminder]
   ipcMain.handle(channels[0]!, async (event) => {
     assertTrustedSender(event, windows.window)
@@ -164,7 +172,7 @@ export function registerDesktopUpdates(environment: DesktopEnvironment, runtime:
   }
   const assertTarget = (input: unknown) => {
     const { version } = desktopUpdateTargetSchema.parse(input)
-    if (version !== delivery.state.version || version !== updates.state.result?.latestVersion)
+    if (version !== delivery.state.version || version !== updates.state.result?.latestVersion || !isDesktopVersionAllowed(version, updates.state.channel))
       throw new Error('UPDATE_TARGET_CHANGED')
   }
   register(DESKTOP_IPC_CHANNELS.appUpdatesDownload, (input) => {
@@ -198,6 +206,7 @@ export function registerDesktopUpdates(environment: DesktopEnvironment, runtime:
   void initialization.catch(() => environment.events.publish({ component: 'desktop.updates', event: 'update.restore.failed', level: 'warn', errorCode: 'UPDATE_STATE_UNAVAILABLE' }))
   return {
     check: () => updates.check(),
+    beginChannelChange: (channel?: DesktopUpdateChannel) => channel ? delivery.holdInstallation() : undefined,
     capabilities: { ...policy.capabilities, automaticCheck },
     async dispose() {
       stopStartup()

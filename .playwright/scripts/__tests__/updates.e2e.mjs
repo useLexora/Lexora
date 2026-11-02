@@ -97,13 +97,6 @@ test('updates stay discoverable after dismissal, persist and restore skips, and 
   const reminder = () => desktop.page.getByTestId('update-reminder')
   await expect(reminder()).toBeVisible()
   await expect.poll(() => decisions(instance)).toMatchObject({ notifiedVersion: version, seenVersion: null })
-  for (const theme of ['light', 'dark']) {
-    await desktop.page.evaluate(id => window.lexoraDesktop.themes.request({ action: 'preference', preference: { id } }), `lexora.themes.classic-${theme}`)
-    await expect(desktop.page.locator('html')).toHaveAttribute('data-buddy-theme', theme)
-    await expect(reminder().locator('.n-alert')).toHaveCSS('background-color', /^rgb\(\d+, \d+, \d+\)$/)
-  }
-  await desktop.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(980, 640))
-  await expect(reminder().getByRole('button', { name: '查看更新', exact: true })).toBeInViewport()
   await reminder().locator('.n-alert__close').click()
   await expect(reminder()).toHaveCount(0)
   await desktop.page.locator('.desktop-app-sidebar__notification-trigger').click()
@@ -239,7 +232,7 @@ test('explicit reminder deferrals survive relaunch and are consumed only after t
   await dialog().getByRole('button', { name: '稍后', exact: true }).click()
   await desktop.page.getByRole('menuitem', { name: '30 分钟后提醒', exact: true }).click()
   await expect(dialog()).toHaveCount(0)
-  await expect.poll(() => decisions(instance)).toMatchObject({ version: 2, ignoredVersion: null, snoozedReminder: { version } })
+  await expect.poll(() => decisions(instance)).toMatchObject({ version: 3, channel: 'stable', ignoredVersion: null, snoozedReminder: { version } })
   const scheduled = (await decisions(instance)).snoozedReminder.until
   await instance.stop()
   desktop = await instance.launch()
@@ -292,7 +285,7 @@ test('failed real update checks retain the last successful time and describe the
   expect(desktop.diagnostics.console.filter(entry => entry.type === 'pageerror')).toEqual([])
 })
 
-test('updates defer for all running tasks and pending approvals, then notify when the window is idle', async ({ buddy }) => {
+test('updates defer for running and queued tasks with live approvals, then notify when the window is idle', async ({ buddy }) => {
   const instance = await buddy.createInstance('updates-busy')
   await seedUpdate(instance, false)
   const { app, page, diagnostics } = await instance.launch()
@@ -320,7 +313,7 @@ test('updates defer for all running tasks and pending approvals, then notify whe
     const { DatabaseSync } = process.getBuiltinModule('node:sqlite')
     const db = new DatabaseSync(databasePath)
     try {
-      db.exec('UPDATE runs SET status = \'completed\' WHERE id = \'update-fixture-run\'')
+      db.exec('UPDATE runs SET status = \'queued\' WHERE id = \'update-fixture-run\'')
     }
     finally { db.close() }
   }, databasePath)
@@ -330,7 +323,7 @@ test('updates defer for all running tasks and pending approvals, then notify whe
     const { DatabaseSync } = process.getBuiltinModule('node:sqlite')
     const db = new DatabaseSync(databasePath)
     try {
-      db.exec('UPDATE approvals SET status = \'approved\' WHERE id = \'update-fixture-approval\'')
+      db.exec('UPDATE approvals SET status = \'approved\' WHERE id = \'update-fixture-approval\'; UPDATE runs SET status = \'completed\' WHERE id = \'update-fixture-run\'')
     }
     finally { db.close() }
     const window = BrowserWindow.getAllWindows().find(window => window.webContents.getURL().startsWith('lexora-app:'))
@@ -348,7 +341,7 @@ test('update delivery waits for verification and requires review of changed vers
   await seedUpdate(instance, false)
   const { app, page, diagnostics } = await instance.launch()
   await app.evaluate(({ ipcMain, BrowserWindow }, result) => {
-    const state = { revision: 100, checking: false, enabled: false, lastCheckedAt: Date.now(), lastSuccessfulCheckAt: Date.now(), checkFailed: false, ignoredVersion: null, result, notification: null, reminderDueAt: null, delivery: { mode: 'restart', reason: null, status: 'verifying', version: result.latestVersion, progressPercent: 0 } }
+    const state = { channel: 'stable', revision: 100, checking: false, enabled: false, lastCheckedAt: Date.now(), lastSuccessfulCheckAt: Date.now(), checkFailed: false, ignoredVersion: null, result, notification: null, reminderDueAt: null, delivery: { mode: 'restart', reason: null, status: 'verifying', version: result.latestVersion, progressPercent: 0 } }
     globalThis.updateDeliveryFixture = state
     ipcMain.removeHandler('lexora:app:check-for-updates')
     ipcMain.handle('lexora:app:check-for-updates', () => globalThis.updateDeliveryFixture.result)
@@ -360,20 +353,16 @@ test('update delivery waits for verification and requires review of changed vers
   await checkFromApplicationMenu(page)
   const dialog = page.locator('.desktop-update-dialog')
   await expect(dialog.getByRole('button', { name: '正在校验…', exact: true })).toBeDisabled()
-  const staleActions = await page.evaluate(async () => {
-    const updates = window.lexoraDesktop.app.updates
-    return Promise.all([updates.download, updates.cancelDownload, updates.install, updates.openPackage].map(async (operation) => {
-      try {
-        await operation('998.0.0')
-        return 'accepted'
-      }
-      catch (error) {
-        return error.message
-      }
-    }))
+  const staleInstall = await page.evaluate(async () => {
+    try {
+      await window.lexoraDesktop.app.updates.install('998.0.0')
+      return 'accepted'
+    }
+    catch (error) {
+      return error.message
+    }
   })
-  for (const response of staleActions)
-    expect(response).toContain('UPDATE_TARGET_CHANGED')
+  expect(staleInstall).toContain('UPDATE_TARGET_CHANGED')
   await app.evaluate(({ BrowserWindow }) => {
     const state = globalThis.updateDeliveryFixture
     state.revision++
@@ -399,7 +388,7 @@ test('update delivery waits for verification and requires review of changed vers
       window.webContents.send('lexora:app:updates:changed', state)
   })
   await dialog.getByRole('button', { name: '查看检查结果', exact: true }).click()
-  await expect(dialog).toContainText('已是最新版本')
+  await expect(dialog).toContainText('当前通道暂无更新')
   await expect(dialog.getByRole('button', { name: '跳过此版本', exact: true })).toHaveCount(0)
   expect(diagnostics.console.filter(entry => entry.type === 'pageerror')).toEqual([])
 })

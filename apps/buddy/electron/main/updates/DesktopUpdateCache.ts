@@ -16,7 +16,7 @@ const formats = Object.keys(DESKTOP_PACKAGE_FORMATS) as (keyof typeof DESKTOP_PA
 function ownedPackage(name: string) {
   const temporary = name.endsWith('.download')
   const asset = temporary ? name.slice(0, -'.download'.length) : name
-  const version = desktopVersionSchema.safeParse(/^Lexora-Buddy-(\d+\.\d+\.\d+)-/.exec(asset)?.[1])
+  const version = desktopVersionSchema.safeParse(/^Lexora-Buddy-(\d+\.\d+\.\d+(?:-beta\.[1-9]\d*)?)-/.exec(asset)?.[1])
   if (!version.success || !formats.some(format => (['x64', 'arm64'] as const).some(architecture => desktopUpdateArtifactName(format, architecture, version.data) === asset)))
     return null
   return { version: version.data, temporary }

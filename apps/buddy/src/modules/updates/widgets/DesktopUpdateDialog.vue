@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import type { DesktopUpdateCheckResult, DesktopUpdateDeliveryState } from '@buddy-electron/shared/desktopUpdates'
+import type { DesktopUpdateChannel, DesktopUpdateCheckResult, DesktopUpdateDeliveryState } from '@buddy-electron/shared/desktopUpdates'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { compareDesktopVersions } from '@buddy-electron/shared/desktopUpdates'
 import { ArrowDownload20Regular, ArrowUpRight20Regular, CheckmarkCircle20Regular, ChevronDown16Regular, History20Regular, MoreHorizontal20Regular } from '@vicons/fluent'
-import { NButton, NDropdown, NModal, NScrollbar, NTooltip } from 'naive-ui'
+import { NButton, NDropdown, NModal, NScrollbar, NTag, NTooltip } from 'naive-ui'
 import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
@@ -13,6 +13,7 @@ import DesktopUpdateDeliveryStatus from './DesktopUpdateDeliveryStatus.vue'
 
 const props = defineProps<{
   delivery?: DesktopUpdateDeliveryState
+  channel?: DesktopUpdateChannel
   language: BuddyLocale
   result: DesktopUpdateCheckResult | null
   show: boolean
@@ -42,6 +43,9 @@ const emit = defineEmits<{
 }>()
 const { t } = useBuddyI18n(() => props.language)
 const installing = computed(() => props.delivery?.status === 'installing')
+const availableBeta = computed(() => /-beta\.\d+$/.test(props.result?.latestVersion ?? ''))
+const installedBeta = computed(() => /-beta\.\d+$/.test(props.result?.currentVersion ?? ''))
+const channelName = computed(() => t(props.channel === 'beta' ? 'desktop.update.channelBeta' : 'desktop.update.channelStableName'))
 const installationFailed = computed(() => props.delivery?.reason === 'installer-unavailable' && props.delivery.version === props.result?.latestVersion)
 const updateAvailable = computed(() => props.result?.status === 'update_available' || installationFailed.value)
 const outdated = computed(() => !installing.value && !!props.result && !!props.latestVersion && props.latestVersion !== props.result.latestVersion)
@@ -96,14 +100,20 @@ function updateVersionReminder() {
             <DesktopIcon :component="ArrowDownload20Regular" :size="22" aria-hidden="true" />
           </div>
           <div class="min-w-0 flex-1">
-            <div class="flex items-center gap-[8px]">
-              <h2 class="m-0 text-strong text-[16px] font-600 leading-[1.35]">
+            <div class="flex flex-wrap items-center gap-[8px]">
+              <h2 class="m-0 text-strong text-[16px] font-600 leading-[1.35] [overflow-wrap:anywhere]">
                 Lexora Buddy {{ result.latestVersion }}
               </h2>
+              <NTag v-if="availableBeta" size="small" type="warning" :bordered="false">
+                {{ t('desktop.update.betaTag') }}
+              </NTag>
               <span class="inline-flex items-center py-[2px] px-[7px] rounded-[4px] bg-accent-surface text-accent-text text-[11px] font-600 leading-[1.3]">{{ t(installationFailed ? 'desktop.update.installationIncomplete' : ignored ? 'desktop.update.skippedTag' : 'desktop.update.newTag') }}</span>
             </div>
-            <p class="mt-[3px] mr-0 mb-0 ml-0 text-muted text-[12px] leading-[1.5]">
-              {{ t('desktop.update.currentVersion') }} v{{ result.currentVersion }}
+            <p class="mt-[3px] mr-0 mb-0 ml-0 flex flex-wrap items-center gap-2 text-muted text-[12px] leading-[1.5]">
+              <span>{{ t('desktop.update.currentVersion') }} v{{ result.currentVersion }}</span>
+              <NTag v-if="installedBeta" size="small" type="warning" :bordered="false">
+                {{ t('desktop.update.betaTag') }}
+              </NTag>
             </p>
           </div>
         </header>
@@ -178,7 +188,13 @@ function updateVersionReminder() {
             {{ t(checkFailed ? 'desktop.update.cachedResult' : 'desktop.update.latest') }}
           </h2>
           <p class="m-0 text-muted text-[13px] leading-[1.5]">
-            {{ t(checkFailed ? 'desktop.update.cachedResultDescription' : 'desktop.update.latestDescription') }} (v{{ result.currentVersion }})
+            {{ t(checkFailed ? 'desktop.update.cachedResultDescription' : 'desktop.update.latestDescription', { channel: channelName }) }}
+          </p>
+          <p class="mt-2 mb-0 flex flex-wrap items-center justify-center gap-2 text-muted text-[13px] leading-[1.5]">
+            <span>{{ t('desktop.update.currentVersion') }} v{{ result.currentVersion }}</span>
+            <NTag v-if="installedBeta" size="small" type="warning" :bordered="false">
+              {{ t('desktop.update.betaTag') }}
+            </NTag>
           </p>
         </div>
       </template>

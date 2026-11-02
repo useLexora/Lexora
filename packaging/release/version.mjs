@@ -7,8 +7,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { writeError, writeOutput } from '../shared/cli-output.mjs'
 
 const repoRoot = resolve(import.meta.dirname, '../..')
-const versionPattern = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/
-const releaseTagPattern = /^v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/
+const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-beta\.([1-9]\d*))?$/
 const applicationPackagePaths = {
   buddy: 'apps/buddy/package.json',
 }
@@ -75,7 +74,7 @@ export function readLexoraVersionStateFromSources(sources) {
 
 export function validateLexoraVersionState(state) {
   const errors = []
-  if (!versionPattern.test(state.productVersion))
+  if (!isLexoraVersion(state.productVersion))
     errors.push(`package.json has invalid product version: ${state.productVersion}`)
 
   for (const [name, version] of Object.entries(state.applicationVersions)) {
@@ -106,9 +105,9 @@ export function validateLexoraVersionState(state) {
 }
 
 export function validateLexoraReleaseTag(tag, productVersion) {
-  const version = releaseTagPattern.exec(tag)?.[1]
-  if (!version)
-    throw new Error(`Lexora release tag must use vX.Y.Z format: ${tag}`)
+  const version = typeof tag === 'string' && tag.startsWith('v') ? tag.slice(1) : ''
+  if (!isLexoraVersion(version))
+    throw new Error(`Lexora release tag must use vX.Y.Z or vX.Y.Z-beta.N format: ${tag}`)
   if (version !== productVersion)
     throw new Error(`Lexora release tag ${tag} does not match product version ${productVersion}`)
   return { tag, version }
@@ -129,8 +128,7 @@ export function setLexoraVersion(cwd, version, options = {}) {
 }
 
 export function createLexoraVersionSources(sources, version, options = {}) {
-  if (!versionPattern.test(version))
-    throw new Error(`version must use x.y.z format without leading zeroes: ${version}`)
+  parseLexoraVersion(version)
 
   const parsed = {
     rootPackage: parseJson(sources['package.json'], 'package.json'),
@@ -143,7 +141,7 @@ export function createLexoraVersionSources(sources, version, options = {}) {
     buddyMetadata: parseJson(sources[buddyMetadataPath], buddyMetadataPath),
   }
   const currentVersion = readJsonVersion(parsed.rootPackage)
-  if (!versionPattern.test(currentVersion))
+  if (!isLexoraVersion(currentVersion))
     throw new Error(`package.json has invalid product version: ${currentVersion}`)
 
   const comparison = compareLexoraVersions(version, currentVersion)
@@ -287,16 +285,34 @@ function replaceExactlyOnce(source, pattern, replacement, path) {
   return source.replace(pattern, replacement)
 }
 
+function isLexoraVersion(version) {
+  return typeof version === 'string' && versionPattern.exec(version)?.[0] === version
+}
+
+export function parseLexoraVersion(version) {
+  const match = typeof version === 'string' ? versionPattern.exec(version) : null
+  if (!match || match[0] !== version)
+    throw new Error(`version must use x.y.z or x.y.z-beta.N without leading zeroes (N > 0): ${version}`)
+  const [, major, minor, patch, beta = null] = match
+  return { major, minor, patch, beta, baseVersion: `${major}.${minor}.${patch}` }
+}
+
 export function compareLexoraVersions(left, right) {
-  const leftParts = left.split('.').map(BigInt)
-  const rightParts = right.split('.').map(BigInt)
-  for (let index = 0; index < leftParts.length; index += 1) {
-    if (leftParts[index] > rightParts[index])
+  const a = parseLexoraVersion(left)
+  const b = parseLexoraVersion(right)
+  for (const part of ['major', 'minor', 'patch']) {
+    if (BigInt(a[part]) > BigInt(b[part]))
       return 1
-    if (leftParts[index] < rightParts[index])
+    if (BigInt(a[part]) < BigInt(b[part]))
       return -1
   }
-  return 0
+  if (a.beta === b.beta)
+    return 0
+  if (a.beta === null)
+    return 1
+  if (b.beta === null)
+    return -1
+  return BigInt(a.beta) > BigInt(b.beta) ? 1 : -1
 }
 
 function checkVersionState(cwd = repoRoot) {
@@ -323,8 +339,7 @@ function main() {
   if (command === '--check-next') {
     const state = checkVersionState()
     const version = value ?? ''
-    if (!versionPattern.test(version))
-      throw new Error(`version must use x.y.z format without leading zeroes: ${version}`)
+    parseLexoraVersion(version)
     if (compareLexoraVersions(version, state.productVersion) <= 0) {
       throw new Error(
         `version ${version} must be greater than current product version ${state.productVersion}`,
@@ -340,7 +355,7 @@ function main() {
     return
   }
   throw new Error(
-    'usage: version.mjs --set <x.y.z> | --check | --check-next <x.y.z> | --check-tag <vX.Y.Z>',
+    'usage: version.mjs --set <version> | --check | --check-next <version> | --check-tag <vVersion> (x.y.z or x.y.z-beta.N)',
   )
 }
 

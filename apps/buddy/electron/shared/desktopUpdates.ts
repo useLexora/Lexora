@@ -2,7 +2,17 @@ import type { DeepReadonly } from '../../shared/runtime/apiValidation'
 import { z } from 'zod'
 import { isLexoraReleaseUrl } from './productLinks'
 
-export const desktopVersionSchema = z.string().max(32).regex(/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/)
+export const desktopVersionSchema = z.string().max(32).regex(/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-beta\.[1-9]\d*)?$/)
+export const desktopUpdateChannelSchema = z.enum(['stable', 'beta'])
+export type DesktopUpdateChannel = z.infer<typeof desktopUpdateChannelSchema>
+
+export function isDesktopBetaVersion(version: string): boolean {
+  return version.includes('-beta.')
+}
+
+export function isDesktopVersionAllowed(version: string, channel: DesktopUpdateChannel): boolean {
+  return channel === 'beta' || !isDesktopBetaVersion(version)
+}
 
 export const desktopUpdateResultSchema = z.object({
   currentVersion: desktopVersionSchema,
@@ -57,6 +67,7 @@ export interface DesktopUpdateState {
   readonly downloadDirectory?: string | null
   readonly revision: number
   readonly checking: boolean
+  readonly channel: DesktopUpdateChannel
   readonly enabled: boolean
   readonly lastCheckedAt: number | null
   readonly lastSuccessfulCheckAt: number | null
@@ -99,13 +110,21 @@ export interface DesktopUpdateApi {
 }
 
 export function compareDesktopVersions(left: string, right: string): number {
-  const a = left.split('.').map(BigInt)
-  const b = right.split('.').map(BigInt)
+  const [leftCore, leftBeta] = left.split('-beta.')
+  const [rightCore, rightBeta] = right.split('-beta.')
+  const a = leftCore!.split('.').map(BigInt)
+  const b = rightCore!.split('.').map(BigInt)
   for (let index = 0; index < 3; index++) {
     if (a[index]! > b[index]!)
       return 1
     if (a[index]! < b[index]!)
       return -1
   }
-  return 0
+  if (leftBeta === rightBeta)
+    return 0
+  if (leftBeta === undefined)
+    return 1
+  if (rightBeta === undefined)
+    return -1
+  return BigInt(leftBeta) > BigInt(rightBeta) ? 1 : -1
 }

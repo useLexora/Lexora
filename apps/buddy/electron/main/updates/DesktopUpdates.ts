@@ -1,8 +1,8 @@
-import type { DesktopUpdateAction, DesktopUpdateCheckResult, DesktopUpdateState } from '../../shared/desktopUpdates'
+import type { DesktopUpdateAction, DesktopUpdateChannel, DesktopUpdateCheckResult, DesktopUpdateState } from '../../shared/desktopUpdates'
 import type { DesktopUpdateRecord, DesktopUpdateStore } from './DesktopUpdateStore'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
-import { compareDesktopVersions } from '../../shared/desktopUpdates'
+import { compareDesktopVersions, desktopUpdateChannelSchema, isDesktopVersionAllowed } from '../../shared/desktopUpdates'
 import { emptyUpdateRecord } from './DesktopUpdateStore'
 
 export const UPDATE_CHECK_INTERVAL = 24 * 60 * 60 * 1000
@@ -12,15 +12,17 @@ export const UPDATE_STARTUP_DELAY = 30_000
 interface UpdateRequest {
   controller: AbortController
   manual: boolean
+  channel: DesktopUpdateChannel
   promise: Promise<DesktopUpdateCheckResult>
 }
 
 export interface DesktopUpdatesOptions {
   currentVersion: string
+  channel?: DesktopUpdateChannel
   automatic: boolean
   enabled: boolean
   store: Pick<DesktopUpdateStore, 'read' | 'write'>
-  check: (signal: AbortSignal) => Promise<DesktopUpdateCheckResult>
+  check: (signal: AbortSignal, channel: DesktopUpdateChannel) => Promise<DesktopUpdateCheckResult>
   canPresent: () => boolean
   isIdle: () => Promise<boolean>
   reportFailure: () => void
@@ -33,6 +35,7 @@ export class DesktopUpdates {
   #record = emptyUpdateRecord()
   #revision = 0
   #enabled: boolean
+  #channel: DesktopUpdateChannel
   #ready = false
   #stopped = false
   #automaticAfter = 0
@@ -45,6 +48,7 @@ export class DesktopUpdates {
   constructor(options: DesktopUpdatesOptions) {
     this.#options = options
     this.#enabled = options.enabled
+    this.#channel = options.channel ?? 'stable'
     this.#changes = new Emitter(options.reportFailure)
     this.onDidChange = this.#changes.event
   }
@@ -53,9 +57,10 @@ export class DesktopUpdates {
     this.#initialization ??= this.#options.store.read().then((record) => {
       if (this.#stopped)
         return
-      const result = record.result
+      const aligned = this.#alignChannel(record)
+      const result = aligned.result
       this.#record = {
-        ...record,
+        ...aligned,
         result: result
           ? {
               ...result,
@@ -71,19 +76,20 @@ export class DesktopUpdates {
   }
 
   get state(): DesktopUpdateState {
-    const { result, discoveredAt, seenVersion, ignoredVersion, notifiedVersion, lastNotifiedAt, snoozedReminder } = this.#record
-    const candidate = result?.status === 'update_available' && !covers(ignoredVersion, result.latestVersion)
+    const { result, discoveredAt, seenVersion, ignoredVersion, notifiedVersion, lastNotifiedAt, snoozedReminder } = this.#alignChannel(this.#record)
+    const candidate = result?.status === 'update_available' && !this.#covers(ignoredVersion, result.latestVersion)
     const deferred = candidate && snoozedReminder?.version === result.latestVersion ? snoozedReminder : null
     const available = candidate && (this.#enabled || deferred !== null)
-    const unseen = available && !covers(seenVersion, result.latestVersion)
+    const unseen = available && !this.#covers(seenVersion, result.latestVersion)
     return copyEventSnapshot({
       revision: this.#revision,
-      checking: this.#request !== null,
+      checking: this.#request !== null && !this.#request.controller.signal.aborted,
+      channel: this.#channel,
       enabled: this.#enabled,
       lastCheckedAt: this.#record.lastCheckedAt,
       lastSuccessfulCheckAt: this.#record.lastSuccessfulCheckAt,
       checkFailed: this.#record.checkFailed,
-      ignoredVersion: ignoredVersion !== null && compareDesktopVersions(ignoredVersion, this.#options.currentVersion) > 0 ? ignoredVersion : null,
+      ignoredVersion: ignoredVersion !== null && isDesktopVersionAllowed(ignoredVersion, this.#channel) && compareDesktopVersions(ignoredVersion, this.#options.currentVersion) > 0 ? ignoredVersion : null,
       result,
       notification: available
         ? {
@@ -100,7 +106,7 @@ export class DesktopUpdates {
       reminderDueAt: this.#ready && available
         ? deferred
           ? deferred.reminded ? null : deferred.until
-          : unseen && !covers(notifiedVersion, result.latestVersion)
+          : unseen && !this.#covers(notifiedVersion, result.latestVersion)
             ? lastNotifiedAt === null ? 0 : Math.min(lastNotifiedAt, Date.now()) + UPDATE_REMINDER_INTERVAL
             : null
         : null,
@@ -128,6 +134,20 @@ export class DesktopUpdates {
     this.#schedule()
   }
 
+  setChannel(value: DesktopUpdateChannel): Promise<void> {
+    const channel = desktopUpdateChannelSchema.parse(value)
+    if (this.#channel === channel || this.#stopped)
+      return Promise.resolve()
+    this.#channel = channel
+    this.#request?.controller.abort()
+    this.#attemptAt = null
+    this.#publish()
+    return this.#enqueue(async () => {
+      if (this.#channel === channel)
+        await this.#commit(this.#alignChannel(this.#record))
+    }).finally(() => this.#schedule())
+  }
+
   check(manual = true): Promise<DesktopUpdateCheckResult> {
     if (this.#stopped)
       return Promise.reject(new Error('UPDATE_SERVICE_STOPPED'))
@@ -138,6 +158,7 @@ export class DesktopUpdates {
     const request: UpdateRequest = {
       controller: new AbortController(),
       manual,
+      channel: this.#channel,
       promise: Promise.resolve().then(() => this.#check(request)).finally(() => {
         if (this.#request === request) {
           this.#request = null
@@ -185,7 +206,7 @@ export class DesktopUpdates {
         const deferred = this.#record.snoozedReminder?.version === input.version ? this.#record.snoozedReminder : null
         if (deferred && (deferred.reminded || deferred.until > Date.now()))
           return this.state
-        if (!covers(this.#record.notifiedVersion, input.version) || deferred?.version === input.version)
+        if (!this.#covers(this.#record.notifiedVersion, input.version) || deferred?.version === input.version)
           await this.#commit({ ...this.#record, seenVersion: this.#record.seenVersion === input.version ? null : this.#record.seenVersion, snoozedReminder: deferred ? { ...deferred, reminded: true } : null, notifiedVersion: input.version, lastNotifiedAt: Date.now() })
         return this.state
       }
@@ -229,7 +250,10 @@ export class DesktopUpdates {
     signal.throwIfAborted()
     let result: DesktopUpdateCheckResult
     try {
-      result = await this.#options.check(signal)
+      result = await this.#options.check(signal, request.channel)
+      signal.throwIfAborted()
+      if (!isDesktopVersionAllowed(result.latestVersion, request.channel))
+        throw new Error('UPDATE_CHANNEL_MISMATCH')
     }
     catch (error) {
       if (!signal.aborted) {
@@ -246,16 +270,29 @@ export class DesktopUpdates {
       await this.#commit({
         ...this.#record,
         result,
+        channel: request.channel,
         lastSuccessfulCheckAt: Date.now(),
         checkFailed: false,
         snoozedReminder: this.#record.snoozedReminder?.version === result.latestVersion ? this.#record.snoozedReminder : null,
         discoveredAt: previous?.latestVersion === result.latestVersion ? this.#record.discoveredAt : Date.now(),
         ...(request.manual ? { seenVersion: result.latestVersion } : {}),
       })
-      if (request.manual && !covers(this.#record.seenVersion, result.latestVersion))
+      signal.throwIfAborted()
+      if (request.manual && !this.#covers(this.#record.seenVersion, result.latestVersion))
         await this.#commit({ ...this.#record, seenVersion: result.latestVersion })
+      signal.throwIfAborted()
       return result
     })
+  }
+
+  #covers(saved: string | null, candidate: string): boolean {
+    return saved !== null && isDesktopVersionAllowed(saved, this.#channel) && compareDesktopVersions(saved, candidate) >= 0
+  }
+
+  #alignChannel(record: DesktopUpdateRecord): DesktopUpdateRecord {
+    if (record.channel === this.#channel && (!record.result || isDesktopVersionAllowed(record.result.latestVersion, this.#channel)))
+      return record
+    return { ...record, channel: this.#channel, result: null, lastCheckedAt: null, lastSuccessfulCheckAt: null, checkFailed: false, discoveredAt: null, snoozedReminder: null }
   }
 
   #canRemind(): boolean {
@@ -300,8 +337,4 @@ export class DesktopUpdates {
     }, Math.max(0, due - Date.now()))
     this.#timer.unref?.()
   }
-}
-
-function covers(saved: string | null, candidate: string): boolean {
-  return saved !== null && compareDesktopVersions(saved, candidate) >= 0
 }

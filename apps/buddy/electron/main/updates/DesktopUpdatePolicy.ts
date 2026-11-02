@@ -4,6 +4,7 @@ import type { GithubRelease } from '../desktopUpdateService'
 import type { DesktopUpdatePackage } from './DesktopUpdatePackage'
 import { z } from 'zod'
 import { DESKTOP_PACKAGE_FORMATS } from '../../shared/desktopDistribution'
+import { isDesktopBetaVersion } from '../../shared/desktopUpdates'
 import { selectDesktopUpdatePackage } from './DesktopUpdatePackage'
 
 const distributionSchema = z.object({
@@ -45,7 +46,7 @@ export class DesktopUpdatePolicy {
       tag_name: `v${version}`,
       html_url: `https://github.com/useLexora/Lexora/releases/tag/v${version}`,
       draft: false,
-      prerelease: false,
+      prerelease: isDesktopBetaVersion(version),
       assets: packages.map(item => ({ name: item.name, browser_download_url: item.url, digest: `sha256:${item.sha256}`, size: item.size, state: 'uploaded' })),
     }, version)
     return plan.update ? plan : null

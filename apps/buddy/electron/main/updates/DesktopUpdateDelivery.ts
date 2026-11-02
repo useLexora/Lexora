@@ -36,6 +36,7 @@ export class DesktopUpdateDelivery {
   #clearing: Promise<void> | null = null
   #generation = 0
   #pendingPlan: DesktopUpdatePlan | null = null
+  #installationHolds = 0
 
   constructor(options: DeliveryOptions) {
     this.#options = options
@@ -48,9 +49,10 @@ export class DesktopUpdateDelivery {
   get state(): DesktopUpdateDeliveryState { return copyEventSnapshot(this.#state) }
 
   async restore(version: string | null): Promise<void> {
+    const generation = this.#generation
     try {
       const plan = await this.#options.cache?.readPlan(version)
-      if (plan && !this.#update && !this.#stopped) {
+      if (plan && generation === this.#generation && !this.#update && !this.#stopped) {
         this.discover(plan)
         await this.#restoration
       }
@@ -89,6 +91,8 @@ export class DesktopUpdateDelivery {
     }
     if (this.#update?.url === update?.url && this.#update?.sha256 === update?.sha256 && this.#update?.size === update?.size && this.#plan.mode === plan.mode && this.#plan.reason === plan.reason) {
       this.#plan = plan
+      if (!update)
+        this.#generation++
       return
     }
     this.#download?.controller.abort()
@@ -208,11 +212,20 @@ export class DesktopUpdateDelivery {
       this.#cancelledVersion = null
   }
 
+  holdInstallation(): () => void {
+    if (this.#installation)
+      throw new Error('UPDATE_INSTALL_IN_PROGRESS')
+    this.#installationHolds++
+    return () => {
+      this.#installationHolds--
+    }
+  }
+
   install(): Promise<void> {
     if (this.#installation)
       return this.#installation
     const ready = this.#ready
-    if (this.#stopped || this.#clearing || !ready || this.#plan.mode !== 'restart')
+    if (this.#stopped || this.#clearing || this.#installationHolds || !ready || this.#plan.mode !== 'restart')
       return Promise.reject(new Error('UPDATE_INSTALL_UNAVAILABLE'))
     this.#installation = (async () => {
       if (!await this.#verifyReady(ready)) {
@@ -260,16 +273,22 @@ export class DesktopUpdateDelivery {
     return this.#installation
   }
 
-  async openPackage(): Promise<void> {
+  openPackage(): Promise<void> {
     const ready = this.#ready
-    if (this.#stopped || this.#clearing || !ready || this.#plan.mode !== 'open-package')
-      throw new Error('UPDATE_INSTALL_UNAVAILABLE')
-    if (!await this.#verifyReady(ready)) {
-      this.#ready = null
-      this.#setState({ status: 'error', version: ready.update.version, progressPercent: 0, failure: 'verification' })
-      throw new Error('UPDATE_PACKAGE_INVALID')
-    }
-    await this.#options.openPackage(ready.path)
+    if (this.#stopped || this.#clearing || this.#installationHolds || this.#installation || !ready || this.#plan.mode !== 'open-package')
+      return Promise.reject(new Error('UPDATE_INSTALL_UNAVAILABLE'))
+    this.#installation = (async () => {
+      if (!await this.#verifyReady(ready)) {
+        this.#ready = null
+        this.#setState({ status: 'error', version: ready.update.version, progressPercent: 0, failure: 'verification' })
+        throw new Error('UPDATE_PACKAGE_INVALID')
+      }
+      await this.#options.openPackage(ready.path)
+    })().finally(() => {
+      this.#installation = null
+      this.#applyPendingPlan()
+    })
+    return this.#installation
   }
 
   async dispose(): Promise<void> {
