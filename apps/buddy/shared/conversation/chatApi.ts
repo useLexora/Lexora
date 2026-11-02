@@ -5,6 +5,7 @@ import { runSchema, runsRequestSchemas, runsResponseSchemas } from '../runs/runA
 import { idSchema, sessionIdentitySchema } from '../runtime/apiValidation'
 import { skillReferenceSchema } from '../skills/skillApi'
 import { buddyComposerDraftSendSchema } from './composerDraft'
+import { messageSchema } from './conversationApi'
 
 export const buddyInputDeliverySchema = z.object({
   mode: z.enum(['current', 'next']),
@@ -30,6 +31,7 @@ export const turnStartSchema = z.object({
   }).strict().nullable(),
   run: runSchema,
   runId: idSchema,
+  userMessage: messageSchema.nullable(),
 }).strict()
 
 export const chatCommandSchema = buddyComposerDraftSendSchema

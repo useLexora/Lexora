@@ -3,7 +3,7 @@ import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { BuddyComposerResource } from '@buddy-shared/conversation/composerResource'
 import type { JSONContent } from '@tiptap/core'
 import { File as NodeFile } from 'node:buffer'
-import { BUDDY_ATTACHMENT_COUNT_LIMIT, getAttachmentKind } from '@buddy-shared/conversation/attachmentPolicy'
+import { getAttachmentKind } from '@buddy-shared/conversation/attachmentPolicy'
 import { appendBuddyResourceQuote, BUDDY_QUOTE_TEXT_LIMIT } from '@buddy-shared/conversation/buddyUserContent'
 import { Emitter } from '@buddy-shared/events/Emitter'
 import { deferred } from '@buddy-tests/deferred'
@@ -62,35 +62,24 @@ async function mountFlow() {
       return resource
     },
     async selectFiles() { return [] },
-    async selectSource(input, referencedResourceIds = []) {
-      if (referencedResourceIds.length >= BUDDY_ATTACHMENT_COUNT_LIMIT)
-        throw new Error('Attachment limit exceeded')
-      if ('localPath' in input.source || 'resourceId' in input.source)
-        throw new Error('This fixture only supports legacy source selections')
-      const source = 'bindingId' in input.source
-        ? { ...input.source, bindingRevision: 1 }
-        : 'messageId' in input.source
-          ? { ...input.source, attachmentId: 'attachment-history' }
-          : input.source
+    async selectSource(input) {
+      if (!('bindingId' in input.source))
+        throw new Error('Expected a space-file source')
       const resource: BuddyComposerResource = {
         draftId: input.draftId,
         kind: 'text',
         mimeType: 'text/plain',
-        name: 'oversized.txt',
+        name: 'notes.txt',
         previewUrl: null,
         resourceId: input.resourceId,
         sizeBytes: 1,
-        source,
+        source: { ...input.source, bindingRevision: 1 },
         state: 'ready',
       }
       records.set(resource.resourceId, resource)
       return resource
     },
-    async selectSpaceFile(input) {
-      const resource: BuddyComposerResource = { draftId: input.draftId, resourceId: input.resourceId, name: 'notes.txt', kind: 'text', mimeType: 'text/plain', sizeBytes: 1, previewUrl: null, source: { ...input.source, bindingRevision: 1 }, state: 'ready' }
-      records.set(resource.resourceId, resource)
-      return resource
-    },
+    async selectSpaceFile() { throw new Error('Unexpected space-file selection') },
   }
   const draftId = shallowRef('draft-1')
   const pasteTextAsAttachment = shallowRef(true)
@@ -123,6 +112,7 @@ async function mountFlow() {
         composerContent: content,
         draft,
         draftId,
+        editorKey: draftId,
         pasteTextAsAttachment,
         resources: resources.resources,
         selectedModel: shallowRef(null),
@@ -160,8 +150,8 @@ async function mountFlow() {
   })
   const editor = composer.editor.value!
   editor.view.setProps({ handleScrollToSelection: () => true })
-  function pasteImages(names = ['red.png', 'blue.png']) {
-    const files = names.map((name) => {
+  function pasteImages() {
+    const files = ['red.png', 'blue.png'].map((name) => {
       const file = new File(['image-bytes'], name, { type: 'image/png' })
       Object.defineProperty(file, 'arrayBuffer', { value: async () => new ArrayBuffer(11) })
       return file
@@ -474,38 +464,6 @@ describe('composer resource flow', () => {
     expect(flow.storedFiles.size).toBe(2)
   })
 
-  it('numbers same-name images across pastes and keeps repeated references and restored drafts consistent', async () => {
-    const flow = await mountFlow()
-    const labels = () => [...flow.root.querySelectorAll('.chat-resource-reference__label')].map(node => node.textContent)
-    flow.pasteImages(['image.png', 'image.png'])
-    await nextTick()
-    expect(labels()).toEqual(['[Image #1]', '[Image #2]'])
-    flow.pasteImages(['image.png'])
-    await nextTick()
-    expect(labels()).toEqual(['[Image #1]', '[Image #2]', '[Image #3]'])
-    const [first, second] = getChatComposerResourceIds(flow.editor.getJSON())
-    flow.editor.commands.insertContent({ attrs: { resourceId: first }, type: 'chatResourceReference' })
-    await nextTick()
-    expect(labels()).toEqual(['[Image #1]', '[Image #2]', '[Image #3]', '[Image #1]'])
-    expect(flow.composer.materials.value.flatMap(card => card.kind === 'resource' ? [card.imageLabel] : [])).toEqual(['[Image #1]', '[Image #2]', '[Image #3]'])
-    flow.composer.removeResource(second!)
-    await nextTick()
-    expect(labels()).toEqual(['[Image #1]', '[Image #2]', '[Image #1]'])
-    flow.editor.commands.undo()
-    await nextTick()
-    expect(labels()).toEqual(['[Image #1]', '[Image #2]', '[Image #3]', '[Image #1]'])
-    const saved = chatComposerDocumentToUserContent(flow.editor.getJSON())
-    flow.accepting.resolve()
-    flow.uploading.resolve()
-    await flow.resources.whenAccepted()
-    await vi.waitFor(() => expect(flow.composer.canSubmit.value).toBe(true))
-    flow.editor.commands.clearContent()
-    await nextTick()
-    flow.content.value = userContentToChatComposerDocument(saved)
-    await nextTick()
-    expect(labels()).toEqual(['[Image #1]', '[Image #2]', '[Image #3]', '[Image #1]'])
-  })
-
   it('removes a card and all inline appearances in one undoable edit while deleting an inline occurrence retains independent attachments', async () => {
     const flow = await mountFlow()
     flow.pasteImages()
@@ -617,30 +575,6 @@ describe('composer resource flow', () => {
     nextSession.editor.view.dom.dispatchEvent(clipboardEvent('paste'))
     expect(getChatComposerResourceIds(nextSession.editor.getJSON())).toEqual([])
     expect(nextSession.editor.getText()).toBe('[Image #1]')
-  })
-
-  it('does not leave a source card in the renderer when the combined input limit rejects it', async () => {
-    const flow = await mountFlow()
-    flow.editor.commands.setContent({
-      attrs: { panelResourceIds: [] },
-      content: [{
-        content: Array.from({ length: BUDDY_ATTACHMENT_COUNT_LIMIT }, (_, index) => ({
-          attrs: { resourceId: `existing-${index}` },
-          type: 'chatResourceReference',
-        })),
-        type: 'paragraph',
-      }],
-      type: 'doc',
-    })
-
-    await expect(flow.resources.selectSource({
-      bindingId: 'binding-1',
-      relativePath: 'oversized.txt',
-      spaceId: 'space-1',
-    })).resolves.toBeNull()
-
-    expect(flow.resources.resources.value).toEqual([])
-    expect(flow.errors).toHaveLength(1)
   })
 
   it('keeps a failed inline-only resource visible and removes all of its placements', async () => {

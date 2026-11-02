@@ -2,8 +2,9 @@ import type { JSONContent } from '@tiptap/core'
 import type { ChatComposerEditorOptions } from './typing'
 import { resolveBuddyQuoteReference } from '@buddy-shared/conversation/buddyInputMaterial'
 import { appendBuddyResourceQuote } from '@buddy-shared/conversation/buddyUserContent'
+import { Extension } from '@tiptap/core'
 import Placeholder from '@tiptap/extension-placeholder'
-import { NodeSelection } from '@tiptap/pm/state'
+import { EditorState, NodeSelection, Plugin } from '@tiptap/pm/state'
 import StarterKit from '@tiptap/starter-kit'
 import { useEditor } from '@tiptap/vue-3'
 import { computed, shallowRef, watch } from 'vue'
@@ -26,16 +27,21 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
     .flatMap(id => resourceById.value.get(id) ?? [])))
   const quotePasteLimitReached = shallowRef(false)
   const quotePasteLimitMessage = computed(() => quotePasteLimitReached.value ? t('desktop.chat.quoteLimit') : null)
-  watch(options.draftId, () => {
+  watch([options.draftId, options.editorKey], () => {
     quotePasteLimitReached.value = false
   }, { flush: 'sync' })
   let isComposing = false
   let isHydrating = false
 
   const editor = useEditor({
-    editable: !options.isSending.value,
     content: contentJSON.value,
     extensions: [
+      Extension.create({
+        name: 'composerInputGuard',
+        addProseMirrorPlugins: () => [new Plugin({
+          filterTransaction: transaction => !options.isSending.value || isHydrating || !transaction.docChanged,
+        })],
+      }),
       StarterKit.configure({
         document: false,
         bold: false,
@@ -79,16 +85,18 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
       ChatComposerActorReference,
       ChatComposerResourceClipboard.configure({
         draftId: () => options.draftId.value,
+        editorKey: () => options.editorKey.value,
         rejectedIds: options.rejectedResourceIds,
       }),
     ],
     editorProps: {
-      attributes: {
+      attributes: () => ({
         'aria-label': t('desktop.chat.messageInput'),
+        'aria-readonly': String(options.isSending.value),
         'class': 'desktop-chat-composer__prosemirror',
         'data-lexora-composer': '',
         'spellcheck': 'false',
-      },
+      }),
       handleKeyDown: (_view, event) => handleEditorKeydown(event),
       handlePaste: (_view, event) => handleEditorPaste(event),
       handleClickOn: (_view, _position, node, _nodePosition, _event, direct) => {
@@ -99,6 +107,9 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
         return false
       },
       handleDOMEvents: {
+        beforeinput: blockPendingInput,
+        paste: blockPendingInput,
+        drop: blockPendingInput,
         compositionend: () => {
           isComposing = false
           queueMicrotask(refreshActiveTrigger)
@@ -124,7 +135,11 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
     },
   })
 
-  watch(options.isSending, locked => editor.value?.setEditable(!locked, false))
+  watch(options.isSending, () => {
+    const current = editor.value
+    if (current)
+      current.view.updateState(current.state)
+  })
   watch(() => [...options.rejectedResourceIds()], () => {
     const current = editor.value
     if (current)
@@ -132,10 +147,11 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
   }, { flush: 'sync' })
 
   watch(
-    [options.draft, options.composerContent],
-    ([draft, composerContent]) => {
+    [options.editorKey, options.draftId, options.draft, options.composerContent],
+    ([editorKey, draftId, draft, composerContent], [previousEditorKey, previousDraftId]) => {
+      const reset = editorKey !== previousEditorKey || draftId !== previousDraftId
       if (
-        draft === serializedContent.value.content
+        !reset && draft === serializedContent.value.content
         && JSON.stringify(composerContent) === JSON.stringify(contentJSON.value)
       ) {
         return
@@ -153,7 +169,7 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
         const quotesChanged = JSON.stringify(current.state.doc.attrs.quotes) !== JSON.stringify(document.attrs.quotes)
           || JSON.stringify(current.state.doc.attrs.resourceQuotes) !== JSON.stringify(document.attrs.resourceQuotes)
         const sessionReferencesChanged = JSON.stringify(current.state.doc.attrs.sessionReferences) !== JSON.stringify(document.attrs.sessionReferences)
-        if (!bodyChanged && !panelChanged && !quotesChanged && !sessionReferencesChanged)
+        if (!reset && !bodyChanged && !panelChanged && !quotesChanged && !sessionReferencesChanged)
           return
       }
 
@@ -171,10 +187,18 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
             .setDocAttribute('quotes', document.attrs.quotes)
             .setDocAttribute('resourceQuotes', document.attrs.resourceQuotes)
             .setDocAttribute('sessionReferences', document.attrs.sessionReferences)
-          if (isQuoteInsertion(current.getJSON(), nextContent))
+          if (reset) {
+            const nextState = EditorState.create({ doc: document, plugins: current.state.plugins })
+            current.emit('beforeTransaction', { editor: current, transaction, nextState })
+            current.view.updateState(nextState)
+            current.emit('transaction', { editor: current, transaction, appendedTransactions: [] })
+          }
+          else if (isQuoteInsertion(current.getJSON(), nextContent)) {
             replaceChatComposerDocument(current, chatComposerDocumentToUserContent(nextContent))
-          else
+          }
+          else {
             current.view.dispatch(transaction.setMeta('addToHistory', false))
+          }
         }
         options.onTrigger(null)
       }
@@ -184,7 +208,21 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
     },
   )
 
+  function blockPendingInput(_view: unknown, event: Event) {
+    if (!options.isSending.value)
+      return false
+    event.preventDefault()
+    return true
+  }
+
   function handleEditorKeydown(event: KeyboardEvent) {
+    if (options.isSending.value) {
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        return true
+      }
+      return false
+    }
     if (options.onSuggestionKeydown(event))
       return true
 

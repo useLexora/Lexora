@@ -15,7 +15,7 @@ export function useComposerPastedText(options: UseChatComposerOptions, editor: R
   watch(options.pasteTextAsAttachment, () => {
     pasteGeneration += 1
   }, { flush: 'sync' })
-  watch(options.draftId, () => {
+  watch([options.draftId, options.editorKey], () => {
     session += 1
     selectedId.value = null
     texts.clear()
@@ -68,7 +68,7 @@ export function useComposerPastedText(options: UseChatComposerOptions, editor: R
 
   function paste(text: string) {
     const current = editor.value
-    if (!current?.isEditable || !options.pasteTextAsAttachment.value)
+    if (!current?.isEditable || options.isSending.value || !options.pasteTextAsAttachment.value)
       return
     const currentSession = session
     const generation = pasteGeneration

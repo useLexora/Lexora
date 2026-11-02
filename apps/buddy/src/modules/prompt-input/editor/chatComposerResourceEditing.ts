@@ -18,10 +18,11 @@ import {
 
 const RESOURCE_EDIT_META = 'buddy-composer-resource-edit'
 export const CHAT_COMPOSER_CLIPBOARD_TYPE = 'application/x-lexora-composer'
-let copiedSlice: { draftId: string, editorSessionId: string, slice: Slice, token: string } | null = null
+let copiedSlice: { draftId: string, editorKey: string, editorSessionId: string, slice: Slice, token: string } | null = null
 
 export const ChatComposerResourceClipboard = Extension.create<{
   draftId: () => string
+  editorKey: () => string
   rejectedIds: () => ReadonlySet<string>
 }>({
   name: 'chatComposerResourceClipboard',
@@ -51,7 +52,7 @@ export const ChatComposerResourceClipboard = Extension.create<{
         },
         handlePaste(view, event) {
           const token = event.clipboardData?.getData(CHAT_COMPOSER_CLIPBOARD_TYPE)
-          if (!copiedSlice || copiedSlice.token !== token || copiedSlice.draftId !== options.draftId() || copiedSlice.editorSessionId !== editorSessionId)
+          if (!copiedSlice || copiedSlice.token !== token || copiedSlice.draftId !== options.draftId() || copiedSlice.editorKey !== options.editorKey() || copiedSlice.editorSessionId !== editorSessionId)
             return false
           event.preventDefault()
           view.dispatch(closeHistory(view.state.tr.replaceSelection(copiedSlice.slice)).setMeta(RESOURCE_EDIT_META, true))
@@ -65,7 +66,7 @@ export const ChatComposerResourceClipboard = Extension.create<{
         return false
       const slice = view.state.selection.content()
       const token = crypto.randomUUID()
-      copiedSlice = { draftId: options.draftId(), editorSessionId, slice, token }
+      copiedSlice = { draftId: options.draftId(), editorKey: options.editorKey(), editorSessionId, slice, token }
       const holder = document.createElement('div')
       holder.append(DOMSerializer.fromSchema(view.state.schema).serializeFragment(slice.content))
       event.clipboardData.setData(CHAT_COMPOSER_CLIPBOARD_TYPE, token)

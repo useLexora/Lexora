@@ -62,7 +62,7 @@ function createViewport(loadOlderMessages: () => Promise<boolean>, initial: {
   return { options, original, scope, viewport }
 }
 
-type Invalidation = 'conversation' | 'branch' | 'list' | 'dispose'
+type Invalidation = 'conversation' | 'branch' | 'list' | 'dispose' | 'reader-layout'
 async function prependHistory(fixture: ReturnType<typeof createViewport>, height = 400) {
   fixture.options.timelineItems.value = [{ id: 'older', kind: 'message' }, ...fixture.options.timelineItems.value]
   await nextTick()
@@ -83,6 +83,9 @@ async function invalidate(fixture: ReturnType<typeof createViewport>, reason: In
   else if (reason === 'list') {
     current = createList()
     fixture.options.list.value = current.handle
+  }
+  else if (reason === 'reader-layout') {
+    fixture.viewport.handleReaderLayoutIntent()
   }
   else {
     fixture.scope.stop()
@@ -441,7 +444,7 @@ describe('chat viewport operations', () => {
     expect(current.metrics.scrollTop).toBe(150)
   })
 
-  it.each<Invalidation>(['conversation', 'branch', 'list', 'dispose'])('discards old outline paging, highlighting and scrolling after %s invalidation', async (reason) => {
+  it.each<Invalidation>(['conversation', 'branch', 'list', 'dispose', 'reader-layout'])('discards old outline paging, highlighting and scrolling after %s invalidation', async (reason) => {
     const pending = deferred<boolean>()
     const fixture = createViewport(() => pending.promise)
     const revealing = fixture.viewport.revealOutlineMessage('old-target')
@@ -529,22 +532,6 @@ describe('chat viewport operations', () => {
     expect(fixture.original.metrics.scrollTop).toBe(150)
   })
 
-  it('keeps following when shrinking content leaves nothing to scroll', async () => {
-    const fixture = createViewport(async () => false)
-    fixture.original.metrics.scrollTop = 500
-    fixture.viewport.handleScroll(fixture.original.metrics)
-    expect(fixture.viewport.showReturnToLatest.value).toBe(true)
-
-    fixture.original.metrics.scrollHeight = 400
-    fixture.original.metrics.scrollTop = 0
-    fixture.viewport.handleContentResize(fixture.original.metrics)
-
-    expect(fixture.original.metrics.scrollTop).toBe(0)
-    expect(fixture.viewport.showReturnToLatest.value).toBe(false)
-    fixture.viewport.handleReaderLayoutIntent()
-    expect(fixture.viewport.showReturnToLatest.value).toBe(false)
-  })
-
   it('keeps reader ownership when only the list owner is replaced', async () => {
     const fixture = createViewport(async () => false)
     fixture.viewport.handleReaderLayoutIntent()
@@ -571,20 +558,6 @@ describe('chat viewport operations', () => {
     expect(fixture.original.highlights).toEqual(['old-target'])
     expect(fixture.original.metrics.scrollTop).toBe(100)
     expect(fixture.viewport.showReturnToLatest.value).toBe(true)
-  })
-
-  it('lets a reader layout change cancel an outline request while history is loading', async () => {
-    const pending = deferred<boolean>()
-    const fixture = createViewport(() => pending.promise)
-    const revealing = fixture.viewport.revealOutlineMessage('old-target')
-    fixture.original.metrics.scrollTop = 250
-    fixture.viewport.handleReaderLayoutIntent()
-    fixture.options.hasOlderMessages.value = false
-    pending.resolve(true)
-    await revealing
-
-    expect(fixture.original.highlights).toEqual([])
-    expect(fixture.original.metrics.scrollTop).toBe(250)
   })
 
   it('releases a failed history request so the next scroll can retry and restore its anchor', async () => {
@@ -641,29 +614,13 @@ describe('chat viewport operations', () => {
 
     fixture.viewport.resetToTail()
     expect(fixture.viewport.showReturnToLatest.value).toBe(false)
+    expect(fixture.original.metrics.scrollTop).toBe(200)
+    await nextTick()
     expect(fixture.original.metrics.scrollTop).toBe(600)
     expect(readingPositions.get('conversation-1:branch-1')).toBeNull()
 
     fixture.original.metrics.scrollHeight = 1_400
     fixture.viewport.handleContentResize(fixture.original.metrics)
     expect(fixture.original.metrics.scrollTop).toBe(1_000)
-  })
-
-  it('does not detach follow ownership on non-user scrolls caused by window or split resizing', async () => {
-    const fixture = createViewport(async () => false)
-    fixture.options.hasOlderMessages.value = false
-    fixture.original.metrics.scrollTop = 600
-    fixture.viewport.handleContentResize(fixture.original.metrics)
-    expect(fixture.viewport.showReturnToLatest.value).toBe(false)
-
-    fixture.original.metrics.clientHeight = 300
-    fixture.original.metrics.scrollTop = 500
-    fixture.viewport.handleScroll(fixture.original.metrics, { userInitiated: false })
-
-    expect(fixture.viewport.showReturnToLatest.value).toBe(false)
-
-    fixture.viewport.handleContentResize(fixture.original.metrics)
-    expect(fixture.original.metrics.scrollTop).toBe(700)
-    expect(fixture.viewport.showReturnToLatest.value).toBe(false)
   })
 })

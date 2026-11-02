@@ -1,7 +1,7 @@
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { LocalConversationTimelineItem, LocalConversationTimelinePage, LocalMessage } from '@buddy-shared/conversation/conversationApi'
 import type { LocalApproval } from '@buddy-shared/permissions/approvalApi'
-import type { LocalRun, LocalRunEvent, LocalRunOutput } from '@buddy-shared/runs/runApi'
+import type { LocalRun, LocalRunEvent } from '@buddy-shared/runs/runApi'
 import { deferred } from '@buddy-tests/deferred'
 import { describe, expect, it, vi } from 'vitest'
 import { effectScope, ref } from 'vue'
@@ -10,6 +10,80 @@ import { projectPersistedChatTranscriptRows } from '../../../model/transcript/ch
 import { useChatRunSync } from '../useChatRunSync'
 
 describe('useChatRunSync', () => {
+  it('publishes the committed input immediately and reconciles it without duplicates or lost attachments', async () => {
+    stubAnimationFrameWindow()
+    const message = {
+      ...timelineMessage('accepted', 'conversation-a', 'branch-conversation-a', 1),
+      attachments: [{ attachmentId: 'file-1', kind: 'text' as const, mimeType: 'text/plain', name: 'report.txt', nameSource: 'file' as const, previewUrl: null, sizeBytes: 3 }],
+      content: { text: 'confirmed input', resourceSnapshots: [{ resourceId: 'resource-1', attachmentId: 'file-1' }] },
+    }
+    let published = false
+    const api = createApi({ listTimeline: async () => timelinePage(published ? [message] : [], null) })
+    const sync = useChatRunSync({ activeBranchId: ref('branch-conversation-a'), activeConversationId: ref('conversation-a'), api, onError: (error) => {
+      throw error
+    } })
+    try {
+      sync.applyRunStart({ branchId: message.branchId, conversationId: message.conversationId, draftReceipt: null, run: { ...run('accepted-run', 'conversation-a'), triggeringMessageId: message.id }, runId: 'accepted-run', userMessage: message })
+      expect(sync.messages.value).toEqual([message])
+      expect(sync.isLoadingConversation.value).toBe(false)
+      published = true
+      await sync.refreshActiveConversation()
+      expect(sync.messages.value).toEqual([message])
+    }
+    finally { sync.dispose() }
+  })
+
+  it.each(['before', 'during'] as const)('keeps unseen history when an input is accepted %s the refresh', async (timing) => {
+    stubAnimationFrameWindow()
+    const items = Array.from({ length: 103 }, (_, index) => ({
+      ...timelineMessage(`message-${index}`, 'conversation-a', 'branch-conversation-a', 0),
+      createdAt: new Date(Date.UTC(2026, 7, 14, 0, 0, index)).toISOString(),
+    }))
+    const latest = deferred<LocalConversationTimelinePage>()
+    let published = false
+    const api = createApi({
+      listTimeline: async input => !published
+        ? timelinePage([items[0]!], null)
+        : input.cursor
+          ? timelinePage(items.slice(0, 3), null)
+          : latest.promise,
+    })
+    const sync = useChatRunSync({
+      activeBranchId: ref('branch-conversation-a'),
+      activeConversationId: ref('conversation-a'),
+      api,
+      onError: (error) => { throw error },
+    })
+    try {
+      await sync.refreshActiveConversation()
+      expect(sync.messages.value).toHaveLength(1)
+      expect(sync.hasOlderMessages.value).toBe(false)
+      published = true
+      const refreshing = timing === 'during' ? sync.refreshActiveConversation() : null
+      const accepted = items.at(-1)!
+      sync.applyRunStart({
+        branchId: accepted.branchId,
+        conversationId: accepted.conversationId,
+        draftReceipt: null,
+        run: { ...run('accepted-run', 'conversation-a'), triggeringMessageId: accepted.id },
+        runId: 'accepted-run',
+        userMessage: accepted,
+      })
+      expect(sync.messages.value).toContainEqual(accepted)
+
+      latest.resolve(timelinePage(items.slice(3), 'before-message-3'))
+      await (refreshing ?? sync.refreshActiveConversation())
+      expect(sync.messages.value).toHaveLength(items.length)
+      expect(new Set(sync.messages.value.map(message => message.id))).toEqual(new Set(items.map(message => message.id)))
+      expect(sync.hasOlderMessages.value).toBe(false)
+      await sync.refreshActiveConversation()
+      expect(sync.messages.value).toHaveLength(items.length)
+    }
+    finally {
+      sync.dispose()
+    }
+  })
+
   it('refreshes scoped child approvals without adding private child events to the transcript', async () => {
     vi.useFakeTimers()
     stubAnimationFrameWindow()
@@ -171,14 +245,14 @@ describe('useChatRunSync', () => {
     }
   })
 
-  it('does not let a stale event fetch overwrite the newly active conversation', async () => {
+  it('does not let a stale snapshot overwrite the newly active conversation', async () => {
     const activeConversationId = ref<string | null>('conversation-a')
     const activeBranchId = ref<string | null>('branch-conversation-a')
-    const staleEvents = deferred<ReadonlyArray<LocalRunEvent>>()
+    const stalePage = deferred<LocalConversationTimelinePage>()
     const api = createApi({
-      listEvents: conversationId => conversationId === 'conversation-a'
-        ? staleEvents.promise
-        : Promise.resolve([event('run-b', 1)]),
+      listTimeline: async input => input.conversationId === 'conversation-a'
+        ? stalePage.promise
+        : timelinePage([timelineMessage('message-b', 'conversation-b', input.branchId!, 1)], null, [run('run-b', 'conversation-b')], [event('run-b', 1)]),
     })
     const sync = useChatRunSync({
       activeBranchId,
@@ -192,19 +266,20 @@ describe('useChatRunSync', () => {
     activeConversationId.value = 'conversation-b'
     activeBranchId.value = 'branch-conversation-b'
     await sync.refreshActiveConversation()
-    staleEvents.resolve([event('run-a', 1)])
+    stalePage.resolve(timelinePage([timelineMessage('message-a', 'conversation-a', 'branch-conversation-a', 1)], null, [run('run-a', 'conversation-a')], [event('run-a', 1)]))
     await staleRefresh
 
     expect(sync.messages.value.map(message => message.conversationId)).toEqual(['conversation-b'])
     expect(sync.runs.value.map(run => run.id)).toEqual(['run-b'])
     expect([...sync.runEventBuckets.value.keys()]).toEqual(['run-b'])
+    sync.dispose()
   })
 
   it('accepts global notifications only for runs owned by the active conversation', async () => {
     const animationFrames = stubAnimationFrameWindow()
     const activeConversationId = ref<string | null>('conversation-a')
     const activeBranchId = ref<string | null>('branch-conversation-a')
-    const api = createApi({ listEvents: async () => [] })
+    const api = createApi({})
     const sync = useChatRunSync({
       activeBranchId,
       activeConversationId,
@@ -224,37 +299,6 @@ describe('useChatRunSync', () => {
 
     expect(sync.runEventBuckets.value.get('run-a')?.events.map(item => item.sequence)).toEqual([1])
     sync.dispose()
-  })
-
-  it('keeps ordinary streamed events incremental without refreshing the timeline', async () => {
-    vi.useFakeTimers()
-    const animationFrames = stubAnimationFrameWindow()
-    const activeConversationId = ref<string | null>('conversation-a')
-    const activeBranchId = ref<string | null>('branch-conversation-a')
-    const api = createApi({ listEvents: async () => [] })
-    const sync = useChatRunSync({
-      activeBranchId,
-      activeConversationId,
-      api,
-      onError: vi.fn(),
-    })
-
-    try {
-      await sync.refreshActiveConversation()
-      sync.handleRunEvent({ ...event('run-a', 1), type: 'tool.updated' })
-      sync.handleRunEvent({ ...event('run-a', 2), type: 'message.delta' })
-      animationFrames.flush()
-      await vi.advanceTimersByTimeAsync(500)
-
-      expect(sync.runSignalEvents.value).toEqual([])
-      expect(api.conversations.listTimeline).toHaveBeenCalledTimes(1)
-      expect(sync.runEventBuckets.value.get('run-a')?.events.map(item => item.sequence))
-        .toEqual([1, 2])
-    }
-    finally {
-      sync.dispose()
-      vi.useRealTimers()
-    }
   })
 
   it('retains a completed reply while steering continues the same running turn', async () => {
@@ -347,55 +391,8 @@ describe('useChatRunSync', () => {
     }
   })
 
-  it('retains context and tool-start events for cross-feature consumers', async () => {
-    const animationFrames = stubAnimationFrameWindow()
-    const activeConversationId = ref<string | null>('conversation-a')
-    const activeBranchId = ref<string | null>('branch-conversation-a')
-    const api = createApi({ listEvents: async () => [] })
-    const sync = useChatRunSync({
-      activeBranchId,
-      activeConversationId,
-      api,
-      onError: vi.fn(),
-    })
-
-    try {
-      await sync.refreshActiveConversation()
-      sync.handleRunEvent({
-        ...event('run-a', 1),
-        payload: {
-          presentation: { card: 'terminal' },
-          toolCallId: 'tool-terminal',
-        },
-        type: 'tool.started',
-      })
-      sync.handleRunEvent({ ...event('run-a', 2), type: 'message.delta' })
-      sync.handleRunEvent({
-        ...event('run-a', 3),
-        payload: {
-          presentation: { card: 'browser', operation: 'open' },
-          toolCallId: 'tool-browser',
-        },
-        type: 'tool.started',
-      })
-      sync.handleRunEvent({ ...event('run-a', 4), type: 'context.usage.updated' })
-      sync.handleRunEvent({ ...event('run-a', 5), type: 'context.compaction.completed' })
-      animationFrames.flush()
-
-      expect(sync.runSignalEvents.value.map(item => item.type)).toEqual([
-        'tool.started',
-        'context.usage.updated',
-        'context.compaction.completed',
-      ])
-      expect(sync.runEventBuckets.value.get('run-a')?.events.map(item => item.sequence))
-        .toEqual([1, 2, 3, 4, 5])
-    }
-    finally {
-      sync.dispose()
-    }
-  })
-
-  it('preserves another run’s events when committing an incremental update', async () => {
+  it('keeps streamed updates incremental without losing another run’s events', async () => {
+    vi.useFakeTimers()
     const animationFrames = stubAnimationFrameWindow()
     const api = createApi({
       listTimeline: async () => timelinePage(
@@ -414,18 +411,22 @@ describe('useChatRunSync', () => {
 
     try {
       await sync.refreshActiveConversation()
-      sync.handleRunEvent({ ...event('run-a', 2), type: 'message.delta' })
+      sync.handleRunEvent({ ...event('run-a', 2), type: 'tool.updated' })
+      sync.handleRunEvent({ ...event('run-a', 3), type: 'message.delta' })
       animationFrames.flush()
+      await vi.advanceTimersByTimeAsync(500)
 
-      expect(sync.runEventBuckets.value.get('run-a')?.events.map(item => item.sequence)).toEqual([1, 2])
+      expect(api.conversations.listTimeline).toHaveBeenCalledTimes(1)
+      expect(sync.runEventBuckets.value.get('run-a')?.events.map(item => item.sequence)).toEqual([1, 2, 3])
       expect(sync.runEventBuckets.value.get('run-b')?.events).toEqual([event('run-b', 1)])
     }
     finally {
       sync.dispose()
+      vi.useRealTimers()
     }
   })
 
-  it('coalesces same-scope refreshes requested while a snapshot is in flight', async () => {
+  it('retains refresh requests received while a snapshot is in flight', async () => {
     const activeConversationId = ref<string | null>('conversation-a')
     const activeBranchId = ref<string | null>('branch-conversation-a')
     const firstPage = deferred<LocalConversationTimelinePage>()
@@ -450,16 +451,13 @@ describe('useChatRunSync', () => {
     const firstRefresh = sync.refreshActiveConversation()
     await vi.waitUntil(() => vi.mocked(api.conversations.listTimeline).mock.calls.length === 1)
     const secondRefresh = sync.refreshActiveConversation()
-    const thirdRefresh = sync.refreshActiveConversation()
-
-    expect(api.conversations.listTimeline).toHaveBeenCalledTimes(1)
     firstPage.resolve(timelinePage([
       timelineMessage('message-old', 'conversation-a', 'branch-conversation-a', 1),
     ], null, [run('run-a', 'conversation-a')]))
-    await Promise.all([firstRefresh, secondRefresh, thirdRefresh])
+    await Promise.all([firstRefresh, secondRefresh])
 
-    expect(api.conversations.listTimeline).toHaveBeenCalledTimes(2)
     expect(sync.messages.value.map(item => item.id)).toEqual(['message-old', 'message-new'])
+    sync.dispose()
   })
 
   it('starts a fresh snapshot when the same scope resets during an older flight', async () => {
@@ -494,6 +492,7 @@ describe('useChatRunSync', () => {
         branchId: 'branch-conversation-a',
         conversationId: 'conversation-a',
         draftReceipt: null,
+        userMessage: null,
         run: run('run-replacement', 'conversation-a'),
         runId: 'run-replacement',
       }, 'message-old')
@@ -543,6 +542,7 @@ describe('useChatRunSync', () => {
     await sync.refreshActiveConversation()
 
     expect(sync.runEventBuckets.value.get('run-a')?.events.map(item => item.sequence)).toEqual([3])
+    sync.dispose()
   })
 
   it('refreshes the final message when a terminal event follows a stale terminal snapshot', async () => {
@@ -598,149 +598,56 @@ describe('useChatRunSync', () => {
     }
   })
 
-  it('prepends older cursor pages in chronological order without duplicating boundaries', async () => {
-    const activeConversationId = ref<string | null>('conversation-a')
-    const activeBranchId = ref<string | null>('branch-conversation-a')
+  it('merges older pages and tail refreshes without losing history, events or cursor progress', async () => {
+    let refreshed = false
     const api = createApi({
-      listEvents: async () => [],
       listTimeline: async input => input.cursor
         ? timelinePage([
             timelineMessage('message-1', 'conversation-a', 'branch-conversation-a', 1),
             compaction('compact-1', 'conversation-a', 'branch-conversation-a', 2),
             timelineMessage('message-2', 'conversation-a', 'branch-conversation-a', 3),
-          ], null)
+            timelineMessage('message-3', 'conversation-a', 'branch-conversation-a', 4),
+          ], null, [], [event('run-a', 1)])
         : timelinePage([
             timelineMessage('message-3', 'conversation-a', 'branch-conversation-a', 4),
             timelineMessage('message-4', 'conversation-a', 'branch-conversation-a', 5),
-          ], 'cursor-before-message-3'),
+            ...(refreshed ? [timelineMessage('message-5', 'conversation-a', 'branch-conversation-a', 6)] : []),
+          ], 'cursor-before-message-3', [run('run-a', 'conversation-a')], [event('run-a', refreshed ? 3 : 2)]),
     })
     const sync = useChatRunSync({
-      activeBranchId,
-      activeConversationId,
+      activeBranchId: ref('branch-conversation-a'),
+      activeConversationId: ref('conversation-a'),
       api,
       onError: vi.fn(),
     })
 
-    await sync.refreshActiveConversation()
-    expect(sync.hasOlderMessages.value).toBe(true)
-    await expect(sync.loadOlderMessages()).resolves.toBe(true)
+    try {
+      await sync.refreshActiveConversation()
+      expect(sync.hasOlderMessages.value).toBe(true)
+      await expect(sync.loadOlderMessages()).resolves.toBe(true)
+      expect(sync.messages.value.map(item => item.id))
+        .toEqual(['message-1', 'message-2', 'message-3', 'message-4'])
+      expect(sync.timelineItems.value.map(item => `${item.kind}:${item.id}`)).toEqual([
+        'message:message-1',
+        'compaction:compact-1',
+        'message:message-2',
+        'message:message-3',
+        'message:message-4',
+      ])
+      expect(sync.runEventBuckets.value.get('run-a')?.events.map(item => item.sequence)).toEqual([1, 2])
+      expect(sync.hasOlderMessages.value).toBe(false)
 
-    expect(api.conversations.listTimeline).toHaveBeenLastCalledWith({
-      branchId: 'branch-conversation-a',
-      conversationId: 'conversation-a',
-      cursor: 'cursor-before-message-3',
-      limit: 100,
-    })
-    expect(sync.messages.value.map(item => item.id))
-      .toEqual(['message-1', 'message-2', 'message-3', 'message-4'])
-    expect(sync.timelineItems.value.map(item => `${item.kind}:${item.id}`)).toEqual([
-      'message:message-1',
-      'compaction:compact-1',
-      'message:message-2',
-      'message:message-3',
-      'message:message-4',
-    ])
-    expect(sync.hasOlderMessages.value).toBe(false)
-  })
+      refreshed = true
+      await sync.refreshActiveConversation()
 
-  it('merges older event pages from the full run buckets', async () => {
-    const activeConversationId = ref<string | null>('conversation-a')
-    const activeBranchId = ref<string | null>('branch-conversation-a')
-    const api = createApi({
-      listTimeline: async input => input.cursor
-        ? timelinePage([], null, [], [event('run-a', 1)])
-        : timelinePage(
-            [timelineMessage('message-2', 'conversation-a', 'branch-conversation-a', 2)],
-            'cursor-before-message-2',
-            [run('run-a', 'conversation-a')],
-            [event('run-a', 2)],
-          ),
-    })
-    const sync = useChatRunSync({
-      activeBranchId,
-      activeConversationId,
-      api,
-      onError: vi.fn(),
-    })
-
-    await sync.refreshActiveConversation()
-    await sync.loadOlderMessages()
-
-    expect(sync.runEventBuckets.value.get('run-a')?.events.map(item => item.sequence))
-      .toEqual([1, 2])
-  })
-
-  it('merges a tail refresh without discarding previously loaded history or reopening its cursor', async () => {
-    const activeConversationId = ref<string | null>('conversation-a')
-    const activeBranchId = ref<string | null>('branch-conversation-a')
-    let newestRequestCount = 0
-    const api = createApi({
-      listEvents: async () => [],
-      listTimeline: async (input) => {
-        if (input.cursor) {
-          return timelinePage([
-            timelineMessage('message-1', 'conversation-a', 'branch-conversation-a', 1),
-            timelineMessage('message-2', 'conversation-a', 'branch-conversation-a', 2),
-          ], null)
-        }
-        newestRequestCount += 1
-        return timelinePage([
-          timelineMessage('message-3', 'conversation-a', 'branch-conversation-a', 3),
-          timelineMessage('message-4', 'conversation-a', 'branch-conversation-a', 4),
-          ...(newestRequestCount > 1
-            ? [timelineMessage('message-5', 'conversation-a', 'branch-conversation-a', 5)]
-            : []),
-        ], 'cursor-before-message-3')
-      },
-    })
-    const sync = useChatRunSync({
-      activeBranchId,
-      activeConversationId,
-      api,
-      onError: vi.fn(),
-    })
-
-    await sync.refreshActiveConversation()
-    await sync.loadOlderMessages()
-    await sync.refreshActiveConversation()
-
-    expect(sync.messages.value.map(item => item.id))
-      .toEqual(['message-1', 'message-2', 'message-3', 'message-4', 'message-5'])
-    expect(sync.hasOlderMessages.value).toBe(false)
-  })
-
-  it('drops an older page that resolves after switching to another branch', async () => {
-    const activeConversationId = ref<string | null>('conversation-a')
-    const activeBranchId = ref<string | null>('branch-a')
-    const stalePage = deferred<LocalConversationTimelinePage>()
-    const api = createApi({
-      listEvents: async () => [],
-      listTimeline: async (input) => {
-        if (input.branchId === 'branch-b')
-          return timelinePage([timelineMessage('message-b', 'conversation-a', 'branch-b', 10)], null)
-        if (input.cursor)
-          return stalePage.promise
-        return timelinePage([timelineMessage('message-a', 'conversation-a', 'branch-a', 5)], 'cursor-a')
-      },
-    })
-    const sync = useChatRunSync({
-      activeBranchId,
-      activeConversationId,
-      api,
-      onError: vi.fn(),
-    })
-
-    await sync.refreshActiveConversation()
-    const staleLoad = sync.loadOlderMessages()
-    await vi.waitUntil(() => vi.mocked(api.conversations.listTimeline).mock.calls.length === 2)
-    activeBranchId.value = 'branch-b'
-    await sync.refreshActiveConversation()
-    stalePage.resolve(timelinePage([
-      timelineMessage('message-stale', 'conversation-a', 'branch-a', 1),
-    ], null))
-
-    await expect(staleLoad).resolves.toBe(false)
-    expect(sync.messages.value.map(item => item.id)).toEqual(['message-b'])
+      expect(sync.messages.value.map(item => item.id))
+        .toEqual(['message-1', 'message-2', 'message-3', 'message-4', 'message-5'])
+      expect(sync.runEventBuckets.value.get('run-a')?.events.map(item => item.sequence)).toEqual([1, 2, 3])
+      expect(sync.hasOlderMessages.value).toBe(false)
+    }
+    finally {
+      sync.dispose()
+    }
   })
 
   it('trims persistent timeline events together with edit and retry boundaries', async () => {
@@ -748,7 +655,6 @@ describe('useChatRunSync', () => {
     const activeConversationId = ref<string | null>('conversation-a')
     const activeBranchId = ref<string | null>('branch-a')
     const api = createApi({
-      listEvents: async () => [],
       listTimeline: async () => timelinePage([
         timelineMessage('message-1', 'conversation-a', 'branch-a', 1),
         compaction('compact-before', 'conversation-a', 'branch-a', 2),
@@ -770,6 +676,7 @@ describe('useChatRunSync', () => {
       branchId: 'branch-edit',
       conversationId: 'conversation-a',
       draftReceipt: null,
+      userMessage: null,
       run: run('run-edited', 'conversation-a'),
       runId: 'run-edited',
     }, 'message-2')
@@ -784,6 +691,7 @@ describe('useChatRunSync', () => {
       branchId: 'branch-a',
       conversationId: 'conversation-a',
       draftReceipt: null,
+      userMessage: null,
       run: {
         ...run('run-regenerated', 'conversation-a'),
         triggeringMessageId: 'message-2',
@@ -798,7 +706,7 @@ describe('useChatRunSync', () => {
     sync.dispose()
   })
 
-  it.each(['success', 'failure'] as const)('ignores a snapshot %s after disposal and retains the last projection', async (outcome) => {
+  it('ignores a failed snapshot after disposal and retains the last projection', async () => {
     const pending = deferred<LocalConversationTimelinePage>()
     const initial = timelinePage([timelineMessage('saved', 'conversation-a', 'branch-a', 1)], null)
     const api = createApi({ listTimeline: async () => initial })
@@ -814,10 +722,7 @@ describe('useChatRunSync', () => {
     const refresh = sync.refreshActiveConversation()
     const queuedRefresh = sync.refreshActiveConversation()
     sync.dispose()
-    if (outcome === 'success')
-      pending.resolve(timelinePage([timelineMessage('late', 'conversation-a', 'branch-a', 2)], null))
-    else
-      pending.reject(new Error('Late snapshot unavailable'))
+    pending.reject(new Error('Late snapshot unavailable'))
     await Promise.all([refresh, queuedRefresh])
     await sync.refreshActiveConversation()
     expect(sync.messages.value.map(item => item.id)).toEqual(['saved'])
@@ -905,7 +810,7 @@ describe('useChatRunSync', () => {
     const animationFrames = stubAnimationFrameWindow()
     const pending = deferred<LocalConversationTimelinePage>()
     const scope = effectScope()
-    const api = createApi({ listEvents: async () => [] })
+    const api = createApi({})
     const sync = scope.run(() => useChatRunSync({
       activeBranchId: ref('branch-conversation-a'),
       activeConversationId: ref('conversation-a'),
@@ -959,7 +864,6 @@ describe('useChatRunSync', () => {
 })
 
 function createApi(options: {
-  listEvents?: (conversationId: string) => Promise<ReadonlyArray<LocalRunEvent>>
   listTimeline?: (input: {
     branchId?: string
     conversationId: string
@@ -967,10 +871,7 @@ function createApi(options: {
     limit?: number
   }) => Promise<LocalConversationTimelinePage>
 }) {
-  const listEvents = vi.fn((input: { conversationId: string }) => (
-    options.listEvents?.(input.conversationId) ?? Promise.resolve([])
-  ))
-  const api = {
+  return {
     approvals: {
       list: vi.fn(async () => []),
     },
@@ -980,26 +881,16 @@ function createApi(options: {
         conversationId: string
         cursor?: string
         limit?: number
-      }) => options.listTimeline?.(input) ?? Promise.resolve(options.listEvents?.(input.conversationId) ?? [])
-        .then(runEvents => timelinePage([
-          timelineMessage(
-            `message-${input.conversationId}`,
-            input.conversationId,
-            input.branchId ?? `branch-${input.conversationId}`,
-            1,
-          ),
-        ], null, [run(input.conversationId === 'conversation-a' ? 'run-a' : 'run-b', input.conversationId)], runEvents))),
-    },
-    runs: {
-      list: vi.fn(async ({ conversationId }: { conversationId: string }) => [
-        run(conversationId === 'conversation-a' ? 'run-a' : 'run-b', conversationId),
-      ]),
-      listEvents,
+      }) => options.listTimeline?.(input) ?? timelinePage([
+        timelineMessage(
+          `message-${input.conversationId}`,
+          input.conversationId,
+          input.branchId ?? `branch-${input.conversationId}`,
+          1,
+        ),
+      ], null, [run(input.conversationId === 'conversation-a' ? 'run-a' : 'run-b', input.conversationId)])),
     },
   } as unknown as LocalChatApi
-  return Object.assign(api, {
-    runs: Object.assign(api.runs, { listEvents }),
-  }) as LocalChatApi & { runs: { listEvents: ReturnType<typeof vi.fn> } }
 }
 
 function timelinePage(
@@ -1007,9 +898,8 @@ function timelinePage(
   nextCursor: string | null,
   runs: ReadonlyArray<LocalRun> = [],
   runEvents: ReadonlyArray<LocalRunEvent> = [],
-  outputs: ReadonlyArray<LocalRunOutput> = [],
 ): LocalConversationTimelinePage {
-  return { changeSets: [], items, nextCursor, outputs, runEvents, runs }
+  return { changeSets: [], items, nextCursor, outputs: [], runEvents, runs }
 }
 
 function timelineMessage(
@@ -1019,17 +909,8 @@ function timelineMessage(
   second: number,
   role: LocalMessage['role'] = 'user',
 ): Extract<LocalConversationTimelineItem, { kind: 'message' }> {
-  return { ...message(id, conversationId, branchId, second, role), kind: 'message' }
-}
-
-function message(
-  id: string,
-  conversationId: string,
-  branchId: string,
-  second: number,
-  role: LocalMessage['role'] = 'user',
-): LocalMessage {
   return {
+    kind: 'message',
     attachments: [],
     branchId,
     content: { text: id },

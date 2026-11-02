@@ -30,8 +30,8 @@ export function useChatWorkspace(
     timelineItems: computed(() => transcript.value.timelineItems.value),
   })
 
-  watch(() => execution.value.isSending.value, (sending) => {
-    if (sending)
+  watch(() => [execution.value, execution.value.submissionRevision.value] as const, ([current, revision], [previous, previousRevision]) => {
+    if (current === previous && revision !== previousRevision)
       viewport.resetToTail()
   }, { flush: 'sync' })
 

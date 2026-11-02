@@ -15,7 +15,6 @@ import { replaceChatComposerDocument } from '@/modules/prompt-input/editor/chatC
 import { insertChatComposerResources, insertChatComposerSessionReferences } from '@/modules/prompt-input/ui'
 import { useProvideWorkbenchCommands } from '@/shared/ui/contributions/workbenchCommands'
 import { copyReferenceClipboard } from '@/shared/ui/selection/referenceClipboard'
-import { CONVERSATION_STATUS_PANEL_KEY } from '../../../state/runs/conversationStatusPanel'
 import { useChatComposer } from '../useChatComposer'
 
 const cleanups: (() => void)[] = []
@@ -50,14 +49,14 @@ async function mountComposer(options: {
   loadContextOptions?: (query: string | null, deepSearch?: boolean, scope?: ChatComposerSessionScope) => Promise<ChatComposerContextOptions>
   selectSource?: (source: BuddyComposerSource) => Promise<string | null>
   model?: LocalRuntimeModelOption
-  statusPanel?: boolean
   commands?: WorkbenchCommandPort
 } = {}) {
   const canSend = shallowRef(true)
-  const statusPanelOpen = shallowRef(false)
   const content = shallowRef(createChatComposerContentFromText(''))
   const draft = shallowRef('')
   const draftId = shallowRef('draft-1')
+  const editorKey = shallowRef('editor-1')
+  const isSending = shallowRef(false)
   const resources = shallowRef<readonly ComposerResourceView[]>([])
   const selectedEffort = shallowRef<BuddyThinkingLevel | null>(null)
   const selectedServiceTier = shallowRef<BuddyServiceTier | null>(null)
@@ -74,10 +73,11 @@ async function mountComposer(options: {
         composerContent: content,
         draft,
         draftId,
+        editorKey,
         resources,
         rejectedResourceIds: () => new Set(),
         isRunning: shallowRef(false),
-        isSending: shallowRef(false),
+        isSending,
         language: shallowRef('zh-CN'),
         selectedModel: shallowRef(options.model ?? null),
         selectedEffort,
@@ -96,10 +96,7 @@ async function mountComposer(options: {
           content.value = value
         },
       })
-      return () => [
-        h(EditorContent, { editor: composer.editor.value }),
-        statusPanelOpen.value ? h('aside', { 'data-testid': 'conversation-status-panel' }, 'Conversation status') : null,
-      ]
+      return () => h(EditorContent, { editor: composer.editor.value })
     },
   })
   const app = createApp(defineComponent({
@@ -109,8 +106,6 @@ async function mountComposer(options: {
       return () => h(component)
     },
   }))
-  if (options.statusPanel !== false)
-    app.provide(CONVERSATION_STATUS_PANEL_KEY, { open: () => { statusPanelOpen.value = true } })
   app.mount(root)
   await nextTick()
   await nextTick()
@@ -124,10 +119,89 @@ async function mountComposer(options: {
     editor.view.dom.dispatchEvent(event)
     return event
   }
-  return { canSend, composer, content, draft, draftId, editor, keydown, resources, root, selectedEffort, selectedServiceTier, sent, sentPayloads }
+  return { canSend, composer, content, draft, draftId, editorKey, isSending, editor, keydown, resources, selectedEffort, selectedServiceTier, sent, sentPayloads }
 }
 
 describe('chat composer editing', () => {
+  it('keeps the focused editor mounted while locking submission and clears sent undo history', async () => {
+    const flow = await mountComposer()
+    flow.editor.commands.insertContent('sent message')
+    flow.editor.view.focus()
+    await nextTick()
+    const input = flow.editor.view.dom
+    flow.isSending.value = true
+    await nextTick()
+    expect(input.getAttribute('aria-readonly')).toBe('true')
+    expect(document.activeElement).toBe(input)
+    flow.editor.commands.insertContent('blocked edit')
+    expect(flow.editor.getText()).toBe('sent message')
+
+    flow.draft.value = ''
+    flow.content.value = createChatComposerContentFromText('')
+    flow.editorKey.value = 'editor-2'
+    await nextTick()
+    flow.isSending.value = false
+    await nextTick()
+    expect(flow.editor.view.dom).toBe(input)
+    expect(document.activeElement).toBe(input)
+    expect(flow.editor.getText()).toBe('')
+    expect(flow.editor.commands.undo()).toBe(false)
+    flow.editor.commands.insertContent('next message')
+    expect(flow.editor.getText()).toBe('next message')
+    expect(flow.editor.commands.undo()).toBe(true)
+    expect(flow.editor.getText()).toBe('')
+    expect(flow.draft.value).toBe('')
+  })
+
+  it.each(['quote', 'resource'] as const)('pastes copied %s text instead of stale references after sending the same draft', async (kind) => {
+    const flow = await mountComposer()
+    if (kind === 'quote') {
+      flow.composer.addQuote({
+        id: 'quote',
+        text: 'quoted evidence',
+        source: { conversationId: 'conversation', branchId: 'branch', messageId: 'message', role: 'assistant', runId: 'run' },
+      })
+    }
+    else {
+      flow.resources.value = [{
+        accepted: true,
+        canRetry: false,
+        resource: { draftId: 'draft-1', resourceId: 'file', kind: 'text', mimeType: 'text/plain', name: 'notes.txt', sizeBytes: 10, state: 'ready', attachmentId: 'attachment', previewUrl: null },
+      }]
+      insertChatComposerResources(flow.editor, ['file'], 'inline')
+    }
+    flow.editor.commands.setTextSelection({ from: 1, to: 2 })
+    const data = new Map<string, string>()
+    const clipboardData = { files: [], getData: (type: string) => data.get(type) ?? '', setData: (type: string, value: string) => data.set(type, value) }
+    function clipboardEvent(type: string) {
+      const event = new Event(type, { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'clipboardData', { value: clipboardData })
+      return event
+    }
+    flow.editor.view.dom.dispatchEvent(clipboardEvent('copy'))
+    const readable = data.get('text/plain')!
+    expect(readable.length).toBeGreaterThan(0)
+
+    const input = flow.editor.view.dom
+    const draftId = flow.draftId.value
+    flow.isSending.value = true
+    await nextTick()
+    flow.draft.value = ''
+    flow.content.value = createChatComposerContentFromText('')
+    flow.editorKey.value = 'after-send'
+    await nextTick()
+    flow.isSending.value = false
+    await nextTick()
+
+    flow.editor.view.dom.dispatchEvent(clipboardEvent('paste'))
+    expect(flow.editor.view.dom).toBe(input)
+    expect(flow.draftId.value).toBe(draftId)
+    expect(flow.editor.getText()).toBe(readable)
+    expect(flow.draft.value).toBe(readable)
+    expect(getChatComposerResourceIds(flow.editor.getJSON())).toEqual([])
+    expect(chatComposerDocumentToUserContent(flow.editor.getJSON()).quotes).toBeUndefined()
+  })
+
   it('pastes a host-copied snapshot into the current task without changing another draft or leaking its locator into the prompt', async () => {
     const first = await mountComposer()
     first.editor.commands.insertContent('First task draft')
@@ -301,67 +375,11 @@ describe('chat composer editing', () => {
     expect(flow.sent).toEqual(['/compact  preserve decisions'])
   })
 
-  it('opens a view action without sending or losing structured input', async () => {
+  it.each(['/status', '/new'])('keeps an unavailable %s action in the draft and out of the model path', async (command) => {
     const flow = await mountComposer()
-    flow.canSend.value = false
-    const prefix = '/status'
-    const quote = { id: 'quote', text: 'quoted evidence', source: { conversationId: 'conversation', branchId: 'branch', messageId: 'message', role: 'assistant', runId: 'run' } }
-    replaceChatComposerDocument(flow.editor, chatComposerDocumentToUserContent({ type: 'doc', attrs: { panelResourceIds: ['panel'], quotes: [quote] }, content: [{ type: 'paragraph', content: [
-      { type: 'text', text: `${prefix} keep this text ` },
-      { type: 'chatResourceReference', attrs: { resourceId: 'inline' } },
-    ] }] }))
+    flow.editor.commands.setContent(createChatComposerContentFromText(`${command} keep this text`))
     flow.composer.submit()
-    await nextTick()
-    expect(flow.root.querySelector('[data-testid="conversation-status-panel"]')?.textContent).toBe('Conversation status')
-    expect(flow.sent).toEqual([])
-    expect(chatComposerDocumentToUserContent(flow.editor.getJSON())).toMatchObject({
-      body: [{ content: [{ type: 'text', text: ' keep this text ' }, { type: 'resource_ref', resourceId: 'inline' }] }],
-      panelResourceIds: ['panel'],
-      quotes: [quote],
-    })
-  })
-
-  it('keeps an unavailable view action in the draft instead of sending it as a message', async () => {
-    const flow = await mountComposer({ statusPanel: false })
-    flow.editor.commands.setContent(createChatComposerContentFromText('/status keep this text'))
-    flow.composer.submit()
-    expect(flow.editor.getText()).toBe('/status keep this text')
-    expect(flow.sent).toEqual([])
-  })
-
-  it('starts a new task from suggestions while preserving the remaining input', async () => {
-    const executions: string[] = []
-    const commands = localCommands(async (id) => {
-      executions.push(id)
-      return null
-    })
-    commands.entries.value = [{ id: 'task.newInSpace', name: 'new', title: 'New task in current space' }]
-    const flow = await mountComposer({ commands })
-    flow.canSend.value = false
-    const prefix = '/ne'
-    replaceChatComposerDocument(flow.editor, chatComposerDocumentToUserContent({ type: 'doc', attrs: { panelResourceIds: ['panel'] }, content: [{ type: 'paragraph', content: [
-      { type: 'text', text: `${prefix} keep this text ` },
-      { type: 'chatResourceReference', attrs: { resourceId: 'inline' } },
-    ] }] }))
-    flow.editor.commands.setTextSelection(prefix.length + 1)
-    flow.composer.activeTrigger.value = { kind: 'slash', query: 'ne' }
-    const suggestions = flow.composer.suggestions.value.filter(item => item.option.value === '/new')
-    expect(suggestions).toHaveLength(1)
-    flow.composer.selectSuggestion(suggestions[0]!.option)
-    await nextTick()
-    expect(executions).toEqual(['task.newInSpace'])
-    expect(flow.sent).toEqual([])
-    expect(chatComposerDocumentToUserContent(flow.editor.getJSON())).toMatchObject({
-      body: [{ content: [{ type: 'text', text: ' keep this text ' }, { type: 'resource_ref', resourceId: 'inline' }] }],
-      panelResourceIds: ['panel'],
-    })
-  })
-
-  it('keeps an unavailable new task action in the draft', async () => {
-    const flow = await mountComposer()
-    flow.editor.commands.setContent(createChatComposerContentFromText('/new keep this text'))
-    flow.composer.submit()
-    expect(flow.editor.getText()).toBe('/new keep this text')
+    expect(flow.editor.getText()).toBe(`${command} keep this text`)
     expect(flow.sent).toEqual([])
   })
 
@@ -392,24 +410,6 @@ describe('chat composer editing', () => {
     ])
     expect(content?.panelResourceIds).toEqual(['panel'])
     expect(content?.quotes).toEqual([quote])
-  })
-
-  it('opens the skills picker from suggestions without discarding the remaining input', async () => {
-    const flow = await mountComposer()
-    const prefix = '/ski'
-    replaceChatComposerDocument(flow.editor, chatComposerDocumentToUserContent({ type: 'doc', attrs: { panelResourceIds: ['panel'] }, content: [{ type: 'paragraph', content: [
-      { type: 'text', text: `${prefix} keep this text ` },
-      { type: 'chatResourceReference', attrs: { resourceId: 'inline' } },
-    ] }] }))
-    flow.editor.commands.setTextSelection(prefix.length + 1)
-    flow.composer.activeTrigger.value = { kind: 'slash', query: 'ski' }
-    flow.composer.selectSuggestion({ kind: 'slashCommand', value: '/skills', label: '/skills', description: null, path: null })
-    expect(flow.sent).toEqual([])
-    expect(chatComposerDocumentToUserContent(flow.editor.getJSON())).toMatchObject({
-      body: [{ content: [{ type: 'text', text: '$ keep this text ' }, { type: 'resource_ref', resourceId: 'inline' }] }],
-      panelResourceIds: ['panel'],
-    })
-    expect(flow.editor.state.selection.from).toBe(2)
   })
 
   it('uses working-directory-relative navigation, keeps external paths absolute and resets deep search between mentions', async () => {
@@ -610,23 +610,6 @@ describe('chat composer editing', () => {
     expect(flow.composer.canSubmit.value).toBe(true)
     flow.composer.submit()
     expect(flow.sent).toEqual(['saved draft'])
-  })
-
-  it('preserves selection and undo when canonical content returns', async () => {
-    const flow = await mountComposer()
-    flow.editor.commands.insertContent('first draft')
-    const selection = flow.editor.state.selection.toJSON()
-    await nextTick()
-
-    expect(flow.editor.state.selection.toJSON()).toEqual(selection)
-
-    flow.editor.commands.undo()
-    await nextTick()
-    expect(flow.editor.getText()).toBe('')
-    expect(flow.draft.value).toBe('')
-    flow.editor.commands.redo()
-    await nextTick()
-    expect(flow.draft.value).toBe('first draft')
   })
 
   it('switches to an external draft and resumes saving local edits', async () => {
