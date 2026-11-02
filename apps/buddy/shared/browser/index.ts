@@ -8,5 +8,5 @@ export { browserReadContentSchema, browserReadOptionsSchema, browserReadParamsSc
 export type { BrowserReadContent, BrowserReadOptions, BrowserReadParams } from './reading'
 export { browserAcquireControlResultSchema, browserActResultSchema, browserCloseResultSchema, browserObserveResultSchema, browserOpenResultSchema, browserReadResultSchema, browserReleaseControlResultSchema, browserScreenshotReadResultSchema, browserStateResultSchema, browserValidateActionResultSchema } from './results'
 export type { BrowserAcquireControlResult, BrowserActResult, BrowserCloseResult, BrowserObserveResult, BrowserOpenResult, BrowserReadResult, BrowserReleaseControlResult, BrowserScreenshotReadResult, BrowserStateResult, BrowserValidateActionResult } from './results'
-export { browserAcquireControlParamsSchema, browserControlLeaseSchema, browserReleaseControlParamsSchema, browserSessionParamsSchema, browserStateSnapshotSchema } from './session'
-export type { BrowserAcquireControlParams, BrowserControlLease, BrowserReleaseControlParams, BrowserSessionParams, BrowserStateSnapshot } from './session'
+export { browserAcquireControlParamsSchema, browserAgentTabId, browserCancelParamsSchema, browserControlLeaseSchema, browserPageOwnerSchema, browserReleaseControlParamsSchema, browserSessionParamsSchema, browserStateSnapshotSchema } from './session'
+export type { BrowserAcquireControlParams, BrowserControlLease, BrowserPageOwner, BrowserReleaseControlParams, BrowserSessionParams, BrowserStateSnapshot } from './session'

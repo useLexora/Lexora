@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { BROWSER_MAX_OBSERVATION_ELEMENT_LIMIT, BROWSER_MAX_OBSERVATION_TEXT_BYTES, BROWSER_MAX_SCREENSHOT_BYTES, browserElementRefSchema, browserFrameIdSchema, browserIdSchema, browserRuntimeUrlSchema } from './primitives'
+import { browserPageOwnerSchema } from './session'
 
 export function getBrowserObservationTextByteLength(observation: object): number {
   return new TextEncoder().encode(JSON.stringify(observation)).byteLength
@@ -13,6 +14,7 @@ export const browserSnapshotOptionsSchema = z.object({
 }).strict()
 
 export const browserObserveParamsSchema = browserSnapshotOptionsSchema.extend({
+  owner: browserPageOwnerSchema.optional(),
   pageId: browserIdSchema,
   sessionId: browserIdSchema,
 })
@@ -160,6 +162,7 @@ export type BrowserScreenshotRef = z.infer<typeof browserScreenshotRefSchema>
 export type BrowserObservation = z.infer<typeof browserObservationSchema>
 
 export const browserScreenshotReadParamsSchema = z.object({
+  owner: browserPageOwnerSchema.optional(),
   documentRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   observationId: browserIdSchema,
   pageId: browserIdSchema,

@@ -7,6 +7,7 @@ import type {
   BrowserObserveParams,
   BrowserObserveResult,
   BrowserOpenResult,
+  BrowserPageOwner,
   BrowserReadParams,
   BrowserReadResult,
   BrowserReleaseControlParams,
@@ -29,6 +30,7 @@ import {
   browserAcquireControlResultSchema,
   browserActParamsSchema,
   browserActResultSchema,
+  browserCancelParamsSchema,
   browserCloseResultSchema,
   browserObserveParamsSchema,
   browserObserveResultSchema,
@@ -53,12 +55,14 @@ import { GrantedPathError, resolveGrantedPath } from '../directories/resolveGran
 import { requestWithNetworkAuthorization } from '../network/networkAuthorizationContext'
 
 export interface OpenBrowserUrlInput {
+  owner: BrowserPageOwner
   conversationId: string
   until?: BrowserWaitSpec
   url: string
 }
 
 export interface OpenBrowserLocalInput {
+  owner: BrowserPageOwner
   conversationId: string
   entryPath: string
   grants: readonly DirectoryGrant[]
@@ -70,6 +74,11 @@ export class BrowserHostClient {
 
   constructor(peer: Pick<RuntimeRpcPeerContract, 'request'> & Partial<Pick<RuntimeRpcPeerContract, 'onRequest'>>) {
     this.#peer = peer
+  }
+
+  async cancel(conversationId: string, owner: BrowserPageOwner): Promise<BrowserCloseResult> {
+    const request = browserCancelParamsSchema.parse({ conversationId, owner })
+    return browserCloseResultSchema.parse(await this.#peer.request('host.browser.cancel', request))
   }
 
   async createAdapterLease(
@@ -85,6 +94,7 @@ export class BrowserHostClient {
   async openUrl(input: OpenBrowserUrlInput): Promise<BrowserOpenResult> {
     const request = browserOpenParamsSchema.parse({
       conversationId: input.conversationId,
+      owner: input.owner,
       target: { kind: 'url', url: input.url },
       ...(input.until ? { until: input.until } : {}),
     })
@@ -102,6 +112,7 @@ export class BrowserHostClient {
       throw new GrantedPathError('PATH_OUTSIDE_GRANTED_DIRECTORY')
     const request = browserOpenParamsSchema.parse({
       conversationId: input.conversationId,
+      owner: input.owner,
       target: {
         entryPath: resolution.canonicalPath,
         kind: 'local-file',
@@ -162,16 +173,16 @@ export class BrowserHostClient {
     ))
   }
 
-  async getState(sessionId: string): Promise<BrowserStateResult> {
-    const request = browserSessionParamsSchema.parse({ sessionId })
+  async getState(sessionId: string, owner?: BrowserPageOwner): Promise<BrowserStateResult> {
+    const request = browserSessionParamsSchema.parse({ sessionId, owner })
     return browserStateResultSchema.parse(await this.#peer.request(
       'host.browser.getState',
       request,
     ))
   }
 
-  async close(sessionId: string): Promise<BrowserCloseResult> {
-    const request = browserSessionParamsSchema.parse({ sessionId })
+  async close(sessionId: string, owner?: BrowserPageOwner): Promise<BrowserCloseResult> {
+    const request = browserSessionParamsSchema.parse({ sessionId, owner })
     return browserCloseResultSchema.parse(await this.#peer.request(
       'host.browser.close',
       request,

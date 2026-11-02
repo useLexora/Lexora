@@ -164,20 +164,22 @@ function createBrowserActTool(service: BrowserExtensionService) {
 
 function createBrowserOpenTool({ service, getExecutionGrants, onOpening }: CreateBrowserExtensionOptions) {
   return defineTool<TSchema, BrowserToolDetails>({
-    description: `Open an HTTP(S) or granted local HTML page in the browser visible to the user. Returns a fresh observation once the main document is readable. Omit until when that content is sufficient; use text-visible or dom-stable for missing SPA content. page-ready waits for load completion and may be delayed by unrelated resources. ${browserUntrustedDataNotice}`,
+    description: `Open an HTTP(S) or granted local HTML page owned by this execution. Opens in the background by default; background:false explicitly presents this page to the user. Other executions have separate pages, but the normal browser profile shares login state. Returns a fresh observation once the main document is readable. Omit until when that content is sufficient; use text-visible or dom-stable for missing SPA content. page-ready waits for load completion and may be delayed by unrelated resources. ${browserUntrustedDataNotice}`,
     async execute(toolCallId, input, signal) {
       if (!isBrowserOpenToolInput(input))
         return failureResult('open', 'VALIDATION_FAILED', null)
       const executionSignal = signal ?? new AbortController().signal
       try {
         executionSignal.throwIfAborted()
-        await onOpening?.()
-        executionSignal.throwIfAborted()
-        const result = await service.open(input, getExecutionGrants?.(toolCallId))
+        const { background, ...target } = input
+        const result = await service.open(target, getExecutionGrants?.(toolCallId), executionSignal)
         executionSignal.throwIfAborted()
         if (!result.ok)
           return hostFailureResult('open', result.error)
-        const observation = await service.observe()
+        if (background === false)
+          await onOpening?.()
+        executionSignal.throwIfAborted()
+        const observation = await service.observe({}, executionSignal)
         executionSignal.throwIfAborted()
         return observation.ok
           ? await withScreenshot(openSuccessResult(observation.observation, result.until), observation.observation, service, executionSignal)
@@ -204,7 +206,7 @@ function createBrowserSnapshotTool(service: BrowserExtensionService) {
       const executionSignal = signal ?? new AbortController().signal
       try {
         executionSignal.throwIfAborted()
-        const result = await service.observe(input)
+        const result = await service.observe(input, executionSignal)
         executionSignal.throwIfAborted()
         return result.ok
           ? await withScreenshot(snapshotSuccessResult(result.observation), result.observation, service, executionSignal)
@@ -231,7 +233,7 @@ function createBrowserReadTool(service: BrowserExtensionService) {
       const executionSignal = signal ?? new AbortController().signal
       try {
         executionSignal.throwIfAborted()
-        const result = await service.read(input)
+        const result = await service.read(input, executionSignal)
         executionSignal.throwIfAborted()
         return result.ok ? readSuccessResult(result.content) : hostFailureResult('read', result.error)
       }

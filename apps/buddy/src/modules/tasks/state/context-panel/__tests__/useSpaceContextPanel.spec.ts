@@ -174,7 +174,7 @@ describe('space-linked resources', () => {
 
     await f.host.execute({ action: 'open', target: { kind: 'browser', source: { conversationId: 'c', runId: 'run-c' } } }, 'harness')
     await nextTick()
-    expect(f.panel.tabs.value.map(tab => tab.id)).toEqual([selected.id, 'browser:c'])
+    expect(f.panel.tabs.value.map(tab => tab.id)).toEqual([selected.id, 'browser:c:agent:run-c'])
     expect(f.panel.activeTab.value).toBe(selected)
   })
 
@@ -195,21 +195,9 @@ describe('space-linked resources', () => {
 
     await f.host.execute({ action: 'open', target: { kind: 'browser', source: { conversationId: 'b', runId: 'run-b' } } }, 'harness')
     await nextTick()
-    expect(f.panel.tabs.value.map(tab => tab.id)).toEqual([remaining.id, 'browser:b'])
+    expect(f.panel.tabs.value.map(tab => tab.id)).toEqual([remaining.id, 'browser:b:agent:run-b'])
     expect(f.panel.activeTab.value).toBe(remaining)
-  })
-
-  it('keeps the selection when a background task in the same space presents resources', async () => {
-    const f = fixture()
-    const { panel } = f
-    panel.addBrowser()
-    const selected = panel.activeTab.value!
-    const source = { conversationId: 'b', runId: 'run-b' }
-    await f.host.execute({ action: 'open', target: { kind: 'browser', source } }, 'harness')
-    await nextTick()
-    expect(panel.tabs.value.map(tab => tab.id)).toEqual([selected.id, 'browser:b'])
-    expect(panel.activeTab.value).toEqual(selected)
     f.activeConversationId.value = 'b'
-    expect(panel.activeTab.value).toEqual(selected)
+    expect(f.panel.activeTab.value).toBe(remaining)
   })
 })

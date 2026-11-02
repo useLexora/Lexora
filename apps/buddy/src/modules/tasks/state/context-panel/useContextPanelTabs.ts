@@ -2,7 +2,7 @@ import type { DesktopContextPanelMode } from '@buddy-electron/shared/desktopApi'
 import type { Ref } from 'vue'
 import type { ContextPanelScope, ContextPanelSelectionScope, TaskContextTab } from '../../model/context-panel/taskContextPanel'
 import { computed, readonly, shallowReactive, shallowRef, watch } from 'vue'
-import { contextPanelSelectionScope, taskContextPanelScope } from '../../model/context-panel/taskContextPanel'
+import { contextPanelSelectionScope, isAgentBrowserTab, taskContextPanelScope } from '../../model/context-panel/taskContextPanel'
 
 export function useContextPanelTabs(options: {
   mode: Readonly<Ref<DesktopContextPanelMode>>
@@ -56,7 +56,7 @@ export function useContextPanelTabs(options: {
 
   function selectedTab(scope: ContextPanelSelectionScope) {
     const tabs = scopeTabs(scope)
-    return tabs.find(tab => tab.id === selections.get(scope)) ?? tabs.at(-1) ?? null
+    return tabs.find(tab => tab.id === selections.get(scope)) ?? tabs.findLast(tab => !isAgentBrowserTab(tab)) ?? null
   }
 
   function select(id: string) {

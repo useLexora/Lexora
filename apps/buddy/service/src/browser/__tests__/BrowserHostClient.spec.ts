@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BrowserHostClient } from '../BrowserHostClient'
 
+const OWNER = { runId: 'run-1', buddyId: 'default' }
 const SESSION_ID = '6f828cc1-6549-4245-b26e-43b2917c9281'
 const PAGE_ID = 'ed312709-baf9-44b3-a292-108055838477'
 const OBSERVATION_ID = 'b3a5d63b-17b7-4b5a-863a-37f135e297d4'
@@ -76,12 +77,14 @@ describe('browserHostClient', () => {
 
     await expect(client.openLocal({
       conversationId: 'conversation-1',
+      owner: OWNER,
       entryPath,
       grants: [{ canonicalRoot, grantId: 'space-1', kind: 'workspace' as const, root: grantedRoot }],
     })).resolves.toEqual({ ok: true, state: READY_STATE })
 
     expect(request).toHaveBeenCalledExactlyOnceWith('host.browser.open', {
       conversationId: 'conversation-1',
+      owner: OWNER,
       target: {
         entryPath: await realpath(entryPath),
         kind: 'local-file',
@@ -104,11 +107,13 @@ describe('browserHostClient', () => {
 
     await expect(client.openLocal({
       conversationId: 'conversation-1',
+      owner: OWNER,
       entryPath: outsidePath,
       grants: [grant],
     })).rejects.toMatchObject({ code: 'PATH_OUTSIDE_GRANTED_DIRECTORY' })
     await expect(client.openLocal({
       conversationId: 'conversation-1',
+      owner: OWNER,
       entryPath: linkedPath,
       grants: [grant],
     })).rejects.toMatchObject({ code: 'PATH_OUTSIDE_GRANTED_DIRECTORY' })

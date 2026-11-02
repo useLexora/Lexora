@@ -8,7 +8,7 @@ import { getActiveSpaceDirectories } from '@buddy-shared/spaces/spaceApi'
 import { computed, readonly, watch } from 'vue'
 import { useContextPanelControl } from '@/platform/desktop/useContextPanelControl'
 import { readContextSelection, readContextTab } from '../../model/context-panel/readContextTab'
-import { artifactTabId, browserTabId, contextTabSource, spaceTaskBrowserTab, taskContextPanelScope } from '../../model/context-panel/taskContextPanel'
+import { agentBrowserTab, artifactTabId, browserTabId, contextTabSource, spaceTaskBrowserTab, taskContextPanelScope } from '../../model/context-panel/taskContextPanel'
 import { useContextPanelTabs } from './useContextPanelTabs'
 
 export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
@@ -21,9 +21,8 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
     getSource,
     onError: options.onError,
     onTarget: (target) => {
-      const tab = spaceTaskBrowserTab(target.source.conversationId)
-      if (tab)
-        store.put({ ...tab, source: target.source }, options.taskVisible.value && target.source.conversationId === options.activeConversationId.value)
+      store.put(agentBrowserTab(target.source), options.mode.value === 'task'
+      || (options.taskVisible.value && target.source.conversationId === options.activeConversationId.value))
     },
   })
   const fileSpaces = computed(() => options.spaces.value.filter(space => getActiveSpaceDirectories(space).length > 0))
@@ -206,6 +205,11 @@ export function useTaskContextPanel(options: UseTaskContextPanelOptions) {
     hasTab,
     openArtifact,
     openBrowser,
+    registerAgentBrowser(source: ContextPanelSource) {
+      const tab = agentBrowserTab(source)
+      if (!hasTab(tab.id))
+        store.put(tab, false)
+    },
     openChanges,
     openFiles,
     locateFile,

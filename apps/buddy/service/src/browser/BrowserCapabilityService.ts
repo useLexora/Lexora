@@ -11,6 +11,7 @@ import type {
   BrowserObserveParams,
   BrowserObserveResult,
   BrowserOpenResult,
+  BrowserPageOwner,
   BrowserReadOptions,
   BrowserReadParams,
   BrowserReadResult,
@@ -46,7 +47,7 @@ export type BrowserCapabilityOpenTarget = {
   until?: BrowserWaitSpec
 }
 
-export type BrowserCapabilityObserveInput = Omit<BrowserObserveParams, 'pageId' | 'sessionId'>
+export type BrowserCapabilityObserveInput = Omit<BrowserObserveParams, 'owner' | 'pageId' | 'sessionId'>
 
 export type BrowserCapabilityActInput = BrowserCapabilityActParams
 
@@ -65,8 +66,9 @@ export interface BrowserCapabilityHost {
     input: BrowserAcquireControlParams,
   ) => Promise<BrowserAcquireControlResult>
   act: (input: BrowserActParams) => Promise<BrowserActResult>
-  close: (sessionId: string) => Promise<BrowserCloseResult>
-  getState: (sessionId: string) => Promise<BrowserStateResult>
+  cancel: (conversationId: string, owner: BrowserPageOwner) => Promise<BrowserCloseResult>
+  close: (sessionId: string, owner?: BrowserPageOwner) => Promise<BrowserCloseResult>
+  getState: (sessionId: string, owner?: BrowserPageOwner) => Promise<BrowserStateResult>
   observe: (input: BrowserObserveParams) => Promise<BrowserObserveResult>
   read: (input: BrowserReadParams) => Promise<BrowserReadResult>
   readScreenshot: (input: BrowserScreenshotReadParams) => Promise<BrowserScreenshotReadResult>
@@ -81,6 +83,7 @@ export interface BrowserCapabilityHost {
 }
 
 export interface BrowserCapabilityServiceOptions {
+  getOwner: () => BrowserPageOwner
   getExecutionGrants?: (toolCallId: string) => readonly DirectoryGrant[]
   conversationId: string
   getGrants: () => readonly DirectoryGrant[]
@@ -129,19 +132,24 @@ export class BrowserCapabilityService {
   readonly #host: BrowserCapabilityHost
   #policyObservation: BrowserPolicyObservation | null = null
   #sessionId: string | null = null
+  readonly #getOwner: () => BrowserPageOwner
+  #owner: BrowserPageOwner | null = null
+  #operationTail: Promise<unknown> = Promise.resolve()
+  #cancellation: { owner: BrowserPageOwner, pending: Promise<void> } | null = null
 
   constructor(options: BrowserCapabilityServiceOptions) {
     this.#conversationId = options.conversationId
+    this.#getOwner = options.getOwner
     this.#getGrants = options.getGrants
     this.#host = options.host
   }
 
   get snapshot() { return copyEventSnapshot({ revision: this.#revision, stopping: this.#shutdown.signal.aborted, pending: this.#pending.size, ...this.#binding() }) }
 
-  open(target: BrowserCapabilityOpenTarget, grants = this.#getGrants()): Promise<BrowserOpenResult> {
+  open(target: BrowserCapabilityOpenTarget, grants = this.#getGrants(), signal?: AbortSignal): Promise<BrowserOpenResult> {
     const captured = copyEventSnapshot(target)
     const capturedGrants = grants.map(cloneGrant)
-    return this.#track(() => this.#open(captured, capturedGrants))
+    return this.#queue(() => this.#open(captured, capturedGrants), signal)
   }
 
   async #open(target: BrowserCapabilityOpenTarget, grants: readonly DirectoryGrant[]): Promise<BrowserOpenResult> {
@@ -149,11 +157,13 @@ export class BrowserCapabilityService {
     const result = target.kind === 'url'
       ? await this.#host.openUrl({
           conversationId: this.#conversationId,
+          owner: this.#owner!,
           ...(target.until ? { until: target.until } : {}),
           url: target.url,
         })
       : await this.#host.openLocal({
           conversationId: this.#conversationId,
+          owner: this.#owner!,
           entryPath: target.entryPath,
           grants: grants.map(cloneGrant),
           ...(target.until ? { until: target.until } : {}),
@@ -162,7 +172,7 @@ export class BrowserCapabilityService {
       this.#clearUnavailableBinding(result.error.code)
       return result
     }
-    if (result.state.conversationId !== this.#conversationId) {
+    if (result.state.conversationId !== this.#conversationId || !sameOwner(result.state.owner, this.#owner)) {
       this.#setBinding(null)
       return sessionNotFound()
     }
@@ -170,9 +180,9 @@ export class BrowserCapabilityService {
     return result
   }
 
-  observe(input: BrowserCapabilityObserveInput = {}): Promise<BrowserObserveResult> {
+  observe(input: BrowserCapabilityObserveInput = {}, signal?: AbortSignal): Promise<BrowserObserveResult> {
     const captured = { ...input }
-    return this.#track(() => this.#observe(captured))
+    return this.#queue(() => this.#observe(captured), signal)
   }
 
   async #observe(input: BrowserCapabilityObserveInput): Promise<BrowserObserveResult> {
@@ -182,6 +192,7 @@ export class BrowserCapabilityService {
       return state
     const request: BrowserObserveParams = {
       ...input,
+      owner: this.#owner!,
       pageId: state.state.pageId,
       sessionId: state.state.sessionId,
     }
@@ -200,13 +211,13 @@ export class BrowserCapabilityService {
     return result
   }
 
-  read(input: BrowserReadOptions): Promise<BrowserReadResult> {
+  read(input: BrowserReadOptions, signal?: AbortSignal): Promise<BrowserReadResult> {
     const captured = copyEventSnapshot(input)
-    return this.#track(async () => {
+    return this.#queue(async () => {
       const state = await this.#getState()
       if (!state.ok)
         return state
-      const result = await this.#host.read({ ...captured, pageId: state.state.pageId, sessionId: state.state.sessionId })
+      const result = await this.#host.read({ ...captured, owner: this.#owner!, pageId: state.state.pageId, sessionId: state.state.sessionId })
       if (!result.ok) {
         this.#clearUnavailableBinding(result.error.code)
         return result
@@ -218,19 +229,21 @@ export class BrowserCapabilityService {
       if (result.content.pageId !== state.state.pageId)
         return targetStale()
       return result
-    })
+    }, signal)
   }
 
   readScreenshot(observation: BrowserObservation): Promise<BrowserScreenshotReadResult> {
     const captured = copyEventSnapshot(observation)
+    const owner = this.#owner
     return this.#track(async () => {
-      const matches = () => captured.sessionId === this.#sessionId
+      const matches = () => sameOwner(owner, this.#getOwner()) && captured.sessionId === this.#sessionId
         && captured.pageId === this.#policyObservation?.pageId
         && captured.observationId === this.#policyObservation?.observationId
         && captured.documentRevision === this.#policyObservation?.documentRevision
       if (!captured.screenshot || !matches())
         return targetStale()
       const result = await this.#host.readScreenshot({
+        owner: owner!,
         documentRevision: captured.documentRevision,
         observationId: captured.observationId,
         pageId: captured.pageId,
@@ -246,7 +259,8 @@ export class BrowserCapabilityService {
   ): BrowserCapabilityActionClassificationResult {
     const observation = this.#policyObservation
     if (
-      !observation
+      !sameOwner(this.#owner, this.#getOwner())
+      || !observation
       || observation.pageId !== input.pageId
       || observation.observationId !== input.observationId
       || observation.documentRevision !== input.documentRevision
@@ -304,7 +318,7 @@ export class BrowserCapabilityService {
       this.#setPolicy(null)
       return staleApprovalValidation()
     }
-    const result = await this.#host.validateAction({ ...input, sessionId })
+    const result = await this.#host.validateAction({ ...input, owner: this.#owner!, sessionId })
     if (!result.ok) {
       this.#setPolicy(null)
       this.#clearUnavailableBinding(result.error.code)
@@ -317,12 +331,12 @@ export class BrowserCapabilityService {
     const captured = structuredClone(input)
     const signal = AbortSignal.any([parent, this.#shutdown.signal])
     const operationId = randomUUID()
-    return this.#track(async () => {
+    return this.#queue(async () => {
       try {
         return await this.#act(captured, signal, operationId)
       }
       finally { this.#publish({ kind: 'action', operationId, phase: 'caller-settled', cancelled: signal.aborted }) }
-    })
+    }, signal)
   }
 
   async #act(input: BrowserCapabilityActInput, signal: AbortSignal, operationId: string): Promise<BrowserActResult> {
@@ -334,6 +348,7 @@ export class BrowserCapabilityService {
       return targetStale()
 
     const acquired = await this.#host.acquireControl({
+      owner: this.#owner!,
       pageId: input.pageId,
       sessionId: state.state.sessionId,
     })
@@ -344,11 +359,12 @@ export class BrowserCapabilityService {
     const { lease } = acquired
     this.#publish({ kind: 'control', operationId, phase: 'acquired', controlEpoch: lease.controlEpoch, cancelled: signal.aborted })
     const releaseInput: BrowserReleaseControlParams = {
+      owner: this.#owner!,
       controlEpoch: lease.controlEpoch,
       pageId: lease.pageId,
       sessionId: lease.sessionId,
     }
-    if (lease.sessionId !== state.state.sessionId) {
+    if (lease.sessionId !== state.state.sessionId || !sameOwner(lease.owner, this.#owner)) {
       await this.#releaseControl(releaseInput, operationId, signal)
       this.#setBinding(null)
       return sessionNotFound()
@@ -371,7 +387,7 @@ export class BrowserCapabilityService {
       this.#publish({ kind: 'action', operationId, phase: 'dispatched', cancelled: signal.aborted })
       const response = this.#track(async () => {
         try {
-          const result = await this.#host.act({ ...input, controlEpoch: lease.controlEpoch, sessionId: lease.sessionId })
+          const result = await this.#host.act({ ...input, owner: this.#owner!, controlEpoch: lease.controlEpoch, sessionId: lease.sessionId })
           this.#publish({ kind: 'action', operationId, phase: 'response-received', accepted: result.ok, cancelled: signal.aborted })
           return result
         }
@@ -408,19 +424,20 @@ export class BrowserCapabilityService {
     }
   }
 
-  getState(): Promise<BrowserStateResult> { return this.#track(() => this.#getState()) }
+  getState(): Promise<BrowserStateResult> { return this.#queue(() => this.#getState()) }
 
   async #getState(): Promise<BrowserStateResult> {
     const sessionId = this.#sessionId
     if (!sessionId)
       return sessionNotFound()
-    const result = await this.#host.getState(sessionId)
+    const result = await this.#host.getState(sessionId, this.#owner!)
     if (!result.ok) {
       this.#clearUnavailableBinding(result.error.code)
       return result
     }
     if (
       result.state.conversationId !== this.#conversationId
+      || !sameOwner(result.state.owner, this.#owner)
       || result.state.sessionId !== sessionId
     ) {
       this.#setBinding(null)
@@ -429,13 +446,13 @@ export class BrowserCapabilityService {
     return result
   }
 
-  close(): Promise<BrowserCloseResult> { return this.#track(() => this.#close()) }
+  close(): Promise<BrowserCloseResult> { return this.#queue(() => this.#close()) }
 
   async #close(): Promise<BrowserCloseResult> {
     const sessionId = this.#sessionId
     if (!sessionId)
       return sessionNotFound()
-    const result = await this.#host.close(sessionId)
+    const result = await this.#host.close(sessionId, this.#owner!)
     if (result.ok || isUnavailable(result.error.code)) {
       this.#setBinding(null)
       this.#setPolicy(null)
@@ -462,6 +479,8 @@ export class BrowserCapabilityService {
 
   dispose(): Promise<void> {
     this.#disposing ??= Promise.resolve().then(async () => {
+      if (this.#owner && this.#pending.size > 0)
+        await this.#cancelOwner(this.#owner)
       await Promise.allSettled([...this.#pending])
       this.#setPolicy(null)
       this.#setBinding(null)
@@ -469,6 +488,61 @@ export class BrowserCapabilityService {
     })
     this.#shutdown.abort()
     return this.#disposing
+  }
+
+  #queue<T>(operation: () => Promise<T>, parent?: AbortSignal): Promise<T> {
+    const owner = { ...this.#getOwner() }
+    const signal = AbortSignal.any([this.#shutdown.signal, ...(parent ? [parent] : [])])
+    const previous = this.#operationTail
+    if (this.#owner && this.#pending.size > 0 && !sameOwner(owner, this.#owner))
+      void this.#cancelOwner(this.#owner).catch(() => {})
+    const result = this.#track(async () => {
+      await previous.catch(() => {})
+      signal.throwIfAborted()
+      if (!sameOwner(owner, this.#getOwner()))
+        throw new Error('BROWSER_TARGET_STALE')
+      if (!sameOwner(owner, this.#owner)) {
+        this.#owner = owner
+        this.#setBinding(null)
+        this.#setPolicy(null)
+      }
+      if (sameOwner(owner, this.#cancellation?.owner))
+        throw new Error('BROWSER_CONTROL_REQUIRED')
+      const onAbort = () => {
+        this.#setBinding(null)
+        this.#setPolicy(null)
+        void this.#cancelOwner(owner).catch(() => {})
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+      try {
+        const value = await operation()
+        signal.throwIfAborted()
+        if (!sameOwner(owner, this.#getOwner()))
+          throw new Error('BROWSER_TARGET_STALE')
+        return value
+      }
+      finally {
+        signal.removeEventListener('abort', onAbort)
+        if (signal.aborted || !sameOwner(owner, this.#getOwner())) {
+          this.#setBinding(null)
+          this.#setPolicy(null)
+          await this.#cancelOwner(owner)
+        }
+      }
+    })
+    this.#operationTail = result.then(() => {}, () => {})
+    return result
+  }
+
+  #cancelOwner(owner: BrowserPageOwner): Promise<void> {
+    if (this.#cancellation && sameOwner(owner, this.#cancellation.owner))
+      return this.#cancellation.pending
+    const pending = this.#host.cancel(this.#conversationId, owner).then((result) => {
+      if (!result.ok && !isUnavailable(result.error.code))
+        throw new Error(result.error.code)
+    })
+    this.#cancellation = { owner, pending }
+    return pending
   }
 
   #track<T>(operation: () => Promise<T>): Promise<T> {
@@ -501,6 +575,10 @@ export class BrowserCapabilityService {
   #publish(change: Omit<Extract<BrowserCapabilityChange, { kind: 'action' | 'control' }>, 'revision'>): void {
     this.#changes.fire(copyEventSnapshot({ ...change, revision: ++this.#revision }))
   }
+}
+
+function sameOwner(left: BrowserPageOwner | null | undefined, right: BrowserPageOwner | null | undefined): boolean {
+  return !!left && !!right && left.runId === right.runId && left.buddyId === right.buddyId
 }
 
 function cloneGrant(grant: DirectoryGrant): DirectoryGrant {

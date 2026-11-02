@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { BROWSER_ACTION_TEXT_MAX_LENGTH, BROWSER_MAX_WAIT_TIMEOUT_MS, BROWSER_PRESS_KEYS, BROWSER_WAIT_CONDITIONS, BROWSER_WAIT_MAX_QUIET_MS, BROWSER_WAIT_TEXT_MAX_LENGTH, browserConversationIdSchema, browserElementRefSchema, browserFrameIdSchema, browserIdSchema, browserPathSchema, browserUrlSchema } from './primitives'
+import { browserPageOwnerSchema } from './session'
 
 export const browserOpenTargetSchema = z.discriminatedUnion('kind', [
   z.object({
@@ -64,6 +65,7 @@ export const browserWaitOutcomeSchema = z.object({
 }).strict()
 
 export const browserOpenParamsSchema = z.object({
+  owner: browserPageOwnerSchema,
   conversationId: browserConversationIdSchema,
   target: browserOpenTargetSchema,
   until: browserWaitSpecSchema.optional(),
@@ -151,12 +153,14 @@ export const browserCapabilityActParamsSchema = z.object(
 ).strict().superRefine(validateBrowserActionFrame)
 
 export const browserActParamsSchema = z.object({
+  owner: browserPageOwnerSchema.optional(),
   ...browserCapabilityActParamsShape,
   controlEpoch: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   sessionId: browserIdSchema,
 }).strict().superRefine(validateBrowserActionFrame)
 
 export const browserValidateActionParamsSchema = z.object({
+  owner: browserPageOwnerSchema.optional(),
   ...browserCapabilityActParamsShape,
   sessionId: browserIdSchema,
 }).strict().superRefine(validateBrowserActionFrame)

@@ -4,6 +4,7 @@ import type { LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
 import type { ContextPanelSource } from '@buddy-shared/context-panel/contextPanel'
 import type { LocalRunOutput } from '@buddy-shared/runs/runApi'
 import type { SpaceFileTarget } from '@buddy-shared/spaces/spaceFileApi'
+import { browserAgentTabId } from '@buddy-shared/browser/session'
 
 export type ArtifactViewMode = 'preview' | 'source'
 export type ContextPanelScope = `task:${string}` | `draft:${string}` | 'independent' | 'workspace'
@@ -112,6 +113,22 @@ export function spaceTaskBrowserTab(
         kind: 'browser',
       }
     : null
+}
+
+export function agentBrowserTab(source: ContextPanelSource): TaskBrowserContextTab {
+  const browserKey = browserAgentTabId(source.runId)
+  return {
+    conversationId: source.conversationId,
+    scope: taskContextPanelScope(source.conversationId),
+    id: browserTabId(source.conversationId, browserKey),
+    kind: 'browser',
+    browserKey,
+    source,
+  }
+}
+
+export function isAgentBrowserTab(tab: TaskContextTab): boolean {
+  return tab.kind === 'browser' && !!tab.source && tab.browserKey === browserAgentTabId(tab.source.runId)
 }
 
 export function browserTabId(conversationId: string | null, browserKey?: string): string {

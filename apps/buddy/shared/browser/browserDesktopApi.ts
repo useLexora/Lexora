@@ -2,6 +2,7 @@ import type { TaskFileTarget } from '../files/taskFileApi'
 import type { BrowserClearDataInput, BrowserClearDataResult, BrowserDataSummary } from './browserData'
 import type { BrowserLocateElementInput, BrowserPickResult } from './browserSelection'
 import type { BrowserFailureReason } from './primitives'
+import type { BrowserPageOwner } from './session'
 
 export type BrowserScreenshotResult = 'saved' | 'copied' | 'canceled'
 
@@ -47,6 +48,7 @@ export type DesktopBrowserSecurityState = {
 }
 
 export interface DesktopBrowserState {
+  owner?: BrowserPageOwner
   documentVersion?: number
   zoomFactor: number
   canGoBack: boolean
@@ -66,6 +68,8 @@ export interface DesktopBrowserState {
 }
 
 export interface DesktopBrowserGuestDescriptor {
+  owner?: BrowserPageOwner
+  conversationId?: string
   partition: string
   sessionId: string
 }

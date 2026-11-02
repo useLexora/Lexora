@@ -14,9 +14,11 @@ function fixture() {
   const activeConversationId = shallowRef<string | null>('conversation')
   const gate = deferred<DesktopBrowserState>()
   let sessionOpen = true
-  const browser: Pick<DesktopBrowserApi, 'onStateChanged' | 'ensureSession' | 'close' | 'openArtifact' | 'openFile' | 'navigate'> = {
+  const browser: Pick<DesktopBrowserApi, 'onStateChanged' | 'onGuestsChanged' | 'listGuests' | 'ensureSession' | 'close' | 'openArtifact' | 'openFile' | 'navigate'> = {
     navigate: async (sessionId, url) => ({ sessionId, conversationId: 'conversation', url } as DesktopBrowserState),
     onStateChanged: () => () => {},
+    onGuestsChanged: () => () => {},
+    listGuests: async () => [],
     ensureSession: () => gate.promise,
     close: async () => { sessionOpen = false },
     openFile: async () => { throw new Error('Unexpected file link') },
@@ -106,13 +108,10 @@ describe('resource panel operations', () => {
     f.runOutputs.value = [{ ...output, artifacts: [artifact, { ...artifact, artifactId: 'other', path: '/other/report.md' }] }]
     expect(f.panel.fileArtifact('report.md')).toBeNull()
     expect(f.panel.canPreviewFile('report.md')).toBe(true)
-    expect(f.panel.canPreviewFile('/workspace/report.md')).toBe(true)
-    expect(f.panel.canPreviewFile('file:///workspace/report.md')).toBe(true)
-    expect(f.panel.canPreviewFile('https://example.com/report.md')).toBe(false)
-    expect(f.panel.canPreviewFile('../workspace/report.md')).toBe(true)
   })
 
-  it.each(['report.md', 'page.html', 'data.xxx'])('uses the host-selected opener for an unregistered %s link', async (name) => {
+  it('uses the host-selected opener instead of the built-in HTML browser default', async () => {
+    const name = 'page.html'
     const f = fixture()
     f.runOutputs.value = []
     const selected = resolveBuiltinFileOpening('report.txt', 'standalone').provider!

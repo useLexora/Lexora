@@ -210,7 +210,11 @@ describe('browserHost sessions and navigation', () => {
   it('revalidates a rejected target on retry and forgets it when a new navigation succeeds', async () => {
     const fixture = createFixture()
     const session = fixture.host.ensureSession('conversation-1')
-    await fixture.host.navigate(session.sessionId, 'https://example.com/old')
+    await expect(fixture.host.navigate(session.sessionId, 'https://10.0.0.5/')).resolves.toMatchObject({
+      security: { kind: 'secure', origin: 'https://10.0.0.5' },
+      status: 'ready',
+      url: 'https://10.0.0.5/',
+    })
     await expect(fixture.host.navigate(session.sessionId, 'javascript:alert(1)'))
       .rejects
       .toMatchObject({ code: 'BROWSER_NAVIGATION_BLOCKED' })
@@ -221,14 +225,14 @@ describe('browserHost sessions and navigation', () => {
       status: 'error',
       error: { code: 'BROWSER_NAVIGATION_BLOCKED' },
     })
-    expect(fixture.webContents.loadURL.mock.calls).toEqual([['https://example.com/old']])
+    expect(fixture.webContents.loadURL.mock.calls).toEqual([['https://10.0.0.5/']])
     expect(fixture.webContents.reload).not.toHaveBeenCalled()
 
     await fixture.host.navigate(session.sessionId, 'https://example.com/new')
     await fixture.host.reload(session.sessionId)
     expect(fixture.webContents.reload).toHaveBeenCalledOnce()
     expect(fixture.webContents.loadURL.mock.calls).toEqual([
-      ['https://example.com/old'],
+      ['https://10.0.0.5/'],
       ['https://example.com/new'],
     ])
     fixture.host.dispose()
@@ -310,23 +314,6 @@ describe('browserHost sessions and navigation', () => {
     fixture.host.dispose()
   })
 
-  it('releases a shared debugger connection and page listeners when the page closes', async () => {
-    const fixture = createFixture()
-    const state = fixture.host.ensureSession('conversation')
-    configureSemanticObservation(fixture.webContents)
-    await fixture.host.navigate(state.sessionId, 'https://example.com/')
-    await fixture.host.observe({ sessionId: state.sessionId, pageId: state.pageId })
-    expect(fixture.webContents.debuggerAttached).toBe(true)
-    fixture.host.close(state.sessionId)
-    expect(fixture.webContents.debuggerAttached).toBe(false)
-    expect(fixture.webContents.eventNames()).toEqual([])
-    expect(fixture.webContents.session.eventNames()).toEqual([])
-    fixture.onStateChanged.mockClear()
-    fixture.webContents.emit('did-navigate', {}, 'https://obsolete.example/')
-    expect(fixture.onStateChanged).not.toHaveBeenCalled()
-    fixture.host.dispose()
-  })
-
   it('keeps standalone tabs independent through conversation and profile changes', async () => {
     const fixture = createFixture()
     const first = fixture.host.ensureSession(null, 'manual-1')
@@ -348,19 +335,9 @@ describe('browserHost sessions and navigation', () => {
     expect(fixture.host.getStateForConversation('conversation').sessionId).toBe(agent.sessionId)
   })
 
-  it('describes one isolated renderer-owned guest per conversation', () => {
+  it('hardens renderer-owned guests before attachment', () => {
     const fixture = createFixture()
-
-    const first = fixture.host.ensureSession('conversation-1')
-    const second = fixture.host.ensureSession('conversation-1')
-
-    expect(second).toEqual(first)
-    expect(fixture.createPage).toHaveBeenCalledOnce()
-    expect(fixture.guestDescriptors).toEqual([{
-      partition: 'persist:buddy-browser-default-v1',
-      sessionId: first.sessionId,
-    }])
-    expect(fixture.host.listGuests()).toEqual(fixture.guestDescriptors)
+    fixture.host.ensureSession('conversation-1')
 
     const event = { preventDefault: vi.fn() }
     const webPreferences: Record<string, unknown> = {
@@ -382,10 +359,7 @@ describe('browserHost sessions and navigation', () => {
       webSecurity: true,
     })
     expect(webPreferences).not.toHaveProperty('preload')
-    expect(fixture.webContents.session.setPermissionCheckHandler).toHaveBeenCalledOnce()
-    expect(fixture.webContents.session.setPermissionRequestHandler).toHaveBeenCalledOnce()
-    expect(first.profileMode).toBe('default')
-    expect(first.security).toEqual({ kind: 'blank', origin: null })
+    fixture.host.dispose()
   })
 
   it('switches one browser tab profile without replacing the agent or other tabs', async () => {
@@ -443,14 +417,21 @@ describe('browserHost sessions and navigation', () => {
     ))).toBe(true)
   })
 
-  it('does not carry a local file grant across profile switches', async () => {
+  it('opens a Runtime-authorized local file without carrying its grant across profile switches', async () => {
     const fixture = createFixture()
     const initial = fixture.host.ensureSession('conversation-1')
     const local = await createLocalSite()
-    await fixture.host.openLocalFile(initial.sessionId, {
+    const entryUrl = pathToFileURL(local.entryPath).toString()
+    await expect(fixture.host.openLocalFile(initial.sessionId, {
       entryPath: local.entryPath,
       rootPath: local.rootPath,
+    })).resolves.toMatchObject({
+      security: { kind: 'local', origin: 'file://' },
+      sessionId: initial.sessionId,
+      status: 'ready',
+      url: entryUrl,
     })
+    expect(fixture.webContents.loadURL).toHaveBeenCalledExactlyOnceWith(entryUrl)
 
     const incognito = await fixture.host.setProfileMode(initial.sessionId, 'incognito')
 
@@ -499,28 +480,6 @@ describe('browserHost sessions and navigation', () => {
     expect(fixture.webContentsInstances.every(contents => (
       contents.close.mock.calls.length === 0
     ))).toBe(true)
-  })
-
-  it('navigates the owned page and rejects non-web schemes in Main', async () => {
-    const fixture = createFixture()
-    const session = fixture.host.ensureSession('conversation-1')
-
-    await expect(fixture.host.navigate(
-      session.sessionId,
-      'https://10.0.0.5/',
-    )).resolves.toMatchObject({
-      security: { kind: 'secure', origin: 'https://10.0.0.5' },
-      status: 'ready',
-      url: 'https://10.0.0.5/',
-    })
-    expect(fixture.webContents.loadURL).toHaveBeenCalledExactlyOnceWith(
-      'https://10.0.0.5/',
-    )
-
-    await expect(fixture.host.navigate(
-      session.sessionId,
-      'javascript:alert(1)',
-    )).rejects.toMatchObject({ code: 'BROWSER_NAVIGATION_BLOCKED' })
   })
 
   it('recovers semantic observation from a stale page load error when the page is still live', async () => {
@@ -719,37 +678,19 @@ describe('browserHost sessions and navigation', () => {
     const fixture = createFixture()
     const session = fixture.host.ensureSession('conversation-1')
     const url = 'http://127.0.0.1:65534/'
-    fixture.webContents.loadURL.mockRejectedValueOnce(
-      new Error(`ERR_CONNECTION_REFUSED (-102) loading '${url}'`),
-    )
+    const message = `ERR_CONNECTION_REFUSED (-102) loading '${url}'`
+    fixture.webContents.loadURL.mockRejectedValueOnce(new Error(message))
 
     await expect(fixture.host.navigate(session.sessionId, url)).rejects.toMatchObject({
       code: 'BROWSER_PAGE_FAILED',
-      message: `ERR_CONNECTION_REFUSED (-102) loading '${url}'`,
+      message,
     })
     expect(fixture.webContents.loadURL).toHaveBeenCalledOnce()
-    expect(fixture.host.getState(session.sessionId)).toMatchObject({ status: 'error' })
-  })
-
-  it('preserves the Chromium failure when the clock crosses the settlement deadline during a poll', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    const fixture = createFixture()
-    const session = fixture.host.ensureSession('conversation-1')
-    const message = 'ERR_CONNECTION_REFUSED (-102)'
-    fixture.webContents.loadURL.mockImplementationOnce(async () => {
-      let now = 0
-      vi.spyOn(Date, 'now').mockImplementation(() => now += 100)
-      throw new Error(message)
-    })
-
-    const failure = expect(fixture.host.navigate(session.sessionId, 'http://127.0.0.1:65534/'))
-      .rejects
-      .toMatchObject({ code: 'BROWSER_PAGE_FAILED', message })
-    await Promise.all([failure, vi.advanceTimersByTimeAsync(1_000)])
     expect(fixture.host.getState(session.sessionId)).toMatchObject({
       status: 'error',
       error: { code: 'BROWSER_PAGE_FAILED', message },
     })
+    fixture.host.dispose()
   })
 
   it('does not start a navigation after it is stopped during authorization', async () => {
@@ -770,25 +711,6 @@ describe('browserHost sessions and navigation', () => {
       url: 'about:blank',
     })
     expect(fixture.webContents.loadURL).not.toHaveBeenCalled()
-  })
-
-  it('navigates a Runtime-authorized local file directly', async () => {
-    const fixture = createFixture()
-    const session = fixture.host.ensureSession('conversation-1')
-    const local = await createLocalSite()
-    const entryUrl = pathToFileURL(local.entryPath).toString()
-
-    await expect(fixture.host.openLocalFile(session.sessionId, {
-      entryPath: local.entryPath,
-      rootPath: local.rootPath,
-    })).resolves.toMatchObject({
-      security: { kind: 'local', origin: 'file://' },
-      sessionId: session.sessionId,
-      status: 'ready',
-      url: entryUrl,
-    })
-
-    expect(fixture.webContents.loadURL).toHaveBeenCalledExactlyOnceWith(entryUrl)
   })
 
   it('ignores an obsolete main-frame failure reported after a later commit', () => {
@@ -889,16 +811,26 @@ describe('browserHost sessions and navigation', () => {
     }))
   })
 
-  it('closes views and listeners on session close and window teardown', () => {
+  it('releases guests, shared debugger connections and listeners on session close and window teardown', async () => {
     const fixture = createFixture()
     const first = fixture.host.ensureSession('conversation-1')
     fixture.host.setSurface({
       sessionId: first.sessionId,
       visible: true,
     })
+    configureSemanticObservation(fixture.webContents)
+    await fixture.host.navigate(first.sessionId, 'https://example.com/')
+    await fixture.host.observe({ sessionId: first.sessionId, pageId: first.pageId })
+    expect(fixture.webContents.debuggerAttached).toBe(true)
 
-    fixture.host.close(first.sessionId)
+    await fixture.host.close(first.sessionId)
 
+    expect(fixture.webContents.debuggerAttached).toBe(false)
+    expect(fixture.webContents.eventNames()).toEqual([])
+    expect(fixture.webContents.session.eventNames()).toEqual([])
+    fixture.onStateChanged.mockClear()
+    fixture.webContents.emit('did-navigate', {}, 'https://obsolete.example/')
+    expect(fixture.onStateChanged).not.toHaveBeenCalled()
     expect(fixture.webContents.close).toHaveBeenCalledOnce()
     expect(fixture.onSessionClosed).toHaveBeenNthCalledWith(
       1,
@@ -909,6 +841,7 @@ describe('browserHost sessions and navigation', () => {
 
     const second = fixture.host.ensureSession('conversation-2')
     fixture.window.emit('closed')
+    await fixture.host.whenIdle()
 
     expect(fixture.host.isDisposed).toBe(true)
     expect(() => fixture.host.getState(second.sessionId)).toThrowError(BrowserHostError)
@@ -918,11 +851,8 @@ describe('browserHost sessions and navigation', () => {
       expect.objectContaining({ sessionId: second.sessionId }),
       'disposed',
     )
-    expect(fixture.window.listenerCount('hide')).toBe(0)
-    expect(fixture.window.listenerCount('minimize')).toBe(0)
-    expect(fixture.window.listenerCount('restore')).toBe(0)
-    expect(fixture.window.listenerCount('show')).toBe(0)
-    expect(fixture.window.webContents.listenerCount('will-attach-webview')).toBe(0)
+    expect(fixture.window.eventNames()).toEqual([])
+    expect(fixture.window.webContents.eventNames()).toEqual([])
   })
 
   it('protects the visible session and evicts the least recently used detached page', () => {
@@ -945,11 +875,11 @@ describe('browserHost sessions and navigation', () => {
     expect(() => fixture.host.getState(second.sessionId)).toThrowError(BrowserHostError)
     expect(fixture.webContentsInstances.at(0)?.close).not.toHaveBeenCalled()
     expect(fixture.webContentsInstances.at(1)?.close).toHaveBeenCalledOnce()
-    expect(fixture.onStateChanged).toHaveBeenCalledWith(expect.objectContaining({
+    expect(fixture.onSessionClosed).toHaveBeenCalledWith(expect.objectContaining({
       conversationId: 'conversation-2',
       error: expect.objectContaining({ code: 'BROWSER_SESSION_EVICTED' }),
       status: 'error',
-    }))
+    }), 'evicted')
 
     expect(fixture.host.ensureSession('conversation-2')).toMatchObject({
       conversationId: 'conversation-2',

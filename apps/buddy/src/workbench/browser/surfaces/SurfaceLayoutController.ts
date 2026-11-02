@@ -125,7 +125,7 @@ export class SurfaceLayoutController implements SurfaceLayout {
   #park(element: HTMLElement, retainSize = false): void {
     const width = retainSize ? element.style.width || `${window.innerWidth}px` : '1px'
     const height = retainSize ? element.style.height || `${window.innerHeight}px` : '1px'
-    Object.assign(element.style, { position: 'fixed', visibility: 'hidden', pointerEvents: 'none', left: '-10000px', top: '0', width, height, clipPath: 'none' })
+    Object.assign(element.style, { position: 'fixed', visibility: retainSize ? 'visible' : 'hidden', opacity: retainSize ? '0' : '1', pointerEvents: 'none', left: retainSize ? '0' : '-10000px', top: '0', width, height, clipPath: 'none' })
     element.tabIndex = -1
     element.inert = true
     element.setAttribute('aria-hidden', 'true')
@@ -166,6 +166,7 @@ export class SurfaceLayoutController implements SurfaceLayout {
     Object.assign(element.style, {
       position: 'fixed',
       visibility: 'visible',
+      opacity: '1',
       pointerEvents: options.interactive && !options.childrenOnly ? 'auto' : 'none',
       left: `${bounds.left}px`,
       top: `${bounds.top}px`,

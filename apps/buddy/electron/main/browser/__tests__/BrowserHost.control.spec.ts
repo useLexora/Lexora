@@ -1,9 +1,39 @@
 import { deferred as createDeferred } from '@buddy-tests/deferred'
 import { describe, expect, it, vi } from 'vitest'
 import { BrowserOperationGuard } from '../BrowserOperationGuard'
+import { BrowserSecurityPolicy } from '../BrowserSecurityPolicy'
 import { configureSemanticObservation, configureSensitiveSemanticObservation, createFixture } from './browserHostFixture'
 
 describe('browserHost control and semantic actions', () => {
+  it('rejects late agent navigation after human takeover during authorization', async () => {
+    const fixture = createFixture()
+    const session = fixture.host.ensureSession('conversation')
+    configureSemanticObservation(fixture.webContents)
+    await fixture.host.navigate(session.sessionId, 'https://example.com/')
+    const observation = await fixture.host.observe({ sessionId: session.sessionId, pageId: session.pageId })
+    const lease = fixture.host.acquireControl({ sessionId: session.sessionId, pageId: session.pageId })
+    const ready = createDeferred<void>()
+    const pending = createDeferred<void>()
+    const authorize = BrowserSecurityPolicy.prototype.authorizeNavigation
+    const delayed = vi.spyOn(BrowserSecurityPolicy.prototype, 'authorizeNavigation').mockImplementation(async function (this: BrowserSecurityPolicy, url) {
+      const result = await authorize.call(this, url)
+      ready.resolve()
+      await pending.promise
+      return result
+    })
+    const action = fixture.host.act({ ...lease, action: { kind: 'navigate', url: 'https://example.com/late' }, documentRevision: observation.documentRevision, observationId: observation.observationId })
+    const rejected = expect(action).rejects.toMatchObject({ code: 'BROWSER_CONTROL_REQUIRED' })
+    await ready.promise
+    fixture.host.takeControl(session.sessionId)
+    pending.resolve()
+    await rejected
+    expect(fixture.webContents.loadURL.mock.calls.map(([url]) => url)).toEqual(['https://example.com/'])
+    expect(fixture.host.getState(session.sessionId)).toMatchObject({ controller: 'human', status: 'ready', error: null, url: 'https://example.com/' })
+    delayed.mockRestore()
+    fixture.host.dispose()
+    await fixture.host.whenIdle()
+  })
+
   it('preserves confirmed dispatch when the following observation fails', async () => {
     const fixture = createFixture()
     const session = fixture.host.ensureSession('conversation')
@@ -73,19 +103,7 @@ describe('browserHost control and semantic actions', () => {
       sessionId: session.sessionId,
     })
     const event = { preventDefault: vi.fn() }
-    const escapeInput = {
-      alt: false,
-      code: 'Escape',
-      control: false,
-      isAutoRepeat: false,
-      isComposing: false,
-      key: 'Escape',
-      location: 0,
-      meta: false,
-      modifiers: [],
-      shift: false,
-      type: 'keyDown',
-    }
+    const escapeInput = { key: 'Escape', type: 'keyDown' }
 
     fixture.webContents.emit('before-input-event', event, escapeInput)
 
@@ -238,43 +256,6 @@ describe('browserHost control and semantic actions', () => {
     })
   })
 
-  it('invalidates an approved action binding when the page changes before execution', async () => {
-    const fixture = createFixture()
-    const session = fixture.host.ensureSession('conversation-1')
-    configureSemanticObservation(fixture.webContents)
-    await fixture.host.navigate(session.sessionId, 'https://example.com/app')
-    const observation = await fixture.host.observe({
-      pageId: session.pageId,
-      sessionId: session.sessionId,
-    })
-    const input = {
-      action: { kind: 'click', ref: 'e1' } as const,
-      documentRevision: observation.documentRevision,
-      frameId: 'main-frame',
-      observationId: observation.observationId,
-      pageId: session.pageId,
-      sessionId: session.sessionId,
-    }
-    fixture.webContents.debugger.sendCommand.mockClear()
-
-    expect(fixture.host.validateAction(input)).toBeUndefined()
-    expect(fixture.webContents.debugger.sendCommand).not.toHaveBeenCalled()
-
-    fixture.webContents.emit(
-      'did-navigate-in-page',
-      {},
-      'https://example.com/app/changed',
-      true,
-      1,
-      1,
-    )
-
-    expect(() => fixture.host.validateAction(input)).toThrowError(expect.objectContaining({
-      code: 'BROWSER_TARGET_STALE',
-    }))
-    expect(fixture.webContents.debugger.sendCommand).not.toHaveBeenCalled()
-  })
-
   it('keeps Main-owned control epochs monotonic across acquire, release, and human takeover', async () => {
     const fixture = createFixture()
     const session = fixture.host.ensureSession('conversation-1')
@@ -395,6 +376,7 @@ describe('browserHost control and semantic actions', () => {
     })
 
     const firstAction = fixture.host.act(action)
+    const firstFailure = expect(firstAction).rejects.toMatchObject({ code: 'BROWSER_CONTROL_REQUIRED' })
     await actionStarted.promise
     const queuedAction = fixture.host.act(action)
     const queuedFailure = expect(queuedAction).rejects.toMatchObject({
@@ -407,15 +389,11 @@ describe('browserHost control and semantic actions', () => {
     })
     continueAction.resolve()
 
-    await expect(firstAction).resolves.toMatchObject({ actionKind: 'click' })
+    await firstFailure
     await queuedFailure
-    expect(fixture.webContents.debugger.sendCommand).toHaveBeenCalledWith(
-      'Input.dispatchMouseEvent',
-      expect.objectContaining({ type: 'mousePressed' }),
-    )
     expect(fixture.webContents.debugger.sendCommand.mock.calls.filter(([method, params]) => (
       method === 'Input.dispatchMouseEvent' && params?.type === 'mousePressed'
-    ))).toHaveLength(1)
+    ))).toHaveLength(0)
   })
 
   it('requires a fresh observation after explicit or in-page human takeover', async () => {
@@ -569,34 +547,24 @@ describe('browserHost control and semantic actions', () => {
     })).rejects.toMatchObject({ code: 'BROWSER_TARGET_STALE' })
   })
 
-  it('advances document revision for SPA and child-frame navigation without replacing the main URL', async () => {
+  it('invalidates approved targets for SPA and child-frame navigation without replacing the main URL', async () => {
     const fixture = createFixture()
     const session = fixture.host.ensureSession('conversation-1')
+    const target = { pageId: session.pageId, sessionId: session.sessionId }
     configureSemanticObservation(fixture.webContents)
     await fixture.host.navigate(session.sessionId, 'https://example.com/app')
+    const observation = await fixture.host.observe(target)
+    const action = { ...target, action: { kind: 'click', ref: 'e1' } as const, frameId: 'main-frame' }
+    expect(() => fixture.host.validateAction({ ...observation, ...action })).not.toThrow()
 
-    await expect(fixture.host.observe({
-      pageId: session.pageId,
-      sessionId: session.sessionId,
-    })).resolves.toMatchObject({ documentRevision: 1 })
-
-    fixture.webContents.currentUrl = 'https://example.com/app/reports#revenue'
-    fixture.webContents.emit(
-      'did-navigate-in-page',
-      {},
-      'https://example.com/app/reports#revenue',
-      true,
-      1,
-      1,
-    )
-
-    await expect(fixture.host.observe({
-      pageId: session.pageId,
-      sessionId: session.sessionId,
-    })).resolves.toMatchObject({
-      documentRevision: 2,
-      url: 'https://example.com/app/reports',
-    })
+    const mainUrl = 'https://example.com/app/reports#revenue'
+    fixture.webContents.currentUrl = mainUrl
+    fixture.webContents.emit('did-navigate-in-page', {}, mainUrl, true)
+    expect(() => fixture.host.validateAction({ ...observation, ...action })).toThrowError(expect.objectContaining({
+      code: 'BROWSER_TARGET_STALE',
+    }))
+    const afterSpa = await fixture.host.observe(target)
+    expect(afterSpa.url).toBe('https://example.com/app/reports')
 
     fixture.webContents.emit(
       'did-frame-navigate',
@@ -605,24 +573,17 @@ describe('browserHost control and semantic actions', () => {
       200,
       'OK',
       false,
-      2,
-      3,
     )
-    fixture.webContents.emit(
-      'did-navigate-in-page',
-      {},
-      'https://widgets.example.test/chart#quarter-2',
-      false,
-      2,
-      3,
-    )
-
-    await expect(fixture.host.observe({
-      pageId: session.pageId,
-      sessionId: session.sessionId,
-    })).resolves.toMatchObject({ documentRevision: 4 })
-    expect(fixture.host.getState(session.sessionId).url).toBe(
-      'https://example.com/app/reports#revenue',
-    )
+    expect(() => fixture.host.validateAction({ ...afterSpa, ...action })).toThrowError(expect.objectContaining({
+      code: 'BROWSER_TARGET_STALE',
+    }))
+    const afterChildNavigation = await fixture.host.observe(target)
+    fixture.webContents.emit('did-navigate-in-page', {}, 'https://widgets.example.test/chart#quarter-2', false)
+    expect(() => fixture.host.validateAction({ ...afterChildNavigation, ...action })).toThrowError(expect.objectContaining({
+      code: 'BROWSER_TARGET_STALE',
+    }))
+    expect(fixture.host.getState(session.sessionId).url).toBe(mainUrl)
+    fixture.host.dispose()
+    await fixture.host.whenIdle()
   })
 })

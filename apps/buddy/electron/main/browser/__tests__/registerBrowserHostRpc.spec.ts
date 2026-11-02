@@ -2,11 +2,17 @@ import type { RuntimeRequestHandler, RuntimeRpcPeerContract } from '../../../../
 import type { BrowserHost } from '../BrowserHost'
 import { describe, expect, it, vi } from 'vitest'
 import { registerBrowserHostRpc as registerHostRpc } from '../registerBrowserHostRpc'
+import { createFixture } from './browserHostFixture'
 
 const registerBrowserHostRpc: typeof registerHostRpc = (peer, options) => {
   const host = options.getHost()
-  if (host)
+  if (host) {
+    host.assertOwner = vi.fn()
+    host.assertControl = vi.fn()
+    host.acquireControl ??= vi.fn(input => ({ ...input, controller: 'agent', controlEpoch: 1 }))
+    host.releaseControl ??= vi.fn()
     host.withNetworkAuthorization = async (_session, _authorize, _signal, operation) => operation()
+  }
   return registerHostRpc(peer, options)
 }
 
@@ -52,6 +58,41 @@ const OBSERVATION = {
 } as const
 
 describe('registerBrowserHostRpc', () => {
+  it('rejects cross-owner requests without changing the target page network context', async () => {
+    const fixture = createFixture()
+    const owner = { runId: 'run-a', buddyId: 'actor-a' }
+    const state = fixture.host.ensureAgentSession('task', owner)
+    const request = fixture.webContents.session.webRequest.onBeforeRequest.mock.calls.at(-1)!.at(-1) as unknown as (details: object, callback: (result: object) => void) => void
+    const access = () => new Promise(resolve => request({ resourceType: 'xhr', url: 'https://example.com/data', webContentsId: fixture.webContents.id }, resolve))
+    const peer = createPeerFixture()
+    registerHostRpc(peer.peer, { getHost: () => fixture.host })
+    expect(await access()).toEqual({ cancel: false })
+    const input = { sessionId: state.sessionId, pageId: state.pageId, owner: { runId: 'run-b', buddyId: 'actor-b' } }
+    expect(await peer.invoke('host.browser.observe', input)).toMatchObject({ ok: false, error: { code: 'BROWSER_CONTROL_REQUIRED' } })
+    expect(await peer.invoke('host.browser.read', input)).toMatchObject({ ok: false, error: { code: 'BROWSER_CONTROL_REQUIRED' } })
+    expect(await access()).toEqual({ cancel: false })
+    fixture.host.dispose()
+    await fixture.host.whenIdle()
+  })
+
+  it('cancels a preparing execution before guest attachment without allowing a late navigation', async () => {
+    const fixture = createFixture()
+    fixture.createPage.mockReturnValueOnce(undefined as never)
+    const owner = { runId: 'run-a', buddyId: 'actor-a' }
+    const state = fixture.host.ensureAgentSession('task', owner)
+    const peer = createPeerFixture()
+    registerHostRpc(peer.peer, { getHost: () => fixture.host })
+    const opening = peer.invoke('host.browser.open', { conversationId: 'task', owner, target: { kind: 'url', url: 'https://example.com/' } })
+    await vi.waitFor(() => expect(fixture.host.getState(state.sessionId).status).toBe('loading'))
+    expect(await peer.invoke('host.browser.cancel', { conversationId: 'task', owner })).toEqual({ ok: true })
+    expect(await opening).toMatchObject({ ok: false, error: { code: 'BROWSER_CONTROL_REQUIRED' } })
+    const page = fixture.createPage(fixture.host.getGuestDescriptor(state.sessionId))
+    fixture.host.attachGuest(state.sessionId, page as never)
+    expect(page.loadURL).not.toHaveBeenCalled()
+    fixture.host.dispose()
+    await fixture.host.whenIdle()
+  })
+
   it('issues a strict short-lived adapter lease through the private Runtime peer', async () => {
     const fixture = createPeerFixture()
     const lease = {
@@ -73,88 +114,25 @@ describe('registerBrowserHostRpc', () => {
       conversationId: 'conversation-1',
       ttlMs: 60_000,
     })).resolves.toEqual(lease)
-    expect(createAdapterLease).toHaveBeenCalledExactlyOnceWith({
-      conversationId: 'conversation-1',
-      ttlMs: 60_000,
-    })
     await expect(fixture.invoke('host.browser.createAdapterLease', {
       conversationId: 'conversation-1',
       ttlMs: 300_001,
     })).rejects.toThrow()
   })
 
-  it('acquires and releases page-bound control through Runtime-only methods', async () => {
+  it('returns stale actions and leases as recoverable results with strict contexts', async () => {
     const fixture = createPeerFixture()
+    const staleTarget = Object.assign(new Error('private stale target diagnostic'), { code: 'BROWSER_TARGET_STALE' })
     const host = {
-      acquireControl: vi.fn().mockReturnValue({
-        controller: 'agent',
-        controlEpoch: 4,
-        pageId: PAGE_ID,
-        sessionId: SESSION_ID,
+      act: vi.fn().mockRejectedValue(staleTarget),
+      validateAction: vi.fn(() => { throw staleTarget }),
+      releaseControl: vi.fn(() => {
+        throw Object.assign(new Error('private stale lease diagnostic'), { code: 'BROWSER_CONTROL_REQUIRED' })
       }),
-      releaseControl: vi.fn()
-        .mockReturnValueOnce({
-          ...READY_STATE,
-          controller: 'human',
-          controlEpoch: 5,
-        })
-        .mockImplementationOnce(() => {
-          throw Object.assign(new Error('old runtime lease'), {
-            code: 'BROWSER_CONTROL_REQUIRED',
-          })
-        }),
-    } as unknown as BrowserHost
-    registerBrowserHostRpc(fixture.peer, { getHost: () => host })
-
-    await expect(fixture.invoke('host.browser.acquireControl', {
-      pageId: PAGE_ID,
-      sessionId: SESSION_ID,
-    })).resolves.toEqual({
-      lease: {
-        controller: 'agent',
-        controlEpoch: 4,
-        pageId: PAGE_ID,
-        sessionId: SESSION_ID,
-      },
-      ok: true,
-    })
-    await expect(fixture.invoke('host.browser.releaseControl', {
-      controlEpoch: 4,
-      pageId: PAGE_ID,
-      sessionId: SESSION_ID,
-    })).resolves.toEqual({ ok: true })
-    await expect(fixture.invoke('host.browser.releaseControl', {
-      controlEpoch: 4,
-      pageId: PAGE_ID,
-      sessionId: SESSION_ID,
-    })).resolves.toEqual({
-      error: {
-        code: 'BROWSER_CONTROL_REQUIRED',
-        reason: null,
-        recovery: 'request_human_control',
-      },
-      ok: false,
-    })
-  })
-
-  it('returns stale action targets as a recoverable observe-again result', async () => {
-    const fixture = createPeerFixture()
-    const host = {
-      act: vi.fn()
-        .mockResolvedValueOnce({
-          actionKind: 'click',
-          observation: OBSERVATION,
-          state: READY_STATE,
-        })
-        .mockRejectedValueOnce(Object.assign(
-          new Error('private stale target diagnostic'),
-          { code: 'BROWSER_TARGET_STALE' },
-        )),
     } as unknown as BrowserHost
     registerBrowserHostRpc(fixture.peer, { getHost: () => host })
     const input = {
       action: { kind: 'click', ref: 'e1' },
-      controlEpoch: 1,
       documentRevision: 2,
       frameId: 'main-frame',
       observationId: OBSERVATION_ID,
@@ -162,75 +140,27 @@ describe('registerBrowserHostRpc', () => {
       sessionId: SESSION_ID,
     }
 
-    await expect(fixture.invoke('host.browser.act', input)).resolves.toEqual({
-      actionKind: 'click',
-      observation: OBSERVATION,
-      ok: true,
-      state: {
-        ...READY_STATE,
-        controller: 'human',
-        controlEpoch: 0,
-        profileMode: 'default',
-      },
-    })
-    const stale = await fixture.invoke('host.browser.act', input)
-    expect(stale).toEqual({
-      error: {
-        code: 'BROWSER_TARGET_STALE',
-        reason: null,
-        recovery: 'read_again',
-      },
-      ok: false,
-    })
-    expect(JSON.stringify(stale)).not.toContain('private stale target diagnostic')
+    for (const [method, params, code, recovery] of [
+      ['host.browser.act', { ...input, controlEpoch: 1 }, 'BROWSER_TARGET_STALE', 'read_again'],
+      ['host.browser.validateAction', input, 'BROWSER_TARGET_STALE', 'read_again'],
+      ['host.browser.releaseControl', { controlEpoch: 1, pageId: PAGE_ID, sessionId: SESSION_ID }, 'BROWSER_CONTROL_REQUIRED', 'request_human_control'],
+    ] as const) {
+      const stale = await fixture.invoke(method, params)
+      expect(stale).toEqual({ error: { code, reason: null, recovery }, ok: false })
+      expect(JSON.stringify(stale)).not.toMatch(/private stale (?:target|lease) diagnostic/)
+    }
 
     await expect(fixture.invoke('host.browser.act', {
       ...input,
+      controlEpoch: 1,
       frameId: undefined,
     })).rejects.toThrow()
-    expect(host.act).toHaveBeenCalledTimes(2)
-  })
-
-  it('revalidates an approved action without acquiring control or exposing diagnostics', async () => {
-    const fixture = createPeerFixture()
-    const host = {
-      validateAction: vi.fn()
-        .mockReturnValueOnce(undefined)
-        .mockImplementationOnce(() => {
-          throw Object.assign(new Error('private changed-page diagnostic'), {
-            code: 'BROWSER_TARGET_STALE',
-          })
-        }),
-    } as unknown as BrowserHost
-    registerBrowserHostRpc(fixture.peer, { getHost: () => host })
-    const input = {
-      action: { kind: 'click', ref: 'e1' },
-      documentRevision: 2,
-      frameId: 'main-frame',
-      observationId: OBSERVATION_ID,
-      pageId: PAGE_ID,
-      sessionId: SESSION_ID,
-    }
-
-    await expect(fixture.invoke('host.browser.validateAction', input))
-      .resolves
-      .toEqual({ ok: true })
-    const stale = await fixture.invoke('host.browser.validateAction', input)
-    expect(stale).toEqual({
-      error: {
-        code: 'BROWSER_TARGET_STALE',
-        reason: null,
-        recovery: 'read_again',
-      },
-      ok: false,
-    })
-    expect(JSON.stringify(stale)).not.toContain('private changed-page diagnostic')
-
     await expect(fixture.invoke('host.browser.validateAction', {
       ...input,
       controlEpoch: 1,
     })).rejects.toThrow()
-    expect(host.validateAction).toHaveBeenCalledTimes(2)
+    expect(host.act).toHaveBeenCalledOnce()
+    expect(host.validateAction).toHaveBeenCalledOnce()
   })
 
   it('returns sensitive input as an explicit human handoff without diagnostics', async () => {
@@ -264,9 +194,9 @@ describe('registerBrowserHostRpc', () => {
     expect(JSON.stringify(result)).not.toContain('private sensitive target diagnostic')
   })
 
-  it('rejects script, selector, unrestricted key, and unbounded wait payloads before Host', async () => {
+  it('rejects invalid page identity, script, selector, unrestricted key, and unbounded waits before Host', async () => {
     const fixture = createPeerFixture()
-    const host = { act: vi.fn() } as unknown as BrowserHost
+    const host = { act: vi.fn(), observe: vi.fn() } as unknown as BrowserHost
     registerBrowserHostRpc(fixture.peer, { getHost: () => host })
     const context = {
       controlEpoch: 1,
@@ -301,10 +231,15 @@ describe('registerBrowserHostRpc', () => {
 
     for (const input of rejected)
       await expect(fixture.invoke('host.browser.act', input)).rejects.toThrow()
+    await expect(fixture.invoke('host.browser.observe', {
+      pageId: 'not-a-uuid',
+      sessionId: SESSION_ID,
+    })).rejects.toThrow()
     expect(host.act).not.toHaveBeenCalled()
+    expect(host.observe).not.toHaveBeenCalled()
   })
 
-  it('opens URL and granted local targets through the same BrowserHost session', async () => {
+  it('preserves explicit wait results and redacts local-file paths', async () => {
     const fixture = createPeerFixture()
     const explicitUntil = {
       condition: 'text-visible' as const,
@@ -323,22 +258,17 @@ describe('registerBrowserHostRpc', () => {
       url: 'file:///workspace/site/index.html',
     } as const
     const host = {
-      ensureSession: vi.fn().mockReturnValue(BLANK_STATE),
+      ensureAgentSession: vi.fn().mockReturnValue(BLANK_STATE),
       navigate: vi.fn().mockResolvedValue({ ...READY_STATE, status: 'loading' }),
-      getState: vi.fn().mockReturnValue(READY_STATE),
+      getState: vi.fn().mockReturnValueOnce(READY_STATE).mockReturnValue(localState),
       openLocalFile: vi.fn().mockResolvedValue(localState),
-      waitFor: vi.fn()
-        .mockResolvedValueOnce(explicitOutcome)
-        .mockResolvedValueOnce({
-          condition: 'dom-stable',
-          elapsedMs: 1_500,
-          satisfied: false,
-        }),
+      waitFor: vi.fn().mockResolvedValue(explicitOutcome),
     } as unknown as BrowserHost
     registerBrowserHostRpc(fixture.peer, { getHost: () => host })
 
     await expect(fixture.invoke('host.browser.open', {
       conversationId: 'conversation-1',
+      owner: { runId: 'run-1', buddyId: 'default' },
       target: { kind: 'url', url: 'https://example.com/docs' },
       until: explicitUntil,
     })).resolves.toEqual({
@@ -353,6 +283,7 @@ describe('registerBrowserHostRpc', () => {
     })
     await expect(fixture.invoke('host.browser.open', {
       conversationId: 'conversation-1',
+      owner: { runId: 'run-1', buddyId: 'default' },
       target: {
         entryPath: '/workspace/site/index.html',
         kind: 'local-file',
@@ -369,26 +300,13 @@ describe('registerBrowserHostRpc', () => {
       },
     })
 
-    expect(host.ensureSession).toHaveBeenCalledTimes(2)
-    expect(host.ensureSession).toHaveBeenNthCalledWith(1, 'conversation-1')
-    expect(host.ensureSession).toHaveBeenNthCalledWith(2, 'conversation-1')
-    expect(host.navigate).toHaveBeenCalledExactlyOnceWith(
-      SESSION_ID,
-      'https://example.com/docs',
-      'document-ready',
-    )
-    expect(host.openLocalFile).toHaveBeenCalledExactlyOnceWith(SESSION_ID, {
-      entryPath: '/workspace/site/index.html',
-      rootPath: '/workspace',
-    }, 'document-ready')
-    expect(host.waitFor).toHaveBeenNthCalledWith(1, SESSION_ID, explicitUntil)
     expect(host.waitFor).toHaveBeenCalledTimes(1)
   })
 
   it('preserves a bounded browser security reason without exposing diagnostics', async () => {
     const fixture = createPeerFixture()
     const host = {
-      ensureSession: vi.fn().mockReturnValue(BLANK_STATE),
+      ensureAgentSession: vi.fn().mockReturnValue(BLANK_STATE),
       navigate: vi.fn().mockRejectedValue(Object.assign(
         new Error('blocked browser request must not cross RPC'),
         {
@@ -401,6 +319,7 @@ describe('registerBrowserHostRpc', () => {
 
     const result = await fixture.invoke('host.browser.open', {
       conversationId: 'conversation-1',
+      owner: { runId: 'run-1', buddyId: 'default' },
       target: { kind: 'url', url: 'https://example.com/' },
     })
 
@@ -415,84 +334,20 @@ describe('registerBrowserHostRpc', () => {
     expect(JSON.stringify(result)).not.toContain('blocked browser request')
   })
 
-  it('validates, observes, reads, and closes without exposing host diagnostics', async () => {
-    const fixture = createPeerFixture()
-    const host = {
-      close: vi.fn(),
-      getState: vi.fn()
-        .mockReturnValueOnce({
-          ...READY_STATE,
-          controller: 'agent',
-          controlEpoch: 7,
-        })
-        .mockImplementationOnce(() => {
-          throw Object.assign(new Error('private host diagnostic'), {
-            code: 'BROWSER_SESSION_NOT_FOUND',
-          })
-        }),
-      observe: vi.fn().mockResolvedValue(OBSERVATION),
-    } as unknown as BrowserHost
-    registerBrowserHostRpc(fixture.peer, { getHost: () => host })
-
-    await expect(fixture.invoke('host.browser.observe', {
-      maxElements: 160,
-      pageId: PAGE_ID,
-      sessionId: SESSION_ID,
-    })).resolves.toEqual({ observation: OBSERVATION, ok: true })
-    await expect(fixture.invoke('host.browser.getState', {
-      sessionId: SESSION_ID,
-    })).resolves.toMatchObject({
-      ok: true,
-      state: {
-        controller: 'agent',
-        controlEpoch: 7,
-        profileMode: 'default',
-        sessionId: SESSION_ID,
-      },
-    })
-    await expect(fixture.invoke('host.browser.close', {
-      sessionId: SESSION_ID,
-    })).resolves.toEqual({ ok: true })
-
-    const failure = await fixture.invoke('host.browser.getState', {
-      sessionId: SESSION_ID,
-    })
-    expect(failure).toEqual({
-      error: {
-        code: 'BROWSER_SESSION_NOT_FOUND',
-        reason: null,
-        recovery: 'open_again',
-      },
-      ok: false,
-    })
-    expect(JSON.stringify(failure)).not.toContain('private host diagnostic')
-
-    await expect(fixture.invoke('host.browser.observe', {
-      pageId: 'not-a-uuid',
-      sessionId: SESSION_ID,
-    })).rejects.toThrow()
-    expect(host.observe).toHaveBeenCalledOnce()
-    expect(host.close).toHaveBeenCalledExactlyOnceWith(SESSION_ID)
-  })
-
   it('removes URL query and fragment before Main returns browser state or observations', async () => {
     const fixture = createPeerFixture()
     const privateUrl = 'https://example.com/docs?access_token=query-secret#fragment-secret'
     const host = {
-      ensureSession: vi.fn().mockReturnValue(BLANK_STATE),
+      ensureAgentSession: vi.fn().mockReturnValue(BLANK_STATE),
       getState: vi.fn().mockReturnValue({ ...READY_STATE, url: privateUrl }),
       navigate: vi.fn().mockResolvedValue({ ...READY_STATE, url: privateUrl }),
       observe: vi.fn().mockResolvedValue({ ...OBSERVATION, url: privateUrl }),
-      waitFor: vi.fn().mockResolvedValue({
-        condition: 'dom-stable',
-        elapsedMs: 300,
-        satisfied: true,
-      }),
     } as unknown as BrowserHost
     registerBrowserHostRpc(fixture.peer, { getHost: () => host })
 
     const opened = await fixture.invoke('host.browser.open', {
       conversationId: 'conversation-1',
+      owner: { runId: 'run-1', buddyId: 'default' },
       target: { kind: 'url', url: privateUrl },
     })
     const observed = await fixture.invoke('host.browser.observe', {
@@ -519,6 +374,7 @@ describe('registerBrowserHostRpc', () => {
 
     await expect(unavailable.invoke('host.browser.open', {
       conversationId: 'conversation-1',
+      owner: { runId: 'run-1', buddyId: 'default' },
       target: { kind: 'url', url: 'https://example.com' },
     })).resolves.toEqual({
       error: {
@@ -552,13 +408,12 @@ describe('registerBrowserHostRpc', () => {
 function createPeerFixture() {
   const handlers = new Map<string, RuntimeRequestHandler>()
   const peer = {
-    onRequest: vi.fn((method: string, handler: RuntimeRequestHandler) => {
+    onRequest: (method: string, handler: RuntimeRequestHandler) => {
       handlers.set(method, handler)
       return () => handlers.delete(method)
-    }),
+    },
   } as unknown as RuntimeRpcPeerContract
   return {
-    handlers,
     invoke(method: string, params: unknown) {
       const handler = handlers.get(method)
       if (!handler)

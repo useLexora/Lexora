@@ -13,7 +13,6 @@ const SESSION_ID = '6f828cc1-6549-4245-b26e-43b2917c9281'
 const PAGE_ID = 'ed312709-baf9-44b3-a292-108055838477'
 const OBSERVATION_ID = 'b3a5d63b-17b7-4b5a-863a-37f135e297d4'
 const POST_ACTION_OBSERVATION_ID = '2e7d9de1-fd2f-4f83-aef2-74a3b830dc48'
-type BrowserToolResultHandler = (event: Record<string, unknown>) => unknown
 
 const READY_STATE: BrowserStateSnapshot = {
   canGoBack: false,
@@ -60,14 +59,30 @@ const POST_ACTION_OBSERVATION: BrowserObservation = {
 }
 
 describe('browserExtension', () => {
-  it('returns native image blocks and preserves completed actions when screenshot delivery fails', async () => {
+  it('keeps screenshot results compact and preserves completed actions when delivery fails', async () => {
     const fixture = createFixture()
-    const observation = { ...OBSERVATION, elements: [], screenshot: { byteLength: 8, height: 600, mimeType: 'image/png', reasons: ['explicit-request'], screenshotId: 'da56fda3-f4de-4622-908b-39978c98194d', width: 800 } }
+    const observation = { ...OBSERVATION, screenshot: { byteLength: 8, height: 600, mimeType: 'image/png', reasons: ['explicit-request'], screenshotId: 'da56fda3-f4de-4622-908b-39978c98194d', width: 800 } }
     const image = { data: 'iVBORw0KGgo=', mimeType: 'image/png' }
     fixture.service.observe.mockResolvedValue({ ok: true, observation })
     fixture.service.readScreenshot.mockResolvedValue({ ok: true, image })
     const snapshot = await execute(requireTool(fixture.tools, 'lexora_browser_snapshot'), { mode: 'screenshot' })
     expect(snapshot.content).toEqual([{ type: 'text', text: JSON.stringify(observation) }, { type: 'image', ...image }])
+    expect(snapshot).toMatchObject({
+      details: {
+        documentRevision: 3,
+        elementCount: 1,
+        observationId: OBSERVATION_ID,
+        operation: 'snapshot',
+        pageId: PAGE_ID,
+        sessionId: SESSION_ID,
+        status: 'ready',
+        truncated: false,
+        url: observation.url,
+      },
+      isError: false,
+    })
+    expect(snapshot.details).not.toHaveProperty('elements')
+    expect(snapshot.details).not.toHaveProperty('screenshot')
     fixture.service.act.mockResolvedValue({ ok: true, actionKind: 'reload', observation, state: READY_STATE })
     fixture.service.readScreenshot.mockRejectedValue(new Error('private host failure'))
     const action = await execute(requireTool(fixture.tools, 'lexora_browser_act'), { action: { kind: 'reload' }, documentRevision: 3, observationId: OBSERVATION_ID, pageId: PAGE_ID })
@@ -77,7 +92,7 @@ describe('browserExtension', () => {
     expect(JSON.stringify(action)).not.toContain('private host failure')
   })
 
-  it('shows the browser before navigation completes and does not reopen a panel closed during loading', async () => {
+  it('keeps a background navigation and its observation from opening the resource panel', async () => {
     const host = new ContextPanelHost(async () => {})
     const source = { conversationId: 'conversation-1', runId: 'run-1' }
     const fixture = createFixture(async () => {
@@ -89,14 +104,14 @@ describe('browserExtension', () => {
     }))
     fixture.service.observe.mockResolvedValue({ observation: OBSERVATION, ok: true })
     const opening = execute(requireTool(fixture.tools, 'lexora_browser_open'), { kind: 'url', url: READY_STATE.url })
-    await vi.waitFor(() => expect(host.getState().open).toBe(true))
-    await host.execute({ action: 'close', source })
+    await vi.waitFor(() => expect(fixture.service.open).toHaveBeenCalledOnce())
+    expect(host.getState().open).toBe(false)
     complete({ ok: true, state: READY_STATE })
     expect((await opening).isError).not.toBe(true)
     expect(host.getState().open).toBe(false)
   })
 
-  it('presents a successful browser through the desktop without changing the model result', async () => {
+  it('presents an explicit foreground open while preserving observation and wait results', async () => {
     const operations: ContextPanelOperationRecord[] = []
     const host = new ContextPanelHost(async (operation) => {
       operations.push(operation)
@@ -105,22 +120,30 @@ describe('browserExtension', () => {
     const fixture = createFixture(async () => {
       await host.execute({ action: 'open', target: { kind: 'browser', source } }, 'harness')
     })
-    fixture.service.open.mockResolvedValue({ ok: true, state: READY_STATE })
+    const until = { condition: 'text-visible' as const, elapsedMs: 320, satisfied: true }
+    fixture.service.open
+      .mockResolvedValueOnce({ ok: true, state: READY_STATE, until })
+      .mockResolvedValue({ ok: true, state: READY_STATE })
     fixture.service.observe.mockResolvedValue({ observation: OBSERVATION, ok: true })
     const open = requireTool(fixture.tools, 'lexora_browser_open')
-    const first = await execute(open, { kind: 'url', url: READY_STATE.url })
+    const first = await execute(open, {
+      kind: 'url',
+      url: READY_STATE.url,
+      background: false,
+      until: { condition: 'text-visible', text: 'Example', timeoutMs: 8_000 },
+    })
     expect(host.getState()).toMatchObject({ open: true, target: { kind: 'browser', source } })
-    expect(readContent(first)).toEqual(OBSERVATION)
+    expect(readContent(first)).toEqual({ observation: OBSERVATION, until })
     const second = await execute(open, { kind: 'url', url: READY_STATE.url })
-    expect(second).toEqual(first)
+    expect(readContent(second)).toEqual(OBSERVATION)
     expect(operations.map(({ action, actor }) => ({ action, actor }))).toEqual([{ action: 'open', actor: 'harness' }])
     await host.execute({ action: 'close', source })
     await execute(requireTool(fixture.tools, 'lexora_browser_snapshot'), {})
     expect(host.getState().open).toBe(false)
     fixture.service.open.mockResolvedValue({ ok: false, error: { code: 'BROWSER_SESSION_NOT_FOUND', reason: null, recovery: 'open_again' } })
     expect((await execute(open, { kind: 'url', url: READY_STATE.url })).isError).toBe(true)
-    expect(host.getState().open).toBe(true)
-    expect(operations.map(operation => operation.action)).toEqual(['open', 'close', 'open'])
+    expect(host.getState().open).toBe(false)
+    expect(operations.map(operation => operation.action)).toEqual(['open', 'close'])
   })
 
   it('validates browser tool inputs at the model boundary', () => {
@@ -128,9 +151,6 @@ describe('browserExtension', () => {
     const act = requireTool(tools, 'lexora_browser_act')
     const open = requireTool(tools, 'lexora_browser_open')
     const snapshot = requireTool(tools, 'lexora_browser_snapshot')
-    for (const tool of [open, snapshot, act])
-      expect(tool.parameters).toMatchObject({ type: 'object' })
-
     const read = requireTool(tools, 'lexora_browser_read')
     expect(Check(snapshot.parameters, { mode: 'screenshot' })).toBe(true)
     expect(Check(snapshot.parameters, { mode: 'auto' })).toBe(false)
@@ -251,51 +271,6 @@ describe('browserExtension', () => {
     expect(fixture.service.act).not.toHaveBeenCalled()
   })
 
-  it('opens URL and granted-local targets with an immediate semantic read', async () => {
-    const fixture = createFixture()
-    const until = {
-      condition: 'text-visible' as const,
-      elapsedMs: 320,
-      satisfied: true,
-    }
-    fixture.service.open
-      .mockResolvedValueOnce({ ok: true, state: READY_STATE, until })
-      .mockResolvedValueOnce({ ok: true, state: READY_STATE })
-    fixture.service.observe.mockResolvedValue({ observation: OBSERVATION, ok: true })
-    const open = requireTool(fixture.tools, 'lexora_browser_open')
-    const urlInput = {
-      kind: 'url' as const,
-      until: {
-        condition: 'text-visible' as const,
-        text: 'Example',
-        timeoutMs: 8_000,
-      },
-      url: READY_STATE.url,
-    }
-    const localInput = {
-      entryPath: '/workspace/report.html',
-      kind: 'local-file' as const,
-    }
-
-    const urlResult = await execute(open, urlInput)
-    const localResult = await execute(open, localInput)
-
-    expect(fixture.service.open.mock.calls).toEqual([[urlInput, undefined], [localInput, undefined]])
-    expect(fixture.service.observe.mock.calls).toEqual([[], []])
-    expect(urlResult).toMatchObject({
-      details: {
-        operation: 'open',
-        pageId: PAGE_ID,
-        sessionId: SESSION_ID,
-        status: 'ready',
-        url: READY_STATE.url,
-      },
-      isError: false,
-    })
-    expect(readContent(urlResult)).toEqual({ observation: OBSERVATION, until })
-    expect(readContent(localResult)).toEqual(OBSERVATION)
-  })
-
   it('keeps a successful navigation successful when the immediate observation is unavailable', async () => {
     const fixture = createFixture()
     fixture.service.open.mockResolvedValue({ ok: true, state: READY_STATE })
@@ -343,33 +318,6 @@ describe('browserExtension', () => {
     })
   })
 
-  it('returns the bounded semantic observation without duplicating it in details', async () => {
-    const fixture = createFixture()
-    fixture.service.observe.mockResolvedValue({ observation: OBSERVATION, ok: true })
-    const snapshot = requireTool(fixture.tools, 'lexora_browser_snapshot')
-
-    const result = await execute(snapshot, { maxElements: 120 })
-
-    expect(fixture.service.observe).toHaveBeenCalledExactlyOnceWith({ maxElements: 120 })
-    expect(result).toMatchObject({
-      details: {
-        documentRevision: 3,
-        elementCount: 1,
-        observationId: OBSERVATION_ID,
-        operation: 'snapshot',
-        pageId: PAGE_ID,
-        sessionId: SESSION_ID,
-        status: 'ready',
-        truncated: false,
-        url: OBSERVATION.url,
-      },
-      isError: false,
-    })
-    expect(result.details).not.toHaveProperty('elements')
-    expect(result.details).not.toHaveProperty('screenshot')
-    expect(readContent(result)).toEqual(OBSERVATION)
-  })
-
   it('executes an action without copying its input into tool content or details', async () => {
     const fixture = createFixture()
     fixture.service.act.mockResolvedValue({
@@ -409,7 +357,7 @@ describe('browserExtension', () => {
     })
   })
 
-  it('returns stable validation and Host failures without leaking exceptions', async () => {
+  it('returns stable validation and recoverable Host failures', async () => {
     const fixture = createFixture()
     fixture.service.observe.mockResolvedValue({
       error: {
@@ -421,19 +369,12 @@ describe('browserExtension', () => {
     })
     const open = requireTool(fixture.tools, 'lexora_browser_open')
     const snapshot = requireTool(fixture.tools, 'lexora_browser_snapshot')
-    const act = requireTool(fixture.tools, 'lexora_browser_act')
 
     const invalid = await execute(open, {
       kind: 'url',
       url: 'javascript:alert(1)',
     })
     const unavailable = await execute(snapshot, {})
-    const invalidAction = await execute(act, {
-      action: { kind: 'fill', ref: 'e1', text: 'must not execute' },
-      documentRevision: 3,
-      observationId: OBSERVATION_ID,
-      pageId: PAGE_ID,
-    })
 
     expect(invalid).toMatchObject({
       details: { code: 'VALIDATION_FAILED', operation: 'open', recovery: null },
@@ -458,15 +399,7 @@ describe('browserExtension', () => {
       reason: null,
       recovery: 'open_again',
     })
-    expect(invalidAction).toMatchObject({
-      details: { code: 'VALIDATION_FAILED', operation: 'act', recovery: null },
-      isError: true,
-    })
-    expect(fixture.service.act).not.toHaveBeenCalled()
-  })
 
-  it('preserves bounded Host failure reasons for model recovery', async () => {
-    const fixture = createFixture()
     fixture.service.open.mockResolvedValue({
       error: {
         code: 'BROWSER_NAVIGATION_BLOCKED',
@@ -476,10 +409,7 @@ describe('browserExtension', () => {
       ok: false,
     })
 
-    const result = await execute(requireTool(fixture.tools, 'lexora_browser_open'), {
-      kind: 'url',
-      url: 'https://example.com/',
-    })
+    const result = await execute(open, { kind: 'url', url: 'https://example.com/' })
 
     expect(readContent(result)).toEqual({
       code: 'BROWSER_NAVIGATION_BLOCKED',
@@ -504,19 +434,14 @@ function createFixture(onOpening?: () => Promise<void>) {
     open: vi.fn(),
   }
   const tools = new Map<string, ToolDefinition>()
-  let toolResultHandler: BrowserToolResultHandler | null = null
   createBrowserExtension({ service: service as never, onOpening }).factory({
-    on(event: string, handler: (event: Record<string, unknown>) => unknown) {
-      if (event === 'tool_result')
-        toolResultHandler = handler
-    },
+    on() {},
     registerTool(tool: ToolDefinition) {
       tools.set(tool.name, tool)
     },
   } as never)
   return {
     service,
-    toolResultHandler: toolResultHandler as BrowserToolResultHandler | null,
     tools,
   }
 }

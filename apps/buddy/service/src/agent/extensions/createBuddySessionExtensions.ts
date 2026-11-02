@@ -224,6 +224,7 @@ export async function createBuddySessionExtensions(
       get executionProfile() { return getExecutionProfile() },
       cwd: options.canonicalRoot,
       getRunId: () => runContext.current?.runId,
+      getActorId: () => runContext.current?.actorIdentity?.id,
       getImagePreferences: () => runContext.current?.imagePreferences,
       getExecutionGrants: toolCallId => [...grants.snapshot, ...executionPermissions.get(runContext.current, toolCallId)],
       get grants() { return grants.snapshot },

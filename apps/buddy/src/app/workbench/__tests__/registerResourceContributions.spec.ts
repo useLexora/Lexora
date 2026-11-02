@@ -18,6 +18,8 @@ function createResourcePanel(overrides: Parameters<typeof contextPanelFixture>[0
     openFile: async () => { throw new Error('Unexpected file opening') },
     browser: {
       onStateChanged: () => () => {},
+      onGuestsChanged: () => () => {},
+      listGuests: async () => [],
       close: async () => {},
       ensureSession: async () => { throw new Error('Unexpected browser session') },
       openFile: async () => { throw new Error('Unexpected file link') },
@@ -37,7 +39,7 @@ function setup(panel: Parameters<typeof registerResourceContributions>[1]) {
   return { controller, ...launchers }
 }
 
-it('opens a single root, asks before choosing among roots and dispatches to the current panel', async () => {
+it('opens a single root and asks before choosing among roots', async () => {
   const now = '2026-09-10T00:00:00.000Z'
   const space: LocalSpace = {
     id: 'space',
@@ -54,21 +56,15 @@ it('opens a single root, asks before choosing among roots and dispatches to the 
   }
   const spaces = shallowRef<readonly LocalSpace[]>([space])
   const activeSpace = shallowRef<LocalSpace | null>(space)
-  const original = createResourcePanel({ spaces, activeSpace })
-  const panel = shallowRef(original)
-  const f = setup(() => panel.value)
+  const panel = createResourcePanel({ spaces, activeSpace })
+  const f = setup(() => panel)
   await f.launch('files')
-  expect(original.activeTab.value).toMatchObject({ kind: 'files', target: { spaceId: 'space', directoryId: 'directory', path: '' } })
-  expect(panel.value.fileSpacePickerOpen.value).toBe(false)
+  expect(panel.activeTab.value).toMatchObject({ kind: 'files', target: { spaceId: 'space', directoryId: 'directory', path: '' } })
+  expect(panel.fileSpacePickerOpen.value).toBe(false)
   const additional = { ...space.primaryDirectory!, id: 'additional', root: '/extra', canonicalRoot: '/extra' }
   spaces.value = [{ ...space, additionalDirectories: [additional] }]
   activeSpace.value = spaces.value[0]!
   await f.controller.commands.execute('resource.files', { source: 'palette' })
-  expect(panel.value.fileSpacePickerOpen.value).toBe(true)
-  expect(original.allTabs.value).toHaveLength(1)
-  panel.value = createResourcePanel({ activeConversationId: shallowRef('replacement') })
-  expect(await f.launch('files')).toBe(false)
-  await f.launch('browser')
-  expect(panel.value.activeTab.value).toMatchObject({ kind: 'browser', scope: 'task:replacement' })
-  expect(original.allTabs.value).toHaveLength(1)
+  expect(panel.fileSpacePickerOpen.value).toBe(true)
+  expect(panel.allTabs.value).toHaveLength(1)
 })

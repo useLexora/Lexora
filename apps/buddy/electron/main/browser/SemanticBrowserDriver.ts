@@ -512,8 +512,9 @@ export class SemanticBrowserDriver {
     })
   }
 
-  async executeAction(input: SemanticBrowserActionInput): Promise<void> {
+  async executeAction(input: SemanticBrowserActionInput, assertControl: () => void = () => {}): Promise<void> {
     try {
+      assertControl()
       const target = this.validateAction(input)
       this.#ensureDebugger()
       if (!target) {
@@ -529,21 +530,26 @@ export class SemanticBrowserDriver {
       }
 
       await this.#withLiveTarget(target, input.action, async (objectId) => {
+        assertControl()
         switch (input.action.kind) {
           case 'click':
-            await this.#click(target)
+            await this.#click(target, assertControl)
             return
           case 'fill':
             await this.#focus(target, objectId)
+            assertControl()
             await this.#selectText(objectId)
+            assertControl()
             await this.#page.insertText(input.action.text)
             return
           case 'type':
             await this.#focus(target, objectId)
+            assertControl()
             await this.#page.insertText(input.action.text)
             return
           case 'press':
             await this.#focus(target, objectId)
+            assertControl()
             await this.#press(input.action.key)
             return
           case 'select':
@@ -562,7 +568,7 @@ export class SemanticBrowserDriver {
       })
     }
     catch (error) {
-      if (error instanceof SemanticBrowserDriverError)
+      if (error instanceof SemanticBrowserDriverError || error instanceof BrowserHostError)
         throw error
       throw new SemanticBrowserDriverError()
     }
@@ -826,19 +832,22 @@ export class SemanticBrowserDriver {
     return browserTargetActionabilitySchema.parse(response.result.value)
   }
 
-  async #click(target: SemanticBrowserTarget): Promise<void> {
+  async #click(target: SemanticBrowserTarget, assertControl: () => void): Promise<void> {
     const { model } = cdpBoxModelSchema.parse(
       await this.#connection.sendCommand('DOM.getBoxModel', {
         backendNodeId: target.backendDOMNodeId,
       }),
     )
     const { x, y } = quadCenter(model.content)
+    assertControl()
     await this.#connection.sendCommand('Input.dispatchMouseEvent', {
       type: 'mouseMoved',
       x,
       y,
     })
     for (const type of ['mousePressed', 'mouseReleased'] as const) {
+      if (type === 'mousePressed')
+        assertControl()
       await this.#connection.sendCommand('Input.dispatchMouseEvent', {
         button: 'left',
         clickCount: 1,

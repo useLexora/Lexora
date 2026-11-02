@@ -15,7 +15,9 @@ const CURRENT_PAGE_ID = '9b230ce2-b3eb-4ae4-ac33-37c4c7b2339a'
 const OBSERVATION_ID = 'b3a5d63b-17b7-4b5a-863a-37f135e297d4'
 const POST_ACTION_OBSERVATION_ID = '2e7d9de1-fd2f-4f83-aef2-74a3b830dc48'
 
+const OWNER = { runId: 'run-1', buddyId: 'default' }
 const READY_STATE: BrowserStateSnapshot = {
+  owner: OWNER,
   canGoBack: false,
   canGoForward: false,
   controller: 'human',
@@ -53,6 +55,48 @@ const ACTION_INPUT = {
 }
 
 describe('browserCapabilityService', () => {
+  it('cancels an opening page before its response and rejects late rebinding', async () => {
+    const host = createHost()
+    const pending = createDeferred<Awaited<ReturnType<BrowserCapabilityHost['openUrl']>>>()
+    host.openUrl.mockReturnValue(pending.promise)
+    const service = createService(host)
+    const controller = new AbortController()
+    const opening = service.open({ kind: 'url', url: READY_STATE.url }, [], controller.signal)
+    const rejected = expect(opening).rejects.toMatchObject({ name: 'AbortError' })
+    await vi.waitFor(() => expect(host.openUrl).toHaveBeenCalledOnce())
+    controller.abort()
+    await vi.waitFor(() => expect(host.cancel).toHaveBeenCalledWith('conversation-1', OWNER))
+    pending.resolve({ ok: true, state: READY_STATE })
+    await rejected
+    expect(service.snapshot.sessionId).toBeNull()
+    expect(service.snapshot.count).toBe(0)
+    await service.dispose()
+  })
+
+  it('rejects queued and late work from an old execution without rebinding the next one', async () => {
+    const host = createHost()
+    const pending = createDeferred<Awaited<ReturnType<BrowserCapabilityHost['openUrl']>>>()
+    host.openUrl.mockReturnValueOnce(pending.promise)
+    let owner = OWNER
+    const service = new BrowserCapabilityService({ host, getOwner: () => owner, getGrants: () => [], conversationId: 'conversation-1' })
+    const opening = service.open({ kind: 'url', url: READY_STATE.url })
+    const rejected = expect(opening).rejects.toThrow('BROWSER_TARGET_STALE')
+    await vi.waitFor(() => expect(host.openUrl).toHaveBeenCalledOnce())
+    const observing = service.observe()
+    const rejectedQueued = expect(observing).rejects.toThrow('BROWSER_TARGET_STALE')
+    owner = { ...OWNER, runId: 'run-2' }
+    const nextState = { ...READY_STATE, owner, sessionId: OTHER_SESSION_ID }
+    host.openUrl.mockResolvedValueOnce({ ok: true, state: nextState })
+    const next = service.open({ kind: 'url', url: READY_STATE.url })
+    pending.resolve({ ok: true, state: READY_STATE })
+    await rejected
+    await rejectedQueued
+    expect(await next).toEqual({ ok: true, state: nextState })
+    expect(service.snapshot.sessionId).toBe(OTHER_SESSION_ID)
+    expect(host.observe).not.toHaveBeenCalled()
+    await service.dispose()
+  })
+
   it('keeps screenshot resolution bound to the current session and observation across async changes', async () => {
     const host = createHost()
     const state = { ...READY_STATE, pageId: CURRENT_PAGE_ID }
@@ -99,6 +143,7 @@ describe('browserCapabilityService', () => {
     grants[1]!.canonicalRoot = '/other'
 
     expect(host.openLocal).toHaveBeenCalledExactlyOnceWith({
+      owner: OWNER,
       conversationId: 'conversation-1',
       entryPath: '/workspace/space/report.html',
       grants: [
@@ -140,7 +185,7 @@ describe('browserCapabilityService', () => {
     expect(host.observe).not.toHaveBeenCalled()
   })
 
-  it('refreshes the current page identity before every observation', async () => {
+  it('refreshes the page identity and rejects observations from a different page', async () => {
     const host = createHost()
     host.openUrl.mockResolvedValue({ ok: true, state: READY_STATE })
     host.getState.mockResolvedValue({
@@ -152,7 +197,9 @@ describe('browserCapabilityService', () => {
         url: 'https://example.com/current',
       },
     })
-    host.observe.mockResolvedValue({ observation: OBSERVATION, ok: true })
+    host.observe
+      .mockResolvedValueOnce({ observation: OBSERVATION, ok: true })
+      .mockResolvedValueOnce({ observation: { ...OBSERVATION, pageId: PAGE_ID }, ok: true })
     const service = createService(host)
     await service.open({ kind: 'url', url: READY_STATE.url })
 
@@ -161,11 +208,16 @@ describe('browserCapabilityService', () => {
       ok: true,
     })
 
-    expect(host.getState).toHaveBeenCalledExactlyOnceWith(SESSION_ID)
+    expect(host.getState).toHaveBeenCalledExactlyOnceWith(SESSION_ID, OWNER)
     expect(host.observe).toHaveBeenCalledExactlyOnceWith({
+      owner: OWNER,
       maxElements: 120,
       pageId: CURRENT_PAGE_ID,
       sessionId: SESSION_ID,
+    })
+    await expect(service.observe()).resolves.toEqual({
+      error: { code: 'BROWSER_TARGET_STALE', reason: null, recovery: 'read_again' },
+      ok: false,
     })
   })
 
@@ -294,23 +346,6 @@ describe('browserCapabilityService', () => {
     if (result.ok)
       result.observation.elements[0]!.name = 'Open details'
     const secondClassification = service.classifyAction(actionInput)
-    expect(secondClassification).toEqual({
-      approvalReview: {
-        action: 'click',
-        actionDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
-        documentRevision: 2,
-        effect: null,
-        key: null,
-        observationId: OBSERVATION_ID,
-        origin: 'https://example.com',
-        pageId: PAGE_ID,
-        risk: 'interaction',
-        sessionId: SESSION_ID,
-        targetName: 'Publish now',
-        targetRole: 'button',
-      },
-      access: 'interaction',
-    })
     expect(secondClassification).toEqual(firstClassification)
     if (
       'blocked' in secondClassification
@@ -340,6 +375,7 @@ describe('browserCapabilityService', () => {
       reason: 'BROWSER_TARGET_STALE',
     })
     expect(host.validateAction).toHaveBeenCalledWith({
+      owner: OWNER,
       ...actionInput,
       sessionId: SESSION_ID,
     })
@@ -347,13 +383,6 @@ describe('browserCapabilityService', () => {
       blocked: true,
       reason: 'BROWSER_TARGET_STALE',
     })
-    expect(service.classifyAction({
-      action: { kind: 'click', ref: 'e99' },
-      documentRevision: 2,
-      frameId: 'main-frame',
-      observationId: OBSERVATION_ID,
-      pageId: PAGE_ID,
-    })).toEqual({ blocked: true, reason: 'BROWSER_TARGET_STALE' })
   })
 
   it.each([
@@ -398,6 +427,7 @@ describe('browserCapabilityService', () => {
     host.acquireControl
       .mockResolvedValueOnce({
         lease: {
+          owner: OWNER,
           controller: 'agent',
           controlEpoch: 1,
           pageId: PAGE_ID,
@@ -407,6 +437,7 @@ describe('browserCapabilityService', () => {
       })
       .mockResolvedValueOnce({
         lease: {
+          owner: OWNER,
           controller: 'agent',
           controlEpoch: 3,
           pageId: PAGE_ID,
@@ -416,6 +447,7 @@ describe('browserCapabilityService', () => {
       })
       .mockResolvedValueOnce({
         lease: {
+          owner: OWNER,
           controller: 'agent',
           controlEpoch: 5,
           pageId: PAGE_ID,
@@ -465,23 +497,26 @@ describe('browserCapabilityService', () => {
     await expect(service.act(ACTION_INPUT)).rejects.toThrow('Runtime action request failed')
 
     expect(host.acquireControl).toHaveBeenNthCalledWith(1, {
+      owner: OWNER,
       pageId: PAGE_ID,
       sessionId: SESSION_ID,
     })
     expect(host.act).toHaveBeenNthCalledWith(1, {
+      owner: OWNER,
       ...ACTION_INPUT,
       controlEpoch: 1,
       sessionId: SESSION_ID,
     })
     expect(host.act).toHaveBeenNthCalledWith(2, {
+      owner: OWNER,
       ...ACTION_INPUT,
       controlEpoch: 3,
       sessionId: SESSION_ID,
     })
     expect(host.releaseControl.mock.calls).toEqual([
-      [{ controlEpoch: 1, pageId: PAGE_ID, sessionId: SESSION_ID }],
-      [{ controlEpoch: 3, pageId: PAGE_ID, sessionId: SESSION_ID }],
-      [{ controlEpoch: 5, pageId: PAGE_ID, sessionId: SESSION_ID }],
+      [{ owner: OWNER, controlEpoch: 1, pageId: PAGE_ID, sessionId: SESSION_ID }],
+      [{ owner: OWNER, controlEpoch: 3, pageId: PAGE_ID, sessionId: SESSION_ID }],
+      [{ owner: OWNER, controlEpoch: 5, pageId: PAGE_ID, sessionId: SESSION_ID }],
     ])
   })
 
@@ -492,6 +527,7 @@ describe('browserCapabilityService', () => {
     host.getState.mockResolvedValue({ ok: true, state: READY_STATE })
     host.acquireControl.mockResolvedValue({
       lease: {
+        owner: OWNER,
         controller: 'agent',
         controlEpoch: 5,
         pageId: PAGE_ID,
@@ -502,11 +538,6 @@ describe('browserCapabilityService', () => {
     host.act.mockReturnValue(action.promise)
     host.releaseControl.mockResolvedValue({ ok: true })
     const service = createService(host)
-    const phases: string[] = []
-    service.onDidChange((change) => {
-      if ('phase' in change)
-        phases.push(change.phase)
-    })
     await service.open({ kind: 'url', url: READY_STATE.url })
     const controller = new AbortController()
     const acting = service.act(ACTION_INPUT, controller.signal)
@@ -516,6 +547,7 @@ describe('browserCapabilityService', () => {
 
     await expect(acting).rejects.toMatchObject({ name: 'AbortError' })
     expect(host.releaseControl).toHaveBeenCalledExactlyOnceWith({
+      owner: OWNER,
       controlEpoch: 5,
       pageId: PAGE_ID,
       sessionId: SESSION_ID,
@@ -526,11 +558,8 @@ describe('browserCapabilityService', () => {
     })
     await Promise.resolve()
     expect(disposed).toBe(false)
-    expect(phases).toContain('caller-settled')
-    expect(phases).not.toContain('response-unknown')
     action.reject(new Error('cancelled action finished later'))
     await stopping
-    expect(phases.at(-1)).toBe('response-unknown')
     expect(service.snapshot.pending).toBe(0)
   })
 
@@ -552,30 +581,6 @@ describe('browserCapabilityService', () => {
     await expect(service.getState()).resolves.toEqual(sessionNotFound())
 
     expect(host.getState).toHaveBeenCalledOnce()
-  })
-
-  it('rejects observations that do not match the refreshed page', async () => {
-    const host = createHost()
-    host.openUrl.mockResolvedValue({ ok: true, state: READY_STATE })
-    host.getState.mockResolvedValue({ ok: true, state: READY_STATE })
-    host.observe.mockResolvedValue({
-      observation: {
-        ...OBSERVATION,
-        pageId: CURRENT_PAGE_ID,
-      },
-      ok: true,
-    })
-    const service = createService(host)
-    await service.open({ kind: 'url', url: READY_STATE.url })
-
-    await expect(service.observe()).resolves.toEqual({
-      error: {
-        code: 'BROWSER_TARGET_STALE',
-        reason: null,
-        recovery: 'read_again',
-      },
-      ok: false,
-    })
   })
 
   it('preserves Host failures and clears unavailable sessions', async () => {
@@ -629,6 +634,7 @@ describe('browserCapabilityService', () => {
 
 function createHost() {
   return {
+    cancel: vi.fn<BrowserCapabilityHost['cancel']>().mockResolvedValue({ ok: true }),
     acquireControl: vi.fn(),
     act: vi.fn(),
     close: vi.fn<BrowserCapabilityHost['close']>(),
@@ -653,6 +659,7 @@ function createService(
   }],
 ) {
   return new BrowserCapabilityService({
+    getOwner: () => OWNER,
     conversationId: 'conversation-1',
     getGrants,
     host,

@@ -143,7 +143,7 @@ describe('browser session extensions', () => {
     const extensions = await createExtensions(root, requestApproval)
     const policy = activateToolPolicy(extensions)
 
-    await expect(policy.invoke({
+    await expect(policy({
       input: { entryPath: insidePath, kind: 'local-file' },
       toolCallId: 'tool-open-inside',
       toolName: 'lexora_browser_open',
@@ -153,7 +153,7 @@ describe('browser session extensions', () => {
 
     // Rendering a file outside the workspace asks, and approving it authorizes
     // the directory instead of leaving the model with an unrecoverable denial.
-    await expect(policy.invoke({
+    await expect(policy({
       input: { entryPath: outsidePath, kind: 'local-file' },
       toolCallId: 'tool-open-outside',
       toolName: 'lexora_browser_open',
@@ -200,10 +200,9 @@ function activateToolPolicy(
   extensions: Awaited<ReturnType<typeof createBuddySessionExtensions>>,
 ) {
   let handler: ((event: unknown) => Promise<unknown>) | null = null
-  const onAuthorized = vi.fn(async () => {})
   extensions.runContext.current = {
     flushProjectedEvents: async () => {},
-    onToolExecutionAuthorized: onAuthorized,
+    onToolExecutionAuthorized: async () => {},
     runId: 'run-1',
     signal: new AbortController().signal,
   }
@@ -218,10 +217,7 @@ function activateToolPolicy(
   } as never)
   if (!handler)
     throw new Error('Tool policy extension did not register its tool_call handler')
-  return {
-    invoke: handler as (event: unknown) => Promise<unknown>,
-    onAuthorized,
-  }
+  return handler as (event: unknown) => Promise<unknown>
 }
 
 function createCompositionServices(
@@ -271,6 +267,7 @@ function createUnavailableBrowserHost(): BrowserCapabilityHost {
     throw new Error('Browser host should not be called while composing a session')
   }
   return {
+    cancel: unavailable,
     acquireControl: unavailable,
     act: unavailable,
     close: unavailable,
