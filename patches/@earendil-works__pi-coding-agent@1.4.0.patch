@@ -73,6 +73,19 @@ diff --git a/dist/core/agent-session.js b/dist/core/agent-session.js
          // Context overflow is handled by compaction, not retry.
          if (isContextOverflow(message, (this._modelForMessage(message) ?? this.model)?.contextWindow ?? 0))
              return false;
+diff --git a/dist/core/compaction/compaction.js b/dist/core/compaction/compaction.js
+--- a/dist/core/compaction/compaction.js
++++ b/dist/core/compaction/compaction.js
+@@ -458,6 +458,9 @@ export function getSummarizationFailure(response, label) {
+     if (response.stopReason === "length") {
+         return `${label} failed: generation hit the token cap and the summary is incomplete`;
+     }
++    if (!response.content.some((block) => block.type === "toolCall") && !contentText(response.content).trim()) {
++        return `${label} failed: model returned an empty summary`;
++    }
+     return undefined;
+ }
+ function createSummarizationOptions(model, apiKey, headers, env, signal, thinkingLevel, sessionId) {
 diff --git a/dist/core/extensions/types.d.ts b/dist/core/extensions/types.d.ts
 --- a/dist/core/extensions/types.d.ts
 +++ b/dist/core/extensions/types.d.ts
