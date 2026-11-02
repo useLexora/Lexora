@@ -11,6 +11,7 @@ import type { ApplicationSettings } from '@/modules/settings'
 import type { ChatBlockerKind } from '@/modules/tasks/model/status/typing'
 import type { RuntimeSupervisorStore } from '@/platform/runtime/useRuntimeSupervisorStore'
 import { DEFAULT_DESKTOP_CHAT_WELCOME_ITEMS } from '@buddy-electron/shared/desktopApi'
+import { actorThreadId } from '@buddy-shared/conversation/actorThread'
 import { getBuddyUserContentActorReferences } from '@buddy-shared/conversation/buddyUserContent'
 import { BUDDY_DEFAULT_PERMISSION_MODE } from '@buddy-shared/permissions/permissionMode'
 import { until } from '@vueuse/core'
@@ -371,16 +372,34 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     && actorInput.execution.value?.buddyId === inputActorId.value
     ? actorInput.target.value?.runId ?? null
     : null)
-  const inputActorRunIds = computed(() => new Set(inputContextRunId.value
-    ? [inputContextRunId.value]
-    : runs.value.filter(run => run.buddyId === inputActorId.value
-      && run.conversationId === activeConversationId.value && run.branchId === activeBranchId.value).map(run => run.id)))
+  const inputContextThreadId = computed(() => inputContextRunId.value
+    ? actorInput.execution.value?.threadId ?? null
+    : activeConversationId.value && inputActorId.value
+      ? actorThreadId(activeConversationId.value, inputActorId.value)
+      : null)
+  const inputActorRunIds = computed(() => {
+    if (inputContextRunId.value)
+      return new Set([inputContextRunId.value])
+    const branchRootIds = new Set(runs.value.filter(run => run.conversationId === activeConversationId.value
+      && run.branchId === activeBranchId.value).map(run => run.id))
+    return new Set(executionTree.records.value.filter(run => run.buddyId === inputActorId.value
+      && run.threadId === inputContextThreadId.value && branchRootIds.has(run.rootRunId)).map(run => run.runId))
+  })
+  const inputMaintenanceRunIds = computed(() => new Set(runs.value
+    .filter(run => run.buddyId === inputActorId.value && run.purpose === 'conversation.compaction')
+    .map(run => run.id)))
   const contextUsageTracker = useChatContextUsage({
     actorId: inputActorId,
     runId: inputContextRunId,
-    runRevision: computed(() => inputContextRunId.value
-      ? executionTree.records.value.find(run => run.runId === inputContextRunId.value)?.updatedAt ?? null
-      : null),
+    threadId: inputContextThreadId,
+    runRevision: computed(() => JSON.stringify([
+      inputContextRunId.value
+        ? executionTree.records.value.find(run => run.runId === inputContextRunId.value)?.updatedAt ?? null
+        : null,
+      runs.value.filter(run => inputMaintenanceRunIds.value.has(run.id)).map(run => [run.id, run.status, run.completedAt]),
+      runSignalEvents.value.filter(event => event.type === 'context.compaction.completed'
+        && inputMaintenanceRunIds.value.has(event.runId)).map(event => [event.runId, event.sequence]),
+    ])),
     activeBranchId,
     activeConversationId,
     approvalPolicy: permissionSettingsState.approvalPolicy,

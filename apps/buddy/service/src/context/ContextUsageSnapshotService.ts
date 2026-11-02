@@ -74,7 +74,7 @@ export type ContextUsageSnapshot = {
   modelId: string
   providerId: string
 } & (
-  | { status: 'pending' }
+  | { status: 'pending', reason: 'unavailable' | 'compaction' }
   | ReadyBuddyContextSnapshot & { status: 'ready' }
 )
 
@@ -138,11 +138,13 @@ export class ContextUsageSnapshotService implements ContextUsageSnapshotReader {
       const latest = await this.#options.events.findLatest(targetRun.id, ['context.usage.updated', 'context.compaction.completed'])
       if (this.#requireRun(input).threadId !== targetRun.threadId)
         throw new BuddyServiceError('VALIDATION_FAILED')
+      if (latest?.type === 'context.compaction.completed')
+        return { ...identity, createdAt: latest.createdAt, status: 'pending', reason: 'compaction' }
       if (latest?.type !== 'context.usage.updated' || latest.runId !== targetRun.id)
-        return { ...identity, status: 'pending' }
+        return { ...identity, status: 'pending', reason: 'unavailable' }
       const payload = latest.payload as Record<string, unknown> | null
       if (payload?.model !== identity.modelId || payload.provider !== identity.providerId)
-        return { ...identity, status: 'pending' }
+        return { ...identity, status: 'pending', reason: 'unavailable' }
       const snapshot = contextUsageSnapshotSchema.safeParse({
         ...identity,
         createdAt: latest.createdAt,
@@ -154,7 +156,7 @@ export class ContextUsageSnapshotService implements ContextUsageSnapshotReader {
         toolTokens: payload.toolTokens,
         totalTokens: payload.totalTokens,
       })
-      return snapshot.success ? snapshot.data : { ...identity, status: 'pending' }
+      return snapshot.success ? snapshot.data : { ...identity, status: 'pending', reason: 'unavailable' }
     }
     const actorId = input.actorId ?? conversation?.buddyId ?? this.#options.getDefaultActorId()
     const actor = (await this.#options.definitions.capture({ buddyId: actorId, kind: 'actor', conversationId: conversation?.id ?? null, requestedModel: input.modelSelection })).definition
@@ -203,7 +205,7 @@ export class ContextUsageSnapshotService implements ContextUsageSnapshotReader {
           : await this.#options.tree.preview(conversation.id, branchId, blueprint.canonicalRoot, threadId!)
         : SessionManager.inMemory(blueprint.canonicalRoot)
       if (!sessionManager)
-        return { ...identity, status: 'pending' }
+        return { ...identity, status: 'pending', reason: 'unavailable' }
       const snapshot = await createBuddyContextSnapshot({
         sessionManager,
         agentDir: this.#options.agentDirectory,
@@ -222,7 +224,7 @@ export class ContextUsageSnapshotService implements ContextUsageSnapshotReader {
         thinkingLevel: input.modelSelection.reasoning ?? undefined,
       })
       if (!snapshot)
-        return { ...identity, status: 'pending' }
+        return { ...identity, status: 'pending', reason: 'compaction' }
 
       return {
         ...snapshot,

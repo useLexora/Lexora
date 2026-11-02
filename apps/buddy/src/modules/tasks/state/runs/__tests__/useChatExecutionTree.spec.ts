@@ -10,7 +10,7 @@ const now = '2026-10-12T00:00:00.000Z'
 const cleanups: (() => void)[] = []
 afterEach(() => cleanups.splice(0).forEach(cleanup => cleanup()))
 function execution(runId: string, kind: LocalExecution['kind'] = 'root'): LocalExecution {
-  return { runId, rootRunId: runId, parentRunId: null, buddyId: 'default', buddyName: 'Lexora', ordinal: null, kind, phase: 'working', status: 'running', startedAt: now, completedAt: null, updatedAt: now, progress: null, toolCount: 0, usage: null, stopping: false, task: 'Task', waitingFor: null, activeChildren: 0, canCancel: true, canAnswer: false, canSend: false, cleanup: 'pending', errorCode: null, affectedResources: [], questions: [] }
+  return { runId, threadId: `thread-${runId}`, rootRunId: runId, parentRunId: null, buddyId: 'default', buddyName: 'Lexora', ordinal: null, kind, phase: 'working', status: 'running', startedAt: now, completedAt: null, updatedAt: now, progress: null, toolCount: 0, usage: null, stopping: false, task: 'Task', waitingFor: null, activeChildren: 0, canCancel: true, canAnswer: false, canSend: false, cleanup: 'pending', errorCode: null, affectedResources: [], questions: [] }
 }
 function receipt(runId: string, branchId = 'branch'): LocalExecutionInputReceipt {
   return { conversationId: 'task', branchId, runId, rootRunId: runId, buddyId: 'default', buddyName: 'Lexora', task: 'Task', messageId: `input-${runId}`, kind: 'supplement', text: `Private ${runId}`, createdAt: now, state: 'pending' }

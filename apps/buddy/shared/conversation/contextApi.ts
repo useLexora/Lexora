@@ -14,6 +14,7 @@ export const contextUsageSnapshotIdentitySchema = z.object({
 export const contextUsageSnapshotSchema = z.discriminatedUnion('status', [
   contextUsageSnapshotIdentitySchema.extend({
     status: z.literal('pending'),
+    reason: z.enum(['unavailable', 'compaction']),
   }).strict(),
   contextUsageSnapshotIdentitySchema.extend({
     mcpTokens: z.number().int().nonnegative(),

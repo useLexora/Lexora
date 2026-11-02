@@ -39,15 +39,15 @@ export function createWorkbenchDataPort(options: { api: LocalChatApi, controller
     if (!target?.actorId || target.conversationId !== conversationId || target.branchId !== branchId)
       return null
     const actorId = target.actorId
+    const usage = current.workspace.composer.contextUsage.value
     return {
-      key: JSON.stringify([runtime, target]),
+      key: JSON.stringify([runtime, target, usage]),
       read: async () => {
         if (runtime !== 'ready')
           return { source, status: 'unavailable', value: null }
-        const snapshot = await api.context.getUsageSnapshot(target)
-        if (snapshot.status !== 'ready' || snapshot.contextWindow <= 0)
+        if (usage?.status !== 'ready' || usage.totalTokens === null || usage.contextWindow <= 0)
           return { source, status: 'unavailable', value: null }
-        return { source, status: 'ready', value: { taskId: conversationId, branchId, actorId, runId: target.runId ?? null, tokens: snapshot.totalTokens, window: snapshot.contextWindow, percent: snapshot.totalTokens / snapshot.contextWindow * 100 } }
+        return { source, status: 'ready', value: { taskId: conversationId, branchId, actorId, runId: target.runId ?? null, tokens: usage.totalTokens, window: usage.contextWindow, percent: usage.totalTokens / usage.contextWindow * 100 } }
       },
     }
   }

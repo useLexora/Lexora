@@ -7,6 +7,7 @@ import type { LocalConversation } from '@buddy-shared/conversation/conversationA
 import type { LocalExecution } from '@buddy-shared/executions/executionPresentationApi'
 
 import type { UseTaskCapabilityOptions } from '../useTaskCapability'
+import { actorThreadId } from '@buddy-shared/conversation/actorThread'
 import { ServiceHost } from '@buddy-shared/lifecycle/ServiceHost'
 import { deferred } from '@buddy-tests/deferred'
 import { describe, expect, it, vi } from 'vitest'
@@ -37,6 +38,7 @@ describe('useTaskCapability', () => {
     vi.mocked(api.localChat.providers.listModels).mockResolvedValue(models.map(model => ({ ...model, type: 'chat', sourceType: 'chat', typeOverride: null })))
     let child: LocalExecution = {
       runId: 'isolated-child',
+      threadId: 'isolated-thread',
       rootRunId: 'root',
       parentRunId: 'root',
       buddyId: 'default',
@@ -70,7 +72,7 @@ describe('useTaskCapability', () => {
     vi.mocked(api.localChat.context.getUsageSnapshot).mockImplementation(async (input) => {
       const identity = { modelId: 'model-1', providerId: 'provider-1', contextWindow: 4096, createdAt: '2026-08-20T00:00:00.000Z' }
       if (input.runId && !ready)
-        return { ...identity, status: 'pending' as const }
+        return { ...identity, status: 'pending' as const, reason: 'unavailable' as const }
       const tokens = input.runId ? 200 : 900
       return { ...identity, status: 'ready' as const, totalTokens: tokens, messageTokens: tokens, mcpTokens: 0, skillTokens: 0, systemPromptTokens: 0, toolTokens: 0 }
     })
@@ -91,6 +93,120 @@ describe('useTaskCapability', () => {
       child = { ...child, updatedAt: '2026-08-21T00:00:00.000Z' }
       await chat.workspace.executionTree.refresh()
       await vi.waitFor(() => expect(chat.workspace.composer.contextUsage.value).toMatchObject({ status: 'ready', totalTokens: 200 }))
+    }
+    finally {
+      chat.dispose()
+      scope.stop()
+    }
+  })
+
+  it.each(['ancestor', 'isolated', 'current'] as const)('scopes idle context events to the active branch and actor thread: %s', async (source) => {
+    const api = createBranchingDesktopApi()
+    const branches = await api.localChat.conversations.listBranches('conversation-1')
+    vi.mocked(api.localChat.conversations.listBranches).mockResolvedValue([...branches, branch('branch-edited', 'branch-root', 'assistant-1', '2026-08-15T00:00:00.000Z')])
+    await api.localChat.conversations.activateBranch({ conversationId: 'conversation-1', branchId: 'branch-edited' })
+    const models = await api.localChat.providers.listModels()
+    vi.mocked(api.localChat.providers.listModels).mockResolvedValue(models.map(model => ({ ...model, type: 'chat', sourceType: 'chat', typeOverride: null })))
+    const run = { ...queuedRun(), id: 'run-assistant-1', branchId: source === 'ancestor' ? 'branch-root' : 'branch-edited', status: 'completed' as const, completedAt: '2026-08-19T00:00:03.000Z' }
+    const execution: LocalExecution = {
+      runId: run.id,
+      threadId: source === 'isolated' ? 'isolated-thread' : actorThreadId(run.conversationId, run.buddyId),
+      rootRunId: run.id,
+      parentRunId: null,
+      buddyId: run.buddyId,
+      buddyName: 'Actor',
+      ordinal: null,
+      kind: 'root',
+      phase: 'closed',
+      status: run.status,
+      startedAt: run.startedAt,
+      completedAt: run.completedAt,
+      updatedAt: run.completedAt,
+      progress: null,
+      toolCount: 0,
+      usage: null,
+      stopping: false,
+      task: 'Earlier work',
+      waitingFor: null,
+      activeChildren: 0,
+      canCancel: false,
+      canSend: false,
+      canAnswer: false,
+      cleanup: 'clean',
+      errorCode: null,
+      affectedResources: [],
+      questions: [],
+    }
+    api.localChat.executions.list = async () => [execution]
+    api.localChat.executions.inputs = async () => ({ inputs: [], nextOffset: null })
+    vi.mocked(api.localChat.context.getUsageSnapshot).mockResolvedValue({ modelId: 'model-1', providerId: 'provider-1', contextWindow: 4096, createdAt: '2026-08-20T00:00:00.000Z', status: 'ready', totalTokens: 100, messageTokens: 100, mcpTokens: 0, skillTokens: 0, systemPromptTokens: 0, toolTokens: 0 })
+    vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
+    const scope = effectScope()
+    const chat = scope.run(() => createTestTask(api, { conversationId: 'conversation-1', branchId: 'branch-edited', spaceId: null }))!
+    try {
+      await chat.initialize()
+      await vi.waitFor(() => {
+        expect(chat.workspace.executionTree.records.value).toHaveLength(1)
+        expect(chat.workspace.composer.contextUsage.value).toMatchObject({ status: 'ready', totalTokens: 100 })
+      })
+      const timeline = await api.localChat.conversations.listTimeline({ conversationId: 'conversation-1', branchId: 'branch-edited' })
+      vi.mocked(api.localChat.conversations.listTimeline).mockResolvedValue({
+        ...timeline,
+        runs: [run],
+        runEvents: [
+          { runId: run.id, sequence: 1, type: 'context.compaction.completed', createdAt: '2026-08-19T00:00:01.000Z', payload: {} },
+          { runId: run.id, sequence: 2, type: 'context.usage.updated', createdAt: '2026-08-19T00:00:02.000Z', payload: { model: 'model-1', provider: 'provider-1', totalTokens: 900, messageTokens: 900, mcpTokens: 0, skillTokens: 0, systemPromptTokens: 0, toolTokens: 0 } },
+        ],
+      })
+      for (const [listener] of vi.mocked(api.localChat.conversations.onTimelineChanged).mock.calls)
+        listener({ sourceId: '00000000-0000-4000-8000-000000000001', revision: 1, conversationId: 'conversation-1', branchId: 'branch-edited' })
+      await vi.waitFor(() => expect(chat.workspace.transcript.runSignalEvents.value).toHaveLength(2))
+      expect(chat.workspace.composer.contextUsage.value).toMatchObject({ status: 'ready', totalTokens: source === 'current' ? 900 : 100 })
+    }
+    finally {
+      chat.dispose()
+      scope.stop()
+    }
+  })
+
+  it.each([true, false])('revalidates idle context after a maintenance compaction without assuming it affects this thread: %s', async (affectsThread) => {
+    const api = createBranchingDesktopApi()
+    const timeline = await api.localChat.conversations.listTimeline({ conversationId: 'conversation-1', branchId: 'branch-root' })
+    const models = await api.localChat.providers.listModels()
+    vi.mocked(api.localChat.providers.listModels).mockResolvedValue(models.map(model => ({ ...model, type: 'chat', sourceType: 'chat', typeOverride: null })))
+    let compacted = false
+    let settled = false
+    vi.mocked(api.localChat.conversations.listTimeline).mockImplementation(async () => ({
+      ...timeline,
+      runs: compacted ? [{ ...queuedRun(), id: 'maintenance', branchId: 'branch-root', purpose: 'conversation.compaction', status: settled ? 'completed' : 'running', completedAt: settled ? '2026-08-20T00:00:00.000Z' : null }] : [],
+      runEvents: compacted ? [{ runId: 'maintenance', sequence: 2, type: 'context.compaction.completed', createdAt: '2026-08-20T00:00:00.000Z', payload: {} }] : [],
+    }))
+    vi.mocked(api.localChat.context.getUsageSnapshot).mockImplementation(async () => {
+      const identity = { modelId: 'model-1', providerId: 'provider-1', contextWindow: 4096, createdAt: '2026-08-20T00:00:01.000Z' }
+      return compacted && settled && affectsThread
+        ? { ...identity, status: 'pending', reason: 'compaction' }
+        : { ...identity, status: 'ready', totalTokens: 100, messageTokens: 100, mcpTokens: 0, skillTokens: 0, systemPromptTokens: 0, toolTokens: 0 }
+    })
+    vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
+    const scope = effectScope()
+    const chat = scope.run(() => createTestTask(api, { conversationId: 'conversation-1', branchId: 'branch-root', spaceId: null }))!
+    try {
+      await chat.initialize()
+      await vi.waitFor(() => expect(chat.workspace.composer.contextUsage.value).toMatchObject({ status: 'ready', totalTokens: 100 }))
+      const previousReads = vi.mocked(api.localChat.context.getUsageSnapshot).mock.calls.length
+      compacted = true
+      for (const [listener] of vi.mocked(api.localChat.conversations.onTimelineChanged).mock.calls)
+        listener({ sourceId: '00000000-0000-4000-8000-000000000001', revision: 1, conversationId: 'conversation-1', branchId: 'branch-root' })
+      await vi.waitFor(() => expect(vi.mocked(api.localChat.context.getUsageSnapshot).mock.calls.length).toBeGreaterThan(previousReads))
+      expect(chat.workspace.composer.contextUsage.value).toMatchObject({ status: 'ready', totalTokens: 100 })
+      const readsBeforeCompletion = vi.mocked(api.localChat.context.getUsageSnapshot).mock.calls.length
+      settled = true
+      for (const [listener] of vi.mocked(api.localChat.conversations.onTimelineChanged).mock.calls)
+        listener({ sourceId: '00000000-0000-4000-8000-000000000001', revision: 2, conversationId: 'conversation-1', branchId: 'branch-root' })
+      await vi.waitFor(() => expect(vi.mocked(api.localChat.context.getUsageSnapshot).mock.calls.length).toBeGreaterThan(readsBeforeCompletion))
+      await vi.waitFor(() => expect(chat.workspace.composer.contextUsage.value).toMatchObject(affectsThread
+        ? { status: 'pending', totalTokens: null }
+        : { status: 'ready', totalTokens: 100 }))
     }
     finally {
       chat.dispose()
