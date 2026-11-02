@@ -96,6 +96,7 @@ const {
   composerContent: toRef(props, 'composerContent'),
   draft: toRef(props, 'draft'),
   draftId: toRef(props, 'draftId'),
+  editorKey: toRef(props, 'editorKey'),
   resources: toRef(props, 'resources'),
   selectedModel: toRef(props, 'selectedModel'),
   selectedEffort: toRef(props, 'selectedEffort'),
@@ -163,9 +164,10 @@ function startRecording(provider: SpeechProvider) {
   if (!current || !current.isEditable || props.isSending)
     return
   const draftId = props.draftId
+  const editorKey = props.editorKey
   const { doc, selection } = current.state
   insertTranscript = (text) => {
-    if (editor.value !== current || current.isDestroyed || !current.isEditable || props.isSending || props.draftId !== draftId)
+    if (editor.value !== current || current.isDestroyed || !current.isEditable || props.isSending || props.draftId !== draftId || props.editorKey !== editorKey)
       return
     const transcript = text.trim()
     if (!transcript)
@@ -194,7 +196,7 @@ useEventListener('keydown', (event) => {
     cancelRecording()
   }
 }, { capture: true })
-watch(() => props.draftId, () => {
+watch(() => props.editorKey, () => {
   speech.cancel()
   insertTranscript = undefined
 })
@@ -229,14 +231,15 @@ async function selectConversationFile(option: ChatPromptContextOption) {
 }
 function captureDraft(): WorkbenchMenuSelection {
   const current = editor.value
-  if (!current || !current.isEditable || current.isDestroyed)
+  if (!current || !current.isEditable || props.isSending || current.isDestroyed)
     return {}
   const draftId = props.draftId
+  const editorKey = props.editorKey
   const { doc, selection } = current.state
   return {
     content: current.getText(),
     apply(result) {
-      if (editor.value !== current || current.isDestroyed || !current.isEditable || props.isSending || props.draftId !== draftId || !current.state.doc.eq(doc))
+      if (editor.value !== current || current.isDestroyed || !current.isEditable || props.isSending || props.draftId !== draftId || props.editorKey !== editorKey || !current.state.doc.eq(doc))
         return
       if (!result || typeof result !== 'object' || Array.isArray(result) || typeof result.insertText !== 'string' || !result.insertText || result.insertText.length > 131072)
         return

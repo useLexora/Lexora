@@ -167,6 +167,7 @@ export interface TaskExecution {
   editingMessageId: State<string | null>
   isMutatingBranch: State<boolean>
   isSending: State<boolean>
+  submissionRevision: State<number>
   resolvingApprovalActions: State<ReadonlyMap<string, ChatApprovalDecision>>
   resolvingApprovalIds: State<ReadonlySet<string>>
   cancelActiveRun: () => Promise<void>

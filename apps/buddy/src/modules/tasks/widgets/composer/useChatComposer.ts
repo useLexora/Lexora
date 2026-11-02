@@ -23,11 +23,11 @@ import { useComposerCommands } from './useComposerCommands'
 import { useComposerPastedText } from './useComposerPastedText'
 
 export function useChatComposer(options: UseChatComposerOptions) {
-  const localCommands = useComposerCommands(options.draftId, chooseCommand)
+  const localCommands = useComposerCommands(options.editorKey, chooseCommand)
   const conversationStatusPanel = useConversationStatusPanel()
   const conversationMcpPanel = useConversationMcpPanel()
   let editingSession = 0
-  watch(options.draftId, () => {
+  watch([options.draftId, options.editorKey], () => {
     editingSession += 1
   }, { flush: 'sync' })
   onScopeDispose(() => {
@@ -41,6 +41,7 @@ export function useChatComposer(options: UseChatComposerOptions) {
     composerContent: options.composerContent,
     draft: options.draft,
     draftId: options.draftId,
+    editorKey: options.editorKey,
     isSending: options.isSending,
     language: options.language,
     rejectedResourceIds: options.rejectedResourceIds,
@@ -68,7 +69,7 @@ export function useChatComposer(options: UseChatComposerOptions) {
     onPasteText: pasteText,
     onPasteSessionReferences: (references, text) => {
       const current = editor.value
-      if (!current?.isEditable)
+      if (!current?.isEditable || options.isSending.value)
         return
       insertChatComposerSessionReferences(current, references)
       if (text)
@@ -145,7 +146,7 @@ export function useChatComposer(options: UseChatComposerOptions) {
 
   function chooseCommand(name: string) {
     const current = editor.value
-    if (!current || !current.isEditable)
+    if (!current || !current.isEditable || options.isSending.value)
       return
     const range = findTypedCommandRange(name)
     if (!range)
@@ -156,7 +157,7 @@ export function useChatComposer(options: UseChatComposerOptions) {
 
   function submit() {
     const current = editor.value
-    if (!current?.isEditable)
+    if (!current?.isEditable || options.isSending.value)
       return
     const payload = serializeChatComposerContent(current.getJSON())
     if (localCommands.handles(payload)) {
@@ -243,9 +244,11 @@ export function useChatComposer(options: UseChatComposerOptions) {
   }
 
   async function resolveSource(source: BuddyComposerSource): Promise<string | null> {
+    if (options.isSending.value)
+      return null
     const session = editingSession
     const resourceId = await options.selectSource(source)
-    return session === editingSession ? resourceId : null
+    return session === editingSession && !options.isSending.value ? resourceId : null
   }
 
   function resolveOption(option: ChatPromptContextOption): Promise<string | null> {
@@ -258,7 +261,7 @@ export function useChatComposer(options: UseChatComposerOptions) {
 
   function attachFiles(files: readonly File[], placement: 'panel' | 'both', origin: 'file' | 'clipboard' = 'file') {
     const current = editor.value
-    if (!current || !current.isEditable)
+    if (!current || !current.isEditable || options.isSending.value)
       return
     insertChatComposerResources(current, options.beginImport(files, origin), placement)
   }
@@ -273,7 +276,7 @@ export function useChatComposer(options: UseChatComposerOptions) {
   function selectSuggestion(option: ChatPromptContextOption | undefined, action: 'complete' | 'select' = 'select') {
     const currentEditor = editor.value
     const trigger = query.activeTrigger.value
-    if (!currentEditor || !currentEditor.isEditable || !trigger || !option)
+    if (!currentEditor || !currentEditor.isEditable || options.isSending.value || !trigger || !option)
       return
 
     const to = currentEditor.state.selection.from
@@ -369,10 +372,10 @@ export function useChatComposer(options: UseChatComposerOptions) {
 
   async function selectPanelSource(option: ChatPromptContextOption): Promise<boolean> {
     const currentEditor = editor.value
-    if (!currentEditor || !currentEditor.isEditable || option.kind !== 'file')
+    if (!currentEditor || !currentEditor.isEditable || options.isSending.value || option.kind !== 'file')
       return false
     const resourceId = await resolveOption(option)
-    if (!resourceId)
+    if (!resourceId || options.isSending.value)
       return false
     return insertChatComposerResources(currentEditor, [resourceId], 'panel')
   }
@@ -405,7 +408,7 @@ export function useChatComposer(options: UseChatComposerOptions) {
       removeChatComposerQuote(editor.value, 'resource', id)
     },
     sessionReferences,
-    addQuote: (quote: BuddyMessageQuote) => addChatComposerQuote(editor.value, quote),
+    addQuote: (quote: BuddyMessageQuote) => addChatComposerQuote(options.isSending.value ? undefined : editor.value, quote),
     removeQuote: (id: string) => removeChatComposerQuote(editor.value, 'message', id),
     removeSessionReference(id: string) {
       const current = editor.value

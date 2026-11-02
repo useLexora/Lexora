@@ -710,6 +710,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
       editingMessageId,
       isMutatingBranch: readonly(isMutatingBranch),
       isSending: readonly(isSending),
+      submissionRevision: execution.submissionRevision,
       stoppingRunId: computed(() => cancellingInput.value?.scopeKey === draftScopeKey.value
         && cancellingInput.value.runId === actorInput.target.value?.runId
         ? cancellingInput.value.runId

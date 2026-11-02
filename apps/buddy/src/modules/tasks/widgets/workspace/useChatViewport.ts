@@ -253,9 +253,9 @@ export function useChatViewport(options: UseChatViewportOptions) {
     readingPositions.set(positionedScopeKey, null)
     scrollState.value = createChatScrollState()
     finishPositioning()
-    writeTailPosition()
+    const operation = { generation: operationGeneration, list: options.list.value }
     void nextTick(() => {
-      if (!disposed && scrollState.value.ownership === 'following')
+      if (isCurrent(operation) && scrollState.value.ownership === 'following')
         writeTailPosition()
     })
   }

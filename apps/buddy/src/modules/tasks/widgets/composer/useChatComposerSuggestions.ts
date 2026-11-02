@@ -9,7 +9,7 @@ import { useWorkbenchCommands } from '@/shared/ui/contributions/workbenchCommand
 import { inputMaterialLabel } from '../../model/materials/inputMaterialView'
 
 export function useChatComposerSuggestions(
-  options: Pick<UseChatComposerOptions, 'composerContent' | 'draftId' | 'language' | 'loadContextOptions' | 'resources'>,
+  options: Pick<UseChatComposerOptions, 'composerContent' | 'draftId' | 'editorKey' | 'language' | 'loadContextOptions' | 'resources'>,
   onSelect: (option: ChatPromptContextOption | undefined, action?: 'complete' | 'select') => void,
   getImageLabel: (resourceId: string) => string | undefined,
 ) {
@@ -98,7 +98,7 @@ export function useChatComposerSuggestions(
     if (required)
       activeSuggestionIndex.value = -1
   }, { flush: 'sync' })
-  watch(options.draftId, () => {
+  watch([options.draftId, options.editorKey], () => {
     activeTrigger.value = null
     contextOptions.value = { files: [], skills: [] }
     loadedSkillDraftId = null

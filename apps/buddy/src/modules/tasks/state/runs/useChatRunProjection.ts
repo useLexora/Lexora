@@ -37,6 +37,7 @@ export function useChatRunProjection() {
   const hasOlderMessages = computed(() => timelineCursor.value !== null)
   const knownRunIds = new Set<string>()
   let hasLoadedTimelinePage = false
+  let syncedTimelineTailKey: string | null = null
 
   function mergePage(page: LocalConversationTimelinePage) {
     upsertRuns(page.runs)
@@ -60,6 +61,8 @@ export function useChatRunProjection() {
     else {
       timelineItems.value = mergeTailTimelineItems(timelineItems.value, page.items)
     }
+    const tail = page.items.at(-1)
+    syncedTimelineTailKey = tail ? timelineItemKey(tail) : null
     mergePage(page)
     approvals.value = pendingApprovals
   }
@@ -91,7 +94,18 @@ export function useChatRunProjection() {
     runs.value = [...byId.values()].sort((left, right) => right.startedAt.localeCompare(left.startedAt))
   }
 
+  function upsertMessage(message: LocalMessage) {
+    timelineItems.value = mergeTailTimelineItems(timelineItems.value, [{ ...message, kind: 'message' }])
+  }
+
+  function getRefreshBoundaryKey(): string | null {
+    const running = timelineItems.value.find(item => item.kind === 'extension-action' && item.status === 'running')
+    return running ? timelineItemKey(running) : syncedTimelineTailKey
+  }
+
   function clear(retainedTimeline: ReadonlyArray<LocalConversationTimelineItem> = []) {
+    const tail = retainedTimeline.at(-1)
+    syncedTimelineTailKey = tail ? timelineItemKey(tail) : null
     hasLoadedTimelinePage = false
     timelineCursor.value = null
     timelineItems.value = retainedTimeline
@@ -130,10 +144,12 @@ export function useChatRunProjection() {
     appendEvents,
     applySnapshot,
     clear,
+    getRefreshBoundaryKey,
     hasRun: (runId: string) => knownRunIds.has(runId),
     prependPage,
     replaceTurn,
     timelineCursor,
     upsertRuns,
+    upsertMessage,
   }
 }

@@ -22,7 +22,7 @@ defineExpose({
   quote: (quote: BuddyMessageQuote) => composerRef.value?.quote(quote) ?? 'unavailable',
 })
 
-const { bindings, editorKey, sendMessage } = useTaskComposer(props)
+const { bindings, sendMessage } = useTaskComposer(props)
 const { withSubmissionFocus } = useComposerSubmissionFocus({
   draftId: () => props.composer.draftId.value,
   ready: () => props.focusReady && !bindings.value.isSending,
@@ -50,7 +50,6 @@ function manageSkills() {
   />
   <DesktopChatComposer
     ref="composerRef"
-    :key="editorKey"
     v-bind="bindings"
     :speech-enabled="focusReady"
     :paste-text-as-attachment="chat.pasteTextAsAttachment"

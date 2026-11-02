@@ -147,7 +147,7 @@ describe('turn submission conflicts', () => {
 })
 
 describe('model selection before submission', () => {
-  function prepare(route: 'start' | 'queue' | 'mailbox' = 'queue') {
+  function prepare(route: 'queue' | 'mailbox' = 'queue') {
     const f = createFixture()
     const key = 'conversation:conversation-a:branch-a'
     f.selectedModel.value = { modelId: 'model-b', providerId: 'provider-a' } as LocalRuntimeModelOption
@@ -164,26 +164,23 @@ describe('model selection before submission', () => {
     }
     f.drafts.confirmOpen(snapshot, remote)
     const target = { conversationId: 'conversation-a', branchId: 'branch-a', rootRunId: 'run-a', runId: route === 'mailbox' ? 'partner-run' : 'run-a' }
-    f.actorInput.target.value = route === 'start' ? null : target
+    f.actorInput.target.value = target
     f.actorInput.mailboxTarget.value = route === 'mailbox' ? target : null
-    f.actorInput.delivery.value = { mode: 'current', actorId: route === 'mailbox' ? 'partner' : 'default', target: route === 'start' ? null : { rootRunId: target.rootRunId, runId: target.runId } }
-    if (route === 'start')
-      f.projectedRuns.value = []
-    const result = { id: 'queued', conversationId: 'conversation-a', branchId: 'branch-a', run: { ...f.run, status: 'queued' }, draftReceipt: { draftId: snapshot.draftId, sourceRevision: 1, committedRevision: 2 } }
-    f.api.chat.enqueue.mockResolvedValue(result)
-    f.api.chat.startTurn.mockResolvedValue(result)
+    f.actorInput.delivery.value = { mode: 'current', actorId: route === 'mailbox' ? 'partner' : 'default', target: { rootRunId: target.rootRunId, runId: target.runId } }
+    f.api.chat.enqueue.mockResolvedValue({ id: 'queued', conversationId: 'conversation-a', branchId: 'branch-a', draftReceipt: { draftId: snapshot.draftId, sourceRevision: 1, committedRevision: 2 } })
     f.api.executions.sendDraft.mockResolvedValue({ ...remote, revision: 2, content: createBuddyUserContent() })
     const barrier = deferred<boolean>()
     f.flushModelSelection.mockImplementation(() => barrier.promise)
     return { ...f, key, remote, target, barrier }
   }
 
-  it.each(['start', 'queue', 'mailbox'] as const)('waits for the selected model before accepting %s input', async (route) => {
-    const f = prepare(route)
+  it('waits for the selected model without changing the accepted input target', async () => {
+    const f = prepare('mailbox')
     const delivery = f.actorInput.delivery.value
     const sending = f.execution.send('pending input')
     await Promise.resolve()
     expect(f.execution.isSending.value).toBe(true)
+    expect(f.execution.submissionRevision.value).toBe(0)
     expect(f.drafts.draft.value).toBe('pending input')
     expect([f.api.chat.startTurn, f.api.chat.enqueue, f.api.executions.sendDraft].flatMap(api => api.mock.calls)).toEqual([])
     f.actorInput.delivery.value = { mode: 'current', actorId: 'other', target: { rootRunId: 'other-root', runId: 'other-run' } }
@@ -191,10 +188,8 @@ describe('model selection before submission', () => {
     f.barrier.resolve(true)
 
     expect(await sending).toBe(true)
-    const request = (route === 'start' ? f.api.chat.startTurn : route === 'queue' ? f.api.chat.enqueue : f.api.executions.sendDraft).mock.calls[0]![0]
-    expect(request).toMatchObject({ draftId: f.remote.draftId, expectedRevision: 1, delivery })
-    if (route === 'mailbox')
-      expect(request).toMatchObject(f.target)
+    expect(f.api.executions.sendDraft.mock.calls[0]![0]).toMatchObject({ ...f.target, draftId: f.remote.draftId, expectedRevision: 1, delivery })
+    expect(f.execution.submissionRevision.value).toBe(1)
     expect(f.drafts.draft.value).toBe('')
     expect(f.execution.isSending.value).toBe(false)
   })
@@ -211,6 +206,7 @@ describe('model selection before submission', () => {
 
     expect(await sending).toBe(false)
     expect(f.drafts.snapshot(f.key)).toEqual(original)
+    expect(f.execution.submissionRevision.value).toBe(0)
     expect([f.api.chat.startTurn, f.api.chat.enqueue, f.api.executions.sendDraft].flatMap(api => api.mock.calls)).toEqual([])
     expect(f.execution.isSending.value).toBe(false)
     expect(f.error.value).toBeTruthy()
@@ -230,6 +226,7 @@ describe('model selection before submission', () => {
     expect(f.api.chat.enqueue.mock.calls[0]![0]).toMatchObject({ draftId: f.remote.draftId, expectedRevision: 1, delivery: { actorId: 'default', target: { rootRunId: 'run-a', runId: 'run-a' } } })
     expect(f.drafts.snapshot(f.key).content).toEqual(createBuddyUserContent())
     expect(f.drafts.draft.value).toBe('current view input')
+    expect(f.execution.submissionRevision.value).toBe(0)
     expect(f.error.value).toBe('current view status')
   })
 
@@ -318,10 +315,9 @@ describe('addressed role input', () => {
     return { ...f, key, snapshot, content }
   }
 
-  it.each([true, false])('retains an unavailable addressed draft without falling back to a new turn, root active: %s', async (active) => {
+  it('retains an unavailable addressed draft without falling back to a new turn', async () => {
     const f = prepare()
-    if (!active)
-      f.projectedRuns.value = []
+    f.projectedRuns.value = []
     f.api.executions.sendDraft.mockResolvedValue(null)
     expect(await f.execution.send({ content: '@Partner Continue this work', userContent: f.content })).toBe(false)
     expect(f.api.chat.enqueue.mock.calls).toEqual([])

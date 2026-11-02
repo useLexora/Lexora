@@ -4,7 +4,6 @@ import type { ChatComposerSubmitPayload } from '@/modules/prompt-input'
 import { computed } from 'vue'
 
 export function useTaskComposer(props: Readonly<TaskComposerHostProps>) {
-  const editorKey = computed(() => props.composer.editorKey.value)
   const bindings = computed<Omit<DesktopChatComposerProps, 'pasteTextAsAttachment'>>(() => {
     const composer = props.composer
     const execution = props.execution
@@ -22,6 +21,7 @@ export function useTaskComposer(props: Readonly<TaskComposerHostProps>) {
       contextUsage: composer.contextUsage.value,
       draft: composer.draft.value,
       draftId: composer.draftId.value,
+      editorKey: composer.editorKey.value,
       resources: composer.resources.value,
       rejectedResourceIds: composer.rejectedResourceIds,
       beginImport: composer.beginImport,
@@ -53,5 +53,5 @@ export function useTaskComposer(props: Readonly<TaskComposerHostProps>) {
     await (execution.editingMessageId.value ? execution.submitEditedMessage(payload) : execution.send(payload))
   }
 
-  return { bindings, editorKey, sendMessage }
+  return { bindings, sendMessage }
 }

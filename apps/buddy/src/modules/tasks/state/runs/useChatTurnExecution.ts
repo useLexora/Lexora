@@ -74,6 +74,7 @@ export interface UseChatTurnExecutionOptions {
 export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
   const queue = useChatQueue({ api: options.api.chat, session: options.session, runtime: options.runtimeSupervisor, refreshConversation: options.runSync.refreshActiveConversation, onError: error => options.setErrorMessage(resolveLocalChatErrorMessage(error, options.language.value)), onUnavailable: reason => options.setErrorMessage(translateBuddy(options.language.value, reason === 'incompatible' ? 'desktop.chat.queueIncompatible' : reason === 'unavailable' ? 'desktop.chat.queueUnavailable' : 'desktop.chat.queueActionFailed')) })
   const isSending = shallowRef(false)
+  const submissionRevision = shallowRef(0)
   const requestIds = createRequestIdRegistry()
   const pendingDeliveries = new Map<string, { delivery: BuddyInputDelivery, mailboxTarget: ExecutionTarget | null }>()
   const pendingCancellationWatches = new Set<() => void>()
@@ -206,6 +207,8 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
         if (deliveryKey)
           pendingDeliveries.delete(deliveryKey)
         options.drafts.confirmOpen(confirmedDraft, remote)
+        if (isSourceViewCurrent())
+          submissionRevision.value += 1
         return true
       }
       const operationKey = `turn:${confirmedDraft.draftId}:${expectedRevision}:${buddyId ?? ''}:${JSON.stringify(delivery ?? null)}`
@@ -216,6 +219,8 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
         if (deliveryKey)
           pendingDeliveries.delete(deliveryKey)
         options.composerTarget.complete(result.draftReceipt, sourceScopeKey, sourceScopeKey)
+        if (isSourceViewCurrent())
+          submissionRevision.value += 1
         await queue.refreshQueue()
         return true
       }
@@ -250,6 +255,7 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
           })
         }
         options.runSync.applyRunStart(result)
+        submissionRevision.value += 1
       }
       if (result.run.status === 'failed' || result.run.status === 'cancelled') {
         if (sourceViewIsCurrent) {
@@ -325,6 +331,7 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
       if (isSourceViewCurrent()) {
         options.onActionCommandRunStarted(result.runId)
         options.runSync.applyRunStart(result)
+        submissionRevision.value += 1
       }
       if (result.run.status === 'failed' || result.run.status === 'cancelled') {
         if (
@@ -397,6 +404,7 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
     cancelActiveRun,
     stoppingRunId: readonly(stoppingRunId),
     isSending: readonly(isSending),
+    submissionRevision: readonly(submissionRevision),
     send,
   }
 }

@@ -126,9 +126,7 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
       if (!isCurrent(request))
         return
       let page = latest
-      const refreshBoundary = projection.state.timelineItems.value.find(item => item.kind === 'extension-action' && item.status === 'running')
-        ?? projection.state.timelineItems.value.at(-1)
-      const rememberedStart = refreshBoundary ? timelineItemKey(refreshBoundary) : null
+      const rememberedStart = projection.getRefreshBoundaryKey()
       while (page.nextCursor) {
         if (!rememberedStart || page.items.some(item => timelineItemKey(item) === rememberedStart))
           break
@@ -231,6 +229,9 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
       return
     selectProjection(turn.conversationId, turn.branchId)
     projection.upsertRuns([turn.run])
+    if (turn.userMessage)
+      projection.upsertMessage(turn.userMessage)
+    settledScopeKey.value = `${turn.conversationId}:${turn.branchId}`
     scheduleRefresh()
   }
 
@@ -239,6 +240,8 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
       return
     invalidatePendingWork()
     projection.replaceTurn(turn.run, messageId, retainMessage)
+    if (turn.userMessage)
+      projection.upsertMessage(turn.userMessage)
     loadedConversationId = turn.conversationId
     loadedBranchId = turn.branchId
     scheduleRefresh()

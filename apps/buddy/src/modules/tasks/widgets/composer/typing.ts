@@ -17,6 +17,7 @@ export interface UseChatComposerOptions {
   composerContent: Readonly<Ref<JSONContent>>
   draft: Readonly<Ref<string>>
   draftId: Readonly<Ref<string>>
+  editorKey: Readonly<Ref<string>>
   resources: Readonly<Ref<readonly ComposerResourceView[]>>
   rejectedResourceIds: () => ReadonlySet<string>
   isRunning: Readonly<Ref<boolean>>
@@ -41,6 +42,7 @@ export interface ChatComposerEditorOptions {
   composerContent: Readonly<Ref<JSONContent>>
   draft: Readonly<Ref<string>>
   draftId: Readonly<Ref<string>>
+  editorKey: Readonly<Ref<string>>
   isSending: Readonly<Ref<boolean>>
   language: Readonly<Ref<BuddyLocale>>
   rejectedResourceIds: () => ReadonlySet<string>
@@ -78,6 +80,7 @@ export interface DesktopChatComposerProps {
   contextUsage: ChatContextUsage | null
   draft: string
   draftId: string
+  editorKey: string
   resources: readonly ComposerResourceView[]
   rejectedResourceIds: ReadonlySet<string>
   beginImport: (files: readonly File[], origin?: 'file' | 'clipboard') => readonly string[]
