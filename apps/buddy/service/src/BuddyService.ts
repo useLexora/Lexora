@@ -1475,6 +1475,12 @@ export async function startBuddyService(
     questionDelivery = new UserQuestionDelivery({ database: options.database, executions: executionRecords, mailbox: createMailboxRepository(options.database), coordinator: executionCoordinator, runner, turns: chatTurnService })
     chatQueueService = await host.start('runtime.chat-queue', async ({ defer }) => {
       const service = new ChatQueueService({ availability: conversationAvailability, queue: chatQueue, turns: chatTurnService, requests: turnRequests, launcher: turnLauncher, runner, runs, runInputs, getRunPermissionCeiling, eventLog: options.eventLog, onObserverError: () => record({ event: 'queue.observer_failed', level: 'error' }) })
+      const sourceId = randomUUID()
+      let revision = 0
+      const notification = service.onDidChange((event) => {
+        if (event.kind === 'delivered' || event.kind === 'dispatched')
+          options.rpc.notify(conversationTimelineChanged.method, { sourceId, revision: ++revision, ...event.scope })
+      })
       const actionInputs = service.onDidChange((event) => {
         if (event.kind === 'cancelled')
           void questions.retryPending(event.scope).catch(() => record({ event: 'questions.delivery_reconcile_failed', level: 'error' }))
@@ -1500,6 +1506,7 @@ export async function startBuddyService(
           record({ event: `attachments.${committed.attachmentOwnership.kind}_bound`, level: 'info', operationId: committed.commitId, conversationId: event.scope.conversationId, count: committed.attachmentOwnership.attachmentIds.length, ...(committed.runId ? { runId: committed.runId } : {}) })
       })
       defer(async () => {
+        notification.dispose()
         actionInputs.dispose()
         const stopped = continuation.dispose()
         service.dispose()
