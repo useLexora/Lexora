@@ -46,6 +46,33 @@ describe('task-owned user questions', () => {
     expect(reopened.state.drafts.value.get('first')?.[0]?.text).toBe('')
   })
 
+  it('preserves the active question and all drafts across switching and workspace release, then submits the complete group', async () => {
+    const interaction = createUserQuestionInteractionState()
+    const group: UserQuestionRequest = { ...request('first'), questions: [request('first').questions[0]!, { id: 'constraints', question: '还需要遵守什么限制？', kind: 'text', options: [] }] }
+    const api: Partial<LocalChatApi['questions']> = {
+      list: async () => [group, request('second')],
+      answer: async input => ({ ...group, status: 'answered', response: { answers: structuredClone(input.answers) }, resolvedAt: now }),
+    }
+    const first = setup(api, interaction)
+    await vi.waitFor(() => expect(first.state.pending.value).toHaveLength(2))
+    first.state.updateAnswer('first', answer('只做隔离验证。'))
+    first.state.selectQuestion('first', 'constraints')
+    first.state.updateAnswer('first', { questionId: 'constraints', selectedOptionIds: [], text: '不修改实际用户数据。' })
+    first.state.selectQuestion('first', 'missing')
+    first.state.selectQuestion('second', 'constraints')
+    expect(first.state.selectedQuestionIds.value.get('first')).toBe('constraints')
+    expect(first.state.selectedQuestionIds.value.get('second')).toBe('scope')
+    first.dispose()
+    const reopened = setup(api, interaction)
+    await vi.waitFor(() => expect(reopened.state.pending.value).toHaveLength(2))
+    expect(reopened.state.selectedQuestionIds.value.get('first')).toBe('constraints')
+    expect(reopened.state.drafts.value.get('first')?.map(value => value.text)).toEqual(['只做隔离验证。', '不修改实际用户数据。'])
+    expect(await reopened.state.resolve('first', true)).toBe(true)
+    expect(reopened.state.history.value[0]?.entries.map(value => value.answer)).toEqual(['只做隔离验证。', '不修改实际用户数据。'])
+    expect(reopened.state.selectedQuestionIds.value.has('first')).toBe(false)
+    expect(reopened.state.selectedQuestionIds.value.get('second')).toBe('scope')
+  })
+
   it('restores a pending draft when its task workspace is released and reopened', async () => {
     const interaction = createUserQuestionInteractionState()
     const first = setup({}, interaction)

@@ -8,6 +8,7 @@ export function createUserQuestionInteractionState() {
     drafts: shallowRef(new Map<string, UserQuestionAnswer[]>()),
     expandedIds: shallowRef(new Set<string>()),
     selectedByScope: shallowRef(new Map<string, string>()),
+    selectedQuestionIds: shallowRef(new Map<string, string>()),
     resolvingIds: shallowRef(new Set<string>()),
     errors: shallowRef(new Set<string>()),
   }

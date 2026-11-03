@@ -12,6 +12,8 @@ export default {
   'questions.otherPlaceholder': 'Add details, or write another answer…',
   'questions.previousRequest': 'Previous request',
   'questions.nextRequest': 'Next request',
+  'questions.previousQuestion': 'Previous question',
+  'questions.nextQuestion': 'Next question',
   'questions.yourAnswer': 'Your answer',
   'questions.count': '{count} questions',
   'questions.position': 'Question {current} of {total}',
