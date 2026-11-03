@@ -660,20 +660,36 @@ describe('useChatRunSync', () => {
     const activeConversationId = ref<string | null>('conversation-a')
     const activeBranchId = ref<string | null>('branch-a')
     const pending = deferred<LocalConversationTimelinePage>()
+    const ancestorRun = { ...run('ancestor-run', 'conversation-a'), branchId: 'branch-a', triggeringMessageId: 'message-1', status: 'completed' as const }
+    const sourceRun = { ...ancestorRun, id: 'source-run', triggeringMessageId: 'message-2' }
+    const events: LocalRunEvent[] = [ancestorRun, sourceRun].map(run => ({ ...event(run.id, 1), type: 'context.usage.updated' }))
+    const changes = [ancestorRun, sourceRun].map(run => ({ changeSetId: `changes-${run.id}`, conversationId: run.conversationId, coverage: 'complete' as const, fileCount: 1, runId: run.id, status: 'completed' as const, updatedAt: run.startedAt }))
+    const outputs = [ancestorRun, sourceRun].map(run => ({
+      createdAt: run.startedAt,
+      runId: run.id,
+      sourceToolCallId: `tool-${run.id}`,
+      artifacts: [{ artifactId: `artifact-${run.id}`, conversationId: run.conversationId, createdAt: run.startedAt, updatedAt: run.startedAt, runId: run.id, sourceToolCallId: `tool-${run.id}`, sourceArtifactId: null, kind: 'file' as const, mimeType: 'text/plain', name: 'report.txt', path: `/workspace/${run.id}/report.txt`, previewUrl: null, sizeBytes: 1 }],
+    }))
     const retained = [
       timelineMessage('message-1', 'conversation-a', 'branch-a', 1),
+      { ...timelineMessage('ancestor-answer', 'conversation-a', 'branch-a', 2, 'assistant'), runId: ancestorRun.id },
+      { ...timelineMessage('public-child-answer', 'conversation-a', 'branch-a', 2, 'assistant'), runId: 'child-run' },
       compaction('compact-before', 'conversation-a', 'branch-a', 2),
     ]
     const originalInput = timelineMessage('message-2', 'conversation-a', 'branch-a', 3)
     const editedInput = timelineMessage('message-edited', 'conversation-a', 'branch-replacement', 6)
     const api = createApi({
       listTimeline: async input => input.branchId === 'branch-a'
-        ? timelinePage([
-            ...retained,
-            originalInput,
-            compaction('compact-after', 'conversation-a', 'branch-a', 4),
-            timelineMessage('assistant-1', 'conversation-a', 'branch-a', 5, 'assistant'),
-          ], null)
+        ? {
+            ...timelinePage([
+              ...retained,
+              originalInput,
+              compaction('compact-after', 'conversation-a', 'branch-a', 4),
+              { ...timelineMessage('assistant-1', 'conversation-a', 'branch-a', 5, 'assistant'), runId: sourceRun.id },
+            ], null, [ancestorRun, sourceRun], events),
+            changeSets: changes,
+            outputs,
+          }
         : pending.promise,
     })
     const onError = vi.fn()
@@ -682,6 +698,7 @@ describe('useChatRunSync', () => {
       await sync.refreshActiveConversation()
       expect(sync.isLoadingConversation.value).toBe(false)
 
+      const ancestorBucket = sync.runEventBuckets.value.get(ancestorRun.id)
       activeBranchId.value = 'branch-replacement'
       const turn = {
         branchId: 'branch-replacement',
@@ -701,7 +718,14 @@ describe('useChatRunSync', () => {
         sync.applyRegeneratedTurn(turn)
       const expected = [...retained, mutation === 'edit' ? editedInput : originalInput]
       expect(sync.timelineItems.value).toEqual(expected)
-      expect(sync.runs.value).toEqual([turn.run])
+      expect(sync.runs.value).toEqual([ancestorRun, turn.run])
+      expect(sync.runEventBuckets.value.get(ancestorRun.id)).toBe(ancestorBucket)
+      expect(sync.runEventBuckets.value.has(sourceRun.id)).toBe(false)
+      sync.handleRunEvent({ ...event('child-run', 1), type: 'message.completed', payload: { content: { text: 'Private child event' } } })
+      expect(sync.runEventBuckets.value.has('child-run')).toBe(false)
+      expect(sync.runSignalEvents.value).toEqual([events[0]])
+      expect(sync.runOutputs.value).toEqual([outputs[0]])
+      expect(sync.changeSets.value).toEqual([changes[0]])
       expect(sync.isLoadingConversation.value).toBe(false)
 
       const refreshing = sync.refreshActiveConversation()
@@ -709,13 +733,17 @@ describe('useChatRunSync', () => {
       expect(sync.timelineItems.value).toEqual(expected)
       const error = new Error('Background refresh unavailable')
       if (outcome === 'success')
-        pending.resolve(timelinePage(expected, null, [turn.run]))
+        pending.resolve({ ...timelinePage(expected, null, [ancestorRun, turn.run], [events[0]!]), outputs: [outputs[0]!], changeSets: [changes[0]!] })
       else
         pending.reject(error)
       await refreshing
       expect(sync.isLoadingConversation.value).toBe(false)
       expect(sync.timelineItems.value).toEqual(expected)
       expect(onError.mock.calls).toEqual(outcome === 'success' ? [] : [[error]])
+      expect(sync.runs.value).toEqual([ancestorRun, turn.run])
+      expect(sync.runSignalEvents.value).toEqual([events[0]])
+      expect(sync.runOutputs.value).toEqual([outputs[0]])
+      expect(sync.changeSets.value).toEqual([changes[0]])
 
       activeBranchId.value = 'branch-other'
       expect(sync.isLoadingConversation.value).toBe(true)
@@ -723,6 +751,56 @@ describe('useChatRunSync', () => {
     finally {
       sync.dispose()
     }
+  })
+
+  it('retains the loaded history range while rebasing pagination onto a regenerated branch', async () => {
+    stubAnimationFrameWindow()
+    const activeBranchId = ref('branch-a')
+    const items = Array.from({ length: 203 }, (_, index) => ({
+      ...timelineMessage(`message-${index}`, 'conversation-a', 'branch-a', 0),
+      createdAt: new Date(Date.UTC(2026, 7, 14, 0, 0, index)).toISOString(),
+    }))
+    const latest = deferred<LocalConversationTimelinePage>()
+    const earlier = deferred<LocalConversationTimelinePage>()
+    const api = createApi({ listTimeline: async (input) => {
+      if (input.branchId === 'branch-a')
+        return input.cursor ? timelinePage(items.slice(4, 104), 'parent-before-4') : timelinePage(items.slice(104), 'parent-before-104')
+      if (!input.cursor)
+        return latest.promise
+      if (input.cursor === 'replacement-before-103')
+        return earlier.promise
+      if (input.cursor === 'replacement-before-3')
+        return timelinePage(items.slice(0, 3), null)
+      throw new Error('Pagination reused a cursor from another branch')
+    } })
+    const onError = vi.fn()
+    const sync = useChatRunSync({ activeBranchId, activeConversationId: ref('conversation-a'), api, onError })
+    try {
+      await sync.refreshActiveConversation()
+      await sync.loadOlderMessages()
+      expect(sync.timelineItems.value).toEqual(items.slice(4))
+      activeBranchId.value = 'branch-replacement'
+      const nextRun = { ...run('run-replacement', 'conversation-a'), branchId: activeBranchId.value, triggeringMessageId: items.at(-1)!.id }
+      sync.applyRegeneratedTurn({ branchId: activeBranchId.value, conversationId: 'conversation-a', draftReceipt: null, userMessage: null, runId: nextRun.id, run: nextRun })
+      expect(sync.hasOlderMessages.value).toBe(true)
+      expect(sync.timelineItems.value).toEqual(items.slice(4))
+      expect(await sync.loadOlderMessages()).toBe(false)
+
+      const refreshing = sync.refreshActiveConversation()
+      latest.resolve(timelinePage(items.slice(103), 'replacement-before-103', [nextRun]))
+      await vi.waitUntil(() => vi.mocked(api.conversations.listTimeline).mock.calls.some(([input]) => input.cursor === 'replacement-before-103'))
+      expect(sync.isLoadingConversation.value).toBe(false)
+      expect(sync.hasOlderMessages.value).toBe(true)
+      expect(sync.timelineItems.value).toEqual(items.slice(4))
+      earlier.resolve(timelinePage(items.slice(3, 103), 'replacement-before-3'))
+      await refreshing
+      expect(sync.timelineItems.value).toEqual(items.slice(3))
+      expect(await sync.loadOlderMessages()).toBe(true)
+      expect(sync.timelineItems.value).toEqual(items)
+      expect(sync.hasOlderMessages.value).toBe(false)
+      expect(onError).not.toHaveBeenCalled()
+    }
+    finally { sync.dispose() }
   })
 
   it('ignores a failed snapshot after disposal and retains the last projection', async () => {

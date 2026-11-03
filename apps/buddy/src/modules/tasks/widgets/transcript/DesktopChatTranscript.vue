@@ -108,6 +108,14 @@ const {
   transcriptProjection,
 })
 
+function prepareTurnReplacement(messageId: string, following: boolean) {
+  messageList.value?.prepareTurnReplacement(messageId, following)
+}
+
+function finishTurnReplacement() {
+  messageList.value?.finishTurnReplacement()
+}
+
 function captureScrollAnchor(): ChatMessageScrollAnchor | null {
   return messageList.value?.captureScrollAnchor() ?? null
 }
@@ -140,6 +148,8 @@ function scrollToTail(): ChatMessageScrollMetrics | null {
 }
 
 defineExpose<BuddyChatMessageListHandle>({
+  prepareTurnReplacement,
+  finishTurnReplacement,
   captureScrollAnchor,
   hasScrollAnchor,
   highlightMessage,

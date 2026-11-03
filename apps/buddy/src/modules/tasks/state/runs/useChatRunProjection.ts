@@ -34,10 +34,10 @@ export function useChatRunProjection() {
   const changeSets = shallowRef<ReadonlyArray<LocalChangeSetSummary>>([])
   const approvals = shallowRef<ReadonlyArray<LocalApproval>>([])
   const timelineCursor = shallowRef<string | null>(null)
-  const hasOlderMessages = computed(() => timelineCursor.value !== null)
+  const hasOlderMessages = shallowRef(false)
   const knownRunIds = new Set<string>()
   let hasLoadedTimelinePage = false
-  let syncedTimelineTailKey: string | null = null
+  let snapshotBoundaryKey: string | null = null
 
   function mergePage(page: LocalConversationTimelinePage) {
     upsertRuns(page.runs)
@@ -56,13 +56,14 @@ export function useChatRunProjection() {
     if (!hasLoadedTimelinePage) {
       timelineItems.value = page.items
       timelineCursor.value = page.nextCursor
+      hasOlderMessages.value = page.nextCursor !== null
       hasLoadedTimelinePage = true
     }
     else {
       timelineItems.value = mergeTailTimelineItems(timelineItems.value, page.items)
     }
     const tail = page.items.at(-1)
-    syncedTimelineTailKey = tail ? timelineItemKey(tail) : null
+    snapshotBoundaryKey = tail ? timelineItemKey(tail) : null
     mergePage(page)
     approvals.value = pendingApprovals
   }
@@ -73,6 +74,7 @@ export function useChatRunProjection() {
     timelineItems.value = mergeOlderTimelineItems(timelineItems.value, page.items)
     mergePage(page)
     timelineCursor.value = page.nextCursor
+    hasOlderMessages.value = page.nextCursor !== null
     return prepended
   }
 
@@ -99,16 +101,18 @@ export function useChatRunProjection() {
   }
 
   function getRefreshBoundaryKey(): string | null {
+    if (!hasLoadedTimelinePage)
+      return snapshotBoundaryKey
     const running = timelineItems.value.find(item => item.kind === 'extension-action' && item.status === 'running')
-    return running ? timelineItemKey(running) : syncedTimelineTailKey
+    return running ? timelineItemKey(running) : snapshotBoundaryKey
   }
 
-  function clear(retainedTimeline: ReadonlyArray<LocalConversationTimelineItem> = []) {
-    const tail = retainedTimeline.at(-1)
-    syncedTimelineTailKey = tail ? timelineItemKey(tail) : null
+  function clear() {
+    snapshotBoundaryKey = null
     hasLoadedTimelinePage = false
     timelineCursor.value = null
-    timelineItems.value = retainedTimeline
+    hasOlderMessages.value = false
+    timelineItems.value = []
     runs.value = []
     runSignalEvents.value = []
     runEventBuckets.value = new Map()
@@ -120,10 +124,27 @@ export function useChatRunProjection() {
 
   function replaceTurn(run: LocalRun, replacedMessageId: string, retainReplacedMessage: boolean) {
     const replacedIndex = timelineItems.value.findIndex(item => item.kind === 'message' && item.id === replacedMessageId)
-    const retainedTimeline = replacedIndex < 0
-      ? []
-      : timelineItems.value.slice(0, replacedIndex + (retainReplacedMessage ? 1 : 0))
-    clear(retainedTimeline)
+    if (replacedIndex < 0) {
+      clear()
+      upsertRuns([run])
+      return
+    }
+    const retainedTimeline = timelineItems.value.slice(0, replacedIndex + (retainReplacedMessage ? 1 : 0))
+    const retainedRunIds = new Set(retainedTimeline.flatMap(item => item.kind === 'message' && item.runId ? [item.runId] : []))
+    timelineItems.value = retainedTimeline
+    runs.value = runs.value.filter(run => retainedRunIds.has(run.id))
+    runSignalEvents.value = runSignalEvents.value.filter(event => retainedRunIds.has(event.runId))
+    runEventBuckets.value = new Map([...runEventBuckets.value].filter(([runId]) => retainedRunIds.has(runId)))
+    runOutputs.value = runOutputs.value.filter(output => retainedRunIds.has(output.runId))
+    changeSets.value = changeSets.value.filter(changeSet => retainedRunIds.has(changeSet.runId))
+    approvals.value = []
+    knownRunIds.clear()
+    for (const retainedRun of runs.value)
+      knownRunIds.add(retainedRun.id)
+    hasLoadedTimelinePage = false
+    timelineCursor.value = null
+    const first = retainedTimeline[0]
+    snapshotBoundaryKey = first ? timelineItemKey(first) : null
     upsertRuns([run])
   }
 

@@ -1,7 +1,8 @@
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { BuddyUserContentV1 } from '@buddy-shared/conversation/buddyUserContent'
-import type { BuddyComposerSource } from '@buddy-shared/conversation/composerResource'
+import type { LocalTurnStart } from '@buddy-shared/conversation/chatApi'
 
+import type { BuddyComposerSource } from '@buddy-shared/conversation/composerResource'
 import type { LocalConversationBranch } from '@buddy-shared/conversation/conversationApi'
 import type { LocalRun } from '@buddy-shared/runs/runApi'
 import type { ComposerTarget } from '../composer/useComposerTarget'
@@ -313,7 +314,7 @@ export function useChatBranchMutations(options: UseChatBranchMutationsOptions) {
     }
   }
 
-  async function regenerateAssistant(sourceRunId: string) {
+  async function regenerateAssistant(sourceRunId: string, beforeApply?: (turn: LocalTurnStart) => void) {
     const conversationId = options.session.activeConversationId.value
     const parentBranchId = options.session.activeBranchId.value
     if (!conversationId || !parentBranchId || !canMutateBranch.value)
@@ -345,6 +346,7 @@ export function useChatBranchMutations(options: UseChatBranchMutationsOptions) {
         void options.taskIndexData.refreshIndex().catch(() => {})
         return true
       }
+      beforeApply?.(turn)
       const branch: LocalConversationBranch = options.session.branches.value.find(branch => branch.id === turn.branchId) ?? {
         conversationId,
         createdAt: turn.run.startedAt,

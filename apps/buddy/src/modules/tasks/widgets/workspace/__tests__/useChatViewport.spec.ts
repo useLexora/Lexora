@@ -12,9 +12,11 @@ function createList() {
   const highlights: string[] = []
   const revealed: string[] = []
   const revealBehaviors: Array<ScrollBehavior | undefined> = []
-  const geometry = { anchorTop: 20 }
+  const geometry = { anchorTop: 20, replacementHeight: null as number | null }
   const anchorKeys = new Set(['visible'])
   const handle: BuddyChatMessageListHandle = {
+    prepareTurnReplacement: () => { geometry.replacementHeight = metrics.scrollHeight },
+    finishTurnReplacement: () => { geometry.replacementHeight = null },
     captureScrollAnchor: () => ({ messageId: 'visible', messageOffsetTop: geometry.anchorTop - metrics.scrollTop, metrics: { ...metrics } }),
     hasScrollAnchor: anchor => anchorKeys.has(anchor.rowKey ?? anchor.messageId),
     highlightMessage: id => highlights.push(id),
@@ -98,6 +100,59 @@ async function invalidate(fixture: ReturnType<typeof createViewport>, reason: In
 }
 
 describe('chat viewport operations', () => {
+  it('inherits the reader anchor across a regeneration branch and its completion', async () => {
+    const fixture = createViewport(async () => false)
+    fixture.options.hasOlderMessages.value = false
+    fixture.original.metrics.scrollTop = 200
+    fixture.viewport.handleScroll(fixture.original.metrics, { userInitiated: true })
+    fixture.viewport.prepareTurnReplacement('visible', 'replacement')
+    fixture.options.activeBranchId.value = 'replacement'
+    fixture.original.geometry.anchorTop += 30
+    await nextTick()
+
+    expect(fixture.original.metrics.scrollTop).toBe(230)
+    expect(fixture.viewport.showReturnToLatest.value).toBe(true)
+    expect(fixture.viewport.isPositioning.value).toBe(false)
+    fixture.original.metrics.scrollHeight += 500
+    fixture.viewport.handleContentResize(fixture.original.metrics)
+    fixture.viewport.finishTurnReplacement()
+    expect(fixture.original.metrics.scrollTop).toBe(230)
+    expect(fixture.original.geometry.replacementHeight).toBeNull()
+  })
+
+  it('keeps following after replacement shrinkage and releases its layout on completion', async () => {
+    const fixture = createViewport(async () => false)
+    fixture.options.hasOlderMessages.value = false
+    await fixture.viewport.returnToLatest()
+    fixture.viewport.prepareTurnReplacement('visible', 'replacement')
+    fixture.options.activeBranchId.value = 'replacement'
+    fixture.original.metrics.scrollHeight = 800
+    fixture.original.metrics.scrollTop = 400
+    await nextTick()
+    expect(fixture.viewport.isPositioning.value).toBe(false)
+    fixture.original.metrics.scrollHeight = 1200
+    fixture.viewport.handleContentResize(fixture.original.metrics)
+    expect(fixture.original.metrics.scrollTop).toBe(400)
+    fixture.original.metrics.scrollHeight = 600
+    fixture.viewport.finishTurnReplacement()
+    expect(fixture.original.metrics.scrollTop).toBe(200)
+    expect(fixture.viewport.showReturnToLatest.value).toBe(false)
+  })
+
+  it('discards the replacement layout and pending positioning when navigating elsewhere', async () => {
+    const fixture = createViewport(async () => false)
+    fixture.options.hasOlderMessages.value = false
+    fixture.viewport.prepareTurnReplacement('visible', 'replacement')
+    fixture.options.activeBranchId.value = 'replacement'
+    fixture.options.activeConversationId.value = 'another-conversation'
+    await nextTick()
+    expect(fixture.original.geometry.replacementHeight).toBeNull()
+    fixture.original.metrics.scrollTop = 100
+    fixture.viewport.handleScroll(fixture.original.metrics, { userInitiated: true })
+    fixture.viewport.finishTurnReplacement()
+    expect(fixture.original.metrics.scrollTop).toBe(100)
+  })
+
   it('leaves resize position correction to the list owner across reader, navigation and tail ownership', async () => {
     const fixture = createViewport(async () => false)
     fixture.options.hasOlderMessages.value = false

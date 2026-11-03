@@ -65,12 +65,12 @@ defineExpose<BuddyChatTranscriptViewportHandle>(handle)
           :ref="measureRow"
           :row-key="String(row.key)"
           :data-index="row.index"
-          :style="{ transform: `translateY(${row.start + (row.items.length ? 0 : tailOffset)}px)` }"
+          :style="{ transform: `translateY(${row.start + (row.items.length || row.spacer ? 0 : tailOffset)}px)`, height: row.spacer ? `${row.size}px` : undefined }"
         >
           <template v-for="item in row.items" :key="item.key">
             <slot :item="item" />
           </template>
-          <slot v-if="!row.items.length" name="tail" />
+          <slot v-if="!row.items.length && !row.spacer" name="tail" />
         </BuddyChatVirtualRow>
       </div>
     </NScrollbar>

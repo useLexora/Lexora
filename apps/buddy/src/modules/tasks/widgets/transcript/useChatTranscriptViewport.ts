@@ -35,8 +35,10 @@ export function useChatTranscriptViewport(
       element.dataset.chatScrollViewport = ''
     }
   }, { flush: 'post' })
+  const replacementGapKey = 'turn-replacement-gap'
+  const replacement = shallowRef<{ anchorKey: string, height: number, following: boolean } | null>(null)
   const rows = computed(() => {
-    const result: { key: string, messageId: string | null, estimate: number, items: ChatTranscriptDisplayRow[] }[] = []
+    const result: { key: string, messageId: string | null, estimate: number, items: ChatTranscriptDisplayRow[], spacer?: boolean }[] = []
     let divider: ChatTranscriptDisplayRow | null = null
     for (const row of options.rows()) {
       if (row.kind === 'day-divider') {
@@ -44,6 +46,8 @@ export function useChatTranscriptViewport(
         continue
       }
       result.push({ key: row.key, messageId: messageId(row), estimate: estimateHeight(row) + (divider ? 52 : 0), items: divider ? [divider, row] : [row] })
+      if (replacement.value?.following && replacement.value.anchorKey === row.key)
+        result.push({ key: replacementGapKey, messageId: null, estimate: 0, items: [], spacer: true })
       divider = null
     }
     if (options.hasTail())
@@ -114,9 +118,46 @@ export function useChatTranscriptViewport(
     },
   })))
 
-  const virtualRows = computed(() => virtualizer.value.getVirtualItems().map(item => ({ ...item, items: rows.value[item.index]!.items })))
-  const totalHeight = computed(() => Math.max(virtualizer.value.getTotalSize(), options.hasTail() ? virtualizer.value.scrollRect?.height ?? 0 : 0))
+  const virtualRows = computed(() => virtualizer.value.getVirtualItems().map(item => ({ ...item, items: rows.value[item.index]!.items, spacer: rows.value[item.index]!.spacer })))
+  const totalHeight = computed(() => Math.max(virtualizer.value.getTotalSize(), replacement.value?.height ?? 0, options.hasTail() ? virtualizer.value.scrollRect?.height ?? 0 : 0))
   const tailOffset = computed(() => Math.max(0, totalHeight.value - virtualizer.value.getTotalSize()))
+
+  watch([virtualizer, replacement], () => {
+    const index = indexes.value.keys.get(replacementGapKey)
+    if (!replacement.value || index === undefined)
+      return
+    const instance = virtualizer.value
+    if (instance.options.getItemKey(index) !== replacementGapKey)
+      return
+    const current = instance.itemSizeCache.get(replacementGapKey) ?? 0
+    const height = Math.max(0, replacement.value.height - (instance.getTotalSize() - current))
+    if (Math.abs(current - height) > 0.5)
+      instance.resizeItem(index, height)
+  }, { flush: 'post' })
+
+  function prepareTurnReplacement(id: string, following: boolean) {
+    finishTurnReplacement()
+    const index = indexes.value.messages.get(id)
+    const metrics = readScrollMetrics()
+    if (index === undefined || !metrics)
+      return
+    const instance = virtualizer.value
+    const row = rows.value[index]!
+    const start = (instance.getOffsetForIndex(index, 'start')?.[0] ?? 0) + navigationOffset.value
+    const prefixHeight = Math.min(metrics.scrollHeight, start + (instance.itemSizeCache.get(row.key) ?? row.estimate))
+    const height = following
+      ? prefixHeight + Math.min(metrics.scrollHeight - prefixHeight, metrics.clientHeight)
+      : Math.min(metrics.scrollHeight, metrics.scrollTop + metrics.clientHeight)
+    replacement.value = { anchorKey: row.key, height: Math.max(metrics.clientHeight, height), following }
+  }
+
+  function finishTurnReplacement() {
+    const index = indexes.value.keys.get(replacementGapKey)
+    const instance = virtualizer.value
+    if (index !== undefined && instance.options.getItemKey(index) === replacementGapKey)
+      instance.resizeItem(index, 0)
+    replacement.value = null
+  }
 
   function reportMetrics() {
     const metrics = readScrollMetrics()
@@ -164,7 +205,9 @@ export function useChatTranscriptViewport(
       return null
     if (requestedAnchor)
       return { ...requestedAnchor, metrics }
-    const item = virtualizer.value.getVirtualItems().find(item => item.end > metrics.scrollTop)
+    const items = virtualizer.value.getVirtualItems()
+    const item = items.find(item => item.end > metrics.scrollTop && !rows.value[item.index]?.spacer)
+      ?? items.findLast(item => item.start <= metrics.scrollTop && !rows.value[item.index]?.spacer)
     const row = item && rows.value[item.index]
     return item && row ? { rowKey: row.key, messageId: row.messageId ?? '', messageOffsetTop: item.start - metrics.scrollTop, metrics } : null
   }
@@ -235,20 +278,31 @@ export function useChatTranscriptViewport(
 
   useEventListener(viewport, ['wheel', 'touchmove'], readerIntent, { passive: true })
   useEventListener(viewport, 'keydown', (event: KeyboardEvent) => {
+    if (event.defaultPrevented || (event.target instanceof Element
+      && (event.target.closest('input, textarea, [contenteditable="true"]')
+        || (event.key === ' ' && event.target.closest('button, a'))))) {
+      return
+    }
     if (['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', ' '].includes(event.key))
       readerIntent()
   })
-  useEventListener(root, 'pointerdown', () => {
+  useEventListener(root, 'pointerdown', (event: PointerEvent) => {
+    if (event.button !== 0 || (event.target instanceof Element && event.target.closest('button, a, input, textarea, [contenteditable="true"]')))
+      return
     pointerDragging = true
     readerIntent()
   })
   useEventListener(window, ['pointerup', 'pointercancel', 'blur'], () => pointerDragging = false)
 
   function measureRow(component: Element | ComponentPublicInstance | null) {
-    virtualizer.value.measureElement(component instanceof Element ? component as HTMLElement : component?.$el ?? null)
+    const element = component instanceof Element ? component as HTMLElement : component?.$el ?? null
+    if (element?.dataset.virtualRowKey !== replacementGapKey)
+      virtualizer.value.measureElement(element)
   }
 
   const handle: BuddyChatTranscriptViewportHandle = {
+    prepareTurnReplacement,
+    finishTurnReplacement,
     captureScrollAnchor,
     hasScrollAnchor: anchor => anchorIndex(anchor) !== undefined,
     readScrollMetrics,

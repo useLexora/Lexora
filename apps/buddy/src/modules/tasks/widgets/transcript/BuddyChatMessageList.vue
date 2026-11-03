@@ -116,6 +116,14 @@ function readScrollMetrics(): ChatMessageScrollMetrics | null {
   return transcriptViewport.value?.readScrollMetrics() ?? null
 }
 
+function prepareTurnReplacement(messageId: string, following: boolean) {
+  transcriptViewport.value?.prepareTurnReplacement(messageId, following)
+}
+
+function finishTurnReplacement() {
+  transcriptViewport.value?.finishTurnReplacement()
+}
+
 function captureScrollAnchor(): ChatMessageScrollAnchor | null {
   return transcriptViewport.value?.captureScrollAnchor() ?? null
 }
@@ -170,6 +178,8 @@ function handleReaderLayoutIntent(event: MouseEvent) {
 }
 
 defineExpose<BuddyChatMessageListHandle>({
+  prepareTurnReplacement,
+  finishTurnReplacement,
   captureScrollAnchor,
   hasScrollAnchor,
   highlightMessage,
