@@ -14,6 +14,7 @@ export default {
   'questions.nextRequest': '下一个请求',
   'questions.yourAnswer': '你的回答',
   'questions.count': '{count} 个问题',
+  'questions.position': '问题 {current} / {total}',
   'questions.history': '问答记录',
   'questions.loadFailed': '暂时无法加载问题。',
   'questions.retry': '重试',
