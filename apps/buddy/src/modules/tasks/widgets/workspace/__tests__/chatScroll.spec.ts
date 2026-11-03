@@ -200,6 +200,40 @@ describe('desktopChatScroll', () => {
     })
   })
 
+  it.each([1, 12, 36])('gives a %dpx upward move priority over the near-tail tolerance', (distance) => {
+    const metrics = { clientHeight: 600, scrollHeight: 1600, scrollTop: 1000 - distance }
+    const result = observeChatScroll(
+      { observedTop: 1000, ownership: 'following' },
+      metrics,
+      { userInitiated: true },
+    )
+    expect(result).toEqual({ movedByReader: true, state: { observedTop: metrics.scrollTop, ownership: 'detached' } })
+    expect(reconcileChatScrollOwnership(result.state, metrics)).toBe(result.state)
+    expect(recordProgrammaticChatScroll(result.state, metrics).ownership).toBe('detached')
+    expect(observeChatScroll(result.state, metrics, { userInitiated: false }).state.ownership).toBe('detached')
+    expect(observeChatScroll(result.state, { ...metrics, scrollHeight: 1800 }, { userInitiated: false }).state.ownership).toBe('detached')
+  })
+
+  it('keeps successive small upward steps detached and only resumes on a deliberate downward return', () => {
+    let state = resetChatScrollToTail({ clientHeight: 600, scrollHeight: 1600, scrollTop: 1000 })
+    for (const top of [988, 976, 964]) {
+      const metrics = { clientHeight: 600, scrollHeight: 1600, scrollTop: top }
+      state = observeChatScroll(state, metrics, { userInitiated: true }).state
+      expect(state.ownership).toBe('detached')
+      state = reconcileChatScrollOwnership(state, metrics)
+      expect(state.ownership).toBe('detached')
+    }
+    expect(observeChatScroll(state, { clientHeight: 600, scrollHeight: 1600, scrollTop: 976 }, { userInitiated: false }).state.ownership).toBe('detached')
+    expect(observeChatScroll(state, { clientHeight: 600, scrollHeight: 1600, scrollTop: 976 }, { userInitiated: true }).state.ownership).toBe('following')
+  })
+
+  it('allows a small reverse gesture to cancel returning without mistaking programmatic corrections for a gesture', () => {
+    const returning = { observedTop: 995, ownership: 'returning' } as const
+    const metrics = { clientHeight: 600, scrollHeight: 1600, scrollTop: 983 }
+    expect(observeChatScroll(returning, metrics, { userInitiated: true }).state.ownership).toBe('detached')
+    expect(observeChatScroll(returning, metrics, { userInitiated: false }).state.ownership).toBe('following')
+  })
+
   it('resets scroll state to following with resetChatScrollToTail', () => {
     const reset = resetChatScrollToTail({ clientHeight: 600, scrollHeight: 1_600, scrollTop: 1_000 })
     expect(reset).toEqual({

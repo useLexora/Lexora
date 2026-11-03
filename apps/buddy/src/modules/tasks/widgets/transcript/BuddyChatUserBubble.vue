@@ -1,40 +1,18 @@
 <script setup lang="ts">
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { ChevronDown16Regular } from '@vicons/fluent'
-import { useEventListener, useResizeObserver } from '@vueuse/core'
-import { computed, nextTick, onMounted, onUpdated, shallowRef, useId, useTemplateRef } from 'vue'
+import { computed, nextTick, useId, useTemplateRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
+import { useChatUserBubbleOverflow } from './useChatUserBubbleOverflow'
 
 const props = defineProps<{ language: BuddyLocale }>()
 const { t } = useBuddyI18n(() => props.language)
 const root = useTemplateRef<HTMLElement>('root')
 const body = useTemplateRef<HTMLElement>('body')
 const bodyId = useId()
-const expanded = shallowRef(false)
-const overflowing = shallowRef(false)
+const { expanded, overflowing } = useChatUserBubbleOverflow(body)
 const toggleLabel = computed(() => t(expanded.value ? 'desktop.chat.collapseUserMessage' : 'desktop.chat.expandUserMessage'))
-
-function measureOverflow() {
-  const element = body.value
-  if (!element || element.clientHeight === 0)
-    return
-  // Measure the actual five-line layout, including paragraph gaps and inline references.
-  // Reapply the clamp only for this synchronous read when the message is expanded.
-  element.classList.add('is-measuring')
-  overflowing.value = element.scrollHeight > element.clientHeight + 1
-  element.classList.remove('is-measuring')
-  if (!overflowing.value)
-    expanded.value = false
-}
-
-useResizeObserver(body, measureOverflow)
-useEventListener(() => document.fonts, 'loadingdone', measureOverflow)
-onMounted(() => {
-  measureOverflow()
-  void document.fonts?.ready.then(measureOverflow)
-})
-onUpdated(measureOverflow)
 
 async function toggle() {
   const scrollport = root.value?.closest<HTMLElement>('.buddy-chat-transcript-viewport__scrollport')

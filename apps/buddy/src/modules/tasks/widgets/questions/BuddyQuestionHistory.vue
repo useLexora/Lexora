@@ -2,16 +2,17 @@
 import type { UserQuestionHistory } from '@buddy-shared/questions/userQuestionHistory'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { ChatHelp20Regular, CheckmarkCircle20Regular, ChevronDown16Regular, ChevronRight16Regular } from '@vicons/fluent'
-import { computed, shallowRef, useId } from 'vue'
+import { computed, useId } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
+import { useChatTranscriptValue } from '../transcript/chatTranscriptPresentation'
 import BuddyQuestionPrompt from './BuddyQuestionPrompt.vue'
 
 const props = defineProps<{ request: UserQuestionHistory, language: BuddyLocale, retryable?: boolean }>()
 const emit = defineEmits<{ retry: [requestId: string] }>()
 const { t } = useBuddyI18n(() => props.language)
 const id = useId()
-const expanded = shallowRef(props.request.entries.length === 1 && props.request.entries.every(entry => entry.question.length + entry.answer.length <= 320))
+const expanded = useChatTranscriptValue(() => `question-history:${props.request.id}:expanded`, props.request.entries.length === 1 && props.request.entries.every(entry => entry.question.length + entry.answer.length <= 320))
 const preview = computed(() => props.request.entries
   .map(entry => entry.answer.split('\n').map(line => line.trim()).filter(Boolean).join(' · '))
   .filter(Boolean)

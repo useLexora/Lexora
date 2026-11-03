@@ -98,44 +98,49 @@ async function invalidate(fixture: ReturnType<typeof createViewport>, reason: In
 }
 
 describe('chat viewport operations', () => {
-  it('retains the reader anchor when a non-user scroll arrives before layout reconciliation', async () => {
+  it('leaves resize position correction to the list owner across reader, navigation and tail ownership', async () => {
     const fixture = createViewport(async () => false)
     fixture.options.hasOlderMessages.value = false
     await nextTick()
     await nextTick()
     fixture.original.metrics.scrollTop = 200
     fixture.viewport.handleScroll(fixture.original.metrics, { userInitiated: true })
-    const originalOffset = fixture.original.geometry.anchorTop - fixture.original.metrics.scrollTop
 
     fixture.original.geometry.anchorTop += 30
     fixture.original.metrics.scrollHeight += 30
     fixture.viewport.handleContentResize(fixture.original.metrics)
+    expect(fixture.original.metrics.scrollTop).toBe(200)
     fixture.original.geometry.anchorTop += 240
     fixture.original.metrics.scrollHeight += 240
     fixture.viewport.handleScroll(fixture.original.metrics, { userInitiated: false })
     fixture.viewport.handleContentResize(fixture.original.metrics)
-    expect(fixture.original.geometry.anchorTop - fixture.original.metrics.scrollTop).toBe(originalOffset)
-    expect(fixture.original.metrics.scrollTop).toBe(470)
+    expect(fixture.original.metrics.scrollTop).toBe(200)
+    expect(fixture.viewport.showReturnToLatest.value).toBe(true)
 
     await fixture.viewport.revealOutlineMessage('new-target')
     expect(fixture.original.revealBehaviors).toEqual(['smooth'])
+    expect(fixture.original.metrics.scrollTop).toBe(300)
     fixture.original.metrics.scrollTop = 420
     fixture.viewport.handleScroll(fixture.original.metrics, { userInitiated: false })
     fixture.original.geometry.anchorTop += 50
     fixture.original.metrics.scrollHeight += 50
     fixture.viewport.handleContentResize(fixture.original.metrics)
-    expect(fixture.original.metrics.scrollTop).toBe(470)
+    expect(fixture.original.metrics.scrollTop).toBe(420)
 
     fixture.original.metrics.scrollTop = 500
     fixture.viewport.handleScroll(fixture.original.metrics, { userInitiated: true })
     fixture.original.geometry.anchorTop += 50
     fixture.original.metrics.scrollHeight += 50
     fixture.viewport.handleContentResize(fixture.original.metrics)
-    expect(fixture.original.metrics.scrollTop).toBe(550)
+    expect(fixture.original.metrics.scrollTop).toBe(500)
     await fixture.viewport.returnToLatest()
+    const requestedTail = fixture.original.metrics.scrollHeight - fixture.original.metrics.clientHeight
+    expect(fixture.original.metrics.scrollTop).toBe(requestedTail)
+    expect(fixture.viewport.showReturnToLatest.value).toBe(false)
     fixture.original.metrics.scrollHeight += 100
     fixture.viewport.handleContentResize(fixture.original.metrics)
-    expect(fixture.original.metrics.scrollTop).toBe(fixture.original.metrics.scrollHeight - fixture.original.metrics.clientHeight)
+    expect(fixture.original.metrics.scrollTop).toBe(requestedTail)
+    expect(fixture.viewport.showReturnToLatest.value).toBe(false)
   })
 
   it('restores a disposed task from its lightweight anchor after loading the required history', async () => {
@@ -190,7 +195,7 @@ describe('chat viewport operations', () => {
     expect(reopened.viewport.showReturnToLatest.value).toBe(true)
   })
 
-  it.each(['latest', 'scroll', 'layout'] as const)('cancels position recovery on %s intent before a late page arrives', async (intent) => {
+  it.each(['latest', 'scroll', 'layout'] as const)('keeps %s intent authoritative when cancelled recovery receives a late page and resize', async (intent) => {
     const pending = deferred<boolean>()
     const readingPositions: ChatReadingPositions = new Map([['conversation-1:branch-1', {
       messageId: 'old-target',
@@ -215,6 +220,7 @@ describe('chat viewport operations', () => {
       fixture.viewport.handleScroll(fixture.original.metrics, { userInitiated: true })
     }
     expect(fixture.viewport.isRestoringPosition.value).toBe(false)
+    const acceptedTop = fixture.original.metrics.scrollTop
     fixture.original.anchorKeys.add('old-target')
     await prependHistory(fixture)
     pending.resolve(true)
@@ -222,7 +228,9 @@ describe('chat viewport operations', () => {
     await nextTick()
     fixture.viewport.handleContentResize(fixture.original.metrics)
 
-    expect(fixture.original.metrics.scrollTop).toBe(intent === 'latest' ? 1000 : 850)
+    expect(fixture.original.metrics.scrollTop).toBe(acceptedTop)
+    expect(fixture.original.revealed).toEqual([])
+    expect(fixture.original.highlights).toEqual([])
     expect(fixture.viewport.showReturnToLatest.value).toBe(intent !== 'latest')
     expect(fixture.viewport.isRestoringPosition.value).toBe(false)
   })
@@ -263,7 +271,7 @@ describe('chat viewport operations', () => {
     expect(fixture.viewport.showReturnToLatest.value).toBe(false)
   })
 
-  it('shares pending history and restores the latest reader anchor without following appended content', async () => {
+  it('shares one pending history request without writing scroll position for prepend or resize', async () => {
     const pending = deferred<boolean>()
     let requests = 0
     const fixture = createViewport(() => {
@@ -278,14 +286,15 @@ describe('chat viewport operations', () => {
     await nextTick()
 
     expect(requests).toBe(1)
-    expect(fixture.original.metrics.scrollTop).toBe(405)
+    expect(fixture.original.metrics.scrollTop).toBe(5)
     fixture.original.geometry.anchorTop += 80
     fixture.original.metrics.scrollHeight += 80
     fixture.viewport.handleContentResize(fixture.original.metrics)
-    expect(fixture.original.metrics.scrollTop).toBe(485)
+    expect(fixture.original.metrics.scrollTop).toBe(5)
     fixture.original.metrics.scrollHeight = 1_500
     fixture.viewport.handleContentResize(fixture.original.metrics)
-    expect(fixture.original.metrics.scrollTop).toBe(485)
+    expect(fixture.original.metrics.scrollTop).toBe(5)
+    expect(requests).toBe(1)
     expect(fixture.viewport.showReturnToLatest.value).toBe(true)
   })
 
@@ -429,7 +438,7 @@ describe('chat viewport operations', () => {
     fixture.options.revealMessageId.value = null
   })
 
-  it.each<Invalidation>(['conversation', 'branch', 'list', 'dispose'])('discards an old pagination anchor after %s invalidation', async (reason) => {
+  it.each<Invalidation>(['conversation', 'branch', 'list', 'dispose'])('does not write position when pagination settles after %s invalidation', async (reason) => {
     const pending = deferred<boolean>()
     const fixture = createViewport(() => pending.promise)
     fixture.viewport.handleScroll(fixture.original.metrics)
@@ -506,18 +515,20 @@ describe('chat viewport operations', () => {
     expect(fixture.viewport.showReturnToLatest.value).toBe(true)
   })
 
-  it('lets returning to latest supersede a pending history anchor', async () => {
+  it('keeps explicit return-to-latest ownership without replaying late pagination or resize writes', async () => {
     const pending = deferred<boolean>()
     const fixture = createViewport(() => pending.promise)
     fixture.viewport.handleScroll(fixture.original.metrics)
     await fixture.viewport.returnToLatest()
+    expect(fixture.original.metrics.scrollTop).toBe(600)
     fixture.original.metrics.scrollHeight = 1_400
     fixture.viewport.handleContentResize(fixture.original.metrics)
     pending.resolve(true)
     await nextTick()
     await nextTick()
 
-    expect(fixture.original.metrics.scrollTop).toBe(1_000)
+    expect(fixture.original.metrics.scrollTop).toBe(600)
+    expect(fixture.original.revealed).toEqual([])
     expect(fixture.viewport.showReturnToLatest.value).toBe(false)
   })
 
@@ -560,7 +571,7 @@ describe('chat viewport operations', () => {
     expect(fixture.viewport.showReturnToLatest.value).toBe(true)
   })
 
-  it('releases a failed history request so the next scroll can retry and restore its anchor', async () => {
+  it('releases a failed history request so reader movement can retry without a prepend position write', async () => {
     const failed = deferred<boolean>()
     const retry = deferred<boolean>()
     let requests = 0
@@ -576,7 +587,10 @@ describe('chat viewport operations', () => {
     await nextTick()
 
     expect(requests).toBe(2)
-    expect(fixture.original.metrics.scrollTop).toBe(419)
+    expect(fixture.original.metrics.scrollTop).toBe(19)
+    fixture.viewport.handleContentResize(fixture.original.metrics)
+    expect(fixture.original.metrics.scrollTop).toBe(19)
+    expect(fixture.viewport.showReturnToLatest.value).toBe(true)
   })
 
   it('starts paging in the new branch without letting the old request clear its pending state', async () => {
@@ -601,10 +615,13 @@ describe('chat viewport operations', () => {
     newPage.resolve(true)
     await nextTick()
     await nextTick()
-    expect(fixture.original.metrics.scrollTop).toBe(420)
+    expect(fixture.original.metrics.scrollTop).toBe(20)
+    expect(requests).toBe(2)
+    fixture.viewport.handleContentResize(fixture.original.metrics)
+    expect(fixture.original.metrics.scrollTop).toBe(20)
   })
 
-  it('explicitly clears previous reading states and follows the tail on resetToTail', async () => {
+  it('clears previous reading states and writes the tail only for the explicit reset intent', async () => {
     const readingPositions: ChatReadingPositions = new Map()
     const fixture = createViewport(async () => false, { readingPositions })
     fixture.options.hasOlderMessages.value = false
@@ -621,6 +638,11 @@ describe('chat viewport operations', () => {
 
     fixture.original.metrics.scrollHeight = 1_400
     fixture.viewport.handleContentResize(fixture.original.metrics)
+    expect(fixture.original.metrics.scrollTop).toBe(600)
+    expect(fixture.viewport.showReturnToLatest.value).toBe(false)
+
+    fixture.viewport.resetToTail()
+    await nextTick()
     expect(fixture.original.metrics.scrollTop).toBe(1_000)
   })
 })

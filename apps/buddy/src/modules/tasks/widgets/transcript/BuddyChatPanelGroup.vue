@@ -2,10 +2,11 @@
 import type { ChatAgentPanelGroup } from '../../model/transcript/chatAgentActivities'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { ChevronRight20Regular, ChevronUp20Regular, PanelRight20Regular } from '@vicons/fluent'
-import { computed, shallowRef, useId, useTemplateRef } from 'vue'
+import { computed, useId, useTemplateRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import BuddyChatDisclosure from './BuddyChatDisclosure.vue'
+import { useChatTranscriptValue } from './chatTranscriptPresentation'
 
 const props = defineProps<{
   group: ChatAgentPanelGroup
@@ -13,7 +14,7 @@ const props = defineProps<{
 }>()
 
 const { t } = useBuddyI18n(() => props.language)
-const open = shallowRef(false)
+const open = useChatTranscriptValue(() => `panel-group:${props.group.id}:open`, false)
 const grouped = computed(() => props.group.nodes.length > 1)
 const actorLabel = computed(() => t(props.group.actor === 'mixed'
   ? 'desktop.chat.panelActorMixed'

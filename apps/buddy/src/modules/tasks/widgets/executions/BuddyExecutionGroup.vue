@@ -6,6 +6,7 @@ import { computed, defineAsyncComponent, onScopeDispose, shallowReactive, shallo
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import { executionNeedsAttention, projectExecutionCanvas } from '../../model/executions/executionCanvas'
 import { useExecutionTree } from '../../state/runs/chatExecutionContext'
+import { useChatTranscriptValue } from '../transcript/chatTranscriptPresentation'
 import { executionLabels } from './executionLabels'
 
 const props = defineProps<{ rootRunId: string, language: BuddyLocale }>()
@@ -25,7 +26,7 @@ const unfinished = computed(() => children.value.filter(child => child.phase !==
 const attention = computed(() => nodes.value.filter(node => node.execution.kind === 'npc_child' && executionNeedsAttention(node.execution)))
 const issues = computed(() => children.value.filter(child => child.status === 'failed' || child.cleanup === 'degraded'))
 const canStopAll = computed(() => !collaborating.value && root.value?.canCancel && children.value.some(child => child.canCancel))
-const expanded = shallowRef<boolean | null>(null)
+const expanded = useChatTranscriptValue<boolean | null>(() => `execution-group:${props.rootRunId}:expanded`, null)
 const canvasLoaded = shallowRef(false)
 const attentionTarget = shallowRef<string | null>(null)
 const stoppingAll = shallowRef(false)

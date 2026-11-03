@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import type { ChatAgentTurnNode } from '../../model/transcript/chatStreamingMessage'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { computed, shallowReactive } from 'vue'
+import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { createChatAgentActivityProjector } from '../../model/transcript/chatAgentActivities'
 import BuddyChatActivityGroup from './BuddyChatActivityGroup.vue'
 import BuddyChatCompactionRow from './BuddyChatCompactionRow.vue'
 import BuddyChatNarrationBody from './BuddyChatNarrationBody.vue'
 import BuddyChatPanelGroup from './BuddyChatPanelGroup.vue'
+import { useChatTranscriptValue } from './chatTranscriptPresentation'
 
 const props = defineProps<{
   failureDetailText: string | null
@@ -17,9 +18,12 @@ const props = defineProps<{
 
 const { t } = useBuddyI18n(() => props.language)
 const rowProjector = createChatAgentActivityProjector()
-const openEntries = shallowReactive(new Map<string, boolean>())
+const openEntries = useChatTranscriptValue('agent-turn:open-entries', new Map<string, boolean>())
+function setEntry(id: string, open: boolean) {
+  openEntries.value = new Map(openEntries.value).set(id, open)
+}
 function toggleEntry(id: string) {
-  openEntries.set(id, !openEntries.get(id))
+  setEntry(id, !openEntries.value.get(id))
 }
 const rows = computed(() => rowProjector.project(props.nodes))
 </script>
@@ -33,7 +37,7 @@ const rows = computed(() => rowProjector.project(props.nodes))
         :language="language"
         :open-entries="openEntries"
         @toggle-entry="toggleEntry"
-        @open-entry="openEntries.set($event, true)"
+        @open-entry="setEntry($event, true)"
       />
       <BuddyChatCompactionRow
         v-else-if="row.kind === 'compaction' && row.status !== 'running'"

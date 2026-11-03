@@ -6,17 +6,19 @@ import { computed, onBeforeUnmount, shallowRef, watch } from 'vue'
 import { conversationCanvasConnection } from '../../model/canvas/conversationCanvasConnections'
 import { executionNeedsAttention } from '../../model/executions/executionCanvas'
 import { CANVAS_NODE_SHAPE, createCanvasNodeHost } from '../canvas/canvasNodeHost'
+import { useChatTranscriptValue } from '../transcript/chatTranscriptPresentation'
 
 export function useExecutionCanvas(container: Readonly<Ref<HTMLElement | null>>, surface: Readonly<Ref<HTMLElement | null>>, nodes: Readonly<Ref<readonly ExecutionCanvasNode[]>>) {
   const host = createCanvasNodeHost()
   const graph = shallowRef<Graph | null>(null)
   const nearby = shallowRef(false)
   const zoom = shallowRef(100)
-  const manualPositions = new Map<string, { x: number, y: number }>()
+  const savedPositions = useChatTranscriptValue('execution-canvas:positions', new Map<string, { x: number, y: number }>())
+  const manualPositions = new Map(savedPositions.value)
   let applying = false
   let pendingFocus: string | null = null
   const geometry = computed(() => JSON.stringify(nodes.value.map(node => [node.execution.runId, node.parentId, node.x, node.y, node.width, node.height])))
-  let viewport: { tx: number, ty: number, scale: number, width: number, height: number } | null = null
+  const viewport = useChatTranscriptValue<{ tx: number, ty: number, scale: number, width: number, height: number } | null>('execution-canvas:viewport', null)
   let frame = 0
 
   function focus(id: string) {
@@ -112,7 +114,8 @@ export function useExecutionCanvas(container: Readonly<Ref<HTMLElement | null>>,
     cancelAnimationFrame(frame)
     frame = 0
     if (graph.value) {
-      viewport = { ...graph.value.translate(), scale: graph.value.zoom(), width: graph.value.options.width, height: graph.value.options.height }
+      viewport.value = { ...graph.value.translate(), scale: graph.value.zoom(), width: graph.value.options.width, height: graph.value.options.height }
+      savedPositions.value = new Map(manualPositions)
       graph.value.dispose()
       graph.value = null
       host.hosts.clear()
@@ -165,9 +168,9 @@ export function useExecutionCanvas(container: Readonly<Ref<HTMLElement | null>>,
         updateEdge(edge.id)
     })
     sync()
-    if (viewport && viewport.width === element.clientWidth && viewport.height === element.clientHeight) {
-      value.zoomTo(viewport.scale)
-      value.translate(viewport.tx, viewport.ty)
+    if (viewport.value && viewport.value.width === element.clientWidth && viewport.value.height === element.clientHeight) {
+      value.zoomTo(viewport.value.scale)
+      value.translate(viewport.value.tx, viewport.value.ty)
     }
     else {
       place(true)

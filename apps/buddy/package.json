@@ -81,6 +81,7 @@
     "@dnd-kit/dom": "^0.5.0",
     "@dnd-kit/vue": "^0.5.0",
     "@modelcontextprotocol/sdk": "^1.32.1",
+    "@tanstack/vue-virtual": "3.13.51",
     "@tiptap/core": "^3.31.4",
     "@tiptap/extension-placeholder": "^3.31.4",
     "@tiptap/pm": "^3.31.4",
