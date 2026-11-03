@@ -21,6 +21,7 @@ import { useResourceQuoteReveal } from '@/shared/ui/selection/useResourceQuoteRe
 import { useResourceSelectionQuote } from '@/shared/ui/selection/useResourceSelectionQuote'
 import { useWorkbench } from '@/workbench/browser/workbenchContext'
 
+import { spaceFileImageResolver } from '../model/documentImageResolver'
 import { fileOpeningHandler } from '../model/fileOpeningHandlers'
 import { useFileOpening } from '../state/fileOpeningContext'
 import { filePreviewRenderer } from './filePreviewRenderers'
@@ -38,6 +39,7 @@ const document = useTemplateRef<InstanceType<typeof DesktopDocumentContent>>('do
 const copy = shallowRef(copies.get(props.view.resource))
 const opening = useFileOpening()
 const target = computed(() => spaceFileTargetSchema.strip().parse(props.view.resource.data))
+const imageResolver = computed(() => spaceFileImageResolver(target.value))
 const provider = computed(() => (opening?.resolve(props.view.title, 'inline') ?? resolveBuiltinFileOpening(props.view.title, 'inline')).provider)
 const handler = computed(() => fileOpeningHandler(provider.value))
 const previewRenderer = computed(() => filePreviewRenderer({ provider: provider.value, ownerId: props.view.id, target: target.value, source: 'working-copy', resourceReady: !!copy.value?.etag && !copy.value.blocked, text: copy.value?.text ?? '', name: props.view.title, visible: props.visible, language: props.language }))
@@ -217,7 +219,7 @@ onScopeDispose(controller.configuration.subscribe(() => editor?.updateOptions({ 
     <ResourceSelectionQuoteMenu v-if="selection.enabled" :selection="selection" :language="language" />
     <DesktopDocumentContent
       ref="document" :source-ready="editorReady" :reveal-source="revealSource"
-      :mode="mode" :name="view.title" :text="copy?.text ?? ''" :language="language" :write-clipboard-text="writeClipboardText"
+      :mode="mode" :name="view.title" :text="copy?.text ?? ''" :resolve-image="imageResolver" :language="language" :write-clipboard-text="writeClipboardText"
       :quote-source="selection.enabled ? quoteSource('markdown') : undefined" :prepare-quote="selection.prepare" @scroll.capture="selection.close"
     >
       <template v-if="previewRenderer" #preview>

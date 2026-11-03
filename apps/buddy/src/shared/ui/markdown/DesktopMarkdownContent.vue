@@ -2,15 +2,17 @@
 import type { NodeRendererProps, SmoothMarkdownStreamOptions } from 'markstream-vue'
 import type { DropdownOption } from 'naive-ui'
 import type { FileLinkMenuAction, FileLinkMenuProvider } from './fileLinkMenu'
+import type { MarkdownImageResolver } from './markdownImage'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { localFileLinkPath } from '@buddy-shared/files/fileLink'
 import { useEventListener, usePreferredReducedMotion } from '@vueuse/core'
 import MarkdownRender from 'markstream-vue'
 import { NDropdown } from 'naive-ui'
-import { computed, ErrorCodes, getCurrentInstance, handleError, onBeforeUnmount, shallowRef, useTemplateRef, watch } from 'vue'
+import { computed, ErrorCodes, getCurrentInstance, handleError, onBeforeUnmount, provide, shallowRef, useTemplateRef, watch } from 'vue'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
 import { desktopThemeSnapshot } from '@/theme/desktopThemeState'
 import { markdownThemeVariables } from '@/theme/markdownTheme'
+import { markdownImageContextKey } from './markdownImage'
 import { markdownCustomId } from './markdownRenderers'
 import 'katex/dist/katex.min.css'
 import 'markstream-vue/index.css'
@@ -21,6 +23,7 @@ const props = withDefaults(defineProps<{
   fileLinkMenu?: FileLinkMenuProvider
   onLinkError?: (error: unknown) => void
   allowImages?: boolean
+  resolveImage?: MarkdownImageResolver
   codeOverflow?: 'wrap' | 'scroll'
   final?: boolean
   language: BuddyLocale
@@ -35,6 +38,7 @@ const emit = defineEmits<{
 }>()
 
 const { isDark } = useDesktopUi()
+provide(markdownImageContextKey, { resolve: computed(() => props.resolveImage), language: computed(() => props.language) })
 const themeVariables = computed(() => markdownThemeVariables(desktopThemeSnapshot.value.active.colors))
 const disableImages: NonNullable<NodeRendererProps['customMarkdownIt']> = md => md.disable('image')
 const codeBlockProps = computed<NonNullable<NodeRendererProps['codeBlockProps']>>(() => ({
