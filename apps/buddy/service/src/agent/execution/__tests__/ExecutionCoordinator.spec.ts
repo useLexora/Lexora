@@ -11,6 +11,7 @@ import { BuddyDefinitionResolver } from '../../../buddies/BuddyDefinitionResolve
 import { MutationCoordinator } from '../../../changes/MutationCoordinator'
 import { createRunEventLog } from '../../../events/createRunEventLog'
 import { RunEventCorruptionError, RunEventStorageError } from '../../../events/RunEventFailure'
+import { UserQuestionService } from '../../../questions/UserQuestionService'
 import { RunLifecycleService } from '../../../runs/RunLifecycleService'
 import { createExecutionStorageFixture, executionNow } from '../../../storage/__tests__/executionFixture'
 import { createConversationMemberRepository } from '../../../storage/conversationMemberRepository'
@@ -84,6 +85,48 @@ function delegationService(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe('execution coordination', () => {
+  it.each(['steering', 'mailbox'])('ends a user-question wait for new %s without resolving the question', async (input) => {
+    const f = await fixture()
+    const signal = new AbortController().signal
+    const continuation = await f.coordinator.begin('root', signal)
+    let steering = false
+    const unbind = continuation.bindInputs({ hasPendingInput: () => steering, hasPendingSteering: () => steering })
+    const questions = new UserQuestionService({ ...f, deliver: async () => 'root' })
+    cleanups.push(async () => {
+      unbind()
+      await questions.dispose()
+    })
+    const request = questions.ask('root', 'ask', { questions: [{ id: 'scope', question: 'Which scope?', kind: 'text', options: [] }] }, signal)
+    await f.coordinator.send('root', { kind: 'supplement', origin: 'user', messageId: 'previous', targetRunId: 'root', targetGeneration: f.runs.findById('root')!.generation, text: 'Already delivered' })
+    let resumed = false
+    const waiting = questions.wait('root', request.id, signal, ['previous']).then((value) => {
+      resumed = true
+      return value
+    })
+    await vi.waitFor(() => expect(f.executions.find('root')?.phase).toBe('waiting'))
+    f.coordinator.notifyQueuedInput('root')
+    await new Promise(resolve => setImmediate(resolve))
+    expect(resumed).toBe(false)
+    if (input === 'steering') {
+      expect(continuation.acceptInput(() => {
+        steering = true
+        return true
+      })).toBe(true)
+    }
+    else {
+      await f.coordinator.send('root', { kind: 'supplement', origin: 'user', messageId: 'new-input', targetRunId: 'root', targetGeneration: f.runs.findById('root')!.generation, text: 'Continue with independent work' })
+    }
+    expect(await waiting).toMatchObject({ id: request.id, status: 'pending', response: null })
+    expect(questions.isWaiting('root')).toBe(false)
+    expect(f.executions.find('root')).toMatchObject({ phase: 'working', cancelRequestedAt: null })
+    steering = false
+    const again = questions.wait('root', request.id, signal, ['previous', 'new-input'])
+    await vi.waitFor(() => expect(questions.isWaiting('root')).toBe(true))
+    await questions.answer({ conversationId: 'conversation', branchId: 'branch', requestId: request.id, answers: [{ questionId: 'scope', selectedOptionIds: [], text: 'Explicit answer' }] })
+    expect(await again).toMatchObject({ status: 'answered', response: { answers: [{ text: 'Explicit answer' }] } })
+    expect(questions.isWaiting('root')).toBe(false)
+  })
+
   it('wakes a native wait for steering without cancelling the child or waking for ordinary queued input', async () => {
     const f = await fixture()
     const signal = new AbortController().signal
@@ -301,6 +344,41 @@ describe('execution coordination', () => {
     resumeSignal.abort()
     expect(await resume).toBeInstanceOf(DOMException)
     expect(f.executions.listTree('root').filter(item => item.run.executionKind === 'npc_child' && item.phase === 'working')).toHaveLength(5)
+  })
+
+  it('releases an NPC seat while awaiting the user and reacquires it before delivering the answer', async () => {
+    const f = await fixture()
+    const signal = new AbortController().signal
+    await f.coordinator.begin('root', signal)
+    for (let index = 1; index <= 6; index++)
+      await f.coordinator.admitChild(f.child(`question-npc-${index}`))
+    for (let index = 1; index <= 5; index++)
+      await f.coordinator.begin(`question-npc-${index}`, signal)
+    const answer = Promise.withResolvers<string>()
+    let delivered = false
+    const waiting = f.coordinator.waitForUser('question-npc-1', () => answer.promise, signal).then((value) => {
+      delivered = true
+      return value
+    })
+    await f.coordinator.begin('question-npc-6', signal)
+    expect(f.executions.find('question-npc-1')?.phase).toBe('waiting')
+    answer.resolve('explicit answer')
+    await Promise.resolve()
+    expect(delivered).toBe(false)
+    const release = Promise.withResolvers<void>()
+    const otherWaiting = f.coordinator.waitForUser('question-npc-6', () => release.promise, signal)
+    expect(await waiting).toBe('explicit answer')
+    expect(f.executions.find('question-npc-1')?.phase).toBe('working')
+    const cancel = new AbortController()
+    const cancelled = f.coordinator.waitForUser('question-npc-1', () => new Promise<void>((_resolve, reject) => {
+      cancel.signal.addEventListener('abort', () => reject(cancel.signal.reason), { once: true })
+    }), cancel.signal)
+    await vi.waitFor(() => expect(f.executions.find('question-npc-1')?.phase).toBe('waiting'))
+    cancel.abort()
+    await expect(cancelled).rejects.toBeInstanceOf(DOMException)
+    release.resolve()
+    await otherWaiting
+    expect(f.executions.find('question-npc-1')?.phase).toBe('waiting')
   })
 
   it('lets separate supporting actors wait while each of their own NPCs starts', async () => {

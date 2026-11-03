@@ -10,11 +10,13 @@ import { ComposerDraftCommitConflictError } from '../commitComposerDraft'
 import { createComposerDraftRepository } from '../composerDraftRepository'
 import { createConversationRepository } from '../conversationRepository'
 import { openBuddyDatabase } from '../database'
+import { createRunRepository } from '../runRepository'
 import { createThreadBindingRepository } from '../threadBindingRepository'
 import {
   createTurnRequestRepository,
   TurnRequestConflictError,
 } from '../turnRequestRepository'
+import { createExecutionStorageFixture } from './executionFixture'
 
 const databases: DatabaseSync[] = []
 
@@ -24,6 +26,67 @@ afterEach(() => {
 })
 
 describe('turnRequestRepository', () => {
+  it('continues a persisted question answer without reading or consuming a composer draft', () => {
+    const database = createDatabase()
+    const repository = createTurnRequestRepository(database)
+    repository.prepare(createInput())
+    database.prepare('UPDATE runs SET status = \'completed\' WHERE id = \'run-1\'').run()
+    database.prepare('UPDATE execution_state SET phase = \'closed\', cleanup_state = \'clean\' WHERE run_id = \'run-1\'').run()
+    const draft = createComposerDraftRepository(database).findById('draft-1')
+    const input = { ...createInput(), draft: null, requestId: 'question-reply:question', requestFingerprint: 'question-answer', questionReply: { requestId: 'question', sourceRunId: 'run-1' }, runId: 'reply-run', userMessageId: 'reply-message', actorIds: ['default'] }
+    expect(() => repository.prepare(input)).toThrow(TurnRequestConflictError)
+    database.prepare('INSERT INTO user_questions (id, run_id, tool_call_id, request_json) VALUES (?, ?, ?, ?)')
+      .run('question', 'run-1', 'ask-call', JSON.stringify({ id: 'question', status: 'answered', conversationId: input.conversationId, branchId: input.branchId }))
+    expect(() => repository.prepare({ ...input, branchId: 'foreign' })).toThrow(TurnRequestConflictError)
+    const reply = repository.prepare(input)
+    expect(reply.draftReceipt).toBeNull()
+    expect(reply.committedFacts?.some(fact => fact.kind === 'draft.consumed')).toBe(false)
+    expect(repository.prepare(input)).toMatchObject({ created: false, runId: reply.runId })
+    expect(createComposerDraftRepository(database).findById('draft-1')).toEqual(draft)
+    expect(database.prepare('SELECT draft_id FROM turn_requests WHERE request_id = ?').get(input.requestId)?.draft_id).toBeNull()
+    expect(database.prepare('SELECT COUNT(*) AS count FROM runs').get()?.count).toBe(2)
+  })
+
+  it('continues the question owner thread after the same actor completes unrelated work', () => {
+    const database = createDatabase()
+    const repository = createTurnRequestRepository(database)
+    const runs = createRunRepository(database)
+    repository.prepare(createInput())
+    const source = runs.findById('run-1')!
+    const threads = createThreadBindingRepository(database)
+    const original = threads.createIsolated(source.conversationId, source.buddyId, 'actor', source.startedAt).id
+    const unrelated = threads.createIsolated(source.conversationId, source.buddyId, 'actor', source.startedAt).id
+    database.prepare('UPDATE runs SET status = \'completed\', thread_id = ?, pi_session_file = ? WHERE id = ?').run(original, '/fixture/original.jsonl', source.id)
+    database.prepare('UPDATE execution_state SET phase = \'closed\', cleanup_state = \'clean\' WHERE run_id = ?').run(source.id)
+    runs.create({ ...source, id: 'unrelated-run', triggeringMessageId: 'unrelated-message', status: 'completed', threadId: unrelated, piSessionFile: '/fixture/unrelated.jsonl' })
+    database.prepare('INSERT INTO user_questions (id, run_id, tool_call_id, request_json) VALUES (?, ?, ?, ?)')
+      .run('question', source.id, 'ask-call', JSON.stringify({ id: 'question', status: 'answered', conversationId: source.conversationId, branchId: source.branchId }))
+    const input = { ...createInput(), draft: null, requestId: 'question-reply:question', requestFingerprint: 'question-answer', questionReply: { requestId: 'question', sourceRunId: source.id }, runId: 'reply-run', userMessageId: 'reply-message', actorIds: [source.buddyId] }
+    repository.prepare(input)
+    expect(runs.findById('reply-run')).toMatchObject({ threadId: original, piSessionFile: '/fixture/original.jsonl' })
+    expect(runs.findById('unrelated-run')).toMatchObject({ threadId: unrelated, piSessionFile: '/fixture/unrelated.jsonl' })
+  })
+
+  it('continues a completed NPC question on its owning actor thread and rejects another actor', () => {
+    const f = createExecutionStorageFixture()
+    databases.push(f.database)
+    f.executions.admitChild(f.child('owner', f.actor.id))
+    f.executions.claimWorking(f.fence('owner'))
+    f.executions.admitChild(f.child('question-npc', f.npc.id, 'owner'))
+    const owner = f.runs.findById('owner')!
+    f.database.prepare('UPDATE runs SET status = \'completed\'').run()
+    f.database.prepare('UPDATE execution_state SET phase = \'closed\', cleanup_state = \'clean\'').run()
+    f.database.prepare('UPDATE runs SET pi_session_file = ? WHERE id = ?').run('/fixture/actor.jsonl', owner.id)
+    f.database.prepare('UPDATE runs SET pi_session_file = ? WHERE id = ?').run('/fixture/npc.jsonl', 'question-npc')
+    f.database.prepare('INSERT INTO user_questions (id, run_id, tool_call_id, request_json) VALUES (?, ?, ?, ?)')
+      .run('question', 'question-npc', 'ask-call', JSON.stringify({ id: 'question', status: 'answered', conversationId: owner.conversationId, branchId: owner.branchId }))
+    const repository = createTurnRequestRepository(f.database)
+    const input = { ...createInput(), conversationId: owner.conversationId, branchId: owner.branchId, draft: null, requestId: 'question-reply:question', requestFingerprint: 'question-answer', questionReply: { requestId: 'question', sourceRunId: 'question-npc' }, runId: 'reply-run', userMessageId: 'reply-message', buddyId: owner.buddyId, actorIds: [owner.buddyId] }
+    expect(() => repository.prepare({ ...input, buddyId: 'default', actorIds: ['default'] })).toThrow(TurnRequestConflictError)
+    repository.prepare(input)
+    expect(f.runs.findById('reply-run')).toMatchObject({ buddyId: owner.buddyId, threadId: owner.threadId, piSessionFile: '/fixture/actor.jsonl' })
+  })
+
   it.each([
     { mode: 'current', mentioned: false, reuseWork: false },
     { mode: 'current', mentioned: true, reuseWork: true },

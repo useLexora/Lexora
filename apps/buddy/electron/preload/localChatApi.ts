@@ -8,6 +8,7 @@ import { createConversationApi } from './local-chat/conversation'
 import { createExecutionsApi } from './local-chat/executions'
 import { createPromptsApi } from './local-chat/prompts'
 import { createProvidersApi } from './local-chat/providers'
+import { createQuestionsApi } from './local-chat/questions'
 import { createRuntimeApi } from './local-chat/runtime'
 import { createSkillsApi } from './local-chat/skills'
 import { createSpacesApi } from './local-chat/spaces'
@@ -19,6 +20,7 @@ export function createLocalChatApi(): LocalChatApi {
   return Object.freeze({
     ...createBuddiesApi(),
     ...createExecutionsApi(),
+    ...createQuestionsApi(),
     ...createActivityApi(),
     ...createAutomationsApi(),
     ...createRuntimeApi(),

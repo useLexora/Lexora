@@ -1,6 +1,7 @@
 import type { LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
 import type { LocalConversationTimelinePage } from '@buddy-shared/conversation/conversationApi'
 import type { ConversationNodeDetailRequest, LocalConversationTreeNode } from '@buddy-shared/conversation/conversationTree'
+import type { UserQuestionRequest } from '@buddy-shared/questions/userQuestionApi'
 import type { LocalRun, LocalRunOutput } from '@buddy-shared/runs/runApi'
 import type { Ref } from 'vue'
 import type { ChatRunEventBuckets } from '../../model/runs/typing'
@@ -20,6 +21,7 @@ export function useConversationNodeDetail(options: {
   runEventBuckets: Readonly<Ref<ChatRunEventBuckets>>
   runOutputs: Readonly<Ref<readonly LocalRunOutput[]>>
   changeSets: Readonly<Ref<readonly LocalChangeSetSummary[]>>
+  userQuestions?: Readonly<Ref<readonly UserQuestionRequest[]>>
 }) {
   const target = shallowRef<ConversationNodeDetailRequest | null>(null)
   const data = shallowRef<LocalConversationTimelinePage | null>(null)
@@ -44,6 +46,7 @@ export function useConversationNodeDetail(options: {
     const projections = runProjector.project(buckets.value, runs.value)
     const content = transcriptProjector.project({
       includeUnanchoredTurns: true,
+      userQuestions: options.userQuestions?.value,
       changeSets: [...data.value.changeSets, ...options.changeSets.value.filter(item => item.runId === liveRun.value?.id)],
       outputs: [...data.value.outputs, ...options.runOutputs.value.filter(item => item.runId === liveRun.value?.id)],
       runProjections: projections,

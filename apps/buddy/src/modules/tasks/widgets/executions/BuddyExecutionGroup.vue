@@ -20,7 +20,7 @@ const labels = computed(() => executionLabels(props.language, root.value?.errorC
 const children = computed(() => nodes.value.slice(1).map(node => node.execution))
 const collaborating = computed(() => group.value?.mode === 'collaboration')
 const npcCount = computed(() => group.value?.subtasks.length ?? 0)
-const visible = computed(() => children.value.length > 0 || (!!root.value && (root.value.questions.length > 0 || root.value.cleanup === 'degraded')))
+const visible = computed(() => children.value.length > 0 || (!!root.value && root.value.cleanup === 'degraded'))
 const unfinished = computed(() => children.value.filter(child => child.phase !== 'closed').length)
 const attention = computed(() => nodes.value.filter(node => node.execution.kind === 'npc_child' && executionNeedsAttention(node.execution)))
 const issues = computed(() => children.value.filter(child => child.status === 'failed' || child.cleanup === 'degraded'))

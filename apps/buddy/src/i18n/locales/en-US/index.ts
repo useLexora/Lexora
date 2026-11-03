@@ -10,6 +10,7 @@ import mcp from './mcp'
 import models from './models'
 import onboarding from './onboarding'
 import pet from './pet'
+import questions from './questions'
 import settings from './settings'
 import skills from './skills'
 import speech from './speech'
@@ -17,6 +18,7 @@ import tasks from './tasks'
 import usage from './usage'
 
 export default {
+  ...questions,
   ...images,
   ...app,
   ...applicationLogs,

@@ -122,11 +122,13 @@ describe('execution canvas projection', () => {
   it('only marks actionable user questions and approvals as needing the user', () => {
     expect(executionNeedsAttention(execution('child', { questions: [question] }))).toBe(true)
     expect(executionNeedsAttention(execution('child', { waitingFor: 'approval' }))).toBe(true)
+    expect(executionNeedsAttention(execution('child', { waitingFor: 'user_answer', canAnswer: false, questions: [] }))).toBe(true)
     for (const overrides of [
       { questions: [{ ...question, audience: 'caller' as const }] },
       { questions: [question], canAnswer: false },
       { questions: [question], stopping: true },
       { questions: [question], phase: 'closed' as const, status: 'cancelled' as const },
+      { waitingFor: 'user_answer' as const, stopping: true },
       { waitingFor: 'children' as const },
       { waitingFor: 'resource' as const },
       { cleanup: 'degraded' as const },
@@ -138,6 +140,7 @@ describe('execution canvas projection', () => {
   it('prioritizes waiting, cancellation and closing over stale tool progress', () => {
     const stale = execution('child', { phase: 'waiting', progress: { phase: 'tool_executing', toolName: 'read' } })
     expect(executionStatus(stale, 'zh-CN')).toBe('等待中')
+    expect(executionStatus({ ...stale, waitingFor: 'user_answer', questions: [] }, 'zh-CN')).toBe('等待回答')
     expect(executionStatus({ ...stale, waitingFor: 'answer', questions: [question] }, 'zh-CN')).toBe('等待回答')
     expect(executionStatus({ ...stale, stopping: true }, 'zh-CN')).toBe('正在停止')
     expect(executionPhaseLabel({ ...stale, phase: 'closing' }, 'zh-CN')).toBe('正在收尾')

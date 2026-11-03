@@ -6,6 +6,7 @@ import type { ChangeCaptureService } from '../../changes/ChangeCaptureService'
 import type { MutationCoordinator } from '../../changes/MutationCoordinator'
 import type { BuddyRunEvent } from '../../events/BuddyRunEvent'
 import type { RunEventAvailability, RunEventObservation, RunEventReader } from '../../events/RunEventPorts'
+import type { UserQuestionService } from '../../questions/UserQuestionService'
 import type { ApprovalRepository } from '../../storage/approvalRepository'
 import type { ArtifactRepository } from '../../storage/artifactRepository'
 import type { ConversationRepository } from '../../storage/conversationRepository'
@@ -26,6 +27,7 @@ import { toPublicRun } from '../../runs/publicRun'
 import { readExecutionResult } from './readExecutionResult'
 
 export interface ExecutionPresentationOptions {
+  questions?: Pick<UserQuestionService, 'isWaiting' | 'onDidChange'>
   approvals: Pick<ApprovalRepository, 'hasPending'>
   conversations: Pick<ConversationRepository, 'findById' | 'listBranches' | 'listBranchMessages'>
   runs: Pick<RunRepository, 'listForTimeline'>
@@ -56,6 +58,7 @@ export class ExecutionPresentationService {
     this.#changes = new Emitter(options.onObserverError ?? (() => {}))
     this.onDidChange = this.#changes.event
     this.#subscriptions = [
+      ...(options.questions ? [options.questions.onDidChange(event => this.#publish(options.executions.find(event.runId)?.run.rootRunId))] : []),
       options.events.onDidCommit((event) => {
         const record = options.executions.find(event.runId)
         if (!record || this.#pending.has(record.run.rootRunId))
@@ -197,7 +200,7 @@ export class ExecutionPresentationService {
     const state = record.state === 'undelivered' && record.receipt ? 'accepted' : record.state
     if (value.targetRunId !== runId || value.sourceRunId !== runId)
       return null
-    if (value.kind === 'supplement' && value.origin === 'user')
+    if (value.kind === 'supplement' && value.origin === 'user' && value.purpose !== 'question_answer')
       return { kind: value.kind, messageId: value.messageId, text: value.text, createdAt, state }
     if (value.kind === 'answer') {
       const question = this.#options.mailbox.findQuestion(value.questionId)?.message
@@ -287,7 +290,7 @@ export class ExecutionPresentationService {
       usage,
       stopping: record.cancelRequestedAt !== null && record.phase !== 'closed',
       task: record.initialInput?.prompt.slice(0, 300) ?? '',
-      waitingFor: questions.some(question => question.open) ? 'answer' : isLive(record) && this.#options.approvals.hasPending(run.id) ? 'approval' : mutations.pending ? 'resource' : record.phase === 'waiting' && activeChildren ? 'children' : null,
+      waitingFor: record.phase === 'waiting' && this.#options.questions?.isWaiting(run.id) ? 'user_answer' : questions.some(question => question.open) ? 'answer' : isLive(record) && this.#options.approvals.hasPending(run.id) ? 'approval' : mutations.pending ? 'resource' : record.phase === 'waiting' && activeChildren ? 'children' : null,
       activeChildren,
       canCancel: isCancellable(record) && tree.find(member => member.run.id === run.rootRunId)?.phase !== 'closed'
         && run.branchId === scope.branchId && this.#options.conversations.findById(scope.conversationId)?.activeBranchId === scope.branchId,

@@ -31,7 +31,7 @@ const duration = computed(() => formatChatRunDuration(props.turn.startedAt, prop
   <div v-if="executionGroup?.mode === 'collaboration'" class="buddy-chat-collaboration-activity grid min-w-0 gap-1 pb-[var(--buddy-chat-gap-turn)]" data-testid="collaboration-activity">
     <BuddyChatActorActivity v-for="actor in executionGroup.activeActors" :key="actor.runId" :execution="actor" :language="language" :now="now" :stopping="stopping" />
   </div>
-  <BuddyChatActorActivity v-else-if="executionGroup?.root.questions.some(question => question.open && question.audience === 'user')" :execution="executionGroup.root" :language="language" :now="now" :stopping="stopping" class="pb-[var(--buddy-chat-gap-turn)]" />
+  <BuddyChatActorActivity v-else-if="executionGroup && (executionGroup.root.waitingFor === 'user_answer' || executionGroup.root.questions.some(question => question.open && question.audience === 'user'))" :execution="executionGroup.root" :language="language" :now="now" :stopping="stopping" class="pb-[var(--buddy-chat-gap-turn)]" />
   <div v-else-if="activity" class="buddy-chat-run-activity min-w-0 pb-[var(--buddy-chat-gap-turn)]" :class="{ 'is-retrying': activity.retry }">
     <BuddyChatActivityStatus :label="activity.label" :warning="activity.warning" :active="activity.active">
       <template #icon>

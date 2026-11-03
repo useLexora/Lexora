@@ -6,6 +6,7 @@ import type {
 import type { BuddyComposerDraftScope } from '../../../shared/conversation/composerDraft'
 import type { InputMaterialProjectionState } from '../../../shared/conversation/inputMaterialProjection'
 import type { BuddyThinkingLevel } from '../../../shared/conversation/modelSelection'
+import type { UserQuestionRequest } from '../../../shared/questions/userQuestionApi'
 import type { SkillReference } from '../../../shared/skills/skillApi'
 import type { BuddyAgentRunner } from '../agent/execution/BuddyAgentRunner'
 import type { BuddyTurnLauncher } from '../agent/execution/BuddyTurnLauncher'
@@ -58,12 +59,15 @@ import {
   bindResourceAttachments,
   buddyUserContentToText,
   buddyUserMessageContentV1Schema,
+  createBuddyUserContent,
   getBuddyUserContentActorReferences,
   getResourceAttachmentIds,
   readBuddyUserMessageContent,
 } from '../../../shared/conversation/buddyUserContent'
 import { inputMaterialInlineBytes } from '../../../shared/conversation/inputMaterialProjection'
 import { isBuddyThinkingLevel } from '../../../shared/conversation/modelSelection'
+import { isExecutionProfileWithin } from '../../../shared/permissions/executionProfile'
+import { renderUserQuestionReply, userQuestionReplyText } from '../../../shared/questions/userQuestionReply'
 import { canReadReferenceSnapshots } from '../conversations/referenceSnapshotToolContract'
 import { resolveGrantedPath } from '../directories/resolveGrantedPath'
 import { getModelFileInputMimeTypes } from '../providers/modelCapabilities'
@@ -185,6 +189,57 @@ export class ChatTurnService {
       return this.#options.turnRequests.prepare(prepared)
     })
     return this.#launchPreparedTurn(request)
+  }
+
+  continueQuestion(request: UserQuestionRequest, owner: RunRecord): Promise<string> {
+    return this.#run(() => this.#continueQuestion(request, owner))
+  }
+
+  async #continueQuestion(request: UserQuestionRequest, owner: RunRecord): Promise<string> {
+    const requestId = `question-reply:${request.id}`
+    const previous = this.#options.turnRequests.findByRequestId(requestId)
+    if (previous)
+      return previous.runId
+    const conversation = this.#requireActiveConversation(request.conversationId)
+    if (conversation.activeBranchId !== request.branchId)
+      throw new BuddyServiceError('VALIDATION_FAILED')
+    const resolved = await this.#options.definitions.resolve({ buddyId: owner.buddyId, kind: 'actor', conversationId: conversation.id, requestedModel: null })
+    const prompt = `The user answered an earlier question. Continue the original task using this answer. If the source was an NPC, resume that work only when needed. Existing permissions still apply.\n${renderUserQuestionReply(request)}`
+    const selection = resolved.selection
+    await this.#options.inputValidation.validate({ actorId: owner.buddyId, threadId: owner.threadId, conversationId: conversation.id, branchId: request.branchId, modelId: selection.modelId, providerId: selection.providerId, contextWindow: selection.contextWindow, maxTokens: selection.maxTokens, prompt, attachments: [] })
+    this.#stopping.signal.throwIfAborted()
+    const source = this.#options.runs.findById(request.runId)
+    const ceiling = source?.actorSnapshot?.settings.limits.fileAccess === 'read_only' || isReviewUserMessage(this.#options.conversations.listBranchMessages(conversation.id, request.branchId).find(message => message.id === owner.triggeringMessageId)?.content)
+      ? 'read_only'
+      : source?.executionProfile ?? owner.executionProfile
+    const prepared = this.#options.turnRequests.prepare({
+      questionReply: { requestId: request.id, sourceRunId: request.runId },
+      draft: null,
+      requestId,
+      requestFingerprint: createHash('sha256').update(renderUserQuestionReply(request)).digest('hex'),
+      conversationId: conversation.id,
+      branchId: request.branchId,
+      spaceId: conversation.spaceId,
+      buddyId: owner.buddyId,
+      actorIds: [owner.buddyId],
+      actorSnapshot: resolved.definition,
+      expectedActorModelSelection: resolved.memberModelSelection,
+      approvalPolicy: conversation.approvalPolicy,
+      executionProfile: conversation.executionProfile,
+      runExecutionProfile: isExecutionProfileWithin(conversation.executionProfile, ceiling) ? conversation.executionProfile : ceiling,
+      model: selection.modelId,
+      provider: selection.providerId,
+      modelParameters: toModelParameters(selection),
+      runInput: { prompt, attachmentIds: [], contextItems: [], reasoning: normalizeThinkingLevel(selection.reasoning) ?? null, serviceTier: selection.serviceTier },
+      runId: randomUUID(),
+      userMessageId: randomUUID(),
+      title: null,
+      createdAt: new Date().toISOString(),
+      attachmentBindings: [],
+      userMessageContent: { userContent: createBuddyUserContent(userQuestionReplyText(request)), resourceSnapshots: [], questionReply: { requestId: request.id } },
+    })
+    await this.#launchPreparedTurn(prepared)
+    return prepared.runId
   }
 
   async prepareStart(input: BuddyStartTurnInput) {

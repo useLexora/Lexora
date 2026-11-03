@@ -18,15 +18,15 @@ import { currentPlatform } from '../../platform/currentPlatform'
 import { resolveWindowsPowerShell } from '../../platform/windows/powerShell'
 import { artifactsChanged } from '../../shared/artifacts/artifactApi'
 import { automationNotifications } from '../../shared/automation/automationApi'
-
 import { buddiesChanged } from '../../shared/buddies/buddyApi'
 import { changesChanged } from '../../shared/changes/changeApi'
 import { connectorNotifications } from '../../shared/connectors/connectorApi'
-import { contextPanelRpc, contextPanelStateSchema } from '../../shared/context-panel/contextPanel'
 
+import { contextPanelRpc, contextPanelStateSchema } from '../../shared/context-panel/contextPanel'
 import { buddyUserMessageContentV1Schema, getBuddyUserContentActorReferences } from '../../shared/conversation/buddyUserContent'
 import { composerResourcesChanged } from '../../shared/conversation/composerApi'
 import { CONVERSATION_CHANGED, conversationTimelineChanged } from '../../shared/conversation/conversationApi'
+
 import { Emitter } from '../../shared/events/Emitter'
 import { executionsChanged } from '../../shared/executions/executionPresentationApi'
 import { extensionActionRpc } from '../../shared/extensions/extensionActionApi'
@@ -42,6 +42,7 @@ import { notificationsChanged } from '../../shared/notifications/notificationApi
 import { ApplicationEvents as EventPublisher } from '../../shared/observability/ApplicationEvents'
 import { observeLifecycleDiagnostics } from '../../shared/observability/lifecycleDiagnostics'
 import { promptsRpc } from '../../shared/prompts/promptApi'
+import { userQuestionsChanged } from '../../shared/questions/userQuestionApi'
 import { taskMetricsChanged } from '../../shared/runs/taskMetricsApi'
 import { openExternalResultSchema } from '../../shared/runtime/credentialProtocol'
 import { runtimePreferencesRpc, runtimePreferencesSchema } from '../../shared/runtime/runtimePreferences'
@@ -169,6 +170,9 @@ import { ProviderDependents } from './providers/ProviderDependents'
 import { registerProviderRpc } from './providers/registerProviderRpc'
 import { refreshProviderSpeechModels, registerProviderSpeechRpc } from './providers/registerProviderSpeechRpc'
 import { resolveInteractiveModelSelection } from './providers/resolveInteractiveModelSelection'
+import { registerUserQuestionRpc } from './questions/registerUserQuestionRpc'
+import { UserQuestionDelivery } from './questions/UserQuestionDelivery'
+import { UserQuestionService } from './questions/UserQuestionService'
 import { BuddyServiceError, registerRuntimeRequest } from './rpc/runtimeRequest'
 import { ConversationStatusService } from './runs/ConversationStatusService'
 import { registerRunRpc } from './runs/registerRunRpc'
@@ -407,6 +411,8 @@ export async function startBuddyService(
     }, ['runtime.spaces', 'runtime.file_engine'])
     let runner!: BuddyAgentRunner
     let turnLauncher!: BuddyTurnLauncher
+    let questions!: UserQuestionService
+    let questionDelivery!: UserQuestionDelivery
     let delegation!: ExecutionDelegationService
     const approvalService = await host.start('runtime.approvals', ({ defer }) => {
       const service = new ApprovalService({
@@ -995,6 +1001,7 @@ export async function startBuddyService(
       imageReading,
       getImagePreferences,
       fileResources,
+      questions: { ask: (...args) => questions.ask(...args), wait: (...args) => questions.wait(...args) },
       delegation: { pending: (...arguments_) => delegation.pending(...arguments_), execute: (...arguments_) => delegation.execute(...arguments_), assertShellExecutionAllowed: runId => delegation.assertShellExecutionAllowed(runId) },
       followUp: async (runId, signal) => { await chatQueueService?.followUp(runId, signal) },
       prepareForRun: signal => connectorService.prepareForRun(signal),
@@ -1156,6 +1163,15 @@ export async function startBuddyService(
       defer(() => service.dispose())
       return service
     })
+    questions = await host.start('runtime.user_questions', ({ defer }) => {
+      const service = new UserQuestionService({ database: options.database, executions: executionRecords, conversations, coordinator: executionCoordinator, deliver: request => questionDelivery.deliver(request) })
+      const subscription = service.onDidChange(event => options.rpc.notify(userQuestionsChanged.method, { conversationId: event.conversationId, branchId: event.branchId, runId: event.runId }))
+      defer(async () => {
+        subscription.dispose()
+        await service.dispose()
+      })
+      return service
+    })
     delegation = new ExecutionDelegationService({
       readResult: runId => readExecutionResult(options.eventLog, runId),
       readToolOptions: signal => readBuddyToolOptions(sessionExtensionServices.createCapabilities, agentDirectory, signal, sessionExtensionServices.shells),
@@ -1189,6 +1205,7 @@ export async function startBuddyService(
     })
     const executionPresentation = await host.start('runtime.execution_presentation', ({ defer }) => {
       const service = new ExecutionPresentationService({
+        questions,
         approvals: approvalsRepository,
         conversations,
         runs,
@@ -1247,6 +1264,11 @@ export async function startBuddyService(
         runRecoveryService.recoverQuarantinedRun(run.id)
       })
       defer(() => quarantine.dispose())
+      const settledQuestions = service.onDidSettle((settled) => {
+        if (!settled.stopping)
+          void questions.executionSettled(settled.runId).catch(() => record({ event: 'question.delivery_failed', level: 'error' }))
+      })
+      defer(() => settledQuestions.dispose())
       const settledDiagnostics = service.onDidSettle(settled => record({
         event: 'execution.settled',
         level: settled.cleanup === 'degraded' ? 'warn' : 'info',
@@ -1450,9 +1472,12 @@ export async function startBuddyService(
       defer(() => service.dispose())
       return service
     })
+    questionDelivery = new UserQuestionDelivery({ database: options.database, executions: executionRecords, mailbox: createMailboxRepository(options.database), coordinator: executionCoordinator, runner, turns: chatTurnService })
     chatQueueService = await host.start('runtime.chat-queue', async ({ defer }) => {
       const service = new ChatQueueService({ availability: conversationAvailability, queue: chatQueue, turns: chatTurnService, requests: turnRequests, launcher: turnLauncher, runner, runs, runInputs, getRunPermissionCeiling, eventLog: options.eventLog, onObserverError: () => record({ event: 'queue.observer_failed', level: 'error' }) })
       const actionInputs = service.onDidChange((event) => {
+        if (event.kind === 'cancelled')
+          void questions.retryPending(event.scope).catch(() => record({ event: 'questions.delivery_reconcile_failed', level: 'error' }))
         if (event.kind === 'enqueued' || event.kind === 'cancelled') {
           const active = chatQueue.activeRun(event.scope)
           if (active)
@@ -1640,6 +1665,7 @@ export async function startBuddyService(
       )
       register(registerRuntimeRequest(options.rpc, promptsRpc.get, () => getBuiltinPromptCatalog()))
       register(registerContextPanelRpc({ rpc: options.rpc, runs, events: options.eventLog }))
+      register(registerUserQuestionRpc({ rpc: options.rpc, service: questions }))
       register(registerExecutionRpc({ rpc: options.rpc, service: executionPresentation, inputs: new ExecutionComposerInputService({ drafts: composerDraftService, conversations, executions: executionRecords, getRunPermissionCeiling, mailbox: createMailboxRepository(options.database), delivery: executionPresentation }) }))
       register(
         registerAttachmentRpc({

@@ -48,6 +48,7 @@ const browserOperations = {
 } as const satisfies Record<string, ChatToolRegistration>
 
 const builtins: Readonly<Record<string, ChatToolRegistration>> = {
+  lexora_ask_user: { category: 'other', icon: 'tool', label: 'questions.toolLabel' },
   bash: cards.terminal,
   lexora_shell: cards.terminal,
   lexora_host_shell: cards.terminal,

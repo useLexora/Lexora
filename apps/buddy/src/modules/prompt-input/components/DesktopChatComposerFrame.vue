@@ -28,7 +28,7 @@ withDefaults(defineProps<{
     <div class="desktop-chat-composer relative w-full min-w-0 border-1 border-solid border-border-strong rounded-[10px] bg-composer text-composer-fg p-[0.7rem] shadow-soft focus-within:border-focus" :style="{ borderRadius }" data-theme-surface="input">
       <slot name="overlay" />
 
-      <div class="relative">
+      <div class="relative min-w-0">
         <NScrollbar class="desktop-chat-composer__editor-scrollbar">
           <slot name="editor" />
         </NScrollbar>
@@ -84,8 +84,9 @@ withDefaults(defineProps<{
 }
 
 :deep(.desktop-chat-composer__editor-scrollbar) {
-  min-height: calc(2lh + var(--desktop-chat-composer-editor-padding-top) + var(--desktop-chat-composer-editor-padding-bottom));
-  max-height: calc(8lh + var(--desktop-chat-composer-editor-padding-top) + var(--desktop-chat-composer-editor-padding-bottom));
+  --editor-height-limit: max(calc(1lh + var(--desktop-chat-composer-editor-padding-top) + var(--desktop-chat-composer-editor-padding-bottom)), var(--desktop-chat-composer-editor-max-height, 100vh));
+  min-height: min(calc(2lh + var(--desktop-chat-composer-editor-padding-top) + var(--desktop-chat-composer-editor-padding-bottom)), var(--editor-height-limit));
+  max-height: min(calc(8lh + var(--desktop-chat-composer-editor-padding-top) + var(--desktop-chat-composer-editor-padding-bottom)), var(--editor-height-limit));
   font-family: var(--buddy-font-body);
   font-size: var(--buddy-chat-user-font-size);
   line-height: var(--buddy-chat-final-line-height);

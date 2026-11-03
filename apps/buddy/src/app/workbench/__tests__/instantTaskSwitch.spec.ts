@@ -20,7 +20,7 @@ import { useTaskInputLifecycle } from '../useTaskInputLifecycle'
 vi.mock('../DesktopTaskContribution.vue', () => ({ default: {} }))
 vi.mock('../DesktopFileContribution.vue', () => ({ default: {} }))
 const factory = vi.hoisted(() => ({ create: (_options: unknown): unknown => null }))
-vi.mock('@/modules/tasks', () => ({ useTaskCapability: (options: unknown) => factory.create(options) }))
+vi.mock('@/modules/tasks', async importOriginal => ({ ...await importOriginal<typeof import('@/modules/tasks')>(), useTaskCapability: (options: unknown) => factory.create(options) }))
 const cleanups: Array<() => void | Promise<void>> = []
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()

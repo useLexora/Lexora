@@ -311,6 +311,39 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
     })
   }
 
+  async waitForUser<T>(runId: string, wait: (signal: AbortSignal) => Promise<T>, signal: AbortSignal, deliveredMessageIds: readonly string[] = []): Promise<T | null> {
+    await this.#options.mutations.waitForRun(runId, signal)
+    const controller = new AbortController()
+    const waitingSignal = AbortSignal.any([signal, controller.signal])
+    const input = async () => {
+      for (;;) {
+        waitingSignal.throwIfAborted()
+        const record = this.#require(runId)
+        this.#options.executions.assertCurrent(this.#fence(record))
+        const revision = this.#revision(record.run.rootRunId)
+        if (this.#options.mailbox.listUnconsumed(runId).some(message => !deliveredMessageIds.includes(message.messageId) && !isExecutionProgress(message))
+          || this.#inputs.get(runId)?.hasPendingSteering()) {
+          return null
+        }
+        if (record.phase === 'working') {
+          this.#options.executions.markWaiting(this.#fence(record))
+          this.#changed(record.run.rootRunId)
+        }
+        await this.#wait(record.run.rootRunId, revision, waitingSignal)
+      }
+    }
+    try {
+      const result = await Promise.race([input(), wait(waitingSignal)])
+      signal.throwIfAborted()
+      return result
+    }
+    finally {
+      controller.abort()
+      if (!signal.aborted)
+        await this.#claimWorking(runId, signal)
+    }
+  }
+
   async wait(runId: string, targetRunIds: readonly string[], timeoutMs: number, signal: AbortSignal, deliveredMessageIds: readonly string[] = []): Promise<'changed' | 'timedout'> {
     const deadline = AbortSignal.timeout(timeoutMs)
     const waitingSignal = AbortSignal.any([signal, deadline])

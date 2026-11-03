@@ -29,6 +29,8 @@ export function groupChatTranscriptRows(
     return [...rows]
   }
   const owner = (row: ChatTranscriptRow) => {
+    if (row.kind === 'user-question')
+      return byRoot.get(row.request.rootRunId)
     if (row.kind === 'execution-input')
       return byRoot.get(row.input.rootRunId)
     const runId = row.kind === 'message'

@@ -12,7 +12,7 @@ import { useComposerSubmissionFocus } from './useComposerSubmissionFocus'
 import { useTaskComposer } from './useTaskComposer'
 
 const props = defineProps<TaskComposerHostProps>()
-defineSlots<{ leadingContext?: () => unknown, decoration?: () => unknown }>()
+defineSlots<{ leadingContext?: () => unknown, decoration?: () => unknown, accessory?: () => unknown }>()
 const router = useRouter()
 const { chat } = useDesktopUi()
 const composerRef = useTemplateRef<InstanceType<typeof DesktopChatComposer>>('composerRef')
@@ -68,6 +68,9 @@ function manageSkills() {
     @update-model="composer.selectModel"
     @update-service-tier="composer.setSelectedServiceTier"
   >
+    <template v-if="$slots.accessory" #accessory>
+      <slot name="accessory" />
+    </template>
     <template #decoration>
       <slot name="decoration" />
     </template>

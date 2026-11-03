@@ -21,6 +21,7 @@ import type { FileResourceCoordinator } from '../../files/FileResourceCoordinato
 import type { ImageReadingMaterialWriter } from '../../images/ImageReadingMaterialStore'
 import type { ImageReadingService } from '../../images/ImageReadingService'
 import type { NetworkPermissionsStore } from '../../permissions/NetworkPermissionsClient'
+import type { UserQuestionService } from '../../questions/UserQuestionService'
 import type { ShellSandboxClient } from '../../sandbox/ShellSandboxClient'
 import type { ExtensionShellRegistry } from '../../sandbox/ShellSelection'
 import type { BuddyInputReferenceStore } from '../context/BuddyInputReference'
@@ -40,6 +41,7 @@ import { ToolExecutionPermissions } from '../../permissions/ToolExecutionPermiss
 import { SandboxDirectoryPermissions } from '../../sandbox/SandboxDirectoryPermissions'
 import { createShellCapability } from '../../sandbox/shellCapability'
 import { resolveShellExecution } from '../../sandbox/shellExecution'
+import { createAskUserCapability } from './askUserCapability'
 import { createMutationToolWrapper } from './changeCaptureExtension'
 import { createChatQueueExtension } from './chatQueueExtension'
 import { createCodemodeCapability } from './codemodeExtension'
@@ -60,6 +62,7 @@ export interface BuddySessionExtensionServices {
   networkPermissions?: NetworkPermissionsStore
   imageReading?: Pick<ImageReadingService, 'read' | 'allowsNativeInput'>
   getImagePreferences?: (signal: AbortSignal) => Promise<ImagePreferences>
+  questions?: Pick<UserQuestionService, 'ask' | 'wait'>
   delegation?: Pick<ExecutionDelegationService, 'execute' | 'pending' | 'assertShellExecutionAllowed'>
   followUp?: (runId: string, signal: AbortSignal) => Promise<void>
   prepareForRun?: (signal: AbortSignal) => Promise<void>
@@ -258,6 +261,8 @@ export async function createBuddySessionExtensions(
       assertExecutionAllowed: ({ run }) => services.delegation?.assertShellExecutionAllowed(run.runId),
     })
     capabilities.push(shellCapability)
+    if (services.questions && options.sessionMode === 'interactive')
+      capabilities.push(createAskUserCapability({ service: services.questions, runContext }))
     if (services.delegation) {
       capabilities.push(createDelegationCapability({
         service: services.delegation,

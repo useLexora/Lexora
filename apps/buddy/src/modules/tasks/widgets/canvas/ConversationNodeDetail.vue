@@ -6,6 +6,7 @@ import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { Dismiss20Regular, Keyboard20Regular, Wand20Regular } from '@vicons/fluent'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
+import BuddyQuestionHistory from '../questions/BuddyQuestionHistory.vue'
 import BuddyChatAgentTurn from '../transcript/BuddyChatAgentTurn.vue'
 import BuddyChatAgentTurnFlow from '../transcript/BuddyChatAgentTurnFlow.vue'
 import BuddyChatCompactionRow from '../transcript/BuddyChatCompactionRow.vue'
@@ -63,6 +64,7 @@ const { writeClipboardText } = useChatContent()
           <BuddyChatAgentTurn :turn="row.turn" :execution-status="row.executionStatus" :show-identity="row.showIdentity" :show-outcome="row.showOutcome" :language="language" />
           <BuddyChatTokenUsage v-if="row.ownsResultActions && row.turn.usage" :usage="row.turn.usage" :language="language" />
         </template>
+        <BuddyQuestionHistory v-else-if="row.kind === 'user-question'" :request="row.request" :language="language" />
         <BuddyChatRunActivity v-else-if="row.kind === 'activity'" :turn="row.turn" :language="language" :stopping="stoppingRunId === row.turn.runId" />
         <BuddyChatAgentTurnFlow v-else-if="row.kind === 'activity-flow'" :nodes="row.nodes" :failure-detail-text="null" :language="language" />
         <BuddyChatCompactionRow v-else-if="row.kind === 'compaction'" :node="row.compaction" :language="language" />

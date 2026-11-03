@@ -4,7 +4,7 @@ import type { ResourceRef } from '@/workbench/common/workbench'
 import { Emitter } from '@buddy-shared/events/Emitter'
 import { copyEventSnapshot } from '@buddy-shared/events/eventSnapshot'
 import { effectScope } from 'vue'
-import { useTaskCapability } from '@/modules/tasks'
+import { createUserQuestionInteractionState, useTaskCapability } from '@/modules/tasks'
 import { resourceKey } from '@/workbench/common/workbench'
 
 export interface TaskWorkspaceChange {
@@ -14,6 +14,7 @@ export interface TaskWorkspaceChange {
 }
 
 export class TaskWorkspacePool {
+  readonly #questionInteraction = createUserQuestionInteractionState()
   readonly #changes = new Emitter<TaskWorkspaceChange>(() => console.error('TASK_WORKSPACE_OBSERVER_FAILED'))
   readonly onDidChange = this.#changes.event
   readonly #options: Omit<UseTaskCapabilityOptions, 'initialTarget'>
@@ -68,6 +69,7 @@ export class TaskWorkspacePool {
     let currentResource = resource
     const task = scope.run(() => useTaskCapability({
       ...this.#options,
+      questionInteraction: this.#questionInteraction,
       initialTarget: {
         draftKey: resource.scheme === 'draft' ? resource.id : undefined,
         conversationId: conversation?.id ?? null,

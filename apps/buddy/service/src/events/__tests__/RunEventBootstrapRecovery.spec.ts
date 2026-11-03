@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { openBuddyDatabase } from '../../storage/database'
-import { BUDDY_SCHEMA_MIGRATIONS } from '../../storage/schema'
+import { BUDDY_SCHEMA_MIGRATIONS, BUDDY_SCHEMA_VERSION } from '../../storage/schema'
 import { createRunEventLog } from '../createRunEventLog'
 import { RunEventProjector } from '../RunEventProjector'
 import { RUN_EVENT_PROJECTION_VERSION } from '../RunEventRecovery'
@@ -37,7 +37,7 @@ describe('v40 bootstrap checkpoint certification', () => {
     const before = projection(f.database)
     const content = await readFile(f.file, 'utf8')
     await f.reopen()
-    expect(f.database.prepare('PRAGMA user_version').get()).toEqual({ user_version: 40 })
+    expect(f.database.prepare('PRAGMA user_version').get()).toEqual({ user_version: BUDDY_SCHEMA_VERSION })
     expect(maintenance(f.database)).toMatchObject({
       recovery_pending: 1,
       compaction_pending: 1,

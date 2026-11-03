@@ -20,6 +20,7 @@ export interface OpenBuddyDatabaseOptions {
 }
 
 const BUDDY_CURRENT_SCHEMA_COLUMNS = {
+  user_questions: ['id', 'run_id', 'tool_call_id', 'request_json'],
   automations: ['actor_id'],
   automation_occurrences: ['actor_snapshot_json'],
   runs: ['scheduling_lane', 'buddy_id', 'actor_snapshot_json', 'model_override_json', 'root_run_id', 'parent_run_id', 'execution_kind', 'thread_id', 'generation'],

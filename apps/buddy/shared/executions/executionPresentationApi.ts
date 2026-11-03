@@ -42,7 +42,7 @@ export const executionPresentationSchema = z.object({
   usage: runTokenUsageSchema.nullable().default(null),
   stopping: z.boolean(),
   task: z.string().max(300),
-  waitingFor: z.enum(['answer', 'approval', 'children', 'resource']).nullable(),
+  waitingFor: z.enum(['answer', 'user_answer', 'approval', 'children', 'resource']).nullable(),
   activeChildren: z.number().int().nonnegative(),
   canCancel: z.boolean(),
   canAnswer: z.boolean(),

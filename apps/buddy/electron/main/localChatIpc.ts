@@ -9,6 +9,7 @@ import { registerExecutionsIpc } from './local-chat/executions'
 import { registerLocalChatNotifications } from './local-chat/notifications'
 import { registerPromptsIpc } from './local-chat/prompts'
 import { registerProvidersIpc } from './local-chat/providers'
+import { registerQuestionsIpc } from './local-chat/questions'
 import { createLocalChatIpcContext } from './local-chat/registrar'
 import { registerRuntimeIpc } from './local-chat/runtime'
 import { registerSkillsIpc } from './local-chat/skills'
@@ -23,6 +24,7 @@ export function registerLocalChatIpc(options: RegisterLocalChatIpcOptions): () =
   const context = createLocalChatIpcContext(options)
   registerBuddiesIpc(context)
   registerExecutionsIpc(context)
+  registerQuestionsIpc(context)
   registerRuntimeIpc(context)
   registerActivityIpc(context)
   registerAutomationsIpc(context)

@@ -43,9 +43,20 @@ function projectChatTranscriptState(input: ChatTranscriptProjectionInput) {
       item.kind === 'message',
   )
   const runEvents = input.runEvents ?? []
-  const agentTurns = input.runProjections?.map(projection => projection.turn)
+  const sourceTurns = input.runProjections?.map(projection => projection.turn)
     ?? input.agentTurns
     ?? projectChatAgentTurns(runEvents, input.runs)
+  const questionCalls = new Map<string, Set<string>>()
+  for (const request of input.userQuestions ?? []) {
+    if (!request.toolCallId)
+      continue
+    const calls = questionCalls.get(request.runId) ?? new Set<string>()
+    calls.add(request.toolCallId)
+    questionCalls.set(request.runId, calls)
+  }
+  const agentTurns = sourceTurns.map(turn => questionCalls.has(turn.runId)
+    ? { ...turn, nodes: turn.nodes.filter(node => node.kind !== 'tool' || !node.toolCallId || !questionCalls.get(turn.runId)!.has(node.toolCallId)) }
+    : turn)
   const recoveryNotices = input.runProjections
     ? selectChatRecoveryNotices(
         input.timelineItems,
@@ -89,6 +100,7 @@ function projectChatTranscriptState(input: ChatTranscriptProjectionInput) {
     input.changeSets ?? [],
     input.includeUnanchoredTurns,
     input.executionGroups,
+    input.userQuestions,
   )) {
     rows.push(row.kind === 'message' && streamingById.has(row.message.id)
       ? { ...row, message: streamingById.get(row.message.id)!, streaming: true, showActions: false }

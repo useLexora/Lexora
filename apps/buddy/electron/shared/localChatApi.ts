@@ -38,6 +38,7 @@ import type { ModelCapabilityOverrides } from '../../shared/providers/providerCa
 import type { ModelCatalogReference } from '../../shared/providers/providerCatalog'
 import type { ProviderRequestHeader } from '../../shared/providers/providerHeaders'
 import type { ProviderModelType } from '../../shared/providers/providerModelType'
+import type { UserQuestionRequest, UserQuestionsChanged, UserQuestionSubmit, UserQuestionTarget } from '../../shared/questions/userQuestionApi'
 import type { LocalRun, LocalRunEvent } from '../../shared/runs/runApi'
 import type { LocalTaskMetrics, TaskMetricsChanged } from '../../shared/runs/taskMetricsApi'
 import type { LocalBuddyServiceSupervisorState } from '../../shared/runtime/serviceState'
@@ -51,6 +52,11 @@ import type { LocalUsageAnalytics, LocalUsageTopTasks, LocalUsageTrend, UsagePer
 import type { LocalUsageSnapshot } from '../../shared/usage/usageApi'
 
 export const LOCAL_CHAT_IPC_CHANNELS = {
+  questionsList: 'lexora:buddy:questions:list',
+  questionsAnswer: 'lexora:buddy:questions:answer',
+  questionsCancel: 'lexora:buddy:questions:cancel',
+  questionsRetry: 'lexora:buddy:questions:retry',
+  questionsChanged: 'lexora:buddy:questions:changed',
   executionsList: 'lexora:local-chat:executions:list',
   executionsDetail: 'lexora:local-chat:executions:detail',
   executionsInputs: 'lexora:local-chat:executions:inputs',
@@ -262,6 +268,13 @@ interface LocalMutationResult {
 }
 
 export interface LocalChatApi {
+  questions: {
+    list: (input: ExecutionScope) => Promise<UserQuestionRequest[]>
+    answer: (input: UserQuestionSubmit) => Promise<UserQuestionRequest>
+    retry: (input: UserQuestionTarget) => Promise<UserQuestionRequest>
+    cancel: (input: UserQuestionTarget) => Promise<UserQuestionRequest>
+    onChanged: (listener: (event: UserQuestionsChanged) => void) => () => void
+  }
   executions: {
     list: (input: ExecutionScope) => Promise<readonly LocalExecution[]>
     detail: (input: ExecutionTarget) => Promise<LocalExecutionDetail>

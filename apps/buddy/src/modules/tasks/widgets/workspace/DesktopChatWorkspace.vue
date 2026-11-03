@@ -15,6 +15,7 @@ import { useConversationNodeDetail } from '../../state/conversations/useConversa
 import { provideExecutionTree } from '../../state/runs/chatExecutionContext'
 import ConversationNodeDetail from '../canvas/ConversationNodeDetail.vue'
 import { useConversationDetailResize } from '../canvas/useConversationDetailResize'
+import BuddyUserQuestions from '../questions/BuddyUserQuestions.vue'
 import { useChatQuoteNavigation } from '../quotes/useChatQuoteNavigation'
 import { useTaskResultRead } from '../task-index/useTaskResultRead'
 import { provideChatBuddyIdentity } from '../transcript/chatBuddyIdentity'
@@ -49,6 +50,7 @@ const nodeDetail = useConversationNodeDetail({
   runEventBuckets: computed(() => props.workspace.transcript.runEventBuckets.value),
   runOutputs: computed(() => props.workspace.transcript.runOutputs.value),
   changeSets: computed(() => props.workspace.transcript.changeSets.value),
+  userQuestions: computed(() => props.workspace.questions.records.value),
 })
 const detailVisible = computed(() => props.viewMode === 'canvas' && nodeDetail.visible.value)
 const selectedNodeId = computed(() => {
@@ -157,6 +159,20 @@ async function openModelSelector() {
 const quoteContextKey = computed(() => [props.workspace.session.activeConversationId.value, props.workspace.session.activeBranchId.value, props.workspace.composer.editorKey.value].join(':'))
 const quoteOwnerKey = computed(() => [quoteContextKey.value, props.viewMode, nodeDetail.visible.value, nodeDetail.target.value?.kind === 'question' ? nodeDetail.target.value.messageId : nodeDetail.target.value?.runId].join(':'))
 const quoteDisabled = computed(() => isLoading.value || props.workspace.execution.isSending.value || props.workspace.execution.isMutatingBranch.value)
+const hasQuestions = computed(() => props.workspace.questions.pending.value.length > 0 || props.workspace.questions.loadError.value)
+const questionExpanded = computed(() => {
+  const request = props.workspace.questions.selected.value
+  return !!request && props.workspace.questions.expandedIds.value.has(request.id)
+})
+async function openQuestionInChat() {
+  const request = props.workspace.questions.selected.value
+  if (request && !props.workspace.questions.expandedIds.value.has(request.id))
+    props.workspace.questions.toggleExpanded(request.id)
+  emit('showChat')
+  await nextTick()
+  viewport.returnToLatest()
+}
+
 const hasNotice = computed(() => (
   !!props.workspace.status.visibleChatBlocker.value
   || !!props.workspace.status.runtimeError.value
@@ -269,6 +285,7 @@ function openDetailChanges(id: string) {
           :stopping-run-id="workspace.execution.stoppingRunId.value"
           :followup-message-id="followup?.assistantMessageId"
           class="desktop-chat-page__messages"
+          @retry-question="workspace.questions.retry"
           @activate-branch="workspace.transcript.activateBranch"
           @content-resize="viewport.handleContentResize"
           @edit-user-message="workspace.execution.editUserMessage"
@@ -281,7 +298,11 @@ function openDetailChanges(id: string) {
           @return-to-latest="viewport.returnToLatest"
           @select-outline-message="viewport.revealOutlineMessage"
           @scroll="(metrics, options) => viewport.handleScroll(metrics, options)"
-        />
+        >
+          <template v-if="questionExpanded" #tail>
+            <BuddyUserQuestions :controller="workspace.questions" :language="language" />
+          </template>
+        </DesktopChatTranscript>
       </main>
 
       <div
@@ -302,7 +323,7 @@ function openDetailChanges(id: string) {
         />
       </aside>
 
-      <footer v-show="composerVisible" class="desktop-chat-page__composer-dock [grid-area:composer] relative z-2 flex-none pt-0 pr-[var(--buddy-chat-inline-gutter)] pb-4 pl-[var(--buddy-chat-inline-gutter)]" :data-composer-placement="composerVisible ? detailVisible ? 'detail' : 'bottom' : 'hidden'">
+      <footer v-show="composerVisible" class="desktop-chat-page__composer-dock [grid-area:composer] relative z-2 min-w-0 flex-none pt-0 pr-[var(--buddy-chat-inline-gutter)] pb-4 pl-[var(--buddy-chat-inline-gutter)]" :data-composer-placement="composerVisible ? detailVisible ? 'detail' : 'bottom' : 'hidden'">
         <div class="grid grid-cols-[minmax(0,_1fr)] min-w-0 w-[min(100%,_var(--buddy-chat-reading-width))] gap-[0.55rem] my-0 mx-auto">
           <DesktopTaskNotices
             :change-recovery="workspace.changeRecovery"
@@ -325,13 +346,16 @@ function openDetailChanges(id: string) {
             <DesktopTaskComposer
               ref="composerRef"
               :composer="workspace.composer"
-              :inline-materials="isEmpty && viewMode !== 'canvas'"
+              :inline-materials="(isEmpty && viewMode !== 'canvas') || hasQuestions"
               :welcome-layout="isEmpty && viewMode !== 'canvas' && workspace.welcomeEnabled.value"
               :skill-scope-id="workspace.session.spaceId.value"
               :focus-ready="active && composerVisible && !isLoading && workspace.status.runtimeState.value.status === 'ready'"
               :execution="workspace.execution"
               :language="language"
             >
+              <template v-if="hasQuestions && (viewMode === 'canvas' || !questionExpanded)" #accessory>
+                <BuddyUserQuestions class="mb-[0.55rem]" :controller="workspace.questions" :language="language" compact @open="openQuestionInChat" />
+              </template>
               <template #decoration>
                 <DesktopWelcomeCompanion
                   v-if="isEmpty && viewMode !== 'canvas' && workspace.welcomeEnabled.value && workspace.welcomeCompanionEnabled.value && !hasNotice"
@@ -414,6 +438,10 @@ function openDetailChanges(id: string) {
 }
 
 @container task-pane (max-height: 620px) {
+  .desktop-chat-page {
+    --desktop-chat-composer-editor-max-height: calc(35cqh - 5rem);
+  }
+
   .desktop-chat-page.is-empty {
     padding-bottom: 2rem;
   }

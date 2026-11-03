@@ -2,6 +2,7 @@
 import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
 import type { LocalConversationBranch, LocalConversationTimelineItem, LocalMessage } from '@buddy-shared/conversation/conversationApi'
+import type { UserQuestionRequest } from '@buddy-shared/questions/userQuestionApi'
 import type { LocalRun, LocalRunOutput } from '@buddy-shared/runs/runApi'
 
 import type { BuddyLocale } from '@/i18n/buddyI18n'
@@ -41,9 +42,11 @@ const props = defineProps<{
   runs: ReadonlyArray<LocalRun>
   showReturnToLatest: boolean
   timelineItems: ReadonlyArray<LocalConversationTimelineItem>
+  userQuestions?: readonly UserQuestionRequest[]
 }>()
 
 const emit = defineEmits<{
+  retryQuestion: [requestId: string]
   activateBranch: [branchId: string]
   contentResize: [metrics: ChatMessageScrollMetrics]
   editUserMessage: [messageId: string]
@@ -58,6 +61,8 @@ const emit = defineEmits<{
   scroll: [metrics: ChatMessageScrollMetrics, options?: { userInitiated?: boolean }]
 }>()
 
+defineSlots<{ tail?: () => unknown }>()
+
 const messageList = useTemplateRef<BuddyChatMessageListHandle>('messageList')
 const { chat } = useDesktopUi()
 const activeBranchId = computed(() => props.activeBranchId)
@@ -71,8 +76,10 @@ const runProjections = computed(() => runTranscriptProjector.project(
   props.runEventBuckets,
   props.runs,
 ))
+const userQuestions = computed(() => props.userQuestions?.filter(request => request.conversationId === props.conversationId && request.branchId === props.activeBranchId))
 const transcriptProjection = computed(() => transcriptProjector.project({
   executionGroups: executionTree?.groups.value,
+  userQuestions: userQuestions.value,
   executionInputs: executionTree?.conversationId.value === props.conversationId && executionTree.branchId.value === props.activeBranchId ? executionTree.inputs.value : undefined,
   changeSets: props.changeSets,
   outputs: props.runOutputs,
@@ -163,6 +170,7 @@ defineExpose<BuddyChatMessageListHandle>({
     :outline-position="chat.outlinePosition"
     :outline-loading="outlineLoading"
     :show-return-to-latest="showReturnToLatest"
+    @retry-question="emit('retryQuestion', $event)"
     @activate-branch="emit('activateBranch', $event)"
     @content-resize="emit('contentResize', $event)"
     @edit-user-message="emit('editUserMessage', $event)"
@@ -176,5 +184,9 @@ defineExpose<BuddyChatMessageListHandle>({
     @return-to-latest="emit('returnToLatest')"
     @select-outline-message="emit('selectOutlineMessage', $event)"
     @scroll="(metrics, options) => emit('scroll', metrics, options)"
-  />
+  >
+    <template v-if="$slots.tail" #tail>
+      <slot name="tail" />
+    </template>
+  </BuddyChatMessageList>
 </template>

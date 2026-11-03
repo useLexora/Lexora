@@ -23,6 +23,7 @@ import {
 } from '../../model/transcript/chatMessageTime'
 import { useExecutionTree } from '../../state/runs/chatExecutionContext'
 import BuddyExecutionGroup from '../executions/BuddyExecutionGroup.vue'
+import BuddyQuestionHistory from '../questions/BuddyQuestionHistory.vue'
 import BuddyChatAgentTurn from './BuddyChatAgentTurn.vue'
 import BuddyChatAgentTurnFlow from './BuddyChatAgentTurnFlow.vue'
 import BuddyChatCompactionRow from './BuddyChatCompactionRow.vue'
@@ -54,6 +55,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  retryQuestion: [requestId: string]
   activateBranch: [branchId: string]
   editUserMessage: [messageId: string]
   openArtifact: [artifact: LocalArtifact]
@@ -68,6 +70,8 @@ const emit = defineEmits<{
   scroll: [metrics: ChatMessageScrollMetrics, options?: { userInitiated?: boolean }]
   contentResize: [metrics: ChatMessageScrollMetrics]
 }>()
+
+defineSlots<{ tail?: () => unknown }>()
 
 const { t } = useBuddyI18n(() => props.language)
 const historyElement = useTemplateRef<HTMLElement>('historyElement')
@@ -209,6 +213,7 @@ onBeforeUnmount(clearOutlineHighlight)
     <BuddyChatTranscriptViewport
       ref="transcriptViewport"
       :has-older-messages="hasOlderMessages ?? false"
+      :has-tail="!!$slots.tail"
       :return-to-latest-label="t('desktop.chat.returnToLatest')"
       :show-return-to-latest="showReturnToLatest ?? false"
       @active-message-change="activeOutlineMessageId = $event"
@@ -269,6 +274,16 @@ onBeforeUnmount(clearOutlineHighlight)
             />
           </template>
         </BuddyChatMessageRow>
+
+        <BuddyQuestionHistory
+          v-else-if="item.kind === 'user-question'"
+          :data-chat-row-key="item.key"
+          class="buddy-chat-transcript-row pb-[var(--buddy-chat-gap-section)]"
+          :request="item.request"
+          retryable
+          :language="language"
+          @retry="emit('retryQuestion', $event)"
+        />
 
         <BuddyChatExecutionInput
           v-else-if="item.kind === 'execution-input'"
@@ -371,6 +386,9 @@ onBeforeUnmount(clearOutlineHighlight)
           :language="language"
         />
       </template>
+      <div v-if="$slots.tail" class="buddy-chat-transcript-row" data-chat-row-key="pending-user-questions">
+        <slot name="tail" />
+      </div>
     </BuddyChatTranscriptViewport>
   </div>
 </template>

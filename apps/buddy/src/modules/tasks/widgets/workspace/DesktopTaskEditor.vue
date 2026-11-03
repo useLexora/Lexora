@@ -156,6 +156,7 @@ useProvideChatContent({
       :workspace="workspace"
       @ready="emit('ready')"
       @show-canvas="viewMode = 'canvas'"
+      @show-chat="viewMode = 'chat'"
       @open-settings="router.push(desktopRouteLocations.settings($event))"
       @open-artifact="contextActions.openArtifact"
       @open-node-artifact="contextActions.openArtifact"

@@ -4,7 +4,7 @@ import { translateBuddy } from '@/i18n/buddyI18n'
 import { executionLabels } from './executionLabels'
 
 export function executionPriority(execution: LocalExecution): number {
-  if (execution.questions.some(question => question.open && question.audience === 'user') || execution.waitingFor === 'approval')
+  if (execution.waitingFor === 'user_answer' || execution.questions.some(question => question.open && question.audience === 'user') || execution.waitingFor === 'approval')
     return 0
   if (execution.cleanup === 'degraded' || execution.status === 'failed')
     return 1
@@ -19,6 +19,8 @@ export function executionStatus(execution: LocalExecution, language: BuddyLocale
     return labels.closing
   if (['completed', 'failed', 'cancelled'].includes(execution.status))
     return labels[execution.status as 'completed' | 'failed' | 'cancelled']
+  if (execution.waitingFor === 'user_answer')
+    return labels.waitingAnswer
   if (execution.waitingFor === 'answer')
     return execution.questions.some(question => question.open && question.audience === 'user') ? labels.waitingAnswer : labels.waitingCaller
   if (execution.waitingFor === 'approval')
