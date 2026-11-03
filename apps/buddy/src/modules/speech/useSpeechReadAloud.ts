@@ -1,11 +1,11 @@
 import type { SpeechPreferences } from '@buddy-shared/speech/speechApi'
 import { speechEnabled, speechOutput } from '@buddy-shared/speech/speechApi'
-import { shallowRef, watch } from 'vue'
+import { computed, shallowRef, watch } from 'vue'
 import { requireDesktopApi } from '@/platform/desktop/desktopApi'
 import { SpeechPlayback } from './audio/SpeechPlayback'
 import { SystemSpeechPlayback } from './audio/SystemSpeechPlayback'
 import { SpeechConnection } from './SpeechConnection'
-import { activateSpeechPlayback, clearSpeechPlayback, markSpeechPlaying } from './speechPlaybackState'
+import { activateSpeechPlayback, activeSpeechPlayback, clearSpeechPlayback, setSpeechPlaybackPhase } from './speechPlaybackState'
 import { useSpeechLifetime, useSpeechScopeKey } from './speechScope'
 import { speechText } from './speechText'
 import { useSpeechCatalog } from './useSpeechCatalog'
@@ -14,7 +14,8 @@ import { stopSpeechRecording } from './useSpeechRecorder'
 export function useSpeechReadAloud(options: { owner: () => string, text: () => string, language: () => string, preferences?: () => SpeechPreferences }) {
   const { catalog, selected } = useSpeechCatalog()
   const scope = useSpeechScopeKey()
-  const busy = shallowRef(false)
+  const phase = computed(() => activeSpeechPlayback.value?.stop === stop ? activeSpeechPlayback.value.phase : 'idle')
+  const busy = computed(() => phase.value !== 'idle')
   const error = shallowRef('')
   let connection: SpeechConnection | undefined
   let playback: SpeechPlayback | SystemSpeechPlayback | undefined
@@ -25,7 +26,6 @@ export function useSpeechReadAloud(options: { owner: () => string, text: () => s
     void connection?.cancel()
     connection = undefined
     playback = undefined
-    busy.value = false
     clearSpeechPlayback(stop)
   }
   function reset() {
@@ -53,24 +53,29 @@ export function useSpeechReadAloud(options: { owner: () => string, text: () => s
       return
     }
     stopSpeechRecording()
-    activateSpeechPlayback({ owner: options.owner(), scope: scope.value, phase: 'preparing', stop })
+    const preferences = options.preferences?.() ?? catalog.value.preferences
+    activateSpeechPlayback({ owner: options.owner(), scope: scope.value, phase: speechOutput(preferences) === 'system' ? 'preparing' : 'generating', stop })
     const current = ++epoch
-    busy.value = true
     try {
-      const preferences = options.preferences?.() ?? catalog.value.preferences
       if (speechOutput(preferences) === 'system') {
         const player = playback = new SystemSpeechPlayback()
-        await player.play(text, { voice: preferences.systemVoice, rate: preferences.systemRate, language: options.language() }, () => markSpeechPlaying(stop))
+        await player.play(text, { voice: preferences.systemVoice, rate: preferences.systemRate, language: options.language() }, () => {
+          if (current === epoch)
+            setSpeechPlaybackPhase(stop, 'playing')
+        })
       }
       else {
         const provider = selected('speech.synthesize')
         if (!provider?.supported)
           throw new Error('SPEECH_PROVIDER_UNAVAILABLE')
         const player = playback = new SpeechPlayback()
-        const session = connection = new SpeechConnection(requireDesktopApi().speech, provider, text, (event, signal) => {
-          if (event.type === 'audio') {
-            markSpeechPlaying(stop)
-            return player.append(event, signal)
+        const session = connection = new SpeechConnection(requireDesktopApi().speech, provider, text, async (event, signal) => {
+          if (event.type === 'audio' && current === epoch) {
+            if (phase.value === 'generating')
+              setSpeechPlaybackPhase(stop, 'loading')
+            await player.append(event, signal)
+            if (current === epoch)
+              setSpeechPlaybackPhase(stop, 'playing')
           }
         })
         const result = await session.done
@@ -91,5 +96,5 @@ export function useSpeechReadAloud(options: { owner: () => string, text: () => s
         stop()
     }
   }
-  return { busy, error, play, stop, reset }
+  return { busy, phase, error, play, stop, reset }
 }
