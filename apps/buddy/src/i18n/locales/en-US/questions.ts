@@ -14,6 +14,7 @@ export default {
   'questions.nextRequest': 'Next request',
   'questions.yourAnswer': 'Your answer',
   'questions.count': '{count} questions',
+  'questions.position': 'Question {current} of {total}',
   'questions.history': 'Questions & answers',
   'questions.loadFailed': 'Unable to load questions.',
   'questions.retry': 'Retry',
