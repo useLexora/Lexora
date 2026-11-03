@@ -184,10 +184,10 @@ export class BuddySessionRegistry<TSession extends DisposableBuddySession> {
     return run ? Object.freeze({ ...run }) : undefined
   }
 
-  getReady(conversationId: string, branchId: string, actorId?: string): TSession | null {
+  getReady(conversationId: string, branchId: string, actorId?: string, threadId?: string): TSession | null {
     for (const [key, identity] of this.#identities) {
       if (identity.conversationId === conversationId && identity.branchId === branchId
-        && identity.actorKind !== 'npc' && (!actorId || identity.actorId === actorId)) {
+        && identity.actorKind !== 'npc' && (!actorId || identity.actorId === actorId) && (!threadId || identity.threadId === threadId)) {
         const entry = this.#sessions.get(key)
         if (entry?.status === 'ready')
           return entry.binding?.session ?? null

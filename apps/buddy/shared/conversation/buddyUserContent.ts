@@ -190,6 +190,7 @@ export const buddyUserMessageMaterialProjectionSchema = z.object({
 }).strict()
 
 export const buddyUserMessageContentV1Schema = z.object({
+  questionReply: z.object({ requestId: idSchema }).strict().optional(),
   materialProjection: buddyUserMessageMaterialProjectionSchema.optional(),
   resourceSnapshots: z.array(buddyUserMessageResourceSnapshotSchema).readonly(),
   userContent: buddyUserContentV1Schema,

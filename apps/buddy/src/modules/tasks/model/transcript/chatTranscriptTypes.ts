@@ -2,6 +2,8 @@ import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
 import type { LocalConversationTimelineItem, LocalMessage } from '@buddy-shared/conversation/conversationApi'
 import type { LocalExecutionInputReceipt } from '@buddy-shared/executions/executionInputReceipt'
+import type { UserQuestionRequest } from '@buddy-shared/questions/userQuestionApi'
+import type { UserQuestionHistory } from '@buddy-shared/questions/userQuestionHistory'
 import type { LocalRun, LocalRunEvent, LocalRunOutput } from '@buddy-shared/runs/runApi'
 import type { LocalRunTokenUsage } from '@buddy-shared/usage/runTokenUsage'
 
@@ -39,6 +41,12 @@ export interface ChatTranscriptExecutionInputRow {
   key: string
   kind: 'execution-input'
   input: LocalExecutionInputReceipt
+}
+
+export interface ChatTranscriptQuestionRow {
+  key: string
+  kind: 'user-question'
+  request: UserQuestionHistory
 }
 
 export interface ChatTranscriptCompactionRow {
@@ -92,7 +100,8 @@ export interface ChatTranscriptRecoveryNoticeRow {
 }
 
 export type ChatTranscriptRow
-  = | ChatTranscriptActivityRow
+  = | ChatTranscriptQuestionRow
+    | ChatTranscriptActivityRow
     | ChatTranscriptAgentTurnRow
     | ChatTranscriptCompactionRow
     | ChatTranscriptActivityFlowRow
@@ -123,6 +132,7 @@ export type ChatTranscriptProjectionUpdate
 export interface ChatTranscriptProjectionInput {
   executionGroups?: ExecutionGroups
   executionInputs?: readonly LocalExecutionInputReceipt[]
+  userQuestions?: readonly UserQuestionRequest[]
   includeUnanchoredTurns?: boolean
   agentTurns?: ReadonlyArray<ChatAgentTurn>
   changeSets?: ReadonlyArray<LocalChangeSetSummary>

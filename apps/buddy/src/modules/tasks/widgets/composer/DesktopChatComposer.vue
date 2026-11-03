@@ -47,6 +47,7 @@ const emit = defineEmits<{
 defineSlots<{
   decoration?: () => unknown
   leadingContext?: () => unknown
+  accessory?: () => unknown
 }>()
 
 const { t } = useBuddyI18n(() => props.language)
@@ -261,6 +262,7 @@ function captureDraft(): WorkbenchMenuSelection {
   >
     <template #attachments>
       <WorkbenchSlot target="composer.accessory" class="desktop-chat-composer__accessory max-h-[min(240px,30vh)] overflow-auto" />
+      <slot name="accessory" />
       <ChatInputMaterialStrip
         ref="resourceStrip"
         class="desktop-chat-composer__materials"

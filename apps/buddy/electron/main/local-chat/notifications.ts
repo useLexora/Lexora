@@ -11,6 +11,7 @@ import { executionsChanged } from '../../../shared/executions/executionPresentat
 import { webSettingsChanged } from '../../../shared/network/webApi'
 import { notificationsChanged } from '../../../shared/notifications/notificationApi'
 import { providerNotifications } from '../../../shared/providers/providerApi'
+import { userQuestionsChanged } from '../../../shared/questions/userQuestionApi'
 import { toPublicRunEvent } from '../../../shared/runs/publicRunEvent'
 import { runNotifications } from '../../../shared/runs/runApi'
 import { taskMetricsChanged } from '../../../shared/runs/taskMetricsApi'
@@ -38,6 +39,12 @@ export function registerLocalChatNotifications(options: RegisterLocalChatIpcOpti
       const event = taskMetricsChanged.params.safeParse(notification.params)
       if (event.success)
         sendToRenderer(options.getWindow(), LOCAL_CHAT_IPC_CHANNELS.runsMetricsChanged, event.data)
+      return
+    }
+    if (notification.method === userQuestionsChanged.method) {
+      const event = userQuestionsChanged.params.safeParse(notification.params)
+      if (event.success)
+        sendToRenderer(options.getWindow(), LOCAL_CHAT_IPC_CHANNELS.questionsChanged, event.data)
       return
     }
     if (notification.method === executionsChanged.method) {

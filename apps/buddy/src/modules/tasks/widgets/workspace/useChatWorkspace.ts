@@ -73,6 +73,7 @@ export function useChatWorkspace(
       runs: currentTranscript.runs.value,
       showReturnToLatest: viewport.showReturnToLatest.value,
       timelineItems: currentTranscript.timelineItems.value,
+      userQuestions: workspace.value.questions.records.value,
     }
   })
 

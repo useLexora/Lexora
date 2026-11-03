@@ -2,10 +2,10 @@ import type { LocalMessage } from '@buddy-shared/conversation/conversationApi'
 import type { ExtensionActionTimelineItem } from '@buddy-shared/extensions/extensionActionApi'
 import type { ExecutionGroups } from '../executions/executionGroups'
 import type { ChatAgentToolNode, ChatAgentTurn } from './chatAgentTurn'
-import type { ChatTranscriptActivityFlowRow, ChatTranscriptAgentTurnRow, ChatTranscriptCompactionRow, ChatTranscriptExtensionActionRow, ChatTranscriptMessageRow } from './chatTranscriptTypes'
+import type { ChatTranscriptActivityFlowRow, ChatTranscriptAgentTurnRow, ChatTranscriptCompactionRow, ChatTranscriptExtensionActionRow, ChatTranscriptMessageRow, ChatTranscriptQuestionRow } from './chatTranscriptTypes'
 
-export type PersistedChatTranscriptRow = ChatTranscriptAgentTurnRow | ChatTranscriptCompactionRow | ChatTranscriptExtensionActionRow | ChatTranscriptMessageRow
-export type PresentedChatTranscriptRow = ChatTranscriptAgentTurnRow | ChatTranscriptCompactionRow | ChatTranscriptActivityFlowRow | ChatTranscriptMessageRow
+export type PersistedChatTranscriptRow = ChatTranscriptQuestionRow | ChatTranscriptAgentTurnRow | ChatTranscriptCompactionRow | ChatTranscriptExtensionActionRow | ChatTranscriptMessageRow
+export type PresentedChatTranscriptRow = ChatTranscriptQuestionRow | ChatTranscriptAgentTurnRow | ChatTranscriptCompactionRow | ChatTranscriptActivityFlowRow | ChatTranscriptMessageRow
 
 export function projectChatTurnExtensionActions(
   turns: readonly ChatAgentTurn[],

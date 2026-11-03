@@ -22,7 +22,7 @@ export const executionMailboxMessageSchema = z.discriminatedUnion('kind', [
   z.object({ ...messageFields, kind: z.literal('result') }).strict(),
   z.object({ ...messageFields, kind: z.literal('question'), questionId: z.string().min(1).max(256), audience: z.enum(['caller', 'user']).optional() }).strict(),
   z.object({ ...messageFields, kind: z.literal('answer'), questionId: z.string().min(1).max(256) }).strict(),
-  z.object({ ...messageFields, kind: z.literal('supplement'), origin: z.literal('user').optional(), purpose: z.literal('progress').optional() }).strict(),
+  z.object({ ...messageFields, kind: z.literal('supplement'), origin: z.literal('user').optional(), purpose: z.enum(['progress', 'question_answer']).optional() }).strict(),
 ])
 
 const draftFields = {
@@ -35,7 +35,7 @@ export const executionMailboxDraftSchema = z.discriminatedUnion('kind', [
   z.object({ ...draftFields, kind: z.literal('result') }).strict(),
   z.object({ ...draftFields, kind: z.literal('question'), questionId: z.string().min(1).max(256), audience: z.enum(['caller', 'user']).optional() }).strict(),
   z.object({ ...draftFields, kind: z.literal('answer'), questionId: z.string().min(1).max(256) }).strict(),
-  z.object({ ...draftFields, kind: z.literal('supplement'), origin: z.literal('user').optional(), purpose: z.literal('progress').optional() }).strict(),
+  z.object({ ...draftFields, kind: z.literal('supplement'), origin: z.literal('user').optional(), purpose: z.enum(['progress', 'question_answer']).optional() }).strict(),
 ])
 export type ExecutionMailboxDraft = Readonly<z.infer<typeof executionMailboxDraftSchema>>
 

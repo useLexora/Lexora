@@ -1,6 +1,6 @@
 import type { EventSnapshot } from '../../../shared/events/eventTypes'
 import type { RunEventAvailability } from '../events/RunEventPorts'
-import type { EditTurnRequestInput, PrepareTurnRequestInput, RegenerateTurnRequestInput, RetryInterruptedTurnRequestInput, TurnCommitFact, TurnRequestRecord, TurnRequestRepository } from '../storage/turnRequestRepository'
+import type { EditTurnRequestInput, PrepareQuestionReplyInput, PrepareTurnRequestInput, RegenerateTurnRequestInput, RetryInterruptedTurnRequestInput, TurnCommitFact, TurnRequestRecord, TurnRequestRepository } from '../storage/turnRequestRepository'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 
@@ -35,7 +35,7 @@ export class TurnRequestService implements TurnRequestRepository {
     return this.#repository.findByRequestId(requestId)
   }
 
-  prepare(input: PrepareTurnRequestInput) {
+  prepare(input: PrepareTurnRequestInput | PrepareQuestionReplyInput) {
     this.#availability?.assertConversationWritable(input.conversationId)
     return this.#commit(() => this.#repository.prepare(input))
   }

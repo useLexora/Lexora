@@ -1,9 +1,12 @@
 import type { LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
 import type { LocalConversationTimelineItem, LocalMessage } from '@buddy-shared/conversation/conversationApi'
+import type { UserQuestionRequest } from '@buddy-shared/questions/userQuestionApi'
 import type { LocalRun, LocalRunEvent, LocalRunOutput } from '@buddy-shared/runs/runApi'
 
 import type { ChatRunTranscriptProjection } from '../chatRunTranscriptProjector'
+
 import type { ChatAgentTurn } from '../chatStreamingMessage'
+import { createBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
 import { describe, expect, it } from 'vitest'
 
 import { replaceChatRunEventBuckets } from '../../runs/chatRunEventBuckets'
@@ -15,6 +18,73 @@ import {
 } from '../chatTranscriptProjection'
 
 describe('chat transcript projection', () => {
+  it('replaces only the matching question tool call and retains failed calls from the same run', () => {
+    const user = message('question-input', 'user')
+    const run = localRun('run-1', user.id, 'running')
+    const turn = agentTurn(run, [])
+    turn.nodes = ['answered-call', 'failed-call'].map(toolCallId => ({
+      id: toolCallId,
+      toolCallId,
+      kind: 'tool',
+      toolName: 'lexora_ask_user',
+      description: null,
+      status: toolCallId === 'failed-call' ? 'failed' : 'completed',
+      isError: toolCallId === 'failed-call',
+      presentation: { card: 'generic', argumentNames: [], description: null, output: null, truncated: false },
+    }))
+    const rows = projectChatTranscript({ outputs: [], runs: [run], timelineItems: [user], agentTurns: [turn], userQuestions: [{ ...userQuestion(run), toolCallId: 'answered-call' }] }).rows
+    expect(rows.flatMap(row => row.kind === 'agent-turn' ? row.turn.nodes.filter(node => node.kind === 'tool').map(node => node.toolCallId) : [])).toEqual(['failed-call'])
+    expect(rows.filter(row => row.kind === 'user-question')).toHaveLength(1)
+  })
+
+  it('places completed questions in the owning timeline without exposing unopened history or another branch', () => {
+    const user = message('question-input', 'user')
+    const run = localRun('run-1', user.id, 'completed')
+    const final = { ...message('question-result', 'assistant'), createdAt: run.completedAt! }
+    const question = userQuestion(run)
+    const input = { outputs: [], runs: [run], timelineItems: [user, final], agentTurns: [agentTurn(run, [], final.id)], userQuestions: [
+      question,
+      { ...question, id: 'npc', runId: 'npc-run', buddyName: 'Researcher' },
+      { ...question, id: 'pending', status: 'pending' as const, response: null },
+      { ...question, id: 'old-page', runId: 'old-run', rootRunId: 'old-run' },
+      { ...question, id: 'other-branch', branchId: 'other-branch' },
+    ] }
+    const rows = projectChatTranscript(input).rows
+    expect(rows.map(row => row.key)).toEqual(['message:question-input', 'user-question:question', 'user-question:npc', 'message:question-result'])
+    expect(rows.filter(row => row.kind === 'user-question').map(row => row.request.entries[0]?.answer)).toEqual(['Synthetic data only', 'Synthetic data only'])
+    expect(rows.filter(row => row.kind === 'message' && row.message.role === 'user')).toHaveLength(1)
+    expect(rows.at(-1)).toMatchObject({ turnResult: { runId: run.id } })
+  })
+
+  it('shows a late reply once when only its continuation is in the loaded page', () => {
+    const source = localRun('earlier-run', 'earlier-input', 'completed')
+    const question = userQuestion(source)
+    const input = { ...message('reply-input', 'user'), content: { userContent: createBuddyUserContent('Which scope?\nSynthetic data only'), resourceSnapshots: [], questionReply: { requestId: question.id } } }
+    const continuation = localRun('continued-run', input.id, 'running')
+    const data = { outputs: [], runs: [continuation], timelineItems: [input], agentTurns: [agentTurn(continuation, ['Continuing'])] }
+    const rows = projectChatTranscript({ ...data, userQuestions: [{ ...question, delivery: { state: 'delivered', targetRunId: continuation.id } }] }).rows
+    expect(rows.filter(row => row.kind === 'user-question')).toMatchObject([{ request: { entries: [{ answer: 'Synthetic data only' }] } }])
+    expect(rows.some(row => row.kind === 'message' && row.message.id === input.id)).toBe(false)
+    expect(rows.map(row => row.key)).toEqual(['user-question:question', 'agent-turn:continued-run', 'activity:continued-run'])
+    expect(projectChatTranscript(data).rows.some(row => row.kind === 'message' && row.message.id === input.id)).toBe(true)
+  })
+
+  it('retains resolved questions across cached streaming updates and records cancellation without an answer', () => {
+    const user = message('question-input', 'user')
+    const run = localRun('run-1', user.id, 'running')
+    const turn = agentTurn(run, ['Working'])
+    const question = userQuestion(run)
+    const projector = createChatTranscriptProjector()
+    const base = { outputs: [], runs: [run], timelineItems: [user], runProjections: [runProjection(turn)], userQuestions: [{ ...question, status: 'pending' as const, response: null }] }
+    expect(projector.project(base).rows.some(row => row.kind === 'user-question')).toBe(false)
+    const resolved = { ...base, userQuestions: [question] }
+    expect(projector.project(resolved).rows.filter(row => row.kind === 'user-question')).toHaveLength(1)
+    const streaming = { ...resolved, runProjections: [runProjection({ ...turn, nodes: [...turn.nodes, { id: 'after-answer', kind: 'text' as const, messageId: 'after-answer-message', text: 'Answer received' }], nodeStartedAt: { 'after-answer': '2026-08-20T00:00:02.500Z' } })] }
+    expect(projector.project(streaming).rows).toEqual(projectChatTranscript(streaming).rows)
+    const cancelled = projector.project({ ...streaming, userQuestions: [{ ...question, status: 'cancelled', response: null }] })
+    expect(cancelled.rows.find(row => row.kind === 'user-question')).toMatchObject({ request: { status: 'cancelled', entries: [{ id: 'scope', question: 'Which scope?', answer: '' }] } })
+  })
+
   it('retains the phase of public actor messages without adding children to ordinary runs', () => {
     const commentary = { ...message('actor-commentary', 'assistant'), runId: 'actor', content: { text: 'Checking the animation', phase: 'commentary' } }
     const final = { ...message('actor-final', 'assistant'), runId: 'actor', content: { text: 'Animation ready', phase: 'final_answer' } }
@@ -480,5 +550,21 @@ function streamingMessage(run: LocalRun, text: string): LocalMessage {
     id: `streaming:${run.id}`,
     role: 'assistant',
     runId: run.id,
+  }
+}
+
+function userQuestion(run: LocalRun): UserQuestionRequest {
+  return {
+    id: 'question',
+    runId: run.id,
+    rootRunId: run.id,
+    conversationId: run.conversationId,
+    branchId: run.branchId,
+    buddyName: 'Lexora',
+    status: 'answered',
+    createdAt: '2026-08-20T00:00:02.000Z',
+    resolvedAt: '2026-08-20T00:00:02.300Z',
+    questions: [{ id: 'scope', question: 'Which scope?', kind: 'text', options: [] }],
+    response: { answers: [{ questionId: 'scope', selectedOptionIds: [], text: 'Synthetic data only' }] },
   }
 }

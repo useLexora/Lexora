@@ -18,6 +18,7 @@ import { selectChatStreamingMessages } from './chatRunStreamingMessages'
 export interface CachedChatTranscriptProjection {
   executionGroups: ChatTranscriptProjectionInput['executionGroups']
   executionInputs: ChatTranscriptProjectionInput['executionInputs']
+  userQuestions: ChatTranscriptProjectionInput['userQuestions']
   supportsIncrementalUpdates: boolean
   continuation: ChatTranscriptContinuation
   includeUnanchoredTurns: boolean
@@ -51,6 +52,7 @@ export function projectIncrementalChatTranscript(
     || !cached.supportsIncrementalUpdates
     || cached.executionGroups !== input.executionGroups
     || cached.executionInputs !== input.executionInputs
+    || cached.userQuestions !== input.userQuestions
     || cached.includeUnanchoredTurns !== (input.includeUnanchoredTurns ?? false)
     || !cached.runProjections
     || cached.timelineItems !== input.timelineItems
@@ -238,6 +240,10 @@ export function createChatTranscriptProjectionCache(
         && item.createdAt >= run.startedAt
         && (run.completedAt === null || item.createdAt <= run.completedAt)
   ))).map(run => run.id))
+  for (const request of input.userQuestions ?? []) {
+    interleavedRunIds.add(request.runId)
+    interleavedRunIds.add(request.rootRunId)
+  }
   const seenTurns = new Set<string>()
   for (const row of projection.rows) {
     if (row.kind !== 'agent-turn')
@@ -249,6 +255,7 @@ export function createChatTranscriptProjectionCache(
   return {
     executionGroups: input.executionGroups,
     executionInputs: input.executionInputs,
+    userQuestions: input.userQuestions,
     supportsIncrementalUpdates: projection.rows.filter(row => row.kind === 'activity').length <= 1
       && projection.rows.filter(row => row.kind === 'message' && row.streaming).length <= 1
       && (activityRowIndex === null || activityRowIndex === projection.rows.length - 1),

@@ -25,6 +25,7 @@ import type { ChatApprovalDecision, ChatContextUsage, ChatRunEventBuckets } from
 import type { ChatBlocker } from './model/status/typing'
 import type { ChatComposerInteraction, ComposerResourceView } from './state/composer/typing'
 import type { DraftRestorationConflict, DraftRestorationState } from './state/drafts/typing'
+import type { UserQuestionsController } from './state/runs/useUserQuestions'
 import type { TaskSpaceInput } from './state/task-index/typing'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { ChatComposerContextOptions, ChatComposerSessionScope, ChatComposerSubmitPayload } from '@/modules/prompt-input'
@@ -249,6 +250,7 @@ export interface TaskChangeRecovery {
 }
 
 export interface TaskChatWorkspace {
+  questions: UserQuestionsController
   changeRecovery: TaskChangeRecovery
   executionTree: TaskExecutionTree
   marks: TaskMarks

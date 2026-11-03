@@ -11,14 +11,15 @@ export function interleaveChatTranscriptSegments(
 ): PresentedChatTranscriptRow[] {
   const timestamp = (row: Exclude<PersistedChatTranscriptRow, ChatTranscriptAgentTurnRow>) => row.kind === 'message'
     ? row.message.startedAt ?? messageStartedAt.get(row.message.id) ?? row.message.createdAt
-    : row.kind === 'extension-action' ? row.action.createdAt : row.compaction.createdAt
+    : row.kind === 'user-question' ? row.request.resolvedAt ?? row.request.createdAt : row.kind === 'extension-action' ? row.action.createdAt : row.compaction.createdAt
   const timeline = rows.filter(row => row.kind !== 'agent-turn').sort((left, right) => timestamp(left).localeCompare(timestamp(right)))
   const positions = new Map(timeline.map((row, index) => [row.key, index]))
   const segments = new Map<number, ChatTranscriptAgentTurnRow[]>()
   for (const row of rows) {
     if (row.kind !== 'agent-turn')
       continue
-    const trigger = positions.get(`message:${row.turn.triggeringMessageId}`) ?? -1
+    const trigger = positions.get(`message:${row.turn.triggeringMessageId}`)
+      ?? timeline.findIndex(candidate => candidate.kind === 'user-question' && candidate.request.delivery?.targetRunId === row.turn.runId)
     const groups = new Map<number, ChatAgentTurnNode[]>()
     const replyBoundaries = new Map<string, number>()
     let replyBoundary = timeline.length
@@ -56,14 +57,17 @@ export function interleaveChatTranscriptSegments(
       && timestamp(candidate) >= row.turn.startedAt
       && (!row.turn.completedAt || timestamp(candidate) <= row.turn.completedAt))
     if (row.ownsResultActions) {
-      const outcomePosition = timeline.findLastIndex(candidate => candidate.kind === 'message' && (
-        candidate.message.runId === row.turn.runId
-        || (candidate.message.role === 'user'
-          && candidate.message.branchId === row.turn.branchId
-          && timestamp(candidate) >= row.turn.startedAt
-          && row.turn.completedAt !== null
-          && timestamp(candidate) <= row.turn.completedAt)
-      ))
+      const outcomePosition = timeline.findLastIndex(candidate => candidate.kind === 'user-question'
+        ? (candidate.request.runId === row.turn.runId || candidate.request.rootRunId === row.turn.runId)
+        && (!row.turn.completedAt || timestamp(candidate) <= row.turn.completedAt)
+        : candidate.kind === 'message' && (
+          candidate.message.runId === row.turn.runId
+          || (candidate.message.role === 'user'
+            && candidate.message.branchId === row.turn.branchId
+            && timestamp(candidate) >= row.turn.startedAt
+            && row.turn.completedAt !== null
+            && timestamp(candidate) <= row.turn.completedAt)
+        ))
       const position = Math.max(outcomePosition, lastOtherSpeaker)
       if (position > Math.max(...groups.keys()))
         groups.set(position, [])

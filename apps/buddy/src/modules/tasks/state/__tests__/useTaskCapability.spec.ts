@@ -1100,6 +1100,7 @@ function createDesktopApi() {
     },
     lifecycle: { quit: vi.fn() },
     localChat: {
+      questions: { list: async () => [], onChanged: () => () => {} },
       executions: { list: async () => [], onChanged: () => () => {} },
       buddies: { list: vi.fn(async () => ({ revision: 1, defaultBuddyId: 'default', buddies: [] })) },
       taskMarks: { list: async () => [], states: async () => [] },

@@ -53,8 +53,8 @@ export function projectExecutionCanvas(records: readonly LocalExecution[], rootR
 }
 
 export function executionNeedsAnswer(execution: LocalExecution): boolean {
-  return execution.phase !== 'closed' && !execution.stopping && execution.canAnswer
-    && execution.questions.some(question => question.open && question.audience === 'user')
+  return execution.phase !== 'closed' && !execution.stopping && (execution.waitingFor === 'user_answer' || (execution.canAnswer
+    && execution.questions.some(question => question.open && question.audience === 'user')))
 }
 
 export function executionNeedsAttention(execution: LocalExecution): boolean {

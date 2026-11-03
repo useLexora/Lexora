@@ -261,6 +261,20 @@ describe('buddySessionRegistry', () => {
     await registry.dispose()
   })
 
+  it('selects the requested thread when one actor has multiple cached sessions', async () => {
+    const registry = new BuddySessionRegistry<TestSession>()
+    const owner = { ...identity('branch-1'), threadId: 'owner', actorKind: 'actor' as const, actorId: 'main' }
+    const unrelated = { ...owner, threadId: 'unrelated' }
+    const originalSession = new TestSession()
+    const unrelatedSession = new TestSession()
+    await registry.getOrCreate(unrelated, null, async () => ({ piSessionFile: '/sessions/unrelated', session: unrelatedSession }))
+    await registry.getOrCreate(owner, null, async () => ({ piSessionFile: '/sessions/original', session: originalSession }))
+    expect(registry.getReady(owner.conversationId, owner.branchId, owner.actorId, owner.threadId)).toBe(originalSession)
+    expect(registry.getReady(owner.conversationId, owner.branchId, owner.actorId, unrelated.threadId)).toBe(unrelatedSession)
+    expect(registry.getReady(owner.conversationId, owner.branchId, owner.actorId, 'missing')).toBeNull()
+    await registry.dispose()
+  })
+
   it('does not rebind an existing Buddy branch to another directory', async () => {
     const registry = new BuddySessionRegistry<TestSession>()
     await registry.getOrCreate(identity('branch-1'), null, async () => ({

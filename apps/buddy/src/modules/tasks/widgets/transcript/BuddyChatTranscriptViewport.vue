@@ -10,6 +10,7 @@ import { useChatTranscriptViewport } from './useChatTranscriptViewport'
 
 const props = defineProps<{
   hasOlderMessages: boolean
+  hasTail?: boolean
   returnToLatestLabel: string
   showReturnToLatest: boolean
 }>()
@@ -45,7 +46,7 @@ defineExpose<BuddyChatTranscriptViewportHandle>(handle)
       <div
         ref="content"
         class="buddy-chat-transcript-viewport__content min-h-full"
-        :class="{ 'has-older-messages': props.hasOlderMessages }"
+        :class="{ 'has-older-messages': props.hasOlderMessages, 'has-tail': hasTail }"
       >
         <slot />
       </div>
@@ -98,6 +99,19 @@ defineExpose<BuddyChatTranscriptViewportHandle>(handle)
 
   &.has-older-messages {
     padding-top: 2rem;
+  }
+
+  &.has-tail {
+    display: flex;
+    flex-direction: column;
+
+    :deep(> *) {
+      flex-shrink: 0;
+    }
+
+    :deep(> :last-child) {
+      margin-top: auto;
+    }
   }
 }
 

@@ -25,6 +25,16 @@ describe('chat input validation', () => {
     await expect(fixture.service.validate({ ...input(), prompt: 'x'.repeat(20 * 1024 * 1024), attachments: [fixture.attach('application/pdf', 5 * 1024 * 1024)] })).rejects.toMatchObject({ code: 'MODEL_INPUT_TOO_LARGE' })
   })
 
+  it('validates continuation input against its original thread history', async () => {
+    const fixture = createFixture({ inputLimits: { maxRequestBytes: 2000 } })
+    fixture.history.appendMessage({ role: 'user', content: 'Unrelated context '.repeat(500), timestamp: 1 })
+    const original = SessionManager.inMemory('/fixture')
+    original.appendMessage({ role: 'user', content: 'Original question context', timestamp: 1 })
+    fixture.threads.set('original', original)
+    await expect(fixture.service.validate({ ...input(), threadId: 'original' })).resolves.toBeUndefined()
+    await expect(fixture.service.validate(input())).rejects.toMatchObject({ code: 'MODEL_INPUT_TOO_LARGE' })
+  })
+
   it('lets request projection trim historical tool images before enforcing the complete payload limit', async () => {
     const fixture = createFixture({ api: 'openai-completions', inputLimits: { maxRequestBytes: 2000 } })
     const image = { type: 'image' as const, mimeType: 'image/png', data: 'A'.repeat(4096) }
@@ -66,6 +76,7 @@ function createFixture(overrides: Partial<InputModel> = {}) {
   }
   const records = new Map<string, AttachmentRecord>()
   const history = SessionManager.inMemory('/fixture')
+  const threads = new Map<string, SessionManager>()
   const active: { messages: AgentSession['messages'] | null } = { messages: null }
   const service = new ChatInputValidationService({
     models: { resolveAvailable: async () => model },
@@ -87,11 +98,11 @@ function createFixture(overrides: Partial<InputModel> = {}) {
           shutdown: async () => {},
         })
       : null },
-    tree: { preview: async () => history, snapshot: async () => history },
+    tree: { preview: async (_conversationId, _branchId, _cwd, threadId) => threads.get(threadId ?? '') ?? history, snapshot: async () => history },
     runs: { findById: () => null },
     runInputs: { findByTriggeringMessageId: () => null },
   })
-  return { service, history, active, attach(mimeType: string, sizeBytes: number) {
+  return { service, history, threads, active, attach(mimeType: string, sizeBytes: number) {
     const record: AttachmentRecord = { id: `file-${records.size}`, mimeType, sizeBytes, name: 'Fixture file', storedPath: '/fixture/input', messageId: 'message-1', conversationId: 'conversation-1', draftId: null, createdAt: '2026-09-12T00:00:00.000Z' }
     records.set(record.id, record)
     return record

@@ -2,6 +2,7 @@ import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
 import type { LocalConversationTimelineItem, LocalMessage } from '@buddy-shared/conversation/conversationApi'
 import type { ExtensionActionTimelineItem } from '@buddy-shared/extensions/extensionActionApi'
+import type { UserQuestionRequest } from '@buddy-shared/questions/userQuestionApi'
 import type { LocalRunOutput } from '@buddy-shared/runs/runApi'
 
 import type { ExecutionGroups } from '../executions/executionGroups'
@@ -12,6 +13,8 @@ import type {
   ChatTranscriptTurnOutputs,
   ChatTranscriptTurnResultRow,
 } from './chatTranscriptTypes'
+import { readBuddyUserMessageContent } from '@buddy-shared/conversation/buddyUserContent'
+import { projectUserQuestionHistory } from '@buddy-shared/questions/userQuestionHistory'
 import { projectConversationCompactionState } from './chatConversationTimeline'
 import { getChatMessagePhase, isVisibleChatMessage } from './chatMessageContent'
 import { projectChatTurnExtensionActions } from './chatTranscriptActivities'
@@ -24,6 +27,7 @@ export function projectPersistedChatTranscriptRows(
   changeSets: ReadonlyArray<LocalChangeSetSummary> = [],
   includeUnanchoredTurns = false,
   executions?: ExecutionGroups,
+  userQuestions: readonly UserQuestionRequest[] = [],
 ): Array<PresentedChatTranscriptRow | ChatTranscriptTurnResultRow> {
   const rows: PersistedChatTranscriptRow[] = []
   const turnsByTrigger = new Map<string, ChatAgentTurn[]>()
@@ -124,7 +128,9 @@ export function projectPersistedChatTranscriptRows(
       : null
     if (turnUsage)
       row.turnUsage = turnUsage
-    rows.push(row)
+    const questionReply = item.role === 'user' ? readBuddyUserMessageContent(item.content)?.questionReply : null
+    if (!questionReply || !userQuestions.some(request => request.id === questionReply.requestId))
+      rows.push(row)
     rows.push(...(turnsByTrigger.get(item.id) ?? []).map((turn) => {
       const ownsResultActions = standaloneResultRunIds.has(turn.runId)
       return {
@@ -134,6 +140,12 @@ export function projectPersistedChatTranscriptRows(
         turn,
       }
     }))
+  }
+  const visibleRuns = new Map(rows.flatMap(row => row.kind === 'agent-turn' ? [[row.turn.runId, row.turn.branchId] as const] : []))
+  for (const request of userQuestions) {
+    const history = projectUserQuestionHistory(request)
+    if (history && (visibleRuns.get(request.runId) === request.branchId || visibleRuns.get(request.rootRunId) === request.branchId || (request.delivery?.targetRunId && visibleRuns.get(request.delivery.targetRunId) === request.branchId)))
+      rows.push({ kind: 'user-question', key: `user-question:${request.id}`, request: history })
   }
   return interleaveChatTranscriptSegments(rows, new Map(turns.flatMap(turn => Object.entries(turn.messageStartedAt ?? {}))), executions).flatMap<PresentedChatTranscriptRow | ChatTranscriptTurnResultRow>((row) => {
     if (row.kind !== 'agent-turn' || !row.ownsResultActions || row.turn.status !== 'completed')

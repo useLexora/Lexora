@@ -9,6 +9,7 @@ import type { TaskIndexController } from './task-index/useTaskIndex'
 import type { ModelProvidersStore } from '@/modules/models'
 import type { ApplicationSettings } from '@/modules/settings'
 import type { ChatBlockerKind } from '@/modules/tasks/model/status/typing'
+import type { createUserQuestionInteractionState } from '@/modules/tasks/state/runs/useUserQuestions'
 import type { RuntimeSupervisorStore } from '@/platform/runtime/useRuntimeSupervisorStore'
 import { DEFAULT_DESKTOP_CHAT_WELCOME_ITEMS } from '@buddy-electron/shared/desktopApi'
 import { actorThreadId } from '@buddy-shared/conversation/actorThread'
@@ -33,6 +34,7 @@ import { useChatContextUsage } from '@/modules/tasks/state/runs/useChatContextUs
 import { useChatExecution } from '@/modules/tasks/state/runs/useChatExecution'
 import { useChatExecutionTree } from '@/modules/tasks/state/runs/useChatExecutionTree'
 import { useChatRunSync } from '@/modules/tasks/state/runs/useChatRunSync'
+import { useUserQuestions } from '@/modules/tasks/state/runs/useUserQuestions'
 import { useTaskSpaces } from '@/modules/tasks/state/task-index/useTaskSpaces'
 import { resolveLocalChatErrorMessage } from '@/shared/lib/localChatError'
 import { createSessionContextOptions } from '../model/composer/sessionContextOptions'
@@ -52,6 +54,7 @@ import { useTaskWorkspacePersistence } from './drafts/useTaskWorkspacePersistenc
 import { useTaskLifecycle } from './useTaskLifecycle'
 
 export interface UseTaskCapabilityOptions {
+  questionInteraction?: ReturnType<typeof createUserQuestionInteractionState>
   buddyCatalog?: Readonly<Ref<BuddyCatalog | null>>
   index: TaskIndexController
   initialTarget: { draftKey?: string, conversationId: string | null, branchId: string | null, spaceId: string | null }
@@ -136,6 +139,13 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     ready: computed(() => runtimeSupervisor.runtimeState.value.status === 'ready'),
     api: api.localChat.executions,
     onError: setError,
+  })
+  const questions = useUserQuestions({
+    interaction: options.questionInteraction,
+    api: api.localChat.questions,
+    conversationId: activeConversationId,
+    branchId: activeBranchId,
+    ready: computed(() => runtimeSupervisor.runtimeState.value.status === 'ready'),
   })
   const hasAvailableProvider = computed(() => modelProviders.providers.value.some(
     provider => provider.enabled && provider.status === 'available',
@@ -656,6 +666,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
   const workspace = {
     changeRecovery,
     executionTree,
+    questions,
     marks: taskMarks,
     tree,
     context: {
