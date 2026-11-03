@@ -68,7 +68,7 @@ export function interleaveChatTranscriptSegments(
             && row.turn.completedAt !== null
             && timestamp(candidate) <= row.turn.completedAt)
         ))
-      const position = Math.max(outcomePosition, lastOtherSpeaker)
+      const position = Math.max(trigger, outcomePosition, lastOtherSpeaker)
       if (position > Math.max(...groups.keys()))
         groups.set(position, [])
     }
