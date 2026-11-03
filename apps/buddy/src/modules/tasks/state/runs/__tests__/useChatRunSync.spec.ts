@@ -650,60 +650,79 @@ describe('useChatRunSync', () => {
     }
   })
 
-  it('trims persistent timeline events together with edit and retry boundaries', async () => {
+  it.each([
+    { mutation: 'edit', outcome: 'success' },
+    { mutation: 'edit', outcome: 'failure' },
+    { mutation: 'regenerate', outcome: 'success' },
+    { mutation: 'regenerate', outcome: 'failure' },
+  ] as const)('keeps the $mutation branch visible across background refresh $outcome and trims its replaced history', async ({ mutation, outcome }) => {
     vi.stubGlobal('window', { clearTimeout, setTimeout })
     const activeConversationId = ref<string | null>('conversation-a')
     const activeBranchId = ref<string | null>('branch-a')
+    const pending = deferred<LocalConversationTimelinePage>()
+    const retained = [
+      timelineMessage('message-1', 'conversation-a', 'branch-a', 1),
+      compaction('compact-before', 'conversation-a', 'branch-a', 2),
+    ]
+    const originalInput = timelineMessage('message-2', 'conversation-a', 'branch-a', 3)
+    const editedInput = timelineMessage('message-edited', 'conversation-a', 'branch-replacement', 6)
     const api = createApi({
-      listTimeline: async () => timelinePage([
-        timelineMessage('message-1', 'conversation-a', 'branch-a', 1),
-        compaction('compact-before', 'conversation-a', 'branch-a', 2),
-        timelineMessage('message-2', 'conversation-a', 'branch-a', 3),
-        compaction('compact-after', 'conversation-a', 'branch-a', 4),
-        timelineMessage('assistant-1', 'conversation-a', 'branch-a', 5, 'assistant'),
-      ], null),
+      listTimeline: async input => input.branchId === 'branch-a'
+        ? timelinePage([
+            ...retained,
+            originalInput,
+            compaction('compact-after', 'conversation-a', 'branch-a', 4),
+            timelineMessage('assistant-1', 'conversation-a', 'branch-a', 5, 'assistant'),
+          ], null)
+        : pending.promise,
     })
-    const sync = useChatRunSync({
-      activeBranchId,
-      activeConversationId,
-      api,
-      onError: vi.fn(),
-    })
-    await sync.refreshActiveConversation()
+    const onError = vi.fn()
+    const sync = useChatRunSync({ activeBranchId, activeConversationId, api, onError })
+    try {
+      await sync.refreshActiveConversation()
+      expect(sync.isLoadingConversation.value).toBe(false)
 
-    activeBranchId.value = 'branch-edit'
-    sync.applyEditedTurn({
-      branchId: 'branch-edit',
-      conversationId: 'conversation-a',
-      draftReceipt: null,
-      userMessage: null,
-      run: run('run-edited', 'conversation-a'),
-      runId: 'run-edited',
-    }, 'message-2')
-    expect(sync.timelineItems.value.map(item => item.id)).toEqual([
-      'message-1',
-      'compact-before',
-    ])
+      activeBranchId.value = 'branch-replacement'
+      const turn = {
+        branchId: 'branch-replacement',
+        conversationId: 'conversation-a',
+        draftReceipt: null,
+        userMessage: mutation === 'edit' ? editedInput : null,
+        run: {
+          ...run('run-replacement', 'conversation-a'),
+          branchId: 'branch-replacement',
+          triggeringMessageId: mutation === 'edit' ? editedInput.id : originalInput.id,
+        },
+        runId: 'run-replacement',
+      }
+      if (mutation === 'edit')
+        sync.applyEditedTurn(turn, originalInput.id)
+      else
+        sync.applyRegeneratedTurn(turn)
+      const expected = [...retained, mutation === 'edit' ? editedInput : originalInput]
+      expect(sync.timelineItems.value).toEqual(expected)
+      expect(sync.runs.value).toEqual([turn.run])
+      expect(sync.isLoadingConversation.value).toBe(false)
 
-    activeBranchId.value = 'branch-a'
-    await sync.refreshActiveConversation()
-    sync.applyRegeneratedTurn({
-      branchId: 'branch-a',
-      conversationId: 'conversation-a',
-      draftReceipt: null,
-      userMessage: null,
-      run: {
-        ...run('run-regenerated', 'conversation-a'),
-        triggeringMessageId: 'message-2',
-      },
-      runId: 'run-regenerated',
-    })
-    expect(sync.timelineItems.value.map(item => item.id)).toEqual([
-      'message-1',
-      'compact-before',
-      'message-2',
-    ])
-    sync.dispose()
+      const refreshing = sync.refreshActiveConversation()
+      expect(sync.isLoadingConversation.value).toBe(false)
+      expect(sync.timelineItems.value).toEqual(expected)
+      const error = new Error('Background refresh unavailable')
+      if (outcome === 'success')
+        pending.resolve(timelinePage(expected, null, [turn.run]))
+      else
+        pending.reject(error)
+      await refreshing
+      expect(sync.isLoadingConversation.value).toBe(false)
+      expect(sync.timelineItems.value).toEqual(expected)
+      expect(onError.mock.calls).toEqual(outcome === 'success' ? [] : [[error]])
+
+      activeBranchId.value = 'branch-other'
+      expect(sync.isLoadingConversation.value).toBe(true)
+    }
+    finally {
+      sync.dispose()
+    }
   })
 
   it('ignores a failed snapshot after disposal and retains the last projection', async () => {

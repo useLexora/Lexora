@@ -244,6 +244,7 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
       projection.upsertMessage(turn.userMessage)
     loadedConversationId = turn.conversationId
     loadedBranchId = turn.branchId
+    settledScopeKey.value = `${turn.conversationId}:${turn.branchId}`
     scheduleRefresh()
   }
 
