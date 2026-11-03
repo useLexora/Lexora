@@ -1,20 +1,25 @@
-import type { TaskFileTarget } from '@buddy-shared/files/taskFileApi'
+import type { TaskFile, TaskFileLink, TaskFileTarget } from '@buddy-shared/files/taskFileApi'
 import type { SpaceFileTarget } from '@buddy-shared/spaces/spaceFileApi'
 import type { MarkdownImageResolver } from '@/shared/ui/markdown/markdownImage'
 import { spaceFileMediaUrl, taskFileMediaUrl } from '@buddy-shared/files/mediaPreview'
-import { documentRelativePath } from '@/shared/ui/markdown/markdownImage'
+import { documentRelativePath, isDocumentRelativeImage } from './documentRelativePath'
 
-// Images a document references by a path beside it load through the same media routes as the file itself, so the service keeps checking access.
 export function spaceFileImageResolver(target: SpaceFileTarget): MarkdownImageResolver {
-  return (src) => {
-    const path = documentRelativePath(target.path, src)
-    return path ? spaceFileMediaUrl({ ...target, path }) : null
-  }
+  return documentImageResolver(target.path, path => spaceFileMediaUrl({ ...target, path }))
 }
 
-export function taskFileImageResolver(target: TaskFileTarget): MarkdownImageResolver {
-  return (src) => {
-    const path = documentRelativePath(target.path, src)
-    return path ? taskFileMediaUrl({ conversationId: target.conversationId, path }) : null
+export function taskFileImageResolver(target: TaskFileTarget, resolve: (link: TaskFileLink) => Promise<TaskFile>): MarkdownImageResolver {
+  return documentImageResolver(target.path, async (path) => {
+    const file = await resolve({ conversationId: target.conversationId, href: encodeURIComponent(path) })
+    return taskFileMediaUrl(file.target)
+  })
+}
+
+function documentImageResolver(documentPath: string, resolve: (path: string) => string | Promise<string>): MarkdownImageResolver {
+  return async (src) => {
+    if (!isDocumentRelativeImage(src))
+      return { kind: 'default' }
+    const path = documentRelativePath(documentPath, src)
+    return path ? { kind: 'local', src: await resolve(path) } : { kind: 'unavailable' }
   }
 }

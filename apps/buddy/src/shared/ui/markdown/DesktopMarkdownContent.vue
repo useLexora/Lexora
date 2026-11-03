@@ -12,7 +12,7 @@ import { computed, ErrorCodes, getCurrentInstance, handleError, onBeforeUnmount,
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
 import { desktopThemeSnapshot } from '@/theme/desktopThemeState'
 import { markdownThemeVariables } from '@/theme/markdownTheme'
-import { markdownImageResolverKey } from './markdownImage'
+import { markdownImageContextKey } from './markdownImage'
 import { markdownCustomId } from './markdownRenderers'
 import 'katex/dist/katex.min.css'
 import 'markstream-vue/index.css'
@@ -38,7 +38,7 @@ const emit = defineEmits<{
 }>()
 
 const { isDark } = useDesktopUi()
-provide(markdownImageResolverKey, computed(() => props.resolveImage))
+provide(markdownImageContextKey, { resolve: computed(() => props.resolveImage), language: computed(() => props.language) })
 const themeVariables = computed(() => markdownThemeVariables(desktopThemeSnapshot.value.active.colors))
 const disableImages: NonNullable<NodeRendererProps['customMarkdownIt']> = md => md.disable('image')
 const codeBlockProps = computed<NonNullable<NodeRendererProps['codeBlockProps']>>(() => ({

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { documentRelativePath } from '../markdownImage'
+import { documentRelativePath } from '../documentRelativePath'
 
 describe('documentRelativePath', () => {
   it('resolves an image beside a document inside a root and decodes its path', () => {
@@ -24,11 +24,16 @@ describe('documentRelativePath', () => {
     expect(documentRelativePath('C:/notes/a.md', 'img/b.png')).toBe('C:/notes/img/b.png')
   })
 
+  it('preserves UNC share roots and refuses to climb above them', () => {
+    expect(documentRelativePath(String.raw`\\server\share\docs\a.md`, '../img/b.png')).toBe(String.raw`\\server\share\img\b.png`)
+    expect(documentRelativePath('//server/share/docs/a.md', 'img/b.png')).toBe('//server/share/docs/img/b.png')
+    expect(documentRelativePath(String.raw`\\server\share\a.md`, '../b.png')).toBeNull()
+  })
+
   it('leaves addresses that are not paths beside the document alone', () => {
     for (const src of ['', 'https://example.test/a.png', 'data:image/png;base64,AAAA', 'lexora-file://media/?a=1', 'C:/a.png', '//cdn.test/a.png', '/a.png', '\\a.png', '#top', '?x=1'])
       expect(documentRelativePath('docs/readme.md', src)).toBeNull()
     expect(documentRelativePath('docs/readme.md', '%E0%A4%A.png')).toBeNull()
     expect(documentRelativePath('docs/readme.md', 'a%00.png')).toBeNull()
-    expect(documentRelativePath('\\\\server\\share\\a.md', 'a.png')).toBeNull()
   })
 })

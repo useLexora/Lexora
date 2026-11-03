@@ -32,7 +32,9 @@ const opening = useFileOpening()
 const taskTarget = computed(() => props.view.resource.scheme === 'task-file' ? taskFileTargetSchema.parse({ conversationId: props.view.resource.data.conversationId, path: props.view.resource.data.path }) : null)
 const target = computed(() => taskTarget.value ? null : spaceFileTargetSchema.strip().parse(props.view.resource.data))
 const directory = computed(() => taskTarget.value !== null && props.view.resource.data.kind === 'directory')
-const imageResolver = computed(() => taskTarget.value ? taskFileImageResolver(taskTarget.value) : target.value ? spaceFileImageResolver(target.value) : undefined)
+const imageResolver = computed(() => taskTarget.value
+  ? props.taskFiles && taskFileImageResolver(taskTarget.value, props.taskFiles.resolve)
+  : target.value ? spaceFileImageResolver(target.value) : undefined)
 const provider = computed(() => {
   const location = taskTarget.value ? 'standalone' : 'inline'
   const resolved = opening?.resolve(props.view.title, location) ?? resolveBuiltinFileOpening(props.view.title, location)
