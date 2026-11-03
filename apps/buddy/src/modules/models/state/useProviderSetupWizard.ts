@@ -28,6 +28,7 @@ export function useProviderSetupWizard(options: UseProviderSetupWizardOptions) {
   const furthestStep = shallowRef(1)
   const sourceTab = shallowRef<'builtin' | 'custom'>('builtin')
   const providerQuery = shallowRef('')
+  const modelQuery = shallowRef('')
   const selectedProviderId = shallowRef<string | null>(null)
   const manualFormKey = shallowRef(0)
   const showManualModelDialog = shallowRef(false)
@@ -57,6 +58,15 @@ export function useProviderSetupWizard(options: UseProviderSetupWizardOptions) {
   const providerModels = computed(() => providerSettings().registeredModels.value.filter(
     model => model.providerId === selectedProviderId.value,
   ))
+  const filteredProviderModels = computed(() => {
+    const query = modelQuery.value.trim().toLocaleLowerCase()
+    if (!query)
+      return providerModels.value
+    return providerModels.value.filter(model => (
+      model.displayName.toLocaleLowerCase().includes(query)
+      || model.modelId.toLocaleLowerCase().includes(query)
+    ))
+  })
   const enabledModels = computed(() => providerModels.value.filter(
     model => model.enabled && model.available,
   ))
@@ -108,6 +118,15 @@ export function useProviderSetupWizard(options: UseProviderSetupWizardOptions) {
     }
     resetSteps(provider.storedCredentialType ? 3 : 2)
   }, { flush: 'sync', immediate: true })
+
+  watch(show, (visible, wasVisible) => {
+    if (visible && !wasVisible)
+      modelQuery.value = ''
+  })
+
+  watch(selectedProviderId, () => {
+    modelQuery.value = ''
+  })
 
   onScopeDispose(() => {
     generation += 1
@@ -288,6 +307,7 @@ export function useProviderSetupWizard(options: UseProviderSetupWizardOptions) {
   function resetNewProviderForm() {
     sourceTab.value = 'builtin'
     providerQuery.value = ''
+    modelQuery.value = ''
     selectedProviderId.value = null
     customForm.api = desktopProviderApiOptions[0]!.value
     customForm.baseUrl = ''
@@ -317,11 +337,13 @@ export function useProviderSetupWizard(options: UseProviderSetupWizardOptions) {
     updateCustomForm,
     enabledModels,
     filteredProviders,
+    filteredProviderModels,
     finish,
     furthestStep,
     goToPreviousStep,
     login,
     manualFormKey,
+    modelQuery,
     navigateToReachedStep,
     openManualModelDialog,
     providerModels,
