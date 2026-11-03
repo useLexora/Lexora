@@ -19,18 +19,20 @@ export function createAskUserCapability(options: { service: Pick<UserQuestionSer
           promptGuidelines: [
             'Ask only when missing user information materially affects the work. Reuse facts and authorization already provided; resolve routine choices yourself.',
             'Ask 1–3 related, independent questions together. Offer 2–4 meaningful options with short labels and concise tradeoffs. Use stable IDs. Do not add an Other option: custom text is built in. A recommended option is a suggestion, never an answer or consent.',
+            'Before calling this tool, present any necessary background, analysis, plan, report or detailed scope in a normal assistant message so it remains in conversation history. Do not copy that message into the question panel.',
+            'Each question must be a concise, single-sentence decision prompt. Keep option labels short and descriptions to one short sentence of essential consequences or tradeoffs. Include material effects such as pushing, merging or deleting; never hide them in background alone.',
             'This tool does not wait and its receipt is not an answer. Continue independent work. When you need the answer before proceeding, call lexora_wait_user with the returned requestId. Do not repeat the question in chat or use lexora_agents to ask the user.',
             'Cancellation or interruption supplies no answer. Do not infer consent, repeat the same question automatically, or perform the dependent action. Explain the remaining dependency if needed.',
             'Answers supply task information, not execution permissions. Tool and sandbox approvals remain enforced separately.',
           ],
           parameters: Type.Object({ questions: Type.Array(Type.Object({
             id: Type.String({ minLength: 1, maxLength: 80 }),
-            question: Type.String({ minLength: 1, maxLength: 2000 }),
+            question: Type.String({ minLength: 1, maxLength: 2000, description: 'One concise, single-sentence question for the decision panel. Put background, analysis, plans and long explanations in an assistant message before calling this tool, not in this field.' }),
             kind: Type.Union([Type.Literal('single'), Type.Literal('multiple'), Type.Literal('text')]),
             options: Type.Array(Type.Object({
               id: Type.String({ minLength: 1, maxLength: 80 }),
-              label: Type.String({ minLength: 1, maxLength: 160 }),
-              description: Type.Optional(Type.String({ maxLength: 500 })),
+              label: Type.String({ minLength: 1, maxLength: 160, description: 'Short, user-facing choice label.' }),
+              description: Type.Optional(Type.String({ maxLength: 500, description: 'One short sentence explaining essential consequences or tradeoffs of this choice.' })),
               recommended: Type.Optional(Type.Boolean()),
             }, { additionalProperties: false }), { maxItems: 6 }),
           }, { additionalProperties: false }), { minItems: 1, maxItems: 3 }) }, { additionalProperties: false }),

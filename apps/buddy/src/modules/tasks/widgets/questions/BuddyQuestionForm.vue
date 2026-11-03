@@ -2,7 +2,7 @@
 import type { UserQuestion, UserQuestionAnswer } from '@buddy-shared/questions/userQuestionApi'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { NCheckbox, NInput, NRadio } from 'naive-ui'
-import { computed, shallowRef, useId, useTemplateRef } from 'vue'
+import { computed, shallowRef, useId, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import BuddyQuestionPrompt from './BuddyQuestionPrompt.vue'
 
@@ -11,6 +11,9 @@ const emit = defineEmits<{ change: [answer: UserQuestionAnswer] }>()
 const { t } = useBuddyI18n(() => props.language)
 const id = useId()
 const customSelected = shallowRef(false)
+watch(() => props.question.id, () => {
+  customSelected.value = false
+})
 const customInput = useTemplateRef<InstanceType<typeof NInput>>('customInput')
 const isCustom = computed(() => !props.answer.selectedOptionIds.length && (customSelected.value || !!props.answer.text))
 const inputTheme = {
@@ -23,17 +26,19 @@ const inputTheme = {
 }
 const customInputTheme = {
   ...inputTheme,
+  fontSizeSmall: 'var(--buddy-chat-meta-font-size)',
+  lineHeightTextarea: 'var(--buddy-chat-meta-line-height)',
   color: 'transparent',
   colorHover: 'transparent',
   colorFocus: 'transparent',
   colorDisabled: 'transparent',
   paddingSmall: '0',
-  heightSmall: 'calc(var(--buddy-chat-user-font-size) * 1.5)',
+  heightSmall: 'calc(var(--buddy-chat-meta-font-size) * var(--buddy-chat-meta-line-height))',
   boxShadowFocus: 'none',
 }
 const choiceTheme = {
-  fontSizeMedium: 'var(--buddy-chat-user-font-size)',
-  labelLineHeight: 'var(--buddy-chat-user-line-height)',
+  fontSizeMedium: 'var(--buddy-chat-meta-font-size)',
+  labelLineHeight: 'var(--buddy-chat-meta-line-height)',
   labelPadding: '0 0 0 10px',
 }
 function updateCustom(text: string) {
@@ -55,76 +60,81 @@ function choose(optionId: string, checked: boolean) {
 
 <template>
   <fieldset class="question-form m-0 min-w-0 border-0 p-0 disabled:opacity-60" :disabled="disabled" :aria-label="question.question">
-    <BuddyQuestionPrompt class="mb-2" :content="question.question" :language="language" :position="position" :total="total" :multiple="question.kind === 'multiple'" />
-    <div v-if="question.options.length" class="flex flex-col gap-0.5">
-      <component
-        :is="question.kind === 'multiple' ? NCheckbox : NRadio"
-        v-for="option in question.options"
-        :key="option.id"
-        class="question-option m-0 min-w-0 w-full rounded-control border-1 border-solid border-transparent px-2 py-1.5"
-        :class="{ selected: answer.selectedOptionIds.includes(option.id) }"
-        :name="id"
-        :value="option.id"
-        :checked="answer.selectedOptionIds.includes(option.id)"
-        :disabled="disabled"
-        :aria-disabled="disabled || undefined"
-        :theme-overrides="choiceTheme"
-        @update:checked="choose(option.id, $event)"
-      >
-        <span class="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span class="text-fg text-[length:var(--buddy-chat-user-font-size)] font-500">{{ option.label }}</span>
-          <span v-if="option.recommended" class="text-[length:var(--buddy-chat-caption-font-size)] text-accent-text leading-[var(--buddy-chat-caption-line-height)]">{{ t('questions.recommended') }}</span>
-        </span>
-        <span v-if="option.description" class="mt-0.5 block text-muted text-[length:var(--buddy-chat-meta-font-size)] leading-[var(--buddy-chat-process-line-height)]">{{ option.description }}</span>
-      </component>
-      <div v-if="question.kind === 'single'" class="question-option flex items-start gap-2.5 rounded-control border-1 border-solid border-transparent px-2 py-1.5" :class="{ selected: isCustom }">
-        <NRadio class="shrink-0" :name="id" :checked="isCustom" :disabled="disabled" :theme-overrides="{ ...choiceTheme, labelPadding: '0' }" @update:checked="chooseCustom()">
-          <span class="sr-only">{{ t('questions.custom') }}</span>
-        </NRadio>
-        <NInput
-          ref="customInput"
-          class="min-w-0 flex-1"
-          type="textarea"
-          size="small"
-          :bordered="false"
-          :theme-overrides="customInputTheme"
-          :value="isCustom ? answer.text : ''"
+    <BuddyQuestionPrompt class="mb-2" :content="question.question" :language="language" :position="position" :total="total" :multiple="question.kind === 'multiple'">
+      <template #navigation>
+        <slot name="navigation" />
+      </template>
+    </BuddyQuestionPrompt>
+    <div class="question-answers grid gap-3">
+      <div v-if="question.options.length" class="flex min-w-0 flex-col gap-0.5">
+        <component
+          :is="question.kind === 'multiple' ? NCheckbox : NRadio"
+          v-for="option in question.options"
+          :key="option.id"
+          class="question-option m-0 min-w-0 w-full border-1 border-solid border-transparent rounded-control px-2 py-1.5"
+          :class="{ selected: answer.selectedOptionIds.includes(option.id) }"
+          :name="id"
+          :value="option.id"
+          :checked="answer.selectedOptionIds.includes(option.id)"
           :disabled="disabled"
-          :autosize="{ minRows: 1, maxRows: 6 }"
+          :aria-disabled="disabled || undefined"
+          :theme-overrides="choiceTheme"
+          @update:checked="choose(option.id, $event)"
+        >
+          <span class="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span class="text-fg text-[length:var(--buddy-chat-meta-font-size)] font-500">{{ option.label }}</span>
+            <span v-if="option.recommended" class="text-[length:var(--buddy-chat-caption-font-size)] text-accent-text leading-[var(--buddy-chat-caption-line-height)]">{{ t('questions.recommended') }}</span>
+          </span>
+          <span v-if="option.description" class="mt-0.5 block text-muted text-[length:var(--buddy-chat-caption-font-size)] leading-[var(--buddy-chat-caption-line-height)]">{{ option.description }}</span>
+        </component>
+        <div v-if="question.kind === 'single'" class="question-option flex items-start gap-2.5 border-1 border-solid border-transparent rounded-control px-2 py-1.5" :class="{ selected: isCustom }">
+          <NRadio class="shrink-0" :name="id" :checked="isCustom" :disabled="disabled" :theme-overrides="{ ...choiceTheme, labelPadding: '0' }" @update:checked="chooseCustom()">
+            <span class="sr-only">{{ t('questions.custom') }}</span>
+          </NRadio>
+          <NInput
+            ref="customInput"
+            class="min-w-0 flex-1"
+            type="textarea"
+            size="small"
+            :bordered="false"
+            :theme-overrides="customInputTheme"
+            :value="isCustom ? answer.text : ''"
+            :disabled="disabled"
+            :autosize="{ minRows: 1, maxRows: 6 }"
+            :maxlength="8000"
+            :placeholder="t('questions.customPlaceholder')"
+            :input-props="{ 'aria-label': `${question.question} — ${t('questions.custom')}` }"
+            @update:value="updateCustom"
+          />
+        </div>
+      </div>
+      <div v-if="question.kind !== 'single' || answer.selectedOptionIds.length" class="grid gap-2">
+        <label v-if="question.options.length" :for="`${id}-details`" class="text-[length:var(--buddy-chat-caption-font-size)] text-muted leading-[var(--buddy-chat-caption-line-height)]">{{ t('questions.notes') }}</label>
+        <NInput
+          :theme-overrides="{ ...inputTheme, paddingMedium: '0 12px' }"
+          type="textarea"
+          :value="answer.text"
+          :disabled="disabled"
+          :autosize="{ minRows: question.kind === 'text' ? 2 : 1, maxRows: 6 }"
           :maxlength="8000"
-          :placeholder="t('questions.customPlaceholder')"
-          :input-props="{ 'aria-label': `${question.question} — ${t('questions.custom')}` }"
-          @update:value="updateCustom"
+          :placeholder="t(question.kind === 'text' ? 'questions.textPlaceholder' : question.kind === 'multiple' ? 'questions.otherPlaceholder' : 'questions.notesPlaceholder')"
+          :input-props="{ 'id': `${id}-details`, 'aria-label': `${question.question} — ${t(question.kind === 'text' ? 'questions.yourAnswer' : 'questions.notes')}` }"
+          @update:value="emit('change', { ...answer, text: $event })"
         />
       </div>
-    </div>
-    <div v-if="question.kind !== 'single' || answer.selectedOptionIds.length" class="grid gap-2" :class="{ 'mt-3': question.options.length }">
-      <label v-if="question.options.length" :for="`${id}-details`" class="text-[length:var(--buddy-chat-caption-font-size)] text-muted leading-[var(--buddy-chat-caption-line-height)]">{{ t('questions.notes') }}</label>
-      <NInput
-        :theme-overrides="{ ...inputTheme, paddingMedium: '0 12px' }"
-        type="textarea"
-        :value="answer.text"
-        :disabled="disabled"
-        :autosize="{ minRows: question.kind === 'text' ? 2 : 1, maxRows: 6 }"
-        :maxlength="8000"
-        :placeholder="t(question.kind === 'text' ? 'questions.textPlaceholder' : question.kind === 'multiple' ? 'questions.otherPlaceholder' : 'questions.notesPlaceholder')"
-        :input-props="{ 'id': `${id}-details`, 'aria-label': `${question.question} — ${t(question.kind === 'text' ? 'questions.yourAnswer' : 'questions.notes')}` }"
-        @update:value="emit('change', { ...answer, text: $event })"
-      />
     </div>
   </fieldset>
 </template>
 
 <style scoped lang="scss">
 .question-option {
-  transition: background-color 120ms, border-color 120ms;
+  transition: background-color 120ms;
 
   &.selected {
     background: var(--buddy-state-selected);
   }
 
-  &:focus-visible,
-  &:has(:focus-visible) {
+  &:has(textarea:focus-visible) {
     outline: 2px solid var(--buddy-focus-ring);
     outline-offset: -2px;
   }

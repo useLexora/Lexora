@@ -14,11 +14,13 @@ const multiline = computed(() => props.content.includes('\n'))
 <template>
   <div class="buddy-question-prompt min-w-0" :class="multiline ? 'grid gap-2' : 'flex items-start gap-3'">
     <div v-if="total > 1 || multiple" class="flex shrink-0 items-center gap-2 whitespace-nowrap text-[length:var(--buddy-chat-caption-font-size)] text-muted leading-[var(--buddy-chat-final-line-height)]" :class="multiline ? 'justify-between' : 'order-last'">
-      <span v-if="total > 1">{{ t('questions.position', { current: position, total }) }}</span>
       <span v-if="multiple">{{ t('questions.multiple') }}</span>
+      <slot name="navigation">
+        <span v-if="total > 1">{{ t('questions.position', { current: position, total }) }}</span>
+      </slot>
     </div>
     <DesktopMarkdownContent
-      class="min-w-0 flex-1 font-normal text-fg"
+      class="question-title min-w-0 flex-1 font-normal text-fg"
       :content="content"
       :language="language"
       :allow-images="false"

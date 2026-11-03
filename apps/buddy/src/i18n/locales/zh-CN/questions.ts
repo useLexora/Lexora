@@ -12,6 +12,8 @@ export default {
   'questions.otherPlaceholder': '补充说明，或填写其他答案…',
   'questions.previousRequest': '上一个请求',
   'questions.nextRequest': '下一个请求',
+  'questions.previousQuestion': '上一个问题',
+  'questions.nextQuestion': '下一个问题',
   'questions.yourAnswer': '你的回答',
   'questions.count': '{count} 个问题',
   'questions.position': '问题 {current} / {total}',

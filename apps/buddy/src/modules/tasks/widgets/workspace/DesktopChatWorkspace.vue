@@ -160,17 +160,11 @@ const quoteContextKey = computed(() => [props.workspace.session.activeConversati
 const quoteOwnerKey = computed(() => [quoteContextKey.value, props.viewMode, nodeDetail.visible.value, nodeDetail.target.value?.kind === 'question' ? nodeDetail.target.value.messageId : nodeDetail.target.value?.runId].join(':'))
 const quoteDisabled = computed(() => isLoading.value || props.workspace.execution.isSending.value || props.workspace.execution.isMutatingBranch.value)
 const hasQuestions = computed(() => props.workspace.questions.pending.value.length > 0 || props.workspace.questions.loadError.value)
-const questionExpanded = computed(() => {
-  const request = props.workspace.questions.selected.value
-  return !!request && props.workspace.questions.expandedIds.value.has(request.id)
-})
-async function openQuestionInChat() {
+function openQuestionInChat() {
   const request = props.workspace.questions.selected.value
   if (request && !props.workspace.questions.expandedIds.value.has(request.id))
     props.workspace.questions.toggleExpanded(request.id)
   emit('showChat')
-  await nextTick()
-  viewport.returnToLatest()
 }
 
 const hasNotice = computed(() => (
@@ -298,11 +292,7 @@ function openDetailChanges(id: string) {
           @return-to-latest="viewport.returnToLatest"
           @select-outline-message="viewport.revealOutlineMessage"
           @scroll="(metrics, options) => viewport.handleScroll(metrics, options)"
-        >
-          <template v-if="questionExpanded" #tail>
-            <BuddyUserQuestions :controller="workspace.questions" :language="language" />
-          </template>
-        </DesktopChatTranscript>
+        />
       </main>
 
       <div
@@ -353,8 +343,8 @@ function openDetailChanges(id: string) {
               :execution="workspace.execution"
               :language="language"
             >
-              <template v-if="hasQuestions && (viewMode === 'canvas' || !questionExpanded)" #accessory>
-                <BuddyUserQuestions class="mb-[0.55rem]" :controller="workspace.questions" :language="language" compact @open="openQuestionInChat" />
+              <template v-if="hasQuestions" #accessory>
+                <BuddyUserQuestions class="mb-[0.55rem] max-h-[min(50cqh,calc(100cqh_-_12rem))]" :controller="workspace.questions" :language="language" :compact="viewMode === 'canvas'" @open="openQuestionInChat" />
               </template>
               <template #decoration>
                 <DesktopWelcomeCompanion

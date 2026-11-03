@@ -21,13 +21,18 @@ export function useUserQuestions(options: {
     const entry = projectUserQuestionHistory(record)
     return entry ? [entry] : []
   }).toReversed())
-  const { drafts, expandedIds, selectedByScope, resolvingIds, errors } = options.interaction ?? createUserQuestionInteractionState()
+  const { drafts, expandedIds, selectedByScope, selectedQuestionIds, resolvingIds, errors } = options.interaction ?? createUserQuestionInteractionState()
   const loadError = shallowRef(false)
   const scopeKey = computed(() => JSON.stringify([options.conversationId.value, options.branchId.value]))
   const selected = computed(() => pending.value.find(request => request.id === selectedByScope.value.get(scopeKey.value)) ?? pending.value[0] ?? null)
   function select(requestId: string) {
     if (pending.value.some(request => request.id === requestId))
       selectedByScope.value = new Map(selectedByScope.value).set(scopeKey.value, requestId)
+  }
+  function selectQuestion(requestId: string, questionId: string) {
+    if (resolvingIds.value.has(requestId) || !pending.value.some(request => request.id === requestId && request.questions.some(question => question.id === questionId)))
+      return
+    selectedQuestionIds.value = new Map(selectedQuestionIds.value).set(requestId, questionId)
   }
   let generation = 0
   let disposed = false
@@ -47,13 +52,17 @@ export function useUserQuestions(options: {
       return known && ((known.status !== 'pending' && record.status === 'pending') || known.delivery?.state === 'delivered') ? known : record
     })
     const nextDrafts = new Map(drafts.value)
+    const nextQuestionIds = new Map(selectedQuestionIds.value)
     for (const record of value) {
       if (record.status !== 'pending') {
         nextDrafts.delete(record.id)
+        nextQuestionIds.delete(record.id)
         toggle(errors, record.id, false)
         toggle(expandedIds, record.id, false)
         continue
       }
+      if (!record.questions.some(question => question.id === nextQuestionIds.get(record.id)) && record.questions[0])
+        nextQuestionIds.set(record.id, record.questions[0].id)
       if (!nextDrafts.has(record.id)) {
         nextDrafts.set(record.id, record.questions.map(question => ({ questionId: question.id, selectedOptionIds: [], text: '' })))
         if (record.status === 'pending')
@@ -61,6 +70,7 @@ export function useUserQuestions(options: {
       }
     }
     drafts.value = nextDrafts
+    selectedQuestionIds.value = nextQuestionIds
     records.value = value
   }
   async function refresh() {
@@ -139,6 +149,6 @@ export function useUserQuestions(options: {
     catch { await refresh() }
     finally { toggle(resolvingIds, requestId, false) }
   }
-  return { retry, records, pending, history, drafts, expandedIds, resolvingIds, errors, loadError, selected, select, ready: options.ready, updateAnswer, toggleExpanded: (id: string) => toggle(expandedIds, id), resolve, refresh }
+  return { retry, records, pending, history, drafts, expandedIds, selectedQuestionIds, selectQuestion, resolvingIds, errors, loadError, selected, select, ready: options.ready, updateAnswer, toggleExpanded: (id: string) => toggle(expandedIds, id), resolve, refresh }
 }
 export type UserQuestionsController = ReturnType<typeof useUserQuestions>

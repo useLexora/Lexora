@@ -11,7 +11,7 @@ import BuddyUserQuestionCard from './BuddyUserQuestionCard.vue'
 const props = defineProps<{ controller: UserQuestionsController, language: BuddyLocale, compact?: boolean }>()
 const emit = defineEmits<{ open: [] }>()
 const { t } = useBuddyI18n(() => props.language)
-const { pending, selected, drafts, expandedIds, resolvingIds, errors, loadError, ready } = props.controller
+const { pending, selected, drafts, expandedIds, selectedQuestionIds, resolvingIds, errors, loadError, ready } = props.controller
 const selectedIndex = computed(() => pending.value.findIndex(request => request.id === selected.value?.id))
 function navigate(offset: number) {
   const request = pending.value[(selectedIndex.value + offset + pending.value.length) % pending.value.length]
@@ -21,7 +21,7 @@ function navigate(offset: number) {
 </script>
 
 <template>
-  <section v-if="pending.length || loadError" class="buddy-user-questions flex min-w-0 flex-col gap-2" :aria-label="t('questions.toolLabel')">
+  <section v-if="pending.length || loadError" class="buddy-user-questions flex min-h-0 min-w-0 flex-col gap-2" :aria-label="t('questions.toolLabel')">
     <p v-if="loadError" class="m-0 text-sm text-muted" role="status">
       {{ t('questions.loadFailed') }} <NButton text size="small" @click="controller.refresh()">
         {{ t('questions.retry') }}
@@ -32,6 +32,7 @@ function navigate(offset: number) {
       :key="selected.id"
       :request="selected"
       :answers="drafts.get(selected.id) ?? []"
+      :question-id="selectedQuestionIds.get(selected.id)"
       :language="language"
       :expanded="!compact && expandedIds.has(selected.id)"
       :busy="resolvingIds.has(selected.id)"
@@ -39,6 +40,7 @@ function navigate(offset: number) {
       :ready="ready"
       @toggle="compact ? emit('open') : controller.toggleExpanded(selected.id)"
       @change="controller.updateAnswer(selected.id, $event)"
+      @select-question="controller.selectQuestion(selected.id, $event)"
       @resolve="controller.resolve(selected.id, $event)"
     >
       <template v-if="pending.length > 1" #navigation>
