@@ -97,25 +97,6 @@ export function useChatViewport(options: UseChatViewportOptions) {
     if (!resumePendingReveal() && (isPositioning.value || scrollState.value.ownership === 'following'))
       void scrollToTailAfterRender()
   })
-  watch(() => options.timelineItems.value, (items, previous) => {
-    if (isPositioning.value || options.isLoading.value || scrollState.value.ownership !== 'detached')
-      return
-    const first = previous[0]
-    if (!first || items[0]?.id === first.id
-      || !items.some(item => item.id === first.id && item.kind === first.kind)) {
-      return
-    }
-    const anchor = options.list.value?.captureScrollAnchor()
-    if (!anchor)
-      return
-    const operation = { generation: operationGeneration, list: options.list.value }
-    void nextTick(() => {
-      if (!isCurrent(operation))
-        return
-      readingAnchor = anchor
-      restoreReadingPosition()
-    })
-  }, { flush: 'pre' })
   onScopeDispose(() => {
     if (!isPositioning.value && !isRestoringPosition.value)
       rememberPosition(options.list.value)
@@ -209,9 +190,6 @@ export function useChatViewport(options: UseChatViewportOptions) {
     if (disposed || options.isLoading.value || isPositioning.value)
       return
     scrollState.value = reconcileChatScrollOwnership(scrollState.value, metrics)
-    if (scrollState.value.ownership === 'detached')
-      restoreReadingPosition()
-    else writeTailPosition()
   }
 
   function restoreReadingPosition() {

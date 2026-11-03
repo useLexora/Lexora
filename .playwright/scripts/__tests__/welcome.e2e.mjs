@@ -163,6 +163,7 @@ test('welcome split panes keep composers reachable and drafts independent in a s
 
   await page.setViewportSize({ width: 1920, height: 640 })
   await page.getByTestId('pane-layout-menu').click()
+  await page.locator('.n-dropdown-menu:visible').getByText('分屏', { exact: true }).hover()
   await page.locator('.n-dropdown-menu:visible').getByText('向右分屏', { exact: true }).click()
   await expect(page.locator('.desktop-task-editor')).toHaveCount(2)
   await expect(page.locator('.n-dropdown-menu:visible')).toHaveCount(0)
@@ -171,6 +172,7 @@ test('welcome split panes keep composers reachable and drafts independent in a s
   for (let step = 0; step < 6; step++)
     await divider.press('ArrowRight')
   await page.locator('.desktop-task-editor').nth(1).getByTestId('pane-layout-menu').click()
+  await page.locator('.n-dropdown-menu:visible').getByText('分屏', { exact: true }).hover()
   await page.locator('.n-dropdown-menu:visible').getByText('向下分屏', { exact: true }).click()
   await expect(page.locator('.desktop-task-editor')).toHaveCount(3)
   while (await dismiss.count())

@@ -47,10 +47,23 @@ export function useWorkbenchResize(controller: WorkbenchController) {
     const listeners = new AbortController()
     const startX = event.clientX
     const startY = event.clientY
+    let frame: number | null = null
+    let pending: { x: number, y: number } | null = null
+    const flush = () => {
+      frame = null
+      if (!pending)
+        return
+      const { x, y } = pending
+      pending = null
+      controller.resizeMany(snapshots.map(item => ({ id: item.id, ratio: item.ratio + (item.axis === 'horizontal' ? x - startX : y - startY) / item.size })))
+    }
     active.value = snapshots.map(item => item.id)
     cursor.value = snapshots.length > 1 ? 'all-scroll' : snapshots[0]!.axis === 'horizontal' ? 'col-resize' : 'row-resize'
     target.setPointerCapture(event.pointerId)
     end = () => {
+      if (frame !== null)
+        cancelAnimationFrame(frame)
+      flush()
       listeners.abort()
       if (target.hasPointerCapture(event.pointerId))
         target.releasePointerCapture(event.pointerId)
@@ -59,16 +72,24 @@ export function useWorkbenchResize(controller: WorkbenchController) {
       end = null
     }
     const cancel = () => {
+      pending = null
       controller.resizeMany(snapshots.map(item => ({ id: item.id, ratio: item.ratio })))
       end?.()
     }
     window.addEventListener('pointermove', (move) => {
       if (move.pointerId !== event.pointerId)
         return
-      controller.resizeMany(snapshots.map(item => ({ id: item.id, ratio: item.ratio + (item.axis === 'horizontal' ? move.clientX - startX : move.clientY - startY) / item.size })))
+      pending = { x: move.clientX, y: move.clientY }
+      if (frame === null)
+        frame = requestAnimationFrame(flush)
     }, { signal: listeners.signal })
-    window.addEventListener('pointerup', up => up.pointerId === event.pointerId && end?.(), { signal: listeners.signal })
-    window.addEventListener('pointercancel', cancel, { signal: listeners.signal })
+    window.addEventListener('pointerup', (up) => {
+      if (up.pointerId !== event.pointerId)
+        return
+      pending = { x: up.clientX, y: up.clientY }
+      end?.()
+    }, { signal: listeners.signal })
+    window.addEventListener('pointercancel', cancelEvent => cancelEvent.pointerId === event.pointerId && cancel(), { signal: listeners.signal })
     target.addEventListener('lostpointercapture', () => end?.(), { signal: listeners.signal })
     window.addEventListener('blur', () => end?.(), { signal: listeners.signal })
     window.addEventListener('keydown', (key) => {

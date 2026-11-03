@@ -19,6 +19,7 @@ class TestResizeObserver implements ResizeObserver {
 }
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame'] })
   naturalHeight = COLLAPSED_HEIGHT
   observers.length = 0
   vi.stubGlobal('ResizeObserver', TestResizeObserver)
@@ -36,6 +37,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanups.splice(0).forEach(cleanup => cleanup())
   vi.restoreAllMocks()
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
@@ -64,7 +66,7 @@ describe('user message bubble', () => {
     expect(root.querySelector('.buddy-chat-user-bubble__toggle-slot')).toBeNull()
 
     button.click()
-    await nextTick()
+    await flushMeasurements()
     expect(button.getAttribute('aria-expanded')).toBe('true')
     expect(button.getAttribute('aria-label')).toBe('收起')
     expect(body.classList.contains('is-collapsed')).toBe(false)
@@ -72,7 +74,7 @@ describe('user message bubble', () => {
     expect(body.textContent).toBe('Complete original message')
 
     button.click()
-    await nextTick()
+    await flushMeasurements()
     expect(button.getAttribute('aria-expanded')).toBe('false')
     expect(body.classList.contains('is-collapsed')).toBe(true)
     expect(root.querySelector('[data-quote-exclude]')?.contains(button)).toBe(true)
@@ -85,12 +87,12 @@ describe('user message bubble', () => {
     await nextTick()
     naturalHeight = 168
     notifyResize()
-    await nextTick()
+    await flushMeasurements()
     expect(root.querySelector('button')?.getAttribute('aria-expanded')).toBe('true')
 
     naturalHeight = COLLAPSED_HEIGHT
     notifyResize()
-    await nextTick()
+    await flushMeasurements()
     expect(root.querySelector('.buddy-chat-user-bubble__toggle')).toBeNull()
     expect(root.querySelector('.buddy-chat-user-bubble__body')?.classList.contains('is-collapsed')).toBe(true)
     expect(root.querySelector('.buddy-chat-user-bubble__body')?.classList.contains('has-toggle')).toBe(false)
@@ -101,8 +103,7 @@ describe('user message bubble', () => {
     expect(root.querySelector('button')).toBeNull()
     naturalHeight = 144
     state.text = 'A replacement long message'
-    await nextTick()
-    await nextTick()
+    await flushMeasurements()
     expect(root.querySelector('button')?.getAttribute('aria-label')).toBe('展开全文')
     state.language = 'en-US'
     await nextTick()
@@ -139,6 +140,62 @@ describe('user message bubble', () => {
     expect(root.scrollTop).toBe(292)
   })
 
+  it('batches expanded measurements without mutating collapsed bubbles or losing expansion', async () => {
+    naturalHeight = 200
+    const first = await mountBubble()
+    const second = await mountBubble()
+    const third = await mountBubble()
+    first.root.querySelector<HTMLButtonElement>('button')!.click()
+    second.root.querySelector<HTMLButtonElement>('button')!.click()
+    await flushMeasurements()
+    const collapsed = third.root.querySelector('.buddy-chat-user-bubble__body')!
+    const mutations = new MutationObserver(() => {})
+    mutations.observe(collapsed, { attributes: true })
+    const snapshots: number[] = []
+    vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockImplementation(function (this: Element) {
+      snapshots.push(document.querySelectorAll('.is-measuring').length)
+      return this.classList.contains('buddy-chat-user-bubble__body') ? naturalHeight : 0
+    })
+    notifyResize()
+    notifyResize()
+    await flushMeasurements()
+    expect(snapshots).toEqual([2, 2, 2])
+    expect(mutations.takeRecords()).toHaveLength(0)
+    mutations.disconnect()
+    expect(document.querySelectorAll('.is-measuring')).toHaveLength(0)
+    expect(first.root.querySelector('button')?.getAttribute('aria-expanded')).toBe('true')
+    expect(second.root.querySelector('button')?.getAttribute('aria-expanded')).toBe('true')
+    expect(third.root.querySelector('button')?.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('preserves hidden expanded messages and measures them when visible again', async () => {
+    naturalHeight = 200
+    const { root } = await mountBubble()
+    root.querySelector<HTMLButtonElement>('button')!.click()
+    await flushMeasurements()
+    naturalHeight = 0
+    notifyResize()
+    await flushMeasurements()
+    expect(root.querySelector('button')?.getAttribute('aria-expanded')).toBe('true')
+    naturalHeight = 24
+    notifyResize()
+    await flushMeasurements()
+    expect(root.querySelector('button')).toBeNull()
+    expect(root.querySelector('.is-collapsed')).not.toBeNull()
+  })
+
+  it('discards unmounted measurements without dropping other pending messages', async () => {
+    const first = await mountBubble()
+    const second = await mountBubble()
+    naturalHeight = 200
+    notifyResize()
+    first.app.unmount()
+    first.root.remove()
+    await flushMeasurements()
+    expect(first.root.textContent).toBe('')
+    expect(second.root.querySelector('button')?.getAttribute('aria-expanded')).toBe('false')
+  })
+
   it('disconnects its resize observer when unmounted', async () => {
     const { app, root } = await mountBubble()
     const active = observers.filter(observer => observer.observe.mock.calls.length > 0)
@@ -172,6 +229,14 @@ async function mountBubble(withReference = false) {
       root.remove()
     }
   })
-  await nextTick()
+  await flushMeasurements()
   return { root, state, app }
+}
+
+async function flushMeasurements() {
+  await nextTick()
+  vi.advanceTimersToNextFrame()
+  await nextTick()
+  vi.advanceTimersToNextFrame()
+  await nextTick()
 }

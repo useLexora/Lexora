@@ -63,6 +63,36 @@ async function anchor(owner) {
   })
 }
 
+async function scrollUpInSmallSteps(page, owner) {
+  await scrollport(owner).hover()
+  for (let step = 0; step < 3; step++) {
+    const previousDistance = await scrollport(owner).evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)
+    await page.mouse.wheel(0, -12)
+    await expect(owner.getByRole('button', { name: '回到最新', exact: true })).toBeVisible()
+    await settleScroll(owner)
+    expect(await scrollport(owner).evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeGreaterThan(previousDistance + 5)
+    await expect(owner.getByRole('button', { name: '回到最新', exact: true })).toBeVisible()
+  }
+}
+
+async function loadedRows(owner) {
+  return Number(await owner.locator('[data-transcript-row-count]').getAttribute('data-transcript-row-count'))
+}
+
+async function navigateOutline(page, owner, index) {
+  await owner.locator('.buddy-chat-outline__indicator-button').first().hover()
+  await owner.locator('.buddy-chat-outline__item-button').first().focus()
+  await page.keyboard.press('Home')
+  await expect(owner.locator('[data-outline-index="0"]')).toBeFocused()
+  for (let step = 0; step < index; step++) {
+    await page.keyboard.press('ArrowDown')
+    await expect(owner.locator(`[data-outline-index="${step + 1}"]`)).toBeFocused()
+  }
+  await page.keyboard.press('Enter')
+  await page.mouse.move(600, 60)
+  await settleScroll(owner)
+}
+
 async function settleScroll(owner) {
   await scrollport(owner).evaluate(element => new Promise((resolve, reject) => {
     let previous = ''
@@ -154,22 +184,36 @@ test('reading retains history anchors, outline navigation and independent stream
     await page.locator('[data-task-id="a"] .desktop-task-sidebar__task').click()
     const first = pane(page, 'Reading A')
     await expect(first.locator('[data-message-id="a-119"]')).toBeVisible()
-    const originalRows = await first.locator('[data-chat-row-key]').count()
-    const firstLoaded = await first.locator('[data-message-id]').first().getAttribute('data-message-id')
+    const originalRows = await loadedRows(first)
+    const firstLoadedId = `a-${120 - (originalRows - 1)}`
     await scrollport(first).evaluate((element) => {
       element.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }))
       element.scrollTop = 0
     })
-    await expect.poll(() => first.locator('[data-chat-row-key]').count()).toBeGreaterThan(originalRows)
-    await expect(first.locator(`[data-message-id="${firstLoaded}"]`)).toBeInViewport()
+    await expect.poll(() => loadedRows(first)).toBeGreaterThan(originalRows)
+    await expect(first.locator(`[data-message-id="${firstLoadedId}"]`)).toBeInViewport()
 
     await first.locator('.buddy-chat-outline__indicator-button').first().hover()
     const outline = first.locator('.buddy-chat-outline__item-button')
     await expect(outline.first()).toBeVisible()
     await outline.first().focus()
     await page.keyboard.press('Home')
+    await expect(first.locator('[data-outline-index="0"]')).toBeFocused()
     await page.keyboard.press('Enter')
     await expect(first.locator('[data-message-id="a-0"]')).toBeInViewport()
+    await first.locator('.buddy-chat-outline__indicator-button').first().click()
+    await expect(first.locator('[data-message-id="a-0"]')).toBeInViewport()
+    await first.locator('.buddy-chat-outline__indicator-button').last().click()
+    await expect(first.locator('[data-message-id="a-119"]')).toBeInViewport()
+    await scrollUpInSmallSteps(page, first)
+    await first.getByRole('button', { name: '回到最新', exact: true }).click()
+    await settleScroll(first)
+    await scrollport(first).focus()
+    await page.keyboard.press('ArrowUp')
+    await expect(first.getByRole('button', { name: '回到最新', exact: true })).toBeVisible()
+    await settleScroll(first)
+    expect(await scrollport(first).evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeGreaterThan(5)
+    await navigateOutline(page, first, 0)
     await page.mouse.move(600, 60)
     await scrollport(first).focus()
     await page.keyboard.press('PageDown')
@@ -201,8 +245,14 @@ test('reading retains history anchors, outline navigation and independent stream
       stream(`Paragraph ${index}: ${'Keep reading. '.repeat(24)}\n\n`)
       await expect(second).toContainText(`Paragraph ${index}:`)
     }
+    await settleScroll(second)
     await expect.poll(() => scrollport(second).evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeLessThan(5)
-    await scrollport(second).hover()
+    await scrollUpInSmallSteps(page, second)
+    const nearTailAnchor = await anchor(second)
+    stream('Near-tail continuation must not move the reader.\n\n')
+    await expect(second).toContainText('Near-tail continuation must not move the reader.')
+    await settleScroll(second)
+    expect(await anchor(second)).toEqual(nearTailAnchor)
     await page.mouse.wheel(0, -700)
     await expect(second.getByRole('button', { name: '回到最新', exact: true })).toBeVisible()
     await settleScroll(second)
@@ -223,13 +273,14 @@ test('reading retains history anchors, outline navigation and independent stream
       selection.addRange(range)
     })
     stream(`Offscreen continuation.\n\n${'Continue without stealing the reading position.\n\n'.repeat(20)}`)
-    await expect(second).toContainText('Offscreen continuation.')
+    await expect(second.getByRole('button', { name: '回到最新', exact: true })).toBeVisible()
     await expect.poll(() => anchor(second)).toEqual(readingAnchor)
     await expect.poll(() => anchor(first)).toEqual(firstAnchor)
     expect(await page.evaluate(() => window.getSelection().toString())).toBe('History a-3')
     await page.keyboard.press('ControlOrMeta+c')
     await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe('History a-3')
     await second.getByRole('button', { name: '回到最新', exact: true }).click()
+    await expect(second).toContainText('Offscreen continuation.')
     await expect.poll(() => scrollport(second).evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeLessThan(5)
     finished.resolve()
     await expect(second.getByRole('button', { name: '停止', exact: true })).toHaveCount(0)
@@ -242,4 +293,156 @@ test('reading retains history anchors, outline navigation and independent stream
     server.closeAllConnections()
     await new Promise(resolve => server.close(resolve))
   }
+})
+
+test('resizing long transcripts preserves reading anchors, expanded messages and tail following', async ({ buddy }, testInfo) => {
+  test.setTimeout(180000)
+  const instance = await buddy.createInstance('reading-resize')
+  const { app, page, diagnostics } = await instance.launch()
+  await page.evaluate(() => window.lexoraDesktop.localChat.conversations.list(1))
+  await app.evaluate(({ BrowserWindow }, databasePath) => {
+    BrowserWindow.getAllWindows()[0].setSize(1800, 1000)
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite')
+    const db = new DatabaseSync(databasePath)
+    try {
+      db.exec('BEGIN')
+      const message = db.prepare('INSERT INTO messages (id, conversation_id, branch_id, role, content_json, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      for (const id of ['resize-a', 'resize-b']) {
+        const now = new Date().toISOString()
+        db.prepare('INSERT INTO conversations (id, title, active_branch_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run(id, id, `branch-${id}`, now, now)
+        db.prepare('INSERT INTO conversation_branches (id, conversation_id, created_at) VALUES (?, ?, ?)').run(`branch-${id}`, id, now)
+        for (let index = 0; index < 120; index++) {
+          const text = index % 2
+            ? `Response ${index}\n\n${'A paragraph with **formatted text** and a stable reading position. '.repeat(18)}\n\n- First result\n- Second result\n\n| Key | Value |\n| --- | --- |\n| Result | Preserved |`
+            : `Question ${index}\n\n${'A long user message that must keep its full original content when resized. '.repeat(12)}`
+          message.run(`${id}-${index}`, id, `branch-${id}`, index % 2 ? 'assistant' : 'user', JSON.stringify({ text }), new Date(Date.now() - (120 - index) * 1000).toISOString())
+        }
+      }
+      db.exec('COMMIT')
+    }
+    finally { db.close() }
+  }, path.join(instance.home, 'buddy/buddy.sqlite3'))
+  await page.reload()
+  await page.locator('[data-task-id="resize-a"] .desktop-task-sidebar__task').click()
+  const first = pane(page, 'resize-a')
+  await expect(first.locator('[data-message-id="resize-a-119"]')).toBeVisible()
+  await first.getByTestId('pane-layout-menu').click()
+  await page.locator('.n-dropdown-menu:visible').getByText('分屏', { exact: true }).hover()
+  await page.locator('.n-dropdown-menu:visible').getByText('向右分屏', { exact: true }).click()
+  await page.locator('[data-task-id="resize-b"] .desktop-task-sidebar__task').click()
+  const second = pane(page, 'resize-b')
+  await expect(second.locator('[data-message-id="resize-b-119"]')).toBeVisible()
+  for (const owner of [first, second]) {
+    for (let attempt = 0; await loadedRows(owner) < 121 && attempt < 10; attempt++) {
+      const previous = await loadedRows(owner)
+      await scrollport(owner).evaluate((element) => {
+        element.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }))
+        element.scrollTop = 0
+      })
+      await expect.poll(() => loadedRows(owner)).toBeGreaterThan(previous)
+      await settleScroll(owner)
+    }
+    expect(await loadedRows(owner)).toBe(121)
+    expect(await owner.locator('[data-message-id]').count()).toBeLessThan(30)
+  }
+  const longMessage = first.locator('[data-message-id="resize-a-60"]')
+  await navigateOutline(page, first, 60)
+  await expect(longMessage).toBeInViewport()
+  const toggle = longMessage.getByRole('button', { name: '展开全文', exact: true })
+  await toggle.click()
+  const expanded = longMessage.getByRole('button', { name: '收起', exact: true })
+  await expect(expanded).toHaveAttribute('aria-expanded', 'true')
+  const originalText = await longMessage.locator('.buddy-chat-user-bubble__body').textContent()
+  await navigateOutline(page, first, 10)
+  await scrollport(first).focus()
+  await expect(longMessage).toHaveCount(0)
+  await navigateOutline(page, first, 60)
+  await expect(expanded).toHaveAttribute('aria-expanded', 'true')
+  await scrollport(first).focus()
+  await longMessage.locator('.buddy-chat-user-bubble__body').evaluate((element) => {
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    const selection = window.getSelection()
+    selection.removeAllRanges()
+    selection.addRange(range)
+  })
+  const selectedText = await page.evaluate(() => window.getSelection().toString())
+  await scrollport(first).evaluate((element) => {
+    element.dispatchEvent(new WheelEvent('wheel', { deltaY: 100 }))
+    element.scrollTop = element.scrollHeight
+  })
+  await expect(first.locator('[data-message-id="resize-a-119"]')).toBeInViewport()
+  await expect(longMessage).toHaveCount(1)
+  expect(await page.evaluate(() => window.getSelection().toString())).toBe(selectedText)
+  await page.evaluate(() => window.getSelection().removeAllRanges())
+  await expect(longMessage).toHaveCount(0)
+  await navigateOutline(page, first, 60)
+  await expect(expanded).toHaveAttribute('aria-expanded', 'true')
+  await scrollport(first).evaluate((element) => {
+    element.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }))
+    element.scrollTop = element.querySelector('[data-message-id="resize-a-60"]').getBoundingClientRect().top - element.getBoundingClientRect().top + element.scrollTop
+  })
+  await second.getByRole('button', { name: '回到最新', exact: true }).click()
+  await settleScroll(first)
+  await settleScroll(second)
+  const remembered = await anchor(first)
+  const divider = page.locator('.workbench-split.horizontal > .workbench-split__handle')
+  const bounds = await divider.boundingBox()
+  const start = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }
+  const session = await page.context().newCDPSession(page)
+  await session.send('Performance.enable')
+  const samples = []
+  try {
+    for (let trial = 0; trial < 3; trial++) {
+      const before = (await session.send('Performance.getMetrics')).metrics
+      const started = performance.now()
+      await page.mouse.move(start.x, start.y)
+      await page.mouse.down()
+      await page.mouse.move(start.x + 220, start.y, { steps: 12 })
+      await page.mouse.move(start.x - 180, start.y, { steps: 18 })
+      await page.mouse.move(start.x, start.y, { steps: 10 })
+      await page.mouse.up()
+      await settleScroll(first)
+      await settleScroll(second)
+      const after = (await session.send('Performance.getMetrics')).metrics
+      const names = ['LayoutCount', 'LayoutDuration', 'RecalcStyleCount', 'RecalcStyleDuration', 'ScriptDuration', 'TaskDuration']
+      samples.push({ elapsedMs: performance.now() - started, ...Object.fromEntries(names.map(name => [name, after.find(item => item.name === name).value - before.find(item => item.name === name).value])) })
+      await expect(expanded).toHaveAttribute('aria-expanded', 'true')
+      await expect(longMessage.locator('.buddy-chat-user-bubble__body')).toHaveText(originalText)
+      await expect.poll(() => anchor(first)).toEqual(remembered)
+      await expect.poll(() => scrollport(second).evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeLessThan(5)
+    }
+  }
+  finally {
+    await testInfo.attach('resize-performance', { body: JSON.stringify({ messagesPerPane: 120, samples }, null, 2), contentType: 'application/json' })
+    await session.detach()
+  }
+  await page.mouse.move(start.x, start.y)
+  await page.mouse.down()
+  await page.mouse.move(start.x + 120, start.y, { steps: 8 })
+  await page.keyboard.press('Escape')
+  await page.mouse.up()
+  await expect.poll(async () => (await divider.boundingBox()).x).toBeCloseTo(bounds.x, 0)
+  await expect.poll(() => anchor(first)).toEqual(remembered)
+  await expanded.click()
+  await expect(longMessage.getByRole('button', { name: '展开全文', exact: true })).toHaveAttribute('aria-expanded', 'false')
+  await scrollport(first).focus()
+  await scrollport(first).evaluate((element) => {
+    window.getSelection().selectAllChildren(element.querySelector('[data-transcript-row-count]'))
+  })
+  await expect(first.locator('[data-message-id]')).toHaveCount(120)
+  await settleScroll(first)
+  const allText = await page.evaluate(() => window.getSelection().toString())
+  expect(allText).toContain('Question 0')
+  expect(allText).toContain('Response 119')
+  await scrollport(first).evaluate((element) => {
+    element.dispatchEvent(new WheelEvent('wheel', { deltaY: 100 }))
+    element.scrollTop = element.scrollHeight
+  })
+  await expect(first.locator('[data-message-id="resize-a-119"]')).toBeInViewport()
+  expect(await page.evaluate(() => window.getSelection().toString())).toBe(allText)
+  await page.evaluate(() => window.getSelection().removeAllRanges())
+  await expect.poll(() => first.locator('[data-message-id]').count()).toBeLessThan(30)
+  await testInfo.attach('resized-transcripts', { body: await page.screenshot(), contentType: 'image/png' })
+  expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })

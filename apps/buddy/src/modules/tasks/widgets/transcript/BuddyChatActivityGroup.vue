@@ -16,6 +16,7 @@ import BuddyChatToolDetails from './BuddyChatToolDetails.vue'
 import BuddyChatToolIcon from './BuddyChatToolIcon.vue'
 import BuddyChatToolRow from './BuddyChatToolRow.vue'
 import { useChatContent } from './chatContentContext'
+import { useChatTranscriptValue } from './chatTranscriptPresentation'
 
 const props = defineProps<{
   group: ChatAgentActivityGroup
@@ -25,7 +26,7 @@ const props = defineProps<{
 const emit = defineEmits<{ toggleEntry: [id: string], openEntry: [id: string] }>()
 const { t } = useBuddyI18n(() => props.language)
 const actions = useChatContent()
-const open = shallowRef(false)
+const open = useChatTranscriptValue(() => `activity-group:${props.group.id}:open`, false)
 const highlightedIssue = shallowRef<string | null>(null)
 const content = useTemplateRef<HTMLDivElement>('content')
 const header = useTemplateRef<HTMLButtonElement>('header')

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { ChatTranscriptDisplayRow } from '../../model/transcript/chatMessageTime'
 import type {
   BuddyChatTranscriptViewportHandle,
   ChatMessageScrollMetrics,
@@ -6,9 +7,12 @@ import type {
 import { NScrollbar } from 'naive-ui'
 import { useTemplateRef } from 'vue'
 import BuddyChatReturnToLatest from './BuddyChatReturnToLatest.vue'
+import BuddyChatVirtualRow from './BuddyChatVirtualRow.vue'
 import { useChatTranscriptViewport } from './useChatTranscriptViewport'
 
 const props = defineProps<{
+  rows: readonly ChatTranscriptDisplayRow[]
+  editingMessageId?: string | null
   hasOlderMessages: boolean
   hasTail?: boolean
   returnToLatestLabel: string
@@ -25,7 +29,13 @@ const emit = defineEmits<{
 
 const root = useTemplateRef<HTMLElement>('root')
 const content = useTemplateRef<HTMLElement>('content')
-const { handle, handleScroll } = useChatTranscriptViewport(root, content, {
+const { handle, handleScroll, measureRow, virtualRows, totalHeight, tailOffset } = useChatTranscriptViewport(root, content, {
+  rows: () => props.rows,
+  editingMessageId: () => props.editingMessageId ?? null,
+  hasTail: () => props.hasTail ?? false,
+  hasOlderMessages: () => props.hasOlderMessages,
+  following: () => !props.showReturnToLatest,
+}, {
   onActiveMessageChange: messageId => emit('activeMessageChange', messageId),
   onContentResize: metrics => emit('contentResize', metrics),
   onReaderScrollIntent: () => emit('readerScrollIntent'),
@@ -45,10 +55,23 @@ defineExpose<BuddyChatTranscriptViewportHandle>(handle)
     >
       <div
         ref="content"
-        class="buddy-chat-transcript-viewport__content min-h-full"
-        :class="{ 'has-older-messages': props.hasOlderMessages, 'has-tail': hasTail }"
+        class="buddy-chat-transcript-viewport__content relative min-h-full"
+        :style="{ height: `${totalHeight}px` }"
+        :data-transcript-row-count="rows.length"
       >
-        <slot />
+        <BuddyChatVirtualRow
+          v-for="row in virtualRows"
+          :key="String(row.key)"
+          :ref="measureRow"
+          :row-key="String(row.key)"
+          :data-index="row.index"
+          :style="{ transform: `translateY(${row.start + (row.items.length ? 0 : tailOffset)}px)` }"
+        >
+          <template v-for="item in row.items" :key="item.key">
+            <slot :item="item" />
+          </template>
+          <slot v-if="!row.items.length" name="tail" />
+        </BuddyChatVirtualRow>
       </div>
     </NScrollbar>
     <Transition name="buddy-chat-return-to-latest">
@@ -95,24 +118,6 @@ defineExpose<BuddyChatTranscriptViewportHandle>(handle)
 
 .buddy-chat-transcript-viewport__content {
   width: 100cqw;
-  padding-block: 1.5rem 1rem;
-
-  &.has-older-messages {
-    padding-top: 2rem;
-  }
-
-  &.has-tail {
-    display: flex;
-    flex-direction: column;
-
-    :deep(> *) {
-      flex-shrink: 0;
-    }
-
-    :deep(> :last-child) {
-      margin-top: auto;
-    }
-  }
 }
 
 .buddy-chat-transcript-viewport__return {
