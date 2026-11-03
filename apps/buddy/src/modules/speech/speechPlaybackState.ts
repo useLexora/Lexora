@@ -1,6 +1,7 @@
 import { shallowRef } from 'vue'
 
-interface ActivePlayback { owner: string, scope: string | null, phase: 'preparing' | 'playing', stop: () => void }
+export type SpeechPlaybackPhase = 'preparing' | 'generating' | 'loading' | 'playing'
+interface ActivePlayback { owner: string, scope: string | null, phase: SpeechPlaybackPhase, stop: () => void }
 export const activeSpeechPlayback = shallowRef<ActivePlayback | null>(null)
 function escape(event: KeyboardEvent) {
   if (event.key === 'Escape' && !event.isComposing && activeSpeechPlayback.value) {
@@ -23,8 +24,8 @@ export function stopSpeechPlayback(): void {
   activeSpeechPlayback.value?.stop()
 }
 
-export function markSpeechPlaying(stop: () => void): void {
+export function setSpeechPlaybackPhase(stop: () => void, phase: SpeechPlaybackPhase): void {
   const current = activeSpeechPlayback.value
-  if (current?.stop === stop && current.phase !== 'playing')
-    activeSpeechPlayback.value = { ...current, phase: 'playing' }
+  if (current?.stop === stop && current.phase !== phase)
+    activeSpeechPlayback.value = { ...current, phase }
 }

@@ -138,6 +138,7 @@ const actionCopyText = computed(() => resultNoticeText.value ?? statusLabel.valu
   pointer-events: none;
   transition: opacity 120ms ease;
 
+  &:has([data-speech-playing="true"]),
   .buddy-chat-agent-turn:hover &,
   .buddy-chat-agent-turn:focus-within & {
     opacity: 1;
