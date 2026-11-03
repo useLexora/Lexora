@@ -38,26 +38,26 @@ const canSubmit = computed(() => {
 </script>
 
 <template>
-  <article class="buddy-user-question-card flex min-w-0 flex-col border-1 border-solid border-border rounded-[10px] bg-raised" :data-request-id="request.id" data-status="pending" :aria-busy="busy">
+  <article class="buddy-user-question-card flex min-w-0 flex-col border-1 border-solid border-border rounded-control bg-raised" :data-request-id="request.id" data-status="pending" :aria-busy="busy">
     <header class="flex shrink-0 items-center">
-      <button type="button" class="question-heading flex min-w-0 flex-1 items-center gap-2 rounded-[10px] px-4 py-3 text-left" :aria-expanded="expanded" :aria-controls="id" @click="emit('toggle')">
-        <DesktopIcon :component="ChatHelp20Regular" :size="18" class="shrink-0 text-muted" />
+      <button type="button" class="question-heading flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-control px-3 py-1.5 text-left text-[length:var(--buddy-chat-meta-font-size)] leading-[var(--buddy-chat-meta-line-height)]" :aria-expanded="expanded" :aria-controls="id" @click="emit('toggle')">
+        <DesktopIcon :component="ChatHelp20Regular" :size="16" class="shrink-0 text-muted" aria-hidden="true" />
         <strong class="max-w-[25%] truncate text-[length:var(--buddy-chat-meta-font-size)] font-500 text-fg">{{ request.buddyName }}</strong>
-        <span class="shrink-0 text-xs text-muted">{{ t('questions.status.pending') }}</span>
+        <span class="shrink-0 text-muted">{{ t('questions.status.pending') }}</span>
         <span class="min-w-0 flex-1 truncate text-[length:var(--buddy-chat-meta-font-size)] text-muted">{{ expanded ? '' : request.questions[0]?.question }}</span>
         <span v-if="request.questions.length > 1" class="shrink-0 text-[length:var(--buddy-chat-caption-font-size)] text-muted">{{ t('questions.count', { count: request.questions.length }) }}</span>
-        <DesktopIcon :component="expanded ? ChevronDown16Regular : ChevronRight16Regular" :size="16" class="shrink-0 text-muted" />
+        <DesktopIcon :component="expanded ? ChevronDown16Regular : ChevronRight16Regular" :size="16" class="shrink-0 text-muted" aria-hidden="true" />
       </button>
       <slot name="navigation" />
     </header>
     <template v-if="expanded">
-      <div :id="id" class="question-body grid min-w-0 gap-4 px-4 pb-1 pt-2">
+      <div :id="id" class="question-body grid min-w-0 gap-4 px-3 pt-2">
         <template v-for="(field, index) in fields" :key="field.question.id">
           <hr v-if="index" class="m-0 w-full border-0 border-t-1 border-t-solid border-t-border">
           <BuddyQuestionForm :question="field.question" :answer="field.answer" :language="language" :disabled="busy || !ready" :position="index + 1" :total="fields.length" @change="emit('change', $event)" />
         </template>
       </div>
-      <footer class="question-actions mt-4 shrink-0 border-t-1 border-t-solid border-t-border px-4 py-3">
+      <footer class="question-actions mt-2 shrink-0 px-3 pb-2">
         <p v-if="error" role="alert" class="m-0 mb-2 text-sm text-danger">
           {{ t('questions.submitFailed') }}
         </p>
@@ -80,7 +80,7 @@ const canSubmit = computed(() => {
   border: 0;
   background: transparent;
   color: inherit;
-  font: inherit;
+  font-family: inherit;
 
   &[aria-expanded='false']:hover {
     background: var(--buddy-state-hover);
