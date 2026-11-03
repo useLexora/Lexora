@@ -97,7 +97,7 @@ watch(() => props.viewMode, (value) => {
   else nodeDetail.close()
 }, { immediate: true })
 const messageList = useTemplateRef<BuddyChatMessageListHandle>('messageList')
-const { isEmpty, isLoading, language, transcriptBindings, viewport, welcomeVariant } = useChatWorkspace(props, messageList)
+const { isEmpty, isLoading, language, regenerateAssistant, transcriptBindings, viewport, welcomeVariant } = useChatWorkspace(props, messageList)
 watch([pageRef, isLoading], ([element, loading], _, cleanup) => {
   if (!element || loading)
     return
@@ -293,7 +293,7 @@ function openDetailChanges(id: string) {
           @open-changes="emit('openChanges', $event)"
           @reader-layout-intent="viewport.handleReaderLayoutIntent"
           @reader-scroll-intent="viewport.handleReaderScrollIntent"
-          @regenerate-assistant="workspace.execution.regenerateAssistant"
+          @regenerate-assistant="regenerateAssistant"
           @followup-assistant="beginFollowup"
           @return-to-latest="viewport.returnToLatest"
           @select-outline-message="viewport.revealOutlineMessage"

@@ -14,6 +14,8 @@ export interface ChatMessageScrollAnchor {
 export type ChatReadingPositions = Map<string, ChatMessageScrollAnchor | null>
 
 interface ChatMessageViewportHandle {
+  prepareTurnReplacement: (messageId: string, following: boolean) => void
+  finishTurnReplacement: () => void
   captureScrollAnchor: () => ChatMessageScrollAnchor | null
   hasScrollAnchor: (anchor: ChatMessageScrollAnchor) => boolean
   readScrollMetrics: () => ChatMessageScrollMetrics | null
