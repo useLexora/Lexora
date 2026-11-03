@@ -82,6 +82,28 @@ function order(projection: ReturnType<typeof projectChatTranscript>) {
 }
 
 describe('interleaved conversation segments', () => {
+  it.each(['failed', 'cancelled', 'completed'] as const)('keeps an empty %s outcome after its triggering input during completion and replay', (status) => {
+    const active = { ...run, startedAt: time(1) }
+    const terminal = { ...active, status, completedAt: time(4), errorCode: status === 'failed' ? 'PROVIDER_AUTHENTICATION_FAILED' : null }
+    const user = message('initial', 'user', 0)
+    const emptyReply = { ...message('empty-reply', 'assistant', 3), content: { text: '' } }
+    const started: LocalRunEvent = { runId: run.id, sequence: 1, createdAt: time(2), type: 'message.started', payload: { role: 'assistant', messageId: emptyReply.id } }
+    const ended: LocalRunEvent = { runId: run.id, sequence: 2, createdAt: time(3), type: 'message.completed', payload: { role: 'assistant', messageId: emptyReply.id, content: { text: '' }, stopReason: status === 'completed' ? 'stop' : status } }
+    const settled: LocalRunEvent = { runId: run.id, sequence: 3, createdAt: time(4), type: `run.${status}`, payload: status === 'failed' ? { errorCode: terminal.errorCode, errorMessage: 'Authentication required' } : {} }
+    for (const hasEmptyReply of [false, true]) {
+      const projector = createChatTranscriptProjector()
+      const live = projector.project(input(active, [], [user]))
+      expect(live.rows.map(row => row.key)).toEqual(['message:initial', 'agent-turn:run', 'activity:run'])
+      const snapshot = input(terminal, hasEmptyReply ? [started, ended, settled] : [settled], hasEmptyReply ? [user, emptyReply] : [user])
+      const result = projector.project(snapshot)
+      expect(result.rows.map(row => row.key)).toEqual(['message:initial', status === 'completed' ? 'turn-result:run' : 'agent-turn:run'])
+      expect(result.rows.at(-1)).toMatchObject({ turn: { status, nodes: [] } })
+      if (status === 'failed')
+        expect(result.rows.at(-1)).toMatchObject({ ownsResultActions: true, turn: { failureCode: terminal.errorCode, failureMessage: 'Authentication required' } })
+      expect(result.rows).toEqual(projectChatTranscript(snapshot).rows)
+    }
+  })
+
   it.each([
     { sameTimestamp: true, phase: undefined },
     { sameTimestamp: false, phase: 'final_answer' },
