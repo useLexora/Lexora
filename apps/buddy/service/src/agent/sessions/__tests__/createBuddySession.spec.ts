@@ -1,4 +1,5 @@
 import type { AssistantMessage, AuthType } from '@earendil-works/pi-ai'
+import type { ExecutionPermissionSettings } from '../../../permissions/permissionContract'
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,6 +8,7 @@ import { ModelRuntime, SessionManager } from '@earendil-works/pi-coding-agent'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createImageGenerationCapability } from '../../../images/imageGenerationExtension'
 import { OpenAiImageGenerationService } from '../../../images/OpenAiImageGenerationService'
+import { WINDOWS_SANDBOX_FILESYSTEM_LIMITS } from '../../../sandbox/shellExecution'
 import { SkillService } from '../../../skills/SkillService'
 import { BuddyDataPaths } from '../../../storage/BuddyDataPaths'
 import { openBuddyDatabase } from '../../../storage/database'
@@ -14,6 +16,8 @@ import { createSkillRepository } from '../../../storage/skillRepository'
 import { createSpaceRepository } from '../../../storage/spaceRepository'
 import { createEstimatedContextUsage } from '../../context/contextUsageBreakdown'
 import { createToolDiscoveryCapability } from '../../extensions/discovery/toolDiscoveryExtension'
+import { createPermissionPrompt } from '../../resources/createBuddyResourceLoader'
+import { BUDDY_MANUAL_APPROVAL_PROMPT, createBuddySystemPrompt } from '../../resources/createBuddySystemPrompt'
 
 import { createBuddySession as createPreparedBuddySession } from '../createBuddySession'
 import {
@@ -25,6 +29,69 @@ const directories: string[] = []
 
 afterEach(async () => {
   await Promise.all(directories.splice(0).map(path => rm(path, { force: true, recursive: true })))
+})
+
+describe('permission prompts', () => {
+  it.each(['linux', 'win32'] as const)('keeps full-access network approval under a role file limit on %s', (platform) => {
+    const settings: ExecutionPermissionSettings = { executionProfile: 'full_access', approvalPolicy: 'manual', fileAccessLimit: 'read_only' }
+    const prompt = createPermissionPrompt(settings, platform)
+    expect(prompt).toContain('inherits the full_access base profile')
+    expect(prompt).toContain('Writing and deleting local files and host execution are prohibited')
+    expect(prompt).toContain('read-only OS sandbox policy')
+    expect(prompt).toContain('Network access and approval policy inherit the base mode')
+    expect(prompt).toContain('including network requests, are automatically approved')
+    expect(prompt).toContain('Explicit tool-scope limits, managed-network domain denials and execution-target validation still apply')
+    expect(prompt).not.toContain('Commands run on the host without shell sandbox isolation')
+    expect(prompt).not.toContain('This conversation uses the local read-only execution profile')
+    expect(prompt).not.toContain('local read-only mode does not auto-approve them')
+    expect(prompt).not.toContain(BUDDY_MANUAL_APPROVAL_PROMPT)
+    expect(prompt.includes(WINDOWS_SANDBOX_FILESYSTEM_LIMITS)).toBe(platform === 'win32')
+    expect(createBuddySystemPrompt({ ...settings, platform })).toContain(prompt)
+  })
+
+  it.each(['policy', 'manual'] as const)('keeps workspace approval %s without promising local writes under a role file limit', (approvalPolicy) => {
+    const settings: ExecutionPermissionSettings = { executionProfile: 'workspace_write', approvalPolicy, fileAccessLimit: 'read_only' }
+    const prompt = createPermissionPrompt(settings, 'linux')
+    expect(prompt).toContain('inherits the workspace_write base profile')
+    expect(prompt).toContain('Writing and deleting local files and host execution are prohibited')
+    expect(prompt).toContain('sensitive reads still require approval')
+    expect(prompt).toContain('Network requests and external tools retain the base domain rules and approval policy')
+    expect(prompt).not.toContain('Modify only authorized directories')
+    expect(prompt).not.toContain('Use lexora_authorize_directory with read or write')
+    expect(prompt).not.toContain('use lexora_host_shell')
+    expect(prompt.includes(BUDDY_MANUAL_APPROVAL_PROMPT)).toBe(approvalPolicy === 'manual')
+    expect(createBuddySystemPrompt({ ...settings, platform: 'linux' })).toContain(prompt)
+  })
+
+  it.each(['read_only', 'workspace_write', 'full_access'] as const)('preserves the ordinary %s profile with no role restriction', (executionProfile) => {
+    const settings: ExecutionPermissionSettings = { executionProfile, approvalPolicy: 'policy' }
+    const prompt = createPermissionPrompt(settings, 'win32')
+    expect(createPermissionPrompt({ ...settings, fileAccessLimit: 'inherit' }, 'win32')).toBe(prompt)
+    expect(prompt).not.toContain('role or inherited local file read-only limit')
+    if (executionProfile === 'read_only') {
+      expect(createPermissionPrompt({ ...settings, fileAccessLimit: 'read_only' }, 'win32')).toBe(prompt)
+      expect(prompt).toContain('local read-only mode does not auto-approve them')
+    }
+    else if (executionProfile === 'full_access') {
+      expect(prompt).toContain('Commands run on the host without shell sandbox isolation')
+      expect(prompt).not.toContain(WINDOWS_SANDBOX_FILESYSTEM_LIMITS)
+    }
+    else {
+      expect(prompt).toContain('Modify only authorized directories')
+      expect(prompt).toContain(WINDOWS_SANDBOX_FILESYSTEM_LIMITS)
+    }
+  })
+
+  it('shows Windows limits only for an active sandbox shell, including the selected shell tool', () => {
+    const settings: ExecutionPermissionSettings = { executionProfile: 'full_access', approvalPolicy: 'policy', fileAccessLimit: 'read_only' }
+    const prompt = createPermissionPrompt(settings, 'win32', ['lexora_shell'])
+    expect(prompt).toContain('lexora_shell commands run with a read-only OS sandbox policy')
+    expect(prompt).toContain(WINDOWS_SANDBOX_FILESYSTEM_LIMITS)
+    const networkOnly = createPermissionPrompt(settings, 'win32', ['lexora_web_fetch'])
+    expect(networkOnly).not.toContain('commands run with a read-only OS sandbox policy')
+    expect(networkOnly).not.toContain(WINDOWS_SANDBOX_FILESYSTEM_LIMITS)
+    expect(networkOnly).toContain('including network requests, are automatically approved')
+  })
 })
 
 describe('createBuddySession', () => {
@@ -179,7 +246,11 @@ describe('createBuddySession', () => {
     }
   })
 
-  it('matches actual Windows tool permissions and actor sections in requests and context previews', async () => {
+  it.each<ExecutionPermissionSettings>([
+    { executionProfile: 'workspace_write', approvalPolicy: 'policy' },
+    { executionProfile: 'full_access', approvalPolicy: 'policy', fileAccessLimit: 'read_only' },
+    { executionProfile: 'workspace_write', approvalPolicy: 'manual', fileAccessLimit: 'read_only' },
+  ])('matches Windows permissions $executionProfile/$approvalPolicy/$fileAccessLimit in requests and context previews', async (permissions) => {
     const root = await createDirectory()
     const agentDir = join(root, '.lexora-buddy')
     const modelRuntime = await ModelRuntime.create({ modelsPath: null, refreshOnCreate: false })
@@ -196,6 +267,7 @@ describe('createBuddySession', () => {
       model,
       modelRuntime,
       platform: 'win32' as const,
+      getPermissionSettings: () => permissions,
       resources: { ...emptyResources(), actorPrompt: 'WINDOWS_ACTOR_INSTRUCTIONS' },
     }
     const result = await createBuddySession(options)
@@ -221,7 +293,8 @@ describe('createBuddySession', () => {
       await result.session.prompt('Inspect the available tools')
       expect(result.session.getActiveToolNames().sort()).toEqual(['edit', 'find', 'grep', 'ls', 'powershell', 'read', 'write'])
       expect(requests).toHaveLength(1)
-      expect(requests[0]!.prompt).toContain('including PowerShell')
+      expect(requests[0]!.prompt).toContain(createPermissionPrompt(permissions, 'win32', result.session.getActiveToolNames()))
+      expect(requests[0]!.prompt).toContain(permissions.fileAccessLimit === 'read_only' ? 'PowerShell commands run with a read-only OS sandbox policy' : 'including PowerShell')
       expect(requests[0]!.prompt).not.toContain('including bash')
       expect(requests[0]!.prompt).toContain('WINDOWS_ACTOR_INSTRUCTIONS')
       expect(snapshot?.systemPromptTokens).toBe(requests[0]!.usage.systemPromptTokens)

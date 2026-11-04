@@ -209,7 +209,7 @@ describe('execution delegation boundary', () => {
     f.executions.setFileAccessCeiling('root')
     f.setPermissions({ approvalPolicy: 'manual', executionProfile: 'full_access' })
     const result = await f.service.execute(f.caller, 'readonly', { operation: 'delegate', targetId: f.npc.id, text: 'Inspect' }, f.controller.signal) as { runId: string }
-    expect(f.executions.find(result.runId)).toMatchObject({ fileAccessCeiling: 'read_only', run: { executionProfile: 'read_only', approvalPolicy: 'manual' } })
+    expect(f.executions.find(result.runId)).toMatchObject({ fileAccessCeiling: 'read_only', run: { executionProfile: 'full_access', approvalPolicy: 'manual' } })
   })
 
   it('describes selected tools and inherited read-only sandbox access without granting missing tools', async () => {
@@ -225,7 +225,8 @@ describe('execution delegation boundary', () => {
       id: npc.id,
       tools: process.platform === 'darwin' ? ['read'] : ['read', shell],
       unavailableToolIds: [missing],
-      executionProfile: 'read_only',
+      executionProfile: 'full_access',
+      fileAccessLimit: 'read_only',
       shell: process.platform === 'darwin' ? null : { tool: shell, boundary: 'sandbox', readOnly: true },
     }] })
   })

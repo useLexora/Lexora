@@ -125,6 +125,22 @@ describe('durable execution work', () => {
     expect(second.work.review).toBeNull()
   })
 
+  it('preserves a file ceiling without downgrading inherited authorization when resuming work', () => {
+    const f = fixture()
+    const input = request(f.child('first'))
+    input.authorization.executionProfile = 'full_access'
+    input.authorization.fileAccessCeiling = 'read_only'
+    input.run.executionProfile = 'full_access'
+    input.requestHash = hashChildAdmissionRequest(input)
+    const first = f.executions.admitChild(input).execution
+    settle(f, first.run.id)
+    const next = request(f.child('second'), first.run.id)
+    next.authorization.executionProfile = 'full_access'
+    next.run.executionProfile = 'full_access'
+    next.requestHash = hashChildAdmissionRequest(next)
+    expect(f.executions.admitChild(next).execution).toMatchObject({ fileAccessCeiling: 'read_only', run: { executionProfile: 'full_access' } })
+  })
+
   it('does not elevate a previously read-only work attempt through a writable new caller', () => {
     const f = fixture()
     const input = request(f.child('first'))

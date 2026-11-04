@@ -209,7 +209,7 @@ export class ChatTurnService {
     await this.#options.inputValidation.validate({ actorId: owner.buddyId, threadId: owner.threadId, conversationId: conversation.id, branchId: request.branchId, modelId: selection.modelId, providerId: selection.providerId, contextWindow: selection.contextWindow, maxTokens: selection.maxTokens, prompt, attachments: [] })
     this.#stopping.signal.throwIfAborted()
     const source = this.#options.runs.findById(request.runId)
-    const ceiling = source?.actorSnapshot?.settings.limits.fileAccess === 'read_only' || isReviewUserMessage(this.#options.conversations.listBranchMessages(conversation.id, request.branchId).find(message => message.id === owner.triggeringMessageId)?.content)
+    const ceiling = isReviewUserMessage(this.#options.conversations.listBranchMessages(conversation.id, request.branchId).find(message => message.id === owner.triggeringMessageId)?.content)
       ? 'read_only'
       : source?.executionProfile ?? owner.executionProfile
     const prepared = this.#options.turnRequests.prepare({

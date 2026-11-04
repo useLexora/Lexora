@@ -23,6 +23,7 @@ import { createReusableBuddySession } from './createReusableBuddySession'
 
 export interface BuddySessionFactoryOptions {
   getRunPermissionCeiling: (runId: string) => BuddyExecutionProfile | undefined
+  getFileAccessCeiling?: (runId: string) => 'read_only' | undefined
   bindPreferences?: (apply: (preferences: RuntimePreferences) => void) => Promise<() => void>
   tree: BuddyConversationTree
   events?: ApplicationEvents
@@ -110,7 +111,7 @@ export class BuddySessionFactory {
         writeImageMaterial: (text, signal) => imageMaterials.write(text, signal),
         actorKind: blueprint.actor?.kind,
         toolScope: run.purpose === 'conversation.compaction' ? { mode: 'none' } : blueprint.actor?.settings.tools,
-        fileAccessLimit: this.#options.getRunPermissionCeiling(run.id) === 'read_only' ? 'read_only' : blueprint.actor?.settings.limits.fileAccess,
+        fileAccessLimit: this.#options.getFileAccessCeiling?.(run.id) === 'read_only' || this.#options.getRunPermissionCeiling(run.id) === 'read_only' ? 'read_only' : blueprint.actor?.settings.limits.fileAccess,
         approvalPolicy: blueprint.approvalPolicy,
         canonicalRoot: blueprint.canonicalRoot,
         conversationId: blueprint.conversationId,
@@ -154,9 +155,7 @@ export class BuddySessionFactory {
       let runPermissionCeiling: BuddyExecutionProfile | undefined
       const restrictPermissions = (settings: BuddyPermissionSettings): BuddyPermissionSettings => ({
         ...settings,
-        executionProfile: runPermissionCeiling === 'read_only' || blueprint.actor?.settings.limits.fileAccess === 'read_only'
-          ? 'read_only'
-          : settings.executionProfile,
+        executionProfile: runPermissionCeiling === 'read_only' ? 'read_only' : settings.executionProfile,
       })
       reusable = createReusableBuddySession({
         getPendingExecutionMessages: (runId, entries) => this.#options.services.delegation?.pending(runId, entries) ?? [],

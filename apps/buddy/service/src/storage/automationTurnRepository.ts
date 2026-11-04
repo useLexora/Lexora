@@ -191,7 +191,7 @@ export function createAutomationTurnRepository(database: DatabaseSync): Automati
           model: { modelId: input.model, providerId: input.provider, reasoning: input.reasoning, serviceTier: input.serviceTier ?? null },
           modelSource: snapshot.model.mode === 'pinned' ? 'input' : actor.settings.model ? 'definition' : 'application',
         })
-        const executionProfile = actor.settings.limits.fileAccess === 'read_only' ? 'read_only' : snapshot.executionProfile
+        const executionProfile = snapshot.executionProfile
         if (
           snapshot.spaceId !== input.spaceId
           || JSON.stringify(snapshot.spaceContext) !== JSON.stringify(input.executionContext)

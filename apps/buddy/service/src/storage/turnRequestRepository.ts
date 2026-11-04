@@ -567,6 +567,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
             throw new TurnRequestConflictError()
         }
         let questionOwner: ReturnType<typeof executions.find> = null
+        let questionFileAccessCeiling = false
         if (!input.draft) {
           const question = database.prepare('SELECT request_json FROM user_questions WHERE id = ? AND run_id = ?').get(input.questionReply.requestId, input.questionReply.sourceRunId)
           const request = question && JSON.parse(String(question.request_json))
@@ -577,6 +578,11 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           questionOwner = executions.find(input.questionReply.sourceRunId)
           if (!questionOwner || questionOwner.phase !== 'closed' || questionOwner.run.status !== 'completed' || questionOwner.cleanupState !== 'clean' || questionOwner.cancelRequestedAt)
             throw new TurnRequestConflictError()
+          if (!isExecutionProfileWithin(resolveTurnExecutionProfile(input), questionOwner.run.executionProfile))
+            throw new TurnRequestConflictError()
+          questionFileAccessCeiling = questionOwner.fileAccessCeiling === 'read_only'
+            || questionOwner.run.actorSnapshot?.settings.limits.fileAccess === 'read_only'
+            || questionOwner.run.executionProfile === 'read_only'
           while (questionOwner?.run.executionKind === 'npc_child' && questionOwner.run.parentRunId)
             questionOwner = executions.find(questionOwner.run.parentRunId)
           if (!questionOwner || questionOwner.phase !== 'closed' || questionOwner.run.status !== 'completed' || questionOwner.cleanupState !== 'clean' || questionOwner.cancelRequestedAt
@@ -683,6 +689,8 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           input.actorSnapshot ? JSON.stringify(input.actorSnapshot) : null,
         )
         database.prepare('UPDATE runs SET scheduling_lane = ?, thread_id = ? WHERE id = ?').run(actorLane ? 'actor' : 'conversation', threadId, input.runId)
+        if (questionFileAccessCeiling)
+          executions.setFileAccessCeiling(input.runId)
         insertRunInput.run(
           input.runId,
           input.runInput.prompt,

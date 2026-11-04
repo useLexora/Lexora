@@ -292,18 +292,19 @@ export class ExecutionDelegationService {
       const selected = selection.mode === 'all' ? null : new Set(selection.mode === 'selected' ? selection.ids : [])
       const readOnly = permissions.executionProfile === 'read_only' || source.fileAccessCeiling === 'read_only'
         || source.run.actorSnapshot?.settings.limits.fileAccess === 'read_only' || buddy.settings.limits.fileAccess === 'read_only'
-      const executionProfile = readOnly ? 'read_only' : permissions.executionProfile
+      const executionProfile = permissions.executionProfile
       const roleTools = toolOptions.filter(tool => !getRoleToolDenial(tool.name, tool, selected, readOnly ? 'read_only' : 'inherit')
         && (currentPlatform.hostShellSupervision || !isShellToolName(tool.name)))
       const unifiedShell = roleTools.some(tool => tool.name === 'lexora_shell')
       const tools = unifiedShell ? roleTools.filter(tool => !isPiShellToolName(tool.name)) : roleTools
-      const shell = resolveShellExecution(executionProfile)
+      const shell = resolveShellExecution(readOnly ? 'read_only' : executionProfile)
       return {
         ...target,
         revision: buddy.revision,
         tools: tools.map(tool => tool.name),
         unavailableToolIds: [...selected ?? []].filter(id => !toolOptions.some(tool => tool.id === id)),
         executionProfile,
+        fileAccessLimit: readOnly ? 'read_only' : 'inherit',
         shell: unifiedShell || tools.some(tool => tool.name === shell.dialect) ? { tool: unifiedShell ? 'lexora_shell' : shell.dialect, boundary: shell.boundary, readOnly: shell.readOnly } : null,
       }
     }
@@ -366,7 +367,7 @@ export class ExecutionDelegationService {
         model: definition.model.modelId,
         purpose: source.run.purpose,
         approvalPolicy: permissions.approvalPolicy,
-        executionProfile: readOnly ? 'read_only' : permissions.executionProfile,
+        executionProfile: previous?.run.executionProfile === 'read_only' ? 'read_only' : permissions.executionProfile,
         executionContext: source.run.executionContext,
         startedAt: new Date().toISOString(),
       },

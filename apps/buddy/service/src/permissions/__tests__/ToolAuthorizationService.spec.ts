@@ -117,6 +117,41 @@ describe('harness tool authorization', () => {
     expect(f.repository.list()).toEqual([])
   })
 
+  it.each(['policy', 'manual'] as const)('inherits full-access network authorization with a read-only role and %s approval', async (approvalPolicy) => {
+    const f = fixture()
+    const settings = structuredClone(DEFAULT_NETWORK_PERMISSIONS)
+    const authorization = new ToolAuthorizationService({
+      ...f.options,
+      approvalPolicy,
+      executionProfile: 'full_access',
+      fileAccessLimit: 'read_only',
+      approvalAvailable: false,
+      networkPermissions: { get: async () => settings, allow: async () => { throw new Error('Role authorization must not persist rules') } },
+    })
+    const target = { host: 'example.com', port: 443 }
+    for (const networkOperation of ['access', 'download', 'upload'] as const) {
+      const call = f.call('lexora_web_fetch', { url: 'https://example.com' })
+      const resource = { network: target, networkOperation }
+      await expect(authorization.authorize(call, f.run, { access: 'network' }, resource)).resolves.toBeNull()
+      settings.defaults[networkOperation] = 'deny'
+      await expect(authorization.authorize(call, f.run, { access: 'network' }, resource)).resolves.toBe('NETWORK_PERMISSION_DENIED')
+      settings.defaults[networkOperation] = 'ask'
+    }
+    for (const access of ['write', 'delete'] as const) {
+      await expect(authorization.authorize(f.call('file_action', {}), f.run, { access, paths: [{ path: workspace, mode: 'existing' }] })).resolves.toBe('READ_ONLY_PROFILE')
+    }
+    await expect(authorization.authorize(f.call('bash', { command: 'pwd' }), f.run, { access: 'execute' })).resolves.toBe('ROLE_FILE_ACCESS_READ_ONLY')
+    const shell = f.call('bash', { command: 'pwd' })
+    await expect(authorization.authorize(shell, f.run, { access: 'execute', shellBoundary: 'sandbox' })).resolves.toBeNull()
+    expect(authorization.getExecutionPermit(shell, f.run)?.executionProfile).toBe('read_only')
+    authorization.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile: 'workspace_write' })
+    await expect(authorization.authorize(f.call('lexora_web_fetch', {}), f.run, { access: 'network' }, { network: target })).resolves.toBe('APPROVAL_UNAVAILABLE_IN_BACKGROUND')
+    authorization.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile: 'full_access' })
+    await expect(authorization.authorize(f.call('lexora_web_fetch', {}), f.run, { access: 'network' }, { network: target })).resolves.toBeNull()
+    expect(settings).toEqual(DEFAULT_NETWORK_PERMISSIONS)
+    expect(f.repository.list()).toEqual([])
+  })
+
   it('saves only the requested network action and reuses it in a later unattended run', async () => {
     const f = fixture()
     let settings = structuredClone(DEFAULT_NETWORK_PERMISSIONS)

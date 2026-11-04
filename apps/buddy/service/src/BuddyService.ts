@@ -1138,9 +1138,17 @@ export async function startBuddyService(
     })
     const getRunPermissionCeiling = (runId: string): BuddyExecutionProfile | undefined => {
       const run = runs.findById(runId)
-      if (executionRecords.find(runId)?.fileAccessCeiling === 'read_only' || run?.actorSnapshot?.settings.limits.fileAccess === 'read_only')
+      const content = run?.triggeringMessageId ? conversationHistory.repository.findMessageById(run.triggeringMessageId)?.content : undefined
+      if (run?.executionProfile === 'read_only' && (run.executionKind !== 'root' || buddyUserMessageContentV1Schema.safeParse(content).data?.questionReply))
         return 'read_only'
-      return run?.triggeringMessageId && isReviewUserMessage(conversationHistory.repository.findMessageById(run.triggeringMessageId)?.content) ? 'read_only' : undefined
+      return isReviewUserMessage(content) ? 'read_only' : undefined
+    }
+    const getFileAccessCeiling = (runId: string): 'read_only' | undefined => {
+      return executionRecords.find(runId)?.fileAccessCeiling === 'read_only'
+        || runs.findById(runId)?.actorSnapshot?.settings.limits.fileAccess === 'read_only'
+        || getRunPermissionCeiling(runId) === 'read_only'
+        ? 'read_only'
+        : undefined
     }
     const executionCoordinator = await host.start('runtime.execution_tree', ({ defer }) => {
       const service = new ExecutionCoordinator({
@@ -1153,7 +1161,7 @@ export async function startBuddyService(
         mutations,
         listIncomplete: () => runs.listIncomplete(),
         recoverQuarantinedRun: runId => runRecoveryService.recoverQuarantinedRun(runId),
-        getFileAccessCeiling: runId => getRunPermissionCeiling(runId) === 'read_only' ? 'read_only' : undefined,
+        getFileAccessCeiling,
         onObserverError: () => record({ event: 'execution.tree_observer_failed', level: 'error' }),
         readResult: runId => readExecutionResult(options.eventLog, runId),
         launchChild: id => turnLauncher.launch(id),
@@ -1191,6 +1199,7 @@ export async function startBuddyService(
     const sessionFactory = await host.start('runtime.session_factory', () => {
       const service = new BuddySessionFactory({
         getRunPermissionCeiling,
+        getFileAccessCeiling,
         bindPreferences: apply => bindRuntimePreferences(options.rpc, apply),
         tree: conversationTree,
         events,
@@ -1378,7 +1387,7 @@ export async function startBuddyService(
       return service
     })
     const executionPlanner = new BuddyRunExecutionPlanner({
-      getFileAccessCeiling: runId => getRunPermissionCeiling(runId) === 'read_only' ? 'read_only' : undefined,
+      getFileAccessCeiling,
       definitions: buddyDefinitions,
       attachments: attachmentService,
       commands: commandRequests,

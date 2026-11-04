@@ -176,7 +176,8 @@ export class ToolAuthorizationService {
         sandboxDirectories: options.getSandboxDirectories?.(run),
         owner: options.owner,
         paths: declared.paths,
-        profile: options.fileAccessLimit === 'read_only' ? 'read_only' : settings.executionProfile,
+        profile: settings.executionProfile,
+        fileAccessLimit: options.fileAccessLimit,
         toolName: event.toolName,
       })
       signal.throwIfAborted()
@@ -251,7 +252,7 @@ export class ToolAuthorizationService {
             cwd: options.cwd,
             grants: options.getGrants(),
             paths: executionPaths,
-            profile: options.fileAccessLimit === 'read_only' ? 'read_only' : settings.executionProfile,
+            profile: settings.executionProfile,
             reviewedPaths: decision.type === 'ask' ? decision.paths : undefined,
           })
         }
