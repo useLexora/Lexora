@@ -9,19 +9,17 @@ import { speechErrorKey } from '../speechError'
 import { speechText } from '../speechText'
 import { useSpeechCatalog } from '../useSpeechCatalog'
 import { useSpeechReadAloud } from '../useSpeechReadAloud'
-import { useSystemVoices } from '../useSystemVoices'
 
 const props = defineProps<{ language: BuddyLocale, text: string, owner: string }>()
 const { t } = useBuddyI18n(() => props.language)
 const { busy, phase, error, play, stop } = useSpeechReadAloud({ owner: () => props.owner, text: () => props.text, language: () => props.language })
 const { catalog, loaded, selected } = useSpeechCatalog()
-const { voices } = useSystemVoices()
 const focused = shallowRef(false)
 const unavailable = computed(() => {
   if (!speechText(props.text))
     return 'speech.textEmpty'
   if (speechOutput(catalog.value.preferences) === 'system')
-    return voices.value.length ? undefined : 'speech.noSystemVoice'
+    return undefined
   return selected('speech.synthesize')?.supported ? undefined : 'speech.configureOutput'
 })
 const disabled = computed(() => !busy.value && !!unavailable.value)

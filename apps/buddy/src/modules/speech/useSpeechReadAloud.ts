@@ -35,6 +35,7 @@ export function useSpeechReadAloud(options: { owner: () => string, text: () => s
   useSpeechLifetime(stop)
   watch(() => [options.owner(), options.text()], stop)
   watch(() => speechEnabled(options.preferences?.() ?? catalog.value.preferences, 'speech.synthesize'), enabled => !enabled && stop())
+  watch(() => speechOutput(options.preferences?.() ?? catalog.value.preferences), reset)
   watch(catalog, () => {
     const provider = connection?.provider
     if (provider && !catalog.value.providers.some(item => item.id === provider.id && item.revision === provider.revision && item.supported)) {
@@ -58,6 +59,11 @@ export function useSpeechReadAloud(options: { owner: () => string, text: () => s
     const current = ++epoch
     try {
       if (speechOutput(preferences) === 'system') {
+        const available = await requireDesktopApi().speech.prepareSystem()
+        if (current !== epoch)
+          return
+        if (!available)
+          throw new Error('SPEECH_SYSTEM_UNAVAILABLE')
         const player = playback = new SystemSpeechPlayback()
         await player.play(text, { voice: preferences.systemVoice, rate: preferences.systemRate, language: options.language() }, () => {
           if (current === epoch)

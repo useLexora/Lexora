@@ -6,9 +6,10 @@ import type { LexoraConfigStore } from '../config/LexoraConfigStore'
 import { ipcMain } from 'electron'
 import { z } from 'zod'
 import { SpeechSession } from '../../../platform/speech/SpeechSession'
-import { SPEECH_IPC, speechAckSchema, speechChoiceSchema, speechChunkSchema, speechEnabled, speechKindSchema, speechSelectionSchema, speechSessionSchema, speechStartSchema } from '../../../shared/speech/speechApi'
+import { SPEECH_IPC, speechAckSchema, speechChoiceSchema, speechChunkSchema, speechEnabled, speechKindSchema, speechOutput, speechSelectionSchema, speechSessionSchema, speechStartSchema } from '../../../shared/speech/speechApi'
 import { assertTrustedSender } from '../ipc'
 import { registerMicrophoneLease } from './microphonePermission'
+import { prepareSystemSpeech } from './systemSpeech'
 
 export function registerSpeechIpc(options: {
   getWindow: () => BrowserWindow | null
@@ -29,6 +30,7 @@ export function registerSpeechIpc(options: {
   let owner: BrowserWindow | null = null
   let testingMicrophone = false
   let microphoneTimer: ReturnType<typeof setTimeout> | undefined
+  let systemPreparation: Promise<boolean> | undefined
   const cancelAll = () => Promise.all([...sessions.values()].map(session => session.cancel())).then(() => {})
   const reset = () => {
     testingMicrophone = false
@@ -113,6 +115,14 @@ export function registerSpeechIpc(options: {
   handle(SPEECH_IPC.catalog, async () => {
     const preferences = (await options.config.read()).desktop.speech ?? {}
     return { preferences, providers: await providers().catch(() => []) }
+  })
+  handle(SPEECH_IPC.prepareSystem, async () => {
+    const preferences = (await options.config.read()).desktop.speech ?? {}
+    if (!speechEnabled(preferences, 'speech.synthesize') || speechOutput(preferences) !== 'system')
+      return false
+    return systemPreparation ??= prepareSystemSpeech().finally(() => {
+      systemPreparation = undefined
+    })
   })
   handle(SPEECH_IPC.voices, async (raw) => {
     const input = z.object({ id: z.string().min(1).max(256), revision: z.string().max(256), kind: speechKindSchema }).strict().parse(raw)

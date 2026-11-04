@@ -23,7 +23,7 @@ const source = computed(() => speechSource(preferences.value, 'speech.synthesize
 const system = computed(() => source.value === 'system')
 const sources = computed(() => [{ value: 'system' as const, label: t('speech.systemSource') }, { value: 'model' as const, label: t('speech.modelServices') }])
 const { selected, select, selecting, error } = useSpeechSelection()
-const { voices } = useSystemVoices()
+const { voices } = useSystemVoices(() => !!props.config && enabled.value && system.value)
 const { pending, failed, save } = useSettingMutation(props.updateSettings)
 const voiceOptions = computed(() => [{ value: '', label: t('speech.defaultVoice') }, ...voices.value.map(voice => ({ value: voice.voiceURI, label: `${voice.name} · ${voice.lang}` }))])
 const canSelectVoice = computed(() => !system.value && selected('speech.synthesize')?.supportsVoiceSelection)
