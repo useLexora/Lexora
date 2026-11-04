@@ -8,7 +8,6 @@ import { z } from 'zod'
 import { modelCapabilityOverridesSchema } from '../../../shared/providers/providerCapabilities'
 import { modelCatalogReferenceSchema } from '../../../shared/providers/providerCatalog'
 import { serviceModelMetadataSchema } from '../../../shared/providers/providerDiscovery'
-import { withTransaction } from './database'
 
 export type ProviderModelSource = 'builtin' | 'manual' | 'synced'
 
@@ -66,7 +65,6 @@ export interface ProviderModelStateRepository {
   remove: (providerId: string, modelId: string) => boolean
   removeForProvider: (providerId: string) => number
   upsert: (record: ProviderModelStateRecord) => ProviderModelStateRecord
-  upsertMany: (records: readonly ProviderModelStateRecord[]) => ProviderModelStateRecord[]
 }
 
 interface ProviderModelStateRow {
@@ -216,11 +214,6 @@ export function createProviderModelStateRepository(
       return Number(removeForProvider.run(providerId).changes)
     },
     upsert: write,
-    upsertMany(records) {
-      if (!records.length)
-        return []
-      return withTransaction(database, () => records.map(record => write(record)))
-    },
   }
 }
 

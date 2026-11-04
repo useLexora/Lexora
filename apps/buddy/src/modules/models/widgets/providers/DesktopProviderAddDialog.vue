@@ -23,12 +23,12 @@ const { t } = useBuddyI18n(language)
 const {
   addingBuiltin,
   addBuiltin,
-  allVisibleModelsEnabled,
   builtinDisplayName,
   builtinHeaders,
   canComplete,
   canLogin,
-  canToggleVisibleModels,
+  canClearVisibleModels,
+  canSelectVisibleModels,
   closeDialog,
   continueFromModels,
   createCustom,
@@ -57,7 +57,7 @@ const {
   step,
   stepCount,
   toggleModel,
-  toggleVisibleModels,
+  setVisibleModelsEnabled,
 } = useProviderSetupWizard({
   providerSettings: () => props.providerSettings,
   resumeProviderId: toRef(props, 'resumeProviderId'),
@@ -242,22 +242,28 @@ async function connect(authType: 'api_key' | 'oauth') {
                 <DesktopIcon :component="Search20Regular" />
               </template>
             </NInput>
-            <NButton
-              class="flex-none"
-              size="small"
-              :disabled="!canToggleVisibleModels"
-              @click="toggleVisibleModels"
-            >
-              {{ allVisibleModelsEnabled
-                ? t('desktop.providers.clearModelSelection')
-                : t('desktop.providers.selectAllModels') }}
-            </NButton>
           </div>
 
           <div class="desktop-provider-add-dialog__models min-h-0 overflow-auto">
             <div class="sticky z-1 top-0 flex min-h-10 items-center justify-between border-b-1 border-b-solid border-b-border bg-surface text-muted text-[0.7rem] font-600 py-[0.55rem] px-[0.8rem]">
               <span>{{ t('desktop.providers.modelColumn') }}</span>
-              <span>{{ t('desktop.providers.enabledColumn') }}</span>
+              <div class="flex flex-wrap items-center justify-end gap-2">
+                <span>{{ t('desktop.providers.enabledColumn') }}</span>
+                <NButton
+                  size="tiny"
+                  :disabled="!canSelectVisibleModels"
+                  @click="setVisibleModelsEnabled(true)"
+                >
+                  {{ t('desktop.providers.selectAllModels') }}
+                </NButton>
+                <NButton
+                  size="tiny"
+                  :disabled="!canClearVisibleModels"
+                  @click="setVisibleModelsEnabled(false)"
+                >
+                  {{ t('desktop.providers.clearModelSelection') }}
+                </NButton>
+              </div>
             </div>
             <div v-for="model in filteredProviderModels" :key="model.modelId" class="desktop-provider-add-dialog__model-row">
               <div>

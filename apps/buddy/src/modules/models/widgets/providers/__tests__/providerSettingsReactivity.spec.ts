@@ -173,14 +173,15 @@ describe('provider settings prop reactivity', () => {
     expect(document.body.querySelectorAll('.desktop-provider-add-dialog__model-row')).toHaveLength(3)
   })
 
-  it('toggles all visible available models with one batch request', async () => {
+  it('can clear a partial selection directly and then enable all available model types', async () => {
     const store = createStore('Alpha')
     store.providers.value = [{ ...provider('Alpha'), modelCount: 4 }]
     store.registeredModels.value = [
       { ...model('Alpha'), modelId: 'alpha', enabled: true },
       { ...model('Beta'), modelId: 'beta', enabled: false },
-      { ...model('Gamma'), modelId: 'gamma', enabled: true },
-      { ...model('Delta'), modelId: 'delta', enabled: false, available: false },
+      { ...model('Gamma'), modelId: 'gamma', enabled: true, type: 'speech' },
+      { ...model('Delta'), modelId: 'delta', enabled: true, available: false },
+      { ...model('Other provider'), modelId: 'other', providerId: 'other', enabled: true },
     ]
     const calls: Array<{ enabled: boolean, modelIds: string[], providerId: string }> = []
     store.setProviderModelsEnabled = async (providerId, modelIds, enabled) => {
@@ -205,29 +206,36 @@ describe('provider settings prop reactivity', () => {
     })
     await nextTick()
 
-    const button = () => document.body.querySelector('.desktop-provider-add-dialog__model-toolbar button') as HTMLButtonElement
-    expect(button().textContent?.trim()).toBe(translateBuddy('zh-CN', 'desktop.providers.selectAllModels'))
+    const buttons = [...document.body.querySelectorAll<HTMLButtonElement>('.desktop-provider-add-dialog__models button')]
+    const selectAll = buttons.find(button => button.textContent?.trim() === translateBuddy('zh-CN', 'desktop.providers.selectAllModels'))!
+    const clearAll = buttons.find(button => button.textContent?.trim() === translateBuddy('zh-CN', 'desktop.providers.clearModelSelection'))!
+    expect(selectAll.disabled).toBe(false)
+    expect(clearAll.disabled).toBe(false)
 
-    button().click()
+    clearAll.click()
     await vi.waitFor(() => expect(calls).toHaveLength(1))
-    expect(calls[0]).toEqual({ enabled: true, modelIds: ['beta'], providerId: 'service' })
+    expect(calls[0]).toEqual({ enabled: false, modelIds: ['alpha', 'gamma'], providerId: 'service' })
+    expect(store.registeredModels.value.filter(item => item.enabled).map(item => item.modelId)).toEqual(['delta', 'other'])
     await nextTick()
-    expect(button().textContent?.trim()).toBe(translateBuddy('zh-CN', 'desktop.providers.clearModelSelection'))
+    expect(selectAll.disabled).toBe(false)
+    expect(clearAll.disabled).toBe(true)
 
-    button().click()
+    selectAll.click()
     await vi.waitFor(() => expect(calls).toHaveLength(2))
-    expect(calls[1]).toEqual({ enabled: false, modelIds: ['alpha', 'beta', 'gamma'], providerId: 'service' })
+    expect(calls[1]).toEqual({ enabled: true, modelIds: ['alpha', 'beta', 'gamma'], providerId: 'service' })
+    expect(store.registeredModels.value.filter(item => item.enabled).map(item => item.modelId)).toEqual(['alpha', 'beta', 'gamma', 'delta', 'other'])
     await nextTick()
-    expect(button().textContent?.trim()).toBe(translateBuddy('zh-CN', 'desktop.providers.selectAllModels'))
+    expect(selectAll.disabled).toBe(true)
+    expect(clearAll.disabled).toBe(false)
   })
 
-  it('scopes the bulk toggle to the current search result', async () => {
+  it('scopes both bulk actions to the search result and disables them without available matches', async () => {
     const store = createStore('Alpha')
     store.providers.value = [{ ...provider('Alpha'), modelCount: 3 }]
     store.registeredModels.value = [
-      { ...model('Alpha'), modelId: 'alpha', enabled: false },
+      { ...model('Alpha'), modelId: 'alpha', enabled: true },
       { ...model('Beta Two'), modelId: 'beta', enabled: false },
-      { ...model('Gamma'), modelId: 'gamma', enabled: false },
+      { ...model('Gamma'), modelId: 'gamma', enabled: true, available: false },
     ]
     const calls: Array<{ enabled: boolean, modelIds: string[], providerId: string }> = []
     store.setProviderModelsEnabled = async (providerId, modelIds, enabled) => {
@@ -256,11 +264,75 @@ describe('provider settings prop reactivity', () => {
     searchInput.value = 'Beta'
     searchInput.dispatchEvent(new Event('input', { bubbles: true }))
     await nextTick()
-    const button = document.body.querySelector('.desktop-provider-add-dialog__model-toolbar button') as HTMLButtonElement
-    button.click()
+    const buttons = [...document.body.querySelectorAll<HTMLButtonElement>('.desktop-provider-add-dialog__models button')]
+    const selectAll = buttons.find(button => button.textContent?.trim() === translateBuddy('zh-CN', 'desktop.providers.selectAllModels'))!
+    const clearAll = buttons.find(button => button.textContent?.trim() === translateBuddy('zh-CN', 'desktop.providers.clearModelSelection'))!
+    selectAll.click()
     await vi.waitFor(() => expect(calls).toHaveLength(1))
     expect(calls[0]).toEqual({ enabled: true, modelIds: ['beta'], providerId: 'service' })
-    expect(store.registeredModels.value.filter(item => item.enabled).map(item => item.modelId)).toEqual(['beta'])
+    expect(store.registeredModels.value.filter(item => item.enabled).map(item => item.modelId)).toEqual(['alpha', 'beta', 'gamma'])
+    await nextTick()
+    clearAll.click()
+    await vi.waitFor(() => expect(calls).toHaveLength(2))
+    expect(calls[1]).toEqual({ enabled: false, modelIds: ['beta'], providerId: 'service' })
+    expect(store.registeredModels.value.filter(item => item.enabled).map(item => item.modelId)).toEqual(['alpha', 'gamma'])
+
+    for (const query of ['Gamma', 'no matches']) {
+      searchInput.value = query
+      searchInput.dispatchEvent(new Event('input', { bubbles: true }))
+      await nextTick()
+      expect(selectAll.disabled).toBe(true)
+      expect(clearAll.disabled).toBe(true)
+    }
+  })
+
+  it('locks both bulk actions and switches until a failed request completes without changing the selection', async () => {
+    const pending = deferred<boolean>()
+    const mutatingProviderId = shallowRef<string | null>(null)
+    const store = {
+      ...createStore('Alpha'),
+      mutatingProviderId,
+      async setProviderModelsEnabled(providerId: string) {
+        mutatingProviderId.value = providerId
+        try {
+          return await pending.promise
+        }
+        finally {
+          mutatingProviderId.value = null
+        }
+      },
+    }
+    store.registeredModels.value = [
+      { ...model('Alpha'), modelId: 'alpha', enabled: true },
+      { ...model('Beta'), modelId: 'beta', enabled: false },
+    ]
+    const root = document.createElement('div')
+    document.body.append(root)
+    const app = createApp({
+      setup: () => () => h(DesktopProviderAddDialog, { show: true, resumeProviderId: 'service', providerSettings: store }),
+    })
+    app.mount(root)
+    cleanups.push(() => {
+      app.unmount()
+      root.remove()
+    })
+    await nextTick()
+
+    const buttons = [...document.body.querySelectorAll<HTMLButtonElement>('.desktop-provider-add-dialog__models button')]
+    const clearAll = buttons.find(button => button.textContent?.trim() === translateBuddy('zh-CN', 'desktop.providers.clearModelSelection'))!
+    clearAll.click()
+    await nextTick()
+    expect(buttons.every(button => button.disabled)).toBe(true)
+    buttons.forEach(button => button.click())
+    await nextTick()
+    expect(store.registeredModels.value.map(item => item.enabled)).toEqual([true, false])
+
+    pending.resolve(false)
+    await vi.waitFor(() => expect(buttons.every(button => !button.disabled)).toBe(true))
+    expect(store.registeredModels.value.map(item => item.enabled)).toEqual([true, false])
+    const modelSwitch = document.body.querySelector<HTMLButtonElement>('.desktop-provider-add-dialog__models .n-switch')!
+    modelSwitch.click()
+    await vi.waitFor(() => expect(store.registeredModels.value.map(item => item.enabled)).toEqual([false, false]))
   })
 
   it('saves model parameters and provider connections through the replacement store', async () => {

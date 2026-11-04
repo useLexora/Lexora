@@ -42,6 +42,8 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
   let catalogRequest: Promise<boolean> | null = null
   let catalogDirty = false
   let catalogScheduled = false
+  let catalogChangeRevision = 0
+  let catalogResult = false
   let disposed = false
   let defaultModelPersistenceRevision = 0
   let persistDefaultModelQueue = Promise.resolve(true)
@@ -51,6 +53,7 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
   })
 
   const stopCatalog = options.api.onChanged(() => {
+    catalogChangeRevision += 1
     catalogDirty = true
     scheduleCatalog()
   })
@@ -70,12 +73,22 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
       return Promise.resolve(false)
     if (catalogRequest)
       return catalogRequest
-    catalogDirty = false
-    catalogRequest = fetchModelCatalog(force).finally(() => {
-      catalogRequest = null
-      if (catalogDirty)
-        scheduleCatalog()
-    })
+    catalogRequest = (async () => {
+      try {
+        do {
+          const shouldForce = force || catalogDirty
+          catalogDirty = false
+          catalogResult = await fetchModelCatalog(shouldForce)
+          if (disposed)
+            return false
+          force = true
+        } while (catalogDirty)
+        return catalogResult
+      }
+      finally {
+        catalogRequest = null
+      }
+    })()
     return catalogRequest
   }
 
@@ -124,10 +137,16 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
     }
   }
 
-  async function refreshAfterMutation(): Promise<boolean> {
+  function refreshAfterMutation(previousChangeRevision: number): Promise<boolean> {
+    if (disposed)
+      return Promise.resolve(false)
+    // A notification after the operation started may already have refreshed it.
+    // Without one, invalidate even an in-flight read started before the mutation.
+    if (catalogChangeRevision === previousChangeRevision)
+      catalogDirty = true
     if (catalogRequest)
-      await catalogRequest
-    return loadModelCatalog(true)
+      return catalogRequest
+    return catalogDirty ? loadModelCatalog(true) : Promise.resolve(catalogResult)
   }
 
   async function loginProvider(providerId: string, authType: 'api_key' | 'oauth') {
@@ -135,12 +154,12 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
       return false
     isAuthenticating.value = true
     modelProviderError.value = null
+    const previousChangeRevision = catalogChangeRevision
     try {
       await options.api.login(providerId, authType)
       if (authChallenge.value?.providerId === providerId)
         authChallenge.value = null
-      await refreshAfterMutation()
-      return true
+      return await refreshAfterMutation(previousChangeRevision)
     }
     catch (error) {
       if (!isProviderLoginCancelled(error))
@@ -153,12 +172,12 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
   }
 
   async function respondToAuth(challengeId: string, value: string) {
+    const previousChangeRevision = catalogChangeRevision
     try {
       await options.api.respondToAuth(challengeId, value)
       if (authChallenge.value?.challengeId === challengeId)
         authChallenge.value = null
-      await refreshAfterMutation()
-      return true
+      return await refreshAfterMutation(previousChangeRevision)
     }
     catch (error) {
       modelProviderError.value = resolveLocalChatErrorMessage(error, options.language.value)
@@ -173,10 +192,10 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
   }
 
   async function logoutProvider(providerId: string) {
+    const previousChangeRevision = catalogChangeRevision
     try {
       await options.api.logout(providerId)
-      await refreshAfterMutation()
-      return true
+      return await refreshAfterMutation(previousChangeRevision)
     }
     catch (error) {
       modelProviderError.value = resolveLocalChatErrorMessage(error, options.language.value)
@@ -186,10 +205,10 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
 
   async function createCustomProvider(provider: LocalCustomProvider) {
     modelProviderError.value = null
+    const previousChangeRevision = catalogChangeRevision
     try {
       const created = await options.api.createCustom(provider)
-      await refreshAfterMutation()
-      return created
+      return await refreshAfterMutation(previousChangeRevision) ? created : null
     }
     catch (error) {
       if (error instanceof Error && parseLocalChatPublicError(error.message)?.code === 'PROVIDER_ID_CONFLICT')
@@ -200,10 +219,10 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
   }
 
   async function upsertCustomProvider(provider: LocalCustomProvider) {
+    const previousChangeRevision = catalogChangeRevision
     try {
       await options.api.upsertCustom(provider)
-      await refreshAfterMutation()
-      return true
+      return await refreshAfterMutation(previousChangeRevision)
     }
     catch (error) {
       modelProviderError.value = resolveLocalChatErrorMessage(error, options.language.value)
@@ -216,13 +235,12 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
       return null
     mutatingProviderId.value = providerId
     modelProviderError.value = null
+    const previousChangeRevision = catalogChangeRevision
     try {
       const provider = await options.api.add(providerId)
       if (disposed)
         return null
-      providers.value = [...providers.value.filter(item => item.id !== provider.id), provider]
-      await refreshAfterMutation()
-      return provider
+      return await refreshAfterMutation(previousChangeRevision) ? provider : null
     }
     catch (error) {
       if (!disposed)
@@ -319,10 +337,10 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
       return false
     syncingProviderId.value = providerId
     modelProviderError.value = null
+    const previousChangeRevision = catalogChangeRevision
     try {
       await options.api.syncModels(providerId)
-      await refreshAfterMutation()
-      return true
+      return await refreshAfterMutation(previousChangeRevision)
     }
     catch (error) {
       modelProviderError.value = resolveLocalChatErrorMessage(error, options.language.value)
@@ -338,10 +356,10 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
       return false
     isRefreshingModelSnapshot.value = true
     modelProviderError.value = null
+    const previousChangeRevision = catalogChangeRevision
     try {
-      modelSnapshot.value = await options.api.refreshModelSnapshot()
-      await refreshAfterMutation()
-      return true
+      await options.api.refreshModelSnapshot()
+      return await refreshAfterMutation(previousChangeRevision)
     }
     catch (error) {
       modelProviderError.value = resolveLocalChatErrorMessage(error, options.language.value)
@@ -367,10 +385,10 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
       return false
     mutatingProviderId.value = providerId
     modelProviderError.value = null
+    const previousChangeRevision = catalogChangeRevision
     try {
       await operation()
-      await refreshAfterMutation()
-      return true
+      return await refreshAfterMutation(previousChangeRevision)
     }
     catch (error) {
       modelProviderError.value = resolveLocalChatErrorMessage(error, options.language.value)

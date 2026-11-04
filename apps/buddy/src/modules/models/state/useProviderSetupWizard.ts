@@ -71,15 +71,14 @@ export function useProviderSetupWizard(options: UseProviderSetupWizardOptions) {
     model => model.enabled && model.available,
   ))
   const visibleAvailableModels = computed(() => filteredProviderModels.value.filter(model => model.available))
-  const allVisibleModelsEnabled = computed(() => (
-    visibleAvailableModels.value.length > 0
-    && visibleAvailableModels.value.every(model => model.enabled)
-  ))
   const modelSelectionBusy = computed(() => (
     providerSettings().mutatingProviderId.value === selectedProviderId.value
   ))
-  const canToggleVisibleModels = computed(() => (
-    !modelSelectionBusy.value && visibleAvailableModels.value.length > 0
+  const canSelectVisibleModels = computed(() => (
+    !modelSelectionBusy.value && visibleAvailableModels.value.some(model => !model.enabled)
+  ))
+  const canClearVisibleModels = computed(() => (
+    !modelSelectionBusy.value && visibleAvailableModels.value.some(model => model.enabled)
   ))
   const filteredProviders = computed(() => {
     const query = providerQuery.value.trim().toLocaleLowerCase()
@@ -267,11 +266,10 @@ export function useProviderSetupWizard(options: UseProviderSetupWizardOptions) {
       await providerSettings().setProviderModelEnabled(provider.id, modelId, enabled)
   }
 
-  async function toggleVisibleModels() {
+  async function setVisibleModelsEnabled(enabled: boolean) {
     const provider = selectedProvider.value
-    if (!provider || !canToggleVisibleModels.value)
+    if (!provider || modelSelectionBusy.value)
       return
-    const enabled = !allVisibleModelsEnabled.value
     const modelIds = visibleAvailableModels.value
       .filter(model => model.enabled !== enabled)
       .map(model => model.modelId)
@@ -349,10 +347,10 @@ export function useProviderSetupWizard(options: UseProviderSetupWizardOptions) {
     builtinHeaders,
     canLogin,
     addBuiltin,
-    allVisibleModelsEnabled,
     canComplete,
     canContinueCustom,
-    canToggleVisibleModels,
+    canClearVisibleModels,
+    canSelectVisibleModels,
     closeDialog,
     continueFromModels,
     createCustom,
@@ -384,7 +382,7 @@ export function useProviderSetupWizard(options: UseProviderSetupWizardOptions) {
     step,
     stepCount,
     toggleModel,
-    toggleVisibleModels,
+    setVisibleModelsEnabled,
     updateCustomName,
   }
 }

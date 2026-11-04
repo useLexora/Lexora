@@ -57,18 +57,25 @@ describe('useModelProvidersStore', () => {
     expect(vi.mocked(api.list).mock.calls).toHaveLength(2)
   })
 
-  it('shares initial catalog loading and refreshes a mutation that completes during that load', async () => {
+  it.each([false, true])('refreshes a mutation that completes during a stale initial load, notification: %s', async (emitNotification) => {
     const initial = deferred<LocalProvider[]>()
     const changed = provider('ready', false, 'available')
+    let notifyChanged: () => void = () => {}
     const api = {
       list: vi.fn().mockReturnValueOnce(initial.promise).mockResolvedValue([changed]),
       listBuiltinPresets: async () => [],
-      listModels: async () => [model('ready')],
+      listModels: vi.fn(async () => [model('ready')]),
       getDefaultModel: async () => null,
       setDefaultModel: async () => {},
-      setEnabled: async () => {},
+      setEnabled: async () => {
+        if (emitNotification)
+          notifyChanged()
+      },
       onAuthChallenge: () => () => {},
-      onChanged: () => () => {},
+      onChanged: (listener: () => void) => {
+        notifyChanged = listener
+        return () => {}
+      },
     } as unknown as LexoraDesktopApi['localChat']['providers']
     const store = useModelProvidersStore({ api, language: shallowRef('zh-CN') })
     const loading = store.loadModelCatalog()
@@ -80,6 +87,9 @@ describe('useModelProvidersStore', () => {
     expect(store.providers.value).toEqual([changed])
     expect(store.models.value).toEqual([])
     expect(store.isLoadingModelCatalog.value).toBe(false)
+    expect(api.list).toHaveBeenCalledTimes(2)
+    expect(api.listModels).toHaveBeenCalledTimes(2)
+    expect(store.mutatingProviderId.value).toBeNull()
 
     vi.mocked(api.list).mockRejectedValueOnce(new Error('RUNTIME_OFFLINE'))
     await expect(store.loadModelCatalog(true)).resolves.toBe(false)
@@ -89,24 +99,182 @@ describe('useModelProvidersStore', () => {
     store.dispose()
   })
 
-  it('enables multiple models with one API call and one catalog refresh', async () => {
+  it.each([false, true])('refreshes a batch once when its RPC emits a notification: %s', async (emitNotification) => {
+    const rpc = deferred<void>()
+    let changed: () => void = () => {}
+    let storedModels = [
+      { ...model('ready'), enabled: false },
+      { ...model('ready'), enabled: false, modelId: 'model-2' },
+    ]
+    const defaultModel = { providerId: 'ready', modelId: 'model-1', reasoning: null }
     const api = {
-      getDefaultModel: async () => null,
+      getDefaultModel: async () => defaultModel,
       list: vi.fn(async () => [provider('ready', true, 'available')]),
       listBuiltinPresets: async () => [],
-      listModels: async () => [model('ready')],
+      listModels: vi.fn(async () => storedModels),
       onAuthChallenge: () => () => {},
-      onChanged: () => () => {},
-      setDefaultModel: async () => {},
-      setModelsEnabled: vi.fn(async () => [model('ready')]),
+      onChanged: (listener: () => void) => {
+        changed = listener
+        return () => {}
+      },
+      setModelsEnabled: async () => {
+        storedModels = storedModels.map(item => ({ ...item, enabled: true }))
+        if (emitNotification)
+          changed()
+        await rpc.promise
+      },
+    } as unknown as LexoraDesktopApi['localChat']['providers']
+    const store = useModelProvidersStore({ api, language: shallowRef('zh-CN') })
+    await store.loadModelCatalog()
+    expect(store.models.value).toEqual([])
+    vi.mocked(api.list).mockClear()
+    vi.mocked(api.listModels).mockClear()
+
+    const changing = store.setProviderModelsEnabled('ready', ['model-1', 'model-2'], true)
+    expect(store.mutatingProviderId.value).toBe('ready')
+    if (emitNotification) {
+      // The notification's entire read can finish before the RPC returns.
+      await vi.waitFor(() => expect(store.models.value.map(item => item.modelId)).toEqual(['model-1', 'model-2']))
+      expect(store.mutatingProviderId.value).toBe('ready')
+    }
+    else {
+      expect(api.list).not.toHaveBeenCalled()
+    }
+    rpc.resolve()
+    await expect(changing).resolves.toBe(true)
+    expect(store.models.value.map(item => item.modelId)).toEqual(['model-1', 'model-2'])
+    expect(store.registeredModels.value.every(item => item.enabled)).toBe(true)
+    expect(store.defaultModelId.value).toBe('ready:model-1')
+    expect(api.list).toHaveBeenCalledTimes(1)
+    expect(api.listModels).toHaveBeenCalledTimes(1)
+    expect(store.mutatingProviderId.value).toBeNull()
+    store.dispose()
+  })
+
+  it('keeps a mutation locked through a later notification and its follow-up read', async () => {
+    const firstRead = deferred<LocalRuntimeModelOption[]>()
+    const followupRead = deferred<LocalRuntimeModelOption[]>()
+    let changed: () => void = () => {}
+    const initialModels = [
+      { ...model('ready'), enabled: false },
+      { ...model('ready'), enabled: false, modelId: 'model-2' },
+    ]
+    const api = {
+      getDefaultModel: async () => ({ providerId: 'ready', modelId: 'model-1', reasoning: null }),
+      list: vi.fn(async () => [provider('ready', true, 'available')]),
+      listBuiltinPresets: async () => [],
+      listModels: vi.fn().mockResolvedValueOnce(initialModels).mockReturnValueOnce(firstRead.promise).mockReturnValueOnce(followupRead.promise),
+      onAuthChallenge: () => () => {},
+      onChanged: (listener: () => void) => {
+        changed = listener
+        return () => {}
+      },
+      setModelsEnabled: async () => {
+        changed()
+      },
     } as unknown as LexoraDesktopApi['localChat']['providers']
     const store = useModelProvidersStore({ api, language: shallowRef('zh-CN') })
     await store.loadModelCatalog()
     vi.mocked(api.list).mockClear()
+    vi.mocked(api.listModels).mockClear()
 
-    await expect(store.setProviderModelsEnabled('ready', ['model-1'], true)).resolves.toBe(true)
-    expect(api.setModelsEnabled).toHaveBeenCalledWith('ready', ['model-1'], true)
+    let settled = false
+    const changing = store.setProviderModelsEnabled('ready', ['model-1'], true).then((result) => {
+      settled = true
+      return result
+    })
+    await vi.waitFor(() => expect(api.listModels).toHaveBeenCalledTimes(1))
+    expect(store.mutatingProviderId.value).toBe('ready')
+    expect(settled).toBe(false)
+    changed()
+    firstRead.resolve([{ ...initialModels[0]!, enabled: true }, initialModels[1]!])
+    await vi.waitFor(() => expect(api.listModels).toHaveBeenCalledTimes(2))
+    expect(store.models.value.map(item => item.modelId)).toEqual(['model-1'])
+    expect(store.mutatingProviderId.value).toBe('ready')
+    expect(settled).toBe(false)
+
+    followupRead.resolve(initialModels.map(item => ({ ...item, enabled: true })))
+    await expect(changing).resolves.toBe(true)
+    expect(store.models.value.map(item => item.modelId)).toEqual(['model-1', 'model-2'])
+    expect(api.list).toHaveBeenCalledTimes(2)
+    expect(api.listModels).toHaveBeenCalledTimes(2)
+    expect(store.mutatingProviderId.value).toBeNull()
+    store.dispose()
+  })
+
+  it.each(['list', 'listModels'] as const)('returns false and retains the catalog when %s fails after a committed mutation', async (failedRead) => {
+    let changed: () => void = () => {}
+    let storedModels = [model('ready')]
+    const api = {
+      getDefaultModel: async () => ({ providerId: 'ready', modelId: 'model-1', reasoning: null }),
+      list: vi.fn(async () => [provider('ready', true, 'available')]),
+      listBuiltinPresets: async () => [],
+      listModels: vi.fn(async () => storedModels),
+      onAuthChallenge: () => () => {},
+      onChanged: (listener: () => void) => {
+        changed = listener
+        return () => {}
+      },
+      setModelsEnabled: async () => {
+        storedModels = storedModels.map(item => ({ ...item, enabled: false }))
+        changed()
+      },
+    } as unknown as LexoraDesktopApi['localChat']['providers']
+    const store = useModelProvidersStore({ api, language: shallowRef('zh-CN') })
+    await store.loadModelCatalog()
+    const previousProviders = store.providers.value
+    const previousModels = store.registeredModels.value
+    vi.mocked(api.list).mockClear()
+    vi.mocked(api.listModels).mockClear()
+    vi.mocked(api[failedRead]).mockRejectedValueOnce(new Error('RUNTIME_OFFLINE'))
+
+    await expect(store.setProviderModelsEnabled('ready', ['model-1'], false)).resolves.toBe(false)
+    expect(storedModels[0]?.enabled).toBe(false)
+    expect(store.providers.value).toEqual(previousProviders)
+    expect(store.registeredModels.value).toEqual(previousModels)
+    expect(store.models.value.map(item => item.modelId)).toEqual(['model-1'])
+    expect(store.defaultModelId.value).toBe('ready:model-1')
+    expect(store.modelProviderError.value).not.toBeNull()
+    expect(store.mutatingProviderId.value).toBeNull()
     expect(api.list).toHaveBeenCalledTimes(1)
+    expect(api.listModels).toHaveBeenCalledTimes(1)
+
+    await expect(store.loadModelCatalog(true)).resolves.toBe(true)
+    expect(store.models.value).toEqual([])
+    expect(store.modelProviderError.value).toBeNull()
+    store.dispose()
+  })
+
+  it('does not publish an added provider when its post-commit catalog read fails', async () => {
+    let storedProviders = [provider('ready', true, 'available')]
+    const api = {
+      getDefaultModel: async () => ({ providerId: 'ready', modelId: 'model-1', reasoning: null }),
+      list: vi.fn(async () => storedProviders),
+      listBuiltinPresets: async () => [],
+      listModels: async () => [model('ready')],
+      onAuthChallenge: () => () => {},
+      onChanged: () => () => {},
+      add: async () => {
+        const added = provider('new', true, 'available')
+        storedProviders = [...storedProviders, added]
+        return added
+      },
+    } as unknown as LexoraDesktopApi['localChat']['providers']
+    const store = useModelProvidersStore({ api, language: shallowRef('zh-CN') })
+    await store.loadModelCatalog()
+    const previousProviders = store.providers.value
+    vi.mocked(api.list).mockRejectedValueOnce(new Error('RUNTIME_OFFLINE'))
+
+    await expect(store.addProvider('new')).resolves.toBeNull()
+    expect(storedProviders.map(item => item.id)).toEqual(['ready', 'new'])
+    expect(store.providers.value).toEqual(previousProviders)
+    expect(store.models.value.map(item => item.modelId)).toEqual(['model-1'])
+    expect(store.modelProviderError.value).not.toBeNull()
+    expect(store.mutatingProviderId.value).toBeNull()
+
+    await expect(store.loadModelCatalog(true)).resolves.toBe(true)
+    expect(store.providers.value.map(item => item.id)).toEqual(['ready', 'new'])
+    expect(store.modelProviderError.value).toBeNull()
     store.dispose()
   })
 
@@ -147,6 +315,7 @@ describe('useModelProvidersStore', () => {
           list: async () => [],
           listBuiltinPresets: async () => [],
           listModels: async () => [],
+          getDefaultModel: async () => null,
           login: () => {
             loginCalls += 1
             if (loginCalls > 1)

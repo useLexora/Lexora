@@ -108,6 +108,7 @@ export class ProviderService {
   readonly #modelSnapshot: ModelSnapshot
   readonly #states: ProviderStateRepository
   readonly executionModels: ProviderExecutionModelResolver
+  readonly #transaction: ProviderRepository['transaction']
   readonly #state: ProviderState
   readonly #operations = new Emitter<{ readonly operationId: string, readonly operation: string, readonly stage: 'started' | 'completed' | 'failed' | 'cancelled' }>(() => console.error('PROVIDER_OPERATION_OBSERVER_FAILED'))
   readonly onDidOperate = this.#operations.event
@@ -164,6 +165,7 @@ export class ProviderService {
       },
     })
     this.#states = options.providers.states
+    this.#transaction = options.providers.transaction
     this.executionModels = new ProviderExecutionModelResolver({
       builtins: options.providers.builtins,
       credentialStatus: options.credentialStatus,
@@ -515,14 +517,16 @@ export class ProviderService {
         for (const modelId of uniqueIds)
           this.#assertModelIdle(providerId, modelId)
       }
-      return this.#state.commit('configuration', () => {
-        const models = this.#modelCatalog.setManyEnabled(providerId, uniqueIds, enabled)
+      const models = this.#transaction(() => {
+        const updated = this.#modelCatalog.setManyEnabled(providerId, uniqueIds, enabled)
         if (!enabled) {
           for (const modelId of uniqueIds)
             this.#clearDefaultIfMatches(providerId, modelId)
         }
-        return models
+        return updated
       })
+      // Failed transactions must not enter ProviderState's publish-on-exit boundary.
+      return this.#state.commit('configuration', () => models)
     })
   }
 

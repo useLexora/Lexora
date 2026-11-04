@@ -552,7 +552,7 @@ export class ProviderModelCatalog {
         updatedAt,
       }
     })
-    return this.#models.upsertMany(records).map(model => this.#toBuddyModel(model))
+    return records.map(record => this.#toBuddyModel(this.#models.upsert(record)))
   }
 
   assertCanSetEnabled(providerId: string, modelId: string, enabled: boolean): void {
