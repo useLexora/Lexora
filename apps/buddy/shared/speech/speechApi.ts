@@ -89,6 +89,7 @@ export type SpeechEvent = { id: string } & (
   | { type: 'ended', status: 'completed' | 'cancelled' | 'failed', error?: string }
 )
 export const SPEECH_IPC = {
+  prepareSystem: 'lexora:speech:prepare-system',
   voices: 'lexora:speech:voices',
   catalog: 'lexora:speech:catalog',
   changed: 'lexora:speech:changed',
@@ -121,6 +122,7 @@ export function speechSelection(preferences: SpeechPreferences, kind: SpeechKind
 }
 
 export interface SpeechApi {
+  prepareSystem: () => Promise<boolean>
   voices: (provider: { id: string, revision: string, kind: SpeechKind }) => Promise<SpeechChoice[]>
   microphone: (active: boolean) => Promise<void>
   catalog: () => Promise<SpeechCatalog>

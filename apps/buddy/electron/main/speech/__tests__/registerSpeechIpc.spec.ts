@@ -43,12 +43,14 @@ it('persists a selection before preparation; a failed start preserves that selec
     },
   })
   try {
+    speech.outputEnabled = false
+    expect(await handlers.get(SPEECH_IPC.prepareSystem)!(event)).toBe(false)
+    delete speech.outputEnabled
     await handlers.get(SPEECH_IPC.select)!(event, { kind: model.kind, provider: { id: model.id, revision: model.revision } })
     expect(speech).toEqual({ output: 'model', synthesize: { id: model.id, title: model.title } })
     await expect(handlers.get(SPEECH_IPC.start)!(event, { id: '7e249980-d382-4d9f-b2f6-030c11e6c54d', kind: model.kind, provider: { id: model.id, revision: model.revision }, text: 'Hello' })).rejects.toThrow('SPEECH_NOT_CONFIGURED')
     expect(speech).toEqual({ output: 'model', synthesize: { id: model.id, title: model.title } })
-    speech.output = 'system'
-    expect(await handlers.get(SPEECH_IPC.catalog)!(event)).toMatchObject({ preferences: { output: 'system', synthesize: { id: model.id } } })
+    expect(await handlers.get(SPEECH_IPC.prepareSystem)!(event)).toBe(false)
   }
   finally { await dispose() }
 })

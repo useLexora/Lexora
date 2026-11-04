@@ -13,13 +13,21 @@ export function chooseSystemVoice(voices: SpeechSynthesisVoice[], saved: string 
 export class SystemSpeechPlayback {
   #cancelled = false
   #settle?: (error?: Error) => void
-  readonly synthesis: SpeechSynthesis
+  readonly synthesis: SpeechSynthesis | undefined
   constructor(synthesis: SpeechSynthesis = window.speechSynthesis) {
     this.synthesis = synthesis
   }
 
   async play(text: string, options: { voice?: string, rate?: number, language: string }, started: () => void): Promise<void> {
-    const voice = chooseSystemVoice(systemVoices(this.synthesis), options.voice, options.language)
+    if (this.#cancelled)
+      throw new Error('SPEECH_CANCELLED')
+    const synthesis = this.synthesis
+    if (!synthesis)
+      throw new Error('SPEECH_SYSTEM_UNAVAILABLE')
+    let voices = systemVoices(synthesis)
+    if (!voices.length)
+      voices = await this.#waitForVoices(synthesis)
+    const voice = chooseSystemVoice(voices, options.voice, options.language)
     if (!voice)
       throw new Error('SPEECH_SYSTEM_UNAVAILABLE')
     const chunks = text.match(/[\s\S]{1,220}(?:[。！？.!?\s]|$)|[\s\S]{1,220}/gu) ?? []
@@ -42,24 +50,46 @@ export class SystemSpeechPlayback {
         this.#settle = settle
         timer = setTimeout(() => {
           settle(new Error('SPEECH_PLAYBACK_FAILED'))
-          this.synthesis.cancel()
+          synthesis.cancel()
         }, 10000)
         utterance.onstart = () => {
           clearTimeout(timer)
           timer = setTimeout(() => {
             settle(new Error('SPEECH_PLAYBACK_FAILED'))
-            this.synthesis.cancel()
+            synthesis.cancel()
           }, 120000)
           started()
         }
         utterance.onend = () => settle()
         utterance.onerror = event => settle(new Error(event.error === 'canceled' || event.error === 'interrupted' ? 'SPEECH_CANCELLED' : 'SPEECH_PLAYBACK_FAILED'))
         try {
-          this.synthesis.speak(utterance)
+          synthesis.speak(utterance)
         }
         catch { settle(new Error('SPEECH_PLAYBACK_FAILED')) }
       })
     }
+  }
+
+  #waitForVoices(synthesis: SpeechSynthesis): Promise<SpeechSynthesisVoice[]> {
+    return new Promise((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout>
+      let settle: (error?: Error) => void
+      const read = () => {
+        if (systemVoices(synthesis).length)
+          settle()
+      }
+      settle = (error?: Error) => {
+        clearTimeout(timer)
+        synthesis.removeEventListener('voiceschanged', read)
+        if (this.#settle === settle)
+          this.#settle = undefined
+        error ? reject(error) : resolve(systemVoices(synthesis))
+      }
+      timer = setTimeout(() => settle(new Error('SPEECH_SYSTEM_UNAVAILABLE')), 3000)
+      this.#settle = settle
+      synthesis.addEventListener('voiceschanged', read)
+      read()
+    })
   }
 
   stop(): void {

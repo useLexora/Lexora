@@ -12,7 +12,7 @@ const { request, settingsListeners } = vi.hoisted(() => ({
 vi.mock('@/platform/desktop/desktopApi', () => ({
   requireDesktopApi: () => ({
     app: { onHidden: () => () => {}, onBeforeQuit: () => () => {} },
-    speech: { catalog: request, onChanged: () => () => {} },
+    speech: { catalog: request, prepareSystem: async () => false, onChanged: () => () => {} },
     settings: {
       onChanged: (listener: () => void) => {
         settingsListeners.add(listener)
@@ -85,6 +85,6 @@ it('keeps speech buttons consistent across loading, remounts and interrupted set
   expect(third.visible()).toEqual({ record: false, read: false })
   await resolveInterrupted({})
   expect(third.visible()).toEqual({ record: false, read: false })
-  await resolveCurrent({ inputEnabled: false, outputEnabled: false })
-  expect(third.visible()).toEqual({ record: false, read: false })
+  await resolveCurrent({ inputEnabled: true, outputEnabled: false })
+  expect(third.visible()).toEqual({ record: true, read: false })
 })

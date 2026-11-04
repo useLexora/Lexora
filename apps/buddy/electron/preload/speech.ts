@@ -5,6 +5,7 @@ import { subscribe } from './subscribe'
 
 export function createSpeechApi(): SpeechApi {
   return Object.freeze<SpeechApi>({
+    prepareSystem: () => ipcRenderer.invoke(SPEECH_IPC.prepareSystem),
     voices: provider => ipcRenderer.invoke(SPEECH_IPC.voices, provider),
     microphone: active => ipcRenderer.invoke(SPEECH_IPC.microphone, active),
     catalog: () => ipcRenderer.invoke(SPEECH_IPC.catalog),
