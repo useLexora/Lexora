@@ -43,13 +43,7 @@ export async function checkForDesktopUpdate(
     for (let page = 1; ; page++) {
       signal.throwIfAborted()
       const url = page === 1 ? RELEASES_API_URL : `${RELEASES_API_URL}&page=${page}`
-      const response = await (options.fetchRelease ?? fetch)(url, {
-        signal,
-        headers: {
-          'accept': 'application/vnd.github+json',
-          'user-agent': 'Lexora-Buddy',
-        },
-      })
+      const response = await fetchReleasePage(options.fetchRelease ?? fetch, url, signal)
       if (!response.ok)
         throw new Error(`GitHub release request failed with ${response.status}`)
       const body = await readResponseBytes(response, remainingBytes)
@@ -81,6 +75,32 @@ export async function checkForDesktopUpdate(
   catch (error) {
     throw new DesktopUpdateCheckError({ cause: error })
   }
+}
+
+const MAX_RELEASE_REDIRECTS = 2
+
+// Chromium keeps a 301 without an expiry in its disk cache forever, and the host request layer does not follow
+// redirects, so one stale 301 would fail every later check. Always revalidate and follow permanent redirects on the API origin.
+async function fetchReleasePage(fetchRelease: NonNullable<CheckForDesktopUpdateOptions['fetchRelease']>, pageUrl: string, signal: AbortSignal): Promise<Response> {
+  const origin = new URL(RELEASES_API_URL).origin
+  let url = pageUrl
+  for (let redirects = 0; redirects <= MAX_RELEASE_REDIRECTS; redirects++) {
+    const response = await fetchRelease(url, {
+      signal,
+      headers: {
+        'accept': 'application/vnd.github+json',
+        'cache-control': 'no-cache',
+        'user-agent': 'Lexora-Buddy',
+      },
+    })
+    const location = response.headers.get('location')
+    if (!location || (response.status !== 301 && response.status !== 308))
+      return response
+    url = new URL(location, url).href
+    if (new URL(url).origin !== origin)
+      throw new Error('GitHub release request was redirected off the API origin')
+  }
+  throw new Error('GitHub release request was redirected too many times')
 }
 
 function parseLatestBuddyRelease(value: unknown, channel: DesktopUpdateChannel): {
