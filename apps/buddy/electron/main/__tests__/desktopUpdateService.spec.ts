@@ -70,6 +70,44 @@ describe('checkForDesktopUpdate', () => {
     await expect(checkForDesktopUpdate({ currentVersion: '1.0.0', fetchRelease: async () => new Response(JSON.stringify([release('1.1.0')]), { headers: { link: '<https://example.invalid/>; rel="next"' } }) })).rejects.toMatchObject({ code: 'UPDATE_CHECK_FAILED' })
   })
 
+  it('revalidates instead of trusting a cached response', async () => {
+    const headers: unknown[] = []
+    await checkForDesktopUpdate({ currentVersion: '1.0.0', fetchRelease: async (_url, init) => {
+      headers.push(init?.headers)
+      return new Response(JSON.stringify([release('1.0.0')]))
+    } })
+    expect(headers).toEqual([expect.objectContaining({ 'cache-control': 'no-cache' })])
+  })
+
+  it('follows a permanent redirect on the GitHub API origin', async () => {
+    const urls: string[] = []
+    const moved = 'https://api.github.com/repositories/1/releases?per_page=100'
+    const result = await checkForDesktopUpdate({ currentVersion: '1.0.0', fetchRelease: async (url) => {
+      urls.push(url)
+      return urls.length === 1
+        ? new Response(null, { status: 301, headers: { location: moved } })
+        : new Response(JSON.stringify([release('1.1.0')]))
+    } })
+    expect(result.latestVersion).toBe('1.1.0')
+    expect(urls).toEqual([RELEASES_API_URL, moved])
+  })
+
+  it('refuses redirects that leave the API origin or never end', async () => {
+    let calls = 0
+    await expect(checkForDesktopUpdate({ currentVersion: '1.0.0', fetchRelease: async () => {
+      calls++
+      return new Response(null, { status: 301, headers: { location: 'https://example.invalid/releases' } })
+    } })).rejects.toMatchObject({ code: 'UPDATE_CHECK_FAILED' })
+    expect(calls).toBe(1)
+
+    calls = 0
+    await expect(checkForDesktopUpdate({ currentVersion: '1.0.0', fetchRelease: async () => {
+      calls++
+      return new Response(null, { status: 308, headers: { location: 'https://api.github.com/repositories/1/releases' } })
+    } })).rejects.toMatchObject({ code: 'UPDATE_CHECK_FAILED' })
+    expect(calls).toBe(3)
+  })
+
   it('returns a stable failure for unavailable, invalid or oversized data and cancellation', async () => {
     for (const response of [
       new Response('', { status: 503 }),
