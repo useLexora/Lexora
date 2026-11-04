@@ -103,6 +103,9 @@ export function useChatTranscriptViewport(
     observeElementRect: (instance, callback) => observeElementRect(instance, (rect) => {
       if (!rect.width || !rect.height)
         return
+      const offset = instance.scrollOffset
+      if (width && offset !== null && instance.scrollElement && Math.abs(instance.scrollElement.scrollTop - offset) > 1)
+        instance.scrollToOffset(offset)
       if (width && Math.abs(width - rect.width) > 0.5) {
         layoutAnchor ??= captureScrollAnchor()
         relayout.schedule()

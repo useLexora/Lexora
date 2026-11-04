@@ -295,6 +295,72 @@ test('reading retains history anchors, outline navigation and independent stream
   }
 })
 
+for (const direction of ['down', 'right']) {
+  for (const following of [false, true]) {
+    test(`closing a sibling split preserves ${direction} transcript ${following ? 'tail following' : 'reading position'}`, async ({ buddy }, testInfo) => {
+      const instance = await buddy.createInstance('reading-close-split')
+      const { app, page, diagnostics } = await instance.launch()
+      await page.evaluate(() => window.lexoraDesktop.localChat.conversations.list(1))
+      await app.evaluate(({ BrowserWindow }, databasePath) => {
+        BrowserWindow.getAllWindows()[0].setSize(1400, 1100)
+        const { DatabaseSync } = process.getBuiltinModule('node:sqlite')
+        const db = new DatabaseSync(databasePath)
+        try {
+          db.exec('BEGIN')
+          const now = new Date().toISOString()
+          for (const id of ['close-a', 'close-b']) {
+            db.prepare('INSERT INTO conversations (id, title, active_branch_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run(id, id, `branch-${id}`, now, now)
+            db.prepare('INSERT INTO conversation_branches (id, conversation_id, created_at) VALUES (?, ?, ?)').run(`branch-${id}`, id, now)
+            const insert = db.prepare('INSERT INTO messages (id, conversation_id, branch_id, role, content_json, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+            for (let index = 0; index < 40; index++) {
+              const text = `Message ${id}-${index}\n\n${'A paragraph with **formatted text** and a stable reading position. '.repeat(12)}\n\n- First result\n- Second result`
+              insert.run(`${id}-${index}`, id, `branch-${id}`, index % 2 ? 'assistant' : 'user', JSON.stringify({ text }), new Date(Date.now() - (40 - index) * 1000).toISOString())
+            }
+          }
+          db.exec('COMMIT')
+        }
+        finally { db.close() }
+      }, path.join(instance.home, 'buddy/buddy.sqlite3'))
+      await page.reload()
+      await page.locator('[data-task-id="close-a"] .desktop-task-sidebar__task').click()
+      const first = pane(page, 'close-a')
+      await expect(first.locator('[data-message-id="close-a-39"]')).toBeInViewport()
+      await first.getByTestId('pane-layout-menu').click()
+      await page.locator('.n-dropdown-menu:visible').getByText('分屏', { exact: true }).hover()
+      await page.locator('.n-dropdown-menu:visible').getByText(direction === 'down' ? '向下分屏' : '向右分屏', { exact: true }).click()
+      await page.locator('[data-task-id="close-b"] .desktop-task-sidebar__task').click()
+      const second = pane(page, 'close-b')
+      await expect(second.locator('[data-message-id="close-b-39"]')).toBeInViewport()
+      if (!following) {
+        await navigateOutline(page, second, 20)
+        await scrollport(second).focus()
+      }
+      await settleScroll(second)
+      const remembered = await anchor(second)
+      expect(remembered).not.toBeNull()
+      const originalViewport = await scrollport(second).elementHandle()
+      await first.getByTestId('pane-layout-menu').click()
+      await page.locator('.n-dropdown-menu:visible').getByText('关闭', { exact: true }).click()
+      await expect(page.locator('.workbench-pane')).toHaveCount(1)
+      await settleScroll(second)
+      await testInfo.attach('closed-sibling-split', { body: await page.screenshot(), contentType: 'image/png' })
+      expect(await scrollport(second).evaluate((element, original) => element === original, originalViewport)).toBe(true)
+      if (following) {
+        await expect.poll(() => scrollport(second).evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeLessThan(2)
+        await expect(second.locator('[data-message-id="close-b-39"]')).toBeInViewport()
+        await expect(second.getByRole('button', { name: '回到最新', exact: true })).toHaveCount(0)
+      }
+      else {
+        await expect.poll(() => anchor(second)).toEqual(remembered)
+        await expect(second.locator('[data-message-id="close-b-20"]')).toBeInViewport()
+        await expect(second.getByRole('button', { name: '回到最新', exact: true })).toBeVisible()
+      }
+      expect(await second.locator('[data-message-id]').count()).toBeLessThan(30)
+      expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
+    })
+  }
+}
+
 test('resizing long transcripts preserves reading anchors, expanded messages and tail following', async ({ buddy }, testInfo) => {
   test.setTimeout(180000)
   const instance = await buddy.createInstance('reading-resize')
