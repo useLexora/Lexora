@@ -542,6 +542,19 @@ export class ProviderModelCatalog {
     }))
   }
 
+  setManyEnabled(providerId: string, modelIds: readonly string[], enabled: boolean): BuddyModel[] {
+    const updatedAt = new Date().toISOString()
+    const records = modelIds.map((modelId) => {
+      this.assertCanSetEnabled(providerId, modelId, enabled)
+      return {
+        ...this.#requireModelState(providerId, modelId),
+        enabled,
+        updatedAt,
+      }
+    })
+    return records.map(record => this.#toBuddyModel(this.#models.upsert(record)))
+  }
+
   assertCanSetEnabled(providerId: string, modelId: string, enabled: boolean): void {
     const current = this.#models.find(providerId, modelId)
     if (!current || (enabled && !this.#available(current)))

@@ -9,6 +9,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { HostCredentialStore } from '../HostCredentialStore'
 import type { ProviderModelDefinition, ProviderModelDiscovery } from '../ProviderModelDiscovery'
 import type { ProviderServiceOptions } from '../ProviderService'
+import type { ProviderCommit } from '../ProviderState'
 import { mkdtempSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -80,7 +81,7 @@ describe('providerService', () => {
     const runtime = new FakeModelRuntime()
     const repository = createProviderRepository(database)
     const service = createProviderServiceForTest({ authInteractions: new AuthInteractionService(), modelRuntime: runtime, providers: repository })
-    const commits: Array<import('../ProviderState').ProviderCommit> = []
+    const commits: ProviderCommit[] = []
     const stages: string[] = []
     service.onDidCommit(event => commits.push(event))
     service.onDidApplyCatalog(event => stages.push(event.stage))
@@ -107,7 +108,7 @@ describe('providerService', () => {
     const service = createProviderServiceForTest({ authInteractions: new AuthInteractionService(), modelRuntime: runtime, providers: createProviderRepository(database) })
     try {
       await service.createCustomProvider({ api: 'openai-completions', baseUrl: 'https://fixture.invalid/v1', displayName: 'Fixture', enabled: false, id: 'fixture', models: [{ id: 'model', name: 'Model', input: ['text'], reasoning: false, contextWindow: 32000, maxTokens: 4000 }] })
-      const commits: Array<import('../ProviderState').ProviderCommit> = []
+      const commits: ProviderCommit[] = []
       service.onDidCommit(event => commits.push(event))
       await service.renameProvider('fixture', 'Renamed')
       expect(commits[0]?.providers[0]?.executionChanged).toBe(false)
@@ -710,6 +711,148 @@ describe('providerService', () => {
     expect(await service.listProviders()).toEqual([])
     expect(service.listBuiltinPresets()).toContainEqual(expect.objectContaining({ id: 'anthropic' }))
     database.close()
+  })
+
+  it('enables models in one batch commit and rejects invalid batches without partial writes', async () => {
+    const runtime = new FakeModelRuntime()
+    runtime.providers = [provider('anthropic')]
+    runtime.models = [
+      model('anthropic', 'alpha'),
+      model('anthropic', 'beta'),
+      model('anthropic', 'gamma'),
+    ]
+    runtime.credentials = [{ providerId: 'anthropic', type: 'api_key' } as CredentialInfo]
+    let activeRuns: Array<{ model: string, provider: string }> = []
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    const service = createProviderServiceForTest({
+      authInteractions: new AuthInteractionService(),
+      getActiveRuns: () => activeRuns,
+      modelRuntime: runtime,
+      providers: createProviderRepository(database),
+    })
+    await restoreLegacyProvider(service, database, 'anthropic')
+    const commits: ProviderCommit[] = []
+    service.onDidCommit(event => commits.push(event))
+    try {
+      await service.setModelsEnabled('anthropic', ['alpha', 'beta'], true)
+      expect(commits).toHaveLength(1)
+      expect(commits[0]?.models.map(entry => entry.modelId).sort()).toEqual(['alpha', 'beta'])
+      expect((await service.listModels('anthropic')).filter(entry => entry.enabled).map(entry => entry.id)).toEqual(['alpha', 'beta'])
+
+      await expect(service.setModelsEnabled('anthropic', ['gamma', 'missing'], true)).rejects.toMatchObject({
+        code: 'PROVIDER_UNAVAILABLE',
+      })
+      expect(commits).toHaveLength(1)
+      expect((await service.listModels('anthropic')).filter(entry => entry.enabled).map(entry => entry.id)).toEqual(['alpha', 'beta'])
+
+      activeRuns = [{ model: 'alpha', provider: 'anthropic' }]
+      await expect(service.setModelsEnabled('anthropic', ['alpha', 'beta'], false)).rejects.toMatchObject({
+        code: 'PROVIDER_HAS_ACTIVE_RUNS',
+      })
+      expect(commits).toHaveLength(1)
+      expect((await service.listModels('anthropic')).filter(entry => entry.enabled).map(entry => entry.id)).toEqual(['alpha', 'beta'])
+
+      activeRuns = []
+      await service.setModelsEnabled('anthropic', ['alpha', 'beta', 'gamma'], false)
+      expect(commits).toHaveLength(2)
+      expect((await service.listModels('anthropic')).filter(entry => entry.enabled)).toEqual([])
+    }
+    finally {
+      await service.dispose()
+      database.close()
+    }
+  })
+
+  it.each([
+    {
+      failure: 'the second model write',
+      sql: `
+        CREATE TRIGGER fail_batch BEFORE UPDATE ON provider_model_states
+        WHEN OLD.provider_id = 'anthropic' AND OLD.model_id = 'beta' AND NEW.enabled = 0
+        BEGIN SELECT RAISE(ABORT, 'fixture batch failure'); END;
+      `,
+    },
+    {
+      failure: 'the matching default deletion',
+      sql: `
+        CREATE TRIGGER fail_batch BEFORE DELETE ON default_model_setting
+        WHEN OLD.provider_id = 'anthropic' AND OLD.model_id = 'alpha'
+        BEGIN SELECT RAISE(ABORT, 'fixture batch failure'); END;
+      `,
+    },
+  ])('rolls back every model and the default when SQLite rejects $failure without publishing', async ({ sql }) => {
+    const directory = mkdtempSync(join(tmpdir(), 'lexora-buddy-batch-rollback-'))
+    databasePaths.push(directory)
+    const databasePath = join(directory, 'buddy.sqlite3')
+    const database = openBuddyDatabase({ databasePath })
+    const observerDatabase = openBuddyDatabase({ databasePath })
+    const runtime = new FakeModelRuntime()
+    runtime.providers = [provider('anthropic')]
+    runtime.models = [model('anthropic', 'alpha'), model('anthropic', 'beta')]
+    runtime.credentials = [{ providerId: 'anthropic', type: 'api_key' } as CredentialInfo]
+    const repository = createProviderRepository(database)
+    const service = createProviderServiceForTest({
+      authInteractions: new AuthInteractionService(),
+      modelRuntime: runtime,
+      providers: repository,
+    })
+    try {
+      await restoreLegacyProvider(service, database, 'anthropic')
+      await service.setModelsEnabled('anthropic', ['alpha', 'beta'], true)
+      await service.setProviderEnabled('anthropic', true)
+      await service.setDefaultModel({ providerId: 'anthropic', modelId: 'alpha', reasoning: null })
+      const beforeModels = database.prepare('SELECT * FROM provider_model_states ORDER BY provider_id, model_id').all()
+      const beforeDefault = database.prepare('SELECT * FROM default_model_setting').all()
+      const beforeSnapshot = service.snapshot
+      const commits: ProviderCommit[] = []
+      const observedModels: unknown[] = []
+      const observedDefaults: unknown[] = []
+      service.onDidCommit((event) => {
+        commits.push(event)
+        observedModels.push(observerDatabase.prepare('SELECT model_id, enabled FROM provider_model_states ORDER BY model_id').all())
+        observedDefaults.push(observerDatabase.prepare('SELECT * FROM default_model_setting').all())
+      })
+      database.exec(sql)
+
+      await expect(service.setModelsEnabled('anthropic', ['alpha', 'beta'], false)).rejects.toThrow('fixture batch failure')
+
+      expect(database.prepare('SELECT * FROM provider_model_states ORDER BY provider_id, model_id').all()).toEqual(beforeModels)
+      expect(database.prepare('SELECT * FROM default_model_setting').all()).toEqual(beforeDefault)
+      expect(await service.getDefaultModel()).toEqual({ providerId: 'anthropic', modelId: 'alpha', reasoning: null })
+      expect(service.snapshot).toEqual(beforeSnapshot)
+      expect(commits).toEqual([])
+      expect(observedModels).toEqual([])
+      expect(observedDefaults).toEqual([])
+
+      database.exec('DROP TRIGGER fail_batch')
+      const updated = await service.setModelsEnabled('anthropic', ['alpha', 'beta', 'alpha'], false)
+
+      expect(updated.map(entry => ({ id: entry.id, enabled: entry.enabled }))).toEqual([
+        { id: 'alpha', enabled: false },
+        { id: 'beta', enabled: false },
+      ])
+      expect(commits).toHaveLength(1)
+      expect(commits[0]).toMatchObject({
+        defaultModelChanged: true,
+        defaultModel: null,
+        models: [
+          { modelId: 'alpha', current: { enabled: false } },
+          { modelId: 'beta', current: { enabled: false } },
+        ],
+      })
+      expect(observedModels).toEqual([[
+        { model_id: 'alpha', enabled: 0 },
+        { model_id: 'beta', enabled: 0 },
+      ]])
+      expect(observedDefaults).toEqual([[]])
+      expect(repository.defaultModel.find()).toBeNull()
+      expect(await service.getDefaultModel()).toBeNull()
+    }
+    finally {
+      await service.dispose()
+      observerDatabase.close()
+      database.close()
+    }
   })
 
   it('rejects connection edits, manual models and discovery while custom provider runs are active', async () => {

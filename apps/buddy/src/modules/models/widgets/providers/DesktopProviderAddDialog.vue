@@ -27,6 +27,8 @@ const {
   builtinHeaders,
   canComplete,
   canLogin,
+  canClearVisibleModels,
+  canSelectVisibleModels,
   closeDialog,
   continueFromModels,
   createCustom,
@@ -42,6 +44,7 @@ const {
   login,
   manualFormKey,
   modelQuery,
+  modelSelectionBusy,
   navigateToReachedStep,
   openManualModelDialog,
   providerModels,
@@ -54,6 +57,7 @@ const {
   step,
   stepCount,
   toggleModel,
+  setVisibleModelsEnabled,
 } = useProviderSetupWizard({
   providerSettings: () => props.providerSettings,
   resumeProviderId: toRef(props, 'resumeProviderId'),
@@ -225,7 +229,7 @@ async function connect(authType: 'api_key' | 'oauth') {
             </div>
           </div>
 
-          <div class="desktop-provider-add-dialog__model-toolbar flex items-center">
+          <div class="desktop-provider-add-dialog__model-toolbar flex items-center gap-2">
             <NInput
               v-model:value="modelQuery"
               class="flex-1"
@@ -243,7 +247,23 @@ async function connect(authType: 'api_key' | 'oauth') {
           <div class="desktop-provider-add-dialog__models min-h-0 overflow-auto">
             <div class="sticky z-1 top-0 flex min-h-10 items-center justify-between border-b-1 border-b-solid border-b-border bg-surface text-muted text-[0.7rem] font-600 py-[0.55rem] px-[0.8rem]">
               <span>{{ t('desktop.providers.modelColumn') }}</span>
-              <span>{{ t('desktop.providers.enabledColumn') }}</span>
+              <div class="flex flex-wrap items-center justify-end gap-2">
+                <span>{{ t('desktop.providers.enabledColumn') }}</span>
+                <NButton
+                  size="tiny"
+                  :disabled="!canSelectVisibleModels"
+                  @click="setVisibleModelsEnabled(true)"
+                >
+                  {{ t('desktop.providers.selectAllModels') }}
+                </NButton>
+                <NButton
+                  size="tiny"
+                  :disabled="!canClearVisibleModels"
+                  @click="setVisibleModelsEnabled(false)"
+                >
+                  {{ t('desktop.providers.clearModelSelection') }}
+                </NButton>
+              </div>
             </div>
             <div v-for="model in filteredProviderModels" :key="model.modelId" class="desktop-provider-add-dialog__model-row">
               <div>
@@ -254,7 +274,7 @@ async function connect(authType: 'api_key' | 'oauth') {
               <NSwitch
                 :round="false"
                 :value="model.enabled"
-                :disabled="!model.available"
+                :disabled="!model.available || modelSelectionBusy"
                 @update:value="toggleModel(model.modelId, $event)"
               />
             </div>

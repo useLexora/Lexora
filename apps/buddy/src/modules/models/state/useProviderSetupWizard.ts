@@ -70,6 +70,16 @@ export function useProviderSetupWizard(options: UseProviderSetupWizardOptions) {
   const enabledModels = computed(() => providerModels.value.filter(
     model => model.enabled && model.available,
   ))
+  const visibleAvailableModels = computed(() => filteredProviderModels.value.filter(model => model.available))
+  const modelSelectionBusy = computed(() => (
+    providerSettings().mutatingProviderId.value === selectedProviderId.value
+  ))
+  const canSelectVisibleModels = computed(() => (
+    !modelSelectionBusy.value && visibleAvailableModels.value.some(model => !model.enabled)
+  ))
+  const canClearVisibleModels = computed(() => (
+    !modelSelectionBusy.value && visibleAvailableModels.value.some(model => model.enabled)
+  ))
   const filteredProviders = computed(() => {
     const query = providerQuery.value.trim().toLocaleLowerCase()
     return providerSettings().builtinPresets.value.filter(provider => (
@@ -256,6 +266,18 @@ export function useProviderSetupWizard(options: UseProviderSetupWizardOptions) {
       await providerSettings().setProviderModelEnabled(provider.id, modelId, enabled)
   }
 
+  async function setVisibleModelsEnabled(enabled: boolean) {
+    const provider = selectedProvider.value
+    if (!provider || modelSelectionBusy.value)
+      return
+    const modelIds = visibleAvailableModels.value
+      .filter(model => model.enabled !== enabled)
+      .map(model => model.modelId)
+    if (!modelIds.length)
+      return
+    await providerSettings().setProviderModelsEnabled(provider.id, modelIds, enabled)
+  }
+
   async function continueFromModels() {
     if (!canComplete.value)
       return
@@ -327,6 +349,8 @@ export function useProviderSetupWizard(options: UseProviderSetupWizardOptions) {
     addBuiltin,
     canComplete,
     canContinueCustom,
+    canClearVisibleModels,
+    canSelectVisibleModels,
     closeDialog,
     continueFromModels,
     createCustom,
@@ -344,6 +368,7 @@ export function useProviderSetupWizard(options: UseProviderSetupWizardOptions) {
     login,
     manualFormKey,
     modelQuery,
+    modelSelectionBusy,
     navigateToReachedStep,
     openManualModelDialog,
     providerModels,
@@ -357,6 +382,7 @@ export function useProviderSetupWizard(options: UseProviderSetupWizardOptions) {
     step,
     stepCount,
     toggleModel,
+    setVisibleModelsEnabled,
     updateCustomName,
   }
 }

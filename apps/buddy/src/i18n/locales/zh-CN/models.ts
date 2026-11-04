@@ -87,6 +87,8 @@ export default {
   'desktop.providers.displayName': '显示名称',
   'desktop.providers.displayNamePlaceholder': '输入显示名称',
   'desktop.providers.disabled': '已停用',
+  'desktop.providers.clearModelSelection': '全部取消',
+  'desktop.providers.selectAllModels': '全选',
   'desktop.providers.enabledModelSummary': '已启用 {enabled} / {total} 个模型',
   'desktop.providers.fetchServiceModels': '获取服务模型',
   'desktop.providers.enabledColumn': '启用',

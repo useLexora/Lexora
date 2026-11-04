@@ -54,6 +54,7 @@ export interface ModelProvidersStore {
   setModelCapabilities: (providerId: string, modelId: string, capabilities: ModelCapabilityOverrides | null) => Promise<boolean>
   setProviderEnabled: (providerId: string, enabled: boolean) => Promise<boolean>
   setProviderModelEnabled: (providerId: string, modelId: string, enabled: boolean) => Promise<boolean>
+  setProviderModelsEnabled: (providerId: string, modelIds: readonly string[], enabled: boolean) => Promise<boolean>
   syncProviderModels: (providerId: string) => Promise<boolean>
   upsertCustomProvider: (provider: LocalCustomProvider) => Promise<boolean>
   upsertManualModel: (providerId: string, model: LocalCustomProviderModel) => Promise<boolean>

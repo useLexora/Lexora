@@ -220,6 +220,7 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   providersSetDefaultModel: 'lexora:buddy:providers:set-default-model',
   providersSetEnabled: 'lexora:buddy:providers:set-enabled',
   providersSetModelEnabled: 'lexora:buddy:providers:set-model-enabled',
+  providersSetModelsEnabled: 'lexora:buddy:providers:set-models-enabled',
   providersSetModelParameters: 'lexora:buddy:providers:set-model-parameters',
   providersSetModelCatalogSource: 'lexora:buddy:providers:set-model-catalog-source',
   providersSetModelType: 'lexora:buddy:providers:set-model-type',
@@ -376,6 +377,11 @@ export interface LocalChatApi {
       modelId: string,
       enabled: boolean,
     ) => Promise<LocalRuntimeModelOption>
+    setModelsEnabled: (
+      providerId: string,
+      modelIds: readonly string[],
+      enabled: boolean,
+    ) => Promise<ReadonlyArray<LocalRuntimeModelOption>>
     setModelCatalogSource: (
       providerId: string,
       modelId: string,

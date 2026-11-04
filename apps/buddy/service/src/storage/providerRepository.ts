@@ -5,6 +5,7 @@ import type { ProviderConfigRepository } from './providerConfigRepository'
 import type { ProviderModelStateRepository } from './providerModelStateRepository'
 import type { ProviderStateRepository } from './providerStateRepository'
 import { createBuiltinProviderConfigRepository } from './builtinProviderConfigRepository'
+import { withTransaction } from './database'
 import { createDefaultModelRepository } from './defaultModelRepository'
 import { createProviderConfigRepository } from './providerConfigRepository'
 import { createProviderModelStateRepository } from './providerModelStateRepository'
@@ -16,6 +17,7 @@ export interface ProviderRepository {
   readonly defaultModel: DefaultModelRepository
   readonly models: ProviderModelStateRepository
   readonly states: ProviderStateRepository
+  transaction: <T>(operation: () => T) => T
 }
 
 export function createProviderRepository(database: DatabaseSync): ProviderRepository {
@@ -25,5 +27,8 @@ export function createProviderRepository(database: DatabaseSync): ProviderReposi
     defaultModel: createDefaultModelRepository(database),
     models: createProviderModelStateRepository(database),
     states: createProviderStateRepository(database),
+    transaction(operation) {
+      return withTransaction(database, operation)
+    },
   }
 }
