@@ -73,6 +73,14 @@ export function registerProviderRpc(options: RegisterProviderRpcOptions): () => 
     )
     return toRuntimeModelOption(options.service.executionModels, model)
   }))
+  disposers.push(registerRuntimeRequest(options.rpc, providersRpc.setModelsEnabled, async (input) => {
+    const models = await options.service.setModelsEnabled(
+      input.providerId,
+      input.modelIds,
+      input.enabled,
+    )
+    return models.map(model => toRuntimeModelOption(options.service.executionModels, model))
+  }))
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.removeModel, async (input) => {
     await options.service.removeModel(input.providerId, input.modelId)
     return ok()

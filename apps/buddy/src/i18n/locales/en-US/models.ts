@@ -89,6 +89,8 @@ export default {
   'desktop.providers.displayName': 'Display name',
   'desktop.providers.displayNamePlaceholder': 'Enter display name',
   'desktop.providers.disabled': 'Disabled',
+  'desktop.providers.clearModelSelection': 'Clear all',
+  'desktop.providers.selectAllModels': 'Select all',
   'desktop.providers.enabledModelSummary': '{enabled} of {total} models enabled',
   'desktop.providers.fetchServiceModels': 'Fetch service models',
   'desktop.providers.enabledColumn': 'Enabled',

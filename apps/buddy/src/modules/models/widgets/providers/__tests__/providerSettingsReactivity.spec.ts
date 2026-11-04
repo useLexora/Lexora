@@ -173,6 +173,96 @@ describe('provider settings prop reactivity', () => {
     expect(document.body.querySelectorAll('.desktop-provider-add-dialog__model-row')).toHaveLength(3)
   })
 
+  it('toggles all visible available models with one batch request', async () => {
+    const store = createStore('Alpha')
+    store.providers.value = [{ ...provider('Alpha'), modelCount: 4 }]
+    store.registeredModels.value = [
+      { ...model('Alpha'), modelId: 'alpha', enabled: true },
+      { ...model('Beta'), modelId: 'beta', enabled: false },
+      { ...model('Gamma'), modelId: 'gamma', enabled: true },
+      { ...model('Delta'), modelId: 'delta', enabled: false, available: false },
+    ]
+    const calls: Array<{ enabled: boolean, modelIds: string[], providerId: string }> = []
+    store.setProviderModelsEnabled = async (providerId, modelIds, enabled) => {
+      calls.push({ enabled, modelIds: [...modelIds], providerId })
+      const selected = new Set(modelIds)
+      store.registeredModels.value = store.registeredModels.value.map(item => (
+        item.providerId === providerId && selected.has(item.modelId)
+          ? { ...item, enabled }
+          : item
+      ))
+      return true
+    }
+    const root = document.createElement('div')
+    document.body.append(root)
+    const app = createApp({
+      setup: () => () => h(DesktopProviderAddDialog, { show: true, resumeProviderId: 'service', providerSettings: store }),
+    })
+    app.mount(root)
+    cleanups.push(() => {
+      app.unmount()
+      root.remove()
+    })
+    await nextTick()
+
+    const button = () => document.body.querySelector('.desktop-provider-add-dialog__model-toolbar button') as HTMLButtonElement
+    expect(button().textContent?.trim()).toBe(translateBuddy('zh-CN', 'desktop.providers.selectAllModels'))
+
+    button().click()
+    await vi.waitFor(() => expect(calls).toHaveLength(1))
+    expect(calls[0]).toEqual({ enabled: true, modelIds: ['beta'], providerId: 'service' })
+    await nextTick()
+    expect(button().textContent?.trim()).toBe(translateBuddy('zh-CN', 'desktop.providers.clearModelSelection'))
+
+    button().click()
+    await vi.waitFor(() => expect(calls).toHaveLength(2))
+    expect(calls[1]).toEqual({ enabled: false, modelIds: ['alpha', 'beta', 'gamma'], providerId: 'service' })
+    await nextTick()
+    expect(button().textContent?.trim()).toBe(translateBuddy('zh-CN', 'desktop.providers.selectAllModels'))
+  })
+
+  it('scopes the bulk toggle to the current search result', async () => {
+    const store = createStore('Alpha')
+    store.providers.value = [{ ...provider('Alpha'), modelCount: 3 }]
+    store.registeredModels.value = [
+      { ...model('Alpha'), modelId: 'alpha', enabled: false },
+      { ...model('Beta Two'), modelId: 'beta', enabled: false },
+      { ...model('Gamma'), modelId: 'gamma', enabled: false },
+    ]
+    const calls: Array<{ enabled: boolean, modelIds: string[], providerId: string }> = []
+    store.setProviderModelsEnabled = async (providerId, modelIds, enabled) => {
+      calls.push({ enabled, modelIds: [...modelIds], providerId })
+      const selected = new Set(modelIds)
+      store.registeredModels.value = store.registeredModels.value.map(item => (
+        item.providerId === providerId && selected.has(item.modelId)
+          ? { ...item, enabled }
+          : item
+      ))
+      return true
+    }
+    const root = document.createElement('div')
+    document.body.append(root)
+    const app = createApp({
+      setup: () => () => h(DesktopProviderAddDialog, { show: true, resumeProviderId: 'service', providerSettings: store }),
+    })
+    app.mount(root)
+    cleanups.push(() => {
+      app.unmount()
+      root.remove()
+    })
+    await nextTick()
+
+    const searchInput = document.body.querySelector('.desktop-provider-add-dialog__model-toolbar input') as HTMLInputElement
+    searchInput.value = 'Beta'
+    searchInput.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    const button = document.body.querySelector('.desktop-provider-add-dialog__model-toolbar button') as HTMLButtonElement
+    button.click()
+    await vi.waitFor(() => expect(calls).toHaveLength(1))
+    expect(calls[0]).toEqual({ enabled: true, modelIds: ['beta'], providerId: 'service' })
+    expect(store.registeredModels.value.filter(item => item.enabled).map(item => item.modelId)).toEqual(['beta'])
+  })
+
   it('saves model parameters and provider connections through the replacement store', async () => {
     const first = createStore('Alpha')
     const second = createStore('Beta')
@@ -578,6 +668,11 @@ function createStore(name: string, locale: BuddyLocale = 'zh-CN') {
     },
     setProviderModelEnabled: async (providerId, modelId, enabled) => {
       registeredModels.value = registeredModels.value.map(item => item.providerId === providerId && item.modelId === modelId ? { ...item, enabled } : item)
+      return true
+    },
+    setProviderModelsEnabled: async (providerId, modelIds, enabled) => {
+      const selected = new Set(modelIds)
+      registeredModels.value = registeredModels.value.map(item => item.providerId === providerId && selected.has(item.modelId) ? { ...item, enabled } : item)
       return true
     },
     upsertCustomProvider: async (input) => {

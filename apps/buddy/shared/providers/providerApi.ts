@@ -276,6 +276,11 @@ export const providersRequestSchemas = {
     modelId: idSchema,
     providerId: idSchema,
   }).strict(),
+  providerModelsEnabled: z.object({
+    enabled: z.boolean(),
+    modelIds: z.array(idSchema).min(1).max(2_000),
+    providerId: idSchema,
+  }).strict(),
   providerUpsert: z.object({ provider: customProviderSchema }).strict(),
   defaultModel: z.object({
     model: defaultModelSelectionSchema.nullable(),
@@ -309,6 +314,7 @@ export const providersRpc = {
   remove: { method: 'providers.remove', input: providersRequestSchemas.providerId, response: validationResponseSchemas.mutation },
   setEnabled: { method: 'providers.setEnabled', input: providersRequestSchemas.providerEnabled, response: providersResponseSchemas.provider },
   setModelEnabled: { method: 'providers.setModelEnabled', input: providersRequestSchemas.providerModelEnabled, response: providersResponseSchemas.model },
+  setModelsEnabled: { method: 'providers.setModelsEnabled', input: providersRequestSchemas.providerModelsEnabled, response: providersResponseSchemas.models },
   removeModel: { method: 'providers.removeModel', input: providersRequestSchemas.providerModel, response: validationResponseSchemas.mutation },
   setModelParameters: { method: 'providers.setModelParameters', input: providersRequestSchemas.providerModelParameters, response: providersResponseSchemas.model },
   setModelType: {

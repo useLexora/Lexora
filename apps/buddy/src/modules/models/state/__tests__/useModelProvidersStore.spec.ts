@@ -89,6 +89,27 @@ describe('useModelProvidersStore', () => {
     store.dispose()
   })
 
+  it('enables multiple models with one API call and one catalog refresh', async () => {
+    const api = {
+      getDefaultModel: async () => null,
+      list: vi.fn(async () => [provider('ready', true, 'available')]),
+      listBuiltinPresets: async () => [],
+      listModels: async () => [model('ready')],
+      onAuthChallenge: () => () => {},
+      onChanged: () => () => {},
+      setDefaultModel: async () => {},
+      setModelsEnabled: vi.fn(async () => [model('ready')]),
+    } as unknown as LexoraDesktopApi['localChat']['providers']
+    const store = useModelProvidersStore({ api, language: shallowRef('zh-CN') })
+    await store.loadModelCatalog()
+    vi.mocked(api.list).mockClear()
+
+    await expect(store.setProviderModelsEnabled('ready', ['model-1'], true)).resolves.toBe(true)
+    expect(api.setModelsEnabled).toHaveBeenCalledWith('ready', ['model-1'], true)
+    expect(api.list).toHaveBeenCalledTimes(1)
+    store.dispose()
+  })
+
   it('does not expose a provider login cancellation as a provider error', async () => {
     const api = {
       localChat: {

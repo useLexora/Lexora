@@ -503,6 +503,29 @@ export class ProviderService {
     })
   }
 
+  async setModelsEnabled(providerId: string, modelIds: readonly string[], enabled: boolean): Promise<BuddyModel[]> {
+    return this.#operate('setModelsEnabled', async () => {
+      await this.#credentialStatus.listOrEmpty()
+      const uniqueIds = [...new Set(modelIds)]
+      if (!uniqueIds.length)
+        return []
+      for (const modelId of uniqueIds)
+        this.#modelCatalog.assertCanSetEnabled(providerId, modelId, enabled)
+      if (!enabled) {
+        for (const modelId of uniqueIds)
+          this.#assertModelIdle(providerId, modelId)
+      }
+      return this.#state.commit('configuration', () => {
+        const models = this.#modelCatalog.setManyEnabled(providerId, uniqueIds, enabled)
+        if (!enabled) {
+          for (const modelId of uniqueIds)
+            this.#clearDefaultIfMatches(providerId, modelId)
+        }
+        return models
+      })
+    })
+  }
+
   async removeModel(providerId: string, modelId: string): Promise<void> {
     return this.#operate('removeModel', async () => {
       await this.#credentialStatus.listOrEmpty()

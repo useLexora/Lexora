@@ -258,6 +258,10 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
     return mutateProvider(providerId, () => options.api.setModelEnabled(providerId, modelId, enabled))
   }
 
+  async function setProviderModelsEnabled(providerId: string, modelIds: readonly string[], enabled: boolean) {
+    return mutateProvider(providerId, () => options.api.setModelsEnabled(providerId, modelIds, enabled))
+  }
+
   async function setModelCatalogSource(
     providerId: string,
     modelId: string,
@@ -475,6 +479,7 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
     setModelCapabilities,
     setProviderEnabled,
     setProviderModelEnabled,
+    setProviderModelsEnabled,
     syncingProviderId: readonly(syncingProviderId),
     syncProviderModels,
     upsertCustomProvider,

@@ -23,10 +23,12 @@ const { t } = useBuddyI18n(language)
 const {
   addingBuiltin,
   addBuiltin,
+  allVisibleModelsEnabled,
   builtinDisplayName,
   builtinHeaders,
   canComplete,
   canLogin,
+  canToggleVisibleModels,
   closeDialog,
   continueFromModels,
   createCustom,
@@ -42,6 +44,7 @@ const {
   login,
   manualFormKey,
   modelQuery,
+  modelSelectionBusy,
   navigateToReachedStep,
   openManualModelDialog,
   providerModels,
@@ -54,6 +57,7 @@ const {
   step,
   stepCount,
   toggleModel,
+  toggleVisibleModels,
 } = useProviderSetupWizard({
   providerSettings: () => props.providerSettings,
   resumeProviderId: toRef(props, 'resumeProviderId'),
@@ -225,7 +229,7 @@ async function connect(authType: 'api_key' | 'oauth') {
             </div>
           </div>
 
-          <div class="desktop-provider-add-dialog__model-toolbar flex items-center">
+          <div class="desktop-provider-add-dialog__model-toolbar flex items-center gap-2">
             <NInput
               v-model:value="modelQuery"
               class="flex-1"
@@ -238,6 +242,16 @@ async function connect(authType: 'api_key' | 'oauth') {
                 <DesktopIcon :component="Search20Regular" />
               </template>
             </NInput>
+            <NButton
+              class="flex-none"
+              size="small"
+              :disabled="!canToggleVisibleModels"
+              @click="toggleVisibleModels"
+            >
+              {{ allVisibleModelsEnabled
+                ? t('desktop.providers.clearModelSelection')
+                : t('desktop.providers.selectAllModels') }}
+            </NButton>
           </div>
 
           <div class="desktop-provider-add-dialog__models min-h-0 overflow-auto">
@@ -254,7 +268,7 @@ async function connect(authType: 'api_key' | 'oauth') {
               <NSwitch
                 :round="false"
                 :value="model.enabled"
-                :disabled="!model.available"
+                :disabled="!model.available || modelSelectionBusy"
                 @update:value="toggleModel(model.modelId, $event)"
               />
             </div>

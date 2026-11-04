@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { modelCapabilityOverridesSchema } from '../../../shared/providers/providerCapabilities'
 import { modelCatalogReferenceSchema } from '../../../shared/providers/providerCatalog'
 import { serviceModelMetadataSchema } from '../../../shared/providers/providerDiscovery'
+import { withTransaction } from './database'
 
 export type ProviderModelSource = 'builtin' | 'manual' | 'synced'
 
@@ -65,6 +66,7 @@ export interface ProviderModelStateRepository {
   remove: (providerId: string, modelId: string) => boolean
   removeForProvider: (providerId: string) => number
   upsert: (record: ProviderModelStateRecord) => ProviderModelStateRecord
+  upsertMany: (records: readonly ProviderModelStateRecord[]) => ProviderModelStateRecord[]
 }
 
 interface ProviderModelStateRow {
@@ -161,6 +163,43 @@ export function createProviderModelStateRepository(
       updated_at = excluded.updated_at
   `)
 
+  function write(record: ProviderModelStateRecord): ProviderModelStateRecord {
+    upsert.run(
+      record.providerId,
+      record.modelId,
+      record.displayName,
+      record.api,
+      JSON.stringify(record.input),
+      Number(record.reasoning),
+      JSON.stringify(record.cost),
+      record.sourceContextWindow,
+      record.sourceMaxTokens,
+      record.overrideContextWindow,
+      record.overrideMaxTokens,
+      record.sourceRevision,
+      record.acknowledgedSourceRevision,
+      record.source,
+      Number(record.enabled),
+      Number(record.available),
+      record.lastSeenAt,
+      record.createdAt,
+      record.updatedAt,
+      serializeJson(record.thinkingLevelMap),
+      serializeJson(record.samplingParams),
+      serializeJson(record.compat),
+      record.catalogProviderId,
+      record.sourceFingerprint,
+      record.catalogModelId,
+      serializeJson(record.catalogSelection),
+      serializeJson(record.capabilityOverrides),
+      serializeJson(record.serviceMetadata),
+      record.type ?? 'chat',
+      record.typeOverride ?? null,
+      serializeJson(record.resolution ? providerModelResolutionSchema.parse(record.resolution) : null),
+    )
+    return requireProviderModelState(find.get(record.providerId, record.modelId))
+  }
+
   return {
     find(providerId, modelId) {
       const row = find.get(providerId, modelId) as ProviderModelStateRow | undefined
@@ -176,41 +215,11 @@ export function createProviderModelStateRepository(
     removeForProvider(providerId) {
       return Number(removeForProvider.run(providerId).changes)
     },
-    upsert(record) {
-      upsert.run(
-        record.providerId,
-        record.modelId,
-        record.displayName,
-        record.api,
-        JSON.stringify(record.input),
-        Number(record.reasoning),
-        JSON.stringify(record.cost),
-        record.sourceContextWindow,
-        record.sourceMaxTokens,
-        record.overrideContextWindow,
-        record.overrideMaxTokens,
-        record.sourceRevision,
-        record.acknowledgedSourceRevision,
-        record.source,
-        Number(record.enabled),
-        Number(record.available),
-        record.lastSeenAt,
-        record.createdAt,
-        record.updatedAt,
-        serializeJson(record.thinkingLevelMap),
-        serializeJson(record.samplingParams),
-        serializeJson(record.compat),
-        record.catalogProviderId,
-        record.sourceFingerprint,
-        record.catalogModelId,
-        serializeJson(record.catalogSelection),
-        serializeJson(record.capabilityOverrides),
-        serializeJson(record.serviceMetadata),
-        record.type ?? 'chat',
-        record.typeOverride ?? null,
-        serializeJson(record.resolution ? providerModelResolutionSchema.parse(record.resolution) : null),
-      )
-      return requireProviderModelState(find.get(record.providerId, record.modelId))
+    upsert: write,
+    upsertMany(records) {
+      if (!records.length)
+        return []
+      return withTransaction(database, () => records.map(record => write(record)))
     },
   }
 }
