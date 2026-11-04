@@ -1,10 +1,10 @@
 import type { SettingsManager } from '@earendil-works/pi-coding-agent'
 import type { BuddyApprovalPolicy } from '../../../../shared/permissions/approvalPolicy'
 import type { BuddyExecutionProfile } from '../../../../shared/permissions/executionProfile'
-import type { BuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
 import type { LocalSkill } from '../../../../shared/skills/skillApi'
 import type { ImageReadingMaterialWriter } from '../../images/ImageReadingMaterialStore'
 import type { ImageReader } from '../../images/ImageReadingService'
+import type { ExecutionPermissionSettings } from '../../permissions/permissionContract'
 import type { BuddyInputReferenceV1 } from '../context/BuddyInputReference'
 import type { BuddyInProcessExtension } from '../extensions/BuddyInProcessExtension'
 import type { BoundedContextFile } from './loadBoundedContextFiles'
@@ -29,7 +29,7 @@ export interface CreateBuddyResourceLoaderOptions {
   readImage?: ImageReader
   writeImageMaterial?: ImageReadingMaterialWriter
   actorPrompt?: string
-  getPermissionSettings?: () => BuddyPermissionSettings
+  getPermissionSettings?: () => ExecutionPermissionSettings
   getPendingInput?: () => BuddyInputReferenceV1 | null
   approvedSkills: readonly LocalSkill[]
   agentDir: string
@@ -114,8 +114,8 @@ export async function createBuddyResourceLoader(
   return loader
 }
 
-export function createPermissionPrompt(settings: BuddyPermissionSettings, platform?: NodeJS.Platform, activeToolNames?: readonly string[]): string {
-  return [createBuddyExecutionPrompt(settings.executionProfile, platform, activeToolNames), ...settings.executionProfile !== 'full_access' && settings.approvalPolicy === 'manual' ? [BUDDY_MANUAL_APPROVAL_PROMPT] : []].join('\n\n')
+export function createPermissionPrompt(settings: ExecutionPermissionSettings, platform?: NodeJS.Platform, activeToolNames?: readonly string[]): string {
+  return [createBuddyExecutionPrompt(settings.executionProfile, platform, activeToolNames, settings.fileAccessLimit), ...settings.executionProfile !== 'full_access' && settings.approvalPolicy === 'manual' ? [BUDDY_MANUAL_APPROVAL_PROMPT] : []].join('\n\n')
 }
 
 export class BuddyResourceLoadError extends Error {

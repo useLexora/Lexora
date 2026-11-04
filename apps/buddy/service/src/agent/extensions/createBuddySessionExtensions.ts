@@ -21,6 +21,7 @@ import type { FileResourceCoordinator } from '../../files/FileResourceCoordinato
 import type { ImageReadingMaterialWriter } from '../../images/ImageReadingMaterialStore'
 import type { ImageReadingService } from '../../images/ImageReadingService'
 import type { NetworkPermissionsStore } from '../../permissions/NetworkPermissionsClient'
+import type { ExecutionPermissionSettings } from '../../permissions/permissionContract'
 import type { UserQuestionService } from '../../questions/UserQuestionService'
 import type { ShellSandboxClient } from '../../sandbox/ShellSandboxClient'
 import type { ExtensionShellRegistry } from '../../sandbox/ShellSelection'
@@ -99,7 +100,7 @@ export interface CreateBuddySessionExtensionsOptions {
 }
 
 export interface BuddySessionExtensions {
-  getPermissionSettings: () => BuddyPermissionSettings
+  getPermissionSettings: () => ExecutionPermissionSettings
   updatePermissionSettings: (settings: BuddyPermissionSettings) => void
   setCodemodeMode: (mode: CodemodeMode) => void
   assertCodemodeReady: () => void
@@ -143,7 +144,7 @@ export async function createBuddySessionExtensions(
     },
   })
   const fileAccessLimit = options.fileAccessLimit ?? 'inherit'
-  const getExecutionProfile = () => fileAccessLimit === 'read_only' ? 'read_only' : permissionSettings.executionProfile
+  const getFileExecutionProfile = () => fileAccessLimit === 'read_only' ? 'read_only' : permissionSettings.executionProfile
   const inputReferences: BuddyInputReferenceStore = { pending: null }
   const executionPermissions = new ToolExecutionPermissions()
   const diagnostics = observeSessionPermissions({ grants: grants.onDidChange, sandbox: sandboxDirectories.onDidChange, tools: executionPermissions.onDidChange }, options.conversationId, services.recordPermissions)
@@ -189,7 +190,7 @@ export async function createBuddySessionExtensions(
       approvalService: services.approvalService,
       cwd: options.canonicalRoot,
       executionPermissions,
-      get executionProfile() { return getExecutionProfile() },
+      get executionProfile() { return permissionSettings.executionProfile },
       fileAccessLimit,
       getToolScopeDenial: toolName => toolScope ? toolScope.denial(toolName) : 'TOOL_SCOPE_UNAVAILABLE',
       getGrants: () => grants.snapshot,
@@ -225,7 +226,7 @@ export async function createBuddySessionExtensions(
       },
       isCodemodeEnabled: () => codemodeMode !== 'off',
       conversationId: options.conversationId,
-      get executionProfile() { return getExecutionProfile() },
+      get executionProfile() { return getFileExecutionProfile() },
       cwd: options.canonicalRoot,
       getRunId: () => runContext.current?.runId,
       getActorId: () => runContext.current?.actorIdentity?.id,
@@ -248,8 +249,8 @@ export async function createBuddySessionExtensions(
     const shellCapability = createShellCapability({
       shells,
       cwd: options.canonicalRoot,
-      execution: resolveShellExecution(getExecutionProfile()),
-      getExecution: () => resolveShellExecution(getExecutionProfile()),
+      execution: resolveShellExecution(getFileExecutionProfile()),
+      getExecution: () => resolveShellExecution(getFileExecutionProfile()),
       getGrants: () => grants.snapshot,
       resourceReadRoots: options.skillReadRoots ?? [],
       getRunContext: () => runContext.current,
@@ -268,7 +269,7 @@ export async function createBuddySessionExtensions(
         service: services.delegation,
         runContext,
         actorKind: options.actorKind ?? 'actor',
-        getPermissions: () => ({ ...permissionSettings, executionProfile: getExecutionProfile() }),
+        getPermissions: () => ({ ...permissionSettings }),
       }))
     }
     creationSignal.throwIfAborted()
@@ -329,7 +330,7 @@ export async function createBuddySessionExtensions(
     ]
 
     return {
-      getPermissionSettings: () => ({ ...permissionSettings, executionProfile: getExecutionProfile() }),
+      getPermissionSettings: () => ({ ...permissionSettings, fileAccessLimit }),
       updatePermissionSettings: (settings) => {
         if (settings.approvalPolicy === permissionSettings.approvalPolicy && settings.executionProfile === permissionSettings.executionProfile)
           return

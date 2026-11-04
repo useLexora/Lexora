@@ -222,10 +222,16 @@ describe('execution admission and fences', () => {
     elevated.run.executionProfile = 'full_access'
     expect(f.executions.admitChild(rehash(elevated)).created).toBe(true)
     f.executions.setFileAccessCeiling('root')
-    expect(() => f.executions.admitChild(rehash(f.child('blocked')))).toThrow(expect.objectContaining({ code: 'unauthorized' }))
     const readonly = f.child('readonly')
-    readonly.run.executionProfile = 'read_only'
-    expect(f.executions.admitChild(rehash(readonly)).execution.fileAccessCeiling).toBe('read_only')
+    readonly.authorization.executionProfile = 'full_access'
+    readonly.run.executionProfile = 'full_access'
+    expect(f.executions.admitChild(rehash(readonly)).execution).toMatchObject({
+      fileAccessCeiling: 'read_only',
+      run: { executionProfile: 'full_access' },
+    })
+    const denied = f.child('beyond-parent')
+    denied.authorization.executionProfile = 'read_only'
+    expect(() => f.executions.admitChild(rehash(denied))).toThrow(expect.objectContaining({ code: 'unauthorized' }))
   })
 
   it('seals only its own generation and cancels pending preparation before it can take a working permit', () => {

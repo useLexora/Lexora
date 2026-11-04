@@ -1,7 +1,9 @@
+import type { BuddySettings } from '../../../shared/buddies/buddySettings'
 import type { BuddyApprovalPolicy } from '../../../shared/permissions/approvalPolicy'
 import type { ApprovalReviewKind, ShellApprovalContext } from '../../../shared/permissions/approvalReviewPayload'
 import type { BuddyExecutionProfile } from '../../../shared/permissions/executionProfile'
 import type { NetworkPermissionDecision } from '../../../shared/permissions/networkPermissions'
+import type { BuddyPermissionSettings } from '../../../shared/permissions/permissionMode'
 import type { SandboxDirectoryGrant } from '../../../shared/permissions/shellSandbox'
 
 export type AccessKind
@@ -71,6 +73,10 @@ export type PermissionDecision
     type: 'deny'
   }
 
+export interface ExecutionPermissionSettings extends BuddyPermissionSettings {
+  fileAccessLimit?: BuddySettings['limits']['fileAccess']
+}
+
 export interface PermissionRequest {
   networkPermission?: NetworkPermissionDecision
   access?: AccessKind
@@ -88,6 +94,7 @@ export interface PermissionRequest {
   owner: GrantOwner
   paths?: readonly PermissionPath[]
   profile: BuddyExecutionProfile
+  fileAccessLimit?: BuddySettings['limits']['fileAccess']
   toolName: string
 }
 

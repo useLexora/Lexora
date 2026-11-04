@@ -1,7 +1,10 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { UserQuestionRequest } from '../../../../shared/questions/userQuestionApi'
+import type { ChatTurnServiceOptions } from '../../chat/ChatTurnService'
 import type { TurnRequestCommit } from '../../chat/TurnRequestService'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createBuddyUserContent } from '../../../../shared/conversation/buddyUserContent'
+import { ChatTurnService } from '../../chat/ChatTurnService'
 import { TurnRequestService } from '../../chat/TurnRequestService'
 import { RunEventCorruptionError } from '../../events/RunEventFailure'
 import { createAttachmentRepository } from '../attachmentRepository'
@@ -45,6 +48,61 @@ describe('turnRequestRepository', () => {
     expect(createComposerDraftRepository(database).findById('draft-1')).toEqual(draft)
     expect(database.prepare('SELECT draft_id FROM turn_requests WHERE request_id = ?').get(input.requestId)?.draft_id).toBeNull()
     expect(database.prepare('SELECT COUNT(*) AS count FROM runs').get()?.count).toBe(2)
+  })
+
+  it.each(['inherited', 'role', 'historical'] as const)('preserves separate permissions for a late question reply with %s read-only restrictions', async (kind) => {
+    const f = createExecutionStorageFixture()
+    databases.push(f.database)
+    f.executions.admitChild(f.child('source', f.actor.id))
+    const snapshot = f.snapshot(f.actor.id)
+    if (kind === 'role')
+      snapshot.settings.limits.fileAccess = 'read_only'
+    const base = kind === 'historical' ? 'read_only' : 'full_access'
+    f.database.prepare('UPDATE conversations SET execution_profile = ?').run('full_access')
+    f.database.prepare('UPDATE runs SET execution_profile = ?, actor_snapshot_json = ? WHERE id = ?').run(base, JSON.stringify(snapshot), 'source')
+    if (kind === 'inherited')
+      f.executions.setFileAccessCeiling('source')
+    f.database.prepare('UPDATE runs SET status = \'completed\'').run()
+    f.database.prepare('UPDATE execution_state SET phase = \'closed\', cleanup_state = \'clean\'').run()
+    const source = f.runs.findById('source')!
+    const request: UserQuestionRequest = {
+      id: 'question',
+      runId: source.id,
+      rootRunId: source.rootRunId,
+      conversationId: source.conversationId,
+      branchId: source.branchId,
+      buddyName: 'Reviewer',
+      status: 'answered',
+      createdAt: source.startedAt,
+      resolvedAt: source.startedAt,
+      questions: [{ id: 'budget', question: 'What is the budget?', kind: 'text', options: [] }],
+      response: { answers: [{ questionId: 'budget', selectedOptionIds: [], text: '200' }] },
+    }
+    f.database.prepare('INSERT INTO user_questions (id, run_id, tool_call_id, request_json) VALUES (?, ?, ?, ?)')
+      .run(request.id, source.id, 'ask-call', JSON.stringify(request))
+    const repository = createTurnRequestRepository(f.database)
+    const service = new ChatTurnService({
+      definitions: { resolve: async () => ({ definition: snapshot, selection: { ...snapshot.model, contextWindow: 16384, maxTokens: 1024 }, memberModelSelection: snapshot.model }) },
+      conversations: { findById: f.conversations.findById, listBranchMessages: () => [] },
+      conversationLifecycle: { isDeleting: () => false },
+      inputValidation: { validate: async () => {} },
+      runs: f.runs,
+      runInputs: { findByRunId: () => null },
+      turnRequests: repository,
+      turnLauncher: { launch: async (runId: string) => ({ runId, completion: Promise.resolve() }) },
+    } as unknown as ChatTurnServiceOptions)
+    try {
+      const runId = await service.continueQuestion(request, source)
+      expect(f.executions.find(runId)).toMatchObject({
+        fileAccessCeiling: 'read_only',
+        run: { executionProfile: base, executionKind: 'root', threadId: source.threadId },
+      })
+      expect(await service.continueQuestion(request, source)).toBe(runId)
+      expect(f.database.prepare('SELECT COUNT(*) AS count FROM runs WHERE thread_id = ?').get(source.threadId)?.count).toBe(2)
+    }
+    finally {
+      await service.dispose()
+    }
   })
 
   it('continues the question owner thread after the same actor completes unrelated work', () => {

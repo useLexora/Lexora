@@ -2,8 +2,9 @@ import type { Api, AssistantMessage, Model, ToolCall } from '@earendil-works/pi-
 import type { BuddySettings } from '../../../../../../shared/buddies/buddySettings'
 import type { BuddyExecutionProfile } from '../../../../../../shared/permissions/executionProfile'
 import type { CodemodeMode } from '../../../../../../shared/runtime/runtimePreferences'
-import type { BuddyCapability } from '../../BuddyCapability'
+import type { BuddyCapability, BuddyCapabilityContext } from '../../BuddyCapability'
 import type { BuddySessionExtensionServices } from '../../createBuddySessionExtensions'
+import { Buffer } from 'node:buffer'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -13,6 +14,7 @@ import { defineTool, ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as userHomePaths from '../../../../../../platform/filesystem/userHomePaths'
+import { DEFAULT_NETWORK_PERMISSIONS } from '../../../../../../shared/permissions/networkPermissions'
 import { MutationCoordinator } from '../../../../changes/MutationCoordinator'
 import { FileResourceCoordinator } from '../../../../files/FileResourceCoordinator'
 import { NativeFileEngine } from '../../../../files/NativeFileEngine'
@@ -26,6 +28,7 @@ const allowedMcp = 'mcp__scope__read'
 const deniedMcp = 'mcp__scope__mutate'
 const pluginTool = 'lexora_plugin_scope'
 const editTool = 'lexora_scope_document'
+const networkTool = 'lexora_scope_fetch'
 const marker = 'UNSELECTED_TOOL_DETAILS'
 const stableId = (kind: string, source: string, tool: string) => JSON.stringify([kind, source, tool])
 const cleanups: (() => Promise<void>)[] = []
@@ -210,13 +213,41 @@ describe('role tool scope in real Pi sessions', () => {
     expect(ordinary.approved).toEqual([allowedMcp])
   })
 
+  it.each(['off', 'on', 'only'] as const)('separates inherited network approval from role filesystem and shell limits, codemode=%s', async (codemode) => {
+    const f = await fixture({ fileAccessLimit: 'read_only', executionProfile: 'full_access', network: true, codemode })
+    const fetch = codemode === 'off' ? { name: networkTool, arguments: {} } : scriptCall(networkTool, {})
+    await f.turn(fetch)
+    expect(f.lastResult()).toContain('network resource reached')
+    expect(f.approved).toEqual([])
+    expect(f.extensions.getPermissionSettings()).toMatchObject({ executionProfile: 'full_access', fileAccessLimit: 'read_only' })
+    f.networkSettings.defaults.access = 'deny'
+    await f.turn(fetch)
+    expect(f.lastResult()).toContain('NETWORK_PERMISSION_DENIED')
+    expect(f.approved).toEqual([])
+    f.networkSettings.defaults.access = 'ask'
+    f.extensions.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile: 'workspace_write' })
+    await f.turn(fetch)
+    expect(f.lastResult()).toContain('network resource reached')
+    expect(f.approved).toEqual([networkTool])
+    f.extensions.updatePermissionSettings({ approvalPolicy: 'policy', executionProfile: 'full_access' })
+    await f.turn(fetch)
+    expect(f.approved).toEqual([networkTool])
+    await f.turn(codemode === 'off'
+      ? { name: getPiShellToolName(process.platform), arguments: { command: 'pwd', readOnly: false } }
+      : scriptCall(getPiShellToolName(process.platform), { command: 'pwd', readOnly: false }))
+    expect(f.lastResult()).toContain('READ_ONLY_DISPATCH:true')
+    await f.turn(codemode === 'off' ? { name: editTool, arguments: { content: 'blocked' } } : scriptCall(editTool, { content: 'blocked' }))
+    expect(f.lastResult()).toContain('READ_ONLY_PROFILE')
+    expect(await readFile(f.document, 'utf8')).toBe('original document')
+  })
+
   it('rejects a missing selected capability during composition instead of falling back to all', async () => {
     const missing = stableId('mcp', 'removed-connector', 'missing-tool')
     await expect(fixture({ tools: { mode: 'selected', ids: [missing] } })).rejects.toMatchObject({ code: 'BUDDY_CAPABILITY_UNAVAILABLE', toolIds: [missing] })
   })
 })
 
-async function fixture(options: { tools?: BuddySettings['tools'], fileAccessLimit?: BuddySettings['limits']['fileAccess'], executionProfile?: BuddyExecutionProfile, root?: string, piSessionFile?: string, codemode?: CodemodeMode, shells?: boolean } = {}) {
+async function fixture(options: { tools?: BuddySettings['tools'], fileAccessLimit?: BuddySettings['limits']['fileAccess'], executionProfile?: BuddyExecutionProfile, root?: string, piSessionFile?: string, codemode?: CodemodeMode, shells?: boolean, network?: boolean } = {}) {
   const root = options.root ?? await realpath(await mkdtemp(join(tmpdir(), 'buddy-tool-scope-')))
   if (!options.root)
     cleanups.push(() => rm(root, { recursive: true, force: true }))
@@ -228,15 +259,19 @@ async function fixture(options: { tools?: BuddySettings['tools'], fileAccessLimi
   const model = runtime.getModels().find(model => model.provider === 'anthropic')!
   await runtime.setRuntimeApiKey(model.provider, 'offline-test-only')
   const approved: string[] = []
+  const networkSettings = structuredClone(DEFAULT_NETWORK_PERMISSIONS)
+  let capabilityContext: BuddyCapabilityContext
   let afterToolResult: (() => void) | undefined
   const custom: BuddyCapability = {
     classify: event => event.toolName === editTool
       ? { access: 'write', paths: [{ path: document, mode: 'existing' }] }
       : event.toolName.startsWith('mcp__')
         ? { access: 'network', requireApproval: true }
-        : event.toolName === pluginTool ? { access: 'read', paths: [] } : null,
+        : event.toolName === networkTool
+          ? { access: 'network', networkManaged: true, paths: [] }
+          : event.toolName === pluginTool ? { access: 'read', paths: [] } : null,
     disclosure: [
-      { source: { kind: 'builtin', id: 'scope', title: 'Document fixture' }, exposure: 'direct', keywords: 'document', tools: [{ name: editTool }] },
+      { source: { kind: 'builtin', id: 'scope', title: 'Document fixture' }, exposure: 'direct', keywords: 'document', tools: [{ name: editTool }, ...options.network ? [{ name: networkTool }] : []] },
       { source: { kind: 'mcp', id: 'scope-connector', title: 'Scope connector' }, exposure: 'on_demand', keywords: 'scope', tools: [{ name: allowedMcp, id: 'remote-read' }, { name: deniedMcp, id: 'remote-mutate' }] },
       { source: { kind: 'plugin', id: 'scope-plugin', title: 'Scope plugin' }, exposure: 'on_demand', keywords: marker, tools: [{ name: pluginTool }] },
     ],
@@ -266,6 +301,18 @@ async function fixture(options: { tools?: BuddySettings['tools'], fileAccessLimi
         for (const tool of remote)
           pi.registerTool(tool)
       })
+      if (options.network) {
+        pi.registerTool(defineTool({
+          name: networkTool,
+          label: 'Read network fixture',
+          description: 'Read a fixed external resource',
+          parameters: Type.Object({}),
+          async execute(toolCallId, _input, signal) {
+            await capabilityContext.authorizeNetwork!({ toolCallId, toolName: networkTool, url: 'https://example.com/fixture', operation: 'access', signal })
+            return { content: [{ type: 'text', text: 'network resource reached' }], details: {} }
+          },
+        }))
+      }
       pi.registerTool(defineTool({
         name: editTool,
         label: 'Update document',
@@ -299,7 +346,17 @@ async function fixture(options: { tools?: BuddySettings['tools'], fileAccessLimi
     fileResources,
     mutations,
     changeCaptureService: { beginInvocation: async input => ({ invocationId: input.invocationId, runId: input.runId }), finishInvocation: async () => ({ complete: true }), markPartial: async () => {} },
-    createCapabilities: async () => [custom],
+    createCapabilities: async (context) => {
+      capabilityContext = context
+      return [custom]
+    },
+    networkPermissions: options.network ? { get: async () => networkSettings, allow: async () => { throw new Error('Unexpected persistent rule') } } : undefined,
+    shellSandbox: options.network
+      ? { exec: async (input, options) => {
+          options.onData(Buffer.from(`READ_ONLY_DISPATCH:${input.readOnly}`))
+          return { exitCode: 0 }
+        } }
+      : undefined,
     directoryGrants: { assertCurrent() {}, grant: async () => { throw new Error('Unexpected directory grant') } },
   }
   const extensions = await createBuddySessionExtensions({ canonicalRoot: root, conversationId: 'scope-conversation', approvalPolicy: 'policy', executionProfile, grants: [{ canonicalRoot: root, root, grantId: 'scope-workspace', kind: 'workspace' }], services, sessionMode: 'interactive', signal: new AbortController().signal, spaceId: null, toolScope: options.tools, fileAccessLimit: options.fileAccessLimit })
@@ -340,6 +397,7 @@ async function fixture(options: { tools?: BuddySettings['tools'], fileAccessLimi
     root,
     document,
     approved,
+    networkSettings,
     extensions,
     requests,
     shutdown,

@@ -1,5 +1,5 @@
-import type { BuddyApprovalPolicy } from '../../../../shared/permissions/approvalPolicy'
 import type { BuddyExecutionProfile } from '../../../../shared/permissions/executionProfile'
+import type { ExecutionPermissionSettings } from '../../permissions/permissionContract'
 import { SHELL_SANDBOX_BACKEND } from '../../../../shared/platform/identifiers'
 import { resolveShellExecution, WINDOWS_SANDBOX_FILESYSTEM_LIMITS } from '../../sandbox/shellExecution'
 
@@ -25,18 +25,16 @@ export const BUDDY_MANUAL_APPROVAL_PROMPT = [
   'State-changing host operations pause for product approval unless the user authorizes the rest of the current turn. Use the tool normally and let the approval card handle consent; do not replace it with a conversational question.',
 ].join('\n')
 
-export interface CreateBuddySystemPromptOptions {
+export interface CreateBuddySystemPromptOptions extends ExecutionPermissionSettings {
   includePermissions?: boolean
-  approvalPolicy: BuddyApprovalPolicy
   directoryContext?: string
-  executionProfile: BuddyExecutionProfile
   platform?: NodeJS.Platform
 }
 
 export function createBuddySystemPrompt(options: CreateBuddySystemPromptOptions): string {
   const sections = [
     LEXORA_BUDDY_BASE_SYSTEM_PROMPT,
-    ...options.includePermissions === false ? [] : [createBuddyExecutionPrompt(options.executionProfile, options.platform)],
+    ...options.includePermissions === false ? [] : [createBuddyExecutionPrompt(options.executionProfile, options.platform, undefined, options.fileAccessLimit)],
   ]
   if (options.includePermissions !== false && options.executionProfile !== 'full_access' && options.approvalPolicy === 'manual')
     sections.push(BUDDY_MANUAL_APPROVAL_PROMPT)
@@ -46,10 +44,11 @@ export function createBuddySystemPrompt(options: CreateBuddySystemPromptOptions)
   return sections.join('\n\n')
 }
 
-export function createBuddyExecutionPrompt(executionProfile: BuddyExecutionProfile, platform?: NodeJS.Platform, activeToolNames?: readonly string[]): string {
-  const execution = resolveShellExecution(executionProfile, platform)
+export function createBuddyExecutionPrompt(executionProfile: BuddyExecutionProfile, platform?: NodeJS.Platform, activeToolNames?: readonly string[], fileAccessLimit?: ExecutionPermissionSettings['fileAccessLimit']): string {
+  const fileReadOnly = fileAccessLimit === 'read_only'
+  const execution = resolveShellExecution(fileReadOnly ? 'read_only' : executionProfile, platform)
   const shellTool = activeToolNames?.includes('lexora_shell') ? 'lexora_shell' : execution.dialect
-  const prompt = createExecutionProfilePrompt(executionProfile, shellTool, execution.boundary === 'sandbox', activeToolNames)
+  const prompt = createExecutionProfilePrompt(executionProfile, shellTool, execution.boundary === 'sandbox', activeToolNames, fileReadOnly)
   return execution.boundary === 'sandbox' && execution.backend === SHELL_SANDBOX_BACKEND.Windows && (activeToolNames?.includes(shellTool) ?? true)
     ? `${prompt}\n${WINDOWS_SANDBOX_FILESYSTEM_LIMITS}`
     : prompt
@@ -60,6 +59,7 @@ function createExecutionProfilePrompt(
   shellTool: 'bash' | 'powershell' | 'lexora_shell',
   isolatedShell: boolean,
   activeToolNames?: readonly string[],
+  fileReadOnly = false,
 ): string {
   const hasTool = (name: string) => activeToolNames?.includes(name) ?? true
   const hasShell = hasTool(shellTool)
@@ -68,7 +68,7 @@ function createExecutionProfilePrompt(
     hasShell ? `Use Pi built-in tools, including ${shellName}, for general host inspection, diagnosis, and target discovery.` : '',
     hasTool('lexora_system_action') ? 'Use lexora_system_action for supported structured host state changes.' : '',
   ].filter(Boolean).join('\n')
-  if (executionProfile === 'full_access') {
+  if (executionProfile === 'full_access' && !fileReadOnly) {
     return [
       'The user explicitly enabled full access for this conversation.',
       'Available tools are automatically approved, including file and credential access, host commands, network requests, system mutations, MCP calls, and automation changes. Commands run on the host without shell sandbox isolation; saved directory grants do not constrain full-access tool calls.',
@@ -76,18 +76,35 @@ function createExecutionProfilePrompt(
       inspection,
     ].filter(Boolean).join('\n')
   }
-  if (executionProfile === 'read_only') {
+  if (executionProfile === 'read_only' || fileReadOnly) {
+    const roleLimited = executionProfile !== 'read_only'
     return [
-      'This conversation uses the local read-only execution profile.',
+      roleLimited
+        ? `This execution inherits the ${executionProfile} base profile with a role or inherited local file read-only limit.`
+        : 'This conversation uses the local read-only execution profile.',
       'Pi built-in tools keep their native names; Lexora-owned tools use lexora_ prefixed names.',
-      hasTool('read') ? 'Native file tools can read ordinary files outside the authorized directories; sensitive reads still require approval. This does not expand other tools\' boundaries.' : '',
-      'File tools block writing and deleting in this profile, and no approval can lift that. Do not use commands or OS permission gaps to modify user files; the profile must change before making those changes.',
+      hasTool('read')
+        ? executionProfile === 'full_access'
+          ? 'Native file reads are automatically approved under the base full-access profile. This does not expand sandbox access to protected credential paths.'
+          : 'Native file tools can read ordinary files outside the authorized directories; sensitive reads still require approval. This does not expand other tools\' boundaries.'
+        : '',
+      roleLimited
+        ? 'Writing and deleting local files and host execution are prohibited by the file-access limit; no approval can lift it. Do not use commands or OS permission gaps to modify user files.'
+        : 'File tools block writing and deleting in this profile, and no approval can lift that. Do not use commands or OS permission gaps to modify user files; the profile must change before making those changes.',
       hasShell
         ? isolatedShell
-          ? `${shellName} commands run with a read-only OS sandbox policy. Arbitrary command syntax is available for inspection; write only private temporary files. Do not access protected credential paths. Host execution cannot be enabled in this profile.`
+          ? `${shellName} commands run with a read-only OS sandbox policy. Arbitrary command syntax is available for inspection; write only private temporary files. Do not access protected credential paths. Host execution cannot be enabled in this ${roleLimited ? 'execution' : 'profile'}.`
           : `Only commands that are safe to run without confirmation are available through ${shellName}; use them for inspection and diagnosis.`
         : '',
-      'Network access and external tools remain separate approval boundaries; local read-only mode does not auto-approve them.',
+      roleLimited
+        ? 'Network access and approval policy inherit the base mode; the file-access limit does not reset them to the local read-only profile.'
+        : 'Network access and external tools remain separate approval boundaries; local read-only mode does not auto-approve them.',
+      roleLimited
+        ? executionProfile === 'full_access'
+          ? 'Within these limits, available tools, including network requests, are automatically approved. Explicit tool-scope limits, managed-network domain denials and execution-target validation still apply.'
+          : 'Network requests and external tools retain the base domain rules and approval policy. Explicit tool-scope limits and denials still apply.'
+        : '',
+      roleLimited ? 'Local file read-only does not make remote operations read-only or expand the user task.' : '',
     ].filter(Boolean).join('\n')
   }
   return [

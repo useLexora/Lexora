@@ -379,7 +379,7 @@ export function createExecutionRepository(database: DatabaseSync) {
           || snapshot.settings.limits.fileAccess === 'read_only'
         if (!isExecutionProfileWithin(input.run.executionProfile, input.authorization.executionProfile)
           || (input.authorization.approvalPolicy === 'manual' && input.run.approvalPolicy !== 'manual')
-          || (ceiling && input.run.executionProfile !== 'read_only')) {
+          || (previous?.run.executionProfile === 'read_only' && input.run.executionProfile !== 'read_only')) {
           throw new ExecutionAdmissionError('unauthorized')
         }
         if (snapshot.kind === 'actor' && database.prepare(`SELECT 1 FROM runs JOIN execution_state ON execution_state.run_id = runs.id

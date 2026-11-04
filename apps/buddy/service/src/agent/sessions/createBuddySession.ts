@@ -8,9 +8,9 @@ import type {
 import type { BuddyServiceTier } from '../../../../shared/conversation/modelSelection'
 import type { BuddyApprovalPolicy } from '../../../../shared/permissions/approvalPolicy'
 import type { BuddyExecutionProfile } from '../../../../shared/permissions/executionProfile'
-import type { BuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
 import type { ImageReadingMaterialWriter } from '../../images/ImageReadingMaterialStore'
 import type { ImageReader } from '../../images/ImageReadingService'
+import type { ExecutionPermissionSettings } from '../../permissions/permissionContract'
 import type { BuddyInputReferenceV1 } from '../context/BuddyInputReference'
 import type { BuddyInProcessExtension } from '../extensions/BuddyInProcessExtension'
 import type { BuddySessionResources } from '../resources/BuddySessionResources'
@@ -54,7 +54,7 @@ const sessionIdentityPattern = /^[A-Z0-9][\w-]{0,127}$/i
 export interface CreateBuddySessionOptions {
   readImage?: ImageReader
   writeImageMaterial?: ImageReadingMaterialWriter
-  getPermissionSettings?: () => BuddyPermissionSettings
+  getPermissionSettings?: () => ExecutionPermissionSettings
   getInputMessages?: () => AgentSession['messages']
   getPendingInput?: () => BuddyInputReferenceV1 | null
   sessionManager: SessionManager

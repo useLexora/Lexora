@@ -236,10 +236,11 @@ describe('real Runtime multi-agent mutation concurrency', () => {
     }
   }, 60000)
 
-  it('propagates an ancestor read_only ceiling through actor and repeated NPC descendants', async () => {
+  it.each([false, true])('propagates an ancestor read_only ceiling through actor and repeated NPC descendants (full access: %s)', async (fullAccess) => {
     let path = ''
     const f = await createConcurrencyRuntime({
       readOnly: true,
+      fullAccess,
       steps: role => [tool(`${role}-forbidden`, 'write', { path, content: `forbidden:${role}` })],
     })
     try {
@@ -250,7 +251,7 @@ describe('real Runtime multi-agent mutation concurrency', () => {
       const tree = await assertDurableTree(f)
       expect(await readFile(path, 'utf8')).toBe('untouched\n')
       for (const role of roles) {
-        expect(tree[role].executionProfile).toBe(role === 'root' ? 'workspace_write' : 'read_only')
+        expect(tree[role].executionProfile).toBe(fullAccess ? 'full_access' : 'workspace_write')
         expect(f.database.prepare('SELECT file_access_ceiling FROM execution_state WHERE run_id = ?').get(tree[role].id)?.file_access_ceiling).toBe('read_only')
         if (role !== 'root')
           expect(tree[role].actorSnapshot?.settings.limits.fileAccess).toBe('inherit')
