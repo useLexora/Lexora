@@ -2,25 +2,21 @@
 import type { ExtensionCatalogListing, ExtensionCatalogSnapshot } from '@buddy-shared/extensions/extensionCatalog'
 import { NAlert, NButton, NEmpty, NInput, NSelect, NSpin } from 'naive-ui'
 import { gt } from 'semver'
-import { computed, onScopeDispose, shallowRef } from 'vue'
+import { computed, shallowRef } from 'vue'
 import { useExtensionContext } from '../extensionContext'
 import { extensionLabels } from '../extensionLabels'
 import DesktopExtensionCatalogCard from './DesktopExtensionCatalogCard.vue'
 import DesktopExtensionCompatibilityHint from './DesktopExtensionCompatibilityHint.vue'
 
-const emit = defineEmits<{ install: [entry: ExtensionCatalogListing], applyUpdate: [id: string] }>()
+const props = defineProps<{ snapshot: ExtensionCatalogSnapshot | null, loading: boolean, error: boolean }>()
+const emit = defineEmits<{ install: [entry: ExtensionCatalogListing], applyUpdate: [id: string], refresh: [] }>()
 const { state, language } = useExtensionContext()
-const snapshot = shallowRef<ExtensionCatalogSnapshot | null>(null)
-const loading = shallowRef(false)
 const query = shallowRef('')
 const category = shallowRef<string | null>(null)
-const error = shallowRef(false)
 const en = computed(() => language.value === 'en-US')
 const labels = computed(() => extensionLabels(language.value))
-let disposed = false
-let revision = 0
-const categories = computed(() => [...new Set(snapshot.value?.plugins.flatMap(item => item.manifest.categories) ?? [])].map(value => ({ label: value, value })))
-const plugins = computed(() => (snapshot.value?.plugins ?? []).filter((item) => {
+const categories = computed(() => [...new Set(props.snapshot?.plugins.flatMap(item => item.manifest.categories) ?? [])].map(value => ({ label: value, value })))
+const plugins = computed(() => (props.snapshot?.plugins ?? []).filter((item) => {
   const { manifest } = item
   const text = [manifest.id, manifest.author, manifest.name, manifest.description, ...manifest.tags].join(' ').toLocaleLowerCase()
   return (!category.value || manifest.categories.includes(category.value)) && text.includes(query.value.trim().toLocaleLowerCase())
@@ -30,31 +26,6 @@ const plugins = computed(() => (snapshot.value?.plugins ?? []).filter((item) => 
   const version = installed?.pending?.manifest.version ?? installed?.manifest.version ?? retained?.manifest.version
   return { ...item, installed, installedVersion: version, available: !version || gt(item.manifest.version, version) }
 }))
-async function refresh(force = false) {
-  const current = ++revision
-  loading.value = true
-  error.value = false
-  try {
-    const next = await state.api.catalog(force)
-    if (!disposed && revision === current) {
-      snapshot.value = next
-      error.value = !!next.error
-    }
-  }
-  catch {
-    if (!disposed && revision === current)
-      error.value = true
-  }
-  finally {
-    if (!disposed && revision === current)
-      loading.value = false
-  }
-}
-void refresh()
-onScopeDispose(() => {
-  disposed = true
-  revision++
-})
 </script>
 
 <template>
@@ -62,7 +33,7 @@ onScopeDispose(() => {
     <div class="extension-catalog__search flex gap-[10px] items-center">
       <NInput v-model:value="query" clearable :placeholder="en ? 'Search plugins' : '搜索插件名称、描述或标签'" :aria-label="en ? 'Search plugins' : '搜索插件'" />
       <NSelect v-if="categories.length" v-model:value="category" clearable :options="categories" :placeholder="en ? 'Category' : '分类'" :aria-label="en ? 'Category' : '分类'" />
-      <NButton :loading="loading" @click="refresh(true)">
+      <NButton :loading="loading" @click="emit('refresh')">
         {{ en ? 'Refresh' : '刷新' }}
       </NButton>
     </div>

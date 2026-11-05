@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ExtensionStatus, ExtensionUnavailableInstallation } from '@buddy-shared/extensions/extensionApi'
+import type { ExtensionCatalogListing } from '@buddy-shared/extensions/extensionCatalog'
 import type { ExtensionInstallation } from '@buddy-shared/extensions/extensionInstallation'
 import type { DropdownOption } from 'naive-ui'
 import type { ExtensionPendingInstall } from '../state/useExtensionOperations'
@@ -13,11 +14,12 @@ import DesktopExtensionCompatibilityHint from './DesktopExtensionCompatibilityHi
 import DesktopExtensionInstallationStatus from './DesktopExtensionInstallationStatus.vue'
 import DesktopExtensionTags from './DesktopExtensionTags.vue'
 
-const props = defineProps<{ item: ExtensionStatus, unavailablePending?: ExtensionUnavailableInstallation, language: string, busy: boolean, canOpen: boolean, installation?: ExtensionPendingInstall, job?: ExtensionInstallation }>()
+const props = defineProps<{ item: ExtensionStatus, unavailablePending?: ExtensionUnavailableInstallation, catalogUpdate?: ExtensionCatalogListing, language: string, busy: boolean, canOpen: boolean, installation?: ExtensionPendingInstall, job?: ExtensionInstallation }>()
 const emit = defineEmits<{
   toggle: []
   restart: []
   applyUpdate: []
+  reviewUpdate: [entry: ExtensionCatalogListing]
   diagnostics: []
   remove: []
   open: []
@@ -27,9 +29,11 @@ const emit = defineEmits<{
 }>()
 const labels = computed(() => extensionLabels(props.language))
 const pending = computed(() => props.item.pending ?? props.unavailablePending)
+const update = computed(() => props.catalogUpdate ?? pending.value)
+const updateUnavailable = computed(() => !!update.value?.incompatibility || (props.catalogUpdate ? !props.catalogUpdate.compatible : false))
 const warning = computed(() => {
-  const issue = props.item.incompatibility ?? pending.value?.incompatibility
-  return issue ? { issue, version: props.item.incompatibility ? undefined : pending.value?.manifest.version } : null
+  const issue = props.item.incompatibility ?? update.value?.incompatibility
+  return issue ? { issue, version: props.item.incompatibility ? undefined : update.value?.manifest.version } : null
 })
 const status = computed(() => props.item.incompatibility ? (props.language === 'en-US' ? 'Unavailable' : '暂不可用') : labels.value[props.item.state === 'failed' ? 'failedState' : props.item.state])
 const actions = computed<DropdownOption[]>(() => {
@@ -46,6 +50,12 @@ const actions = computed<DropdownOption[]>(() => {
     { key: 'remove', label: labels.value.remove, props: { 'role': 'menuitem', 'data-testid': 'extension-uninstall' } },
   ]
 })
+function requestUpdate() {
+  if (props.catalogUpdate)
+    emit('reviewUpdate', props.catalogUpdate)
+  else
+    emit('applyUpdate')
+}
 function handleAction(key: string | number) {
   if (key === 'restart')
     emit('restart')
@@ -76,7 +86,19 @@ function handleAction(key: string | number) {
         </p>
       </div>
       <div class="flex flex-none items-center gap-1">
-        <NTag size="small" :bordered="false" :type="item.incompatibility || item.state === 'failed' || item.state === 'blocked' ? 'warning' : 'default'">
+        <NTooltip v-if="update">
+          <template #trigger>
+            <NButton size="tiny" type="primary" :disabled="busy || updateUnavailable" data-testid="extension-update-available" @click="requestUpdate">
+              {{ labels.updateAvailable }}
+            </NButton>
+          </template>
+          <div class="grid max-w-[280px] gap-1 text-[12px] leading-[1.6]">
+            <span>{{ status }}</span>
+            <span>{{ language === 'en-US' ? 'New version' : '新版本' }} {{ update.manifest.version }}</span>
+            <span v-if="!updateUnavailable">{{ catalogUpdate ? labels.reviewUpdateHint : labels.applyUpdateHint }}</span>
+          </div>
+        </NTooltip>
+        <NTag v-else size="small" :bordered="false" :type="item.incompatibility || item.state === 'failed' || item.state === 'blocked' ? 'warning' : 'default'">
           {{ status }}
         </NTag>
         <DesktopExtensionCompatibilityHint v-if="warning" :issue="warning.issue" :version="warning.version" :language="language" placement="bottom-end" />
