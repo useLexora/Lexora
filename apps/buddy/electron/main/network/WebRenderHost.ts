@@ -1,6 +1,7 @@
 import type { NetworkAuthorizer } from '../../../shared/network/networkAuthorization'
 import type { HostWebNetwork } from './HostWebNetwork'
 import { randomUUID } from 'node:crypto'
+import { setImmediate } from 'node:timers/promises'
 import { BrowserWindow, session } from 'electron'
 import { readResponseBytes } from '../../../platform/network/publicWebTransport'
 import { WebError } from '../../../shared/network/webProtocol'
@@ -35,9 +36,14 @@ export async function renderWebDocument(network: HostWebNetwork, url: string, si
   const cleaned = Promise.withResolvers<void>()
   track(cleaned.promise)
   let window: BrowserWindow | undefined
-  const abort = () => {
+  let stopping: Promise<void> | undefined
+  const stopLoading = () => stopping ??= setImmediate().then(() => {
+    // loadURL can reject inside Chromium's navigation callback; Stop must leave that stack first.
     if (window && !window.isDestroyed())
       window.webContents.stop()
+  })
+  const abort = () => {
+    void stopLoading().catch(() => {})
   }
   signal.addEventListener('abort', abort, { once: true })
   try {
@@ -129,7 +135,7 @@ export async function renderWebDocument(network: HostWebNetwork, url: string, si
     cleaning()
     const cleanup = (async () => {
       signal.removeEventListener('abort', abort)
-      abort()
+      await stopLoading()
       lifetime.abort(new WebError('WEB_CANCELLED'))
       for (const scheme of ['http', 'https'])
         isolated.protocol.unhandle(scheme)
