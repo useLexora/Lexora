@@ -51,7 +51,7 @@ export async function withArtifactPreview(buddy, options, verify) {
     }, directory)
     await page.reload()
     await expect(page.locator('.desktop-workbench-area__tasks .tiptap:visible')).toBeVisible()
-    await page.locator('.desktop-task-sidebar__spaces .desktop-task-sidebar__section-add').dispatchEvent('click')
+    await page.locator('[data-row-key="section:spaces"] .desktop-task-sidebar__section-add').dispatchEvent('click')
     const dialog = page.locator('.desktop-space-dialog')
     await dialog.getByPlaceholder('输入空间名称').fill('文件产物验收')
     await dialog.getByRole('button', { name: '选择目录', exact: true }).click()

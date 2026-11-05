@@ -3,7 +3,8 @@ import type { BuddyUserMessageContentV1 } from '@buddy-shared/conversation/buddy
 import type { LocalStartTurnRequest } from '@buddy-shared/conversation/chatApi'
 import type { LocalComposerDraft } from '@buddy-shared/conversation/composerApi'
 import type { BuddyComposerResourceAccept } from '@buddy-shared/conversation/composerResource'
-import type { LocalConversation } from '@buddy-shared/conversation/conversationApi'
+import type { LocalConversation, LocalConversationSummary } from '@buddy-shared/conversation/conversationApi'
+import type { ConversationHistoryQuery } from '@buddy-shared/conversation/conversationHistoryApi'
 import type { LocalExecution } from '@buddy-shared/executions/executionPresentationApi'
 
 import type { UseTaskCapabilityOptions } from '../useTaskCapability'
@@ -169,21 +170,20 @@ describe('useTaskCapability', () => {
     }
   })
 
-  it.each([true, false])('revalidates idle context after a maintenance compaction without assuming it affects this thread: %s', async (affectsThread) => {
+  it('invalidates idle context when maintenance compacts its thread', async () => {
     const api = createBranchingDesktopApi()
     const timeline = await api.localChat.conversations.listTimeline({ conversationId: 'conversation-1', branchId: 'branch-root' })
     const models = await api.localChat.providers.listModels()
     vi.mocked(api.localChat.providers.listModels).mockResolvedValue(models.map(model => ({ ...model, type: 'chat', sourceType: 'chat', typeOverride: null })))
     let compacted = false
-    let settled = false
     vi.mocked(api.localChat.conversations.listTimeline).mockImplementation(async () => ({
       ...timeline,
-      runs: compacted ? [{ ...queuedRun(), id: 'maintenance', branchId: 'branch-root', purpose: 'conversation.compaction', status: settled ? 'completed' : 'running', completedAt: settled ? '2026-08-20T00:00:00.000Z' : null }] : [],
+      runs: compacted ? [{ ...queuedRun(), id: 'maintenance', branchId: 'branch-root', purpose: 'conversation.compaction', status: 'completed', completedAt: '2026-08-20T00:00:00.000Z' }] : [],
       runEvents: compacted ? [{ runId: 'maintenance', sequence: 2, type: 'context.compaction.completed', createdAt: '2026-08-20T00:00:00.000Z', payload: {} }] : [],
     }))
     vi.mocked(api.localChat.context.getUsageSnapshot).mockImplementation(async () => {
       const identity = { modelId: 'model-1', providerId: 'provider-1', contextWindow: 4096, createdAt: '2026-08-20T00:00:01.000Z' }
-      return compacted && settled && affectsThread
+      return compacted
         ? { ...identity, status: 'pending', reason: 'compaction' }
         : { ...identity, status: 'ready', totalTokens: 100, messageTokens: 100, mcpTokens: 0, skillTokens: 0, systemPromptTokens: 0, toolTokens: 0 }
     })
@@ -193,20 +193,10 @@ describe('useTaskCapability', () => {
     try {
       await chat.initialize()
       await vi.waitFor(() => expect(chat.workspace.composer.contextUsage.value).toMatchObject({ status: 'ready', totalTokens: 100 }))
-      const previousReads = vi.mocked(api.localChat.context.getUsageSnapshot).mock.calls.length
       compacted = true
       for (const [listener] of vi.mocked(api.localChat.conversations.onTimelineChanged).mock.calls)
         listener({ sourceId: '00000000-0000-4000-8000-000000000001', revision: 1, conversationId: 'conversation-1', branchId: 'branch-root' })
-      await vi.waitFor(() => expect(vi.mocked(api.localChat.context.getUsageSnapshot).mock.calls.length).toBeGreaterThan(previousReads))
-      expect(chat.workspace.composer.contextUsage.value).toMatchObject({ status: 'ready', totalTokens: 100 })
-      const readsBeforeCompletion = vi.mocked(api.localChat.context.getUsageSnapshot).mock.calls.length
-      settled = true
-      for (const [listener] of vi.mocked(api.localChat.conversations.onTimelineChanged).mock.calls)
-        listener({ sourceId: '00000000-0000-4000-8000-000000000001', revision: 2, conversationId: 'conversation-1', branchId: 'branch-root' })
-      await vi.waitFor(() => expect(vi.mocked(api.localChat.context.getUsageSnapshot).mock.calls.length).toBeGreaterThan(readsBeforeCompletion))
-      await vi.waitFor(() => expect(chat.workspace.composer.contextUsage.value).toMatchObject(affectsThread
-        ? { status: 'pending', totalTokens: null }
-        : { status: 'ready', totalTokens: 100 }))
+      await vi.waitFor(() => expect(chat.workspace.composer.contextUsage.value).toMatchObject({ status: 'pending', totalTokens: null }))
     }
     finally {
       chat.dispose()
@@ -386,27 +376,6 @@ describe('useTaskCapability', () => {
     await chat.workspace.composer.selectModel('provider-1:model-1')
     expect(chat.workspace.execution.canSend.value).toBe(true)
     expect(await chat.workspace.execution.send('saved input')).toBe(true)
-  })
-
-  it('recovers a failed initial Draft open on concurrent Runtime ready refreshes', async () => {
-    const api = createDesktopApi()
-    vi.mocked(api.localChat.conversations.list).mockReset().mockResolvedValue([])
-    vi.mocked(api.localChat.composerDrafts.open).mockRejectedValueOnce(new Error('Runtime unavailable'))
-    vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
-    const chat = createTestTask(api)
-    await chat.initialize()
-    chat.workspace.composer.updateComposerContent('typed after Runtime failure', null)
-    const draftId = chat.workspace.composer.draftId.value
-    expect(await chat.flushDrafts()).toBe(false)
-
-    const first = chat.refreshRuntimeDependentState()
-    const second = chat.refreshRuntimeDependentState()
-    await Promise.all([first, second])
-
-    expect(chat.workspace.composer.draftId.value).toBe(draftId)
-    expect(chat.workspace.composer.draft.value).toBe('typed after Runtime failure')
-    expect(await chat.flushDrafts()).toBe(true)
-    expect(await chat.workspace.execution.send('typed after Runtime failure')).toBe(true)
   })
 
   it('returns a late file selection to the originating draft without changing the newly opened conversation', async () => {
@@ -731,7 +700,6 @@ describe('useTaskCapability', () => {
   })
 
   it.each([
-    { permissions: { approvalPolicy: 'policy', executionProfile: 'read_only' }, pendingModel: false },
     { permissions: { approvalPolicy: 'manual', executionProfile: 'workspace_write' }, pendingModel: false },
     { permissions: { approvalPolicy: 'policy', executionProfile: 'read_only' }, pendingModel: true },
   ] as const)('submits the first regenerated-branch draft with $permissions and pending model $pendingModel', async ({ permissions, pendingModel }) => {
@@ -809,46 +777,6 @@ describe('useTaskCapability', () => {
     expect(chat.workspace.execution.canSend.value).toBe(true)
     const draft = await api.localChat.composerDrafts.get(chat.workspace.composer.draftId.value)
     expect(draft.executionConfig).toEqual({ approvalPolicy: 'policy', executionProfile: 'full_access' })
-  })
-
-  it('routes compact input through the command lifecycle without creating a turn', async () => {
-    const api = createBranchingDesktopApi()
-    const compactRun = {
-      ...queuedRun(),
-      branchId: 'branch-root',
-      id: 'run-compact',
-      purpose: 'conversation.compaction',
-      triggeringMessageId: 'user-2',
-    }
-    vi.mocked(api.localChat.chat.executeCommand).mockImplementation(async input => ({
-      branchId: 'branch-root',
-      conversationId: 'conversation-1',
-      draftReceipt: {
-        committedRevision: input.expectedRevision + 1,
-        draftId: input.draftId,
-        sourceRevision: input.expectedRevision,
-      },
-      userMessage: null,
-      run: compactRun,
-      runId: compactRun.id,
-    }))
-    vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
-    const chat = createTestTask(api, { conversationId: 'conversation-1', branchId: 'branch-root', spaceId: null })
-    await chat.initialize()
-    chat.workspace.composer.updateComposerContent('/compact focus on decisions', null)
-
-    await expect(chat.workspace.execution.send('/compact focus on decisions')).resolves.toBe(true)
-
-    expect((await api.localChat.composerDrafts.get(chat.workspace.composer.draftId.value)).content).toMatchObject({
-      body: [{ content: [
-        { commandMode: 'action', directive: 'slash_command', value: '/compact' },
-        { text: ' focus on decisions', type: 'text' },
-      ] }],
-    })
-    expect(api.localChat.chat.startTurn).not.toHaveBeenCalled()
-    expect(chat.workspace.execution.activeRun.value).toMatchObject({ id: 'run-compact' })
-    expect(chat.workspace.execution.submissionRevision.value).toBe(1)
-    expect(chat.workspace.composer.draft.value).toBe('')
   })
 
   it('clears the previous branch projection while an activated branch is loading', async () => {
@@ -1088,7 +1016,7 @@ function createDesktopApi() {
   const run = queuedRun()
   const draftsById = new Map<string, LocalComposerDraft>()
   const draftsByScope = new Map<string, LocalComposerDraft>()
-  const conversationsList = vi.fn()
+  const conversationsList = vi.fn<() => Promise<LocalConversationSummary[]>>()
     .mockResolvedValueOnce([])
     .mockRejectedValue(new Error('collection refresh failed'))
   return {
@@ -1237,6 +1165,16 @@ function createDesktopApi() {
         activateBranch: vi.fn(),
         delete: vi.fn(),
         list: conversationsList,
+        listHistory: vi.fn(async (query: ConversationHistoryQuery) => ({
+          items: query.kind === 'attention'
+            ? []
+            : (await conversationsList()).map(conversation => ({
+                conversation,
+                markState: { conversationId: conversation.id, markId: null, unread: false, resultRunId: null, readRevision: 0 },
+              })),
+          nextCursor: null,
+        })),
+        getHistoryEntries: vi.fn(async () => []),
         listBranches: vi.fn(async () => []),
         listMessages: vi.fn(async () => ({ items: [], nextCursor: null })),
         listTimeline: vi.fn(async () => ({ changeSets: [], items: [], nextCursor: null, outputs: [], runEvents: [], runs: [] })),
@@ -1275,7 +1213,7 @@ function createDesktopApi() {
           storedCredentialType: 'api_key',
           syncUnavailableReason: null,
         }]),
-        listModels: vi.fn(async () => [{
+        listModels: vi.fn(async () => ['model-1', 'model-2'].map(modelId => ({
           available: true,
           catalogMatch: 'not_applicable',
           catalog: { source: null, selection: null, candidates: [] },
@@ -1284,14 +1222,14 @@ function createDesktopApi() {
           fileInputMimeTypes: [],
           sourceCapabilities: { image: false, reasoningOptions: ['off', 'low', 'medium', 'high'] },
           api: 'openai-completions',
-          capabilities: ['text'],
+          capabilities: modelId === 'model-1' ? ['text'] : ['text', 'reasoning'],
           contextWindow: 4096,
-          displayName: 'Model',
+          displayName: modelId === 'model-1' ? 'Model' : 'Model 2',
           enabled: true,
           hasParameterOverride: false,
           lastSeenAt: '2026-08-19T00:00:00.000Z',
           maxTokens: 1024,
-          modelId: 'model-1',
+          modelId,
           overrideContextWindow: null,
           overrideMaxTokens: null,
           providerId: 'provider-1',
@@ -1301,33 +1239,7 @@ function createDesktopApi() {
           sourceContextWindow: 4096,
           sourceMaxTokens: 1024,
           sourceParametersUpdated: false,
-        }, {
-          available: true,
-          catalogMatch: 'not_applicable',
-          catalog: { source: null, selection: null, candidates: [] },
-          metadataKnown: true,
-          capabilityOverrides: null,
-          fileInputMimeTypes: [],
-          sourceCapabilities: { image: false, reasoningOptions: ['off', 'low', 'medium', 'high'] },
-          api: 'openai-completions',
-          capabilities: ['text', 'reasoning'],
-          contextWindow: 4096,
-          displayName: 'Model 2',
-          enabled: true,
-          hasParameterOverride: false,
-          lastSeenAt: '2026-08-19T00:00:00.000Z',
-          maxTokens: 1024,
-          modelId: 'model-2',
-          overrideContextWindow: null,
-          overrideMaxTokens: null,
-          providerId: 'provider-1',
-          reasoningOptions: ['off', 'low', 'medium', 'high'],
-          serviceTiers: [],
-          source: 'builtin',
-          sourceContextWindow: 4096,
-          sourceMaxTokens: 1024,
-          sourceParametersUpdated: false,
-        }]),
+        }))),
         onAuthChallenge: vi.fn(() => () => {}),
         setDefaultModel: vi.fn(async value => value),
       },

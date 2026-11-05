@@ -59,8 +59,7 @@ export class TaskWorkspacePool {
     if (!current() || (resource.scheme === 'task' && !conversation) || this.#disposed || conversation?.deletedAt || (this.#retained && !this.#retained.has(resourceKey(resource))))
       throw new Error('TASK_UNAVAILABLE')
     if (conversation) {
-      if (!this.#options.index.data.conversations.value.some(item => item.id === conversation.id))
-        await this.#options.index.data.refreshConversations()
+      await this.#options.index.data.ensureConversation(conversation.id)
       this.#options.index.data.applyConversation(conversation)
     }
     if (!current() || this.#disposed || (this.#retained && !this.#retained.has(resourceKey(resource))))

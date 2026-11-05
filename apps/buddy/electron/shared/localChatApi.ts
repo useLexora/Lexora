@@ -20,6 +20,7 @@ import type {
 } from '../../shared/conversation/composerResource'
 import type { LocalContextUsageSnapshot, LocalContextUsageSnapshotRequest } from '../../shared/conversation/contextApi'
 import type { ConversationListFilter, ConversationModelControls, ConversationTimelineChangeNotice, LocalConversation, LocalConversationBranch, LocalConversationMember, LocalConversationSummary, LocalConversationTimelinePage, LocalMessagePage } from '../../shared/conversation/conversationApi'
+import type { ConversationHistoryQuery, LocalConversationHistoryItem, LocalConversationHistoryPage } from '../../shared/conversation/conversationHistoryApi'
 import type { ConversationNodeDetailRequest, LocalConversationTree } from '../../shared/conversation/conversationTree'
 import type { LocalTaskMark, LocalTaskMarkState, TaskMarkClearInput, TaskMarkInput, TaskMarkReadInput } from '../../shared/conversation/taskMarkApi'
 import type { LocalWorkspaceSetting, LocalWorkspaceStateValue } from '../../shared/conversation/workspaceApi'
@@ -174,6 +175,8 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   conversationsGetNodeDetail: 'lexora:buddy:conversations:get-node-detail',
   conversationsGetTree: 'lexora:buddy:conversations:get-tree',
   conversationsList: 'lexora:buddy:conversations:list',
+  conversationsListHistory: 'lexora:buddy:conversations:list-history',
+  conversationsGetHistoryEntries: 'lexora:buddy:conversations:get-history-entries',
   conversationsListBranches: 'lexora:buddy:conversations:list-branches',
   conversationsListMessages: 'lexora:buddy:conversations:list-messages',
   conversationsRename: 'lexora:buddy:conversations:rename',
@@ -502,6 +505,8 @@ export interface LocalChatApi {
     getNodeDetail: (input: ConversationNodeDetailRequest) => Promise<LocalConversationTimelinePage>
     getTree: (conversationId: string) => Promise<LocalConversationTree>
     list: (limit?: number, filter?: ConversationListFilter) => Promise<ReadonlyArray<LocalConversationSummary>>
+    listHistory: (input: ConversationHistoryQuery) => Promise<LocalConversationHistoryPage>
+    getHistoryEntries: (ids: readonly string[]) => Promise<readonly LocalConversationHistoryItem[]>
     get: (conversationId: string) => Promise<LocalConversation>
     getModelControls: (conversationId: string, actorId?: string) => Promise<ConversationModelControls>
     delete: (conversationId: string) => Promise<boolean>

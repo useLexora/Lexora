@@ -4,12 +4,23 @@ import type { JSONContent } from '@tiptap/core'
 import { chatComposerDocumentToUserContent, createChatComposerContentFromText } from '@/modules/prompt-input'
 import { normalizeLegacyDraftScopeKey, parseDraftScopeKey } from '../../model/drafts/draftScope'
 
-export async function migrateLegacyTaskDrafts(api: { workspaceState: LexoraDesktopApi['localChat']['workspaceState'], composerDrafts: Pick<LexoraDesktopApi['localChat']['composerDrafts'], 'open'> }, conversations: readonly LocalConversationSummary[]): Promise<void> {
+export async function migrateLegacyTaskDrafts(api: {
+  workspaceState: LexoraDesktopApi['localChat']['workspaceState']
+  composerDrafts: Pick<LexoraDesktopApi['localChat']['composerDrafts'], 'open'>
+  conversations: Pick<LexoraDesktopApi['localChat']['conversations'], 'getHistoryEntries'>
+}, conversations: readonly LocalConversationSummary[]): Promise<void> {
   const setting = await api.workspaceState.read()
   if (!setting || !('drafts' in setting.value))
     return
   for (const draft of setting.value.drafts) {
-    const target = normalizeLegacyDraftScopeKey(draft, conversations)
+    let target = normalizeLegacyDraftScopeKey(draft, conversations)
+    const [kind, conversationId, branchId] = draft.targetKey.split(':')
+    if (!target && kind === 'conversation' && conversationId && !branchId) {
+      const [entry] = await api.conversations.getHistoryEntries([conversationId])
+      const conversation = entry?.conversation
+      if (conversation?.activeBranchId)
+        target = `conversation:${conversation.id}:${conversation.activeBranchId}`
+    }
     if (!target || draft.attachments.length)
       throw new Error('Legacy draft requires explicit recovery')
     const previous = parseDraftScopeKey(target)

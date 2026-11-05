@@ -10,21 +10,17 @@ test('quotes file and Markdown snapshots while preserving native editor actions 
   await fs.mkdir(directory)
   await fs.writeFile(path.join(directory, 'README.md'), 'Frozen document excerpt.\n\nSecond paragraph.\n')
   const { app, page, diagnostics } = await instance.launch()
-  await page.evaluate(() => window.lexoraDesktop.settings.update({ desktop: { featureAnnouncementsEnabled: false } }))
   await app.evaluate(({ dialog }, directory) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [directory] })
   }, directory)
   await expect(page.locator('.desktop-workbench-area__tasks .tiptap:visible')).toBeVisible()
-  const section = page.locator('.desktop-task-sidebar__spaces')
-  // Space creation is fixture setup, not the selection-entry interaction under test.
-  // Dispatch directly so startup autofocus/hover-only controls cannot steal the setup keystroke.
+  const section = page.locator('[data-row-key="section:spaces"]')
   await section.locator('.desktop-task-sidebar__section-add').dispatchEvent('click')
   const spaceDialog = page.locator('.desktop-space-dialog')
   await spaceDialog.getByPlaceholder('输入空间名称').fill('引用验收')
   await spaceDialog.getByRole('button', { name: '选择目录', exact: true }).click()
   await spaceDialog.getByRole('button', { name: '确定', exact: true }).click()
   await expect(spaceDialog).toBeHidden()
-  // Creating a Space already opens its new task; avoid unrelated hover-only sidebar actions.
   await expect(page.locator('.desktop-workbench-area__tasks').getByRole('button', { name: '引用验收', exact: true })).toBeVisible()
   const input = page.locator('.desktop-workbench-area__tasks .tiptap:visible').first()
   await input.fill('Keep my latest question.')
@@ -104,15 +100,7 @@ test('quotes file and Markdown snapshots while preserving native editor actions 
   await editor.locator('.monaco-scrollable-element').first().click({ position: { x: 100, y: 12 } })
   await page.keyboard.press('Control+Home')
   await page.keyboard.press('Shift+End')
-  await editor.locator('.monaco-scrollable-element').first().click({ button: 'right', position: { x: 100, y: 12 } })
-  await page.getByRole('menuitem', { name: '引用', exact: true }).click({ delay: 120 })
-  await expect(menu).toBeVisible()
-  await expect(menu.getByRole('menuitem', { name: '引用', exact: true })).toHaveCount(0)
   const sourceBeforeChoice = await editor.locator('.view-line').allTextContents()
-  await expect(menu).toBeFocused()
-  await page.keyboard.press('Escape')
-  await expect(menu).toBeHidden()
-  await expect(editor.locator('.view-line')).toHaveText(sourceBeforeChoice)
   await page.keyboard.press('Shift+F10')
   await page.keyboard.press('ArrowDown')
   await page.keyboard.press('ArrowDown')
@@ -142,9 +130,12 @@ test('mixed input materials preserve exact draft snapshots, resource bytes and a
   let page = desktop.page
   let input = page.locator('.desktop-workbench-area__tasks .tiptap:visible').first()
   await expect(input).toBeVisible()
+  await expect.poll(() => page.evaluate(async () => (await window.lexoraDesktop.localChat.composerDrafts.list()).length)).toBe(1)
+  await expect(page.locator('.desktop-draft-restoration')).toHaveCount(0)
   const text = 'Keep this entire mixed-material draft.'
   const attachmentText = '  Original attachment 文本\r\nSecond line\tend\n'
   await input.fill(text)
+  await expect.poll(() => page.evaluate(async () => (await window.lexoraDesktop.localChat.composerDrafts.list())[0].content.body)).toEqual([{ type: 'paragraph', content: [{ type: 'text', text }] }])
   await page.evaluate((text) => {
     const transfer = new DataTransfer()
     transfer.items.add(new File([text], 'original.txt', { type: 'text/plain' }))

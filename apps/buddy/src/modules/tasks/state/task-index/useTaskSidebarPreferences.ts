@@ -33,12 +33,10 @@ export interface TaskSidebarPreferences {
   collapsed: Readonly<Ref<boolean>>
   collapsedSections: Readonly<Ref<ReadonlySet<DesktopTaskSidebarSection>>>
   collapsedSpaceIds: Readonly<Ref<ReadonlySet<string>>>
-  scrollAnchors: Readonly<Ref<Readonly<Record<DesktopTaskSidebarSection, number>>>>
   width: Readonly<Ref<number | null>>
   isSectionExpanded: (section: DesktopTaskSidebarSection) => boolean
   isSpaceExpanded: (spaceId: string) => boolean
   pruneSpaces: (validSpaceIds: ReadonlySet<string>) => void
-  recordScrollAnchor: (section: DesktopTaskSidebarSection, index: number) => void
   setCollapsed: (collapsed: boolean) => Promise<boolean>
   setSectionExpanded: (section: DesktopTaskSidebarSection, expanded: boolean) => Promise<boolean>
   setSpaceExpanded: (spaceId: string, expanded: boolean) => Promise<boolean>
@@ -58,9 +56,6 @@ export function useTaskSidebarPreferences(
   const collapsedSpaceIds = shallowRef<ReadonlySet<string>>(new Set())
   const collapsed = shallowRef(false)
   const width = shallowRef<number | null>(null)
-  const scrollAnchors = shallowRef<Readonly<Record<DesktopTaskSidebarSection, number>>>(
-    emptyScrollAnchors(),
-  )
   let pendingWrites = 0
   let writeQueue: Promise<unknown> = Promise.resolve()
 
@@ -155,13 +150,6 @@ export function useTaskSidebarPreferences(
     )
   }
 
-  function recordScrollAnchor(section: DesktopTaskSidebarSection, index: number): void {
-    const current = scrollAnchors.value[section]
-    if (current === index)
-      return
-    scrollAnchors.value = { ...scrollAnchors.value, [section]: index }
-  }
-
   return {
     collapsed: readonly(collapsed),
     collapsedSections: readonly(collapsedSections),
@@ -169,16 +157,10 @@ export function useTaskSidebarPreferences(
     isSectionExpanded,
     isSpaceExpanded,
     pruneSpaces,
-    recordScrollAnchor,
-    scrollAnchors: readonly(scrollAnchors),
     setCollapsed,
     setSectionExpanded,
     setSpaceExpanded,
     setWidth,
     width: readonly(width),
   }
-}
-
-function emptyScrollAnchors(): Record<DesktopTaskSidebarSection, number> {
-  return { pinned: 0, spaces: 0, tasks: 0 }
 }

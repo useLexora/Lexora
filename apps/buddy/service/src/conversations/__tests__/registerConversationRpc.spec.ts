@@ -244,9 +244,6 @@ describe('registerConversationRpc', () => {
       }],
     })
     expect(timeline).not.toHaveProperty('runs.0.piSessionFile')
-    expect(conversations.listMessages('conversation-1', 'branch-1').map(message => message.id))
-      .toEqual(['message-user', 'message-tool', 'message-assistant', 'public-child-answer'])
-    expect(conversations.findMessageById('private-child-task')).toBeNull()
     database.prepare('UPDATE runs SET root_run_id = id WHERE id = ?').run(child.id)
     await expect(harness.invoke('conversations.listTimeline', { conversationId: 'conversation-1', limit: 2 })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
   })

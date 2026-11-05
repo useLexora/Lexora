@@ -14,6 +14,7 @@ import type { RunInputRepository } from '../storage/runInputRepository'
 import type { RunRepository } from '../storage/runRepository'
 import type { ConversationMetadataService } from './ConversationMetadataService'
 import { conversationsRpc } from '../../../shared/conversation/conversationApi'
+import { conversationHistoryRpc } from '../../../shared/conversation/conversationHistoryApi'
 
 import { toPublicRunEvent } from '../../../shared/runs/publicRunEvent'
 import {
@@ -65,6 +66,8 @@ export function registerConversationRpc(options: RegisterConversationRpcOptions)
       ? options.conversations.listRecent(input.limit ?? 100, input.filter)
       : options.conversations.listRecent(input.limit ?? 100)
   }))
+  disposers.push(registerRuntimeRequest(options.rpc, conversationHistoryRpc.listHistory, input => options.conversations.listHistory(input)))
+  disposers.push(registerRuntimeRequest(options.rpc, conversationHistoryRpc.getHistoryEntries, input => options.conversations.getHistoryEntries(input.ids)))
   disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.get, (input) => {
     return requireActiveConversation(options, input.conversationId)
   }))

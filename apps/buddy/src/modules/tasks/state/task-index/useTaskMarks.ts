@@ -13,6 +13,9 @@ interface TaskMarksOptions {
   activeConversationId?: Readonly<Ref<string | null>>
   ready: Readonly<Ref<boolean>>
   language: Readonly<Ref<BuddyLocale>>
+  stateSource?: Readonly<Ref<ReadonlyMap<string, LocalTaskMarkState>>>
+  onStateChanged?: (state: LocalTaskMarkState) => void
+  onMarkRemoved?: () => void
 }
 
 export function useTaskMarks(options: TaskMarksOptions): TaskMarks & { dispose: () => void } {
@@ -37,6 +40,27 @@ export function useTaskMarks(options: TaskMarksOptions): TaskMarks & { dispose: 
 
   function applyState(state: LocalTaskMarkState) {
     states.value = new Map(states.value).set(state.conversationId, state)
+    options.onStateChanged?.(state)
+  }
+
+  async function applyMutationState(state: LocalTaskMarkState, previous: LocalTaskMarkState | undefined, assignment = false) {
+    while (true) {
+      if (stopped)
+        return
+      const current = states.value.get(state.conversationId)
+      if (current === previous) {
+        if (assignment)
+          applyAssignment(state)
+        else
+          applyState(state)
+        return
+      }
+      previous = current
+      const [fresh] = await options.api.states([state.conversationId])
+      if (!fresh)
+        return
+      state = fresh
+    }
   }
 
   async function refresh(): Promise<void> {
@@ -52,12 +76,21 @@ export function useTaskMarks(options: TaskMarksOptions): TaskMarks & { dispose: 
       ...(options.activeConversationId?.value ? [options.activeConversationId?.value] : []),
     ])]
     loading.value = true
-    refreshPromise = Promise.all([options.api.list(), options.api.states(ids)])
+    const readStates = async () => {
+      const result: LocalTaskMarkState[] = []
+      if (!options.stateSource) {
+        for (let offset = 0; offset < ids.length; offset += 500)
+          result.push(...await options.api.states(ids.slice(offset, offset + 500)))
+      }
+      return result
+    }
+    refreshPromise = Promise.all([options.api.list(), readStates()])
       .then(([marks, result]) => {
         if (stopped || current !== generation)
           return
         items.value = marks
-        states.value = new Map(result.map(state => [state.conversationId, state]))
+        if (!options.stateSource)
+          states.value = new Map(result.map(state => [state.conversationId, state]))
         error.value = null
       })
       .catch(setError)
@@ -125,6 +158,7 @@ export function useTaskMarks(options: TaskMarksOptions): TaskMarks & { dispose: 
         return
       items.value = items.value.filter(item => item.id !== id)
       states.value = new Map([...states.value].map(([key, state]) => [key, state.markId === id ? { ...state, markId: null } : state]))
+      options.onMarkRemoved?.()
     })
   }
 
@@ -141,9 +175,9 @@ export function useTaskMarks(options: TaskMarksOptions): TaskMarks & { dispose: 
 
   function assign(conversationId: string, markId: string | null): Promise<boolean> {
     return mutate(async () => {
+      const previous = states.value.get(conversationId)
       const state = await options.api.assign(conversationId, markId)
-      if (!stopped)
-        applyAssignment(state)
+      await applyMutationState(state, previous, true)
     })
   }
 
@@ -153,9 +187,9 @@ export function useTaskMarks(options: TaskMarksOptions): TaskMarks & { dispose: 
       return Promise.resolve(false)
     suppressed.delete(conversationId)
     return mutate(async () => {
+      const previous = states.value.get(conversationId)
       const result = await options.api.clear({ conversationId, resultRunId: state.resultRunId, readRevision: state.readRevision })
-      if (!stopped)
-        applyAssignment(result)
+      await applyMutationState(result, previous, true)
     })
   }
 
@@ -167,9 +201,9 @@ export function useTaskMarks(options: TaskMarksOptions): TaskMarks & { dispose: 
       suppressed.set(conversationId, state.resultRunId)
     else suppressed.delete(conversationId)
     return mutate(async () => {
+      const previous = states.value.get(conversationId)
       const result = await options.api.setRead({ conversationId, read, readRevision: state.readRevision, resultRunId: state.resultRunId })
-      if (!stopped)
-        applyState(result)
+      await applyMutationState(result, previous)
     })
   }
 
@@ -185,9 +219,9 @@ export function useTaskMarks(options: TaskMarksOptions): TaskMarks & { dispose: 
       await mutate(async () => {
         if (suppressed.get(conversationId) === resultRunId)
           return
+        const previous = states.value.get(conversationId)
         const result = await options.api.setRead({ conversationId, resultRunId, readRevision, read: true })
-        if (!stopped)
-          applyState(result)
+        await applyMutationState(result, previous)
       })
     }
     finally {
@@ -195,11 +229,17 @@ export function useTaskMarks(options: TaskMarksOptions): TaskMarks & { dispose: 
     }
   }
 
-  const stopWatch = watch([options.ready, options.conversations, () => options.activeConversationId?.value], () => void refresh(), { immediate: true })
+  const stopStateWatch = options.stateSource
+    ? watch(options.stateSource, value => states.value = value, { immediate: true, flush: 'sync' })
+    : () => {}
+  const stopWatch = options.stateSource
+    ? watch(options.ready, () => void refresh(), { immediate: true })
+    : watch([options.ready, options.conversations, () => options.activeConversationId?.value], () => void refresh(), { immediate: true })
   function dispose() {
     stopped = true
     generation += 1
     stopWatch()
+    stopStateWatch()
   }
   onScopeDispose(dispose, true)
 

@@ -1,71 +1,66 @@
 <script setup lang="ts">
 import type { LocalConversationSummary } from '@buddy-shared/conversation/conversationApi'
 import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
+import type { TaskIndex } from '../../contracts'
 
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { TaskListSquareLtr20Regular } from '@vicons/fluent'
-import { useDebounceFn } from '@vueuse/core'
-import { NInput, NModal } from 'naive-ui'
-import { computed, shallowRef, watch } from 'vue'
+import { NButton, NInput, NModal, useMessage } from 'naive-ui'
+import { computed, nextTick, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopSpaceIcon from '../space/DesktopSpaceIcon.vue'
+import { useTaskHistorySearch } from './useTaskHistorySearch'
 
 const props = defineProps<{
-  conversations: ReadonlyArray<LocalConversationSummary>
+  search: TaskIndex['history']['search']
   language: BuddyLocale
   spaces: ReadonlyArray<LocalSpace>
   show: boolean
 }>()
 const emit = defineEmits<{
-  'openTask': [conversationId: string]
+  'openTask': [conversation: LocalConversationSummary]
   'openSpace': [spaceId: string]
   'update:show': [show: boolean]
 }>()
 
-const query = shallowRef('')
-const debouncedQuery = shallowRef('')
 const { t } = useBuddyI18n(() => props.language)
+const message = useMessage()
+const resultsElement = useTemplateRef<HTMLElement>('resultsElement')
+const historySearch = useTaskHistorySearch({
+  show: () => props.show,
+  search: (query, cursor) => props.search(query, cursor),
+  onError: () => message.error(t('desktop.search.failed')),
+})
+const { query, normalizedQuery, items, loading, failed, nextCursor } = historySearch
 const activeSpaces = computed(() => props.spaces.filter(space => space.revokedAt === null))
 const spaceNames = computed(() => new Map(activeSpaces.value.map(space => [space.id, space.name])))
-const normalizedQuery = computed(() => debouncedQuery.value.trim().toLocaleLowerCase())
-const matchingConversations = computed(() => {
-  if (!normalizedQuery.value)
-    return []
-  return props.conversations.filter((conversation) => {
-    const spaceName = conversation.spaceId === null
-      ? ''
-      : spaceNames.value.get(conversation.spaceId) ?? ''
-    return formatTaskTitle(conversation).toLocaleLowerCase().includes(normalizedQuery.value)
-      || spaceName.toLocaleLowerCase().includes(normalizedQuery.value)
-  })
-})
+const matchingConversations = computed(() => items.value.map(item => item.conversation))
 const matchingSpaces = computed(() => {
   if (!normalizedQuery.value)
     return []
+  const query = normalizedQuery.value.toLocaleLowerCase()
   return activeSpaces.value.filter(space => (
-    space.name.toLocaleLowerCase().includes(normalizedQuery.value)
-    || space.primaryDirectory?.root.toLocaleLowerCase().includes(normalizedQuery.value)
-    || space.additionalDirectories.some(directory => (
-      directory.root.toLocaleLowerCase().includes(normalizedQuery.value)
-    ))
+    space.name.toLocaleLowerCase().includes(query)
+    || space.primaryDirectory?.root.toLocaleLowerCase().includes(query)
+    || space.additionalDirectories.some(directory => directory.root.toLocaleLowerCase().includes(query))
   ))
 })
 const hasResults = computed(() => matchingConversations.value.length > 0 || matchingSpaces.value.length > 0)
-const updateDebouncedQuery = useDebounceFn((value: string) => {
-  debouncedQuery.value = value
-}, 220)
-
-watch(query, (value) => {
-  updateDebouncedQuery(value)
-})
-
 watch(() => props.show, (show) => {
-  if (!show)
-    return
-  query.value = ''
-  debouncedQuery.value = ''
-})
+  if (show)
+    query.value = ''
+}, { flush: 'sync' })
+
+async function loadMore(event: MouseEvent) {
+  const focused = document.activeElement === event.currentTarget
+  await historySearch.loadMore()
+  await nextTick()
+  if (focused && !nextCursor.value && !failed.value) {
+    const tasks = resultsElement.value?.querySelectorAll<HTMLElement>('.desktop-task-search-dialog__task')
+    tasks?.[tasks.length - 1]?.focus({ preventScroll: true })
+  }
+}
 
 function formatTaskTitle(conversation: LocalConversationSummary) {
   return conversation.title?.trim() || t('desktop.tasks.untitled')
@@ -90,6 +85,7 @@ function taskContext(conversation: LocalConversationSummary) {
     <NInput
       v-model:value="query"
       clearable
+      :maxlength="512"
       size="large"
       :placeholder="t('desktop.search.placeholder')"
     >
@@ -105,7 +101,7 @@ function taskContext(conversation: LocalConversationSummary) {
       <p>{{ t('desktop.search.description') }}</p>
     </div>
 
-    <div v-else class="desktop-task-search-dialog__results grid content-start gap-4 overflow-y-auto pr-[0.2rem]">
+    <div v-else ref="resultsElement" class="desktop-task-search-dialog__results grid content-start gap-4 overflow-y-auto pr-[0.2rem]" :aria-busy="loading || undefined">
       <template v-if="hasResults">
         <section v-if="matchingConversations.length" class="grid gap-1">
           <h3 class="m-0 text-muted text-sidebar-section [font-weight:var(--buddy-sidebar-section-font-weight)] py-1 px-[0.4rem]">
@@ -114,9 +110,9 @@ function taskContext(conversation: LocalConversationSummary) {
           <button
             v-for="conversation in matchingConversations"
             :key="conversation.id"
-            class="desktop-task-search-dialog__result flex w-full min-w-0 items-center gap-3 border-0 rounded-[8px] bg-transparent text-muted cursor-pointer py-[0.65rem] px-3 text-left hover:bg-selected ui-focus-ring"
+            class="desktop-task-search-dialog__result desktop-task-search-dialog__task flex w-full min-w-0 items-center gap-3 border-0 rounded-[8px] bg-transparent text-muted cursor-pointer py-[0.65rem] px-3 text-left hover:bg-selected ui-focus-ring"
             type="button"
-            @click="emit('openTask', conversation.id)"
+            @click="emit('openTask', conversation)"
           >
             <DesktopIcon :component="TaskListSquareLtr20Regular" />
             <span>
@@ -146,7 +142,16 @@ function taskContext(conversation: LocalConversationSummary) {
         </section>
       </template>
 
-      <div v-else class="desktop-task-search-dialog__no-results grid h-full place-items-center content-center gap-3 text-muted text-center">
+      <div v-if="loading" class="px-3 text-muted" role="status">
+        {{ t('common.loading') }}
+      </div>
+      <div v-else-if="failed" class="px-3 text-muted" role="status">
+        {{ t('desktop.search.failed') }}
+      </div>
+      <NButton v-if="nextCursor || failed" :loading="loading" :disabled="loading" @click="loadMore">
+        {{ failed ? t('desktop.tasks.retryHistory') : t('desktop.search.moreResults') }}
+      </NButton>
+      <div v-else-if="!hasResults && !loading" class="desktop-task-search-dialog__no-results grid h-full place-items-center content-center gap-3 text-muted text-center">
         <DesktopIcon name="toolSearch" :size="18" />
         <p>{{ t('desktop.search.noResults') }}</p>
       </div>

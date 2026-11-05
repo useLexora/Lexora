@@ -19,7 +19,7 @@ const targets = {
     { id: 'navigation-layout', selector: '.desktop-navigation-layout-settings', title: 'discovery.navigation-layout.title', description: 'discovery.navigation-layout.hint', side: 'bottom', align: 'center' },
   ],
   'additional-directories': [
-    { id: 'additional-directories', selector: '.desktop-task-sidebar__spaces', title: 'discovery.additional-directories.title', description: 'discovery.additional-directories.hint', side: 'right', align: 'start' },
+    { id: 'additional-directories', selector: '[data-row-key="section:spaces"]', title: 'discovery.additional-directories.title', description: 'discovery.additional-directories.hint', side: 'right', align: 'start' },
   ],
   'network-permissions': [
     { id: 'network-permissions', selector: '[data-testid="network-permissions"]', title: 'discovery.network-permissions.title', description: 'discovery.network-permissions.hint', side: 'left', align: 'start' },

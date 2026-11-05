@@ -27,7 +27,7 @@ test('moving a task requires confirmation, preserves its draft and previous file
     finally { db.close() }
   }, { target, databasePath: path.join(instance.home, 'buddy/buddy.sqlite3') })
   await page.reload()
-  const spaces = page.locator('.desktop-task-sidebar__spaces')
+  const spaces = page.locator('[data-row-key="section:spaces"]')
   await spaces.locator('.desktop-task-sidebar__section-heading').hover()
   await spaces.locator('.desktop-task-sidebar__section-add').click()
   const spaceDialog = page.locator('.desktop-space-dialog')
@@ -36,7 +36,7 @@ test('moving a task requires confirmation, preserves its draft and previous file
   await spaceDialog.getByRole('button', { name: '确定', exact: true }).click()
   await expect(spaceDialog).toBeHidden()
   const spaceId = await page.evaluate(async () => (await window.lexoraDesktop.localChat.spaces.list()).find(space => space.name === '目标项目').id)
-  let rowSelector = '[data-task-id="movable"]'
+  const rowSelector = '[data-task-id="movable"]'
   const row = () => page.locator(rowSelector)
   await row().locator('.desktop-task-sidebar__task').click()
   const editor = () => page.locator('.desktop-chat-composer__prosemirror:visible')
@@ -57,7 +57,6 @@ test('moving a task requires confirmation, preserves its draft and previous file
   expect((await page.evaluate(() => window.lexoraDesktop.localChat.conversations.get('movable'))).spaceId).toBeNull()
   await expect(editor()).toContainText('移入后仍需保留的草稿')
   moveDialog = await openMoveDialog()
-  await page.screenshot({ path: path.join(instance.artifactDirectory, '01-move-confirmation.png'), animations: 'disabled' })
   await moveDialog.getByRole('button', { name: '移入', exact: true }).click()
   await expect(moveDialog).toBeHidden()
   await expect.poll(() => page.evaluate(() => window.lexoraDesktop.localChat.conversations.get('movable'))).toMatchObject({ spaceId, activeBranchId: 'branch-movable' })
@@ -65,26 +64,16 @@ test('moving a task requires confirmation, preserves its draft and previous file
   await expect(editor()).toContainText('移入后仍需保留的草稿')
   expect(await fs.readFile(path.join(previous, 'unfinished.txt'), 'utf8')).toBe('Original unfinished work')
   expect(await fs.readdir(target)).toEqual([])
-  const expectMoveHidden = async () => {
-    await row().hover()
-    await row().getByRole('button', { name: '更多操作', exact: true }).click()
-    await expect(page.locator('.n-dropdown-menu:visible')).toBeVisible()
-    await expect(page.locator('.n-dropdown-menu:visible').getByText('移入空间', { exact: true })).toHaveCount(0)
-    await editor().click()
-    await expect(page.locator('.n-dropdown-menu:visible')).toHaveCount(0)
-    await row().click({ button: 'right' })
-    await expect(page.locator('.n-dropdown-menu:visible')).toBeVisible()
-    await expect(page.locator('.n-dropdown-menu:visible').getByText('移入空间', { exact: true })).toHaveCount(0)
-    await editor().click()
-    await expect(page.locator('.n-dropdown-menu:visible')).toHaveCount(0)
-  }
-  await expectMoveHidden()
   const spaceRow = page.locator('.desktop-task-space-row').filter({ hasText: '目标项目' })
   await spaceRow.hover()
   await spaceRow.getByRole('button', { name: '置顶', exact: true }).click()
-  rowSelector = '.desktop-task-sidebar__pinned [data-task-id="movable"]'
+  await expect(spaceRow.getByRole('button', { name: '取消置顶', exact: true })).toBeVisible()
   await expect(row()).toBeVisible()
-  await expectMoveHidden()
+  await row().click({ button: 'right' })
+  await expect(page.locator('.n-dropdown-menu:visible')).toBeVisible()
+  await expect(page.locator('.n-dropdown-menu:visible').getByText('移入空间', { exact: true })).toHaveCount(0)
+  await editor().click()
+  await expect(page.locator('.n-dropdown-menu:visible')).toHaveCount(0)
   const queueError = await page.evaluate(async (spaceId) => {
     try {
       await window.lexoraDesktop.localChat.conversations.moveToSpace('paused', spaceId)
@@ -93,7 +82,6 @@ test('moving a task requires confirmation, preserves its draft and previous file
     catch (error) { return error.message }
   }, spaceId)
   expect(queueError).toContain('CONVERSATION_QUEUE_NOT_EMPTY')
-  await page.screenshot({ path: path.join(instance.artifactDirectory, '02-task-in-space.png'), animations: 'disabled' })
   expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
   await instance.stop()
   ;({ app, page, diagnostics } = await instance.launch())

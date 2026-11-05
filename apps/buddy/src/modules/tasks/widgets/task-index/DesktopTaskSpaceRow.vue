@@ -119,8 +119,8 @@ const element = useTemplateRef<HTMLElement>('row')
 const handle = useTemplateRef<HTMLElement>('handle')
 useTaskHistoryDrag({
   id: () => dragId,
-  element,
-  handle,
+  element: computed(() => props.reorderable ? element.value : null),
+  handle: computed(() => props.reorderable ? handle.value : null),
   type: 'pinned-space',
   data: () => ({ title: props.space.name }),
   disabled: () => !props.reorderable,

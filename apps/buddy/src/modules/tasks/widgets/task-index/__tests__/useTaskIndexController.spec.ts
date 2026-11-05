@@ -3,7 +3,7 @@ import type { LocalConversationSummary } from '@buddy-shared/conversation/conver
 import type { LocalTaskMarkState } from '@buddy-shared/conversation/taskMarkApi'
 import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
 import type { ShallowRef } from 'vue'
-import type { TaskIndexRow } from '../taskPinnedItems'
+import type { TaskIndex } from '../../../contracts'
 import { afterEach, describe, expect, it } from 'vitest'
 import { effectScope, nextTick, shallowRef } from 'vue'
 import { useTaskSidebarPreferences } from '@/modules/tasks/state/task-index/useTaskSidebarPreferences'
@@ -59,6 +59,8 @@ function createSidebarFixture(writes: SidebarFixture['desktop'][]) {
 }
 
 function createController(input: {
+  history?: TaskIndex['history']
+  onHistoryError?: () => void
   markStates?: ShallowRef<ReadonlyMap<string, LocalTaskMarkState>>
   tasks?: ShallowRef<readonly LocalConversationSummary[]>
   pins: ShallowRef<readonly DesktopTaskPinnedItem[]>
@@ -66,8 +68,12 @@ function createController(input: {
   spaces: ShallowRef<readonly LocalSpace[]>
 }) {
   const scope = effectScope()
+  const history = input.history ?? historyFixture()
   scopes.push(scope)
   return scope.run(() => useTaskIndexController({
+    activeConversationId: () => null,
+    history: () => history,
+    onHistoryError: input.onHistoryError ?? (() => {}),
     getUntitledLabel: () => 'Untitled',
     markStates: () => input.markStates?.value ?? new Map(),
     onCreateSpace: async () => true,
@@ -85,33 +91,100 @@ function createController(input: {
   }))!
 }
 
+function historyFixture(): TaskIndex['history'] {
+  return {
+    scopes: shallowRef(new Map()),
+    anchors: shallowRef({ pinned: null, spaces: null, tasks: null }),
+    recordAnchor() {},
+    ensureScope: async () => {},
+    loadMore: async () => {},
+    setActiveTask: async () => {},
+    search: async () => ({ items: [], nextCursor: null }),
+  }
+}
+
 describe('task index presentation', () => {
-  it.each([false, true])('prioritizes custom marks only within each Space and restores order when cleared (pinned: %s)', (pinned) => {
-    const spaces = shallowRef<readonly LocalSpace[]>([space('a'), space('b')])
+  it('preserves loaded rows on page failure and retries only on explicit action', async () => {
+    const pins = shallowRef<readonly DesktopTaskPinnedItem[]>([])
+    const { sidebar } = createSidebarFixture([])
+    const history = historyFixture()
+    let attempts = 0
+    let errorCount = 0
+    history.ensureScope = async () => {
+      attempts += 1
+      if (attempts === 1)
+        throw new Error('unavailable')
+    }
+    const controller = createController({
+      pins,
+      sidebar,
+      history,
+      spaces: shallowRef([space('a')]),
+      tasks: shallowRef([{ id: 'attention', spaceId: 'a', updatedAt: '2026-09-08T00:00:00.000Z', activity: 'idle' } as LocalConversationSummary]),
+      onHistoryError: () => errorCount += 1,
+    })
+    await controller.ensureHistoryScope('a')
+    expect(controller.failedHistoryScopes.value.has('space:a')).toBe(true)
+    expect(controller.spaceRows.value.map(row => row.key)).toEqual(['space:a', 'conversation:attention'])
+    await controller.ensureHistoryScope('a')
+    expect(errorCount).toBe(1)
+    expect(attempts).toBe(1)
+    expect(await controller.loadMoreHistory('a')).toBe(true)
+    expect(controller.failedHistoryScopes.value.size).toBe(0)
+    expect(attempts).toBe(2)
+  })
+
+  it('reveals a searched old task in its pinned, previously collapsed space', async () => {
+    const pins = shallowRef<readonly DesktopTaskPinnedItem[]>([{ kind: 'space', id: 'a' }])
+    const { sidebar } = createSidebarFixture([])
+    await sidebar.setSpaceExpanded('a', false)
+    await sidebar.setSectionExpanded('pinned', false)
+    const history = historyFixture()
+    const tasks = shallowRef<readonly LocalConversationSummary[]>([])
+    const oldTask = { id: 'old', spaceId: 'a', updatedAt: '2020-01-01T00:00:00.000Z', activity: 'idle' } as LocalConversationSummary
+    history.setActiveTask = async (id) => {
+      if (id === oldTask.id)
+        tasks.value = [oldTask]
+    }
+    const controller = createController({ pins, sidebar, history, spaces: shallowRef([space('a')]), tasks })
+    expect(await controller.revealTask(oldTask)).toBe(true)
+    expect(controller.isSpaceExpanded('a')).toBe(true)
+    expect(controller.isSectionExpanded('pinned')).toBe(true)
+    expect(controller.historyRows.value.some(row => row.key === 'conversation:old')).toBe(true)
+    expect(controller.revealTarget.value).toEqual({ rowKey: 'conversation:old' })
+  })
+
+  it('keeps unloaded pins when pinning, unpinning and reordering visible entries', () => {
     const pins = shallowRef<readonly DesktopTaskPinnedItem[]>([
-      ...(pinned ? [{ kind: 'space' as const, id: 'b' }, { kind: 'space' as const, id: 'a' }] : []),
-      { kind: 'conversation', id: 'global-pinned' },
+      { kind: 'conversation', id: 'unloaded' },
+      { kind: 'space', id: 'a' },
+      { kind: 'space', id: 'b' },
     ])
-    const originalPins = [...pins.value]
-    const originalTasks = [
+    const { sidebar } = createSidebarFixture([])
+    const controller = createController({ pins, sidebar, spaces: shallowRef([space('a'), space('b'), space('c')]) })
+    controller.pinSpace('c')
+    expect(pins.value.map(item => item.id)).toEqual(['c', 'unloaded', 'a', 'b'])
+    controller.pinTask('new-global')
+    expect(pins.value.map(item => item.id)).toEqual(['new-global', 'c', 'unloaded', 'a', 'b'])
+    controller.unpinItem('space:c')
+    expect(pins.value.map(item => item.id)).toEqual(['new-global', 'unloaded', 'a', 'b'])
+    controller.beginPinnedDrag('space:b')
+    controller.dropPinnedItem('space:a', 'before')
+    expect(pins.value.map(item => item.id)).toEqual(['new-global', 'unloaded', 'b', 'a'])
+  })
+
+  it('updates marked and unread ordering across scopes without reordering pins', () => {
+    const pins = shallowRef<readonly DesktopTaskPinnedItem[]>([{ kind: 'space', id: 'b' }, { kind: 'conversation', id: 'global-pinned' }])
+    const tasks = shallowRef<readonly LocalConversationSummary[]>([
       ['a-new', 'a'],
-      ['a-marked-new', 'a'],
+      ['a-marked', 'a'],
       ['a-unread', 'a'],
-      ['a-marked-old', 'a'],
-      ['a-old', 'a'],
       ['b-new', 'b'],
       ['b-marked', 'b'],
       ['global-new', null],
       ['global-marked', null],
       ['global-pinned', null],
-    ].map(([id, spaceId]) => ({
-      id,
-      spaceId,
-      title: id,
-      activity: 'idle',
-      updatedAt: '2026-09-08T00:00:00.000Z',
-    } as LocalConversationSummary))
-    const tasks = shallowRef<readonly LocalConversationSummary[]>(originalTasks)
+    ].map(([id, spaceId]) => ({ id, spaceId, activity: 'idle', updatedAt: '2026-09-08T00:00:00.000Z' } as LocalConversationSummary)))
     const state = (conversationId: string, markId: string | null = null, unread = false): LocalTaskMarkState => ({
       conversationId,
       markId,
@@ -122,36 +195,21 @@ describe('task index presentation', () => {
     const unread = state('a-unread', null, true)
     const markStates = shallowRef<ReadonlyMap<string, LocalTaskMarkState>>(new Map([[unread.conversationId, unread]]))
     const { sidebar } = createSidebarFixture([])
-    const controller = createController({ pins, sidebar, spaces, tasks, markStates })
-    const rowIds = (rows: readonly TaskIndexRow[]) => rows.map(row => row.kind === 'space' ? row.space.id : row.task.id)
-    const spaceRows = () => rowIds(pinned ? controller.pinnedRows.value : controller.spaceRows.value)
-    const expectedRows = (aTasks: string[], bTasks: string[]) => pinned
-      ? ['b', ...bTasks, 'a', ...aTasks, 'global-pinned']
-      : ['a', ...aTasks, 'b', ...bTasks]
-    const originalATasks = ['a-new', 'a-marked-new', 'a-unread', 'a-marked-old', 'a-old']
-    const originalBTasks = ['b-new', 'b-marked']
-    expect(spaceRows()).toEqual(expectedRows(originalATasks, originalBTasks))
+    const controller = createController({ pins, sidebar, spaces: shallowRef([space('a'), space('b')]), tasks, markStates })
+    expect(controller.spaceRows.value.map(row => row.key)).toEqual(['space:a', 'conversation:a-unread', 'conversation:a-new', 'conversation:a-marked'])
+    expect(controller.pinnedRows.value.map(row => row.key)).toEqual(['space:b', 'conversation:b-new', 'conversation:b-marked', 'conversation:global-pinned'])
 
     markStates.value = new Map([
       [unread.conversationId, unread],
-      ...['a-marked-new', 'a-marked-old', 'b-marked', 'global-marked', 'global-pinned']
-        .map(id => [id, state(id, 'custom')] as const),
+      ...['a-marked', 'b-marked', 'global-marked', 'global-pinned'].map(id => [id, state(id, 'custom')] as const),
     ])
-    expect(spaceRows()).toEqual(expectedRows(
-      ['a-marked-new', 'a-marked-old', 'a-new', 'a-unread', 'a-old'],
-      ['b-marked', 'b-new'],
-    ))
-    expect(controller.globalTasks.value.map(task => task.id)).toEqual(['global-new', 'global-marked'])
-    expect(controller.pinnedItems.value).toEqual(originalPins)
-    expect(tasks.value.map(task => task.id)).toEqual(originalTasks.map(task => task.id))
-    if (!pinned)
-      expect(rowIds(controller.pinnedRows.value)).toEqual(['global-pinned'])
+    expect(controller.spaceRows.value.map(row => row.key)).toEqual(['space:a', 'conversation:a-marked', 'conversation:a-unread', 'conversation:a-new'])
+    expect(controller.pinnedRows.value.map(row => row.key)).toEqual(['space:b', 'conversation:b-marked', 'conversation:b-new', 'conversation:global-pinned'])
+    expect(controller.globalTasks.value.map(task => task.id)).toEqual(['global-marked', 'global-new'])
 
-    markStates.value = new Map([
-      [unread.conversationId, unread],
-      ['a-marked-old', state('a-marked-old', null, true)],
-    ])
-    expect(spaceRows()).toEqual(expectedRows(originalATasks, originalBTasks))
+    markStates.value = new Map([[unread.conversationId, unread]])
+    expect(controller.spaceRows.value.map(row => row.key)).toEqual(['space:a', 'conversation:a-unread', 'conversation:a-new', 'conversation:a-marked'])
+    expect(controller.pinnedRows.value.map(row => row.key)).toEqual(['space:b', 'conversation:b-new', 'conversation:b-marked', 'conversation:global-pinned'])
   })
 
   it('keeps folded Spaces and pinned order across refresh while expanding newly introduced Spaces', async () => {
@@ -177,26 +235,5 @@ describe('task index presentation', () => {
     expect(controller.pinnedItems.value.map(item => item.id)).toEqual(['b'])
     expect(controller.spaceDialogOpen.value).toBe(false)
     expect([...sidebar.collapsedSpaceIds.value]).toEqual([])
-  })
-
-  it('restores folded Spaces onto a rebuilt sidebar from persisted preferences', async () => {
-    const spaces = shallowRef<readonly LocalSpace[]>([space('a'), space('b')])
-    const pins = shallowRef<readonly DesktopTaskPinnedItem[]>([])
-    const { sidebar, writes } = createSidebarFixture([])
-    const first = createController({ pins, sidebar, spaces })
-    first.toggleSpace('a')
-    first.setSectionExpanded('tasks', false)
-    first.recordScrollAnchor('tasks', 12)
-    await flushWrites()
-    scopes.splice(0).forEach(scope => scope.stop())
-
-    const rebuilt = createController({ pins, sidebar, spaces })
-    await flushWrites()
-    expect(writes.at(-1)?.taskSidebar.collapsedSpaces).toEqual(['a'])
-    expect(rebuilt.isSpaceExpanded('a')).toBe(false)
-    expect(rebuilt.isSpaceExpanded('b')).toBe(true)
-    expect(rebuilt.isSectionExpanded('tasks')).toBe(false)
-    expect(rebuilt.isSectionExpanded('spaces')).toBe(true)
-    expect(rebuilt.scrollAnchors.value.tasks).toBe(12)
   })
 })

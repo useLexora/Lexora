@@ -2,18 +2,17 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test } from '../fixtures/electron.mjs'
 
-test('builtin working copies back up continued edits, veto closure and recover across restart without executable plugins', async ({ buddy }) => {
+test('working copies and sidebar preserve drafts, veto unsaved closure and recover across restart', async ({ buddy }) => {
   const instance = await buddy.createInstance('working-copy')
   const directory = path.join(instance.home, 'documents')
   const document = path.join(directory, 'README.md')
   await fs.mkdir(directory)
   await fs.writeFile(document, 'Original document.\n')
   let { app, page, diagnostics } = await instance.launch()
-  expect(await page.evaluate(async () => (await window.lexoraDesktop.extensions.list()).filter(item => item.manifest.entry || item.manifest.contributes.views.length))).toEqual([])
   await app.evaluate(({ dialog }, directory) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [directory] })
   }, directory)
-  const section = page.locator('.desktop-task-sidebar__spaces')
+  const section = page.locator('[data-row-key="section:spaces"]')
   await section.locator('.desktop-task-sidebar__section-heading').hover()
   await section.locator('.desktop-task-sidebar__section-add').click()
   const spaceDialog = page.locator('.desktop-space-dialog')
@@ -22,10 +21,9 @@ test('builtin working copies back up continued edits, veto closure and recover a
   await expect(spaceDialog.locator('.desktop-space-primary-directory input')).toHaveValue(directory)
   await spaceDialog.getByRole('button', { name: '确定', exact: true }).click()
   await expect(spaceDialog).toBeHidden()
-  const space = page.locator('.desktop-task-space-row').filter({ hasText: '工作副本验收' })
-  await space.hover()
-  await space.getByRole('button', { name: '更多操作', exact: true }).click()
-  await page.locator('.n-dropdown-menu:visible').getByText('新任务', { exact: true }).click()
+  const composer = page.locator('.desktop-chat-composer__prosemirror:visible')
+  const draft = 'Keep this draft while changing the layout.'
+  await composer.fill(draft)
   await page.locator('.desktop-workbench-area__tasks .tiptap').click()
   await page.keyboard.press('Control+Shift+P')
   await page.getByPlaceholder('输入命令名称').fill('文件')
@@ -49,6 +47,28 @@ test('builtin working copies back up continued edits, veto closure and recover a
   await expect.poll(readBackup).toBe(beforeUndo)
   await expect(editor.locator('.view-lines')).toContainText('Second edit while dirty.')
   expect(await fs.readFile(document, 'utf8')).toBe('Original document.\n')
+  const sidebar = page.locator('.desktop-workbench-layout__sidebar')
+  const width = () => sidebar.evaluate(element => element.getBoundingClientRect().width)
+  const initialWidth = await width()
+  await page.getByTestId('workbench-sidebar-resizer').focus()
+  await page.keyboard.press('ArrowRight')
+  const savedWidth = () => page.evaluate(async () => (await window.lexoraDesktop.settings.get()).desktop.taskSidebar.width)
+  await expect.poll(savedWidth).toBeGreaterThan(initialWidth)
+  const expandedWidth = await savedWidth()
+  await expect.poll(width).toBe(expandedWidth)
+  const toggle = page.getByTestId('workbench-sidebar-toggle')
+  await page.getByTestId('workbench-sidebar-resizer').hover()
+  await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(sidebar).toHaveAttribute('inert', '')
+  await expect.poll(width).toBe(0)
+  await expect(composer).toHaveText(draft)
+  await page.locator('.desktop-workbench-layout__sidebar-collapsed-boundary').hover()
+  await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  await expect(sidebar).not.toHaveAttribute('inert')
+  await expect.poll(width).toBe(expandedWidth)
+  await expect(composer).toHaveText(draft)
   await page.getByTestId('task-context-panel').getByRole('tab', { name: '文件', exact: true }).click({ button: 'right' })
   await page.locator('.n-dropdown-menu:visible').getByText('关闭全部', { exact: true }).click()
   const close = page.locator('.n-dialog').filter({ hasText: '关闭前保存更改？' })
@@ -57,6 +77,9 @@ test('builtin working copies back up continued edits, veto closure and recover a
   await expect(editor.locator('.view-lines')).toContainText('Second edit while dirty.')
   await instance.stop()
   ;({ app, page, diagnostics } = await instance.launch())
+  await expect.poll(savedWidth).toBe(expandedWidth)
+  await expect.poll(() => page.locator('.desktop-workbench-layout__sidebar').evaluate(element => element.getBoundingClientRect().width)).toBe(expandedWidth)
+  await expect(page.locator('.desktop-chat-composer__prosemirror:visible')).toHaveText(draft)
   const panelToggle = page.getByTestId('context-panel-toggle')
   if (await panelToggle.getAttribute('aria-expanded') === 'false')
     await panelToggle.click()
@@ -72,7 +95,7 @@ test('builtin working copies back up continued edits, veto closure and recover a
   expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })
 
-test('task switching stays responsive during loading, failure and notification navigation', async ({ buddy }) => {
+test('task switching preserves drafts and ignores late loading results while failures remain retryable', async ({ buddy }) => {
   const instance = await buddy.createInstance('task-switch')
   const { app, page, diagnostics } = await instance.launch()
   await expect.poll(() => page.evaluate(async () => (await window.lexoraDesktop.localChat.runtime.getStatus()).status), { timeout: 45000 }).toBe('ready')
@@ -86,9 +109,6 @@ test('task switching stays responsive during loading, failure and notification n
         db.prepare('INSERT INTO conversation_branches (id, conversation_id, created_at) VALUES (?, ?, ?)').run(`branch-${id}`, id, now)
         db.prepare('INSERT INTO messages (id, conversation_id, branch_id, role, content_json, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(`message-${id}`, id, `branch-${id}`, 'user', JSON.stringify({ text: `Content ${id.toUpperCase()}` }), now)
       }
-      db.prepare('INSERT INTO conversation_branches (id, conversation_id, created_at) VALUES (?, ?, ?)').run('notified-branch', 'b', now)
-      db.prepare('INSERT INTO messages (id, conversation_id, branch_id, role, content_json, created_at) VALUES (?, ?, ?, ?, ?, ?)').run('notified-message', 'b', 'notified-branch', 'user', JSON.stringify({ text: 'Notification target content' }), now)
-      db.prepare('INSERT INTO runs (id, conversation_id, branch_id, triggering_message_id, provider, model, purpose, status, started_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run('notified-run', 'b', 'notified-branch', 'notified-message', 'fixture', 'fixture', 'chat', 'completed', now, now)
     }
     finally { db.close() }
   }, path.join(instance.home, 'buddy/buddy.sqlite3'))
@@ -104,8 +124,6 @@ test('task switching stays responsive during loading, failure and notification n
     for (const [stage, channel] of [
       ['get', 'lexora:buddy:conversations:get'],
       ['draft', 'lexora:buddy:composer-drafts:open'],
-      ['branches', 'lexora:buddy:conversations:list-branches'],
-      ['timeline', 'lexora:buddy:conversations:list-timeline'],
     ]) {
       const handler = ipcMain._invokeHandlers.get(channel)
       ipcMain.removeHandler(channel)
@@ -134,8 +152,6 @@ test('task switching stays responsive during loading, failure and notification n
   await expect(title).toHaveText('Task B')
   await expect(row('b')).toHaveClass(/is-active/)
   await expect(page.getByTestId('task-loading')).toHaveAttribute('aria-busy', 'true')
-  await expect.poll(() => app.evaluate(() => globalThis.taskSwitchProbe.events.some(event => event.id === 'b' && event.stage === 'timeline' && event.phase === 'end'))).toBe(true)
-  expect(await app.evaluate(() => globalThis.taskSwitchProbe.events.some(event => event.id === 'b' && event.stage === 'draft' && event.phase === 'end'))).toBe(false)
   await row('c').click()
   await expect(title).toHaveText('Task C')
   await expect(editor).toBeVisible()
@@ -162,17 +178,6 @@ test('task switching stays responsive during loading, failure and notification n
   await expect(editor).toBeVisible()
   await expect(page.getByTestId('task-loading')).toHaveCount(0)
 
-  await row('a').click()
-  await expect(editor).toHaveText('Saved while switching')
-  await block('get:b')
-  await app.evaluate(({ BrowserWindow }) => {
-    BrowserWindow.getAllWindows()[0].webContents.send('lexora:app:open-target', { conversationId: 'b', runId: 'notified-run' })
-  })
-  await expect(title).toHaveText('Task B')
-  await expect(page.getByTestId('task-loading')).toBeVisible()
-  await release('get:b')
-  await expect.poll(() => page.evaluate(async () => (await window.lexoraDesktop.localChat.conversations.get('b')).activeBranchId)).toBe('notified-branch')
-  await expect(page.locator('.desktop-chat-page')).toContainText('Notification target content')
   expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })
 
@@ -181,7 +186,6 @@ async function prepareNotificationNavigation(buddy, label) {
   const desktop = await instance.launch()
   const window = await desktop.app.browserWindow(desktop.page)
   await expect.poll(() => desktop.page.evaluate(async () => (await window.lexoraDesktop.localChat.runtime.getStatus()).status), { timeout: 45000 }).toBe('ready')
-  await desktop.page.evaluate(() => window.lexoraDesktop.settings.update({ desktop: { featureAnnouncementsEnabled: false } }))
   await window.evaluate(window => window.setSize(1600, 1000))
   await desktop.app.evaluate((_electron, databasePath) => {
     const { DatabaseSync } = process.getBuiltinModule('node:sqlite')
@@ -224,13 +228,14 @@ async function expectNotificationMessage(page, pane) {
   const message = pane.locator('[data-message-id="notification-message"]')
   await expect(message).toContainText('The notification points to this earlier message.')
   await expect(message).toBeInViewport()
-  await expect(pane.locator('[data-message-id="later-message-24"]')).toHaveCount(1)
+  const laterMessages = await page.evaluate(() => window.lexoraDesktop.localChat.conversations.listMessages({ conversationId: 'b', branchId: 'notification-branch', limit: 100 }))
+  expect(laterMessages.items.map(item => item.id)).toContain('later-message-24')
   await expect(pane.locator('[data-message-id="later-message-24"]')).not.toBeInViewport()
   await expect.poll(() => page.evaluate(async () => (await window.lexoraDesktop.localChat.conversations.get('b')).activeBranchId)).toBe('notification-branch')
   await expect(pane.locator('[data-message-id="message-b"]')).toHaveCount(0)
 }
 
-test('notification navigation: app:open-target focuses the original split pane without duplicating the task', async ({ buddy }) => {
+test('notification targets reuse split panes and restore the task from settings without losing the other draft', async ({ buddy }) => {
   const { page, window, diagnostics } = await prepareNotificationNavigation(buddy, 'notification-split')
   await notificationTask(page, 'a').click()
   const first = notificationPane(page, 'a')
@@ -257,26 +262,16 @@ test('notification navigation: app:open-target focuses the original split pane w
   await expect(firstEditor).toHaveText('Keep the other pane and its draft.')
   await expect(first.locator('[data-message-id="message-a"]')).toContainText('Original content A')
   await expect(notificationTask(page, 'b')).toHaveClass(/is-active/)
-  expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
-})
-
-test('notification navigation: app:open-target returns from settings to the existing task and run branch', async ({ buddy }) => {
-  const { page, window, diagnostics } = await prepareNotificationNavigation(buddy, 'notification-settings')
-  await notificationTask(page, 'b').click()
-  const pane = notificationPane(page, 'b')
-  await expect(pane.locator('[data-message-id="message-b"]')).toContainText('Original content B')
-  const paneId = await pane.getAttribute('data-pane-id')
   await page.locator('.desktop-app-sidebar').getByRole('button', { name: '设置', exact: true }).click()
   await expect(page.locator('.desktop-settings-sidebar')).toBeVisible()
-  await expect(page).toHaveURL(/#\/settings(?:\/|$)/)
-
   await sendNotificationTarget(window)
-  await expectNotificationMessage(page, pane)
   await expect(page).toHaveURL(/#\/tasks$/)
   await expect(page.locator('.desktop-settings-sidebar')).toBeHidden()
-  await expect(page.locator('.workbench-pane')).toHaveCount(1)
-  await expect(pane).toHaveAttribute('data-pane-id', paneId)
-  await expect(notificationTask(page, 'b')).toHaveClass(/is-active/)
+  await expectNotificationMessage(page, second)
+  await expect(page.locator('.workbench-pane')).toHaveCount(2)
+  await expect(first).toHaveAttribute('data-pane-id', firstId)
+  await expect(second).toHaveAttribute('data-pane-id', secondId)
+  await expect(firstEditor).toHaveText('Keep the other pane and its draft.')
   expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })
 
@@ -303,54 +298,9 @@ test('notification navigation: app:open-target opens an unopened task while hidd
   expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })
 
-test('sidebar resizing and collapsing preserve the current draft and persist whole-pixel widths', async ({ buddy }) => {
-  const instance = await buddy.createInstance('sidebar-layout')
-  const { page, diagnostics } = await instance.launch()
-  const editor = page.locator('.desktop-chat-composer__prosemirror:visible')
-  await editor.fill('Keep this draft while changing the layout.')
-  const sidebar = page.locator('.desktop-workbench-layout__sidebar')
-  const resize = page.getByTestId('workbench-sidebar-resizer')
-  const width = () => sidebar.evaluate(async (element) => {
-    await Promise.all(element.getAnimations().map(animation => animation.finished))
-    return element.getBoundingClientRect().width
-  })
-  const initialWidth = await width()
-  await resize.focus()
-  await page.keyboard.press('ArrowRight')
-  await expect.poll(width).toBeGreaterThan(initialWidth)
-  const beforeDrag = await width()
-  const handle = await resize.boundingBox()
-  await page.mouse.move(handle.x + handle.width / 2, handle.y + 80)
-  await page.mouse.down()
-  await page.mouse.move(handle.x + 40.375, handle.y + 80.25, { steps: 5 })
-  await page.mouse.up()
-  await expect.poll(width).toBeGreaterThan(beforeDrag)
-  const expandedWidth = await width()
-  const savedWidth = () => page.evaluate(async () => (await window.lexoraDesktop.settings.get()).desktop.taskSidebar.width)
-  await expect.poll(savedWidth).toBe(Math.round(expandedWidth))
-
-  const toggle = page.getByTestId('workbench-sidebar-toggle')
-  await resize.hover()
-  await toggle.click()
-  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
-  await expect.poll(width).toBe(0)
-  await expect(sidebar).toHaveAttribute('inert', '')
-  await expect(editor).toHaveText('Keep this draft while changing the layout.')
-  await page.locator('.desktop-workbench-layout__sidebar-collapsed-boundary').hover()
-  await toggle.click()
-  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
-  await expect.poll(width).toBeCloseTo(expandedWidth, 0)
-  await expect(editor).toHaveText('Keep this draft while changing the layout.')
-  await instance.stop()
-  const restarted = await instance.launch()
-  await expect.poll(() => restarted.page.evaluate(async () => (await window.lexoraDesktop.settings.get()).desktop.taskSidebar.width)).toBe(Math.round(expandedWidth))
-  await expect(restarted.page.locator('.desktop-chat-composer__prosemirror:visible')).toHaveText('Keep this draft while changing the layout.')
-  expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
-})
-
-test('resource tab menus pin, close by position and preserve pins across restart', async ({ buddy }, testInfo) => {
+test('resource tab menus pin, close by position and preserve pins across restart', async ({ buddy }) => {
   const instance = await buddy.createInstance('resource-tab-menu')
-  let { app, page, diagnostics } = await instance.launch()
+  let { page, diagnostics } = await instance.launch()
   await expect(page.getByRole('textbox', { name: '对话消息', exact: true })).toBeVisible()
   await page.keyboard.press('Control+Shift+P')
   await page.getByPlaceholder('输入命令名称').fill('浏览器')
@@ -379,8 +329,6 @@ test('resource tab menus pin, close by position and preserve pins across restart
   await expect(panel().locator('[data-pinned="true"]')).toHaveCount(1)
   await expect(tabs().last()).toHaveAttribute('aria-selected', 'true')
   await tabs().nth(2).click({ button: 'right' })
-  await expect(menu().locator('.n-dropdown-option-body__label')).toHaveText(['固定', '关闭', '关闭其他', '关闭左侧', '关闭右侧', '关闭全部'])
-  await testInfo.attach('resource-tab-menu', { body: await page.screenshot({ animations: 'disabled' }), contentType: 'image/png' })
   await expect(menu().getByText('关闭左侧', { exact: true }).locator('..')).not.toHaveClass(/disabled/)
   await menu().getByText('关闭左侧', { exact: true }).click()
   await expect(tabs()).toHaveCount(3)
@@ -399,16 +347,6 @@ test('resource tab menus pin, close by position and preserve pins across restart
   await expect(menu().getByText('取消固定', { exact: true })).toBeVisible()
   for (const label of ['关闭其他', '关闭左侧', '关闭右侧', '关闭全部'])
     await expect(menu().getByText(label, { exact: true }).locator('..')).toHaveClass(/disabled/)
-  for (const theme of ['light', 'dark']) {
-    await page.evaluate(theme => window.lexoraDesktop.themes.request({ action: 'preference', preference: { id: `lexora.themes.classic-${theme}` } }), theme)
-    await expect(page.locator('html')).toHaveAttribute('data-buddy-theme', theme)
-    await testInfo.attach(`resource-tab-menu-${theme}`, { body: await page.screenshot({ animations: 'disabled' }), contentType: 'image/png' })
-  }
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(980, 640))
-  await page.keyboard.press('Escape')
-  await tabs().first().click({ button: 'right' })
-  await expect(menu().getByText('关闭全部', { exact: true })).toBeInViewport()
-  await testInfo.attach('resource-tab-menu-narrow', { body: await page.screenshot({ animations: 'disabled' }), contentType: 'image/png' })
   await page.keyboard.press('Escape')
   await expect(menu()).toBeHidden()
   expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])

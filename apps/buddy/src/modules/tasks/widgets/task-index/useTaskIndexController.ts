@@ -8,17 +8,22 @@ import type { TaskIndex } from '../../contracts'
 import type { TaskIndexManagementOptions } from './useTaskIndexManagement'
 import type { DesktopTaskPinnedDropPosition } from '@/modules/tasks/widgets/task-index/taskPinnedItems'
 import { useIntervalFn } from '@vueuse/core'
-import { computed, shallowRef, watch } from 'vue'
+import { computed, onScopeDispose, shallowRef, watch } from 'vue'
 import {
+  getTaskHistoryScopeKey,
   prependDesktopTaskPinnedItem,
   removeDesktopTaskPinnedItem,
   reorderDesktopTaskPinnedItems,
   resolveSpaceActivities,
+  resolveTaskHistoryRows,
   resolveTaskIndexProjection,
 } from '@/modules/tasks/widgets/task-index/taskPinnedItems'
 import { useTaskIndexManagement } from './useTaskIndexManagement'
 
 interface UseTaskIndexControllerOptions extends TaskIndexManagementOptions {
+  activeConversationId: () => string | null
+  history: () => TaskIndex['history']
+  onHistoryError: () => void
   markStates: () => ReadonlyMap<string, LocalTaskMarkState>
   onUpdatePinnedItems: (items: DesktopTaskPinnedItem[]) => void
   pinnedItems: Readonly<Ref<ReadonlyArray<DesktopTaskPinnedItem>>>
@@ -40,12 +45,21 @@ export function useTaskIndexController(options: UseTaskIndexControllerOptions) {
   const activeSpaces = computed(() => options.spaces.value.filter(
     space => space.revokedAt === null,
   ))
+  const failedHistoryScopes = shallowRef<ReadonlySet<string>>(new Set())
+  const historyRequests = new Map<string, Promise<boolean>>()
+  const revealTarget = shallowRef<{ rowKey: string } | null>(null)
+  let revealVersion = 0
+  let disposed = false
+  const expandedSpaceIds = computed(() => new Set(activeSpaces.value
+    .filter(space => isSpaceExpanded(space.id))
+    .map(space => space.id)))
   const projection = computed(() => resolveTaskIndexProjection({
-    expandedSpaceIds: new Set(activeSpaces.value
-      .filter(space => isSpaceExpanded(space.id))
-      .map(space => space.id)),
+    expandedSpaceIds: expandedSpaceIds.value,
     markedTaskIds: new Set([...options.markStates().values()]
       .filter(state => state.markId !== null)
+      .map(state => state.conversationId)),
+    unreadTaskIds: new Set([...options.markStates().values()]
+      .filter(state => state.unread)
       .map(state => state.conversationId)),
     pinnedItems: options.pinnedItems.value,
     spaces: options.spaces.value,
@@ -56,6 +70,26 @@ export function useTaskIndexController(options: UseTaskIndexControllerOptions) {
   const spaceRows = computed(() => projection.value.spaceRows)
   const globalTasks = computed(() => projection.value.globalTasks)
   const spaceActivities = computed(() => resolveSpaceActivities(options.tasks.value))
+  const historyRows = computed(() => resolveTaskHistoryRows({
+    projection: projection.value,
+    collapsedSections: options.sidebar().collapsedSections.value,
+    expandedSpaceIds: expandedSpaceIds.value,
+    scopes: options.history().scopes.value,
+  }))
+  const historyAnchors = computed(() => options.history().anchors.value)
+
+  watch(options.activeConversationId, (id) => {
+    const version = ++revealVersion
+    void options.history().setActiveTask(id).catch(() => {
+      if (!disposed && version === revealVersion)
+        options.onHistoryError()
+    })
+  }, { immediate: true })
+
+  onScopeDispose(() => {
+    disposed = true
+    revealVersion += 1
+  })
 
   useIntervalFn(() => {
     relativeTimeNow.value = Date.now()
@@ -73,8 +107,10 @@ export function useTaskIndexController(options: UseTaskIndexControllerOptions) {
     return !options.sidebar().collapsedSpaceIds.value.has(spaceId)
   }
 
-  function toggleSpace(spaceId: string) {
-    void options.sidebar().setSpaceExpanded(spaceId, !isSpaceExpanded(spaceId))
+  async function toggleSpace(spaceId: string) {
+    const expanded = !isSpaceExpanded(spaceId)
+    if (await options.sidebar().setSpaceExpanded(spaceId, expanded) && expanded)
+      await ensureHistoryScope(spaceId)
   }
 
   function isSectionExpanded(section: DesktopTaskSidebarSection) {
@@ -85,28 +121,96 @@ export function useTaskIndexController(options: UseTaskIndexControllerOptions) {
     void options.sidebar().setSectionExpanded(section, expanded)
   }
 
-  function recordScrollAnchor(section: DesktopTaskSidebarSection, index: number) {
-    options.sidebar().recordScrollAnchor(section, index)
+  function recordHistoryAnchor(section: DesktopTaskSidebarSection, anchor: TaskIndex['history']['anchors']['value'][DesktopTaskSidebarSection]) {
+    options.history().recordAnchor(section, anchor)
   }
 
-  const scrollAnchors = computed(() => options.sidebar().scrollAnchors.value)
+  async function requestHistory(spaceId: string | null, more: boolean): Promise<boolean> {
+    const key = getTaskHistoryScopeKey(spaceId)
+    const pending = historyRequests.get(key)
+    if (pending)
+      return pending
+    const errors = new Set(failedHistoryScopes.value)
+    errors.delete(key)
+    failedHistoryScopes.value = errors
+    const request = (async () => {
+      try {
+        if (more)
+          await options.history().loadMore(spaceId)
+        else
+          await options.history().ensureScope(spaceId)
+        return true
+      }
+      catch {
+        if (!disposed) {
+          failedHistoryScopes.value = new Set([...failedHistoryScopes.value, key])
+          options.onHistoryError()
+        }
+        return false
+      }
+      finally {
+        historyRequests.delete(key)
+      }
+    })()
+    historyRequests.set(key, request)
+    return request
+  }
+
+  async function ensureHistoryScope(spaceId: string | null): Promise<void> {
+    const key = getTaskHistoryScopeKey(spaceId)
+    const state = options.history().scopes.value.get(key)
+    if (state?.initialized || state?.loading || failedHistoryScopes.value.has(key))
+      return
+    await requestHistory(spaceId, false)
+  }
+
+  function loadMoreHistory(spaceId: string | null): Promise<boolean> {
+    const state = options.history().scopes.value.get(getTaskHistoryScopeKey(spaceId))
+    return requestHistory(spaceId, state?.initialized ?? false)
+  }
+
+  async function revealTask(task: LocalConversationSummary): Promise<boolean> {
+    const version = ++revealVersion
+    try {
+      await options.history().setActiveTask(task.id)
+      if (disposed || version !== revealVersion)
+        return false
+      const spacePinned = options.pinnedItems.value.some(item => item.kind === 'space' && item.id === task.spaceId)
+      const taskPinned = options.pinnedItems.value.some(item => item.kind === 'conversation' && item.id === task.id)
+      const section = spacePinned || taskPinned ? 'pinned' : task.spaceId === null ? 'tasks' : 'spaces'
+      const expanded = await options.sidebar().setSectionExpanded(section, true)
+      if (!expanded || disposed || version !== revealVersion)
+        return false
+      if (task.spaceId !== null && !await options.sidebar().setSpaceExpanded(task.spaceId, true))
+        return false
+      if (disposed || version !== revealVersion)
+        return false
+      revealTarget.value = { rowKey: `conversation:${task.id}` }
+      return true
+    }
+    catch {
+      if (!disposed && version === revealVersion)
+        options.onHistoryError()
+      return false
+    }
+  }
 
   function pinSpace(spaceId: string) {
     options.onUpdatePinnedItems(prependDesktopTaskPinnedItem(
-      pinnedItems.value,
+      options.pinnedItems.value,
       { id: spaceId, kind: 'space' },
     ))
   }
 
   function pinTask(conversationId: string) {
     options.onUpdatePinnedItems(prependDesktopTaskPinnedItem(
-      pinnedItems.value,
+      options.pinnedItems.value,
       { id: conversationId, kind: 'conversation' },
     ))
   }
 
   function unpinItem(pinKey: string) {
-    options.onUpdatePinnedItems(removeDesktopTaskPinnedItem(pinnedItems.value, pinKey))
+    options.onUpdatePinnedItems(removeDesktopTaskPinnedItem(options.pinnedItems.value, pinKey))
   }
 
   function beginPinnedDrag(pinKey: string) {
@@ -129,7 +233,7 @@ export function useTaskIndexController(options: UseTaskIndexControllerOptions) {
     if (!draggedPinnedItemKey.value)
       return
     options.onUpdatePinnedItems(reorderDesktopTaskPinnedItems(
-      pinnedItems.value,
+      options.pinnedItems.value,
       draggedPinnedItemKey.value,
       pinKey,
       position,
@@ -157,8 +261,14 @@ export function useTaskIndexController(options: UseTaskIndexControllerOptions) {
     pinSpace,
     pinnedItems,
     pinnedRows,
-    recordScrollAnchor,
-    scrollAnchors,
+    ensureHistoryScope,
+    failedHistoryScopes,
+    historyAnchors,
+    historyRows,
+    loadMoreHistory,
+    recordHistoryAnchor,
+    revealTarget,
+    revealTask,
     setSectionExpanded,
     spaceActivities,
     spaceRows,

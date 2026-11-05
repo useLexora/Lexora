@@ -8,7 +8,7 @@ import { useTaskMarks } from '../useTaskMarks'
 const cleanups: (() => void)[] = []
 afterEach(() => cleanups.splice(0).forEach(cleanup => cleanup()))
 const custom: LocalTaskMark = { id: 'mark', name: '需要验证', description: '', color: '#3979d6', taskCount: 0, createdAt: '2026-09-12T00:00:00.000Z', updatedAt: '2026-09-12T00:00:00.000Z' }
-function fixture() {
+function fixture(withSource = false) {
   let state: LocalTaskMarkState = { conversationId: 'a', markId: null, resultRunId: 'result', unread: true, readRevision: 0 }
   const api: LocalChatApi['taskMarks'] = {
     list: vi.fn(async () => [{ ...custom, taskCount: Number(state.markId === custom.id) }]),
@@ -28,13 +28,14 @@ function fixture() {
     }),
   }
   const scope = effectScope()
-  const store = scope.run(() => useTaskMarks({ api, conversations: shallowRef([]), activeConversationId: shallowRef('a'), ready: shallowRef(true), language: shallowRef('zh-CN') }))!
+  const stateSource = withSource ? shallowRef<ReadonlyMap<string, LocalTaskMarkState>>(new Map([['a', state]])) : undefined
+  const store = scope.run(() => useTaskMarks({ api, stateSource, conversations: shallowRef([]), activeConversationId: shallowRef('a'), ready: shallowRef(true), language: shallowRef('zh-CN') }))!
   cleanups.push(() => scope.stop())
-  return { api, store, getState: () => state, replace: (value: Partial<LocalTaskMarkState>) => state = { ...state, ...value } }
+  return { api, store, stateSource, getState: () => state, replace: (value: Partial<LocalTaskMarkState>) => state = { ...state, ...value } }
 }
 
 describe('task mark owner', () => {
-  it('keeps manual unread during the current visit but allows a later visit to read without removing the custom mark', async () => {
+  it('keeps manual unread during a visit, reads it on a later visit, and clears both states without deleting the mark', async () => {
     const f = fixture()
     await f.store.refresh()
     await f.store.assign('a', 'mark')
@@ -45,12 +46,6 @@ describe('task mark owner', () => {
     f.store.beginVisit('a')
     await f.store.readResult('a', state.resultRunId!, state.readRevision)
     expect(f.store.states.value.get('a')).toMatchObject({ unread: false, markId: 'mark' })
-  })
-
-  it('clears a custom mark and manual unread together while retaining the definition and updating its count', async () => {
-    const f = fixture()
-    await f.store.refresh()
-    await f.store.assign('a', 'mark')
     await f.store.setRead('a', false)
     const before = f.store.states.value.get('a')!
     expect(await f.store.clear('a')).toBe(true)
@@ -125,6 +120,22 @@ describe('task mark owner', () => {
     await f.store.remove('mark')
     expect(f.store.items.value).toEqual([])
     expect(f.store.states.value.get('a')).toMatchObject({ markId: null, unread: true })
+  })
+
+  it('preserves a newer unread result when an earlier read receipt arrives after the page source updated', async () => {
+    const f = fixture(true)
+    await f.store.refresh()
+    const delayed = deferred<LocalTaskMarkState>()
+    const oldReceipt = { ...f.getState(), unread: false, readRevision: 1 }
+    vi.mocked(f.api.setRead).mockReturnValueOnce(delayed.promise)
+    const reading = f.store.readResult('a', 'result', 0)
+    await Promise.resolve()
+    f.replace({ resultRunId: 'new-result', unread: true, readRevision: 1 })
+    f.stateSource!.value = new Map([['a', f.getState()]])
+    delayed.resolve(oldReceipt)
+    await reading
+    expect(f.store.states.value.get('a')).toEqual(f.getState())
+    expect(f.store.states.value.get('a')).toMatchObject({ resultRunId: 'new-result', unread: true })
   })
 
   it('does not apply late work after the owner has been disposed', async () => {

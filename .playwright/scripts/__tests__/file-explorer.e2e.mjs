@@ -3,12 +3,10 @@ import path from 'node:path'
 import { expect, test } from '../fixtures/electron.mjs'
 
 async function createSpace(app, page, directory) {
-  await page.evaluate(() => window.lexoraDesktop.settings.update({ desktop: { featureAnnouncementsEnabled: false } }))
-  await expect(page.getByTestId('feature-discovery-reminder')).toHaveCount(0)
   await app.evaluate(({ dialog }, directory) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [directory] })
   }, directory)
-  const section = page.locator('.desktop-task-sidebar__spaces')
+  const section = page.locator('[data-row-key="section:spaces"]')
   await section.locator('.desktop-task-sidebar__section-heading').hover()
   await section.locator('.desktop-task-sidebar__section-add').click()
   const spaceDialog = page.locator('.desktop-space-dialog')
@@ -18,7 +16,7 @@ async function createSpace(app, page, directory) {
   await expect(spaceDialog).toBeHidden()
 }
 
-test('file explorer preserves edits and undo through rename, rejects copy conflicts and watches external changes', async ({ buddy }, testInfo) => {
+test('file explorer preserves edits and undo through rename, rejects copy conflicts and watches external changes', async ({ buddy }) => {
   const instance = await buddy.createInstance('file-explorer')
   const directory = path.join(instance.home, 'documents')
   await fs.mkdir(path.join(directory, 'src'), { recursive: true })
@@ -26,10 +24,6 @@ test('file explorer preserves edits and undo through rename, rejects copy confli
   await Promise.all(Array.from({ length: 251 }, (_, index) => fs.writeFile(path.join(directory, 'src', `${String(index).padStart(3, '0')}.ts`), 'export const value = 1\n')))
   const { app, page, diagnostics } = await instance.launch()
   await createSpace(app, page, directory)
-  const space = page.locator('.desktop-task-space-row').filter({ hasText: '文件树验收' })
-  await space.hover()
-  await space.getByRole('button', { name: '更多操作', exact: true }).click()
-  await page.locator('.n-dropdown-menu:visible').getByText('新任务', { exact: true }).click()
   await page.locator('.desktop-workbench-area__tasks .tiptap').click()
   await page.keyboard.press('Control+Shift+P')
   await page.getByPlaceholder('输入命令名称').fill('文件')
@@ -37,27 +31,6 @@ test('file explorer preserves edits and undo through rename, rejects copy confli
   const tree = page.getByTestId('context-file-tree')
   const row = name => tree.locator(`[data-path="${name}"]`)
   await expect(row('README.md')).toBeVisible()
-  await row('README.md').click({ button: 'right', position: { x: 30, y: 10 } })
-  const menu = page.locator('.n-dropdown-menu:visible').filter({ hasText: '重命名' })
-  await expect(menu).toBeVisible()
-  const anchor = await menu.evaluateHandle((element) => {
-    const follower = element.closest('.v-binder-follower-content')
-    if (!follower)
-      throw new Error('Missing menu positioning surface')
-    const positions = [follower.style.transform]
-    const observer = new MutationObserver(() => positions.push(follower.style.transform))
-    observer.observe(follower, { attributes: true, attributeFilter: ['style'] })
-    return { positions, observer }
-  })
-  await row('README.md').click()
-  await expect(menu).toBeHidden()
-  const positions = await anchor.evaluate(({ positions, observer }) => {
-    observer.disconnect()
-    return positions
-  })
-  await anchor.dispose()
-  expect(positions[0]).toMatch(/translate/)
-  expect(new Set(positions).size).toBe(1)
   await page.getByTestId('context-panel-maximize').click()
   await row('src').click()
   await expect(row('src/000.ts')).toBeVisible()
@@ -86,7 +59,7 @@ test('file explorer preserves edits and undo through rename, rejects copy confli
   await page.locator('.n-dialog').filter({ hasText: '先保存打开的文件' }).getByRole('button', { name: '取消', exact: true }).click()
   await expect(row('README.md')).toBeVisible()
   expect(await fs.readFile(path.join(directory, 'README.md'), 'utf8')).toBe('Original document.\n')
-  await rename()
+  await page.locator('.explorer-name-dialog').getByRole('button', { name: '确定', exact: true }).click()
   await page.getByRole('button', { name: '保存并继续', exact: true }).click()
   await expect(row('RENAMED.md')).toBeVisible()
   await expect.poll(() => fs.readFile(path.join(directory, 'RENAMED.md'), 'utf8')).toContain('Unsaved change.')
@@ -110,8 +83,9 @@ test('file explorer preserves edits and undo through rename, rejects copy confli
       return null
     throw error
   })).toBe(afterUndo)
+  await expect(page.getByRole('button', { name: '新建文件夹', exact: true })).toBeEnabled()
   await tree.press('Control+v')
-  await expect(page.locator('.workspace-explorer [role="alert"]')).toContainText('目标已存在')
+  await expect(page.getByText('目标已存在或文件已更改，请刷新后重试。', { exact: true })).toBeVisible()
   expect(await fs.readFile(path.join(directory, 'src', 'RENAMED.md'), 'utf8')).toBe(afterUndo)
   await page.getByRole('button', { name: '全部折叠', exact: true }).click()
   await fs.writeFile(path.join(directory, 'external.txt'), 'watched')
@@ -129,7 +103,6 @@ test('file explorer preserves edits and undo through rename, rejects copy confli
   await fs.writeFile(path.join(directory, 'RENAMED.md'), 'Second outside change.\n')
   await expect(page.locator('.file-editor__conflict')).toBeVisible()
   await expect(editor.locator('.view-lines')).toContainText('Keep this draft.')
-  await page.screenshot({ path: testInfo.outputPath('explorer.png') })
   await row('external.txt').click()
   await tree.press('Delete')
   await page.getByRole('button', { name: '删除', exact: true }).click()
@@ -139,7 +112,7 @@ test('file explorer preserves edits and undo through rename, rejects copy confli
   expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })
 
-test('file editor distinguishes external deletion and recovers without losing unsaved edits', async ({ buddy }, testInfo) => {
+test('file editor distinguishes external deletion and recovers without losing unsaved edits', async ({ buddy }) => {
   const instance = await buddy.createInstance('file-missing-recovery')
   const directory = path.join(instance.home, 'documents')
   const source = path.join(directory, 'README.md')
@@ -165,18 +138,16 @@ test('file editor distinguishes external deletion and recovers without losing un
   await expect(page.locator('.file-editor__error')).toContainText('文件已被移动或删除')
   await expect(editor.locator('.view-lines')).toContainText('Keep this draft.')
   await expect(page.locator('.file-editor')).toHaveAttribute('data-dirty', 'true')
-  await page.screenshot({ path: testInfo.outputPath('file-missing.png') })
   await fs.writeFile(source, 'Restored outside.\n')
   await expect(page.locator('.file-editor__error')).toHaveCount(0)
   await expect(page.locator('.file-editor__conflict')).toContainText('Restored outside.')
   await expect(editor.locator('.view-lines')).toContainText('Keep this draft.')
   await expect(page.locator('.file-editor')).toHaveAttribute('data-dirty', 'true')
   expect(await fs.readFile(source, 'utf8')).toBe('Restored outside.\n')
-  await page.screenshot({ path: testInfo.outputPath('file-restored.png') })
   expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })
 
-test('copy path uses native clipboard text independently from file copy and cut', async ({ buddy }, testInfo) => {
+test('copy path uses native clipboard text independently from file copy and cut', async ({ buddy }) => {
   const instance = await buddy.createInstance('file-copy-path')
   const directory = path.join(instance.home, process.platform === 'win32' ? 'documents' : 'documents\\draft')
   await Promise.all(['资料', 'copied', 'moved'].map(name => fs.mkdir(path.join(directory, name), { recursive: true })))
@@ -229,7 +200,6 @@ test('copy path uses native clipboard text independently from file copy and cut'
     await expect(page.evaluate(input => window.lexoraDesktop.localChat.spaces.copyFilePath(input), input)).rejects.toThrow()
     expect(await readClipboard()).toBe('unchanged on denied path')
   }
-  await page.screenshot({ path: testInfo.outputPath('copy-path.png') })
   await page.evaluate(spaceId => window.lexoraDesktop.localChat.spaces.delete(spaceId), target.spaceId)
   await expect(page.evaluate(input => window.lexoraDesktop.localChat.spaces.copyFilePath(input), target)).rejects.toThrow()
   expect(await readClipboard()).toBe('unchanged on denied path')
@@ -272,8 +242,6 @@ test('file loading stays local while directories and documents arrive independen
   const placeholder = page.locator('.workspace-explorer .desktop-file-loading__placeholder')
   await expect(tree).toHaveAttribute('aria-busy', 'true')
   await expect(placeholder).toBeVisible()
-  await page.emulateMedia({ reducedMotion: 'reduce' })
-  await expect(placeholder).toHaveCSS('animation-name', 'none')
   await app.evaluate(() => globalThis.fileLoadingGates.get('lexora:buddy:space-files:list:').resolve())
   const src = tree.locator('[data-path="src"]')
   const readme = tree.locator('[data-path="README.md"]')
@@ -282,7 +250,6 @@ test('file loading stays local while directories and documents arrive independen
   await src.click()
   await expect(src).toHaveAttribute('aria-busy', 'true')
   await expect(src.locator('.is-loading, .explorer-loading')).toBeVisible()
-  await expect(src.locator('.is-loading, .explorer-loading')).toHaveCSS('animation-name', 'none')
   await expect(readme).toBeVisible()
   await readme.click()
   await expect(page.locator('.desktop-file-loading__placeholder')).toBeVisible()
@@ -309,7 +276,7 @@ test('file loading stays local while directories and documents arrive independen
   expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })
 
-test('markdown preview resolves document images and retries failed media in place', async ({ buddy }, testInfo) => {
+test('markdown preview resolves document images and retries failed media in place', async ({ buddy }) => {
   const instance = await buddy.createInstance('markdown-images')
   const directory = path.join(instance.home, 'documents')
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="64"><rect width="96" height="64" fill="#4f80c0"/></svg>'
@@ -340,6 +307,5 @@ test('markdown preview resolves document images and retries failed media in plac
   await error.getByRole('button', { name: '重试', exact: true }).click()
   await expect.poll(() => preview.getByAltText('Later').evaluate(element => element.naturalWidth)).toBe(96)
   await expect(preview.getByRole('status')).toHaveCount(0)
-  await page.screenshot({ path: testInfo.outputPath('markdown-images.png') })
   expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })

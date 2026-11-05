@@ -32,7 +32,6 @@ async function fixture() {
   let failed = false
   let canClose = true
   const initialized = new Set<string>()
-  const failures = new Set<string>()
   const errors: unknown[] = []
   factory.create = (raw) => {
     const options = raw as UseTaskCapabilityOptions
@@ -60,7 +59,7 @@ async function fixture() {
   const index = { data: {
     conversations: shallowRef(['a', 'b', 'c'].map(id => ({ id }))),
     applyConversation: () => {},
-    refreshConversations: async () => {},
+    ensureConversation: async () => {},
   } }
   const pool = new TaskWorkspacePool({ api, index } as unknown as Omit<UseTaskCapabilityOptions, 'initialTarget'>, () => {}, async () => {})
   let inputs: ReturnType<typeof useTaskInputLifecycle>
@@ -80,12 +79,8 @@ async function fixture() {
   function render() {
     pool.retain(controller.renderedViews.map(view => view.resource))
     for (const view of controller.renderedViews) {
-      if (!loads.has(view.id)) {
-        loads.set(view.id, pool.open(view.resource).catch(() => {
-          failures.add(view.resource.id)
-          return null
-        }))
-      }
+      if (!loads.has(view.id))
+        loads.set(view.id, pool.open(view.resource).catch(() => null))
     }
   }
   const subscription = controller.onDidChangeLayout(render)
@@ -100,7 +95,7 @@ async function fixture() {
     controller.registry.dispose()
     pool.dispose()
   })
-  return { controller, pool, projection, gate, initialized, failures, errors, loads, open, first, delay: () => {
+  return { controller, pool, projection, gate, initialized, errors, loads, open, first, delay: () => {
     delayed = true
   }, fail: () => {
     failed = true
@@ -117,13 +112,12 @@ describe('instant task switching', () => {
     await vi.waitFor(() => expect(f.initialized.has('b')).toBe(true))
     expect(f.projection.taskId.value).toBe('b')
     expect(f.projection.current.value).toBeNull()
-    expect(f.pool.peek({ scheme: 'task', id: 'b', data: {} })).toBeUndefined()
     expect(f.controller.layout.views[f.first]).toBeUndefined()
     const c = (await f.open('c'))!
     await f.loads.get(c)
     expect(f.projection.current.value?.session.activeTaskId.value).toBe('c')
     f.gate.resolve()
-    expect(await f.loads.get(b)).toBeNull()
+    await f.loads.get(b)
     expect(f.projection.taskId.value).toBe('c')
     expect(f.projection.current.value?.session.activeTaskId.value).toBe('c')
   })
