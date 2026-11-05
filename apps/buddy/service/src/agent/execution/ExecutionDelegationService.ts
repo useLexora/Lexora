@@ -30,6 +30,7 @@ const delegationFields = z.object({
   review: executionReviewSchema.optional(),
   contextMode: executionContextModeSchema.optional(),
   contextSourceIds: z.array(z.string().min(1).max(256)).max(64).optional(),
+  inputSourceId: z.string().optional(),
   targetId: z.string().min(1).max(256).optional(),
   runId: z.string().min(1).max(256).optional(),
   text: z.string().trim().min(1).max(MAX_BUDDY_MESSAGE_TEXT_LENGTH).optional(),
