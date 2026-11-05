@@ -10,6 +10,7 @@ import { extensionAgentSchema } from './extensionAgent.ts'
 import { extensionConditionDefinitionSchema } from './extensionConditions.ts'
 import { extensionDataSourceSchema } from './extensionData.ts'
 import { extensionAuthorSchema } from './extensionIdentity.ts'
+import { inferenceContributionSchema, inferenceOriginSchema } from './extensionInference.ts'
 import { extensionMcpConnectorContributionSchema } from './extensionMcpConnectors.ts'
 import { extensionPathSchema } from './extensionPath.ts'
 import { extensionSettingsGroups, extensionSettingsModules, extensionSettingsSchema, validateExtensionSetting } from './extensionSettings.ts'
@@ -81,6 +82,9 @@ export const extensionPlacementSchema = z.discriminatedUnion('kind', [
 export type ExtensionPlacement = z.infer<typeof extensionPlacementSchema>
 export const extensionPermissionsSchema = z.object({
   shells: z.boolean().default(false),
+  inference: z.boolean().default(false),
+  inferenceGpu: z.boolean().default(false),
+  inferenceNetwork: z.array(inferenceOriginSchema).max(8).default([]),
   agent: z.boolean().default(false),
   models: z.boolean().default(false),
   tasks: z.enum(['none', 'read', 'title']).default('none'),
@@ -141,6 +145,7 @@ export const extensionManifestSchema = extensionMetadataSchema.extend({
     themes: z.array(themeContributionSchema).max(64).default([]),
     conditions: z.array(extensionConditionDefinitionSchema).max(32).default([]),
     agent: extensionAgentSchema.optional(),
+    inference: inferenceContributionSchema.optional(),
     shells: extensionShellContributionSchema.optional(),
     settings: extensionSettingsSchema.prefault({}),
     commands: z.array(z.object({ id: contributionId, title: z.string().min(1).max(100), hidden: z.boolean().default(false), slash: workbenchSlashSchema.optional(), when: workbenchConditionSchema.optional() }).strict()).max(64).default([]),
@@ -235,6 +240,12 @@ export const extensionManifestSchema = extensionMetadataSchema.extend({
     if (priority?.type !== 'number' || priority.default !== 0 || priority.min !== 0 || priority.max !== 100)
       issue('Shell priority must reference a number setting with default 0 and range 0-100')
   }
+  if (manifest.contributes.inference?.runtimes.some(runtime => runtime.gpu) && !manifest.permissions.inferenceGpu)
+    issue('GPU inference requires inferenceGpu permission')
+  if (manifest.permissions.inferenceGpu && !manifest.permissions.inference)
+    issue('GPU inference requires inference permission')
+  if ((manifest.contributes.inference || manifest.permissions.inference || manifest.permissions.inferenceNetwork.length) && (manifest.apiVersion < 3 || !manifest.entry || !manifest.permissions.inference))
+    issue('Inference requires API 3, an entry and inference permission')
   if (agent && (!manifest.entry || !manifest.permissions.agent))
     issue('Agent contributions require an entry and agent permission')
   if (typeof agent?.enabledWhen === 'string' && !settings.items.some(item => item.key === agent.enabledWhen && item.type === 'boolean'))
@@ -253,6 +264,12 @@ export const extensionManifestSchema = extensionMetadataSchema.extend({
       issue('Task conditions require task permission')
   }
   const keys = new Set<string>()
+  for (const module of settings.modules) {
+    if (module.view && !manifest.contributes.views.some(view => view.id === module.view && view.resource === 'none' && view.location === 'page'))
+      issue('Setting module views must reference an owned resource-free page view')
+    if (module.view && settings.groups.some(group => group.module === module.id))
+      issue('Setting modules cannot combine a view with setting groups')
+  }
   for (const group of settings.groups) {
     if (!settings.modules.some(module => module.id === group.module) && !extensionSettingsModules.includes(group.module))
       issue('Setting groups must reference an owned or built-in module')
@@ -331,6 +348,9 @@ export function extensionCompatible(manifest: ExtensionManifest, version: string
 export function addedExtensionPermissions(previous: ExtensionPermissions | undefined, next: ExtensionPermissions): string[] {
   return [
     ...(next.shells && !previous?.shells ? ['shells'] : []),
+    ...(next.inferenceGpu && !previous?.inferenceGpu ? ['inferenceGpu'] : []),
+    ...(next.inference && !previous?.inference ? ['inference'] : []),
+    ...next.inferenceNetwork.filter(origin => !previous?.inferenceNetwork?.includes(origin)).map(origin => `inferenceNetwork:${origin}`),
     ...(next.themeManagement && !previous?.themeManagement ? ['themeManagement'] : []),
     ...(next.taskMessages && !previous?.taskMessages ? ['taskMessages'] : []),
     ...next.data.filter(source => !previous?.data?.includes(source)).map(source => `data:${source}`),

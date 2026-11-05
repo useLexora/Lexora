@@ -7,6 +7,9 @@
 | `themeManagement: true` | 校验、预览和保存用户主题；仅声明主题无需此权限 |
 | `shells: true` | 声明并检测固定命令解释器候选；执行仍归宿主 |
 | `agent: true` | 追加 Agent 指令、可调用工具或任务动作 |
+| `inference: true` | 提供后台模型能力，资源准备与调用见 [后台推理](inference.md) |
+| `inferenceGpu: true` | 允许声明 GPU 的推理运行时使用计算设备 |
+| `inferenceNetwork: ["https://example.com"]` | 允许推理运行时通过宿主向指定服务发送模型输入，凭据由宿主管理 |
 | `models: true` | 工具或动作调用期间请求已配置模型，凭据留在宿主 |
 | `tasks: "read" / "title"` | 读取当前任务标题元数据；title 额外允许安全改名 |
 | `data: ["task.metrics"]` | 仅读取宿主为当前视图绑定的任务与分支统计；包含任务、分支标识，不含正文、日志或凭据。见 [数据来源](data.md) |

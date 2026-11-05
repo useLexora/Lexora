@@ -51,6 +51,11 @@ const referenceRequests = new ExtensionReferenceRequests((session, message) => {
   return !!frame?.visible && frame.surface.session === session && frame.surface.visible && frame.surface.eligible && frame.surface.ready && !frame.surface.error
 })
 onScopeDispose(views.onReferenceReveal((session, input, signal) => referenceRequests.request(session, input, signal)))
+onScopeDispose(views.onSettingsHeaderAction((session, id) => {
+  const frame = frames.get(session.token)
+  if (frame?.surface.session === session && frame.visible && document.visibilityState === 'visible')
+    notify(session.token, frame, { type: 'view:settings-header-action:activated', data: { id } })
+}))
 function isOverlay(surface: ExtensionSurface) {
   const item = state.installed.value.find(item => item.manifest.id === surface.input.extensionId)
   return !!item?.manifest.permissions.windowEffects && (!!surface.anchor || item.manifest.contributes.views.some(view => view.id === surface.input.viewType && view.location === 'window-overlay'))

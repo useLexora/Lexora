@@ -13,7 +13,7 @@ describe('independent model capability editing', () => {
     model.value = { ...model.value, api: 'openai-completions', capabilities: ['text', 'audio'] }
     input.startEditing()
     expect(input.form.video).toBe(false)
-    expect(input.editableInputs.value).toEqual({ image: true, pdf: true, audio: true, video: false })
+    expect(input.editableInputs.value).toEqual({ image: true, pdf: true, audio: true, video: false, toolCall: true })
     input.form.video = true
     input.form.image = true
     await input.save()
@@ -21,28 +21,41 @@ describe('independent model capability editing', () => {
     await input.restore()
     expect(model.value.capabilityOverrides).toBeNull()
   })
-  it('saves only changed fields and keeps edits in the other open section', async () => {
+  it('saves only changed inputs and tool support while keeping edits in the other open section', async () => {
     const { input, thinking, model, updateSource } = createForms()
+    updateSource({ toolCall: false })
     input.startEditing()
     thinking.startEditing()
+    expect(input.form.toolCall).toBe(false)
     input.form.image = true
+    input.form.toolCall = true
     thinking.updateLevels(['high'])
     updateSource({ pdf: true })
     await input.save()
-    expect(model.value.capabilityOverrides).toEqual({ image: true })
+    expect(model.value.capabilityOverrides).toEqual({ image: true, toolCall: true })
     expect(thinking.hasOverride.value).toBe(false)
     await thinking.save()
-    expect(model.value.capabilityOverrides).toEqual({ image: true, reasoningOptions: ['high'] })
+    expect(model.value.capabilityOverrides).toEqual({ image: true, toolCall: true, reasoningOptions: ['high'] })
     input.startEditing()
     expect(input.form.pdf).toBe(true)
+    expect(input.form.toolCall).toBe(true)
+    await input.restore()
+    expect(model.value.capabilityOverrides).toEqual({ reasoningOptions: ['high'] })
+    expect(model.value.toolCalling).toBe(false)
   })
 
   it('restores inheritance for one section without discarding another section or legacy explicit values', async () => {
-    const { input, thinking, model, updateSource } = createForms({ image: true, pdf: false, audio: false, video: false, reasoningOptions: ['off', 'low', 'high'] })
+    const { input, thinking, model, updateSource } = createForms({ image: true, pdf: false, audio: false, video: false, toolCall: false, reasoningOptions: ['off', 'low', 'high'] })
+    updateSource({ toolCall: true })
     expect(input.hasOverride.value).toBe(true)
     expect(thinking.hasOverride.value).toBe(true)
+    input.startEditing()
+    expect(input.form.toolCall).toBe(false)
+    input.form.image = false
+    await input.save()
+    expect(model.value.capabilityOverrides).toEqual({ image: false, pdf: false, audio: false, video: false, toolCall: false, reasoningOptions: ['off', 'low', 'high'] })
     await thinking.restore()
-    expect(model.value.capabilityOverrides).toEqual({ image: true, pdf: false, audio: false, video: false })
+    expect(model.value.capabilityOverrides).toEqual({ image: false, pdf: false, audio: false, video: false, toolCall: false })
     expect(thinking.hasOverride.value).toBe(false)
     updateSource({ reasoningOptions: ['off', 'high', 'max'] })
     thinking.startEditing()
@@ -50,6 +63,7 @@ describe('independent model capability editing', () => {
     await input.restore()
     expect(model.value.capabilityOverrides).toBeNull()
     expect(input.hasOverride.value).toBe(false)
+    expect(model.value.toolCalling).toBe(true)
   })
 
   it('leaves source values unpinned when unchanged forms are saved', async () => {
@@ -107,6 +121,7 @@ function createForms(overrides: ModelCapabilityOverrides | null = null) {
       sourceCapabilities,
       capabilities: ['text', ...(['image', 'pdf', 'audio', 'video'] as const).filter(key => effective[key])],
       reasoningOptions: effective.reasoningOptions,
+      toolCalling: effective.toolCall,
     }
   }
   updateSource()

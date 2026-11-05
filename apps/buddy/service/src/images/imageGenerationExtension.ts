@@ -37,7 +37,7 @@ export function createImageGenerationCapability(options: CreateImageGenerationEx
       exposure: 'direct',
       keywords: 'image generate edit picture draw 图片 生成 绘制 画图 编辑 修改',
       tools: [IMAGE_TOOLS.generate],
-      available: ({ model }) => Boolean(model && options.service.supports(model) && (!state.description || state.description.generate.length || state.description.edit.length)),
+      available: ({ model }) => Boolean(model && options.service.supports(model)),
     }],
   }
 }
@@ -128,25 +128,22 @@ function imageToolFailure(
   request?: ImageRequestRef,
   artifactIds: string[] = [],
 ) {
-  const diagnosticText = diagnostic
-    ? Object.entries(diagnostic).map(([key, value]) => `${key}=${value}`).join(', ')
-    : ''
-  const recovery = code === 'IMAGE_GENERATION_BLOCKED'
+  const message = code === 'IMAGE_GENERATION_BLOCKED'
     ? '. No new image request was submitted because a matching request in this run is active or unresolved. Repeating it may create duplicate images or charges. Inspect any existing artifacts before choosing another approach.'
     : outcome === 'partial'
       ? '. The provider returned a result, but local publication was incomplete. Inspect existing artifacts before continuing. Do not automatically generate again.'
       : outcome === 'unknown' || code === 'IMAGE_GENERATION_INCOMPLETE'
         ? '. The provider result is unknown; do not automatically repeat this image request.'
         : code === 'IMAGE_GENERATION_REFERENCE_UNAVAILABLE'
-          ? '. The reference is missing, invalid or unreadable under the current directory permissions. No image request was submitted. Resolve the reference or its access before trying again.'
+          ? '. The reference is missing, invalid or unreadable under the current directory permissions. No image request was submitted.'
           : code === 'IMAGE_GENERATION_UNSUPPORTED'
-            ? '. The selected model, authentication method or channel does not support image generation. Do not automatically switch accounts or billing routes.'
+            ? '. No supported image route is available under the current policy. No image request was submitted.'
             : code === 'IMAGE_GENERATION_RESOURCE_EXHAUSTED' || code === 'IMAGE_GENERATION_BUSY'
-              ? '. The image backend is busy or lacks resources. Do not automatically repeat this request, stop other models, or reduce the requested image requirements. Ask the user to adjust the backend or retry later.'
+              ? '. The image backend is busy or lacks resources.'
               : ''
   return {
     content: [{
-      text: `Lexora Buddy image generation failed: ${code}${diagnosticText ? ` (${diagnosticText})` : ''}${recovery}`,
+      text: JSON.stringify({ code, outcome, artifactIds, ...(request ? { request } : {}), ...(diagnostic ? { diagnostic } : {}), ...(message ? { message: message.slice(2) } : {}) }),
       type: 'text' as const,
     }],
     details: {

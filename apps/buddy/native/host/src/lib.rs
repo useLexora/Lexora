@@ -1,6 +1,11 @@
 pub mod file_engine;
 pub mod file_reader;
 pub mod file_writer;
+#[cfg(windows)]
+pub mod inference_process;
+#[cfg(target_os = "macos")]
+#[path = "inference_process_macos.rs"]
+pub mod inference_process;
 #[cfg(target_os = "linux")]
 pub mod linux_update;
 pub mod private_directories;

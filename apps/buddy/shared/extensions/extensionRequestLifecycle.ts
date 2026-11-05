@@ -1,7 +1,13 @@
 const ioMethods = new Set([
+  'inference.credentials.set',
+  'inference.credentials.remove',
+  'inference.resources.prepare',
+  'inference.bind',
+  'inference.stop',
   'network.get',
   'network.download',
   'resources.importFile',
+  'resources.hash',
   'resources.beginCreate',
   'resources.writeChunk',
   'resources.commitSave',

@@ -19,6 +19,7 @@ import {
   TextDescription20Regular,
   Window20Regular,
 } from '@vicons/fluent'
+import { NTag } from 'naive-ui'
 import { computed } from 'vue'
 
 import { useRoute } from 'vue-router'
@@ -26,6 +27,7 @@ import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { supportsSettingsCategory } from '@/platform/desktop/desktopCapabilities'
 import DataStorageIcon from '@/shared/ui/icon/DataStorageIcon.vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
+import DesktopPluginIcon from '@/shared/ui/icon/DesktopPluginIcon.vue'
 import ModelIcon from '@/shared/ui/icon/ModelIcon.vue'
 import RuntimeIcon from '@/shared/ui/icon/RuntimeIcon.vue'
 import SkillIcon from '@/shared/ui/icon/SkillIcon.vue'
@@ -40,14 +42,19 @@ const props = defineProps<{
   capabilities: BuddyCapabilities | null
 }>()
 const route = useRoute()
-const { registry } = useSettingsContext()
+const { registry, appInfo } = useSettingsContext()
 const { t } = useBuddyI18n(() => props.language)
 const icons = { 'general': Settings20Regular, 'appearance': PaintBrush20Regular, 'notifications': Alert20Regular, 'speech': Mic20Regular, 'pet': AnimalCat20Regular, 'shortcuts': Keyboard20Regular, 'models': ModelIcon, 'runtime': RuntimeIcon, 'prompts': TextDescription20Regular, 'mcp': PlugConnected20Regular, 'skills': SkillIcon, 'usage': DataUsage20Regular, 'web': Globe20Regular, 'browser': Window20Regular, 'file-opening': Open20Regular, 'storage': DataStorageIcon, 'proxy': Server20Regular, 'logs': DocumentTextClock20Regular, 'about': Info20Regular }
 const activeModuleId = computed(() => route.meta.settingsModule ?? route.params.moduleId)
-const visibleGroups = computed(() => settingsNavigationSections.map(section => ({
-  ...section,
-  modules: registry.modules.value.filter(module => module.section === section.id && (!module.category || supportsSettingsCategory(props.capabilities, module.category))),
-})).filter(section => section.modules.length))
+const visibleGroups = computed(() => {
+  const platform = appInfo.value?.platform
+  return settingsNavigationSections.map(section => ({
+    ...section,
+    modules: registry.modules.value
+      .filter(module => module.section === section.id && (!module.category || supportsSettingsCategory(props.capabilities, module.category)))
+      .map(module => ({ ...module, isExperimental: Boolean(platform && module.experimental?.platforms.includes(platform)) })),
+  })).filter(section => section.modules.length)
+})
 </script>
 
 <template>
@@ -72,8 +79,12 @@ const visibleGroups = computed(() => settingsNavigationSections.map(section => (
           :aria-current="activeModuleId === module.id ? 'page' : undefined"
           :to="settingsModuleLocation(module)"
         >
-          <DesktopIcon :component="module.category ? icons[module.category] : PlugConnected20Regular" />
-          <span>{{ settingsText(module.title, language) }}</span>
+          <DesktopIcon v-if="module.category" :component="icons[module.category]" />
+          <DesktopPluginIcon v-else :src="module.iconUrl" />
+          <span class="min-w-0">{{ settingsText(module.title, language) }}</span>
+          <NTag v-if="module.isExperimental" size="tiny" :bordered="false" class="flex-none" data-testid="settings-experimental-tag">
+            {{ t('desktop.settings.experimental') }}
+          </NTag>
         </RouterLink>
       </section>
     </div>

@@ -211,7 +211,7 @@ fn execute(request: &Request, cancelled: &AtomicBool, job: &Job) -> io::Result<i
     result
 }
 
-fn quote_argument(argument: &str) -> String {
+pub(crate) fn quote_argument(argument: &str) -> String {
     let mut result = String::from("\"");
     let mut slashes = 0;
     for character in argument.chars() {

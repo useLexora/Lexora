@@ -1,6 +1,7 @@
 import type zhCN from '../zh-CN/settings'
 
 export default {
+  'desktop.settings.experimental': 'Experimental',
   'desktop.settings.category.speech': 'Voice',
   'desktop.settings.categoryDescription.speech': 'Set up voice input and read aloud.',
   'desktop.backup.completed': 'Cloud backup completed',

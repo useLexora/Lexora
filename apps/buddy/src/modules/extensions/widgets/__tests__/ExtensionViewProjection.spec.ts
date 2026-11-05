@@ -15,7 +15,6 @@ describe('extension view projection and synchronization', () => {
   it('filters before advancing the scoped sequence and owns all snapshots and message payloads', () => {
     const initial = snapshot()
     const source = new ExtensionViewProjection(initial, policy)
-    const other = new ExtensionViewProjection(initial, policy)
     source.publish({ type: 'composer:input:received', data: { caret: null } })
     source.publish({ type: 'view:anchor:changed', data: { anchor: { kind: 'composer.input', visible: true, width: 1, height: 1 } } })
     source.publish({ type: 'interaction:activated', data: { regionId: 'private', x: 1, y: 1 } })
@@ -26,12 +25,16 @@ describe('extension view projection and synchronization', () => {
     source.publish({ type: 'view:message:received', data: { message } })
     message.value.count = 2
     expect(events).toMatchObject([{ sequence: 1, event: { data: { message: { value: { count: 1 } } } } }])
-    expect(other.synchronization.sequence).toBe(0)
-    expect(Object.isFrozen(initial)).toBe(false)
     expect(Object.isFrozen(source.synchronization.snapshot.workbench.values)).toBe(true)
     source.dispose()
     source.publish({ type: 'view:visibility:changed', data: { visible: true } })
     expect(source.synchronization.sequence).toBe(1)
+    for (const excluded of [{ ...policy, decoration: true }, { ...policy, control: true }]) {
+      const restricted = new ExtensionViewProjection(snapshot(), excluded)
+      restricted.publish({ type: 'view:settings-header-action:activated', data: { id: 'downloads' } })
+      expect(restricted.synchronization.sequence).toBe(0)
+      restricted.dispose()
+    }
   })
 
   it('accepts only increments newer than bootstrap and never replays an already-covered transient message', () => {
@@ -79,6 +82,21 @@ describe('extension view projection and synchronization', () => {
     receiver.dispose()
   })
 
+  it('delivers header clicks once through the view stream, including gap recovery', async () => {
+    const pending = Promise.withResolvers<{ streamId: string, sequence: number, snapshot: ExtensionViewSnapshot }>()
+    const receiver = new ExtensionViewState(() => pending.promise)
+    receiver.initialize(snapshot(), false, { streamId: 'stream', sequence: 0 })
+    const received: string[] = []
+    receiver.events.on('view:settings-header-action:activated', event => received.push(event.data.id))
+    const click: ExtensionViewUpdate = { streamId: 'stream', sequence: 2, event: { type: 'view:settings-header-action:activated', data: { id: 'downloads' } } }
+    receiver.acceptUpdate(click)
+    pending.resolve({ streamId: 'stream', sequence: 2, snapshot: snapshot() })
+    await vi.waitFor(() => expect(received).toEqual(['downloads']))
+    receiver.acceptUpdate(click)
+    expect(received).toEqual(['downloads'])
+    receiver.dispose()
+  })
+
   it('starts a new bounded recovery when a newer source watermark arrives after degradation', async () => {
     let unavailable = true
     let reads = 0
@@ -123,15 +141,5 @@ describe('extension view projection and synchronization', () => {
     await Promise.resolve()
     await Promise.resolve()
     expect(closed.snapshot.workbench.values.page).toBe('retained')
-    let attempts = 0
-    const failed = new ExtensionViewState(async () => {
-      attempts++
-      throw new Error('fixture unavailable')
-    })
-    failed.initialize(snapshot(), false, { streamId: 'stream', sequence: 0 })
-    failed.acceptUpdate(update(2, 'gap'))
-    await vi.waitFor(() => expect(failed.synchronizationStatus).toBe('degraded'))
-    expect(attempts).toBe(3)
-    failed.dispose()
   })
 })

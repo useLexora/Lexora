@@ -78,6 +78,10 @@ export function projectExtensionViewEvent(snapshot: ExtensionViewSnapshot, input
       if (!policy.interaction)
         return null
       break
+    case 'view:settings-header-action:activated':
+      if (policy.decoration || policy.control)
+        return null
+      break
     case 'view:message:received': break
     default: return null
   }

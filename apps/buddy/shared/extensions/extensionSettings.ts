@@ -1,5 +1,6 @@
 import type { EventSnapshot } from '../events/eventTypes'
 import { z } from 'zod'
+import { OPERATING_SYSTEM } from '../platform/identifiers.ts'
 import { builtinSettingsModuleIds, publicSettingsGroups } from '../settings/settingsCatalog.ts'
 import { extensionConditionReferenceSchema } from './extensionConditions.ts'
 
@@ -32,8 +33,19 @@ export const extensionSettingItemSchema = z.discriminatedUnion('type', [
   z.object({ ...itemBase, type: z.literal('model'), default: extensionModelSelectionSchema.nullable().default(null) }).strict(),
 ])
 export type ExtensionSettingItem = z.infer<typeof extensionSettingItemSchema>
+const extensionSettingsExperimentalSchema = z.object({
+  platforms: z.array(z.enum(OPERATING_SYSTEM)).min(1).max(3).refine(platforms => new Set(platforms).size === platforms.length),
+}).strict()
+export type ExtensionSettingsExperimental = z.infer<typeof extensionSettingsExperimentalSchema>
 export const extensionSettingsSchema = z.object({
-  modules: z.array(z.object({ id: extensionSettingIdSchema, title: z.string().min(1).max(40), order: z.number().int().min(-1000).max(1000).default(0) }).strict()).max(8).default([]),
+  modules: z.array(z.object({
+    id: extensionSettingIdSchema,
+    title: z.string().min(1).max(40),
+    section: z.enum(['plugins', 'integrations']).default('plugins'),
+    view: extensionSettingIdSchema.optional(),
+    order: z.number().int().min(-1000).max(1000).default(0),
+    experimental: extensionSettingsExperimentalSchema.optional(),
+  }).strict()).max(8).default([]),
   groups: z.array(z.object({ id: extensionSettingIdSchema, module: extensionSettingIdSchema, title: z.string().min(1).max(100), order: z.number().int().min(-1000).max(1000).default(0) }).strict()).max(32).default([]),
   items: z.array(extensionSettingItemSchema).max(64).default([]),
 }).strict()

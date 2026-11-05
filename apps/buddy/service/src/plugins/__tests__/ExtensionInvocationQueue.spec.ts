@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ExtensionInvocationQueue } from '../ExtensionInvocationQueue'
+import { ExtensionInvocationQueue } from '../../../../shared/extensions/ExtensionInvocationQueue'
 
 describe('extension invocation admission', () => {
   it('keeps the global execution and waiting bounds and reuses cancelled queue capacity', async () => {

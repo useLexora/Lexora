@@ -20,7 +20,7 @@
 | 用户目标 | 选择 | 深入阅读 |
 | --- | --- | --- |
 | 为指定后缀提供预览或编辑入口 | `fileHandlers`；无文件入口用 `launchers` | [文件关联](resources.md#文件关联与独立入口) |
-| 读取用户选择的文件、目录或远端文件 | `resources`，远端使用受控 `network` | [资源](resources.md) |
+| 读取用户选择的文件、目录或远端文件、分页文本 | `resources`，远端使用受控 `network` | [资源](resources.md) |
 | 生成私有二进制、导出副本 | `resources.createFile`、`saveFile` | [资源与导出](resources.md#本地资源与导出) |
 | 编辑原件、保存草稿、处理冲突与恢复 | `fileEditing` 与交互视图 `documents` | [文档编辑](documents.md) |
 | 将材料放入任务草稿、定位原文 | 视图 `references`，工具按调用资格解析引用 | [引用](references.md) |
@@ -33,9 +33,11 @@
 | 让主模型主动调用插件 | `agent.tools`，声明读写类别 | [Agent](agent.md) |
 | 输入、完成事件或任务菜单触发动作 | `agent.actions` 与精确触发声明 | [动作](agent.md#任务动作)、[事件](events.md) |
 | 请求已配置模型、读取当前任务 | 本次调用的 `models` / `task`，按权限开放 | [模型与任务](agent.md#模型与任务权限) |
+| 提供本地或 API 对话、语音和图像模型 | `contributes.inference`，管理页面归插件 | [后台推理](inference.md) |
 | 提供可搜索的工作方法与配套资源 | `contributes.skills` | [Skills](skills.md) |
 | 提供由宿主管理认证与启用的远端连接 | `contributes.mcpConnectors`，可独立声明 | [MCP 连接](mcp-connectors.md) |
 | 提供可由伙伴调用的专业 NPC | `contributes.subagents`，可独立声明 | [伙伴：NPC](buddies.md) |
+| 自定义设置页标题按钮 | `settings.header-actions`、`ViewContext.setSettingsHeaderActions/onSettingsHeaderAction` | [设置](settings.md#设置页标题动作) |
 | 原生设置与实时生效条件 | `settings`、`configuration`、`conditions` | [设置](settings.md)、[条件](conditions.md) |
 | 关闭页面后仍通知或定时执行 | 后台命令、`notifications`、`schedules` | [命令](commands.md#通知与定时命令) |
 | 检测用户已有命令解释器 | 声明式 `shells`；运行仍归宿主 | [Shell](shells.md) |

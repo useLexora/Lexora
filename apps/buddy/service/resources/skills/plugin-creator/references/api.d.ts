@@ -106,6 +106,7 @@ export interface ResourceApi {
   listFiles: () => Promise<LocalFile[]>
   getUrl: (resource: Pick<LocalFile, 'id'> | { packagePath: string }) => Promise<string>
   readBytes: (resource: Pick<LocalFile, 'id'>, options?: { offset?: number, length?: number }) => Promise<{ data: Uint8Array, size: number, eof: boolean }>
+  hash: (resource: Pick<LocalFile, 'id'>, options?: { signal?: AbortSignal }) => Promise<{ sha256: string, size: number }>
   importFile: (resource: Resource, options?: ResourceTransferOptions) => Promise<LocalFile>
   createFile: (options: { name: string, data: Blob | ArrayBuffer | Uint8Array, mimeType?: string, signal?: AbortSignal }) => Promise<LocalFile>
   release: (resource: Pick<LocalFile, 'id'>) => Promise<void>
@@ -121,8 +122,13 @@ export interface LocalResourceApi extends ResourceApi {
   revokeDirectory: (directory: Pick<LocalDirectory, 'id'>) => Promise<void>
   saveFile: (options: { name: string, data: Blob | ArrayBuffer | Uint8Array }) => Promise<boolean>
 }
+export interface NetworkResponse {
+  status: number
+  text: string
+  headers: { link?: string }
+}
 export interface NetworkApi {
-  get: (url: string) => Promise<{ status: number, text: string }>
+  get: (url: string) => Promise<NetworkResponse>
   download: (url: string, options?: ResourceTransferOptions) => Promise<LocalFile>
 }
 export interface ScheduleInput { id: string, command: string, enabled: boolean, intervalMinutes: number }
@@ -150,7 +156,7 @@ export interface ConfigurationEvents {
 export interface WorkbenchPaneEvents {
   'workbench:panes:changed': { readonly panes: readonly PaneSnapshot[] }
 }
-export interface ExtensionEvents extends ConfigurationEvents, WorkbenchPaneEvents {}
+export interface ExtensionEvents extends ConfigurationEvents, WorkbenchPaneEvents, InferenceResourceEvents {}
 export interface TaskTitle {
   id: string
   title: string | null
@@ -260,6 +266,7 @@ export interface ExtensionContext {
   }
   readonly conditions: ConditionApi
   readonly shells: { detect: () => Promise<ShellCandidate[]> }
+  readonly inference: InferenceApi
   readonly agent: {
     registerTool: (id: string, execute: (input: Record<string, Json>, context: AgentToolContext) => Json | void | Promise<Json | void>) => Disposable
     registerAction: (id: string, execute: (context: AgentActionContext) => AgentActionResult | Promise<AgentActionResult>) => Disposable
@@ -415,6 +422,13 @@ export interface ExtensionDataApi {
   observe: <Source extends ExtensionDataSource>(query: ExtensionDataQuery<Source>, listener: (snapshot: ExtensionDataSnapshot<Source>) => unknown) => Disposable
 }
 
+export interface SettingsHeaderAction {
+  readonly id: string
+  readonly title: string
+  readonly icon?: 'settings' | 'download' | 'refresh' | 'add' | 'back' | 'more'
+  readonly disabled?: boolean
+  readonly progress?: number | null
+}
 export interface ViewContext {
   readonly documents: DocumentApi
   readonly clipboard: {
@@ -422,6 +436,8 @@ export interface ViewContext {
     write: (data: { text?: string, html?: string }) => Promise<void>
   }
   setDocumentInfo: (info: { title: string, dirty: boolean }) => Promise<void>
+  setSettingsHeaderActions: (actions: readonly SettingsHeaderAction[]) => Promise<void>
+  onSettingsHeaderAction: (listener: (id: string) => void) => Disposable
   onBeforeClose: (handler: (signal: AbortSignal) => boolean | Promise<boolean>) => Disposable
   readonly workers: WorkerApi
   readonly themes: ThemeApi
@@ -481,6 +497,7 @@ export interface ExtensionDataEvents {
   'data:changed': { readonly id: string, readonly snapshot: ExtensionDataSnapshot | null }
 }
 export interface ViewStateEvents {
+  'view:settings-header-action:activated': { readonly id: string }
   'view:visibility:changed': { readonly visible: boolean }
   'view:environment:changed': { readonly environment: ViewEnvironment }
 }
@@ -578,3 +595,157 @@ export interface ThemeApi {
   export: (id: string) => Promise<string>
   onDidChange: (listener: (snapshot: ThemeSnapshot) => void) => Disposable
 }
+
+/** contributes.inference; model service naming is independent of the plugin name and navigation title. */
+export type InferencePlatform = 'linux-x64' | 'windows-x64' | 'macos-arm64'
+export interface InferenceEnvironment {
+  platform: InferencePlatform | null
+  executionMode: 'isolated' | 'supervised' | 'unsupported'
+}
+export interface InferenceContribution {
+  /** Trimmed, nonblank, 1–100 characters. Defaults to manifest.name; does not change provider or model IDs. */
+  providerName?: string
+  preparation?: { entry: string, platforms: InferencePlatform[] }
+  runtimes: { id: string, entry: string, platforms: InferencePlatform[], gpu?: boolean, capacity?: number, idleTimeoutMs?: number }[]
+  capabilities: { id: string, title: string, kind: 'speech.transcribe' | 'speech.synthesize' | 'chat.completion' | 'image.generate' | 'image.read', runtime: string, streamingInput?: boolean, streamingOutput?: boolean }[]
+}
+
+export interface InferenceResourceSet { readonly id: string, readonly revision: string, readonly kind: 'engine' | 'model', readonly files: number, readonly bytes: number }
+export interface InferenceResourceStatus extends InferenceResourceSet { readonly authorized: boolean }
+export interface InferenceResourceFile { path: string, sha256: string, size?: number, executable?: boolean, source: { url: string } | { resourceId: string, reference?: boolean } | { directoryId: string, path: string, reference: true } }
+export interface InferencePreparation {
+  inputs: { id: string, sha256: string, size: number, source: { url: string } | { resourceId: string } }[]
+  options: Json
+  maxBytes: number
+  maxFiles: number
+}
+export interface InferencePrepare {
+  id: string
+  kind: 'engine' | 'model'
+  files: InferenceResourceFile[]
+  preparation?: InferencePreparation
+}
+export interface InferenceResourceProgress {
+  readonly resource: string
+  readonly path: string
+  readonly phase: 'connect' | 'download' | 'verify' | 'extract' | 'ready'
+  readonly completedFiles: number
+  readonly totalFiles: number
+  readonly bytes: number
+  readonly totalBytes: number | null
+  /** 本次文件请求复用的本地字节；计算网络速度时从 bytes 中扣除。 */
+  readonly resumedBytes?: number
+}
+export interface InferenceResourceEvents {
+  'inference:resources:progress': { readonly id: string, readonly progress: InferenceResourceProgress }
+}
+export interface InferenceModel { id: string, title: string, capability: string, contextWindow: number, maxTokens: number, tools: boolean | 'auto', reasoning?: boolean | 'auto', catalogModels?: { providerId: string, modelId: string }[], input?: ('text' | 'image')[] }
+export interface InferenceImageModel {
+  id: string
+  title: string
+  capability: string
+  support: { operations: ('generate' | 'edit')[], maxReferenceImages: number, sizes: string[], qualities: ('auto' | 'low' | 'medium' | 'high')[], backgrounds: ('auto' | 'opaque' | 'transparent')[] }
+}
+export interface InferenceImageReader {
+  id: string
+  title: string
+  capability: string
+  support: { operations: ('understand' | 'extract' | 'document')[] }
+}
+export interface InferenceBinding {
+  imageReaders?: InferenceImageReader[]
+  imageModels?: InferenceImageModel[]
+  models?: InferenceModel[]
+  endpoints?: { id: string, url: string, contentType: 'application/json' | 'application/octet-stream' | 'audio/wav' | 'multipart/form-data', credential?: string }[]
+  runtime: string
+  resources: { mount: string, id: string, revision: string }[]
+  libraryPaths?: { mount: string, path: string }[]
+  configuration?: Record<string, Json>
+}
+export interface InferenceApi {
+  readonly capabilities: { readonly nativeRuntime: true, readonly runtimeIsolation: true, readonly chatImageInput: true, readonly chatToolMatching: true, readonly chatReasoning: true, readonly resumableDownloads: true }
+  environment: () => Promise<InferenceEnvironment>
+  status: () => Promise<{ runtime: string, configured: boolean, platforms: string[], instances: { id: string | null, state: 'loading' | 'ready' | 'stopping' | 'stopped', active: number, pending: number, cancelling: number }[] }[]>
+  stop: (input?: { runtime: string }) => Promise<void>
+  unbind: (input: { runtime: string }) => Promise<void>
+  bind: (binding: InferenceBinding) => Promise<void>
+  credentials: {
+    has: (reference: { id: string, origin: string }) => Promise<boolean>
+    set: (credential: { id: string, origin: string, token: string }) => Promise<void>
+    remove: (id: string) => Promise<void>
+  }
+  resources: {
+    list: () => Promise<InferenceResourceStatus[]>
+    prepare: (resource: InferencePrepare, options?: { signal?: AbortSignal, onProgress?: (progress: InferenceResourceProgress) => void }) => Promise<InferenceResourceSet>
+    remove: (resource: Pick<InferenceResourceSet, 'id' | 'revision'>) => Promise<void>
+  }
+}
+export interface InferenceCall {
+  readonly network: { post: (endpoint: string, body: Uint8Array, options?: { contentType?: string }) => Promise<Response> }
+  readonly signal: AbortSignal
+  emit: (data: Json, bytes?: Uint8Array) => boolean
+  emitAsync: (data: Json, bytes?: Uint8Array) => Promise<void>
+}
+export interface InferenceInput {
+  write?: (bytes: Uint8Array) => void | Promise<void>
+  finish: () => void | Promise<void>
+}
+export interface InferenceBackend {
+  start: (capability: string, input: Json, call: InferenceCall) => InferenceInput | Promise<InferenceInput>
+  dispose?: () => void | Promise<void>
+}
+export interface InferenceModule {
+  initialize: (input: { configuration: Record<string, Json>, resources: Record<string, string>, resourceFiles?: Record<string, Record<string, string>> }) => InferenceBackend | Promise<InferenceBackend>
+}
+
+export type InferenceChatContent
+  = | { type: 'text', text: string }
+    | { type: 'image', mimeType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif', data: string }
+export interface InferenceChatRequest {
+  model: string
+  messages: (
+    | { role: 'system' | 'user', text: string }
+    | { role: 'user', content: InferenceChatContent[] }
+    | { role: 'assistant', text: string, toolCalls: InferenceToolCall[] }
+    | { role: 'tool', text: string, toolCallId: string, name: string, isError: boolean }
+    | { role: 'tool', content: InferenceChatContent[], toolCallId: string, name: string, isError: boolean }
+  )[]
+  tools: { name: string, description: string, parameters: Record<string, Json> }[]
+  maxTokens: number
+  temperature?: number
+  reasoning?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+}
+export interface InferenceToolCall { id: string, name: string, arguments: Record<string, Json> }
+export type InferenceChatEvent
+  = | { type: 'thinking', text: string }
+    | { type: 'text', text: string }
+    | { type: 'tool', call: InferenceToolCall }
+    | { type: 'done', reason: 'stop' | 'length' | 'toolUse', usage: { input: number, output: number, cacheRead?: number, cacheWrite?: number } }
+
+export interface InferenceImageRequest {
+  requestId: string
+  model: string
+  operation: 'generate' | 'edit'
+  prompt: string
+  images: { mimeType: 'image/png' | 'image/jpeg' | 'image/webp', data: string }[]
+  output: { size: string, quality: 'auto' | 'low' | 'medium' | 'high', background: 'auto' | 'opaque' | 'transparent' }
+}
+export type InferenceImageEvent
+  = { type: 'submitted', requestId: string }
+    | { type: 'image', index: number, sequence: number, final: boolean, mimeType: 'image/png' }
+    | { type: 'done', responseId: string | null }
+    | { type: 'failed', code: 'UNAVAILABLE' | 'BUSY' | 'RESOURCE_EXHAUSTED' | 'UNSUPPORTED' | 'FAILED', retryable: boolean }
+
+export type InferenceImageReadingRequest = {
+  requestId: string
+  model: string
+  question: string
+  image: { mimeType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif', data: string }
+} & (
+  | { operation: 'understand' | 'document', currentUserRequest?: string }
+  | { operation: 'extract', currentUserRequest?: never }
+)
+export type InferenceImageReadingEvent
+  = | { type: 'text', sequence: number, text: string }
+    | { type: 'done' }
+    | { type: 'failed', code: 'UNAVAILABLE' | 'BUSY' | 'UNSUPPORTED' | 'FAILED', retryable: boolean }

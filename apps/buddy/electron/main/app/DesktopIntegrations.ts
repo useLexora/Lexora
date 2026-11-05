@@ -22,6 +22,7 @@ import { extensionAgentRpc } from '../../../shared/extensions/extensionAgent'
 import { extensionJsonSchema } from '../../../shared/extensions/extensionApi'
 import { EXTENSION_REVIEW_REQUEST } from '../../../shared/extensions/extensionAuthoring'
 import { extensionCapabilitiesRpc, extensionCapabilityApplyRpc, extensionCapabilityImpactSchema } from '../../../shared/extensions/extensionCapabilities'
+import { extensionChatRpc } from '../../../shared/extensions/extensionChat'
 import { extensionConditionSnapshotRpc } from '../../../shared/extensions/extensionConditionContext'
 import { extensionShellRpc } from '../../../shared/extensions/extensionShell'
 import { extensionSkillsRpc } from '../../../shared/extensions/extensionSkills'
@@ -151,6 +152,20 @@ export class DesktopIntegrations {
         },
         reveal: async (path) => { shell.showItemInFolder(path) },
       },
+      inferenceRequest: runtime.network.request,
+      inferenceAdmission: async (extensionId, invocationId, signal, parentInvocationId) => {
+        const release = async () => {
+          await service.request('extensions.inference.release', { invocationId }, { timeoutMs: 10000 })
+        }
+        try {
+          await service.request('extensions.inference.acquire', { extensionId, invocationId, ...(parentInvocationId ? { parentInvocationId } : {}) }, { signal, timeoutMs: null })
+        }
+        catch (error) {
+          await release().catch(() => {})
+          throw error
+        }
+        return release
+      },
       fileIcons,
       themes,
       record: this.#environment.events.publish,
@@ -164,6 +179,7 @@ export class DesktopIntegrations {
       conditionRuntime: async (input, signal) => extensionConditionSnapshotRpc.response.parse(await service.request(extensionConditionSnapshotRpc.method, input, { signal, timeoutMs: 5000 })),
       taskActions: async () => extensionActionRpc.list.response.parse(await service.request(extensionActionRpc.list.method, {})),
       invokeTaskAction: async input => extensionActionRpc.invoke.response.parse(await service.request(extensionActionRpc.invoke.method, input, { timeoutMs: null })),
+      modelsChanged: () => service.notify(extensionChatRpc.changed, {}),
       agentChanged: catalog => service.notify(extensionAgentRpc.changed, catalog),
       shellsChanged: () => service.notify(extensionShellRpc.changed, {}),
       skillsChanged: () => service.notify(extensionSkillsRpc.changed, {}),
@@ -234,16 +250,25 @@ export class DesktopIntegrations {
     runtime.inspectExtension = extensions.inspect
     runtime.extensionAgent = extensions.agent
     runtime.extensionStorage = extensions
+    runtime.extensionInference = extensions.inference
     runtime.extensionShells = extensions.shells
     runtime.extensionSkills = extensions.skills
     runtime.extensionCapabilities = extensions.capabilities
     service.notify(extensionShellRpc.changed, {})
     service.notify(extensionSkillsRpc.changed, {})
     service.notify(extensionCapabilitiesRpc.changed, {})
+    service.notify(extensionChatRpc.changed, {})
+    this.#subscriptions.push(service.onStateChange((state) => {
+      if (state.status !== 'ready')
+        void extensions.inference.reset().catch(() => {})
+      else
+        service.notify(extensionChatRpc.changed, {})
+    }))
     this.#subscriptions.push(() => {
       runtime.inspectExtension = null
       runtime.extensionAgent = null
       runtime.extensionStorage = null
+      runtime.extensionInference = null
       runtime.extensionShells = null
       runtime.extensionSkills = null
       runtime.extensionCapabilities = null

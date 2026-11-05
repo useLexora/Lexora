@@ -79,6 +79,10 @@ name = "installer-process-windows"
 path = "__tests__/installer_process_windows.rs"
 
 [[example]]
+name = "inference-supervisor-posix"
+path = "__tests__/inference_supervisor_posix.rs"
+
+[[example]]
 name = "sandbox-adversary"
 path = "__tests__/sandbox_adversary.rs"
 
@@ -115,6 +119,7 @@ thiserror.workspace = true
 workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
 rustix = { version = "1.1", features = [ "fs" ] }
 objc2-foundation = { version = "0.3", default-features = false, features = [
   "std",

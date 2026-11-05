@@ -6,7 +6,7 @@ import { supportsAudioInputApi, supportsVideoInputApi } from '@buddy-shared/prov
 import { supportsPdfInputApi } from '@buddy-shared/providers/pdfInput'
 import { computed, onScopeDispose, reactive, shallowRef, watch } from 'vue'
 
-const inputFields = ['image', 'pdf', 'audio', 'video'] as const
+const inputFields = ['image', 'pdf', 'audio', 'video', 'toolCall'] as const
 
 interface ModelCapabilitiesFormOptions {
   section: 'input' | 'thinking'
@@ -19,9 +19,10 @@ interface ModelCapabilitiesFormOptions {
 export function useModelCapabilitiesForm(options: ModelCapabilitiesFormOptions) {
   const editing = shallowRef(false)
   const submitting = shallowRef(false)
-  const form = reactive({ image: false, pdf: false, audio: false, video: false, levels: [] as BuddyThinkingLevel[] })
+  const form = reactive({ image: false, pdf: false, audio: false, video: false, toolCall: false, levels: [] as BuddyThinkingLevel[] })
   const editableInputs = computed(() => ({
     image: true,
+    toolCall: true,
     pdf: supportsPdfInputApi(options.model().api),
     audio: supportsAudioInputApi(options.model().api),
     video: supportsVideoInputApi(options.model().api),
@@ -51,7 +52,7 @@ export function useModelCapabilitiesForm(options: ModelCapabilitiesFormOptions) 
   function startEditing() {
     const model = options.model()
     for (const key of inputFields)
-      form[key] = editableInputs.value[key] && model.capabilities.includes(key)
+      form[key] = editableInputs.value[key] && (key === 'toolCall' ? model.toolCalling !== false : model.capabilities.includes(key))
     const levels = model.capabilityOverrides?.reasoningOptions ?? model.reasoningOptions
     form.levels = levels.length ? [...levels] : ['off']
     initial = { ...form, levels: [...form.levels] }

@@ -2,7 +2,7 @@ import type { Api, Model } from '@earendil-works/pi-ai'
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai'
 import { describe, expect, it } from 'vitest'
 import { modelCapabilitiesSchema, modelCapabilityOverridesSchema } from '../../../../shared/providers/providerCapabilities'
-import { applyModelCapabilities, supportsModelPdfInput } from '../modelCapabilities'
+import { applyModelCapabilities, readModelCapabilities, supportsModelPdfInput, supportsModelToolCalls } from '../modelCapabilities'
 
 function model(): Model<Api> {
   return {
@@ -38,7 +38,18 @@ describe('model capability overrides', () => {
     expect(applyModelCapabilities({ ...updated, input: ['text', 'image'] }, { reasoningOptions: ['off'] }).input).toEqual(['text', 'image'])
   })
 
-  it('requires resolved PDF metadata instead of inferring support from images or hostnames', () => {
+  it('keeps user tool choices independent of current source defaults and restores automatic behavior', () => {
+    const source = { ...model(), toolCall: false }
+    expect(modelCapabilityOverridesSchema.parse({ toolCall: true })).toEqual({ toolCall: true })
+    expect(readModelCapabilities(source).toolCall).toBe(false)
+    expect(supportsModelToolCalls(applyModelCapabilities(source, { toolCall: true }))).toBe(true)
+    expect(supportsModelToolCalls(applyModelCapabilities({ ...source, toolCall: true }, { toolCall: false }))).toBe(false)
+    expect(supportsModelToolCalls(applyModelCapabilities(source, { image: true }))).toBe(false)
+    expect(applyModelCapabilities(source, null)).toEqual(source)
+    expect(modelCapabilityOverridesSchema.safeParse({ toolCall: 'auto' }).success).toBe(false)
+  })
+
+  it('requires resolved PDF metadata and a supported transport independently of image support', () => {
     const official = { ...model(), baseUrl: 'https://api.openai.com/v1', pdfInput: true, input: ['text', 'image'] as Array<'text' | 'image'> }
     expect(supportsModelPdfInput(official)).toBe(true)
     expect(supportsModelPdfInput({ ...official, pdfInput: undefined })).toBe(false)
@@ -46,18 +57,11 @@ describe('model capability overrides', () => {
     expect(supportsModelPdfInput(applyModelCapabilities(model(), { image: false, pdf: true, reasoningOptions: ['off'] }))).toBe(true)
     expect(supportsModelPdfInput(applyModelCapabilities({ ...official, api: 'azure-openai-responses' }, { image: true, pdf: true, reasoningOptions: ['off'] }))).toBe(false)
     expect(supportsModelPdfInput(applyModelCapabilities(official, { image: false, reasoningOptions: ['off'] }))).toBe(true)
-  })
-
-  it('keeps resolved PDF input independent of image support and preserves explicit overrides', () => {
-    const codex = { ...model(), api: 'openai-codex-responses', pdfInput: true, provider: 'codex-instance', baseUrl: 'https://chatgpt.com/backend-api', input: ['text', 'image'] as Array<'text' | 'image'> }
+    const codex = { ...official, api: 'openai-codex-responses', provider: 'codex-instance', baseUrl: 'https://chatgpt.com/backend-api', input: ['text'] as Array<'text' | 'image'> }
     expect(supportsModelPdfInput(codex)).toBe(true)
-    expect(supportsModelPdfInput({ ...codex, input: ['text'] })).toBe(true)
-    expect(supportsModelPdfInput({ ...codex, pdfInput: false })).toBe(false)
-    expect(supportsModelPdfInput(applyModelCapabilities(codex, { image: true, pdf: false, reasoningOptions: ['off'] }))).toBe(false)
-    expect(supportsModelPdfInput(applyModelCapabilities(codex, { image: true, reasoningOptions: ['off'] }))).toBe(true)
   })
 
-  it('uses exactly the selected levels while preserving native effort mapping and route metadata', () => {
+  it('applies selected reasoning levels or disables thinking while preserving the source and route metadata', () => {
     const source = model()
     const effective = applyModelCapabilities(source, { image: true, reasoningOptions: ['low', 'high', 'max'] })
     expect(getSupportedThinkingLevels(effective)).toEqual(['low', 'high', 'max'])
@@ -75,15 +79,10 @@ describe('model capability overrides', () => {
     })
     expect(source.input).toEqual(['text'])
     expect(source.thinkingLevelMap).toEqual({ low: null, high: 'enabled', max: null })
-  })
-
-  it('disables image and thinking without disabling text, and restores the unchanged source', () => {
-    const source = { ...model(), input: ['text', 'image'] as Array<'text' | 'image'> }
-    const effective = applyModelCapabilities(source, { image: false, reasoningOptions: ['off'] })
-    expect(effective.input).toEqual(['text'])
-    expect(effective.reasoning).toBe(false)
-    expect(getSupportedThinkingLevels(effective)).toEqual(['off'])
-    expect(applyModelCapabilities(source, null)).toEqual(source)
+    const disabled = applyModelCapabilities(effective, { image: false, reasoningOptions: ['off'] })
+    expect(disabled.input).toEqual(['text'])
+    expect(disabled.reasoning).toBe(false)
+    expect(getSupportedThinkingLevels(disabled)).toEqual(['off'])
   })
 
   it.each([

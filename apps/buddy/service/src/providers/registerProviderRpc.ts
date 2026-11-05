@@ -27,6 +27,7 @@ export function registerProviderRpc(options: RegisterProviderRpcOptions): () => 
     return options.service.addProvider(input.providerId)
   }))
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.listModels, async (input) => {
+    await options.refreshCapabilities?.()
     const models = await options.service.listModels(input.providerId ?? undefined)
     return models.map(model => toRuntimeModelOption(options.service.executionModels, model))
   }))

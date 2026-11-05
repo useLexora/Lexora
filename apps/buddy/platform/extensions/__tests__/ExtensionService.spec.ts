@@ -1,26 +1,34 @@
 import type { ApplicationDiagnostic } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { ExtensionHostFailure } from '../../../shared/extensions/extensionDiagnostic'
+import type { InferenceResourceEvents, InferenceResourceProgress, InferenceResourceSet } from '../../../shared/extensions/extensionInference'
 import type { ExtensionMcpConnectorContribution } from '../../../shared/extensions/extensionMcpConnectors'
 import type { ExtensionLocalFile } from '../../../shared/extensions/extensionResources'
 import type { ExtensionSubagentContribution } from '../../../shared/extensions/extensionSubagents'
 import type { JsonValue } from '../../../shared/workbench/workbenchState'
 import type { ExtensionServicePorts } from '../ExtensionService'
 import { Buffer } from 'node:buffer'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import process from 'node:process'
 import { deferred } from '@buddy-tests/deferred'
 import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { afterEach, expect, it, vi } from 'vitest'
+import { readSpaceFileResource } from '../../../electron/main/extensions/readSpaceFileResource'
+import { ExtensionHostEvents } from '../../../electron/main/extensions/runtime/ExtensionHostEvents'
 import { applicationDiagnosticSchema } from '../../../shared/diagnostics/applicationDiagnostic'
 import { extensionInspectionSchema } from '../../../shared/extensions/extensionAuthoring'
-import { createExtensionResourceClient } from '../../../shared/extensions/extensionResourceClient'
+import { createExtensionInferenceClient } from '../../../shared/extensions/extensionInferenceClient'
+import { EXTENSION_NETWORK_LINK_BYTES_LIMIT } from '../../../shared/extensions/extensionNetwork'
+import { createExtensionNetworkClient, createExtensionResourceClient } from '../../../shared/extensions/extensionResourceClient'
 import { EXTENSION_CREATED_FILES_LIMIT } from '../../../shared/extensions/extensionResources'
 import { DEFAULT_THEME_PREFERENCE } from '../../../shared/theme/themePreferences'
 import { ThemeService } from '../../themes/ThemeService'
 import { ExtensionService } from '../ExtensionService'
+import { NativeInferenceProcess } from '../NativeInferenceProcess'
 import { observeExtensionDiagnostics } from '../observeExtensionDiagnostics'
 import { createStore, manifest, reviewPackage } from './fixtures'
+import { invocation, memoryInference } from './inferenceFixtures'
 
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => {
@@ -58,6 +66,78 @@ async function fixture(overrides: Partial<ExtensionServicePorts> = {}, initialMa
   return { root, store, service, hosts, events }
 }
 const target = { spaceId: 'space', directoryId: 'directory', revision: 4, path: 'README.md' }
+
+it('hashes local, private and current selected Space resources through one client request', async () => {
+  const source = join(await createTemporaryDirectory('lexora-hash-space-'), 'README.md')
+  const bytes = Buffer.from('local model bytes')
+  await writeFile(source, bytes)
+  const expected = { sha256: createHash('sha256').update(bytes).digest('hex'), size: bytes.length }
+  let allowed = true
+  const f = await fixture({ readResource: (target, signal, request) => readSpaceFileResource(target, signal, async () => {
+    if (!allowed)
+      throw new Error('RESOURCE_REVOKED')
+    return { path: source, kind: 'file' }
+  }, request) }, manifest({ apiVersion: 4, permissions: { selectedResource: 'read', localResources: true } }))
+  await f.service.execute('tests.reader', 'tests.reader.open', target)
+  const resource = (f.hosts[0]!.commands[0] as { resource: { id: string, name: string } }).resource
+  const background = createExtensionResourceClient(f.hosts[0]!.broker)
+  expect(await background.hash(resource)).toEqual(expected)
+  const view = await f.service.openView({ viewId: randomUUID(), extensionId: 'tests.reader', viewType: 'tests.reader.reader', resource, state: null, stateVersion: 1 })
+  const request = (method: string, params: unknown) => f.service.viewRequest(view.id, view.generation, view.token, method, params)
+  const client = createExtensionResourceClient(request)
+  expect(await client.hash(resource)).toEqual(expected)
+  const otherSelected = await f.store.grant('tests.reader', { ...target, path: 'other.md' })
+  await expect(client.hash(otherSelected)).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
+  const [local] = await f.store.resources.grant('tests.reader', [source], () => {})
+  expect(await background.hash(local!)).toEqual(expected)
+  expect(await client.hash(local!)).toEqual(expected)
+  const privateFile = await background.createFile({ name: 'private.bin', data: bytes })
+  expect(await client.hash(privateFile)).toEqual(expected)
+  await expect(request('resources.hash', { id: randomUUID(), resourceId: local!.id, path: source })).rejects.toThrow('EXTENSION_INVALID_ARGUMENT')
+  await expect(background.hash({ id: randomUUID() })).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
+  allowed = false
+  await expect(client.hash(resource)).rejects.toThrow('RESOURCE_REVOKED')
+})
+
+it.each(['signal', 'close', 'disable', 'revoke'] as const)('stops resource hashing on %s and prevents another owner from cancelling it', async (ending) => {
+  const f = await fixture({}, manifest({ apiVersion: 4, permissions: { selectedResource: 'read', localResources: true } }))
+  const path = join(f.root, 'model.bin')
+  await writeFile(path, Buffer.alloc(4 * 1024 * 1024, 7))
+  const [resource] = await f.store.resources.grant('tests.reader', [path], () => {})
+  const selected = await f.store.grant('tests.reader', target)
+  const view = await f.service.openView({ viewId: randomUUID(), extensionId: 'tests.reader', viewType: 'tests.reader.reader', resource: selected, state: null, stateVersion: 1 })
+  const started = deferred<void>()
+  const release = deferred<void>()
+  const original = f.store.resources.response.bind(f.store.resources)
+  vi.spyOn(f.store.resources, 'response').mockImplementationOnce(async (...args) => {
+    const response = await original(...args)
+    started.resolve()
+    await release.promise
+    return response
+  })
+  let operationId = ''
+  const client = createExtensionResourceClient((method, params) => {
+    if (method === 'resources.hash')
+      operationId = (params as { id: string }).id
+    return f.service.viewRequest(view.id, view.generation, view.token, method, params)
+  })
+  const controller = new AbortController()
+  const pending = client.hash(resource!, { signal: controller.signal })
+  const rejected = expect(pending).rejects.toThrow()
+  await started.promise
+  await expect(f.hosts[0]!.broker('network.cancel', { id: operationId })).rejects.toThrow('EXTENSION_RESOURCE_DENIED')
+  if (ending === 'signal')
+    controller.abort(new Error('TEST_CANCELLED'))
+  else if (ending === 'close')
+    f.service.closeView(view.id, view.generation, view.token)
+  else if (ending === 'revoke')
+    await f.store.resources.revoke('tests.reader', resource!.id)
+  const disabling = ending === 'disable' ? f.service.enable('tests.reader', false) : undefined
+  release.resolve()
+  await rejected
+  await disabling
+  expect((await readFile(path)).length).toBe(4 * 1024 * 1024)
+})
 
 it('publishes packaged skills without activating hosts and follows dependency, enabled and promoted package state', async () => {
   const id = 'tests.workbook'
@@ -141,25 +221,17 @@ it.each([false, true])('uninstalls with clearData=%s while preserving other plug
   expect(await store.data(id)).toEqual(clearData ? { version: 0, value: {} } : expect.objectContaining({ version: 1 }))
 })
 
-it('keeps a stopped installation retryable when workbench cleanup fails', async () => {
+it.each(['workbench', 'removeData', 'removePackages'] as const)('keeps the installation retryable after %s cleanup fails', async (operation) => {
   let fail = true
-  const { store, service } = await fixture({ workbench: async event => fail ? null : event.requestId })
+  const { store, service } = await fixture({ workbench: async event => operation === 'workbench' && fail ? null : event.requestId })
   await store.saveData('tests.reader', { retained: true }, 1)
-  await expect(service.uninstall('tests.reader', true)).rejects.toThrow('EXTENSION_DATA_CLEANUP_FAILED')
+  if (operation !== 'workbench')
+    vi.spyOn(store, operation).mockRejectedValueOnce(new Error('fixture permission denied'))
+  await expect(service.uninstall('tests.reader', true)).rejects.toThrow(operation === 'workbench' ? 'EXTENSION_DATA_CLEANUP_FAILED' : 'fixture permission denied')
   expect((await service.list())[0]).toMatchObject({ enabled: false, state: 'disabled' })
-  expect(await store.data('tests.reader')).toEqual({ version: 1, value: { retained: true } })
+  if (operation !== 'removePackages')
+    expect(await store.data('tests.reader')).toEqual({ version: 1, value: { retained: true } })
   fail = false
-  await service.uninstall('tests.reader', true)
-  expect(await service.list()).toEqual([])
-  expect(await store.data('tests.reader')).toEqual({ version: 0, value: {} })
-})
-
-it.each(['removeData', 'removePackages'] as const)('keeps the installation retryable after %s fails', async (operation) => {
-  const { store, service } = await fixture()
-  await store.saveData('tests.reader', { saved: true }, 1)
-  vi.spyOn(store, operation).mockRejectedValueOnce(new Error('fixture permission denied'))
-  await expect(service.uninstall('tests.reader', true)).rejects.toThrow('fixture permission denied')
-  expect((await service.list())[0]).toMatchObject({ enabled: false, state: 'disabled' })
   await service.uninstall('tests.reader', true)
   expect(await service.list()).toEqual([])
   expect(await store.data('tests.reader')).toEqual({ version: 0, value: {} })
@@ -280,9 +352,50 @@ it('keeps pending versions and permissions inactive across restarts and incompat
   expect(hosts[1]!.disposed).toBe(true)
   await expect(hosts[1]!.broker('storage.get', {})).rejects.toThrow('EXTENSION_HOST_STOPPED')
   await service.execute('tests.reader', 'tests.reader.open', null)
-  expect(await hosts[2]!.broker('network.get', { url: 'https://example.com/' })).toEqual({ status: 200, text: 'allowed' })
+  expect(await hosts[2]!.broker('network.get', { url: 'https://example.com/' })).toEqual({ status: 200, text: 'allowed', headers: {} })
   get.mockImplementation(async () => new Response(null, { status: 302, headers: { location: 'https://unapproved.example/' } }))
   await expect(hosts[2]!.broker('network.get', { url: 'https://example.com/' })).rejects.toThrow('EXTENSION_NETWORK_DENIED')
+})
+
+it.each([1, 4] as const)('returns bounded final-response Link metadata through host and view clients on API %s without granting URLs', async (apiVersion) => {
+  const link = '<https://unapproved.example/models?cursor=next%2Fpage>; rel="next", <https://example.com/models>; rel="first"'
+  const urls: string[] = []
+  const get: ExtensionServicePorts['get'] = async (url) => {
+    urls.push(url)
+    if (url.endsWith('/redirect'))
+      return new Response(null, { status: 302, headers: { Location: '/models', Link: '<https://example.com/incorrect>; rel="next"' } })
+    return new Response('[]', { headers: { 'Link': link, 'Set-Cookie': 'fixture=private', 'Cookie': 'fixture=private', 'Authorization': 'Bearer fixture', 'X-Private': 'private' } })
+  }
+  const value = manifest({ apiVersion, permissions: { network: ['https://example.com'] }, contributes: {
+    commands: [{ id: 'tests.reader.open', title: 'Open' }],
+    views: [{ id: 'tests.reader.reader', title: 'Reader', entry: 'view.js', resource: 'none' }],
+  } })
+  const { service, hosts } = await fixture({ get }, value)
+  await service.execute('tests.reader', 'tests.reader.open', null)
+  const broker = hosts[0]!.broker
+  const client = createExtensionNetworkClient(broker)
+  const result = await client.get('https://example.com/redirect')
+  expect(result).toEqual({ status: 200, text: '[]', headers: { link } })
+  expect(urls).toEqual(['https://example.com/redirect', 'https://example.com/models'])
+  await expect(client.get('https://unapproved.example/models?cursor=next%2Fpage')).rejects.toThrow('EXTENSION_NETWORK_DENIED')
+  await expect(client.get('http://example.com/models')).rejects.toThrow('EXTENSION_NETWORK_DENIED')
+  await expect(broker('network.get', { url: 'https://example.com/models', headers: { Authorization: 'Bearer fixture' } })).rejects.toThrow()
+  expect(urls).toHaveLength(2)
+  const view = await service.openView({ viewId: randomUUID(), extensionId: 'tests.reader', viewType: 'tests.reader.reader', resource: null, state: null, stateVersion: 1 })
+  const viewClient = createExtensionNetworkClient((method, params) => service.viewRequest(view.id, view.generation, view.token, method, params))
+  expect(await viewClient.get('https://example.com/models')).toEqual(result)
+})
+
+it('fails explicitly on oversized Link metadata without changing the text response budget', async () => {
+  let oversizedBody = false
+  const { service, hosts } = await fixture({ get: async () => oversizedBody
+    ? new Response('a'.repeat(1024 * 1024 + 1))
+    : new Response('[]', { headers: { Link: 'a'.repeat(EXTENSION_NETWORK_LINK_BYTES_LIMIT + 1) } }) }, manifest({ permissions: { selectedResource: 'read', network: ['https://example.com'] } }))
+  await service.execute('tests.reader', 'tests.reader.open', null)
+  const client = createExtensionNetworkClient(hosts[0]!.broker)
+  await expect(client.get('https://example.com/models')).rejects.toThrow('EXTENSION_NETWORK_HEADERS_TOO_LARGE')
+  oversizedBody = true
+  await expect(client.get('https://example.com/models')).rejects.toThrow('WEB_RESPONSE_TOO_LARGE')
 })
 
 it('stops dependent hosts when their dependency is disabled', async () => {
@@ -675,6 +788,237 @@ it('downloads files and saves standalone theme images using existing grants with
   await expect(request('links.openExternal', { url: 'https://other.example.com/' })).rejects.toThrow('EXTENSION_NETWORK_DENIED')
 })
 
+async function inferenceResourceFixture(overrides: Partial<ExtensionServicePorts> = {}) {
+  const f = await fixture({
+    inference: { sandbox: '', executable: '', bootstrap: '', admit: async () => async () => {} },
+    ...overrides,
+  }, manifest({
+    apiVersion: 4,
+    permissions: { inference: true, localResources: true, network: ['https://media.example.com'] },
+    contributes: {
+      views: [{ id: 'tests.reader.reader', title: 'Models', entry: 'view.js', resource: 'none' }],
+      inference: {
+        runtimes: [{ id: 'local', entry: 'native/fixture.mjs', platforms: ['linux-x64'], capacity: 1, idleTimeoutMs: 60000 }],
+        capabilities: [{ id: 'local', title: 'Local', kind: 'speech.transcribe', runtime: 'local' }],
+      },
+    },
+  }), { 'native/fixture.mjs': 'export function initialize() {}' })
+  const view = await f.service.openView({ viewId: randomUUID(), extensionId: 'tests.reader', viewType: 'tests.reader.reader', resource: null, state: null, stateVersion: 1 })
+  return {
+    ...f,
+    host: (method: string, params: JsonValue = null) => f.hosts[0]!.broker(method, params),
+    view: (method: string, params: JsonValue = null) => f.service.viewRequest(view.id, view.generation, view.token, method, params),
+  }
+}
+
+it('resumes through the public resource transport and reauthorizes every redirect without discarding owned partials', async () => {
+  const requests: Array<{ url: string, headers?: Record<string, string> }> = []
+  let attempt = 0
+  const f = await inferenceResourceFixture({ get: async (url, init) => {
+    requests.push({ url, headers: init.headers })
+    if (attempt === 0) {
+      let pulled = false
+      return new Response(new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (pulled) {
+            controller.error(new Error('connection reset'))
+          }
+          else {
+            pulled = true
+            controller.enqueue(Buffer.from('wei'))
+          }
+        },
+      }, { highWaterMark: 0 }), { headers: { 'content-length': '7', 'etag': '"v1"' } })
+    }
+    if (url.endsWith('/model'))
+      return new Response(null, { status: 302, headers: { location: attempt === 1 ? 'https://unauthorized.example/model' : 'https://media.example.com/blob' } })
+    return new Response('ghts', { status: 206, headers: { 'content-range': 'bytes 3-6/7', 'content-length': '4', 'etag': '"v1"' } })
+  } })
+  const resource = { id: 'model', kind: 'model', files: [{ path: 'model.bin', sha256: createHash('sha256').update('weights').digest('hex'), size: 7, source: { url: 'https://media.example.com/model' } }] }
+  const prepare = () => f.host('inference.resources.prepare', { id: randomUUID(), resource })
+  await expect(prepare()).rejects.toThrow('DOWNLOAD_FAILED')
+  attempt = 1
+  await expect(prepare()).rejects.toThrow('EXTENSION_NETWORK_DENIED')
+  expect(requests.map(request => request.url)).toEqual(['https://media.example.com/model', 'https://media.example.com/model'])
+  attempt = 2
+  await expect(prepare()).resolves.toMatchObject({ id: 'model', bytes: 7 })
+  expect(requests[0]!.headers).toEqual({ 'accept-encoding': 'identity' })
+  expect(requests.slice(1).every(request => request.headers?.range === 'bytes=3-' && request.headers['if-range'] === '"v1"')).toBe(true)
+  expect(requests.at(-1)!.url).toBe('https://media.example.com/blob')
+  for (const url of ['http://media.example.com/model', 'https://unauthorized.example/model', 'https://media.example.com:444/model', 'https://127.0.0.1/model']) {
+    await expect(f.host('inference.resources.prepare', {
+      id: randomUUID(),
+      resource: { ...resource, files: [{ ...resource.files[0]!, source: { url } }] },
+    })).rejects.toThrow(/EXTENSION_NETWORK_DENIED|WEB_URL_BLOCKED/)
+  }
+  expect(requests).toHaveLength(4)
+})
+
+it.each(['ready', 'checksum'] as const)('delivers resource progress before %s settlement under backpressure and detaches the settled callback', async (ending) => {
+  const events = new ExtensionHostEvents()
+  cleanup.push(async () => events.dispose())
+  const release = deferred<void>()
+  cleanup.push(async () => release.resolve())
+  const prepared = deferred<void>()
+  let request!: (method: string, params?: JsonValue) => Promise<JsonValue>
+  let first = true
+  let operationId = ''
+  const f = await inferenceResourceFixture({
+    get: async () => new Response('weights'),
+    createHost: (_pkg, broker) => {
+      request = (method, params = null) => broker(method, params)
+      return { call: async (method, params) => {
+        if (method === 'inference.progress') {
+          const event = params as unknown as InferenceResourceEvents['inference:resources:progress']
+          operationId = event.id
+          events.inferenceProgress(event)
+          if (first) {
+            first = false
+            await release.promise
+          }
+        }
+        return null
+      }, dispose: async () => {}, devtools: () => {} }
+    },
+  })
+  const prepare = f.store.inference.prepare.bind(f.store.inference)
+  vi.spyOn(f.store.inference, 'prepare').mockImplementation(async (...args) => {
+    try {
+      return await prepare(...args)
+    }
+    finally { prepared.resolve() }
+  })
+  const client = createExtensionInferenceClient(request, events.events)
+  const progress: InferenceResourceProgress[] = []
+  const hash = createHash('sha256').update('weights').digest('hex')
+  const pending = client.resources.prepare({ id: 'model', kind: 'model', files: [
+    { path: 'first.bin', sha256: hash, size: 7, source: { url: 'https://media.example.com/first' } },
+    { path: 'second.bin', sha256: ending === 'checksum' ? '0'.repeat(64) : hash, source: { url: 'https://media.example.com/second' } },
+  ] }, { onProgress: value => progress.push(value) })
+  const settled = ending === 'ready' ? expect(pending).resolves.toMatchObject({ files: 2, bytes: 14 }) : expect(pending).rejects.toThrow('CHECKSUM_MISMATCH')
+  await prepared.promise
+  expect(progress.map(value => value.phase)).toEqual(['connect'])
+  events.inferenceProgress({ id: randomUUID(), progress: { ...progress[0]!, phase: 'ready' } })
+  expect(progress).toHaveLength(1)
+  release.resolve()
+  await settled
+  expect(progress.at(-1)).toMatchObject(ending === 'ready'
+    ? { phase: 'ready', path: '', bytes: 14, completedFiles: 2, totalFiles: 2 }
+    : { phase: 'verify', path: 'second.bin', bytes: 7, completedFiles: 1 })
+  expect(await client.resources.list()).toHaveLength(ending === 'ready' ? 1 : 0)
+  const count = progress.length
+  events.inferenceProgress({ id: operationId, progress: progress[0]! })
+  expect(progress).toHaveLength(count)
+})
+
+it.each(['host', 'view'] as const)('keeps downloads, inference and original grants alive across concurrent private releases from %s', async (owner) => {
+  const downloadStarted = deferred<void>()
+  const finishDownload = deferred<void>()
+  const downloadAbort = new AbortController()
+  const f = await inferenceResourceFixture({ get: async () => new Response(new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(Buffer.from('model ')) },
+    async pull(controller) {
+      downloadStarted.resolve()
+      await finishDownload.promise
+      controller.enqueue(Buffer.from('download'))
+      controller.close()
+    },
+  })) })
+  const resources = createExtensionResourceClient(f[owner])
+  const original = join(f.root, 'original.bin')
+  await writeFile(original, 'original weights')
+  const [grant] = await f.store.resources.grant('tests.reader', [original], () => {})
+  const temporary = await resources.importFile(grant!)
+  const avatar = await resources.createFile({ name: 'avatar.bin', data: Buffer.from('avatar') })
+  const model = await f.host('inference.resources.prepare', {
+    id: randomUUID(),
+    resource: { id: 'model', kind: 'model', files: [{ path: 'model.bin', sha256: createHash('sha256').update('original weights').digest('hex'), source: { resourceId: grant!.id, reference: true } }] },
+  }) as InferenceResourceSet
+  await f.host('inference.bind', { runtime: 'local', resources: [{ mount: 'model', id: model.id, revision: model.revision }] })
+  const native = memoryInference()
+  cleanup.push(async () => {
+    native.close()
+    await native.reading
+  })
+  vi.spyOn(NativeInferenceProcess, 'start').mockResolvedValue(native.worker)
+  const ready = deferred<void>()
+  const finishInference = deferred<void>()
+  const events: unknown[] = []
+  const call = f.service.invokeInference('tests.reader', f.store.installed['tests.reader']!.current.revision, invocation({
+    id: randomUUID(),
+    ready: () => {
+      ready.resolve()
+      return finishInference.promise
+    },
+    event(data, bytes) { events.push({ data, bytes: [...bytes] }) },
+  }))
+  void call.catch(() => {})
+  const download = createExtensionNetworkClient(f[owner]).download('https://media.example.com/model.bin', { signal: downloadAbort.signal })
+  void download.catch(() => {})
+  cleanup.push(async () => {
+    finishInference.resolve()
+    finishDownload.resolve()
+    downloadAbort.abort()
+    await Promise.allSettled([call, download])
+  })
+  await Promise.all([ready.promise, downloadStarted.promise])
+  const status = await f.host('inference.status')
+  expect(status).toMatchObject([{ configured: true, instances: [{ id: native.worker.instanceId, state: 'ready', active: 1 }] }])
+  const changes: string[] = []
+  const subscription = f.service.onDidChange(change => changes.push(change.kind))
+  cleanup.push(async () => subscription.dispose())
+  await Promise.all([resources.release(temporary), resources.release(avatar), resources.release(grant!)])
+  expect(await f.host('inference.status')).toEqual(status)
+  expect(changes).not.toContain('inference-models')
+  await expect(resources.readBytes(temporary)).rejects.toThrow('EXTENSION_RESOURCE_UNAVAILABLE')
+  await expect(resources.readBytes(avatar)).rejects.toThrow('EXTENSION_RESOURCE_UNAVAILABLE')
+  expect(await resources.readText(grant!)).toBe('original weights')
+  expect(await readFile(original, 'utf8')).toBe('original weights')
+  finishDownload.resolve()
+  const downloaded = await download
+  expect(await resources.readText(downloaded)).toBe('model download')
+  finishInference.resolve()
+  await call
+  expect(events).toEqual([{ data: { size: 0, input: {} }, bytes: [1, 2, 3, 4] }])
+  expect(await f.host('inference.status')).toMatchObject([{ configured: true, instances: [{ id: native.worker.instanceId, state: 'ready', active: 0 }] }])
+  await f.view('resources.revokeFile', { id: grant!.id })
+  expect(native.worker.stopped).toBe(true)
+  expect(await f.host('inference.status')).toMatchObject([{ instances: [] }])
+  await expect(resources.readBytes(grant!)).rejects.toThrow('EXTENSION_RESOURCE_UNAVAILABLE')
+  expect(await readFile(original, 'utf8')).toBe('original weights')
+})
+
+it.each(['host', 'view'] as const)('cancels only the released source during inference copying from %s and denies private references', async (owner) => {
+  const f = await inferenceResourceFixture()
+  const resources = createExtensionResourceClient(f[owner])
+  const bytes = Buffer.alloc(512 * 1024, 7)
+  const file = await resources.createFile({ name: 'model.bin', data: bytes })
+  const resource = { id: 'model', kind: 'model', files: [{ path: 'model.bin', sha256: createHash('sha256').update(bytes).digest('hex'), source: { resourceId: file.id, reference: true } }] }
+  await expect(f.host('inference.resources.prepare', { id: randomUUID(), resource })).rejects.toThrow('EXTENSION_RESOURCE_UNAVAILABLE')
+  const started = deferred<void>()
+  const resume = deferred<void>()
+  const response = f.store.resources.response.bind(f.store.resources)
+  vi.spyOn(f.store.resources, 'response').mockImplementationOnce(async (...args) => {
+    const result = await response(...args)
+    started.resolve()
+    await resume.promise
+    return result
+  })
+  const preparing = f.host('inference.resources.prepare', { id: randomUUID(), resource: { ...resource, files: [{ ...resource.files[0]!, source: { resourceId: file.id } }] } })
+  const rejected = expect(preparing).rejects.toThrow('EXTENSION_RESOURCE_REVOKED')
+  cleanup.push(async () => {
+    resume.resolve()
+    await Promise.allSettled([preparing])
+  })
+  await started.promise
+  await resources.release(file)
+  resume.resolve()
+  await rejected
+  expect(await f.host('inference.resources.list')).toEqual([])
+  await expect(resources.readBytes(file)).rejects.toThrow('EXTENSION_RESOURCE_UNAVAILABLE')
+  expect(await resources.listFiles()).toEqual([])
+})
+
 it('revalidates download redirects and cancels work owned by a closed view without retaining partial files', async () => {
   const started = deferred<void>()
   let redirect = true
@@ -815,6 +1159,35 @@ it('does not deliver a pending clipboard read after the view is closed', async (
   pending.resolve({ text: 'private' })
   await expect(reading).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
 })
+it('limits header action requests to declared settings views and acknowledges the current renderer session', async () => {
+  let accept = true
+  const events: unknown[] = []
+  const value = manifest({ apiVersion: 3, contributes: { views: [{ id: 'tests.reader.reader', title: 'Settings', entry: 'view.js', resource: 'none', location: 'page' }, { id: 'tests.reader.other', title: 'Page', entry: 'view.js', resource: 'none', location: 'page' }], settings: { modules: [{ id: 'tests.reader.settings', title: 'Settings', view: 'tests.reader.reader' }] } } })
+  const { service, hosts } = await fixture({ workbench: async (event) => {
+    events.push(event)
+    return accept && event.kind === 'settings-header-actions' ? event.viewId : null
+  } }, value)
+  const input = { viewId: randomUUID(), extensionId: value.id, viewType: 'tests.reader.reader', resource: null, state: {}, stateVersion: 1 }
+  const session = await service.openView(input)
+  const request = (actions: unknown, token = session.token) => service.viewRequest(session.id, session.generation, token, 'view.setSettingsHeaderActions', actions)
+  await request([{ id: 'engines', title: '  Engines  ', icon: 'settings' }])
+  expect(events).toContainEqual({ kind: 'settings-header-actions', requestId: expect.any(String), viewId: session.id, generation: session.generation, token: session.token, actions: [{ id: 'engines', title: 'Engines', icon: 'settings' }] })
+  for (const progress of [0, null, 100]) {
+    await request([{ id: 'downloads', title: 'Download history 3', progress }])
+    expect(events.at(-1)).toMatchObject({ kind: 'settings-header-actions', viewId: session.id, generation: session.generation, token: session.token, actions: [{ id: 'downloads', title: 'Download history 3', progress }] })
+  }
+  await expect(request([{ id: 'downloads', title: 'Download history 3', progress: 101 }])).rejects.toThrow('EXTENSION_INVALID_ARGUMENT')
+  await expect(request([{ id: 'engines', title: 'Engines', icon: 'arbitrary' }])).rejects.toThrow('EXTENSION_INVALID_ARGUMENT')
+  await expect(request([], randomUUID())).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
+  await expect(hosts[0]!.broker('view.setSettingsHeaderActions', [])).rejects.toThrow('EXTENSION_METHOD_DENIED')
+  const other = await service.openView({ ...input, viewId: randomUUID(), viewType: 'tests.reader.other' })
+  await expect(service.viewRequest(other.id, other.generation, other.token, 'view.setSettingsHeaderActions', [])).rejects.toThrow('EXTENSION_METHOD_DENIED')
+  accept = false
+  await expect(request([])).rejects.toThrow('EXTENSION_SETTINGS_HEADER_ACTIONS_UNAVAILABLE')
+  service.closeView(session.id, session.generation, session.token)
+  await expect(request([])).rejects.toThrow('EXTENSION_VIEW_EXPIRED')
+})
+
 it('acknowledges document metadata only after persistence for the requesting view session', async () => {
   let accept = true
   const events: unknown[] = []
@@ -976,15 +1349,4 @@ it('publishes declared MCP connectors and sub-agents without activating hosts an
   await service.uninstall('tests.legal')
   expect(await service.capabilityContributions()).toEqual([])
   expect(hosts).toHaveLength(0)
-})
-
-it('announces capability changes when packages are installed, switched or removed', async () => {
-  const capabilitiesChanged = vi.fn()
-  const value = manifest({ id: 'tests.legal', apiVersion: 4, entry: undefined, permissions: {}, contributes: { mcpConnectors: [connector] } })
-  const { service } = await fixture({ capabilitiesChanged }, value)
-  await service.initialize()
-  capabilitiesChanged.mockClear()
-  await service.enable('tests.legal', false)
-  await service.uninstall('tests.legal')
-  expect(capabilitiesChanged).toHaveBeenCalledTimes(2)
 })

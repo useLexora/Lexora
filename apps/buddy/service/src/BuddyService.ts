@@ -143,11 +143,13 @@ import { NativeFileEngine } from './files/NativeFileEngine'
 import { registerTaskFileRpc } from './files/registerTaskFileRpc'
 import { TaskFileAccess } from './files/TaskFileAccess'
 import { TaskFileService } from './files/TaskFileService'
+import { createPluginImageBackends } from './images/createPluginImageBackends'
 import { observeImageDiagnostics } from './images/ImageOperationLifecycle'
 import { ImageReadingService } from './images/ImageReadingService'
 import { ImageRequestStore } from './images/ImageRequestStore'
 import { ImageTransformService } from './images/ImageTransformService'
 import { OpenAiImageGenerationService } from './images/OpenAiImageGenerationService'
+import { PluginImageGateway } from './images/PluginImageGateway'
 import { RoutedImageGateway } from './images/RoutedImageGateway'
 import { AttentionNotificationService } from './notifications/AttentionNotificationService'
 import { NotificationProjection } from './notifications/NotificationProjection'
@@ -166,6 +168,7 @@ import { registerExtensionConditionRpc } from './plugins/registerExtensionCondit
 import { getBuiltinPromptCatalog } from './prompts/builtinPromptCatalog'
 import { createProviderService } from './providers/createProviderService'
 import { createExtensionModelCapabilities } from './providers/extensionModelCapabilities'
+import { PluginModelRegistry } from './providers/PluginModelRegistry'
 import { ProviderDependents } from './providers/ProviderDependents'
 import { registerProviderRpc } from './providers/registerProviderRpc'
 import { refreshProviderSpeechModels, registerProviderSpeechRpc } from './providers/registerProviderSpeechRpc'
@@ -612,13 +615,20 @@ export async function startBuddyService(
       resolveCredentialMetadata: providerId => providerService.getCredentialMetadata(providerId),
       resolveSourceProviderId: providerId => executionModels.resolveSourceProviderId(providerId),
     })
+    const pluginImages = await host.start('runtime.plugin_images', ({ defer }) => {
+      const gateway = new PluginImageGateway(options.rpc)
+      defer(() => gateway.dispose())
+      return gateway
+    })
+    const pluginImageBackends = createPluginImageBackends(options.rpc, providerService, pluginImages)
     const getImagePreferences = async (signal?: AbortSignal) => imagePreferencesSchema.parse(await options.rpc.request(imageRpc.preferences, {}, 30000, signal))
     const imageGenerationGateway = new RoutedImageGateway({
       native: nativeImageGateway,
+      plugins: pluginImageBackends.generation,
       providers: providerService,
       preferences: getImagePreferences,
     })
-    const imageReading = new ImageReadingService({ rpc: options.rpc, providers: providerService, usage: usageService, preferences: getImagePreferences })
+    const imageReading = new ImageReadingService({ plugins: pluginImageBackends.reading, rpc: options.rpc, providers: providerService, usage: usageService, preferences: getImagePreferences })
     const sessions = await host.start('runtime.sessions', () => new BuddySessionRegistry<ReusableBuddySession>())
     const sessionReferences = createSessionReferenceRepository(options.database)
     const conversationMetadata = await host.start('runtime.task_metadata', ({ defer }) => {
@@ -691,6 +701,12 @@ export async function startBuddyService(
           void sessions.invalidateMode('interactive').catch(() => record({ event: 'plugins.sessions_invalidation.failed', level: 'warn', errorCode: 'EXTENSION_INVALIDATION_FAILED' }))
       }))
       return service
+    })
+    const pluginModels = await host.start('runtime.plugin_models', ({ defer }) => {
+      const registry = new PluginModelRegistry(options.rpc, providerService, () => record({ event: 'plugins.models.refresh_failed', level: 'warn', errorCode: 'EXTENSION_INFERENCE_CATALOG_FAILED' }))
+      defer(() => registry.dispose())
+      void registry.refresh().catch(() => record({ event: 'plugins.models.refresh_failed', level: 'warn', errorCode: 'EXTENSION_INFERENCE_CATALOG_FAILED' }))
+      return registry
     })
     const pluginBuilder = await host.start('runtime.plugin_authoring', ({ defer }) => {
       const service = new PluginAuthoringService(options.rpc, () => record({ event: 'plugins.authoring.observer_failed', level: 'warn' }))
@@ -1796,6 +1812,7 @@ export async function startBuddyService(
       register(registerSpaceFileRpc(options.rpc, spaceFiles))
       register(registerTaskFileRpc(options.rpc, taskFileService))
       register(options.rpc.onRequest(imageRpc.catalog, async () => {
+        await pluginModels.refresh()
         return { ...await imageGenerationGateway.catalog(), readingCandidates: await imageReading.candidates() }
       }))
       register(registerProviderSpeechRpc({ rpc: options.rpc, providers: providerService, workspace }))
@@ -1803,7 +1820,9 @@ export async function startBuddyService(
         registerProviderRpc({
           rpc: options.rpc,
           service: providerService,
-          refreshCapabilities: () => refreshProviderSpeechModels({ rpc: options.rpc, providers: providerService, workspace }),
+          refreshCapabilities: async () => {
+            await Promise.all([refreshProviderSpeechModels({ rpc: options.rpc, providers: providerService, workspace }), pluginModels.refresh()])
+          },
         }),
       )
       register(

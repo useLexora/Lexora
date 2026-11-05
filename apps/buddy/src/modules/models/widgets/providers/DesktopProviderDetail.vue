@@ -3,13 +3,11 @@ import type { ModelProvidersStore } from '@/modules/models/state/typing'
 import { Add20Regular, Info20Regular, Search20Regular } from '@vicons/fluent'
 import { NButton, NInput, NPopconfirm, NSpace, NSwitch, NTooltip } from 'naive-ui'
 import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopManualModelDialog from '@/modules/models/widgets/providers/DesktopManualModelDialog.vue'
 import DesktopModelCapabilityTags from '@/modules/models/widgets/providers/DesktopModelCapabilityTags.vue'
 import DesktopModelDetailDialog from '@/modules/models/widgets/providers/DesktopModelDetailDialog.vue'
 import DesktopProviderConnectionDialog from '@/modules/models/widgets/providers/DesktopProviderConnectionDialog.vue'
-import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopSegmentedControl from '@/shared/ui/segmented-control/DesktopSegmentedControl.vue'
 import { useProviderDetail } from './useProviderDetail'
@@ -20,8 +18,8 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   continueSetup: [providerId: string]
+  managePlugin: []
 }>()
-const router = useRouter()
 const language = computed(() => props.providerSettings.language.value)
 const { t } = useBuddyI18n(language)
 const {
@@ -51,8 +49,8 @@ const visibleModels = computed(() => {
     && (!search || [model.displayName, model.modelId].some(value => value.toLocaleLowerCase().includes(search))))
 })
 function managePlugin() {
-  const plugin = provider.value?.plugin
-  return router.push(plugin?.managementPage ? desktopRouteLocations.extensionPage(plugin.id) : desktopRouteLocations.extensions())
+  showModelDetailDialog.value = false
+  emit('managePlugin')
 }
 </script>
 
@@ -187,7 +185,7 @@ function managePlugin() {
           </div>
           <div class="flex flex-none items-center ml-auto gap-[0.4rem]">
             <template v-if="model.available">
-              <NButton size="small" @click="provider.plugin ? managePlugin() : openModelDetail(model.modelId)">
+              <NButton size="small" @click="openModelDetail(model.modelId)">
                 {{ t('desktop.providers.manage') }}
               </NButton>
               <NSwitch
@@ -251,8 +249,10 @@ function managePlugin() {
     :actions="modelActions"
     :language="language"
     :model="selectedModel"
+    :plugin-managed="Boolean(provider?.plugin)"
     :disabled="(provider?.activeRunCount ?? 0) > 0"
     :saving="providerSettings.mutatingProviderId.value === providerId"
+    @manage-plugin="managePlugin"
   />
   <DesktopProviderConnectionDialog
     v-if="provider"

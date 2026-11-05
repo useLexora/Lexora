@@ -188,6 +188,10 @@ export function useExtensionContributions(options: { controller: WorkbenchContro
       else if (event.kind === 'message') {
         views.broadcast(event.extensionId, event.generation, event.message)
       }
+      else if (event.kind === 'settings-header-actions') {
+        if (views.setSettingsHeaderActions(event.viewId, event.generation, event.token, event.actions))
+          result = event.viewId
+      }
       else if (event.kind === 'document-info') {
         const surface = views.surfaces.get(event.viewId)
         const session = surface?.session

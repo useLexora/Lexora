@@ -27,3 +27,13 @@ describe('provider error disclosure', () => {
     expect(result.message).toHaveLength(4096)
   })
 })
+
+describe('plugin inference failures', () => {
+  it.each([
+    ['EXTENSION_INFERENCE_CONTEXT_TOO_LARGE', 'MODEL_INPUT_TOO_LARGE'],
+    ['EXTENSION_INFERENCE_INPUT_UNSUPPORTED', 'MODEL_INPUT_UNSUPPORTED'],
+    ['EXTENSION_INFERENCE_OUTPUT_INCOMPLETE', 'MODEL_STREAM_INCOMPLETE'],
+  ])('preserves the actionable meaning of %s', (message, code) => {
+    expect(normalizeModelRequestFailure(message).code).toBe(code)
+  })
+})

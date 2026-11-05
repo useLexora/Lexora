@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import type { ExtensionReview } from '@buddy-shared/extensions/extensionApi'
 import type { Component } from 'vue'
-import { Alert20Regular, Clipboard20Regular, Clock20Regular, Document20Regular, Folder20Regular, Globe20Regular, Link20Regular, Settings20Regular, Sparkle20Regular, Warning20Regular } from '@vicons/fluent'
+import { supervisedInferencePlatforms } from '@buddy-shared/extensions/inferencePlatform'
+import { Alert20Regular, Clipboard20Regular, Clock20Regular, Document20Regular, Folder20Regular, Globe20Regular, Link20Regular, Settings20Regular, Sparkle20Regular } from '@vicons/fluent'
 import { computed } from 'vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 
@@ -23,6 +24,7 @@ const props = defineProps<{ review: ExtensionReview, language: string }>()
 const english = computed(() => props.language === 'en-US')
 const resources = computed<ReviewResource[]>(() => {
   const p = props.review.manifest.permissions
+  const supervisedPlatforms = supervisedInferencePlatforms(props.review.manifest.contributes.inference).map(platform => platform === 'macos-arm64' ? 'macOS' : 'Windows').join(english.value ? ' and ' : '、')
   const fileRead = [
     ...(p.selectedResource === 'read' ? ['selectedResource:read'] : []),
     ...(p.localResources ? ['localResources'] : []),
@@ -126,6 +128,27 @@ const resources = computed<ReviewResource[]>(() => {
       scope: english.value ? 'Send tool-provided text to configured models; usage may incur costs. Credentials stay in Lexora.' : '将工具文本发送至已配置的模型，可能产生费用；凭据不交给插件。',
     },
     {
+      key: 'inference',
+      title: english.value ? 'Model inference' : '模型推理',
+      icon: Sparkle20Regular,
+      operations: [
+        { key: 'run', label: english.value ? 'Run models' : '运行模型', permissions: p.inference ? ['inference'] : [] },
+        { key: 'gpu', label: english.value ? 'Use GPU' : '使用 GPU', permissions: p.inferenceGpu ? ['inferenceGpu'] : [] },
+      ],
+      scope: supervisedPlatforms
+        ? english.value
+          ? `Run declared inference programs. On ${supervisedPlatforms}, native code runs with your account permissions and can access its files, credentials, devices and network; plugin file and network scopes do not isolate native code.`
+          : `运行声明的推理程序。${supervisedPlatforms} 原生代码以当前账户权限运行，可访问其文件、凭据、设备和网络，不受插件文件与网络权限范围隔离。`
+        : english.value ? 'Run declared inference programs with prepared model resources and task inputs. Local models consume memory and disk space.' : '使用已准备的模型资源和任务输入运行声明的推理程序；本地模型会占用内存和磁盘。',
+    },
+    {
+      key: 'inferenceNetwork',
+      title: english.value ? 'Inference services' : '推理服务',
+      icon: Globe20Regular,
+      operations: p.inferenceNetwork.map(origin => ({ key: origin, label: origin, permissions: [`inferenceNetwork:${origin}`] })),
+      scope: english.value ? 'Send model inputs to these services; usage may incur costs. Credentials stay in Lexora.' : '将模型输入发送至这些服务，可能产生费用；凭据由 Lexora 保管。',
+    },
+    {
       key: 'shells',
       title: english.value ? 'Interpreters' : '命令解释器',
       icon: Settings20Regular,
@@ -178,10 +201,6 @@ const resources = computed<ReviewResource[]>(() => {
     .map(resource => ({ ...resource, operations: resource.operations.filter(operation => operation.permissions.length) }))
     .filter(resource => resource.operations.length)
 })
-const sharesContent = computed(() => {
-  const p = props.review.manifest.permissions
-  return (p.clipboardRead || p.selectedResource === 'read' || p.localResources || p.fileEditing || p.selectedContent || p.taskMessages || p.data.length > 0 || p.references) && p.network.length > 0
-})
 function isNewOperation(operation: ReviewOperation): boolean {
   return !!props.review.currentVersion && operation.permissions.some(key => props.review.addedPermissions.includes(key))
 }
@@ -211,10 +230,6 @@ function isNewOperation(operation: ReviewOperation): boolean {
         </dd>
       </div>
     </dl>
-    <p v-if="sharesContent" class="mt-3 mb-0 flex items-start gap-2 text-[12px] leading-[1.65] text-warning" data-testid="extension-content-sharing-warning">
-      <DesktopIcon class="mt-0.5 shrink-0" :component="Warning20Regular" :size="16" aria-hidden="true" />
-      {{ english ? 'This plugin can send authorized content to the listed websites.' : '此插件可向列出的网站发送已授权读取的内容。' }}
-    </p>
   </section>
 </template>
 

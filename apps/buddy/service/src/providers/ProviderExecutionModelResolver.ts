@@ -7,6 +7,7 @@ import type { ModelMetadataCatalog } from './ModelsDevCatalog'
 import type { ProviderCredentialStatus } from './ProviderCredentialStatus'
 import type { ProviderModelCatalog } from './ProviderModelCatalog'
 import { BUDDY_FAST_SERVICE_TIER } from '../../../shared/conversation/modelSelection'
+import { pluginChatApi, pluginProviderPrefix } from '../../../shared/extensions/extensionChat'
 import {
   ProviderAuthenticationRequiredError,
   ProviderUnavailableError,
@@ -27,6 +28,7 @@ export interface ResolvedProviderSessionModel {
 }
 
 export interface ProviderExecutionModelResolverOptions {
+  isPluginAvailable?: (providerId: string) => boolean
   builtins: Pick<BuiltinProviderConfigRepository, 'findById'>
   credentialStatus: ProviderCredentialStatus
   metadata: Pick<ModelMetadataCatalog, 'getModels'>
@@ -39,6 +41,7 @@ export interface ProviderExecutionModelResolverOptions {
 }
 
 export class ProviderExecutionModelResolver {
+  readonly #isPluginAvailable: NonNullable<ProviderExecutionModelResolverOptions['isPluginAvailable']>
   readonly #builtins: ProviderExecutionModelResolverOptions['builtins']
   readonly #credentialStatus: ProviderCredentialStatus
   readonly #metadata: ProviderExecutionModelResolverOptions['metadata']
@@ -47,6 +50,7 @@ export class ProviderExecutionModelResolver {
   readonly #states: ProviderExecutionModelResolverOptions['states']
 
   constructor(options: ProviderExecutionModelResolverOptions) {
+    this.#isPluginAvailable = options.isPluginAvailable ?? (() => false)
     this.#builtins = options.builtins
     this.#credentialStatus = options.credentialStatus
     this.#metadata = options.metadata
@@ -65,6 +69,8 @@ export class ProviderExecutionModelResolver {
     })
     if (!parameters.success)
       throw new ProviderValidationError()
+    if (model.api === pluginChatApi && (parameters.data.contextWindow > model.contextWindow || parameters.data.maxTokens > model.maxTokens))
+      throw new ProviderUnavailableError()
     return { ...model, ...parameters.data }
   }
 
@@ -77,9 +83,15 @@ export class ProviderExecutionModelResolver {
       throw new ProviderUnavailableError()
     }
     input = { ...input }
-    const credentials = await this.#credentialStatus.list()
-    if (!credentials.some(credential => credential.providerId === input.providerId))
-      throw new ProviderAuthenticationRequiredError()
+    if (input.providerId.startsWith(pluginProviderPrefix)) {
+      if (!this.#isPluginAvailable(input.providerId))
+        throw new ProviderUnavailableError()
+    }
+    else {
+      const credentials = await this.#credentialStatus.list()
+      if (!credentials.some(credential => credential.providerId === input.providerId))
+        throw new ProviderAuthenticationRequiredError()
+    }
     if (!this.#states.findByProviderId(input.providerId)?.enabled || !this.#modelCatalog.isEnabledAvailable(input.providerId, input.modelId))
       throw new ProviderUnavailableError()
     return this.resolve(input)

@@ -121,6 +121,8 @@ async function initialize() {
       workers,
       clipboard: Object.freeze({ read: () => request('clipboard.read'), write: data => request('clipboard.write', data) }),
       setDocumentInfo: info => request('view.setDocumentInfo', info),
+      setSettingsHeaderActions: actions => request('view.setSettingsHeaderActions', actions),
+      onSettingsHeaderAction: listener => events.on('view:settings-header-action:activated', event => listener(event.data.id)),
       apiVersion: initial.apiVersion,
       onBeforeClose: handler => closeGuard.register(handler),
       events,

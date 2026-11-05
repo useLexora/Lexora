@@ -85,6 +85,12 @@ jobs:
           fi
           pnpm --filter @uselexora/lexora-buddy package:macos
 
+      - name: Verify native inference supervision
+        timeout-minutes: 3
+        env:
+          LEXORA_BUDDY_PROCESS_CONTROL: ${{ github.workspace }}/apps/buddy/.output/build/native/${{ steps.target.outputs.rust-target }}/release/lexora-buddy-process-control
+        run: node --test apps/buddy/native/host/__tests__/inference_process.posix.mjs
+
       - name: Verify platform runtime
         run: pnpm --filter @uselexora/lexora-buddy test:platform
 

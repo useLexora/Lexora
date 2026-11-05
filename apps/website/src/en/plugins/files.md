@@ -40,6 +40,12 @@ This is a contributes fragment: declare the referenced view and replace example 
 
 Persist resource IDs and acquire fresh URLs per session. Handles do not reveal arbitrary disk paths. Create a new private version, commit its metadata pointer, then release the previous version; retain old content on failure.
 
+## Remote text and pagination
+
+Call `network.get(url)` for an approved HTTPS origin to receive `{status,text,headers:{link?:string}}`, with at most 1 MiB of text. Headers expose only the final response's pagination `Link`, never Cookie, Set-Cookie, Authorization or other headers. Missing or empty Link produces `{}`; a value exceeding 16 KiB in UTF-8 fails with `EXTENSION_NETWORK_HEADERS_TOO_LARGE` rather than being truncated.
+
+Parse `rel="next"` and validate the next URL, origin, path and cursor before requesting it. Response headers do not grant permission, and every redirect remains authorization-checked. Older hosts may omit `headers`: prompt for an upgrade when pagination is required instead of treating missing support as the last page. This addition leaves the API major version and existing `status/text` consumers unchanged; target a host version verified to support the field.
+
 ## Edit originals and recover
 
 Original editing uses API 4 fileEditing and the interactive view documents API. Plugins adopting this editing capability should require Lexora 0.17.0 or later and verify their target host.

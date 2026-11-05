@@ -19,10 +19,12 @@ import { extensionFileHandlerBindings, extensionFileOpeningProviders } from '../
 import { addedExtensionPermissions, extensionIdSchema, extensionMetadataSchema } from '../../shared/extensions/extensionManifest'
 import { EXTENSION_REVIEW_BYTES_LIMIT, extensionFilesSize } from '../../shared/extensions/extensionPackageBudget'
 import { extensionConfigurationSchema, resolveExtensionConfiguration } from '../../shared/extensions/extensionSettings'
+import { supervisedInferencePlatforms } from '../../shared/extensions/inferencePlatform'
 import { builtinFileOpeningProviders, fileOpeningChoiceSchema, fileOpeningExtension, resolveFileOpening } from '../../shared/files/fileOpening'
 import { spaceFileTargetSchema } from '../../shared/spaces/spaceFileApi'
 import { readExtensionJson, verifiedExtensionAsset, writeExtensionJson } from './extensionFiles'
 import { extensionIconUrl } from './extensionIcon'
+import { ExtensionInferenceResources } from './ExtensionInferenceResources'
 import { processExtensionPackage } from './extensionPackageProcessing'
 import { ExtensionResourceStore } from './ExtensionResourceStore'
 import { extensionPackageSchema as packageSchema, storedIndexSchema } from './extensionState'
@@ -38,6 +40,7 @@ export class ExtensionPackageStore {
   readonly root: string
   readonly appVersion: string
   readonly resources: ExtensionResourceStore
+  readonly inference: ExtensionInferenceResources
   readonly #candidates = new Map<string, ExtensionCandidate>()
   readonly #icons = new Map<string, { revision: string, url: Promise<string | undefined> }>()
   #index: z.infer<typeof indexSchema> = { version: 1, installed: {}, fileOpeningDefaults: {}, fileOpeningRevisions: {} }
@@ -54,6 +57,7 @@ export class ExtensionPackageStore {
     this.appVersion = appVersion
     this.processPackage = processPackage
     this.resources = new ExtensionResourceStore(root)
+    this.inference = new ExtensionInferenceResources(root)
   }
 
   async load(): Promise<void> {
@@ -163,7 +167,11 @@ export class ExtensionPackageStore {
       return { extension, location, providerId: provider.id, title: provider.title, currentProviderId, requestDefault }
     })))
     this.#candidates.set(token, { token, files: new Map(files), development, expires: Date.now() + 600000, package: { manifest, hashes, revision, source }, fileAssociations: fileAssociations.map(({ extension, location, providerId }) => ({ choice: { extension, location, providerId }, revision: this.#index.fileOpeningRevisions[extension]?.[location] ?? 0 })) })
-    return { token, manifest, iconUrl, sha256: revision, development, currentVersion: current?.current.manifest.version ?? null, addedPermissions: addedExtensionPermissions(current?.current.manifest.permissions, manifest.permissions), fileAssociations }
+    const addedPermissions = addedExtensionPermissions(current?.current.manifest.permissions, manifest.permissions)
+    const previousSupervisedPlatforms = supervisedInferencePlatforms(current?.current.manifest.contributes.inference)
+    if (supervisedInferencePlatforms(manifest.contributes.inference).some(platform => !previousSupervisedPlatforms.includes(platform)) && !addedPermissions.includes('inference'))
+      addedPermissions.push('inference')
+    return { token, manifest, iconUrl, sha256: revision, development, currentVersion: current?.current.manifest.version ?? null, addedPermissions, fileAssociations }
   }
 
   #checkReviewBytes(files: ReadonlyMap<string, Uint8Array>, replaced?: string): void {
@@ -365,6 +373,7 @@ export class ExtensionPackageStore {
     if (this.installed[target]?.enabled)
       throw new Error('EXTENSION_STILL_ENABLED')
     await this.#dataWrites.get(target)?.catch(() => {})
+    await this.inference.clear(target)
     await rm(join(this.root, 'data', target), { recursive: true, force: true })
   }
 

@@ -1,4 +1,5 @@
 import type { Api, Model, Provider } from '@earendil-works/pi-ai'
+import type { ExtensionModel } from '../../../shared/extensions/extensionChat'
 import type { ModelCapabilityOverrides } from '../../../shared/providers/providerCapabilities'
 import type { ModelCatalogReference } from '../../../shared/providers/providerCatalog'
 import type { ServiceModelMetadata } from '../../../shared/providers/providerDiscovery'
@@ -20,6 +21,7 @@ import type { BuddyModel, ModelParametersOverride } from './providerSchemas'
 import { createHash } from 'node:crypto'
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai'
 import { BUDDY_THINKING_LEVELS } from '../../../shared/conversation/modelSelection'
+import { pluginChatApi } from '../../../shared/extensions/extensionChat'
 import { supportsPdfInputApi } from '../../../shared/providers/pdfInput'
 import { modelCapabilityOverridesSchema } from '../../../shared/providers/providerCapabilities'
 import { modelDiscoveryBaseUrl, serviceModelMetadataSchema } from '../../../shared/providers/providerDiscovery'
@@ -198,6 +200,49 @@ export class ProviderModelCatalog {
         sourceRevision: now,
         updatedAt: now,
       })
+    }
+  }
+
+  resolvePluginModelTools(model: Pick<ExtensionModel, 'tools' | 'catalogModels'>): boolean {
+    if (typeof model.tools === 'boolean')
+      return model.tools
+    return model.catalogModels?.length ? model.catalogModels.every(reference => this.#catalogMatcher.find(reference)?.toolCall === true) : false
+  }
+
+  resolvePluginModelReasoning(model: Pick<ExtensionModel, 'reasoning' | 'catalogModels'>): boolean {
+    if (typeof model.reasoning === 'boolean')
+      return model.reasoning
+    if (model.reasoning !== 'auto' || !model.catalogModels?.length)
+      return false
+    return model.catalogModels.every(reference => this.#catalogMatcher.find(reference)?.reasoning === true)
+  }
+
+  reconcilePluginModels(providerId: string, models: readonly Model<Api>[]): void {
+    const now = new Date().toISOString()
+    for (const model of models) {
+      const current = this.#models.find(providerId, model.id)
+      const source = createSourceMetadata({ api: model.api, catalogProviderId: null, catalogModelId: null, compat: null, cost: model.cost, displayName: model.name, input: [...model.input], reasoning: model.reasoning, samplingParams: null, sourceContextWindow: model.contextWindow, sourceMaxTokens: model.maxTokens, thinkingLevelMap: model.thinkingLevelMap ?? null })
+      this.#models.upsert({
+        catalogSelection: null,
+        capabilityOverrides: current?.capabilityOverrides ?? null,
+        acknowledgedSourceRevision: current?.acknowledgedSourceRevision ?? null,
+        available: true,
+        createdAt: current?.createdAt ?? now,
+        enabled: current?.enabled ?? true,
+        lastSeenAt: now,
+        modelId: model.id,
+        providerId,
+        overrideContextWindow: null,
+        overrideMaxTokens: null,
+        ...source,
+        source: 'synced',
+        sourceRevision: sourceParametersChanged(current, source) ? nextSourceRevision(current?.sourceRevision, now) : current?.sourceRevision ?? now,
+        updatedAt: now,
+      })
+    }
+    for (const current of this.#models.list(providerId)) {
+      if (effectiveType(current) === 'chat' && !models.some(model => model.id === current.modelId))
+        this.#models.upsert({ ...current, available: false, updatedAt: now })
     }
   }
 
@@ -432,13 +477,14 @@ export class ProviderModelCatalog {
 
   reconcileCapabilityModels(models: readonly import('../../../shared/providers/providerCapabilityModel').ProviderCapabilityModel[]): void {
     const now = new Date().toISOString()
-    for (const model of models) {
+    const catalogModels = models.filter(model => model.kind !== 'image.read')
+    for (const model of catalogModels) {
       const current = this.#models.find(model.providerId, model.modelId)
-      const source = createSourceMetadata({ type: model.kind === 'speech.transcribe' ? 'transcription' : 'speech', api: 'plugin-speech', catalogProviderId: null, compat: null, cost: emptyModelCost(), displayName: model.modelId, input: ['text'], reasoning: false, samplingParams: null, sourceContextWindow: null, sourceMaxTokens: null, thinkingLevelMap: null })
-      this.#models.upsert({ ...source, providerId: model.providerId, modelId: model.modelId, typeOverride: null, catalogSelection: null, capabilityOverrides: null, acknowledgedSourceRevision: null, available: model.available, enabled: current?.enabled ?? true, source: 'synced', overrideContextWindow: null, overrideMaxTokens: null, createdAt: current?.createdAt ?? now, updatedAt: now, lastSeenAt: now, sourceRevision: current?.sourceRevision ?? now })
+      const source = createSourceMetadata({ type: model.kind === 'speech.transcribe' ? 'transcription' : model.kind === 'speech.synthesize' ? 'speech' : 'image-generation', api: model.kind.startsWith('image.') ? 'plugin-image' : 'plugin-speech', catalogProviderId: null, compat: null, cost: emptyModelCost(), displayName: model.title ?? model.modelId, input: ['text'], reasoning: false, samplingParams: null, sourceContextWindow: null, sourceMaxTokens: null, thinkingLevelMap: null })
+      this.#models.upsert({ ...source, providerId: model.providerId, modelId: model.modelId, typeOverride: null, catalogSelection: null, capabilityOverrides: current?.capabilityOverrides ?? null, acknowledgedSourceRevision: null, available: model.available, enabled: current?.enabled ?? true, source: 'synced', overrideContextWindow: null, overrideMaxTokens: null, createdAt: current?.createdAt ?? now, updatedAt: now, lastSeenAt: now, sourceRevision: current?.sourceRevision ?? now })
     }
     for (const current of this.#models.list()) {
-      if (current.api === 'plugin-speech' && !models.some(model => model.providerId === current.providerId && model.modelId === current.modelId))
+      if (['plugin-speech', 'plugin-image'].includes(current.api) && !catalogModels.some(model => model.providerId === current.providerId && model.modelId === current.modelId))
         this.#models.upsert({ ...current, available: false, updatedAt: now })
     }
   }
@@ -495,7 +541,7 @@ export class ProviderModelCatalog {
     if (!parsed.success)
       throw new ProviderValidationError()
     const current = this.#requireModelState(providerId, modelId)
-    if (effectiveType(current) !== 'chat')
+    if (current.api === pluginChatApi || effectiveType(current) !== 'chat')
       throw new ProviderValidationError()
     const hadOverride = hasParameterOverride(current)
     const next = this.#models.upsert({
@@ -602,7 +648,7 @@ export class ProviderModelCatalog {
       pdfInput: resolution.pdfInput,
       audioInput: resolution.audioInput,
       videoInput: resolution.videoInput,
-      toolCall: resolution.toolCall,
+      toolCall: model.api === pluginChatApi ? (runtimeModel as InputModel | undefined)?.toolCall === true : resolution.toolCall,
       provider: model.providerId,
       id: model.modelId,
       name: model.displayName,
@@ -639,7 +685,7 @@ export class ProviderModelCatalog {
     })
     if (model.resolution?.inputFingerprint === inputFingerprint)
       return model.resolution
-    const match = model.source === 'synced'
+    const match = model.source === 'synced' && model.api !== pluginChatApi
       ? this.#catalogMatcher.match({ api, baseUrl, modelId: model.modelId, selection: model.catalogSelection })
       : null
     const metadata = match
@@ -683,7 +729,7 @@ export class ProviderModelCatalog {
         id: model.modelId,
         providerId: model.providerId,
         displayName: model.displayName,
-        api: model.api === 'plugin-speech' ? model.api : type === 'image-generation' ? 'openai-images' : 'openai-audio',
+        api: ['plugin-speech', 'plugin-image'].includes(model.api) ? model.api : type === 'image-generation' ? 'openai-images' : 'openai-audio',
         enabled: model.enabled,
         available: this.#available(model),
         source: model.source,
@@ -714,6 +760,7 @@ export class ProviderModelCatalog {
       sourceType: model.type ?? 'chat',
       typeOverride: model.typeOverride ?? null,
       api: effectiveModel.api,
+      toolCalling: effectiveModel.toolCall,
       fileInputMimeTypes: getModelFileInputMimeTypes(effectiveModel),
       available: this.#available(model),
       capabilities: [...effectiveModel.input, ...(supportsModelPdfInput(effectiveModel) ? ['pdf' as const] : []), ...(supportsModelAudioInput(effectiveModel) ? ['audio' as const] : []), ...(supportsModelVideoInput(effectiveModel) ? ['video' as const] : []), ...(effectiveModel.reasoning ? ['reasoning' as const] : [])],

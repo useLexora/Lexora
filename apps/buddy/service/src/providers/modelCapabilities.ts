@@ -41,6 +41,7 @@ export function getModelFileInputMimeTypes(model: InputModel) {
 export function readModelCapabilities(model: Model<Api>): ModelCapabilities {
   return {
     image: model.input.includes('image'),
+    toolCall: supportsModelToolCalls(model),
     pdf: supportsModelPdfInput(model),
     audio: supportsModelAudioInput(model),
     video: supportsModelVideoInput(model),
@@ -69,6 +70,7 @@ export function applyModelCapabilities(model: InputModel, overrides: ModelCapabi
   return {
     ...model,
     input,
+    toolCall: overrides.toolCall ?? model.toolCall,
     pdfInput: supportsPdfInputApi(model.api) && (overrides.pdf ?? supportsModelPdfInput(model)),
     audioInput: supportsAudioInputApi(model.api) && (overrides.audio ?? supportsModelAudioInput(model)),
     videoInput: supportsVideoInputApi(model.api) && (overrides.video ?? supportsModelVideoInput(model)),

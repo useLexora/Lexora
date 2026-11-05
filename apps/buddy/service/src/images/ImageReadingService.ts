@@ -93,7 +93,7 @@ export class ImageReadingService {
         const parts: string[] = []
         for (const [index, { image, reference }] of input.images.entries()) {
           input.signal.throwIfAborted()
-          const bytes = await validateImage(image, input.signal)
+          const bytes = await validateReadingImage(image, input.signal)
           const prepared = image.mimeType === 'image/bmp' ? await convertToPng(bytes.toString('base64'), image.mimeType) : image
           input.signal.throwIfAborted()
           if (!prepared)
@@ -220,7 +220,7 @@ function assertReadingText(text: string): void {
     throw new ImageReadingError('IMAGE_READING_INCOMPLETE')
 }
 
-async function validateImage(image: ImageContent, signal: AbortSignal): Promise<Buffer> {
+export async function validateReadingImage(image: ImageContent, signal: AbortSignal): Promise<Buffer> {
   const bytes = Buffer.from(image.data, 'base64')
   try {
     await runNativeImage(bytes, { operation: 'validate', options: { mimeType: image.mimeType } }, signal)
@@ -240,7 +240,7 @@ async function prepareReadingImages(input: ImageReadingInput, model: Model<Api>)
   const images: PreparedImageReadingImage[] = []
   for (const { image, reference } of input.images) {
     input.signal.throwIfAborted()
-    const bytes = await validateImage(image, input.signal)
+    const bytes = await validateReadingImage(image, input.signal)
     const converted = ['image/png', 'image/jpeg'].includes(image.mimeType)
       ? { data: image.data, mimeType: image.mimeType }
       : await convertToPng(bytes.toString('base64'), image.mimeType)

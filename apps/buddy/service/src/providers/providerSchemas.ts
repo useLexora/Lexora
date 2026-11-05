@@ -51,6 +51,7 @@ export const buddyModelSchema = z.object({
   type: providerModelTypeSchema.default('chat'),
   sourceType: providerModelTypeSchema.default('chat'),
   typeOverride: providerModelTypeSchema.nullable().default(null),
+  toolCalling: z.boolean().optional(),
   available: z.boolean(),
   catalogMatch: z.enum(['matched', 'ambiguous', 'unmatched', 'not_applicable']),
   catalog: modelCatalogResolutionSchema,

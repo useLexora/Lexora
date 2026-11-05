@@ -1,4 +1,5 @@
 import { copyEventSnapshot } from '../../../../shared/events/eventSnapshot'
+import { createExtensionInferenceClient } from '../../../../shared/extensions/extensionInferenceClient'
 import { createExtensionNetworkClient, createExtensionResourceClient } from '../../../../shared/extensions/extensionResourceClient'
 import { createExtensionWorkers } from '../../../../shared/extensions/extensionWorkers'
 import { createThemeClient } from '../../../../shared/theme/themeClient'
@@ -125,6 +126,7 @@ bridge.subscribe(async ({ id, method, params }) => {
           return disposable(() => agentActions.delete(id))
         } },
         shells: Object.freeze({ detect: () => request('shells.detect') }),
+        inference: createExtensionInferenceClient(request, events),
         network: createExtensionNetworkClient(request),
         notifications: { show: notification => request('notifications.show', notification) },
         schedules: {
@@ -230,6 +232,9 @@ bridge.subscribe(async ({ id, method, params }) => {
     }
     else if (method === 'panes') {
       source.updatePanes(params.panes)
+    }
+    else if (method === 'inference.progress') {
+      source.inferenceProgress(params)
     }
     else if (method === 'interactionEnded') {
       interactions.get(params.id)?.abort()

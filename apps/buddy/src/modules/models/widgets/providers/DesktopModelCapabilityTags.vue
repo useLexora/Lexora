@@ -19,6 +19,8 @@ const capabilities = computed(() => {
     { label: t('desktop.providers.audioAttachment'), enabled: props.model.capabilities.includes('audio') },
     { label: t('desktop.providers.videoAttachment'), enabled: props.model.capabilities.includes('video') },
   ]
+  if (props.model.toolCalling !== undefined)
+    items.push({ label: t('desktop.providers.toolCalling'), enabled: props.model.toolCalling })
   return items
 })
 const checkboxThemeOverrides = computed<CheckboxProps['themeOverrides']>(() => ({

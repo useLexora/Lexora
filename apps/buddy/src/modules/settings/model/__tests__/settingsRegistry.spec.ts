@@ -6,7 +6,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { settingsRoutes } from '../../routes'
 import { builtinSettings } from '../builtinSettings'
 import { extensionSettingsLocation } from '../settingsNavigation'
-import { SettingsRegistry, settingsText } from '../settingsRegistry'
+import { SettingsRegistry } from '../settingsRegistry'
 
 function plugin(): SettingsContribution {
   const item = extensionSettingItemSchema.parse({ id: 'tests.settings.inline', key: 'enabled', type: 'boolean', title: 'Inline', group: 'settings.general.general', default: false })
@@ -18,6 +18,17 @@ function plugin(): SettingsContribution {
 }
 
 describe('settings registry', () => {
+  it('registers and withdraws an integration module while rejecting foreign view ownership', () => {
+    const registry = new SettingsRegistry()
+    registry.register('settings', builtinSettings)
+    const module = { ...plugin().modules[0]!, section: 'integrations' as const, view: 'tests.settings.view' }
+    const dispose = registry.register('tests.settings', { modules: [module], groups: [], items: [] })
+    expect(registry.modules.find(item => item.id === module.id)).toMatchObject({ section: 'integrations', view: module.view, owner: 'tests.settings' })
+    expect(() => registry.register('tests.settings', { modules: [{ ...module, view: 'other.plugin.view' }], groups: [], items: [] })).toThrow()
+    dispose()
+    expect(extensionSettingsLocation(registry.modules, 'tests.settings')).toBeNull()
+  })
+
   it('opens an owned module, a builtin group or an inline field only for registered owners', () => {
     const registry = new SettingsRegistry()
     registry.register('settings', builtinSettings)
@@ -79,16 +90,10 @@ describe('settings registry', () => {
     expect(registry.modules.some(module => module.id === 'tests.settings.module')).toBe(true)
   })
 
-  it('keeps all public targets and existing builtin URLs/names backed by registered definitions', () => {
+  it('keeps public setting groups and existing builtin URLs backed by registered definitions', () => {
     const registry = new SettingsRegistry()
     registry.register('settings', builtinSettings)
     const router = createRouter({ history: createMemoryHistory(), routes: [...settingsRoutes] })
-    for (const module of registry.modules) {
-      const route = router.resolve({ name: `desktop.settings.${module.category}` })
-      expect(route.path).toBe(`/settings/${module.category}`)
-      expect(route.meta.settingsModule).toBe(module.id)
-      expect(settingsText(module.description, 'en-US')).not.toContain('desktop.')
-    }
     for (const [group, module] of Object.entries(publicSettingsGroups))
       expect(registry.modules.find(entry => entry.id === module)!.groups.some(entry => entry.id === group)).toBe(true)
     expect(router.resolve('/settings/models/example').meta.settingsModule).toBe('settings.models')

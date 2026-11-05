@@ -77,6 +77,12 @@ function classifyModelRequestFailure(message: string | undefined, evidence: Fail
     return message
   if (!message)
     return 'MODEL_REQUEST_FAILED'
+  if (message === 'EXTENSION_INFERENCE_CONTEXT_TOO_LARGE')
+    return 'MODEL_INPUT_TOO_LARGE'
+  if (message === 'EXTENSION_INFERENCE_INPUT_UNSUPPORTED')
+    return 'MODEL_INPUT_UNSUPPORTED'
+  if (message === 'EXTENSION_INFERENCE_OUTPUT_INCOMPLETE')
+    return 'MODEL_STREAM_INCOMPLETE'
   if (message === 'EXTENSION_INFERENCE_RESOURCE_CHANGED' || message === 'EXTENSION_INFERENCE_CHECKSUM_MISMATCH')
     return 'MODEL_RESOURCES_CHANGED'
   if (message === 'EXTENSION_INFERENCE_RESOURCE_UNAVAILABLE' || message === 'EXTENSION_INFERENCE_RESOURCE_NOT_EXECUTABLE')

@@ -16,9 +16,10 @@ import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { extensionAgentCatalogSchema, extensionAgentDescriptorSchema, extensionAgentRequestSchema, extensionAgentRpc } from '../../../shared/extensions/extensionAgent'
 import { extensionAgentCapabilities } from '../../../shared/extensions/extensionAgentCapabilities'
 import { extensionJsonSchema } from '../../../shared/extensions/extensionApi'
+import { ExtensionInvocationQueue } from '../../../shared/extensions/ExtensionInvocationQueue'
 import { extensionIdSchema } from '../../../shared/extensions/extensionManifest'
 import { extensionToolInputSchema } from '../../../shared/extensions/extensionToolParameters'
-import { ExtensionInvocationQueue } from './ExtensionInvocationQueue'
+import { extensionInvocationContext } from './extensionInvocationContext'
 import { extensionToolSchema } from './extensionToolSchema'
 
 interface Invocation {
@@ -45,6 +46,7 @@ type InvocationRequest = { tool: string, input: Record<string, JsonValue> } | { 
 export class ExtensionAgentRuntime {
   readonly #options: ExtensionAgentRuntimeOptions
   readonly #invocations = new Map<string, Invocation>()
+  readonly #inferencePermits = new Map<string, () => void>()
   readonly #queue = new ExtensionInvocationQueue()
   readonly #projections = new Map<AbortSignal, ProjectionState>()
   readonly #changes: Emitter<ExtensionAgentChange>
@@ -66,12 +68,36 @@ export class ExtensionAgentRuntime {
 
   bind(): () => void {
     const request = this.#options.rpc.onRequest(extensionAgentRpc.request, (input, signal) => this.#request(input, signal))
+    const acquire = this.#options.rpc.onRequest('extensions.inference.acquire', async (raw, signal) => {
+      const input = z.object({ extensionId: extensionIdSchema, invocationId: z.uuid(), parentInvocationId: z.uuid().optional() }).strict().parse(raw)
+      const abort = AbortSignal.any([this.#stop.signal, ...signal ? [signal] : []])
+      const parent = input.parentInvocationId ? this.#invocations.get(input.parentInvocationId) : undefined
+      if (input.parentInvocationId && (!parent?.accepting || parent.scope.signal.aborted))
+        throw new Error('EXTENSION_AGENT_UNAVAILABLE')
+      if (this.#inferencePermits.has(input.invocationId))
+        throw new Error('EXTENSION_REQUEST_LIMIT')
+      const release = parent ? () => {} : await this.#queue.acquire(input.extensionId, input.invocationId, abort)
+      if (abort.aborted) {
+        release()
+        abort.throwIfAborted()
+      }
+      this.#inferencePermits.set(input.invocationId, release)
+      return null
+    })
+    const release = this.#options.rpc.onRequest('extensions.inference.release', (raw) => {
+      const { invocationId } = z.object({ invocationId: z.uuid() }).strict().parse(raw)
+      this.#inferencePermits.get(invocationId)?.()
+      this.#inferencePermits.delete(invocationId)
+      return null
+    })
     const changed = this.#options.rpc.onNotification((method, params) => {
       if (method === extensionAgentRpc.changed)
         this.#setCatalog(extensionAgentCatalogSchema.parse(params))
     })
     return () => {
       request()
+      acquire()
+      release()
       changed()
     }
   }
@@ -160,6 +186,8 @@ export class ExtensionAgentRuntime {
     this.#disposing = Promise.resolve().then(async () => {
       for (const projection of this.#projections.values()) projection.release()
       await Promise.allSettled([...this.#invocations.values()].map(invocation => invocation.settled))
+      for (const release of this.#inferencePermits.values()) release()
+      this.#inferencePermits.clear()
       this.#changes.dispose()
     })
     this.#stop.abort()
@@ -251,7 +279,7 @@ export class ExtensionAgentRuntime {
     let handler: 'completed' | 'failed' = 'failed'
     const pending = Promise.resolve().then(async () => {
       signal.throwIfAborted()
-      const result = await invocation.handlers[input.method](input.params, { ...context, callNumber })
+      const result = await extensionInvocationContext.run({ ...context, callNumber }, () => invocation.handlers[input.method](input.params, { ...context, callNumber }))
       handler = 'completed'
       signal.throwIfAborted()
       return result

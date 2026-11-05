@@ -8,6 +8,7 @@ import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
 import { randomUUID } from 'node:crypto'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
+import { pluginProviderPrefix } from '../../../shared/extensions/extensionChat'
 import {
   credentialMutationResultSchema,
   credentialProviderListResultSchema,
@@ -64,6 +65,8 @@ export class HostCredentialStore implements CredentialStore {
 
   async #read(providerId: string, options?: AuthOperationOptions): Promise<Credential | undefined> {
     options?.signal?.throwIfAborted()
+    if (providerId.startsWith(pluginProviderPrefix))
+      return undefined
     const request = ++this.#request
     try {
       const response = credentialReadResultSchema.parse(await this.#peer.request('host.credentials.read', { providerId }))

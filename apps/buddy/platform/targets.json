@@ -27,6 +27,6 @@
     "platform": "darwin",
     "architecture": "arm64",
     "rustTarget": "aarch64-apple-darwin",
-    "nativeComponents": ["fileReader", "imageTransform"]
+    "nativeComponents": ["fileReader", "processControl", "imageTransform"]
   }
 }

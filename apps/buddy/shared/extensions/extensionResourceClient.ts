@@ -1,6 +1,7 @@
 import type { JsonValue } from '../workbench/workbenchState'
 import type { ExtensionLocalFile } from './extensionResources'
-import { extensionResourceMimeTypeSchema } from './extensionResources'
+import { extensionNetworkResponseSchema } from './extensionNetwork'
+import { extensionResourceHashSchema, extensionResourceMimeTypeSchema } from './extensionResources'
 
 type Request = (method: string, params?: JsonValue) => Promise<unknown>
 interface TransferOptions { name?: string, signal?: AbortSignal }
@@ -51,7 +52,7 @@ async function transfer(request: Request, method: string, params: Record<string,
 
 export function createExtensionNetworkClient(request: Request) {
   return Object.freeze({
-    get: (url: string) => request('network.get', { url }),
+    get: async (url: string) => extensionNetworkResponseSchema.parse(await request('network.get', { url })),
     download: (url: string, options: TransferOptions = {}) => transfer(request, 'network.download', { url }, options),
   })
 }
@@ -59,6 +60,28 @@ export function createExtensionNetworkClient(request: Request) {
 export function createExtensionResourceClient(request: Request) {
   return Object.freeze({
     readText: (resource: { id: string }) => request('resources.readText', { id: resource.id }),
+    hash: async (resource: Pick<ExtensionLocalFile, 'id'>, options: { signal?: AbortSignal } = {}) => {
+      const { signal } = options
+      signal?.throwIfAborted()
+      const id = crypto.randomUUID()
+      const cancel = () => {
+        void request('network.cancel', { id }).catch(() => {})
+      }
+      const pending = request('resources.hash', { id, resourceId: resource.id })
+      signal?.addEventListener('abort', cancel, { once: true })
+      if (signal?.aborted)
+        cancel()
+      try {
+        const result = await pending
+        signal?.throwIfAborted()
+        return extensionResourceHashSchema.parse(result)
+      }
+      catch (error) {
+        signal?.throwIfAborted()
+        throw error
+      }
+      finally { signal?.removeEventListener('abort', cancel) }
+    },
     getUrl: (resource: { id: string } | { packagePath: string }) => request('resources.getUrl', 'packagePath' in resource ? { packagePath: resource.packagePath } : { id: resource.id }),
     listFiles: () => request('resources.listFiles'),
     readBytes: async (resource: { id: string }, options: { offset?: number, length?: number } = {}) => {

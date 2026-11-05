@@ -179,7 +179,7 @@ function storageUsageCategory(path: string): [StorageUsageCategoryId, StorageUsa
     return ['skills', null]
   if (path.startsWith('buddy/extensions/')) {
     const entry = path.split('/')[2]
-    return ['plugins', entry === 'packages' ? 'packages' : entry === 'data' ? 'pluginData' : 'configuration']
+    return ['plugins', entry === 'packages' ? 'packages' : ['data', 'inference'].includes(entry!) ? 'pluginData' : 'configuration']
   }
   if (browserEntry)
     return ['browser', 'siteData']
