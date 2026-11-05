@@ -76,7 +76,7 @@ export function createDelegationCapability(options: {
             }, { additionalProperties: false })),
             targetId: Type.Optional(Type.String({ description: 'Reusable definition ID from list. Repeated NPC delegations create independent instances, including concurrent instances of the same definition.' })),
             runId: Type.Optional(Type.String({ description: 'Exact execution ID from status/history, or public works returned by context. context + runId reads current public state/reply; forward requires the existing target runId. Public discovery grants no private result, cancel, send, or resume authority.' })),
-            inputSourceId: Type.Optional(Type.String({ description: 'Required only for forward: an inputs[].sourceId returned by context for a user input accepted by your current run. forward accepts only operation, runId, inputSourceId; no text or material overrides.' })),
+            inputSourceId: Type.Optional(Type.String({ description: 'Used only by forward: an inputs[].sourceId returned by context for a user input accepted by your current run. Omit for other operations; they ignore this field. forward requires operation, runId, inputSourceId and accepts no text or material overrides.' })),
             text: Type.Optional(Type.String({ minLength: 1, description: 'Task, supplement, question, or answer.' })),
             questionId: Type.Optional(Type.String()),
             audience: Type.Optional(Type.Literal('caller', { description: 'Required for question. Ask your delegating agent; use lexora_ask_user for the human.' })),

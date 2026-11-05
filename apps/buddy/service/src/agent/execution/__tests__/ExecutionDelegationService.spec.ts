@@ -1,6 +1,9 @@
+import type { ToolCall } from '@earendil-works/pi-ai'
+import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import type { BuddyPermissionSettings } from '../../../../../shared/permissions/permissionMode'
 import type { BuddyExtensionRunContext } from '../../extensions/BuddyExtensionRunContext'
 import process from 'node:process'
+import { validateToolArguments } from '@earendil-works/pi-ai'
 import { SessionManager } from '@earendil-works/pi-coding-agent'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { buddySettingsSchema } from '../../../../../shared/buddies/buddySettings'
@@ -10,8 +13,9 @@ import { BuddyDefinitionResolver } from '../../../buddies/BuddyDefinitionResolve
 import { createExecutionStorageFixture } from '../../../storage/__tests__/executionFixture'
 import { createConversationMemberRepository } from '../../../storage/conversationMemberRepository'
 import { createMailboxRepository, hashExecutionMailboxMessage } from '../../../storage/mailboxRepository'
+import { createDelegationCapability } from '../../extensions/delegationCapability'
 import { getPiShellToolName } from '../../extensions/piBuiltinTools'
-import { ExecutionDelegationService } from '../ExecutionDelegationService'
+import { delegationInputSchema, ExecutionDelegationService } from '../ExecutionDelegationService'
 import { renderMailboxMessage } from '../executionMailboxEntries'
 
 const cleanups: (() => void)[] = []
@@ -56,7 +60,108 @@ function fixture() {
   } }
 }
 
+function delegationTool(f: ReturnType<typeof fixture>, actorKind: 'actor' | 'npc' = 'actor') {
+  let tool: ToolDefinition | undefined
+  createDelegationCapability({ service: f.service, runContext: { current: f.caller.run }, getPermissions: f.caller.getPermissions, actorKind }).extension.factory({
+    registerTool: (registered: ToolDefinition) => { tool = registered },
+  } as never)
+  if (!tool)
+    throw new Error('Missing collaboration tool')
+  return tool
+}
+
+function validateInput(tool: ToolDefinition, input: ToolCall['arguments']) {
+  return validateToolArguments(tool, { type: 'toolCall', id: 'call', name: tool.name, arguments: input })
+}
+
 describe('execution delegation boundary', () => {
+  it.each([undefined, null, '', 'unused', 'source-from-another-run'])('accepts an irrelevant inputSourceId=%s without changing discovery', async (inputSourceId) => {
+    const f = fixture()
+    const tool = delegationTool(f)
+    const value = Object.freeze({ operation: 'list', ...inputSourceId === undefined ? {} : { inputSourceId } })
+    const expected = await f.service.execute(f.caller, 'plain-list', { operation: 'list' }, f.controller.signal)
+    await expect(f.service.execute(f.caller, 'list', validateInput(tool, value), f.controller.signal)).resolves.toEqual(expected)
+    expect(value).toEqual({ operation: 'list', ...inputSourceId === undefined ? {} : { inputSourceId } })
+    expect(f.executions.listTree('root')).toHaveLength(1)
+  })
+
+  it('keeps delegation idempotent when an unused source placeholder changes', async () => {
+    const f = fixture()
+    const tool = delegationTool(f)
+    const input = { operation: 'delegate', targetId: f.npc.id, text: 'Inspect the assigned inputs', inputSourceId: 'unused' }
+    const result = await f.service.execute(f.caller, 'assignment', validateInput(tool, input), f.controller.signal)
+    await expect(f.service.execute(f.caller, 'assignment', validateInput(tool, { ...input, inputSourceId: 'another-placeholder' }), f.controller.signal)).resolves.toEqual(result)
+    expect(f.executions.listTree('root')).toHaveLength(2)
+  })
+
+  it.each(['actor', 'npc'] as const)('accepts unused source fields for %s status without changing execution visibility', async (kind) => {
+    const f = fixture()
+    const tool = delegationTool(f, kind)
+    f.executions.admitChild(f.child('child'))
+    const caller = kind === 'actor' ? f.caller : { ...f.caller, run: { ...f.caller.run, runId: 'child' } }
+    const expected = await f.service.execute(caller, 'plain-status', { operation: 'status' }, f.controller.signal)
+    await expect(f.service.execute(caller, 'status', validateInput(tool, { operation: 'status', inputSourceId: 'unused' }), f.controller.signal)).resolves.toEqual(expected)
+  })
+
+  it.each([
+    null,
+    [],
+    { operation: 'list', inputSourceId: 7 },
+    { operation: 'list', inputSourceId: {} },
+    { operation: 'list', inputSourceId: [] },
+    { operation: 'list', unknown: 'unused' },
+    { operation: 'unknown', inputSourceId: 'unused' },
+    { operation: 'delegate', targetId: '', text: 'Inspect', inputSourceId: 'unused' },
+    { operation: 'delegate', targetId: 'x'.repeat(257), text: 'Inspect', inputSourceId: 'unused' },
+    { operation: 'delegate', targetId: 'npc', text: '  ', inputSourceId: 'unused' },
+    { operation: 'send', runId: '', text: 'Supplement', inputSourceId: 'unused' },
+    { operation: 'answer', questionId: 'x'.repeat(129), text: 'Answer', inputSourceId: 'unused' },
+    { operation: 'delegate', contextSourceIds: [''], inputSourceId: 'unused' },
+    { operation: 'delegate', attachmentIds: ['x'.repeat(257)], inputSourceId: 'unused' },
+    { operation: 'wait', timeoutMs: 0, inputSourceId: 'unused' },
+    { operation: 'result', offset: -1, inputSourceId: 'unused' },
+    { operation: 'forward', runId: 'child' },
+    { operation: 'forward', runId: 'child', inputSourceId: '' },
+    { operation: 'forward', runId: 'child', inputSourceId: 'x'.repeat(257) },
+    { operation: 'forward', inputSourceId: 'source' },
+    { operation: 'forward', runId: '', inputSourceId: 'source' },
+    { operation: 'forward', runId: 'child', inputSourceId: 'source', text: 'replacement' },
+    { operation: 'forward', runId: 'child', inputSourceId: 'source', attachmentIds: [] },
+    { operation: 'forward', runId: 'child', inputSourceId: 'source', contextSourceIds: [] },
+  ])('rejects malformed input and forward overrides: %j', async (input) => {
+    const f = fixture()
+    await expect(f.service.execute(f.caller, 'invalid', input, f.controller.signal)).rejects.toThrow()
+    expect(f.executions.listTree('root')).toHaveLength(1)
+  })
+
+  it('retains required forward IDs after public tool validation and rejects unknown fields in both layers', () => {
+    const f = fixture()
+    const tool = delegationTool(f)
+    const forward = { operation: 'forward', runId: 'child', inputSourceId: 'source' }
+    expect(delegationInputSchema.parse(validateInput(tool, forward))).toEqual(forward)
+    expect(() => validateInput(tool, { operation: 'list', unknown: 'unused' })).toThrow()
+    expect(() => delegationInputSchema.parse(validateInput(tool, { ...forward, inputSourceId: null }))).toThrow()
+    expect(() => validateInput(delegationTool(f, 'npc'), forward)).toThrow()
+  })
+
+  it('returns a recoverable tool error for a forward override and accepts the next ordinary call', async () => {
+    const f = fixture()
+    const tool = delegationTool(f)
+    const context = { sessionManager: { getBranch: () => [] } } as never
+    const rejected = await tool.execute('invalid-forward', validateInput(tool, { operation: 'forward', runId: 'child', inputSourceId: 'source', text: 'replacement' }), f.controller.signal, undefined, context)
+    expect(rejected).toMatchObject({ isError: true, details: { code: 'invalid_request' } })
+    const accepted = await tool.execute('list-after-error', validateInput(tool, { operation: 'list', inputSourceId: 'unused' }), f.controller.signal, undefined, context)
+    expect(accepted.details).toMatchObject({ self: { id: 'default' }, npcs: [{ id: f.npc.id }] })
+    expect(f.executions.listTree('root')).toHaveLength(1)
+  })
+
+  it('does not grant access to another execution tree through an unused source ID', async () => {
+    const f = fixture()
+    f.runs.create({ ...f.runs.findById('root')!, id: 'other-root', rootRunId: 'other-root', buddyId: f.actor.id, actorSnapshot: f.snapshot(f.actor.id) })
+    await expect(f.service.execute(f.caller, 'cross-root', { operation: 'send', runId: 'other-root', text: 'Supplement', inputSourceId: 'unused' }, f.controller.signal)).rejects.toMatchObject({ code: 'unauthorized' })
+    expect(f.executions.listTree('other-root')).toHaveLength(1)
+  })
+
   it.each(['disabled', 'removed', 'unavailable', 'dependency'] as const)('hides %s managed NPCs and rejects stale target IDs without blocking actor partners', async (reason) => {
     const f = fixture()
     const managed = managedBuddyFixture(f.database)
