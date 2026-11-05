@@ -14,7 +14,7 @@ const props = defineProps<{
 }>()
 
 const router = useRouter()
-const { providerSettings, ready } = useSettingsContext()
+const { providerSettings, ready, registry } = useSettingsContext()
 const { t } = useBuddyI18n(providerSettings.language)
 const showAddDialog = shallowRef(false)
 const provider = computed(() => providerSettings.providers.value.find(
@@ -48,6 +48,15 @@ function continueSetup() {
   showAddDialog.value = true
 }
 
+function managePlugin() {
+  const plugin = provider.value?.plugin
+  if (!plugin)
+    return
+  return router.push(plugin.managementPage
+    ? desktopRouteLocations.extensionPage(plugin.id)
+    : registry.extensionLocation(plugin.id) ?? desktopRouteLocations.extensions())
+}
+
 async function removeProvider() {
   await providerSettings.removeProvider(props.providerId)
 }
@@ -73,7 +82,7 @@ const { authChallenge, language } = providerSettings
       {{ providerSummary }}
     </template>
     <template v-if="provider" #actions>
-      <NTooltip :delay="350">
+      <NTooltip v-if="!provider.plugin" :delay="350">
         <template #trigger>
           <span class="inline-flex">
             <NPopconfirm
@@ -100,7 +109,7 @@ const { authChallenge, language } = providerSettings
         </template>
         {{ t('desktop.providers.removeService') }}
       </NTooltip>
-      <span class="w-[1px] h-[14px] bg-border" aria-hidden="true" />
+      <span v-if="!provider.plugin" class="w-[1px] h-[14px] bg-border" aria-hidden="true" />
       <NSwitch
         :round="false"
         :value="provider.enabled"
@@ -114,6 +123,7 @@ const { authChallenge, language } = providerSettings
       :provider-id="providerId"
       :provider-settings="providerSettings"
       @continue-setup="continueSetup"
+      @manage-plugin="managePlugin"
     />
     <DesktopProviderAddDialog
       v-model:show="showAddDialog"

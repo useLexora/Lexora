@@ -1,4 +1,5 @@
 export default {
+  'desktop.settings.experimental': '实验性',
   'desktop.settings.category.speech': '语音',
   'desktop.settings.categoryDescription.speech': '设置语音输入与回复朗读。',
   'desktop.settings.category.storage': '数据存储',

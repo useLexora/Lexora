@@ -1,10 +1,34 @@
 # 声明式设置
 
+## 设置页标题动作
+
+API 3 自定义设置视图可以用 `context.setSettingsHeaderActions(actions)` 替换宿主标题右侧的动作，`[]` 清空。仅对通过本插件 `settings.modules[].view` 挂载的当前设置实例有效；同一 view 作为普通导航页打开时不具备此能力。无需额外权限，不修改清单 API 版本。
+
+每次最多 4 项：`{id,title,icon?,disabled?,progress?}`。id 为 1–64 个字母、数字、点、下划线或连字符，以字母或数字开头，列表内唯一；title 去除首尾空白后为 1–40 字符且不可包含控制字符；icon 仅接受 `settings | download | refresh | add | back | more`。文本由宿主按纯文字显示，不能传 HTML、CSS、图片 URL 或宿主命令。顺序由数组决定；缺省可点击。
+
+`progress` 省略时显示普通图标；`null` 显示不定圆环，不推测百分比；有限数值 `0..100` 显示圆环和向下取整的可读百分比，并提供无障碍进度值。进度替代图标，不改变点击或 disabled；标题仍由插件提供，例如 `下载历史 3`，不另设 badge。旧宿主可能拒绝该增量字段，应提示升级，不读父 DOM。
+
+先用 `context.onSettingsHeaderAction(id => ...)` 订阅点击，再提交动作。也可订阅同一作用域的 `view:settings-header-action:activated` 事件（`data.id`）；二选一，避免重复处理。点击仅到原 view，不广播给同插件其他实例。
+
+```ts
+const subscription = context.onSettingsHeaderAction((id) => {
+  if (id === 'engines' || id === 'downloads')
+    navigate(id)
+})
+context.signal.addEventListener('abort', () => subscription.dispose(), { once: true })
+await context.setSettingsHeaderActions([
+  { id: 'engines', title: '推理引擎', icon: 'settings' },
+  ...(taskCount > 0 ? [{ id: 'downloads', title: `下载任务 ${taskCount}`, icon: 'download' as const }] : []),
+])
+```
+
+`navigate` 和 `taskCount` 由视图自身管理，任务数量变化时重新提交整组。动作只属于当前会话，不写入用户配置；离页、卸载、停用、更新或视图销毁自动撤回。返回设置页时在新 render 中读取业务快照并重新提交。`setSettingsHeaderActions` 与 `onSettingsHeaderAction` 是增量能力：先检查二者是否为函数，不支持时提示升级，不能读取父 DOM 或用定位伪造宿主标题动作。
+
 ## 设置
 
 `contributes.settings` 包含三个可选数组：
 
-- `modules: [{id,title,order?}]`：设置侧栏中的独立模块。
+- `modules: [{id,title,order?,section?,view?,experimental?}]`：设置侧栏中的独立模块。`section` 默认为 `plugins`，也可放入 `integrations`。`view` 可引用本插件 `location: page`、`resource: none` 的隔离视图，填满右侧内容区；此时模块不能再包含声明式分组。`experimental: { platforms: ['darwin'] }` 仅在匹配系统的侧栏入口显示轻量「实验性」标签，不附带说明，不改变权限或执行能力；省略则无标签。`platforms` 为 `darwin`、`linux`、`win32` 中非空且不重复的列表。
 - `groups: [{id,module,title,order?}]`：模块中的分组。module 引用自己的模块或能力目录列出的内置模块。
 - `items: [{id,key,group,title,description?,type,default,order?,enabledWhen?}]`：分组中的单项。group 引用自己的分组或能力目录开放的内置分组。
 

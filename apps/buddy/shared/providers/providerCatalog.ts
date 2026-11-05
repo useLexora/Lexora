@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import { BUDDY_THINKING_LEVELS } from '../conversation/modelSelection'
-import { idSchema } from '../runtime/apiValidation'
+import { BUDDY_THINKING_LEVELS } from '../conversation/modelSelection.ts'
+import { idSchema } from '../runtime/apiValidation.ts'
 
 export const modelCatalogReferenceSchema = z.object({
   providerId: idSchema,

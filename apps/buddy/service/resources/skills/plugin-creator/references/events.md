@@ -19,6 +19,7 @@ subscription.dispose()
 | --- | --- | --- |
 | 宿主 | `configuration:changed` | `{configuration, changedKeys}`，观察已保存配置；实际热应用另用 `configuration.onChange` |
 | 宿主 | `workbench:panes:changed` | `{panes}`；`workbench.onPanesChange` |
+| 设置视图 | `view:settings-header-action:activated` | `{id}`，宿主标题按钮点击；`onSettingsHeaderAction`，见 [设置](settings.md#设置页标题动作) |
 | 视图 | `view:message:received` | `{message}`，本插件私有广播；`onMessage` |
 | 视图数据观察 | `data:changed` | `{id, snapshot}`，订阅最新状态，null 表示取消；由 `data.observe` 创建，见 [只读数据](data.md) |
 | 视图 | `workbench:context:changed` | `{context}`，公开上下文；`onWorkbenchChange` |

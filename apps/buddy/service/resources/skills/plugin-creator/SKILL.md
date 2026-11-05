@@ -33,6 +33,7 @@ description: 创建、修改并验证可安装的 Lexora 桌面插件，包括�
 | Worker/WASM、插件 Skills、解释器候选 | [计算](references/workers.md)、[Skills](references/skills.md)、[Shell](references/shells.md) |
 | 随插件提供远端 MCP 连接 | [MCP 连接](references/mcp-connectors.md) |
 | 随插件提供专业 NPC | [伙伴：NPC](references/buddies.md) |
+| 本地模型、推理服务、图像与语音能力 | [后台推理](references/inference.md) |
 | 权限或访问失败 | [权限](references/permissions.md) |
 
 主题、Skills、MCP 连接、NPC 均可独立声明，无需脚本入口；MCP 连接和 NPC 声明不需要额外插件权限，实际使用仍由宿主授权。仅声明实际需要的权限，确认能力所属的后台、视图或本次 Agent 调用，不能互换上下文。

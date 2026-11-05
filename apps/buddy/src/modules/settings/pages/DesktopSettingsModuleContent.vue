@@ -3,6 +3,7 @@ import type { SettingsModuleNode } from '../model/settingsRegistry'
 import { computed, toRef } from 'vue'
 import DesktopSettingsModuleLayout from '../layouts/DesktopSettingsModuleLayout.vue'
 import { useProvideSettingsModule } from '../state/settingsModuleContext'
+import DesktopSettingsExtensionView from './DesktopSettingsExtensionView.vue'
 import { settingsPageRenderers } from './settingsPageRenderers'
 
 const props = defineProps<{ module: SettingsModuleNode }>()
@@ -11,5 +12,6 @@ const renderer = computed(() => props.module.page ? settingsPageRenderers[props.
 </script>
 
 <template>
-  <component :is="renderer" />
+  <DesktopSettingsExtensionView v-if="module.view" :key="`${module.owner}:${module.id}:${module.view}`" />
+  <component :is="renderer" v-else />
 </template>

@@ -1,4 +1,4 @@
-import type { ExtensionSettingItem } from '@buddy-shared/extensions/extensionSettings'
+import type { ExtensionSettingItem, ExtensionSettingsExperimental } from '@buddy-shared/extensions/extensionSettings'
 import type { ExtensionShellContribution } from '@buddy-shared/extensions/extensionShell'
 import type { BuiltinSettingsCategory } from '@buddy-shared/settings/settingsCatalog'
 import type { ShellCandidateId } from '@buddy-shared/shell/shellProgram'
@@ -19,6 +19,9 @@ export interface SettingsModule {
   page?: Exclude<BuiltinSettingsCategory, 'general'>
   requiresRuntime: boolean
   fill?: boolean
+  view?: string
+  iconUrl?: string
+  experimental?: ExtensionSettingsExperimental
 }
 
 export interface SettingsGroup {
@@ -94,7 +97,7 @@ export class SettingsRegistry {
         ids.add(entry.id)
       }
       const modules = new Set(contribution.modules.map(module => module.id))
-      if (!builtin && contribution.modules.some(module => module.category || module.page || module.section !== 'plugins'))
+      if (!builtin && contribution.modules.some(module => module.category || module.page || !['plugins', 'integrations'].includes(module.section) || (module.view && !module.view.startsWith(`${owner}.`))))
         throw new Error(`Invalid settings module owner: ${owner}`)
       const groups = new Set(contribution.groups.map(group => group.id))
       for (const group of contribution.groups) {

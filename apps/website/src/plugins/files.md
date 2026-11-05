@@ -40,6 +40,12 @@ API 4 的 `contributes.fileHandlers` 按精确后缀注册处理器，分别声�
 
 保存资源 ID，每次会话重新取得 URL。资源对象不包含任意本机路径。私有版本更新先创建新资源、提交元数据指针，再释放旧资源；失败时保留旧内容。
 
+## 远端文本与分页
+
+在获批的 HTTPS 来源内调用 `network.get(url)`，返回 `{status,text,headers:{link?:string}}`，文本最多 1 MiB。`headers` 仅包含最终响应的分页 `Link`，不暴露 Cookie、Set-Cookie、Authorization 等其他响应头；缺失或空 Link 返回 `{}`，超过 16 KiB（UTF-8）以 `EXTENSION_NETWORK_HEADERS_TOO_LARGE` 失败而不截断。
+
+插件解析 `rel="next"` 并验证下一页 URL、来源、路径和游标，再发起请求；响应头不授予权限，重定向仍逐跳核对。旧宿主可能没有 `headers`，需要分页时提示升级，不将能力缺失当作末页。API 主版本不变，旧 `status/text` 用法不受影响；兼容范围应以实际支持该字段的宿主版本为准。
+
 ## 编辑原件与恢复
 
 原件编辑使用 API 4 的 `fileEditing` 与交互视图 `context.documents`。采用这套新增编辑能力的插件应要求 Lexora 0.17.0 或更新版本，并在目标宿主验收。

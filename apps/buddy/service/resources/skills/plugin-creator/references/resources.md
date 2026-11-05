@@ -57,7 +57,7 @@
 
 插件下载和私有文件资源不需要 `localResources` 或额外审批。`network.download(url,{name?,signal?})` 在已批准的网络 origin 范围内流式写盘，返回 `{id,name,mimeType,size}`；不设总大小和总时长配额，可用 AbortSignal 取消。重定向逐跳核对授权，关闭发起视图或停用插件会取消下载并清理未完成文件。资源属于插件私有数据，跨重启保存；普通卸载保留，清除数据时删除。用 `resources.release(file)` 回收不再需要的下载副本。
 
-宿主和视图均可 `resources.listFiles/readBytes/readText` 读取已有资源。`resources.importFile(resource,{name?,signal?})` 将已有授权的本地文件、Space 文件或本插件私有文件复制到新的私有资源，默认保留文件名，不弹出选择窗口；不接受任意路径。声明式包内图片可直接作为主题资产的 `{packagePath}` 来源。
+宿主和视图均可 `resources.listFiles/readBytes/readText/hash` 读取已有资源。`resources.importFile(resource,{name?,signal?})` 将已有授权的本地文件、Space 文件或本插件私有文件复制到新的私有资源，默认保留文件名，不弹出选择窗口；不接受任意路径。声明式包内图片可直接作为主题资产的 `{packagePath}` 来源。
 
 `resources.createFile({name,data,mimeType?,signal?})` 在宿主和视图中将 `Blob | ArrayBuffer | Uint8Array` 保存为新的私有资源，返回 `{id,name,mimeType,size}`。它不弹出文件窗口，不需要 `localResources` 或 `resourceExport`，不接受路径或覆写原文件。适合文档草稿、编辑结果和版本快照；保存新资源成功后，再更新插件元数据中的 ID，最后 `release` 已不需要的旧资源。失败时保留旧 ID，不能先释放旧版本。并发编辑应由插件以文档版本检查串行更新元数据。
 
@@ -65,7 +65,9 @@
 
 视图 `openExternal(url)` 使用系统浏览器打开已批准 origin 的 HTTPS 链接，保留 fragment。无需逐次授权，不授予文件或自定义协议访问。
 
-`network.get(url)` 适用于最多 1 MiB 的文本响应；媒体和大文件使用 `download` 后通过资源 URL 或分段接口读取。大文件不放进 JSON 或命令返回值。下载等待期间不计入宿主普通命令的响应期限；宿主失去响应、退出或用户取消仍会终止操作。
+`network.get(url)` 返回 `{status,text,headers:{link?:string}}`，文本响应最多 1 MiB。`headers` 仅投影最终响应的 HTTP `Link` 为小写 `link`，不暴露 Cookie、Set-Cookie、Authorization 或其他响应头。缺失或空 Link 时为 `{}`；Link 最多 16 KiB（UTF-8），超限以 `EXTENSION_NETWORK_HEADERS_TOO_LARGE` 失败，不截断或伪装为无下一页。媒体和大文件使用 `download` 后通过资源 URL 或分段接口读取。大文件不放进 JSON 或命令返回值。下载等待期间不计入宿主普通命令的响应期限；宿主失去响应、退出或用户取消仍会终止操作。
+
+分页由插件解析 `response.headers.link` 中的 `rel="next"`，验证后续 URL、来源、路径和游标后再次调用 `network.get`。Link 是不可信数据，不是授权；每次请求和重定向仍须符合已批准的 HTTPS origin。此字段为兼容增量，不改变 API 主版本或旧 `status/text` 用法；旧宿主可能没有 `headers`，需要分页时应检测并提示升级，不能将缺少该能力误判为末页。`engines.lexora` 应匹配实际验收且提供此字段的宿主版本，不能只凭 API 4 声明兼容。
 
 声明 `localResources: true` 后，在可见的交互视图中响应用户操作调用 `resources.pickFiles({filters?,multiple?})` 或 `resources.pickDirectory()`。取消分别返回 `[]` 和 `null`。宿主只接受系统窗口确认的路径，插件不能提交或取得绝对路径。文件句柄为 `{id,name,mimeType,size,relativePath?}`，目录句柄为 `{id,name}`；单次最多选择 100 个文件，文件大小不设产品配额，每插件最多 1000 个文件句柄和 32 个目录。
 
@@ -75,7 +77,10 @@
 
 - `resources.readText(file)`：UTF-8 文本，最多 1 MiB；更大文本或其他编码使用分段读取与插件自己的解码器。
 - `resources.readBytes(file,{offset?,length?})`：返回 `{data:Uint8Array,size,eof}`；默认 64 KiB，单次最多 128 KiB，适合二进制解析、增量加载和自定义格式。
+- `resources.hash(file,{signal?})`：返回 `{sha256,size}`，其中 `sha256` 为 64 位小写十六进制 SHA-256，`size` 为实际读取字节数。单次调用在宿主流式计算，不经多次 `readBytes` IPC、不全量加载、不复制或写入原文件；只接受本插件已有授权的资源 ID，视图的 Space 文件限当前 `context.resource`。不支持路径或包内路径，不增加读取权限。
 - `resources.getUrl(file)`：当前视图专用 URL，可供图片、音视频等元素或视图内 fetch 读取；支持 HEAD、Range 和 seek。只保存资源 ID，每次视图创建后重新取得 URL。不可作为脚本、样式或新页面执行。
+
+大文件完整性检查优先使用 `hash`，先检测 `typeof context.resources.hash === 'function'`，旧宿主应提示升级。计算等待不计入普通请求的短超时；传入 signal 取消、关闭发起视图或停用插件会中止计算。读取前后复核文件身份、大小和修改时间，计算期间修改、替换、撤销授权或资源释放会失败，不返回部分摘要；空文件也返回有效摘要。Space 文件沿用来源授权复核。摘要仅证明本次本地内容完整性，不代表上游官方来源、签名或可信模型；需要官方验证的导入仍须独立核对可信来源的预期摘要。
 
 授权跨重启保留；文件被移动、替换或修改后旧句柄读取失败，可重新选择或刷新已授权目录。`revokeFile(file)` 撤销单个句柄，保留的目录授权仍允许下次扫描重新发现它；`revokeDirectory(directory)` 撤销该目录及其派生句柄，其他独立授权保留。用户可从插件管理撤销全部本地资源授权，卸载也撤销。撤销、禁用及视图关闭会使相关 URL 和未完成的读取失效，不删除用户原文件。
 

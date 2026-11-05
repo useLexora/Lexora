@@ -3,6 +3,10 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import process from 'node:process'
 import { app } from 'electron'
+import inferenceBootstrap from 'virtual:extension-runtime/inference'
+import { checkInferenceSmoke } from '../../../../../.playwright/scripts/fixtures/inference-smoke'
+import shellSandbox from '../../../platform/native/shellSandbox.json'
+import { currentTarget } from '../../../platform/target'
 import { OPERATING_SYSTEM } from '../../../shared/platform/identifiers'
 import { readDesktopDistribution } from '../updates/DesktopUpdatePolicy'
 
@@ -36,4 +40,13 @@ export async function checkDesktopSmokeBridge(window: BrowserWindow): Promise<vo
   )
   if (!status || typeof status !== 'object' || status.status !== 'ready')
     throw new Error('Lexora Buddy Desktop Preload local chat IPC is unavailable')
+  if (process.platform === 'linux' && process.arch === 'x64') {
+    await checkInferenceSmoke({
+      bootstrap: inferenceBootstrap,
+      executable: process.execPath,
+      sandbox: join(app.isPackaged ? process.resourcesPath : app.getAppPath(), app.isPackaged ? shellSandbox.resource.to : `${shellSandbox.resource.from}/${currentTarget.id}`, 'bwrap'),
+      appVersion: app.getVersion(),
+    })
+    process.stdout.write(`LEXORA_INFERENCE_SMOKE:passed:${app.isPackaged ? 'packaged' : 'build'}\n`)
+  }
 }

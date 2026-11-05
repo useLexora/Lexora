@@ -2,6 +2,13 @@ import { z } from 'zod'
 
 export type ExtensionFileSource = { resourceId: string } | { packagePath: string }
 
+export const extensionResourceHashRequestSchema = z.object({ id: z.uuid(), resourceId: z.uuid() }).strict()
+export const extensionResourceHashSchema = z.object({
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  size: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+}).strict()
+export type ExtensionResourceHash = z.infer<typeof extensionResourceHashSchema>
+
 export const EXTENSION_CREATED_FILE_LIMIT = 256 * 1024 * 1024
 export const EXTENSION_CREATED_FILES_LIMIT = 4096
 export const EXTENSION_CREATED_STORAGE_LIMIT = 1024 * 1024 * 1024

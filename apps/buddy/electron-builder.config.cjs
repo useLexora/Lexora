@@ -39,7 +39,7 @@ module.exports = withDesktopNativeVersion({
     enableNodeCliInspectArguments: false,
     enableNodeOptionsEnvironmentVariable: false,
     onlyLoadAppFromAsar: true,
-    runAsNode: false,
+    runAsNode: target.id === 'linux-x64',
   },
   npmRebuild: false,
   forceCodeSigning: target.platform === OPERATING_SYSTEM.MacOS && signedMacos,

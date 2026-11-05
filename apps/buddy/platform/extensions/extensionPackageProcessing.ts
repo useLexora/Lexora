@@ -73,7 +73,7 @@ function inspect(files: Map<string, Uint8Array>, appVersion: string): ReviewedEx
       throw error
     throw new Error('EXTENSION_MANIFEST_INVALID')
   }
-  for (const entry of [manifest.entry, ...manifest.contributes.views.map(view => view.entry)]) {
+  for (const entry of [manifest.entry, manifest.contributes.inference?.preparation?.entry, ...manifest.contributes.views.map(view => view.entry), ...manifest.contributes.inference?.runtimes.map(runtime => runtime.entry) ?? []]) {
     if (entry && (!files.has(entry) || !(manifest.format === 'source' ? /\.m?[jt]s$/.test(entry) : /\.m?js$/.test(entry))))
       throw new Error('EXTENSION_ENTRY_MISSING')
   }

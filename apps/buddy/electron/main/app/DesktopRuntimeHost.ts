@@ -36,6 +36,9 @@ import { LexoraConfigStore } from '../config/LexoraConfigStore'
 import { ContextPanelHost } from '../context-panel/ContextPanelHost'
 import { DesktopPerformanceMonitor } from '../diagnostics/DesktopPerformanceMonitor'
 import { registerExtensionAuthoringRpc } from '../extensions/registerExtensionAuthoringRpc'
+import { registerExtensionImageReadingRpc } from '../extensions/registerExtensionImageReadingRpc'
+import { registerExtensionImageRpc } from '../extensions/registerExtensionImageRpc'
+import { registerExtensionModelRpc } from '../extensions/registerExtensionModelRpc'
 import { registerExtensionShellRpc } from '../extensions/registerExtensionShellRpc'
 import { OcrService } from '../images/OcrService'
 import { DesktopNetwork } from '../network/DesktopNetwork'
@@ -55,6 +58,7 @@ export class DesktopRuntimeHost {
   readonly performance: DesktopPerformanceMonitor
   inspectExtension: ((id: string) => Promise<ExtensionInspection>) | null = null
   extensionAgent: ReturnType<typeof registerExtensionIpc>['agent'] | null = null
+  extensionInference: ReturnType<typeof registerExtensionIpc>['inference'] | null = null
   extensionShells: ReturnType<typeof registerExtensionIpc>['shells'] | null = null
   extensionSkills: ReturnType<typeof registerExtensionIpc>['skills'] | null = null
   extensionCapabilities: ReturnType<typeof registerExtensionIpc>['capabilities'] | null = null
@@ -245,6 +249,9 @@ export class DesktopRuntimeHost {
           peer.onRequest(imageRpc.preferences, async () => (await this.configStore.read()).desktop.images ?? {}),
           peer.onRequest(ocrRpc.read, (raw, signal) => this.ocr.read(raw, signal ?? new AbortController().signal)),
           peer.onRequest(HOST_SPEECH_MODELS, () => this.speechModels?.() ?? []),
+          registerExtensionImageReadingRpc(peer, () => this.extensionInference),
+          registerExtensionImageRpc(peer, () => this.extensionInference),
+          registerExtensionModelRpc(peer, () => this.extensionInference),
           registerExtensionShellRpc(peer, () => this.extensionShells),
           peer.onRequest(extensionAgentRpc.list, () => this.extensionAgent?.list() ?? []),
           peer.onRequest(extensionSkillsRpc.list, () => this.extensionSkills?.list() ?? []),

@@ -17,13 +17,17 @@ import { useExtensionViews } from '../useExtensionViews'
 const disposables: (() => void)[] = []
 afterEach(() => disposables.splice(0).forEach(dispose => dispose()))
 
-it('delivers each broadcast once per frame only within the matching extension and generation', async () => {
+it('scopes broadcasts by extension and generation and header actions by exact view session', async () => {
   const installed = shallowRef<ExtensionStatus[]>(['tests.first', 'tests.second'].map(id => ({ manifest: extensionManifestSchema.parse({ schemaVersion: 1, id, name: id, version: '1.0.0', apiVersion: 3, engines: { lexora: '*' }, contributes: {} }), revision: 'first', enabled: true, compatible: true, development: false, pending: null, state: 'active', generation: crypto.randomUUID(), error: null, activationMs: null, logs: [] })))
   const api: Partial<ExtensionApi> = {
     openView: async input => ({ id: input.viewId, extensionId: input.extensionId, generation: installed.value.find(item => item.manifest.id === input.extensionId)!.generation!, token: crypto.randomUUID(), url: 'about:blank' }),
     closeView: async () => {},
   }
-  const layout: SurfaceLayout = { attach: () => ({ update: () => {}, dispose: () => {} }), invalidate: () => {} }
+  const layoutCallbacks: (() => void)[] = []
+  const layout: SurfaceLayout = { attach: (_element, options) => {
+    layoutCallbacks.push(() => options.onLayout?.({ visible: true, width: 100, height: 100 }))
+    return { update: () => {}, dispose: () => {} }
+  }, invalidate: () => {} }
   const controller = new WorkbenchController(new ContributionRegistry())
   let views!: ExtensionViews
   const element = document.createElement('div')
@@ -47,18 +51,21 @@ it('delivers each broadcast once per frame only within the matching extension an
   await vi.waitFor(() => expect(element.querySelectorAll('iframe')).toHaveLength(3))
   const frames = [...element.querySelectorAll('iframe')].map((frame) => {
     const messages: unknown[] = []
+    const actions: unknown[] = []
     const target = frame.contentWindow!
     target.addEventListener('message', ({ data }) => {
       if (data?.channel === 'lexora-extension' && data.event?.type === 'view:message:received')
         messages.push(data)
+      if (data?.channel === 'lexora-extension' && data.event?.type === 'view:settings-header-action:activated')
+        actions.push(data)
     })
-    return { target, messages, session: views.surfaces.get(frame.dataset.extensionView!)!.session! }
+    return { target, messages, actions, session: views.surfaces.get(frame.dataset.extensionView!)!.session! }
   })
   const message = { action: 'increment', amount: 1 }
   const plugin = installed.value[0]!
   views.broadcast(plugin.manifest.id, crypto.randomUUID(), { action: 'obsolete' })
   views.broadcast(plugin.manifest.id, plugin.generation!, message)
-  await Promise.all(frames.map(({ target }) => new Promise<void>((resolve) => {
+  const flushMessages = () => Promise.all(frames.map(({ target }) => new Promise<void>((resolve) => {
     const marker = crypto.randomUUID()
     const receive = (event: MessageEvent) => {
       if (event.data === marker) {
@@ -69,9 +76,27 @@ it('delivers each broadcast once per frame only within the matching extension an
     target.addEventListener('message', receive)
     target.postMessage(marker, '*')
   })))
+  await flushMessages()
   expect(frames.map(frame => frame.messages)).toMatchObject([
     [{ channel: 'lexora-extension', token: frames[0]!.session.token, streamId: expect.any(String), sequence: expect.any(Number), event: { type: 'view:message:received', data: { message } } }],
     [{ channel: 'lexora-extension', token: frames[1]!.session.token, streamId: expect.any(String), sequence: expect.any(Number), event: { type: 'view:message:received', data: { message } } }],
     [],
   ])
+  for (const callback of layoutCallbacks) callback()
+  const session = frames[0]!.session
+  const surface = views.surfaces.get(session.id)!
+  surface.settingsHeaderActionsEnabled = true
+  surface.ready = true
+  expect(views.setSettingsHeaderActions(session.id, session.generation, session.token, [{ id: 'downloads', title: 'Downloads' }])).toBe(true)
+  expect(views.activateSettingsHeaderAction(session.id, session.generation, session.token, 'downloads')).toBe(true)
+  await flushMessages()
+  expect(frames.map(frame => frame.actions)).toMatchObject([
+    [{ token: session.token, event: { type: 'view:settings-header-action:activated', data: { id: 'downloads' } } }],
+    [],
+    [],
+  ])
+  surface.visible = false
+  expect(views.activateSettingsHeaderAction(session.id, session.generation, session.token, 'downloads')).toBe(false)
+  await flushMessages()
+  expect(frames[0]!.actions).toHaveLength(1)
 })

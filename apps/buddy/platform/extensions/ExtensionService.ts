@@ -7,6 +7,8 @@ import type { ExtensionClipboardData } from '../../shared/extensions/extensionCl
 import type { ExtensionConditionRuntime } from '../../shared/extensions/extensionConditionContext'
 import type { ExtensionConditionState } from '../../shared/extensions/extensionConditions'
 import type { ExtensionDiagnostic, ExtensionHostFailure } from '../../shared/extensions/extensionDiagnostic'
+import type { InferenceResourceProgress } from '../../shared/extensions/extensionInference'
+import type { ExtensionNetworkResponse } from '../../shared/extensions/extensionNetwork'
 import type { ExtensionReferenceInput, ExtensionReferenceMaterial, ExtensionReferenceOpening } from '../../shared/extensions/extensionReferences'
 import type { ExtensionFileSource, ExtensionResourceSelection } from '../../shared/extensions/extensionResources'
 import type { ExtensionConfiguration, ExtensionConfigurationSnapshot } from '../../shared/extensions/extensionSettings'
@@ -20,13 +22,17 @@ import type { WorkbenchPaneSnapshot } from '../../shared/workbench/workbenchInte
 import type { JsonValue } from '../../shared/workbench/workbenchState'
 import type { ThemeService } from '../themes/ThemeService'
 import type { ExtensionCompiler } from './compileExtensionSource'
+import type { ExtensionInferencePorts } from './ExtensionInference'
+import type { InferenceResourceSource } from './ExtensionInferenceResources'
 import type { ExtensionPackage, ExtensionPackageStore } from './ExtensionPackageStore'
 import type { ExtensionResourceUpload } from './ExtensionResourceUpload'
 import type { ExtensionConfigurationApplication, ExtensionServiceChange, ExtensionServiceFact, ExtensionServiceSnapshot } from './ExtensionServiceEvents'
 import type { ExtensionDocumentPorts } from './ExtensionWorkingCopyStore'
+import type { InferenceInvocation } from './NativeInferenceProcess'
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
+import process from 'node:process'
 import { z } from 'zod'
 import { BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT } from '../../shared/conversation/attachmentPolicy'
 import { buddyViewQuoteSchema } from '../../shared/conversation/buddyUserContent'
@@ -43,14 +49,18 @@ import { extensionConditionInvalidationSchema } from '../../shared/extensions/ex
 import { extensionDiagnostic, ExtensionRequestError } from '../../shared/extensions/extensionDiagnostic'
 import { extensionDocumentInfoSchema } from '../../shared/extensions/extensionDocumentInfo'
 import { extensionFileHandlerBindings } from '../../shared/extensions/extensionFileOpening'
+import { inferenceBindingSchema, inferenceCredentialReferenceSchema, inferenceCredentialSchema, inferenceHashSchema, inferenceIdSchema, inferencePrepareSchema, inferenceRuntimeReferenceSchema } from '../../shared/extensions/extensionInference'
 import { extensionCompatible, extensionPathSchema } from '../../shared/extensions/extensionManifest'
+import { projectExtensionNetworkHeaders } from '../../shared/extensions/extensionNetwork'
 import { extensionReferenceCaptureSchema, extensionReferenceCommitSchema, extensionReferenceInputSchema, extensionReferenceOpeningSchema, extensionReferenceTargetSchema } from '../../shared/extensions/extensionReferences'
-import { extensionDirectoryScanSchema, extensionResourceCreateSchema, extensionResourceSelectionSchema } from '../../shared/extensions/extensionResources'
+import { extensionDirectoryScanSchema, extensionResourceCreateSchema, extensionResourceHashRequestSchema, extensionResourceSelectionSchema } from '../../shared/extensions/extensionResources'
 import { extensionNotificationSchema, extensionScheduleIdSchema, extensionScheduleInputSchema } from '../../shared/extensions/extensionSchedule'
 import { extensionConfigurationAppliedSchema, resolveExtensionConfiguration, validateExtensionSetting } from '../../shared/extensions/extensionSettings'
+import { extensionSettingsHeaderActionsSchema } from '../../shared/extensions/extensionSettingsHeaderActions'
 import { extensionSkillRoots } from '../../shared/extensions/extensionSkills'
 import { EXTENSION_UNO_STYLESHEET } from '../../shared/extensions/extensionStyles'
 import { windowStyleIdSchema, windowStyleSchema } from '../../shared/extensions/extensionWindowStyles'
+import { resolveInferenceEnvironment } from '../../shared/extensions/inferencePlatform'
 import { fileOpeningExtension } from '../../shared/files/fileOpening'
 import { themeRequestSchema, themeTransportSchema } from '../../shared/theme/themeApi'
 import { workbenchHitRegionsSchema } from '../../shared/workbench/workbenchInteraction'
@@ -63,10 +73,12 @@ import { ExtensionConditionInvalidatedError } from './ExtensionConditionEvaluato
 import { ExtensionConditions } from './ExtensionConditions'
 import { ExtensionDocuments } from './ExtensionDocuments'
 import { sha256, verifiedExtensionAsset } from './extensionFiles'
+import { ExtensionInference } from './ExtensionInference'
 import { ExtensionInstallations } from './ExtensionInstallations'
 import { extensionActivationOrder } from './ExtensionPackageStore'
 import { ExtensionResourceWriter } from './ExtensionResourceWriter'
 import { ExtensionScheduler } from './ExtensionScheduler'
+import { hashResourceResponse } from './hashResourceResponse'
 
 export interface ExtensionHost {
   call: (method: string, params: JsonValue, signal?: AbortSignal) => Promise<JsonValue>
@@ -79,6 +91,7 @@ export interface ExtensionServicePorts {
     read: (session: ExtensionViewSession, assertCurrent: () => void) => Promise<ExtensionClipboardData>
     write: (session: ExtensionViewSession, data: ExtensionClipboardData, assertCurrent: () => void) => Promise<void>
   }
+  inference?: ExtensionInferencePorts
   themes?: ThemeService
   createHost: (pkg: ExtensionPackage, broker: (method: string, params: unknown) => Promise<JsonValue>, failed: (failure?: ExtensionHostFailure) => void) => ExtensionHost
   createView: (pkg: ExtensionPackage, readSelected?: (id: string, request: Request, signal: AbortSignal) => Promise<Response>) => { token: string, url: string, dispose: () => void }
@@ -88,7 +101,7 @@ export interface ExtensionServicePorts {
   readResource?: (target: SpaceFileTarget, signal: AbortSignal, request?: Request) => Promise<Response>
   readArtifactResource?: (artifactId: string, signal: AbortSignal, request?: Request) => Promise<{ name: string, response: Response }>
   readTaskFileResource?: (target: TaskFileTarget, signal: AbortSignal, request?: Request) => Promise<{ name: string, response: Response }>
-  get: (url: string, init: { signal: AbortSignal }) => Promise<Response>
+  get: (url: string, init: { signal: AbortSignal, headers?: Record<string, string> }) => Promise<Response>
   getDownloadSettings?: () => import('../../shared/network/downloadSettings').DownloadSettings | undefined
   changed?: () => void
   agentChanged?: () => void
@@ -114,6 +127,8 @@ interface RunningExtension {
   windowStyles?: Map<string, string>
   resourceEndpoint?: { url: string, dispose: () => void }
   inFlight: number
+  inference?: ExtensionInference
+  inferencePreparations: Set<Promise<unknown>>
   drained: Set<() => void>
   panesPending?: boolean
 }
@@ -346,7 +361,7 @@ export class ExtensionService {
         if (invocation.running.package.manifest.id === id)
           invocation.abort.abort()
       }
-      if (running?.active && !resolveExtensionConfiguration(manifest.contributes.settings.items, current).invalidKeys.length) {
+      if (running?.active && !manifest.contributes.inference && !resolveExtensionConfiguration(manifest.contributes.settings.items, current).invalidKeys.length) {
         let timer: ReturnType<typeof setTimeout> | undefined
         try {
           const result = await Promise.race([
@@ -624,6 +639,265 @@ export class ExtensionService {
     return descriptors.filter((descriptor): descriptor is ExtensionShellDescriptor => descriptor !== null)
   }
 
+  async inferenceContributions() {
+    await this.initialize()
+    return Object.values(this.store.installed).filter(record => record.enabled).flatMap(({ current }) => (current.manifest.contributes.inference?.capabilities ?? []).map(capability => ({ ...capability, extensionId: current.manifest.id, extensionName: current.manifest.name, ...current.manifest.contributes.inference?.providerName ? { providerName: current.manifest.contributes.inference.providerName } : {}, revision: current.revision, managementPage: Boolean(current.manifest.contributes.navigation), platforms: current.manifest.contributes.inference!.runtimes.find(runtime => runtime.id === capability.runtime)!.platforms })))
+  }
+
+  async inferenceSpeechModels() {
+    await this.initialize()
+    const models = []
+    for (const { current, enabled } of Object.values(this.store.installed)) {
+      if (!enabled || !current.manifest.contributes.inference?.capabilities.some(capability => capability.kind === 'speech.transcribe' || capability.kind === 'speech.synthesize'))
+        continue
+      try {
+        const running = await this.#activate(current.manifest.id)
+        this.#assertCurrent(running)
+        models.push(...(await running.inference?.speechModels() ?? []).map(model => ({ ...model, extensionId: current.manifest.id, extensionName: current.manifest.name, ...current.manifest.contributes.inference?.providerName ? { providerName: current.manifest.contributes.inference.providerName } : {}, revision: current.revision, managementPage: Boolean(current.manifest.contributes.navigation), platforms: current.manifest.contributes.inference!.runtimes.find(runtime => runtime.id === model.runtime)!.platforms })))
+      }
+      catch { continue }
+    }
+    return models
+  }
+
+  async inferenceModels() {
+    await this.initialize()
+    const models = []
+    for (const { current, enabled } of Object.values(this.store.installed)) {
+      if (!enabled || !current.manifest.contributes.inference?.capabilities.some(capability => capability.kind === 'chat.completion'))
+        continue
+      try {
+        const running = await this.#activate(current.manifest.id)
+        this.#assertCurrent(running)
+        models.push(...(await running.inference?.models() ?? []).map(model => ({ ...model, extensionId: current.manifest.id, extensionName: current.manifest.name, ...current.manifest.contributes.inference?.providerName ? { providerName: current.manifest.contributes.inference.providerName } : {}, generation: running.generation, revision: current.revision, managementPage: Boolean(current.manifest.contributes.navigation) })))
+      }
+      catch { continue }
+    }
+    return models
+  }
+
+  async inferenceImageModels() {
+    await this.initialize()
+    const models = []
+    for (const { current, enabled } of Object.values(this.store.installed)) {
+      if (!enabled || !current.manifest.contributes.inference?.capabilities.some(capability => capability.kind === 'image.generate'))
+        continue
+      try {
+        const running = await this.#activate(current.manifest.id)
+        this.#assertCurrent(running)
+        models.push(...(await running.inference?.imageModels() ?? []).map(model => ({ ...model, extensionId: current.manifest.id, extensionName: current.manifest.name, ...current.manifest.contributes.inference?.providerName ? { providerName: current.manifest.contributes.inference.providerName } : {}, generation: running.generation, revision: current.revision, managementPage: Boolean(current.manifest.contributes.navigation) })))
+      }
+      catch { continue }
+    }
+    return models
+  }
+
+  async inferenceImageReaders() {
+    await this.initialize()
+    const models = []
+    for (const { current, enabled } of Object.values(this.store.installed)) {
+      if (!enabled || !current.manifest.contributes.inference?.capabilities.some(capability => capability.kind === 'image.read'))
+        continue
+      try {
+        const running = await this.#activate(current.manifest.id)
+        this.#assertCurrent(running)
+        models.push(...(await running.inference?.imageReaders() ?? []).map(model => ({ ...model, extensionId: current.manifest.id, extensionName: current.manifest.name, ...current.manifest.contributes.inference?.providerName ? { providerName: current.manifest.contributes.inference.providerName } : {}, generation: running.generation, revision: current.revision, managementPage: Boolean(current.manifest.contributes.navigation) })))
+      }
+      catch { continue }
+    }
+    return models
+  }
+
+  async prepareInference(extensionId: string, revision: string, capabilityId: string): Promise<void> {
+    const running = await this.#activate(extensionId)
+    const capability = running.package.manifest.contributes.inference?.capabilities.find(item => item.id === capabilityId)
+    if (!capability || running.package.revision !== revision || !running.inference)
+      throw new Error('EXTENSION_INFERENCE_NOT_CONFIGURED')
+    await running.inference.assertConfigured(capability.runtime)
+    this.#assertCurrent(running)
+  }
+
+  async invokeInference(extensionId: string, revision: string, input: InferenceInvocation): Promise<void> {
+    input.signal.throwIfAborted()
+    const running = await this.#activate(extensionId)
+    input.signal.throwIfAborted()
+    const capability = running.package.manifest.contributes.inference?.capabilities.find(item => item.id === input.capability)
+    if (!capability || running.package.revision !== revision || !running.inference || (input.generation && input.generation !== running.generation))
+      throw new Error('EXTENSION_INFERENCE_UNAVAILABLE')
+    z.uuid().parse(input.id)
+    extensionJsonSchema.parse(input.input)
+    await running.inference.invoke(capability, input)
+    this.#assertCurrent(running)
+  }
+
+  async resetInference(): Promise<void> {
+    await Promise.all([...this.#running.values()].map(running => running.inference?.reset()))
+  }
+
+  #inferenceSource(running: RunningExtension): InferenceResourceSource {
+    const { id, permissions } = running.package.manifest
+    return {
+      prepare: running.package.manifest.contributes.inference?.preparation && running.inference
+        ? (...args) => running.inference!.prepareResources(...args)
+        : undefined,
+      assertDownload: (url) => {
+        this.#networkUrl(running, url)
+        this.#assertCurrent(running)
+      },
+      response: (source, signal, headers) => {
+        if ('directoryId' in source)
+          throw new Error('EXTENSION_INFERENCE_REFERENCE_REQUIRED')
+        return 'url' in source ? this.#networkResponse(running, source.url, signal, headers) : this.store.resources.response(id, source.resourceId, new Request('https://resource.invalid/'), signal, permissions.localResources)
+      },
+      directoryReferencePath: async (input) => {
+        this.#assertCurrent(running)
+        if (!permissions.localResources)
+          throw new Error('EXTENSION_PERMISSION_DENIED')
+        const path = await this.store.resources.directoryReferencePath(id, input)
+        this.#assertCurrent(running)
+        return path
+      },
+      referencePath: async (resourceId) => {
+        this.#assertCurrent(running)
+        if (!permissions.localResources)
+          throw new Error('EXTENSION_PERMISSION_DENIED')
+        const path = await this.store.resources.referencePath(id, resourceId)
+        this.#assertCurrent(running)
+        return path
+      },
+      openDirectoryReference: async (input) => {
+        this.#assertCurrent(running)
+        if (!permissions.localResources)
+          throw new Error('EXTENSION_PERMISSION_DENIED')
+        const handle = await this.store.resources.openDirectoryReference(id, input)
+        try {
+          this.#assertCurrent(running)
+          return handle
+        }
+        catch (error) {
+          await handle.close()
+          throw error
+        }
+      },
+      openReference: async (resourceId) => {
+        this.#assertCurrent(running)
+        if (!permissions.localResources)
+          throw new Error('EXTENSION_PERMISSION_DENIED')
+        return this.store.resources.openReference(id, resourceId)
+      },
+    }
+  }
+
+  async #inferenceRequest(running: RunningExtension, method: string, params: unknown, lifetime: AbortSignal, owner: string): Promise<JsonValue> {
+    const { id, permissions } = running.package.manifest
+    if (!permissions.inference)
+      throw new Error('EXTENSION_PERMISSION_DENIED')
+    if (method.startsWith('inference.credentials.')) {
+      const credentials = this.#ports.inference?.credentials
+      if (!credentials || !running.inference)
+        throw new Error('EXTENSION_INFERENCE_UNAVAILABLE')
+      const assertCurrent = () => this.#assertCurrent(running)
+      if (method === 'inference.credentials.remove') {
+        const input = z.object({ id: inferenceIdSchema }).strict().parse(params)
+        await running.inference.withStoppedCredential(input.id, () => credentials.remove(id, input.id, assertCurrent))
+        this.#publish({ kind: 'inference-models', extensionId: id })
+        return null
+      }
+      if (method === 'inference.credentials.has' || method === 'inference.credentials.set') {
+        const input = method === 'inference.credentials.set' ? inferenceCredentialSchema.parse(params) : inferenceCredentialReferenceSchema.parse(params)
+        if (!permissions.inferenceNetwork.includes(input.origin))
+          throw new Error('EXTENSION_PERMISSION_DENIED')
+        if ('token' in input) {
+          await running.inference.withStoppedCredential(input.id, () => credentials.set(id, inferenceCredentialSchema.parse(input), assertCurrent))
+          this.#publish({ kind: 'inference-models', extensionId: id })
+          return null
+        }
+        return credentials.has(id, input)
+      }
+      throw new Error('EXTENSION_METHOD_DENIED')
+    }
+    if (method === 'inference.environment')
+      return { ...resolveInferenceEnvironment(process.platform, process.arch) }
+    if (method === 'inference.status')
+      return running.inference?.status() ?? []
+    if (method === 'inference.stop') {
+      const input = params === null ? undefined : inferenceRuntimeReferenceSchema.parse(params)
+      if (input && !running.inference)
+        throw new Error('EXTENSION_INFERENCE_RUNTIME_UNAVAILABLE')
+      await running.inference?.stop(input)
+      return null
+    }
+    if (method === 'inference.unbind') {
+      const input = inferenceRuntimeReferenceSchema.parse(params)
+      if (!running.inference)
+        throw new Error('EXTENSION_INFERENCE_RUNTIME_UNAVAILABLE')
+      await running.inference.unbind(input)
+      this.#publish({ kind: 'inference-models', extensionId: id })
+      return null
+    }
+    if (method === 'inference.resources.list') {
+      const [files, directories] = await Promise.all([this.store.resources.list(id, permissions.localResources), permissions.localResources ? this.store.resources.directories(id) : []])
+      return this.store.inference.inspect(id, new Set(files.map(file => file.id)), new Set(directories.map(directory => directory.id)))
+    }
+    if (method === 'inference.resources.remove') {
+      const resource = z.object({ id: inferenceIdSchema, revision: inferenceHashSchema }).strict().parse(params)
+      await this.store.inference.remove(id, resource, () => this.#assertCurrent(running))
+      running.inference?.forgetResource(resource.id, resource.revision)
+      this.#publish({ kind: 'inference-models', extensionId: id })
+      return null
+    }
+    if (method === 'inference.bind') {
+      if (!running.inference)
+        throw new Error('EXTENSION_INFERENCE_UNAVAILABLE')
+      await running.inference.bind(inferenceBindingSchema.parse(params))
+      this.#publish({ kind: 'inference-models', extensionId: id })
+      return null
+    }
+    if (method === 'inference.resources.prepare') {
+      const input = z.object({ id: z.uuid(), resource: inferencePrepareSchema }).strict().parse(params)
+      if (this.#downloads.has(input.id))
+        throw new Error('EXTENSION_RESOURCE_DOWNLOAD_EXISTS')
+      const abort = new AbortController()
+      this.#downloads.set(input.id, { running, owner, abort })
+      const signal = AbortSignal.any([abort.signal, lifetime, running.abort.signal])
+      const pendingProgress: InferenceResourceProgress[] = []
+      let publishing: Promise<void> | undefined
+      const publish = () => {
+        if (publishing || signal.aborted)
+          return
+        const next = pendingProgress.shift()
+        if (!next)
+          return
+        publishing = running.host.call('inference.progress', { id: input.id, progress: { ...next } }, signal).then(() => {}, () => {}).finally(() => {
+          publishing = undefined
+          publish()
+        })
+      }
+      const report = (progress: InferenceResourceProgress) => {
+        if (signal.aborted)
+          return
+        const last = pendingProgress.at(-1)
+        if (last && last.path === progress.path && last.phase === progress.phase && last.completedFiles === progress.completedFiles && last.bytes > 0 && progress.bytes > 0)
+          pendingProgress[pendingProgress.length - 1] = progress
+        else
+          pendingProgress.push(progress)
+        publish()
+      }
+      const preparing = this.store.inference.prepare(id, input.resource, this.#inferenceSource(running), signal, () => this.#assertCurrent(running), report)
+      running.inferencePreparations.add(preparing)
+      try {
+        return await preparing
+      }
+      finally {
+        for (let pending = publishing; pending; pending = publishing)
+          await pending
+        running.inferencePreparations.delete(preparing)
+        this.#downloads.delete(input.id)
+      }
+    }
+    throw new Error('EXTENSION_METHOD_DENIED')
+  }
+
   async invokeAgent(input: ExtensionAgentInvocation, signal: AbortSignal): Promise<JsonValue> {
     signal.throwIfAborted()
     const contribution = (await this.agentContributions()).find(item => item.id === input.extensionId)
@@ -864,6 +1138,7 @@ export class ExtensionService {
         const cleared = await this.#ports.workbench({ kind: 'clear-data', requestId, extensionId: id }, AbortSignal.timeout(10000))
         if (cleared !== requestId)
           throw new Error('EXTENSION_DATA_CLEANUP_FAILED')
+        await this.#ports.inference?.credentials?.clear(id)
         await this.store.removeData(id)
       }
       await this.store.removePackages(id)
@@ -1216,6 +1491,15 @@ export class ExtensionService {
         result = null
       }
     }
+    else if (method === 'view.setSettingsHeaderActions') {
+      if (view.running.package.manifest.apiVersion < 3 || contribution.location !== 'page' || placement || !view.running.package.manifest.contributes.settings.modules.some(module => module.view === contribution.id))
+        throw new Error('EXTENSION_METHOD_DENIED')
+      const actions = extensionSettingsHeaderActionsSchema.parse(params)
+      const accepted = await this.#ports.workbench({ kind: 'settings-header-actions', requestId: randomUUID(), viewId: id, generation, token, actions }, AbortSignal.any([view.abort.signal, view.running.abort.signal]))
+      if (accepted !== id)
+        throw new Error('EXTENSION_SETTINGS_HEADER_ACTIONS_UNAVAILABLE')
+      result = null
+    }
     else if (method === 'view.setDocumentInfo') {
       if (contribution.location === 'window-overlay' || (placement && placement.kind !== 'view'))
         throw new Error('EXTENSION_METHOD_DENIED')
@@ -1393,6 +1677,9 @@ export class ExtensionService {
         result = null
       }
     }
+    else if (method === 'resources.hash') {
+      result = await this.#broker(view.running, method, params, view.abort.signal, view.session.id)
+    }
     else if (['resources.readText', 'resources.readBytes', 'resources.getUrl'].includes(method) && view.input.resource && params && typeof params === 'object' && !Array.isArray(params) && params.id === view.input.resource.id) {
       const resourceId = view.input.resource.id
       if (method === 'resources.getUrl') {
@@ -1478,7 +1765,9 @@ export class ExtensionService {
       else {
         const input = z.object({ id: z.string().uuid() }).strict().parse(params)
         if (method === 'resources.revokeDirectory') {
-          await this.store.resources.revokeDirectory(extensionId, input.id, assertView)
+          const revoke = () => this.store.resources.revokeDirectory(extensionId, input.id, assertView)
+          await (view.running.inference ? view.running.inference.withStoppedResources(revoke) : revoke())
+          this.#publish({ kind: 'inference-models', extensionId })
           result = null
         }
         else if (method === 'resources.release') {
@@ -1486,7 +1775,9 @@ export class ExtensionService {
           result = null
         }
         else if (method === 'resources.revokeFile') {
-          await this.store.resources.revoke(extensionId, input.id, assertView)
+          const revoke = () => this.store.resources.revoke(extensionId, input.id, assertView)
+          await (view.running.inference ? view.running.inference.withStoppedResources(revoke) : revoke())
+          this.#publish({ kind: 'inference-models', extensionId })
           result = null
         }
         else { throw new Error('EXTENSION_METHOD_DENIED') }
@@ -1586,6 +1877,7 @@ export class ExtensionService {
       if (this.#viewCleanupError)
         throw this.#viewCleanupError
       await this.scheduler.drain()
+      await this.store.inference.drain()
       return await operation()
     }
     finally {
@@ -1620,7 +1912,11 @@ export class ExtensionService {
           this.#publish({ kind: 'host', extensionId: dependency, generation, status: 'failed', errorCode: extensionError(error) })
           throw error
         }
-        running = { package: pkg, generation, abort, host, ready: Promise.resolve(), active: false, inFlight: 0, drained: new Set() }
+        running = { package: pkg, generation, abort, host, ready: Promise.resolve(), active: false, inFlight: 0, inferencePreparations: new Set(), drained: new Set() }
+        if (pkg.manifest.contributes.inference && this.#ports.inference) {
+          const owner = running
+          running.inference = new ExtensionInference(this.store, pkg, this.#ports.inference, this.#inferenceSource(owner), () => this.#assertCurrent(owner))
+        }
         this.#running.set(dependency, running)
         const start = performance.now()
         const instance = running
@@ -1705,7 +2001,10 @@ export class ExtensionService {
     const { id, dataVersion } = running.package.manifest
     try {
       let result: JsonValue
-      if (method === 'window.styles.set' || method === 'window.styles.remove') {
+      if (method.startsWith('inference.')) {
+        result = await this.#inferenceRequest(running, method, params, lifetime, owner)
+      }
+      else if (method === 'window.styles.set' || method === 'window.styles.remove') {
         if (running.package.manifest.apiVersion < 3 || !running.package.manifest.permissions.windowEffects)
           throw new Error('EXTENSION_PERMISSION_DENIED')
         running.windowStyles ??= new Map()
@@ -1856,6 +2155,27 @@ export class ExtensionService {
         const input = z.object({ id: z.string().uuid() }).strict().parse(params)
         await this.store.resources.release(id, input.id, () => this.#assertCurrent(running))
         result = null
+      }
+      else if (method === 'resources.hash') {
+        const input = extensionResourceHashRequestSchema.parse(params)
+        if (this.#downloads.has(input.id))
+          throw new Error('EXTENSION_RESOURCE_DOWNLOAD_EXISTS')
+        const abort = new AbortController()
+        this.#downloads.set(input.id, { running, owner, abort })
+        const signal = AbortSignal.any([running.abort.signal, lifetime, abort.signal])
+        try {
+          const allowLocal = running.package.manifest.permissions.localResources
+          if ((await this.store.resources.list(id, allowLocal)).some(resource => resource.id === input.resourceId)) {
+            result = await this.store.resources.hash(id, input.resourceId, signal, allowLocal)
+          }
+          else {
+            if (owner !== running.generation && this.#views.get(owner)?.input.resource?.id !== input.resourceId)
+              throw new Error('EXTENSION_RESOURCE_DENIED')
+            result = await hashResourceResponse(await this.#selectedResponse(running, input.resourceId, signal), signal)
+          }
+          signal.throwIfAborted()
+        }
+        finally { this.#downloads.delete(input.id) }
       }
       else if (method === 'resources.importFile' || method === 'network.download') {
         const input = z.object({ id: z.string().uuid(), url: z.string().url().max(8192).optional(), resourceId: z.string().uuid().optional(), name: z.string().min(1).max(255).regex(/^[^/\\\0]+$/).optional() }).strict().parse(params)
@@ -2160,13 +2480,13 @@ export class ExtensionService {
     return parsed
   }
 
-  async #networkResponse(running: RunningExtension, raw: string, signal: AbortSignal): Promise<Response> {
+  async #networkResponse(running: RunningExtension, raw: string, signal: AbortSignal, headers?: Record<string, string>): Promise<Response> {
     let url = raw
     for (let redirects = 0; redirects < 4; redirects++) {
       signal.throwIfAborted()
       const parsed = this.#networkUrl(running, url)
       this.#assertCurrent(running)
-      const response = await this.#ports.get(parsed.href, { signal })
+      const response = await this.#ports.get(parsed.href, { signal, ...(headers ? { headers } : {}) })
       if (signal.aborted) {
         await response.body?.cancel()
         signal.throwIfAborted()
@@ -2184,12 +2504,12 @@ export class ExtensionService {
     throw new Error('EXTENSION_NETWORK_REDIRECT_LIMIT')
   }
 
-  async #fetch(running: RunningExtension, raw: string, lifetime: AbortSignal): Promise<JsonValue> {
+  async #fetch(running: RunningExtension, raw: string, lifetime: AbortSignal): Promise<ExtensionNetworkResponse> {
     const signal = AbortSignal.any([running.abort.signal, lifetime, AbortSignal.timeout(15000)])
     try {
       const response = await this.#networkResponse(running, raw, signal)
       const body = await readResponseBytes(response, 1024 * 1024)
-      return { status: response.status, text: new TextDecoder().decode(body) }
+      return { status: response.status, text: new TextDecoder().decode(body), headers: projectExtensionNetworkHeaders(response.headers) }
     }
     catch (error) {
       if (signal.aborted && signal.reason?.name === 'TimeoutError')
@@ -2243,6 +2563,8 @@ export class ExtensionService {
     }
     this.scheduler.refresh()
     try {
+      await running.inference?.dispose()
+      await Promise.allSettled([...running.inferencePreparations])
       await running.host.dispose()
       this.#pendingStops.delete(id)
       this.#publish({ kind: 'host', extensionId: id, generation: running.generation, status: 'stopped' })

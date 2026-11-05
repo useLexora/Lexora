@@ -43,17 +43,20 @@ const locked = computed(() => props.disabled || props.saving || submitting.value
       @restore="restore"
     />
     <div v-if="editing" class="desktop-model-capabilities-panel__form">
-      <NCheckbox v-model:checked="form.image" size="small" :disabled="locked">
+      <NCheckbox v-model:checked="form.image" size="small" :disabled="locked" :aria-disabled="locked">
         {{ t('desktop.providers.imageAttachment') }}
       </NCheckbox>
-      <NCheckbox v-model:checked="form.pdf" size="small" :disabled="locked || !editableInputs.pdf">
+      <NCheckbox v-model:checked="form.pdf" size="small" :disabled="locked || !editableInputs.pdf" :aria-disabled="locked || !editableInputs.pdf">
         {{ t('desktop.providers.pdfAttachment') }}
       </NCheckbox>
-      <NCheckbox v-model:checked="form.audio" size="small" :disabled="locked || !editableInputs.audio">
+      <NCheckbox v-model:checked="form.audio" size="small" :disabled="locked || !editableInputs.audio" :aria-disabled="locked || !editableInputs.audio">
         {{ t('desktop.providers.audioAttachment') }}
       </NCheckbox>
-      <NCheckbox v-model:checked="form.video" size="small" :disabled="locked || !editableInputs.video">
+      <NCheckbox v-model:checked="form.video" size="small" :disabled="locked || !editableInputs.video" :aria-disabled="locked || !editableInputs.video">
         {{ t('desktop.providers.videoAttachment') }}
+      </NCheckbox>
+      <NCheckbox v-model:checked="form.toolCall" size="small" :disabled="locked" :aria-disabled="locked">
+        {{ t('desktop.providers.toolCalling') }}
       </NCheckbox>
     </div>
     <div v-else class="desktop-model-capabilities-panel__summary">

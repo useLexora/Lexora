@@ -20,7 +20,7 @@ import { safeDiagnosticReporter } from '../../../shared/diagnostics/applicationD
 import { credentialVaultSystemCodeSchema } from '../../../shared/diagnostics/credentialVaultFailure'
 import { OPERATING_SYSTEM } from '../../../shared/platform/identifiers'
 
-type LocalCredentialNamespace = CredentialNamespace | 'sync' | 'backup' | 'images'
+type LocalCredentialNamespace = CredentialNamespace | 'sync' | 'backup' | 'extensions' | 'images'
 
 const SECRET_FILE_SUFFIX = '.credential'
 
@@ -87,7 +87,8 @@ export function createCredentialVault(
   const report = safeDiagnosticReporter(options.reportDiagnostic)
   const run = async <T>(operation: CredentialVaultFailure['operation'], namespace: LocalCredentialNamespace, action: () => Promise<T>): Promise<T> => {
     try {
-      assertAvailable(cipher)
+      if (operation !== 'delete')
+        assertAvailable(cipher)
       return await action()
     }
     catch (error) {

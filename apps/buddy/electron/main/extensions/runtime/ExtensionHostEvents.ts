@@ -1,5 +1,6 @@
 import type { EventSubscription } from '../../../../shared/events/eventTypes'
 import type { ExtensionHostEvents as HostEvents } from '../../../../shared/extensions/extensionEvents'
+import type { InferenceResourceEvents } from '../../../../shared/extensions/extensionInference'
 import type { ConfigurationEvents } from '../../../../shared/extensions/extensionSettings'
 import type { WorkbenchPaneSnapshot } from '../../../../shared/workbench/workbenchInteraction'
 import { EventBus } from '../../../../shared/events/EventBus'
@@ -13,6 +14,11 @@ export class ExtensionHostEvents {
   #panes: HostEvents['workbench:panes:changed']['panes'] = Object.freeze([])
 
   get panes() { return this.#panes }
+
+  inferenceProgress(data: InferenceResourceEvents['inference:resources:progress']): void {
+    if (!this.#disposed)
+      this.#bus.emit({ type: 'inference:resources:progress', data: copyEventSnapshot(data) })
+  }
 
   updatePanes(panes: WorkbenchPaneSnapshot[]): void {
     if (this.#disposed || JSON.stringify(this.#panes) === JSON.stringify(panes))

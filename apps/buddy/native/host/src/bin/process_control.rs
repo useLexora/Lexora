@@ -87,6 +87,16 @@ fn main() -> ExitCode {
                 }
             };
         }
+        #[cfg(any(windows, target_os = "macos"))]
+        if command == "--supervise-inference" && arguments.next().is_none() {
+            return match lexora_buddy_host::inference_process::run() {
+                Ok(code) => ExitCode::from(code.clamp(0, 255) as u8),
+                Err(error) => {
+                    eprintln!("EXTENSION_INFERENCE_SUPERVISION_FAILED: {error}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
         #[cfg(windows)]
         if command == "--check-installation" && arguments.next().is_none() {
             return match lexora_buddy_host::installation_gate::installation_active() {

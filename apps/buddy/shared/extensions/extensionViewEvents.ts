@@ -13,6 +13,7 @@ export interface ExtensionDataEvents {
   'data:changed': { readonly id: string, readonly snapshot: ExtensionDataSnapshot | null }
 }
 export interface ViewStateEvents {
+  'view:settings-header-action:activated': { readonly id: string }
   'view:visibility:changed': { readonly visible: boolean }
   'view:environment:changed': { readonly environment: ViewEnvironment }
 }

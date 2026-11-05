@@ -15,6 +15,16 @@ API 3 的 `contributes.settings` 包含 `modules`、`groups` 和 `items`。模�
 
 需要配置保存后立即生效时，注册 `configuration.onChange` 并返回应用完成的 Promise。普通 `configuration:changed` 事件仅观察保存事实。没有热应用处理器、处理失败或超时时，宿主可以重启插件来应用已保存配置。
 
+## 自定义设置页标题动作
+
+模块的 `view` 可引用本插件无资源的 page 视图。支持标题动作的宿主提供 `ViewContext.setSettingsHeaderActions([{id,title,icon?,disabled?,progress?}])` 和 `onSettingsHeaderAction(id => ...)`，按钮由宿主呈现在设置标题右侧，点击返回原视图，由插件自行导航。
+
+动作整组替换，最多 4 项；id 唯一且最多 64 字符，单行 title 最多 40 字符。icon 可为 `settings`、`download`、`refresh`、`add`、`back`、`more`。例如提交 `[{id:'downloads',title:'下载任务 2',icon:'download'}]`，数量变化时重新提交，`[]` 清空。
+
+可选 `progress` 省略时为普通图标，`null` 为不定圆环，有限数值 `0..100` 为圆环与整数百分比；数量仍写在 title（如 `下载历史 3`）。进度来自插件的真实数据，未知总量不要推测百分比；旧宿主拒绝该字段时提示升级。
+
+先订阅点击，再提交动作；离开设置、停用或视图销毁会清理，返回时重新读取业务状态并提交。仅设置模块中的视图实例可用，不支持普通导航页、父 DOM 访问或自定义 HTML。保持 API 3 清单，并检查两个方法是否存在；旧宿主应提示升级。
+
 ## 私有业务数据
 
 后台 `storage.get/set` 保存插件自己的 JSON 业务数据。多个视图通过自己的命令读写，后台广播变化，视图首次进入仍读取快照。

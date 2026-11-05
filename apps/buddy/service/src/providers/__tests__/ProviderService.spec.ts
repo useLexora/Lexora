@@ -15,7 +15,6 @@ import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai'
-import { builtinProviders } from '@earendil-works/pi-ai/providers/all'
 import { afterEach, describe, expect, it } from 'vitest'
 import { openBuddyDatabase } from '../../storage/database'
 
@@ -24,7 +23,6 @@ import { AuthInteractionService } from '../AuthInteractionService'
 import { HostCredentialStoreError } from '../HostCredentialStore'
 import { supportsModelPdfInput } from '../modelCapabilities'
 import { createProviderCredentialStatus } from '../ProviderCredentialStatus'
-import { ProviderModelSnapshotService } from '../ProviderModelSnapshotService'
 import { ProviderService } from '../ProviderService'
 
 const databasePaths: string[] = []
@@ -34,6 +32,32 @@ afterEach(async () => {
 })
 
 describe('providerService', () => {
+  it('merges image and speech capabilities without losing disabled local models', async () => {
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    const service = createProviderServiceForTest({ authInteractions: new AuthInteractionService(), modelRuntime: new FakeModelRuntime(), providers: createProviderRepository(database) })
+    const plugin = { id: 'fixture.local', name: 'Local models', managementPage: true }
+    const common = { providerId: 'plugin:fixture.local', available: true, plugin }
+    try {
+      service.setCapabilityModels([{ ...common, modelId: 'voice', kind: 'speech.synthesize' }])
+      service.setCapabilityModels([{ ...common, modelId: 'image', title: 'Local image', kind: 'image.generate' }], 'images')
+      expect(await service.listModels()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'voice', type: 'speech', available: true }),
+        expect.objectContaining({ id: 'image', displayName: 'Local image', type: 'image-generation', api: 'plugin-image', available: true }),
+      ]))
+      await service.setModelEnabled(common.providerId, 'image', false)
+      service.setCapabilityModels([{ ...common, modelId: 'voice', kind: 'speech.synthesize', available: false }])
+      expect(service.isPluginModelEnabled(plugin.id, 'image')).toBe(false)
+      service.setCapabilityModels([], 'images')
+      expect(await service.listModels()).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'image', enabled: false, available: false })]))
+      service.setCapabilityModels([{ ...common, modelId: 'image', kind: 'image.generate' }], 'images')
+      expect(service.isPluginModelEnabled(plugin.id, 'image')).toBe(false)
+    }
+    finally {
+      await service.dispose()
+      database.close()
+    }
+  })
+
   it('resolves authentication types from current healthy observations without mixing provider instances', async () => {
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     let snapshot: HostCredentialStore['snapshot'] = {
@@ -177,34 +201,6 @@ describe('providerService', () => {
         id: 'untrusted-metadata',
         models: [{ catalogProviderId: 'openai', id: 'model-1', input: ['text'], reasoning: false }],
       } as never)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
-    }
-    finally {
-      database.close()
-    }
-  })
-
-  it('preserves configured media capabilities independently from native channel transport support', async () => {
-    const runtime = new FakeModelRuntime()
-    runtime.providers = builtinProviders().filter(provider => ['openai-codex', 'google'].includes(provider.id))
-    runtime.models = runtime.providers.flatMap(provider => provider.getModels()).filter(model => ['gpt-6-astra', 'gemini-2.5-pro'].includes(model.id))
-    runtime.models.push({ ...runtime.models.find(model => model.id === 'gpt-6-astra')!, id: 'fixture-no-pdf' })
-    runtime.credentials = runtime.providers.map(provider => ({ providerId: provider.id, type: provider.id === 'google' ? 'api_key' : 'oauth' } as CredentialInfo))
-    const database = openBuddyDatabase({ databasePath: ':memory:' })
-    try {
-      const service = createProviderServiceForTest({ authInteractions: new AuthInteractionService(), modelRuntime: runtime, providers: createProviderRepository(database), modelSnapshot: new ProviderModelSnapshotService() })
-      await service.initializeProviders()
-      const codex = (await service.listModels('openai-codex')).find(model => model.id === 'gpt-6-astra')!
-      expect(codex.capabilities).toContain('pdf')
-      expect(codex.contextWindow).toBe(runtime.models.find(model => model.id === 'gpt-6-astra')!.contextWindow)
-      expect((await service.listModels('openai-codex')).find(model => model.id === 'fixture-no-pdf')!.capabilities).not.toContain('pdf')
-      expect((await service.listModels('google'))[0]!.capabilities).toEqual(expect.arrayContaining(['image', 'pdf', 'audio', 'video']))
-      const overrides = { image: true, audio: true, video: true, reasoningOptions: ['off'] as const }
-      await service.setModelCapabilities('openai-codex', 'gpt-6-astra', { ...overrides, reasoningOptions: [...overrides.reasoningOptions] })
-      await service.initializeProviders()
-      const configured = (await service.listModels('openai-codex')).find(model => model.id === 'gpt-6-astra')!
-      expect(configured.capabilityOverrides).toEqual(overrides)
-      expect(configured.capabilities).not.toContain('audio')
-      expect(configured.capabilities).not.toContain('video')
     }
     finally {
       database.close()

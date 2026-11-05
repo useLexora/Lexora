@@ -29,6 +29,8 @@ it('discovers a compact host index and exact target contracts without loading pl
     const runtime = extensionCapabilitiesSchema.parse(await query({ kind: 'runtime' }))
     expect(runtime.targets.map(target => target.target)).toContain('themes')
     expect(runtime.targets.every(target => target.kind === 'runtime')).toBe(true)
+    const header = extensionCapabilitiesSchema.parse(await query({ kind: 'runtime', target: 'settings.header-actions' }))
+    expect(header.targets).toEqual([expect.objectContaining({ target: 'settings.header-actions', scope: 'page' })])
     await expect(query({ kind: 'arbitrary' })).rejects.toThrow()
   }
   finally { await dispose() }

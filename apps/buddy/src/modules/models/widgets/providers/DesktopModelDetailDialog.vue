@@ -3,7 +3,7 @@ import type { LocalRuntimeModelOption } from '@buddy-shared/providers/providerAp
 import type { ModelParameterActions } from './typing'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { providerModelTypeSchema } from '@buddy-shared/providers/providerModelType'
-import { NCard, NModal, NSelect } from 'naive-ui'
+import { NButton, NCard, NModal, NSelect } from 'naive-ui'
 import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopManualModelInfoPanel from '@/modules/models/widgets/providers/DesktopManualModelInfoPanel.vue'
@@ -18,9 +18,11 @@ const props = defineProps<{
   saving: boolean
   disabled: boolean
   show: boolean
+  pluginManaged?: boolean
 }>()
 const emit = defineEmits<{
   'update:show': [show: boolean]
+  'managePlugin': []
 }>()
 const { t } = useBuddyI18n(() => props.language)
 const typeOptions = computed(() => [
@@ -53,7 +55,7 @@ const modelSourceSummary = computed(() => (
       </template>
 
       <div class="grid gap-[0.85rem]">
-        <label class="grid gap-2">
+        <label v-if="!pluginManaged" class="grid gap-2">
           <span>{{ t('desktop.providers.modelType') }}</span>
           <NSelect :value="model.typeOverride ?? 'auto'" :options="typeOptions" :disabled="saving || disabled" @update:value="saveType" />
         </label>
@@ -75,7 +77,7 @@ const modelSourceSummary = computed(() => (
           :show="show"
         />
         <DesktopModelThinkingPanel
-          v-if="model.type === 'chat'"
+          v-if="model.type === 'chat' && !pluginManaged"
           :actions="actions"
           :language="language"
           :saving="saving"
@@ -84,13 +86,18 @@ const modelSourceSummary = computed(() => (
           :show="show"
         />
         <DesktopModelParametersPanel
-          v-if="model.type === 'chat'"
+          v-if="model.type === 'chat' && !pluginManaged"
           :model="model"
           :actions="actions"
           :language="language"
           :saving="saving"
           :show="show"
         />
+        <div v-if="pluginManaged">
+          <NButton size="small" @click="emit('managePlugin')">
+            {{ t('desktop.providers.pluginModelSettings') }}
+          </NButton>
+        </div>
       </div>
     </NCard>
   </NModal>

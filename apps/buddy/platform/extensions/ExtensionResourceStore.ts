@@ -1,18 +1,22 @@
 import type { BigIntStats } from 'node:fs'
-import type { ExtensionDirectoryScan, ExtensionLocalDirectory, ExtensionLocalFile, ExtensionResourceCreate } from '../../shared/extensions/extensionResources'
+import type { FileHandle } from 'node:fs/promises'
+import type { ExtensionDirectoryScan, ExtensionLocalDirectory, ExtensionLocalFile, ExtensionResourceCreate, ExtensionResourceHash } from '../../shared/extensions/extensionResources'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { lstat, open, opendir, realpath } from 'node:fs/promises'
+import { lstat, open, opendir, readlink, realpath } from 'node:fs/promises'
 import { basename, extname, join, relative } from 'node:path'
+import process from 'node:process'
 import { z } from 'zod'
+import { inferenceResourcePathSchema } from '../../shared/extensions/extensionInference'
 import { extensionIdSchema } from '../../shared/extensions/extensionManifest'
 import { EXTENSION_CREATED_FILES_LIMIT, EXTENSION_CREATED_STORAGE_LIMIT, extensionLocalDirectorySchema, extensionLocalFileSchema, extensionResourceCreateSchema, extensionResourceMimeType } from '../../shared/extensions/extensionResources'
 import { FileAssetStore } from '../filesystem/FileAssetStore'
 import { containsCanonicalPath } from '../filesystem/filePaths'
-import { fileResponse } from '../filesystem/fileResponse'
+import { assertFileSnapshot, fileResponse } from '../filesystem/fileResponse'
 import { readExtensionJson, writeExtensionJson } from './extensionFiles'
 import { ExtensionResourceUpload } from './ExtensionResourceUpload'
+import { hashResourceResponse } from './hashResourceResponse'
 
 const grantSchema = z.object({
   resource: extensionLocalFileSchema,
@@ -178,6 +182,17 @@ export class ExtensionResourceStore {
     })
   }
 
+  async hash(id: string, resourceId: string, signal: AbortSignal, allowLocal = true): Promise<ExtensionResourceHash> {
+    signal.throwIfAborted()
+    const owned = (await this.#owned(id)).find(item => item.resource.id === resourceId)
+    const response = await this.response(id, resourceId, new Request('https://resource.invalid/'), signal, allowLocal, true)
+    const result = await hashResourceResponse(response, signal)
+    signal.throwIfAborted()
+    if (owned && (result.sha256 !== owned.key || result.size !== owned.resource.size))
+      throw new Error('EXTENSION_RESOURCE_CHANGED')
+    return result
+  }
+
   async readBytes(id: string, resourceId: string, offset: number, length: number, signal: AbortSignal, allowLocal = true): Promise<{ base64: string, size: number, eof: boolean }> {
     const url = 'https://resource.invalid/'
     const metadata = await this.response(id, resourceId, new Request(url, { method: 'HEAD' }), signal, allowLocal)
@@ -305,7 +320,7 @@ export class ExtensionResourceStore {
     })
   }
 
-  async response(id: string, resourceId: string, request: Request, lifetime: AbortSignal, allowLocal = true): Promise<Response> {
+  async response(id: string, resourceId: string, request: Request, lifetime: AbortSignal, allowLocal = true, verifySnapshot = false): Promise<Response> {
     z.string().uuid().parse(resourceId)
     const controller = new AbortController()
     const key = `${id}:${resourceId}`
@@ -322,7 +337,7 @@ export class ExtensionResourceStore {
       signal.throwIfAborted()
       const owned = (await this.#owned(id)).find(item => item.resource.id === resourceId)
       if (owned)
-        return await this.#files(id).response(owned.key, owned.resource.mimeType, request, signal, close, 'EXTENSION_RESOURCE_REVOKED')
+        return await this.#files(id).response(owned.key, owned.resource.mimeType, request, signal, close, 'EXTENSION_RESOURCE_REVOKED', verifySnapshot)
       const grant = allowLocal ? (await this.#read(id)).find(grant => grant.resource.id === resourceId) : undefined
       if (!grant || await realpath(grant.path) !== grant.path)
         throw new Error('EXTENSION_RESOURCE_UNAVAILABLE')
@@ -333,19 +348,92 @@ export class ExtensionResourceStore {
           throw new Error('EXTENSION_RESOURCE_DIRECTORY_CHANGED')
       }
       const handle = await open(grant.path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0))
+      let stat: BigIntStats
       try {
-        const stat = await handle.stat({ bigint: true })
+        stat = await handle.stat({ bigint: true })
         if (!stat.isFile() || JSON.stringify(identity(stat)) !== JSON.stringify(grant.identity))
           throw new Error('EXTENSION_RESOURCE_CHANGED')
-        return await fileResponse(handle, grant.resource.size, grant.resource.mimeType, request, signal, close, 'EXTENSION_RESOURCE_REVOKED')
       }
       catch (error) {
-        await handle.close().catch(() => {})
+        await handle.close()
         throw error
       }
+      return await fileResponse(handle, grant.resource.size, grant.resource.mimeType, request, signal, close, 'EXTENSION_RESOURCE_REVOKED', verifySnapshot
+        ? async () => {
+          await assertFileSnapshot(handle, grant.path, stat)
+          if (await realpath(grant.path) !== grant.path)
+            throw new Error('EXTENSION_RESOURCE_CHANGED')
+          if (grant.directoryId)
+            await this.#assertDirectory((await this.#directories(id)).find(directory => directory.resource.id === grant.directoryId))
+        }
+        : undefined)
     }
     catch (error) {
       close()
+      throw error
+    }
+  }
+
+  async directoryReferencePath(id: string, input: { directoryId: string, path: string }): Promise<string> {
+    z.uuid().parse(input.directoryId)
+    inferenceResourcePathSchema.parse(input.path)
+    const directory = (await this.#directories(id)).find(directory => directory.resource.id === input.directoryId)
+    await this.#assertDirectory(directory)
+    const path = join(directory!.path, input.path)
+    if (await realpath(path) !== path)
+      throw new Error('EXTENSION_RESOURCE_DIRECTORY_CHANGED')
+    return path
+  }
+
+  async openDirectoryReference(id: string, input: { directoryId: string, path: string }): Promise<FileHandle> {
+    const path = await this.directoryReferencePath(id, input)
+    const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0))
+    try {
+      if (!(await handle.stat()).isFile() || await realpath(path) !== path || (process.platform === 'linux' && await readlink(`/proc/self/fd/${handle.fd}`) !== path))
+        throw new Error('EXTENSION_RESOURCE_CHANGED')
+      if (await this.directoryReferencePath(id, input) !== path)
+        throw new Error('EXTENSION_RESOURCE_DIRECTORY_CHANGED')
+      return handle
+    }
+    catch (error) {
+      await handle.close()
+      throw error
+    }
+  }
+
+  async #referenceGrant(id: string, resourceId: string): Promise<Grant> {
+    z.uuid().parse(resourceId)
+    const grant = (await this.#read(id)).find(grant => grant.resource.id === resourceId)
+    if (!grant || await realpath(grant.path) !== grant.path)
+      throw new Error('EXTENSION_RESOURCE_UNAVAILABLE')
+    if (grant.directoryId) {
+      const directory = (await this.#directories(id)).find(directory => directory.resource.id === grant.directoryId)
+      await this.#assertDirectory(directory)
+      if (!containsCanonicalPath(directory!.path, grant.path))
+        throw new Error('EXTENSION_RESOURCE_DIRECTORY_CHANGED')
+    }
+    return grant
+  }
+
+  async referencePath(id: string, resourceId: string): Promise<string> {
+    const grant = await this.#referenceGrant(id, resourceId)
+    const stat = await lstat(grant.path, { bigint: true })
+    if (!stat.isFile() || JSON.stringify(identity(stat)) !== JSON.stringify(grant.identity))
+      throw new Error('EXTENSION_RESOURCE_CHANGED')
+    return grant.path
+  }
+
+  async openReference(id: string, resourceId: string): Promise<FileHandle> {
+    const grant = await this.#referenceGrant(id, resourceId)
+    const handle = await open(grant.path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0))
+    try {
+      const stat = await handle.stat({ bigint: true })
+      if (!stat.isFile() || JSON.stringify(identity(stat)) !== JSON.stringify(grant.identity))
+        throw new Error('EXTENSION_RESOURCE_CHANGED')
+      return handle
+    }
+    catch (error) {
+      await handle.close()
       throw error
     }
   }

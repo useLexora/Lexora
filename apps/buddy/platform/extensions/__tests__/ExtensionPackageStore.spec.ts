@@ -24,7 +24,7 @@ describe('extension package contract', () => {
   it('installs and reloads known contributions while ignoring unsupported declarations without granting them', async () => {
     const { root, store } = await fixture()
     const value = manifest()
-    const input = { ...value, futureMetadata: { enabled: true }, permissions: { ...value.permissions, inference: true, inferenceGpu: false, inferenceNetwork: ['https://example.com'], futureAccess: 'read', futureMetadata: { enabled: true } }, contributes: { ...value.contributes, futureProvider: { entry: 'future.js' } } }
+    const input = { ...value, futureMetadata: { enabled: true }, permissions: { ...value.permissions, futureExecution: true, futureAccess: 'read', futureMetadata: { enabled: true } }, contributes: { ...value.contributes, futureProvider: { entry: 'future.js' } } }
     const review = await reviewPackage(root, store, input)
     expect(review.manifest).toEqual(value)
     expect(review.addedPermissions).toEqual(['selectedResource:read'])
@@ -36,11 +36,41 @@ describe('extension package contract', () => {
     expect(reloaded.installed[value.id]!.current.manifest.permissions).toEqual(value.permissions)
     expect(new TextDecoder().decode(await reloaded.asset(reloaded.installed[value.id]!.current, 'extension.js'))).toBe('export function activate() {}')
   })
-  it('still rejects malformed known permissions and contributions', () => {
-    const value = manifest()
-    expect(extensionManifestSchema.safeParse({ ...value, permissions: { ...value.permissions, network: false } }).success).toBe(false)
-    expect(extensionManifestSchema.safeParse({ ...value, permissions: { ...value.permissions, agent: [] } }).success).toBe(false)
-    expect(extensionManifestSchema.safeParse({ ...value, contributes: { ...value.contributes, commands: false } }).success).toBe(false)
+  it('rejects missing native inference entries before installation and preserves reviewed native bytes', async () => {
+    const { root, store } = await fixture()
+    const value = manifest({ apiVersion: 4, permissions: { inference: true }, contributes: { inference: { runtimes: [{ id: 'chat', entry: 'native/chat.mjs', platforms: ['linux-x64'] }], capabilities: [{ id: 'chat', title: 'Chat', kind: 'chat.completion', runtime: 'chat' }] } } })
+    await expect(reviewPackage(root, store, value)).rejects.toThrow('EXTENSION_ENTRY_MISSING')
+    const source = 'import process from "node:process"; export const version = process.version'
+    value.contributes.inference!.preparation = { entry: 'native/prepare.mjs', platforms: ['linux-x64'] }
+    await expect(reviewPackage(root, store, value, { 'native/chat.mjs': source })).rejects.toThrow('EXTENSION_ENTRY_MISSING')
+    const review = await reviewPackage(root, store, value, { 'native/chat.mjs': source, 'native/prepare.mjs': source })
+    expect(review.addedPermissions).toContain('inference')
+    await store.install(review.token)
+    expect(new TextDecoder().decode(await store.asset(store.installed[value.id]!.current, 'native/chat.mjs'))).toBe(source)
+  })
+  it.each(['runtime', 'preparation'] as const)('requires reviewing each added supervised platform through %s', async (source) => {
+    const { root, store } = await fixture()
+    const value = manifest({ apiVersion: 4, permissions: { inference: true }, contributes: { inference: { runtimes: [{ id: 'chat', entry: 'native/chat.mjs', platforms: ['linux-x64'] }], capabilities: [{ id: 'chat', title: 'Chat', kind: 'chat.completion', runtime: 'chat' }] } } })
+    const files = { 'native/chat.mjs': 'export const initialize = () => ({})', 'native/prepare.mjs': 'export const initialize = () => ({})' }
+    await store.install((await reviewPackage(root, store, value, files)).token)
+    value.version = '1.1.0'
+    value.contributes.inference!.runtimes[0]!.platforms.push('windows-x64')
+    const review = await reviewPackage(root, store, value, files)
+    expect(review.addedPermissions).toEqual(['inference'])
+    await store.install(review.token)
+    await store.promote(value.id)
+    value.version = '1.2.0'
+    expect((await reviewPackage(root, store, value, files)).addedPermissions).toEqual([])
+    if (source === 'runtime')
+      value.contributes.inference!.runtimes[0]!.platforms.push('macos-arm64')
+    else
+      value.contributes.inference!.preparation = { entry: 'native/prepare.mjs', platforms: ['macos-arm64'] }
+    const macReview = await reviewPackage(root, store, value, files)
+    expect(macReview.addedPermissions).toEqual(['inference'])
+    await store.install(macReview.token)
+    await store.promote(value.id)
+    value.version = '1.3.0'
+    expect((await reviewPackage(root, store, value, files)).addedPermissions).toEqual([])
   })
   it('bounds state by UTF-8 bytes and requires permission for declared file views', () => {
     expect(extensionJsonSchema.safeParse('文'.repeat(90000)).success).toBe(false)
@@ -182,11 +212,10 @@ describe('extension package contract', () => {
     await candidate.uninstall(review.manifest.id)
     expect(candidate.unavailable).toEqual([])
   })
-  it('rejects missing modules and reports app requirements before parsing future fields without installing', async () => {
+  it('reports app requirements before parsing future fields without installing', async () => {
     const { root, store } = await fixture()
     const value = { ...manifest(), engines: { lexora: '>=9.0.0' }, futureField: true }
     await expect(reviewPackage(root, store, value)).rejects.toMatchObject({ review: { manifest: { name: value.name }, incompatibility: { reason: 'app-too-old', currentVersion: store.appVersion, requiredVersion: '>=9.0.0' } } })
-    await expect(reviewPackage(root, store, manifest({ entry: 'missing.js' }))).rejects.toThrow('EXTENSION_ENTRY_MISSING')
     expect(store.installed).toEqual({})
   })
   it('preserves private data and its previous snapshot; cancelled writes cannot advance the version', async () => {

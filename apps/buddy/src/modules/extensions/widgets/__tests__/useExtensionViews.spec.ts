@@ -34,6 +34,61 @@ function setup() {
   return { context, views, scope, installed, status, input, requests, closed, session, show }
 }
 
+it('replaces settings header actions without reopening and routes only enabled actions to their owning session', async () => {
+  const f = setup()
+  f.views.show(f.input, document.createElement('div'), true, { settingsHeaderActions: true })
+  const session = f.session()
+  f.requests[0]!.resolve(session)
+  await Promise.resolve()
+  const surface = f.views.surfaces.get(session.id)!
+  surface.ready = true
+  const delivered: unknown[] = []
+  f.views.onSettingsHeaderAction((owner, id) => delivered.push({ owner, id }))
+  const set = (actions: Parameters<typeof f.views.setSettingsHeaderActions>[3], token = session.token) => f.views.setSettingsHeaderActions(session.id, session.generation, token, actions)
+  const click = (id: string, token = session.token) => f.views.activateSettingsHeaderAction(session.id, session.generation, token, id)
+  expect(set([{ id: 'engines', title: 'Engines' }])).toBe(true)
+  expect(set([{ id: 'downloads', title: 'Downloads 2' }, { id: 'engines', title: 'Engines', disabled: true }])).toBe(true)
+  expect(surface.settingsHeaderActions?.map(action => action.title)).toEqual(['Downloads 2', 'Engines'])
+  expect(f.requests).toHaveLength(1)
+  expect(click('downloads')).toBe(true)
+  expect(click('engines')).toBe(false)
+  expect(click('unknown')).toBe(false)
+  expect(click('downloads', crypto.randomUUID())).toBe(false)
+  expect(set([], crypto.randomUUID())).toBe(false)
+  expect(set([{ id: 'same', title: 'One' }, { id: 'same', title: 'Two' }])).toBe(false)
+  surface.visible = false
+  expect(click('downloads')).toBe(false)
+  expect(set([])).toBe(false)
+  surface.visible = true
+  expect(delivered).toEqual([{ owner: session, id: 'downloads' }])
+  expect(set([])).toBe(true)
+  expect(click('downloads')).toBe(false)
+  expect(surface.settingsHeaderActions).toEqual([])
+  f.views.show(f.input, surface.element, true)
+  expect(set([{ id: 'outside-settings', title: 'Denied' }])).toBe(false)
+})
+
+it.each(['disable', 'update', 'fail', 'dispose'] as const)('withdraws header actions on %s and rejects late session writes', async (reason) => {
+  const f = setup()
+  f.views.show(f.input, document.createElement('div'), true, { settingsHeaderActions: true })
+  const first = f.session()
+  f.requests[0]!.resolve(first)
+  await Promise.resolve()
+  const surface = f.views.surfaces.get(first.id)!
+  surface.ready = true
+  expect(f.views.setSettingsHeaderActions(first.id, first.generation, first.token, [{ id: 'downloads', title: 'Downloads 1' }])).toBe(true)
+  if (reason === 'disable')
+    f.installed.value = [{ ...f.status, enabled: false }]
+  else if (reason === 'update')
+    f.installed.value = [{ ...f.status, revision: 'updated', generation: crypto.randomUUID() }]
+  else if (reason === 'fail')
+    f.views.fail(surface, 'EXTENSION_VIEW_FAILED')
+  else f.scope.stop()
+  expect(surface.settingsHeaderActions).toEqual([])
+  expect(f.views.setSettingsHeaderActions(first.id, first.generation, first.token, [{ id: 'late', title: 'Late' }])).toBe(false)
+  expect(f.views.activateSettingsHeaderAction(first.id, first.generation, first.token, 'downloads')).toBe(false)
+})
+
 it('prepares all view sessions concurrently and revalidates already-saved document metadata', async () => {
   const f = setup()
   f.show()

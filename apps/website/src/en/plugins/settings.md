@@ -15,6 +15,16 @@ Items support boolean, string, number, select and model values with valid defaul
 
 Register configuration.onChange for immediate application and return a Promise that resolves when applying finishes. The ordinary configuration:changed event only observes saved data. Missing handlers, failure or timeout can cause the host to restart the plugin with the saved configuration.
 
+## Custom settings header actions
+
+A module's `view` may reference its own resource-free page view. Supporting hosts expose `ViewContext.setSettingsHeaderActions([{id,title,icon?,disabled?,progress?}])` and `onSettingsHeaderAction(id => ...)`. The host renders buttons beside the settings title; clicks return only to the originating view, which owns navigation.
+
+Each call replaces the list with up to four actions. IDs must be unique (up to 64 characters), with single-line titles up to 40 characters. Icons are `settings`, `download`, `refresh`, `add`, `back` or `more`. For example, submit `[{id:'downloads',title:'Downloads 2',icon:'download'}]`, resubmit when the count changes, and use `[]` to clear.
+
+Omit `progress` for the regular icon, use `null` for an indeterminate ring, or a finite number from `0` to `100` for a ring with an integer percentage. Counts remain in the title (for example, `Download history 3`). Supply real progress only; do not estimate a percentage with an unknown total. Prompt users to upgrade if an older host rejects the field.
+
+Subscribe before submitting actions. Navigation away, disabling or view disposal removes them; fetch current business state and submit again on return. Only settings-module view instances qualify, not regular navigation pages. Parent DOM access and custom HTML are not supported. Keep the API 3 manifest and check that both methods exist; prompt users to upgrade older hosts.
+
 ## Private business data
 
 Background storage get/set persists private JSON. Views read and write through their own commands; use broadcasts for changes and fetch an initial snapshot.

@@ -1,5 +1,7 @@
 import type { BrowserWindow, IpcMainEvent } from 'electron'
+import type { ExtensionInferencePorts } from '../../../platform/extensions/ExtensionInference'
 import type { ExtensionDocumentPorts } from '../../../platform/extensions/ExtensionWorkingCopyStore'
+import type { InferenceInvocation } from '../../../platform/extensions/NativeInferenceProcess'
 import type { FileIconThemeService } from '../../../platform/icons/FileIconThemeService'
 import type { SpeechBackend } from '../../../platform/speech/SpeechBackend'
 import type { ThemeService } from '../../../platform/themes/ThemeService'
@@ -14,18 +16,26 @@ import type { TaskFileTarget } from '../../../shared/files/taskFileApi'
 import type { SpaceFileTarget } from '../../../shared/spaces/spaceFileApi'
 import type { JsonValue } from '../../../shared/workbench/workbenchState'
 import { join } from 'node:path'
-import { dialog, ipcMain, Notification, powerMonitor, session, shell } from 'electron'
+import process from 'node:process'
+import { app, dialog, ipcMain, Notification, powerMonitor, session, shell } from 'electron'
+import inferenceBootstrap from 'virtual:extension-runtime/inference'
 import { z } from 'zod'
+import { ExtensionInferenceCredentials } from '../../../platform/extensions/ExtensionInferenceCredentials'
 import { ExtensionPackageStore } from '../../../platform/extensions/ExtensionPackageStore'
 import { ExtensionService } from '../../../platform/extensions/ExtensionService'
 import { observeExtensionDiagnostics } from '../../../platform/extensions/observeExtensionDiagnostics'
+import { resolveBuddyProcessControl } from '../../../platform/native/nativeHost'
+import shellSandbox from '../../../platform/native/shellSandbox.json'
+import { currentTarget } from '../../../platform/target'
 import { seedBundledThemes } from '../../../platform/themes/bundledThemes'
 import { safeDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import { EXTENSION_IPC, extensionError, extensionManagementSchema } from '../../../shared/extensions/extensionApi'
 import { ExtensionCompatibilityError } from '../../../shared/extensions/extensionCompatibility'
 import { extensionReferenceCaptureSchema } from '../../../shared/extensions/extensionReferences'
 import { assertTrustedSender } from '../ipc'
+import { createCredentialVault } from '../secrets/CredentialVault'
 import { compileExtension } from './compileExtension'
+import { createExtensionSpeechBackend } from './createExtensionSpeechBackend'
 import { createExtensionClipboard } from './ExtensionClipboard'
 import { processExtensionPackageInBackground } from './ExtensionPackageWorker'
 import { ExtensionProtocol } from './ExtensionProtocol'
@@ -33,6 +43,8 @@ import { SandboxedExtensionHost } from './SandboxedExtensionHost'
 
 export function registerExtensionIpc(options: {
   documents: ExtensionDocumentPorts
+  inferenceAdmission: ExtensionInferencePorts['admit']
+  inferenceRequest: ExtensionInferencePorts['request']
   home: string
   themes: ThemeService
   fileIcons: FileIconThemeService
@@ -48,6 +60,7 @@ export function registerExtensionIpc(options: {
   notificationsEnabled?: () => boolean
   taskActions: () => Promise<ExtensionTaskAction[]>
   invokeTaskAction: (input: ExtensionTaskActionInput) => Promise<ExtensionTaskActionResult>
+  modelsChanged?: () => void
   shellsChanged?: () => void
   skillsChanged?: () => void
   capabilitiesChanged?: () => void
@@ -57,7 +70,7 @@ export function registerExtensionIpc(options: {
   record?: ApplicationDiagnosticReporter
   conditionRuntime?: (input: { models: boolean, task: boolean, taskId: string | null, runId: string | null }, signal: AbortSignal) => Promise<ExtensionConditionRuntime>
   agentRequest?: (input: { invocationId: string, method: string, params: JsonValue }, signal: AbortSignal) => Promise<JsonValue>
-}): { speech?: SpeechBackend, shells: { list: ExtensionService['shellContributions'] }, skills: { list: ExtensionService['skillContributions'] }, capabilities: { list: ExtensionService['capabilityContributions'] }, withStoppedStorage: ExtensionService['withStoppedStorage'], themesReady: Promise<void>, conditions: ExtensionService['conditions'], dispose: () => Promise<void>, reviewPackage: (path: string) => Promise<void>, inspect: (id: string) => Promise<ExtensionInspection>, agent: { readResource: ExtensionService['readAgentResource'], list: () => Promise<ExtensionAgentDescriptor[]>, invoke: (input: ExtensionAgentInvocation, signal: AbortSignal) => Promise<JsonValue> } } {
+}): { speech?: SpeechBackend, shells: { list: ExtensionService['shellContributions'] }, skills: { list: ExtensionService['skillContributions'] }, capabilities: { list: ExtensionService['capabilityContributions'] }, inference: { imageReaders: ExtensionService['inferenceImageReaders'], imageModels: ExtensionService['inferenceImageModels'], models: ExtensionService['inferenceModels'], list: ExtensionService['inferenceContributions'], prepare: ExtensionService['prepareInference'], invoke: (extensionId: string, revision: string, input: InferenceInvocation) => Promise<void>, reset: () => Promise<void> }, withStoppedStorage: ExtensionService['withStoppedStorage'], themesReady: Promise<void>, conditions: ExtensionService['conditions'], dispose: () => Promise<void>, reviewPackage: (path: string) => Promise<void>, inspect: (id: string) => Promise<ExtensionInspection>, agent: { readResource: ExtensionService['readAgentResource'], list: () => Promise<ExtensionAgentDescriptor[]>, invoke: (input: ExtensionAgentInvocation, signal: AbortSignal) => Promise<JsonValue> } } {
   const store = new ExtensionPackageStore(join(options.home, 'extensions'), options.version, processExtensionPackageInBackground)
   async function reviewResult(operation: () => Promise<ExtensionReview>): Promise<ExtensionReviewResult> {
     try {
@@ -76,10 +89,17 @@ export function registerExtensionIpc(options: {
   const bound = new Set<BrowserWindow>()
   let resourcePickerOpen = false
   let initializing = true
+  const vault = createCredentialVault({ buddyHome: options.home, reportDiagnostic: options.record })
+  const credentials = new ExtensionInferenceCredentials({
+    read: id => vault.read('extensions', id),
+    write: (id, value) => vault.write('extensions', id, value),
+    delete: id => vault.delete('extensions', id),
+  })
   const guardNavigation = (event: Electron.Event<Electron.WebContentsWillFrameNavigateEventParams>) => {
     if (!event.isMainFrame && !protocol.validViewUrl(event.url))
       event.preventDefault()
   }
+  const speechListeners = new Set<() => void>()
   const service = new ExtensionService(store, {
     documents: options.documents,
     clipboard: createExtensionClipboard(options.getWindow),
@@ -89,6 +109,15 @@ export function registerExtensionIpc(options: {
     syncCapabilities: async (descriptors, clearExtensionId) => {
       if (!initializing)
         await options.syncCapabilities?.(descriptors, clearExtensionId)
+    },
+    inference: {
+      bootstrap: inferenceBootstrap,
+      executable: process.execPath,
+      supervisor: resolveBuddyProcessControl({ appPath: app.getAppPath(), isPackaged: app.isPackaged, resourcesPath: process.resourcesPath }),
+      sandbox: process.platform === 'linux' ? join(app.isPackaged ? process.resourcesPath : app.getAppPath(), app.isPackaged ? shellSandbox.resource.to : `${shellSandbox.resource.from}/${currentTarget.id}`, 'bwrap') : undefined,
+      admit: options.inferenceAdmission,
+      request: options.inferenceRequest,
+      credentials,
     },
     themes: options.themes,
     createHost: (pkg, broker, failed) => {
@@ -207,8 +236,13 @@ export function registerExtensionIpc(options: {
       const current = window()
       if (current && !current.isDestroyed())
         current.webContents.send(change.kind === 'installation-progress' ? EXTENSION_IPC.installationsChanged : EXTENSION_IPC.changed)
+      if (change.kind !== 'installation-progress') {
+        for (const listener of speechListeners) listener()
+      }
     }),
     service.onDidChange((change) => {
+      if (['inference-models', 'package', 'enabled', 'resources-revoked', 'configuration'].includes(change.kind) || (change.kind === 'host' && change.status === 'failed'))
+        options.modelsChanged?.()
       if (change.kind === 'contributions' && !change.initial)
         options.agentChanged?.(change.descriptors.map(({ id, revision, configurationRevision }) => ({ id, revision, configurationRevision })))
     }),
@@ -392,6 +426,52 @@ export function registerExtensionIpc(options: {
       return service.shellContributions()
     } },
     themesReady,
+    speech: createExtensionSpeechBackend({
+      list: async () => {
+        await prepared
+        return service.inferenceSpeechModels()
+      },
+      prepare: async (...args) => {
+        await prepared
+        await service.prepareInference(...args)
+      },
+      invoke: async (...args) => {
+        await prepared
+        await service.invokeInference(...args)
+      },
+    }, (listener) => {
+      speechListeners.add(listener)
+      return () => {
+        speechListeners.delete(listener)
+      }
+    }),
+    inference: {
+      imageReaders: async () => {
+        await prepared
+        return service.inferenceImageReaders()
+      },
+      imageModels: async () => {
+        await prepared
+        return service.inferenceImageModels()
+      },
+      models: async () => {
+        await prepared
+        return service.inferenceModels()
+      },
+      prepare: async (...args) => {
+        await prepared
+        await service.prepareInference(...args)
+      },
+      list: async () => {
+        await prepared
+        return service.inferenceContributions()
+      },
+      invoke: async (id, revision, input) => {
+        await prepared
+        return service.invokeInference(id, revision, input)
+      },
+      reset: () => service.resetInference(),
+    },
     withStoppedStorage: operation => prepared.then(() => service.withStoppedStorage(operation)),
     conditions: service.conditions,
     dispose,

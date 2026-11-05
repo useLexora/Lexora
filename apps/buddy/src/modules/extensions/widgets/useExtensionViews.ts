@@ -1,6 +1,7 @@
 import type { ExtensionApi, ExtensionStatus, ExtensionViewInput, ExtensionViewSession } from '@buddy-shared/extensions/extensionApi'
 import type { ExtensionDocumentInfo } from '@buddy-shared/extensions/extensionDocumentInfo'
 import type { ExtensionReferenceReveal } from '@buddy-shared/extensions/extensionReferences'
+import type { ExtensionSettingsHeaderAction } from '@buddy-shared/extensions/extensionSettingsHeaderActions'
 import type { ClosePreparation } from '@buddy-shared/lifecycle/closePreparation'
 import type { WorkbenchContextValues } from '@buddy-shared/workbench/workbenchContext'
 import type { WorkbenchHitRegion } from '@buddy-shared/workbench/workbenchInteraction'
@@ -8,6 +9,7 @@ import type { JsonValue } from '@buddy-shared/workbench/workbenchState'
 import type { ControlProposal, ControlSnapshot, WorkbenchMountTarget } from '@buddy-shared/workbench/workbenchUi'
 import type { Ref } from 'vue'
 import type { SemanticAnchor } from '@/shared/ui/contributions/workbenchUiContext'
+import { extensionSettingsHeaderActionsSchema } from '@buddy-shared/extensions/extensionSettingsHeaderActions'
 import { matchesWorkbenchContext } from '@buddy-shared/workbench/workbenchContext'
 import { onScopeDispose, shallowReactive, watch } from 'vue'
 import { extensionErrorCode } from '../state/useExtensionState'
@@ -21,6 +23,8 @@ export interface ExtensionControlBinding {
 }
 export interface ExtensionSurface {
   documentInfo?: ExtensionDocumentInfo
+  settingsHeaderActions?: readonly ExtensionSettingsHeaderAction[]
+  settingsHeaderActionsEnabled?: boolean
   input: ExtensionViewInput
   element: HTMLElement
   visible: boolean
@@ -57,6 +61,7 @@ export function useExtensionViews(api: ExtensionApi, installed: Readonly<Ref<Ext
   const lifecycles = new WeakMap<ExtensionSurface, SurfaceLifecycle>()
   const controlFailures = new Map<string, ControlFailure>()
   const messageListeners = new Set<(extensionId: string, generation: string, message: JsonValue) => void>()
+  let settingsHeaderAction: ((session: ExtensionViewSession, id: string) => void) | undefined
   let referenceReveal: ReferenceReveal | undefined
   let closeRequest: ((session: ExtensionViewSession, signal?: AbortSignal) => Promise<boolean>) | undefined
   let layout = () => {}
@@ -71,6 +76,7 @@ export function useExtensionViews(api: ExtensionApi, installed: Readonly<Ref<Ext
     surface.active = true
     surface.error = ''
     delete surface.documentInfo
+    surface.settingsHeaderActions = []
     surface.regions = []
   }
   async function open(surface: ExtensionSurface) {
@@ -147,7 +153,7 @@ export function useExtensionViews(api: ExtensionApi, installed: Readonly<Ref<Ext
     reconcile()
     layout()
   }, { flush: 'sync' })
-  function show(input: ExtensionViewInput, element: HTMLElement, visible: boolean, binding?: { anchor?: SemanticAnchor, control?: ExtensionControlBinding, mount?: ExtensionSurface['mount'] }) {
+  function show(input: ExtensionViewInput, element: HTMLElement, visible: boolean, binding?: { anchor?: SemanticAnchor, control?: ExtensionControlBinding, mount?: ExtensionSurface['mount'], settingsHeaderActions?: boolean }) {
     const previous = surfaces.get(input.viewId)
     if (previous) {
       if (identity(previous.input) !== identity(input))
@@ -158,9 +164,12 @@ export function useExtensionViews(api: ExtensionApi, installed: Readonly<Ref<Ext
       previous.mount = binding?.mount ?? null
       previous.anchor = binding?.anchor ?? null
       previous.control = binding?.control ?? null
+      previous.settingsHeaderActionsEnabled = binding?.settingsHeaderActions ?? false
+      if (!previous.settingsHeaderActionsEnabled)
+        previous.settingsHeaderActions = []
     }
     else {
-      const surface = shallowReactive<ExtensionSurface>({ input, element, visible, active: true, eligible: true, session: null, opening: false, ready: false, mount: binding?.mount ?? null, anchor: binding?.anchor ?? null, control: binding?.control ?? null, error: '', regions: [], interactionMode: null })
+      const surface = shallowReactive<ExtensionSurface>({ input, element, visible, settingsHeaderActionsEnabled: binding?.settingsHeaderActions ?? false, settingsHeaderActions: [], active: true, eligible: true, session: null, opening: false, ready: false, mount: binding?.mount ?? null, anchor: binding?.anchor ?? null, control: binding?.control ?? null, error: '', regions: [], interactionMode: null })
       lifecycles.set(surface, { revision: null, generation: null, request: 0 })
       surfaces.set(input.viewId, surface)
     }
@@ -208,8 +217,29 @@ export function useExtensionViews(api: ExtensionApi, installed: Readonly<Ref<Ext
     layout()
     return true
   }
+  function setSettingsHeaderActions(id: string, generation: string, token: string, actions: readonly ExtensionSettingsHeaderAction[]): boolean {
+    const surface = surfaces.get(id)
+    if (!surface?.settingsHeaderActionsEnabled || !surface.visible || !surface.eligible || surface.error || surface.session?.generation !== generation || surface.session.token !== token)
+      return false
+    const parsed = extensionSettingsHeaderActionsSchema.safeParse(actions)
+    if (!parsed.success)
+      return false
+    surface.settingsHeaderActions = parsed.data
+    return true
+  }
+  function activateSettingsHeaderAction(id: string, generation: string, token: string, actionId: string): boolean {
+    const surface = surfaces.get(id)
+    if (!surface?.settingsHeaderActionsEnabled || !surface.ready || !surface.visible || !surface.eligible || surface.error || surface.session?.generation !== generation || surface.session.token !== token)
+      return false
+    const action = surface.settingsHeaderActions?.find(action => action.id === actionId)
+    if (!action || action.disabled || !settingsHeaderAction)
+      return false
+    settingsHeaderAction(surface.session, action.id)
+    return true
+  }
   onScopeDispose(() => {
     for (const id of surfaces.keys()) hide(id)
+    settingsHeaderAction = undefined
     messageListeners.clear()
     referenceReveal = undefined
     closeRequest = undefined
@@ -287,6 +317,15 @@ export function useExtensionViews(api: ExtensionApi, installed: Readonly<Ref<Ext
       return referenceReveal?.(session, input, signal) ?? false
     },
     setRegions,
+    setSettingsHeaderActions,
+    activateSettingsHeaderAction,
+    onSettingsHeaderAction(listener: (session: ExtensionViewSession, id: string) => void) {
+      settingsHeaderAction = listener
+      return () => {
+        if (settingsHeaderAction === listener)
+          settingsHeaderAction = undefined
+      }
+    },
     onMessage: (listener: (extensionId: string, generation: string, message: JsonValue) => void) => {
       messageListeners.add(listener)
       return () => messageListeners.delete(listener)

@@ -15,7 +15,7 @@ import { validateExtensionSkillFiles } from './extensionSkillAssets.ts'
 export async function readExtensionPackage(source: string) {
   const files = await readExtensionDirectory(source)
   const manifest = extensionManifestSchema.parse(JSON.parse(new TextDecoder().decode(files.get('extension.json'))))
-  for (const entry of [manifest.entry, ...manifest.contributes.views.map(view => view.entry)].filter((entry): entry is string => !!entry))
+  for (const entry of [manifest.entry, manifest.contributes.inference?.preparation?.entry, ...manifest.contributes.views.map(view => view.entry), ...manifest.contributes.inference?.runtimes.map(runtime => runtime.entry) ?? []].filter((entry): entry is string => !!entry))
     assert(files.has(entry), `Missing entry: ${entry}`)
   validateThemeFiles(files, manifest.contributes.themes)
   validateFileIconThemeFiles(files, manifest.contributes.iconThemes)

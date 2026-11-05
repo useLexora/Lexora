@@ -7,12 +7,12 @@ import { requestThroughHost } from '../requestThroughHost'
 const net = vi.hoisted(() => ({ request: vi.fn() }))
 vi.mock('electron', () => ({ net }))
 
-function transport(statusCode = 200) {
+function transport(statusCode = 200, headers: Record<string, string> = {}) {
   let resumed = 0
   let aborted = false
   const incoming = Object.assign(new EventEmitter(), {
     statusCode,
-    headers: { 'content-type': 'application/pdf' },
+    headers: { 'content-type': 'application/pdf', ...headers },
     pause() {},
     resume() {
       resumed++
@@ -41,6 +41,27 @@ function transport(statusCode = 200) {
 beforeEach(() => net.request.mockReset())
 
 describe('host response body boundary', () => {
+  it.each(['identity', 'gzip'])('retains %s representation metadata for identity downloads so the consumer can validate or reject it', async (encoding) => {
+    const wire = transport(206, { 'content-range': 'bytes 3-12/13', 'content-length': '10', 'content-encoding': encoding, 'set-cookie': 'ignored=1' })
+    const response = await requestThroughHost({} as Session, { url: 'https://example.com', method: 'GET', headers: { 'accept-encoding': 'identity', 'range': 'bytes=3-', 'if-range': '"v1"' } }, new AbortController().signal)
+    expect(response.status).toBe(206)
+    expect(response.headers.get('content-range')).toBe('bytes 3-12/13')
+    expect(response.headers.get('content-length')).toBe('10')
+    expect(response.headers.get('content-encoding')).toBe(encoding)
+    expect(response.headers.has('set-cookie')).toBe(false)
+    expect(wire.resumed).toBe(0)
+    await response.body!.cancel()
+    expect(wire.aborted).toBe(true)
+  })
+
+  it('continues hiding native decoded representation lengths from ordinary requests', async () => {
+    transport(200, { 'content-length': '4', 'content-encoding': 'gzip' })
+    const response = await requestThroughHost({} as Session, { url: 'https://example.com', method: 'GET', headers: {} }, new AbortController().signal)
+    expect(response.headers.has('content-length')).toBe(false)
+    expect(response.headers.has('content-encoding')).toBe(false)
+    expect(await response.text()).toBe('file bytes')
+  })
+
   it('reports native closure separately from headers and body completion', async () => {
     const wire = transport()
     let closed = false

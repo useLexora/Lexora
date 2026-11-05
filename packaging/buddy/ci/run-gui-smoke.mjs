@@ -12,12 +12,11 @@ import { resolveBuddyOutputPaths } from '../release/output-paths.mjs'
 const repoRoot = resolve(import.meta.dirname, '../../..')
 const outputPaths = resolveBuddyOutputPaths(repoRoot)
 const nativePetShutdownTimeoutMs = 3_000
-async function main() {
-  const desktopOnly = process.argv.includes('--desktop-only')
-  const desktopPath = resolve(
-    process.env.LEXORA_DESKTOP_EXECUTABLE_PATH
-    ?? resolve(outputPaths.package.desktop, 'linux-unpacked/lexora-buddy'),
-  )
+export async function runGuiSmoke({
+  desktopOnly = false,
+  desktopPath = resolve(process.env.LEXORA_DESKTOP_EXECUTABLE_PATH ?? resolve(outputPaths.package.desktop, 'linux-unpacked/lexora-buddy')),
+  desktopArgs = [],
+} = {}) {
   const binaryPath = resolve(
     process.env.LEXORA_BUDDY_PET_PATH
     ?? resolve(outputPaths.build.native, 'release/lexora-buddy-pet'),
@@ -33,7 +32,7 @@ async function main() {
       LEXORA_HOME: lexoraHome,
     }
 
-    await runDesktopSmoke(desktopPath, smokeEnv)
+    const desktop = await runDesktopSmoke(desktopPath, smokeEnv, 30_000, desktopArgs)
     if (!desktopOnly) {
       const petFixture = await prepareStandalonePetSmokeFixture(smokeRoot)
       await runNativePetSmoke(binaryPath, 12_000, {
@@ -42,9 +41,9 @@ async function main() {
         LEXORA_HOME: petFixture.lexoraHome,
       })
     }
-    writeOutput(desktopOnly
+    writeOutput(`${desktopOnly
       ? 'Lexora Buddy Desktop GUI smoke passed'
-      : 'Lexora Buddy Desktop and standalone pet GUI smoke passed')
+      : 'Lexora Buddy Desktop and standalone pet GUI smoke passed'}; inference: ${desktop.inference}`)
   }
   finally {
     await rm(smokeRoot, { force: true, recursive: true })
@@ -65,19 +64,24 @@ export async function prepareStandalonePetSmokeFixture(smokeRoot) {
   }
 }
 
-export function runDesktopSmoke(executablePath, env, timeoutMs = 30_000) {
+export async function runDesktopSmoke(executablePath, env, timeoutMs = 30_000, args = []) {
+  const requiresInference = process.platform === 'linux' && process.arch === 'x64'
   return new Promise((resolveSmoke, rejectSmoke) => {
     const child = spawnGui(executablePath, {
       ...env,
       LEXORA_DESKTOP_SMOKE_TEST: '1',
-    }, env.LEXORA_GUI_SMOKE_NO_SANDBOX === '1' ? ['--no-sandbox'] : [])
+    }, [...args, ...(env.LEXORA_GUI_SMOKE_NO_SANDBOX === '1' ? ['--no-sandbox'] : [])])
+    let stdout = ''
     let stderr = ''
     const timeout = setTimeout(() => {
       child.kill('SIGKILL')
       rejectSmoke(new Error(`Desktop smoke did not exit within ${timeoutMs}ms`))
     }, timeoutMs)
 
-    child.stdout.resume()
+    child.stdout.setEncoding('utf8')
+    child.stdout.on('data', (chunk) => {
+      stdout = `${stdout}${chunk}`.slice(-8_192)
+    })
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk) => {
       stderr = `${stderr}${chunk}`.slice(-8_192)
@@ -89,7 +93,12 @@ export function runDesktopSmoke(executablePath, env, timeoutMs = 30_000) {
     child.on('close', (code, signal) => {
       clearTimeout(timeout)
       if (code === 0) {
-        resolveSmoke()
+        const inference = stdout.match(/^LEXORA_INFERENCE_SMOKE:passed:(packaged|build)$/m)?.[1]
+        if (requiresInference && !inference) {
+          rejectSmoke(new Error(`Desktop smoke exited without native inference handshake, I/O and cleanup verification; ${stderr.trim()}`))
+          return
+        }
+        resolveSmoke({ inference: requiresInference ? inference : `unsupported on ${process.platform}-${process.arch}` })
         return
       }
 
@@ -214,7 +223,7 @@ function spawnGui(executablePath, env, args = [], stdin = 'ignore') {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  void main().catch((error) => {
+  void runGuiSmoke({ desktopOnly: process.argv.includes('--desktop-only') }).catch((error) => {
     writeError(error instanceof Error ? error.message : String(error))
     process.exitCode = 1
   })

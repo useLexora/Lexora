@@ -14,6 +14,7 @@ import type { ExtensionInstallation } from './extensionInstallation'
 import type { ExtensionManifest } from './extensionManifest'
 import type { ExtensionReferenceCapture, ExtensionReferenceChoice, ExtensionReferenceMaterial, ExtensionReferenceOpening } from './extensionReferences'
 import type { ExtensionConfiguration, ExtensionConfigurationSnapshot } from './extensionSettings'
+import type { ExtensionSettingsHeaderAction } from './extensionSettingsHeaderActions'
 import type { ExtensionWindowStyle } from './extensionWindowStyles'
 import { z } from 'zod'
 import { fileOpeningChoiceSchema, fileOpeningLocationSchema } from '../files/fileOpening'
@@ -51,6 +52,8 @@ export function parseExtensionRequestParams(method: string, params: unknown): Js
     return extensionClipboardWriteSchema.parse(params)
   if (method === 'references.add' || method === 'references.capture')
     return referenceTransportSchema.parse(extensionReferenceInputSchema.parse(params))
+  if (method === 'inference.resources.prepare')
+    return z.json().refine(value => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 2 * 1024 * 1024, 'Inference resource plan is too large').parse(params)
   return (method === 'themes.request' ? themeTransportSchema : extensionJsonSchema).parse(params)
 }
 
@@ -140,6 +143,7 @@ export type ExtensionWorkbenchEvent
     | { kind: 'clear-data', requestId: string, extensionId: string }
     | { kind: 'open', requestId: string, extensionId: string, generation: string, viewType: string, resource: ExtensionResource | null, state: JsonValue, stateVersion: number }
     | { kind: 'state', requestId: string, viewId: string, generation: string, token: string, state: JsonValue, stateVersion: number }
+    | { kind: 'settings-header-actions', requestId: string, viewId: string, generation: string, token: string, actions: ExtensionSettingsHeaderAction[] }
     | { kind: 'document-info', requestId: string, viewId: string, generation: string, token: string, info: ExtensionDocumentInfo }
     | { kind: 'reference', requestId: string, viewId: string, generation: string, token: string, material: ExtensionReferenceMaterial }
     | { kind: 'reference-capture', requestId: string, viewId: string, generation: string, token: string, material: ExtensionReferenceMaterial }

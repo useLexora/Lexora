@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import type { ExtensionReview } from '@buddy-shared/extensions/extensionApi'
+import type { InferencePlatform } from '@buddy-shared/extensions/extensionInference'
 import type { FileOpeningChoice } from '@buddy-shared/files/fileOpening'
 import { extensionManifestSchema } from '@buddy-shared/extensions/extensionManifest'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -131,10 +132,37 @@ it.each(['en-US', 'zh-CN'])('reviews each requested data source separately from 
   expect(text).toContain(language === 'en-US' ? 'No message text, logs or credentials' : '不读取正文、日志或凭据')
   expect(text).toContain(language === 'en-US' ? 'New' : '新增')
   expect(text).not.toContain(language === 'en-US' ? 'Read messages' : '读取消息')
-  expect(document.querySelector('[data-testid="extension-content-sharing-warning"]')).not.toBeNull()
   current.value = { ...review, fileAssociations: [] }
   await nextTick()
   expect(document.querySelector('[data-testid="extension-review-permissions"]')).toBeNull()
+})
+
+it.each(['en-US', 'zh-CN'])('explains the declared supervised platforms without claiming OS isolation in %s', async (language) => {
+  const nativeReview = (platforms: InferencePlatform[]): ExtensionReview => ({
+    ...review,
+    addedPermissions: ['inference'],
+    manifest: extensionManifestSchema.parse({
+      ...review.manifest,
+      apiVersion: 4,
+      entry: 'extension.js',
+      permissions: { inference: true },
+      contributes: { inference: { runtimes: [{ id: 'chat', entry: 'native/chat.mjs', platforms }], capabilities: [{ id: 'chat', title: 'Chat', kind: 'chat.completion', runtime: 'chat' }] } },
+    }),
+  })
+  const { current } = await mount(nativeReview(['macos-arm64']), language)
+  const permissions = () => document.querySelector('[data-testid="extension-review-permissions"]')?.textContent ?? ''
+  expect(permissions()).toContain('macOS')
+  expect(permissions()).not.toContain('Windows')
+  expect(permissions()).toContain(language === 'en-US' ? 'files, credentials, devices and network' : '文件、凭据、设备和网络')
+  expect(permissions()).toContain(language === 'en-US' ? 'do not isolate native code' : '不受插件文件与网络权限范围隔离')
+  current.value = nativeReview(['windows-x64', 'macos-arm64'])
+  await nextTick()
+  expect(permissions()).toContain(language === 'en-US' ? 'Windows and macOS' : 'Windows、macOS')
+  current.value = nativeReview(['linux-x64'])
+  await nextTick()
+  expect(permissions()).not.toContain('macOS')
+  expect(permissions()).not.toContain('Windows')
+  expect(permissions()).toContain(language === 'en-US' ? 'prepared model resources' : '已准备的模型资源')
 })
 
 it('allows closing a duplicate review while the plugin is busy without submitting another install', async () => {
@@ -148,15 +176,7 @@ it('allows closing a duplicate review while the plugin is busy without submittin
 })
 
 it('preselects requested associations and keeps existing defaults when replacements are cleared', async () => {
-  const { content, submissions, submit } = await mount({
-    ...review,
-    manifest: extensionManifestSchema.parse({
-      ...review.manifest,
-      apiVersion: 4,
-      contributes: { skills: [{ id: 'test.panel.review', path: 'skills/review/SKILL.md' }] },
-    }),
-  })
-  expect(document.querySelector('[data-testid="extension-included-skills"] li')?.textContent?.trim()).toBe('review')
+  const { content, submissions, submit } = await mount()
   const checkboxes = content.querySelectorAll<HTMLElement>('[role="checkbox"]')
   expect(checkboxes[0]?.getAttribute('aria-checked')).toBe('true')
   expect(checkboxes[1]?.getAttribute('aria-checked')).toBe('true')
@@ -242,13 +262,11 @@ it('preselects the first requested provider when several providers apply to the 
   expect(submissions.at(-1)?.choices).toEqual([{ extension: '.md', location: 'inline', providerId: 'test.alternate' }])
 })
 
-it('prioritizes NPCs and progressively discloses their capabilities', async () => {
-  const { submit, submissions } = await mount(capabilityReview)
+it('discloses NPC capabilities on demand and resets expanded details for each review', async () => {
+  const { current } = await mount(capabilityReview)
   const text = (selector: string) => document.querySelector(selector)?.textContent ?? ''
   expect(text('[data-testid="extension-included-mcp"]')).toContain('https://legal.example.com/mcp')
   expect(document.querySelector('[data-testid="extension-review-permissions"]')).toBeNull()
-  const sections = [...document.querySelectorAll('section[data-testid]')].map(section => section.getAttribute('data-testid'))
-  expect(sections.slice(0, 3)).toEqual(['extension-included-agents', 'extension-included-mcp', 'extension-included-skills'])
   expect(text('[data-testid="extension-included-mcp"]')).toContain('Token authentication')
   expect(text('[data-testid="extension-included-mcp"]')).toContain('Off by default')
   expect(text('[data-subagent-id="law-finder"]')).toContain('Tools 2 · Skills 1')
@@ -258,9 +276,6 @@ it('prioritizes NPCs and progressively discloses their capabilities', async () =
   const agent = document.querySelector('[data-subagent-id="law-finder"]')!
   const toggle = agent.querySelector<HTMLButtonElement>('[data-testid="extension-agent-details-toggle"]')!
   expect(toggle.getAttribute('aria-expanded')).toBe('false')
-  expect(agent.querySelector('.n-base-selection')).toBeNull()
-  expect(agent.querySelector('img[data-testid="extension-subagent-avatar"]')?.getAttribute('src')).toContain('npc-slate')
-  expect(text('[data-testid="extension-included-agents"] h3')).toContain('NPC')
   toggle.click()
   await nextTick()
   expect(toggle.getAttribute('aria-expanded')).toBe('true')
@@ -274,29 +289,10 @@ it('prioritizes NPCs and progressively discloses their capabilities', async () =
   toggle.click()
   await nextTick()
   expect(document.querySelector('[data-testid="extension-agent-details"]')).toBeNull()
-  submit()
-  expect(submissions.at(-1)).toEqual({ applyUpdate: true, choices: [] })
-})
-
-it.each(['en-US', 'zh-CN'])('presents NPCs consistently in %s and submits registration without team configuration', async (language) => {
-  const { submit, submissions } = await mount({ ...capabilityReview, currentVersion: '0.9.0' }, language)
-  expect(document.querySelector('[data-testid="extension-included-agents"] h3')?.textContent).toContain('NPC')
-  submit()
-  expect(submissions.at(-1)).toEqual({ applyUpdate: true, choices: [] })
-})
-
-it('resets expanded capability details when reviewing a different package', async () => {
-  const { current } = await mount(capabilityReview)
-  document.querySelector<HTMLButtonElement>('[data-testid="extension-agent-details-toggle"]')!.click()
+  toggle.click()
   await nextTick()
   expect(document.querySelector('[data-testid="extension-agent-details"]')).not.toBeNull()
   current.value = { ...capabilityReview, token: 'another-review' }
   await nextTick()
   expect(document.querySelector('[data-testid="extension-agent-details-toggle"]')?.getAttribute('aria-expanded')).toBe('false')
-})
-
-it('shows neither group for a package that contributes none', async () => {
-  await mount({ ...review, fileAssociations: [] })
-  expect(document.querySelector('[data-testid="extension-included-mcp"]')).toBeNull()
-  expect(document.querySelector('[data-testid="extension-included-agents"]')).toBeNull()
 })

@@ -18,7 +18,7 @@ interface Schema { required: string[], properties: Record<string, Schema>, anyOf
 const model: Model<Api> = { api: 'openai-completions', provider: 'openai', id: 'offline-text-model', name: 'Text only', baseUrl: 'https://example.test/v1', input: ['text'], reasoning: false, contextWindow: 8192, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }
 
 describe('generation tool schema through the public Pi extension lifecycle', () => {
-  it('directly exposes the selected image model and refreshes snapshots while hiding routes that are unavailable', async () => {
+  it('directly exposes the selected image model and refreshes snapshots while describing unavailable routes', async () => {
     const root = await mkdtemp(join(tmpdir(), 'buddy-image-schema-'))
     const candidates: ImageCandidate[] = [
       { target: { kind: 'plugin', extensionId: 'fixture', modelId: 'generator' }, title: 'Generate only', owner: 'Fixture', available: true, managementPage: false, support: { operations: ['generate'], maxReferenceImages: 0, sizes: ['1024x1024'], qualities: ['high'], backgrounds: ['opaque'] } },
@@ -79,7 +79,9 @@ describe('generation tool schema through the public Pi extension lifecycle', () 
       expect(tools[2]!.description).toContain('Custom image model: adapter_constraints')
       expect(tools[2]!.description).toContain('actual model capabilities are unverified')
       expect(tools[2]!.parameters.properties.reference!.anyOf[1]!.properties.resourceIds!.maxItems).toBe(4)
-      expect(tools[3]).toBeUndefined()
+      expect(tools[3]!.description).toContain('generate [unavailable under the current policy]; edit [unavailable under the current policy]')
+      expect(tools[3]!.parameters.properties.output).toBeUndefined()
+      expect(tools[3]!.parameters.properties.reference).toBeUndefined()
     }
     finally {
       session.dispose()

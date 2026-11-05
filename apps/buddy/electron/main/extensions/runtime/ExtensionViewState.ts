@@ -79,7 +79,7 @@ export class ExtensionViewState {
       throw new Error('EXTENSION_VIEW_SNAPSHOT_STALE')
     const previous = this.#state
     const transient = notify && this.#cursor?.streamId === value.streamId
-      ? this.#buffer.filter(update => update.streamId === value.streamId && update.sequence <= value.sequence && ['view:message:received', 'interaction:activated', 'composer:input:received'].includes(update.event.type)).sort((a, b) => a.sequence - b.sequence)
+      ? this.#buffer.filter(update => update.streamId === value.streamId && update.sequence <= value.sequence && ['view:message:received', 'view:settings-header-action:activated', 'interaction:activated', 'composer:input:received'].includes(update.event.type)).sort((a, b) => a.sequence - b.sequence)
       : []
     this.#state = ownExtensionViewSnapshot(value.snapshot, this.#policy)
     this.#cursor = Object.freeze({ streamId: value.streamId, sequence: value.sequence })

@@ -44,8 +44,10 @@ export async function requestThroughHost(session: Session, input: { url: string,
     })
     request.on('response', (incoming) => {
       const headers = new Headers()
+      const identity = new Headers(input.headers).get('accept-encoding')?.toLowerCase() === 'identity'
+      const omitted = identity ? ['set-cookie', 'transfer-encoding'] : ['set-cookie', 'content-length', 'content-encoding', 'transfer-encoding']
       for (const [key, value] of Object.entries(incoming.headers)) {
-        if (value !== undefined && !['set-cookie', 'content-length', 'content-encoding', 'transfer-encoding'].includes(key.toLowerCase()))
+        if (value !== undefined && !omitted.includes(key.toLowerCase()))
           headers.set(key, Array.isArray(value) ? value.join(', ') : value)
       }
       const readable = incoming as typeof incoming & Pick<Readable, 'pause' | 'resume'>

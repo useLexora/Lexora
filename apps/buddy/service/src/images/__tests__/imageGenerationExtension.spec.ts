@@ -114,7 +114,7 @@ describe('imageGenerationExtension', () => {
     expect(classifyImageGenerationTool({ input: {}, toolName: 'read' })).toBeNull()
   })
 
-  it('rejects unavailable authentication with a clear no-account-switch recovery message', async () => {
+  it('returns the unavailable route and failed outcome as model-visible facts', async () => {
     let tool: ToolDefinition | undefined
     const generate = vi.fn()
     createImageGenerationExtension({
@@ -129,8 +129,9 @@ describe('imageGenerationExtension', () => {
       prompt: 'Create an image',
     }, undefined, undefined, { model: openAiModel() } as never)
     expect(result.details).toMatchObject({ code: 'IMAGE_GENERATION_UNSUPPORTED', artifactIds: [] })
-    expect(result.content).toEqual([{ type: 'text', text: expect.stringContaining('authentication method or channel does not support image generation') }])
-    expect(result.content).toEqual([{ type: 'text', text: expect.stringContaining('Do not automatically switch accounts or billing routes') }])
+    const content = result.content[0]!
+    expect(content.type).toBe('text')
+    expect(JSON.parse(content.type === 'text' ? content.text : '')).toMatchObject({ code: 'IMAGE_GENERATION_UNSUPPORTED', outcome: 'failed', artifactIds: [], message: expect.stringContaining('No supported image route is available under the current policy. No image request was submitted.') })
     expect(generate).not.toHaveBeenCalled()
   })
 
@@ -203,7 +204,7 @@ describe('imageGenerationExtension', () => {
         requestId: 'req_image_1',
       },
     })
-    expect(result.content[0]?.text).toContain('providerParameter=tools[0].background')
+    expect(JSON.parse(result.content[0]!.text)).toMatchObject({ code: 'IMAGE_GENERATION_FAILED', outcome: 'failed', diagnostic: result.details.diagnostic })
   })
 })
 

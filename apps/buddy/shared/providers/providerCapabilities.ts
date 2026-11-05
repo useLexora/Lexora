@@ -3,6 +3,7 @@ import { BUDDY_THINKING_LEVELS } from '../conversation/modelSelection'
 
 export const modelCapabilitiesSchema = z.object({
   image: z.boolean(),
+  toolCall: z.boolean().optional(),
   pdf: z.boolean().optional(),
   audio: z.boolean().optional(),
   video: z.boolean().optional(),

@@ -47,7 +47,7 @@ export async function compileExtensionSource(files: Map<string, Uint8Array>, man
     }
     if (/\.d\.[cm]?ts$/.test(name) || name === 'extension.json')
       continue
-    if (!/\.(?:js|mjs|ts|mts)$/.test(name)) {
+    if ((name.startsWith('native/') && manifest.contributes.inference) || !/\.(?:js|mjs|ts|mts)$/.test(name)) {
       output.set(name, bytes)
       continue
     }
