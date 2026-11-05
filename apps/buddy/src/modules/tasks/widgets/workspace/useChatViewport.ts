@@ -263,8 +263,12 @@ export function useChatViewport(options: UseChatViewportOptions) {
     if (disposed || (!replacing && !isPositioning.value && !isRestoringPosition.value && !pendingRevealMessageId))
       return
     cancelPositioning()
-    readingAnchor = options.list.value?.captureScrollAnchor() ?? null
-    scrollState.value = detachChatScroll(scrollState.value)
+    const metrics = options.list.value?.readScrollMetrics()
+    const detached = detachChatScroll(scrollState.value)
+    scrollState.value = metrics ? reconcileChatScrollOwnership(detached, metrics) : detached
+    readingAnchor = scrollState.value.ownership === 'detached'
+      ? options.list.value?.captureScrollAnchor() ?? null
+      : null
   }
 
   function handleReaderLayoutIntent() {
