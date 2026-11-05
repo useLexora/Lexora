@@ -1,7 +1,7 @@
 import type { UserQuestionAnswer, UserQuestionRequest } from '@buddy-shared/questions/userQuestionApi'
 import { shallowRef } from 'vue'
 
-export type UserQuestionFormDefinition = Pick<UserQuestionRequest, 'id' | 'buddyName' | 'questions'>
+export type UserQuestionFormDefinition = Pick<UserQuestionRequest, 'id' | 'runId' | 'buddyName' | 'questions'>
 
 export function createUserQuestionInteractionState() {
   return {

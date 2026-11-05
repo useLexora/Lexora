@@ -5,7 +5,7 @@ import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopMarkdownContent from '@/shared/ui/markdown/DesktopMarkdownContent.vue'
 import { useChatContent } from '../transcript/chatContentContext'
 
-const props = defineProps<{ content: string, language: BuddyLocale, position: number, total: number, multiple?: boolean }>()
+const props = defineProps<{ content: string, language: BuddyLocale, position: number, total: number, multiple?: boolean, prominent?: boolean }>()
 const { t } = useBuddyI18n(() => props.language)
 const actions = useChatContent()
 const multiline = computed(() => props.content.includes('\n'))
@@ -21,6 +21,7 @@ const multiline = computed(() => props.content.includes('\n'))
     </div>
     <DesktopMarkdownContent
       class="question-title min-w-0 flex-1 font-normal text-fg"
+      :class="{ 'question-title-prominent': prominent && !multiline }"
       :content="content"
       :language="language"
       :allow-images="false"
@@ -42,5 +43,13 @@ const multiline = computed(() => props.content.includes('\n'))
   --ms-leading-h1: var(--buddy-chat-final-line-height);
   --ms-leading-h2: var(--buddy-chat-final-line-height);
   --ms-leading-h3: var(--buddy-chat-final-line-height);
+}
+
+.buddy-question-prompt .question-title-prominent :deep(.markstream-vue) {
+  --ms-font-sans: var(--buddy-font-ui);
+  --ms-text-body: calc(var(--buddy-chat-final-font-size) * 8 / 7);
+
+  color: var(--buddy-text-strong);
+  font-weight: 600;
 }
 </style>
