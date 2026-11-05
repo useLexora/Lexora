@@ -9,7 +9,7 @@ export function provideChatBuddyIdentity(runs: () => readonly Pick<LocalRun, 'id
   provide(key, computed(() => new Map(runs().map(run => [run.id, run.buddyId]))))
 }
 
-export function useChatBuddyId(runId: () => string | null | undefined) {
+export function useChatBuddyId(runId: () => string | null | undefined, fallbackId = BUILTIN_BUDDY_ID) {
   const runs = inject(key, null)
-  return computed(() => runs?.value.get(runId() ?? '') ?? BUILTIN_BUDDY_ID)
+  return computed(() => runs?.value.get(runId() ?? '') ?? fallbackId)
 }

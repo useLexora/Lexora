@@ -31,6 +31,7 @@ function navigate(offset: number) {
       v-if="selected"
       :key="selected.id"
       :request="selected"
+      :show-author="pending.length > 1"
       :answers="drafts.get(selected.id) ?? []"
       :question-id="selectedQuestionIds.get(selected.id)"
       :language="language"

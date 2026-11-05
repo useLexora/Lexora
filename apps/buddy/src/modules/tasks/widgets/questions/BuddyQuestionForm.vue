@@ -4,9 +4,8 @@ import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { NCheckbox, NInput, NRadio } from 'naive-ui'
 import { computed, shallowRef, useId, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
-import BuddyQuestionPrompt from './BuddyQuestionPrompt.vue'
 
-const props = defineProps<{ question: UserQuestion, answer: UserQuestionAnswer, language: BuddyLocale, disabled: boolean, position: number, total: number }>()
+const props = defineProps<{ question: UserQuestion, answer: UserQuestionAnswer, language: BuddyLocale, disabled: boolean }>()
 const emit = defineEmits<{ change: [answer: UserQuestionAnswer] }>()
 const { t } = useBuddyI18n(() => props.language)
 const id = useId()
@@ -37,9 +36,9 @@ const customInputTheme = {
   boxShadowFocus: 'none',
 }
 const choiceTheme = {
-  fontSizeMedium: 'var(--buddy-chat-meta-font-size)',
+  fontSizeSmall: 'var(--buddy-chat-meta-font-size)',
   labelLineHeight: 'var(--buddy-chat-meta-line-height)',
-  labelPadding: '0 0 0 10px',
+  labelPadding: '0 0 0 8px',
 }
 function updateCustom(text: string) {
   customSelected.value = true
@@ -60,18 +59,14 @@ function choose(optionId: string, checked: boolean) {
 
 <template>
   <fieldset class="question-form m-0 min-w-0 border-0 p-0 disabled:opacity-60" :disabled="disabled" :aria-label="question.question">
-    <BuddyQuestionPrompt class="mb-2" :content="question.question" :language="language" :position="position" :total="total" :multiple="question.kind === 'multiple'">
-      <template #navigation>
-        <slot name="navigation" />
-      </template>
-    </BuddyQuestionPrompt>
     <div class="question-answers grid gap-3">
-      <div v-if="question.options.length" class="flex min-w-0 flex-col gap-0.5">
+      <div v-if="question.options.length" class="flex min-w-0 flex-col gap-1.5">
         <component
           :is="question.kind === 'multiple' ? NCheckbox : NRadio"
           v-for="option in question.options"
           :key="option.id"
-          class="question-option m-0 min-w-0 w-full border-1 border-solid border-transparent rounded-control px-2 py-1.5"
+          class="question-option relative isolate m-0 min-h-9 min-w-0 w-full border-1 border-solid border-transparent rounded-control px-2.5 py-1.5"
+          size="small"
           :class="{ selected: answer.selectedOptionIds.includes(option.id) }"
           :name="id"
           :value="option.id"
@@ -82,13 +77,13 @@ function choose(optionId: string, checked: boolean) {
           @update:checked="choose(option.id, $event)"
         >
           <span class="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span class="text-fg text-[length:var(--buddy-chat-meta-font-size)] font-500">{{ option.label }}</span>
-            <span v-if="option.recommended" class="text-[length:var(--buddy-chat-caption-font-size)] text-accent-text leading-[var(--buddy-chat-caption-line-height)]">{{ t('questions.recommended') }}</span>
+            <span class="text-strong text-[length:var(--buddy-chat-user-font-size)] font-500">{{ option.label }}</span>
+            <span v-if="option.recommended" class="rounded-micro bg-accent-subtle px-1.5 py-0.5 text-[length:var(--buddy-chat-caption-font-size)] text-accent-text leading-[var(--buddy-chat-caption-line-height)]">{{ t('questions.recommended') }}</span>
           </span>
-          <span v-if="option.description" class="mt-0.5 block text-muted text-[length:var(--buddy-chat-caption-font-size)] leading-[var(--buddy-chat-caption-line-height)]">{{ option.description }}</span>
+          <span v-if="option.description" class="mt-0.5 block text-muted text-[length:var(--buddy-chat-meta-font-size)] leading-[var(--buddy-chat-meta-line-height)]">{{ option.description }}</span>
         </component>
-        <div v-if="question.kind === 'single'" class="question-option flex items-start gap-2.5 border-1 border-solid border-transparent rounded-control px-2 py-1.5" :class="{ selected: isCustom }">
-          <NRadio class="shrink-0" :name="id" :checked="isCustom" :disabled="disabled" :theme-overrides="{ ...choiceTheme, labelPadding: '0' }" @update:checked="chooseCustom()">
+        <div v-if="question.kind === 'single'" class="question-option relative isolate min-h-9 flex items-start gap-2 border-1 border-solid border-transparent rounded-control px-2.5 py-1.5" :class="{ selected: isCustom }">
+          <NRadio class="shrink-0" size="small" :name="id" :checked="isCustom" :disabled="disabled" :theme-overrides="{ ...choiceTheme, labelPadding: '0' }" @update:checked="chooseCustom()">
             <span class="sr-only">{{ t('questions.custom') }}</span>
           </NRadio>
           <NInput
@@ -128,10 +123,40 @@ function choose(optionId: string, checked: boolean) {
 
 <style scoped lang="scss">
 .question-option {
-  transition: background-color 120ms;
+  --question-paper-border: color-mix(in srgb, var(--buddy-text-secondary) 32%, var(--buddy-surface-raised));
+  --question-paper-surface: var(--buddy-surface-raised);
+
+  &::before,
+  &::after {
+    content: '';
+    position: absolute;
+    pointer-events: none;
+    z-index: -1;
+  }
+
+  &::before {
+    inset: 0;
+    border: 1px solid var(--question-paper-border);
+    border-radius: 180px 6px 160px 5px / 6px 120px 5px 130px;
+    background: var(--question-paper-surface);
+    transition: background-color 120ms, border-color 120ms;
+  }
+
+  &::after {
+    inset: 2px 2px 1px 3px;
+    border: 1px solid var(--question-paper-border);
+    border-radius: 160px 5px 190px 6px / 5px 110px 7px 120px;
+    opacity: 0.2;
+    transform: rotate(-0.2deg);
+  }
+
+  &:nth-child(even)::before {
+    border-radius: 6px 180px 5px 160px / 120px 6px 130px 5px;
+  }
 
   &.selected {
-    background: var(--buddy-state-selected);
+    --question-paper-border: var(--buddy-accent-border);
+    --question-paper-surface: var(--buddy-accent-surface-subtle);
   }
 
   &:has(textarea:focus-visible) {
@@ -142,11 +167,11 @@ function choose(optionId: string, checked: boolean) {
 
 .question-form {
   &:not(:disabled) .question-option:hover {
-    background: var(--buddy-state-hover);
+    --question-paper-surface: var(--buddy-state-hover);
   }
 
   &:not(:disabled) .question-option.selected:hover {
-    background: var(--buddy-state-selected-hover);
+    --question-paper-surface: var(--buddy-accent-surface-hover);
   }
 
   :deep(.n-radio__label),
@@ -162,7 +187,7 @@ function choose(optionId: string, checked: boolean) {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .question-option {
+  .question-option::before {
     transition: none;
   }
 }
