@@ -3,12 +3,33 @@ import type { TaskIndex } from '../../contracts'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
 import DesktopTaskIndex from '../task-index/DesktopTaskIndex.vue'
 
-const props = defineProps<{ activeTaskId: string | null, pendingTaskIds?: readonly string[], index: TaskIndex }>()
+defineProps<{ activeTaskId: string | null, pendingTaskIds?: readonly string[], index: TaskIndex }>()
 const emit = defineEmits<{ openTask: [id: string], newTask: [spaceId?: string | null] }>()
 const { language, appSidebarCollapsed } = useDesktopUi()
-const { pinnedItems, sidebar, spaces, tasks: items, ...actions } = props.index
 </script>
 
 <template>
-  <DesktopTaskIndex :pending-conversation-ids="pendingTaskIds" :active-conversation-id="activeTaskId" :marks="index.marks" :app-sidebar-collapsed="appSidebarCollapsed" :language="language" :pinned-items="pinnedItems" :sidebar="sidebar" :spaces="spaces" :select-space-directory="actions.selectSpaceDirectory" :tasks="items" :create-space="actions.createSpace" :move-task-to-space="actions.moveTaskToSpace" :update-space="actions.updateSpace" @delete-space="actions.deleteSpace" @delete-task="actions.deleteTask" @new-task="emit('newTask', $event)" @open-space-directory="actions.openSpaceDirectory" @open-task="emit('openTask', $event)" @rename-task="actions.renameTask" @update-pinned-items="actions.setPinnedItems" />
+  <DesktopTaskIndex
+    :pending-conversation-ids="pendingTaskIds"
+    :active-conversation-id="activeTaskId"
+    :marks="index.marks"
+    :app-sidebar-collapsed="appSidebarCollapsed"
+    :language="language"
+    :pinned-items="index.pinnedItems.value"
+    :sidebar="index.sidebar"
+    :history="index.history"
+    :spaces="index.spaces.value"
+    :select-space-directory="index.selectSpaceDirectory"
+    :tasks="index.tasks.value"
+    :create-space="index.createSpace"
+    :move-task-to-space="index.moveTaskToSpace"
+    :update-space="index.updateSpace"
+    @delete-space="index.deleteSpace"
+    @delete-task="index.deleteTask"
+    @new-task="emit('newTask', $event)"
+    @open-space-directory="index.openSpaceDirectory"
+    @open-task="emit('openTask', $event)"
+    @rename-task="index.renameTask"
+    @update-pinned-items="index.setPinnedItems"
+  />
 </template>

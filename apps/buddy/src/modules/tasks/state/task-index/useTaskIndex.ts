@@ -5,7 +5,7 @@ import type { TaskIndex } from '../../contracts'
 import type { TaskSpaceInput } from './typing'
 import type { ApplicationSettings } from '@/modules/settings'
 import { useDebounceFn } from '@vueuse/core'
-import { onScopeDispose, readonly, shallowRef } from 'vue'
+import { onScopeDispose, readonly, shallowRef, watch } from 'vue'
 import { resolveLocalChatErrorMessage } from '@/shared/lib/localChatError'
 import { migrateLegacyTaskDrafts } from '../drafts/migrateLegacyTaskDrafts'
 import { useTaskIndexData } from './useTaskIndexData'
@@ -27,17 +27,28 @@ const activityEvents = new Set(['approval.requested', 'approval.resolved', 'run.
 
 export function useTaskIndex(options: TaskIndexOptions) {
   const { api, applicationSettings } = options
-  const data = useTaskIndexData({ api })
-  const stopConversationChanges = api.conversations.onChanged(conversation => data.applyConversation(conversation))
-  const pins = useTaskPinnedItems(applicationSettings)
-  const sidebar = useTaskSidebarPreferences(applicationSettings)
-  const marks = useTaskMarks({ api: api.taskMarks, conversations: data.conversations, language: applicationSettings.language, ready: options.ready })
   const errorMessage = shallowRef<string | null>(null)
   let disposed = false
   function setError(error: unknown) {
     if (!disposed)
       errorMessage.value = resolveLocalChatErrorMessage(error, applicationSettings.language.value)
   }
+  const data = useTaskIndexData({ api, onError: setError })
+  const stopConversationChanges = api.conversations.onChanged(conversation => data.applyConversation(conversation))
+  const pins = useTaskPinnedItems(applicationSettings)
+  const sidebar = useTaskSidebarPreferences(applicationSettings)
+  const marks = useTaskMarks({
+    api: api.taskMarks,
+    conversations: data.conversations,
+    language: applicationSettings.language,
+    ready: options.ready,
+    stateSource: data.markStates,
+    onStateChanged: state => void data.applyMarkState(state).catch(setError),
+    onMarkRemoved: () => void data.refreshAttention().catch(setError),
+  })
+  const stopPins = watch(pins.pinnedItems, (value) => {
+    void data.setPinnedIds(value.filter(item => item.kind === 'conversation').map(item => item.id)).catch(setError)
+  }, { immediate: true })
   async function refreshAfterMutation() {
     await data.refreshIndex().catch(setError)
   }
@@ -56,6 +67,7 @@ export function useTaskIndex(options: TaskIndexOptions) {
     }
   }
   const index: TaskIndex = {
+    history: data.history,
     marks,
     pinnedItems: pins.pinnedItems,
     setPinnedItems: pins.setPinnedItems,
@@ -101,7 +113,7 @@ export function useTaskIndex(options: TaskIndexOptions) {
         await api.conversations.delete(id)
         if (!disposed)
           options.onTaskDeleted?.(id)
-        await refreshAfterMutation()
+        await Promise.all([data.refreshConversations(), marks.refresh()]).catch(setError)
       }
       catch (error) {
         setError(error)
@@ -150,7 +162,7 @@ export function useTaskIndex(options: TaskIndexOptions) {
       }
     },
   }
-  const refreshActivity = useDebounceFn(() => disposed ? undefined : data.refreshIndex().catch(setError), 100)
+  const refreshActivity = useDebounceFn(() => disposed ? undefined : data.refreshAttention().catch(setError), 100)
   const spaceRevisions = new Map<string, number>()
   const refreshSpaces = useDebounceFn(() => disposed ? undefined : data.refreshSpaces().catch(setError), 50)
   const stopSpaceChanges = api.spaces.onChanged((event) => {
@@ -170,6 +182,7 @@ export function useTaskIndex(options: TaskIndexOptions) {
     stopEvents()
     stopConversationChanges()
     stopSpaceChanges()
+    stopPins()
     marks.dispose()
     data.dispose()
   }

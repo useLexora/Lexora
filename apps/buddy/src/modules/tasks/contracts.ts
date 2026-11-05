@@ -7,6 +7,7 @@ import type { BuddyComposerDraftScope } from '@buddy-shared/conversation/compose
 import type { BuddyComposerSource } from '@buddy-shared/conversation/composerResource'
 import type { LocalContextUsageSnapshotRequest } from '@buddy-shared/conversation/contextApi'
 import type { LocalConversation, LocalConversationBranch, LocalConversationSummary, LocalConversationTimelineItem, LocalMessage } from '@buddy-shared/conversation/conversationApi'
+import type { LocalConversationHistoryPage } from '@buddy-shared/conversation/conversationHistoryApi'
 import type { LocalConversationTree } from '@buddy-shared/conversation/conversationTree'
 import type { BuddyServiceTier, BuddyThinkingLevel } from '@buddy-shared/conversation/modelSelection'
 import type { LocalTaskMark, LocalTaskMarkState, TaskMarkInput } from '@buddy-shared/conversation/taskMarkApi'
@@ -48,7 +49,29 @@ export interface TaskMarks {
   beginVisit: (conversationId: string) => void
 }
 
+export interface TaskHistoryScopeState {
+  initialized: boolean
+  loading: boolean
+  hasMore: boolean
+}
+
+export interface TaskHistoryAnchor {
+  rowKey: string
+  offsetWithinRow: number
+}
+
+export interface TaskHistory {
+  scopes: State<ReadonlyMap<string, TaskHistoryScopeState>>
+  anchors: State<Readonly<Record<DesktopTaskSidebarSection, TaskHistoryAnchor | null>>>
+  ensureScope: (spaceId: string | null) => Promise<void>
+  loadMore: (spaceId: string | null) => Promise<void>
+  setActiveTask: (id: string | null) => Promise<void>
+  search: (query: string, cursor?: string) => Promise<LocalConversationHistoryPage>
+  recordAnchor: (section: DesktopTaskSidebarSection, anchor: TaskHistoryAnchor | null) => void
+}
+
 export interface TaskIndex {
+  history: TaskHistory
   marks: TaskMarks
   pinnedItems: State<readonly DesktopTaskPinnedItem[]>
   setPinnedItems: (items: DesktopTaskPinnedItem[]) => Promise<boolean>
@@ -56,10 +79,8 @@ export interface TaskIndex {
     collapsed: State<boolean>
     collapsedSections: State<ReadonlySet<DesktopTaskSidebarSection>>
     collapsedSpaceIds: State<ReadonlySet<string>>
-    scrollAnchors: State<Readonly<Record<DesktopTaskSidebarSection, number>>>
     width: State<number | null>
     pruneSpaces: (validSpaceIds: ReadonlySet<string>) => void
-    recordScrollAnchor: (section: DesktopTaskSidebarSection, index: number) => void
     setCollapsed: (collapsed: boolean) => Promise<boolean>
     setSectionExpanded: (section: DesktopTaskSidebarSection, expanded: boolean) => Promise<boolean>
     setSpaceExpanded: (spaceId: string, expanded: boolean) => Promise<boolean>

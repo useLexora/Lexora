@@ -3,6 +3,7 @@ import { chatRequestSchemas, chatRpc } from '../../../shared/conversation/chatAp
 import { chatQueueRpc } from '../../../shared/conversation/chatQueueApi'
 import { contextRequestSchemas, contextRpc } from '../../../shared/conversation/contextApi'
 import { conversationRequestSchemas, conversationsRpc } from '../../../shared/conversation/conversationApi'
+import { conversationHistoryRpc } from '../../../shared/conversation/conversationHistoryApi'
 import { conversationTreeRpc } from '../../../shared/conversation/conversationTree'
 import { LOCAL_WORKSPACE_STATE_KEY, workspaceRequestSchemas, workspaceStateRpc } from '../../../shared/conversation/workspaceApi'
 import { runsRequestSchemas } from '../../../shared/runs/runApi'
@@ -29,6 +30,8 @@ export function registerConversationIpc(context: LocalChatIpcContext): void {
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsGetTree, (_event, input) => request(conversationTreeRpc.get, conversationTreeRpc.get.input.parse(input)))
 
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsList, (_event, input) => request(conversationsRpc.list, conversationRequestSchemas.list.parse(input)))
+  handle(LOCAL_CHAT_IPC_CHANNELS.conversationsListHistory, (_event, input) => request(conversationHistoryRpc.listHistory, conversationHistoryRpc.listHistory.input.parse(input)))
+  handle(LOCAL_CHAT_IPC_CHANNELS.conversationsGetHistoryEntries, (_event, input) => request(conversationHistoryRpc.getHistoryEntries, conversationHistoryRpc.getHistoryEntries.input.parse(input)))
 
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsGet, (_event, input) => request(conversationsRpc.get, conversationRequestSchemas.conversationId.parse(input)))
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsGetModelControls, (_event, input) => request(conversationsRpc.getModelControls, conversationRequestSchemas.modelControls.parse(input)))

@@ -4,7 +4,7 @@ import type { LocalConversation, LocalMessage } from '@buddy-shared/conversation
 import type { ChatSession } from '@/modules/tasks/state/conversations/useChatSession'
 import type { ChatRunSync } from '@/modules/tasks/state/runs/typing'
 import type { TaskIndexData } from '@/modules/tasks/state/task-index/useTaskIndexData'
-import { computed, onScopeDispose, readonly, shallowRef } from 'vue'
+import { computed, onScopeDispose, readonly, shallowRef, watch } from 'vue'
 
 interface UseChatConversationsOptions {
   api: { conversations: Pick<LocalChatApi['conversations'], 'get' | 'listBranches' | 'listMessages'> }
@@ -32,14 +32,16 @@ export function useChatConversations(options: UseChatConversationsOptions) {
   onScopeDispose(() => {
     disposed = true
   })
-  const directlyOpenedConversation = shallowRef<LocalConversation | null>(null)
-  const activeConversation = computed(() => (
-    directlyOpenedConversation.value?.id === options.session.activeConversationId.value
-      ? directlyOpenedConversation.value
-      : options.taskIndexData.conversations.value.find(
-        conversation => conversation.id === options.session.activeConversationId.value,
-      ) ?? null
-  ))
+  const openedConversation = shallowRef<LocalConversation | null>(null)
+  watch(() => options.taskIndexData.conversations.value.find(
+    conversation => conversation.id === options.session.activeConversationId.value,
+  ), (conversation) => {
+    if (conversation)
+      openedConversation.value = conversation
+  }, { immediate: true, flush: 'sync' })
+  const activeConversation = computed(() => openedConversation.value?.id === options.session.activeConversationId.value
+    ? openedConversation.value
+    : null)
 
   async function refreshBranches() {
     const conversationId = options.session.activeConversationId.value
@@ -74,7 +76,7 @@ export function useChatConversations(options: UseChatConversationsOptions) {
     )
     if (!conversation || !canActivate())
       return
-    directlyOpenedConversation.value = indexed ? null : conversation
+    openedConversation.value = conversation
     options.session.activateConversation(conversation)
     options.restoreConversationModelSelection(conversation.modelSelection)
     await Promise.all([
@@ -92,8 +94,8 @@ export function useChatConversations(options: UseChatConversationsOptions) {
 
   function applyConversation(conversation: LocalConversation) {
     options.taskIndexData.applyConversation(conversation)
-    if (directlyOpenedConversation.value?.id === conversation.id)
-      directlyOpenedConversation.value = conversation
+    if (options.session.activeConversationId.value === conversation.id)
+      openedConversation.value = conversation
   }
 
   async function listActiveConversationMessages() {
@@ -132,7 +134,7 @@ export function useChatConversations(options: UseChatConversationsOptions) {
 
   function activateDraftScope(spaceId: string | null) {
     options.session.activateDraft(spaceId)
-    directlyOpenedConversation.value = null
+    openedConversation.value = null
     options.runSync.clearConversationState()
     options.clearError()
   }

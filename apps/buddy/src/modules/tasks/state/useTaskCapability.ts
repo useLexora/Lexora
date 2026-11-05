@@ -310,7 +310,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     sessionOptions: async (query, scope) => createSessionContextOptions({
       conversations: scope
         ? await api.localChat.conversations.list(101, { spaceId: scope.spaceId, query, excludeConversationId: activeConversationId.value ?? undefined })
-        : conversations.value,
+        : await api.localChat.conversations.list(),
       spaces: taskIndexData.spaces.value,
       activeConversationId: activeConversationId.value,
       query,

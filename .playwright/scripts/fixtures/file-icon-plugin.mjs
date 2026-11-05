@@ -69,7 +69,7 @@ export async function exerciseFileIconPlugin(buddy, testInfo, plugin) {
   await app.evaluate(({ dialog }, directory) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [directory] })
   }, directory)
-  const section = page.locator('.desktop-task-sidebar__spaces')
+  const section = page.locator('[data-row-key="section:spaces"]')
   await section.locator('.desktop-task-sidebar__section-heading').hover()
   await section.locator('.desktop-task-sidebar__section-add').click()
   const dialog = page.locator('.desktop-space-dialog')

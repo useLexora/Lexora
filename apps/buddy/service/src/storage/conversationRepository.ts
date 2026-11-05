@@ -189,6 +189,8 @@ export function createConversationRepository(database: DatabaseSync): Conversati
     listMessagePage: history.repository.listMessagePage,
     listMessages: history.repository.listMessages,
     listRecent: index.listRecent,
+    listHistory: index.listHistory,
+    getHistoryEntries: index.getHistoryEntries,
     listTimelinePage: timeline.listTimelinePage,
     markDeleted(id, deletedAt) {
       return Number(markDeleted.run(deletedAt, deletedAt, id).changes) === 1

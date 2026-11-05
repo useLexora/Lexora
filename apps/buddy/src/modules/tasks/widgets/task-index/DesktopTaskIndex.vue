@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { DesktopTaskPinnedItem } from '@buddy-electron/shared/desktopApi'
+import type { DesktopTaskPinnedItem, DesktopTaskSidebarSection } from '@buddy-electron/shared/desktopApi'
 import type { LocalConversationSummary } from '@buddy-shared/conversation/conversationApi'
 
 import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
@@ -8,23 +8,15 @@ import type { TaskIndex, TaskMarks } from '../../contracts'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { TaskSpaceInput } from '@/modules/tasks/state/task-index/typing'
 import { Add20Regular, Tag20Regular } from '@vicons/fluent'
-import { NAlert, NButton, NInput, NModal, NTooltip } from 'naive-ui'
+import { NAlert, NButton, NInput, NModal, NTooltip, useMessage } from 'naive-ui'
 import { computed, shallowRef, toRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopSpaceDialog from '@/modules/tasks/widgets/task-index/DesktopSpaceDialog.vue'
-import DesktopTaskRow from '@/modules/tasks/widgets/task-index/DesktopTaskRow.vue'
 import DesktopTaskSearchDialog from '@/modules/tasks/widgets/task-index/DesktopTaskSearchDialog.vue'
-import DesktopTaskSidebarSection from '@/modules/tasks/widgets/task-index/DesktopTaskSidebarSection.vue'
-import DesktopTaskSpaceRow from '@/modules/tasks/widgets/task-index/DesktopTaskSpaceRow.vue'
-import {
-  DESKTOP_TASK_SIDEBAR_ROW_HEIGHT,
-  DESKTOP_TASK_SIDEBAR_ROW_SIZE,
-  DESKTOP_TASK_SIDEBAR_SECTION_HEADER_SIZE,
-  DESKTOP_TASK_SIDEBAR_SECTION_PRIORITIES,
-} from '@/modules/tasks/widgets/task-index/taskSidebarLayout'
 import { useTaskIndexController } from '@/modules/tasks/widgets/task-index/useTaskIndexController'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopWorkspaceSidebarIdentity from '@/shared/ui/workspace-sidebar/DesktopWorkspaceSidebarIdentity.vue'
+import DesktopTaskHistoryList from './DesktopTaskHistoryList.vue'
 import DesktopTaskMarkManager from './DesktopTaskMarkManager.vue'
 import DesktopTaskMoveToSpaceDialog from './DesktopTaskMoveToSpaceDialog.vue'
 
@@ -36,6 +28,7 @@ const props = defineProps<{
   language: BuddyLocale
   pinnedItems: ReadonlyArray<DesktopTaskPinnedItem>
   sidebar: TaskIndex['sidebar']
+  history: TaskIndex['history']
   spaces: ReadonlyArray<LocalSpace>
   selectSpaceDirectory: () => Promise<string | null>
   createSpace: (input: TaskSpaceInput) => Promise<boolean>
@@ -56,79 +49,26 @@ const emit = defineEmits<{
 const { t } = useBuddyI18n(() => props.language)
 const marksOpen = shallowRef(false)
 const searchOpen = shallowRef(false)
-function markBindings(conversationId: string) {
-  return {
-    loading: props.pendingConversationIds?.includes(conversationId),
-    marks: props.marks.items.value,
-    markState: props.marks.states.value.get(conversationId),
-    marksBusy: props.marks.busy.value,
-    onAssignMark: (markId: string) => props.marks.assign(conversationId, markId),
-    onClearMarks: () => props.marks.clear(conversationId),
-    onSetRead: (read: boolean) => props.marks.setRead(conversationId, read),
-    onManageMarks: () => marksOpen.value = true,
-  }
-}
+const message = useMessage()
 const taskMoveTargetId = shallowRef<string | null>(null)
 const taskMoveTarget = computed(() => props.tasks.find(task => task.id === taskMoveTargetId.value) ?? null)
 const taskMoveBusy = computed(() => Boolean(taskMoveTargetId.value && props.pendingConversationIds?.includes(taskMoveTargetId.value)))
 const moveTargets = computed(() => props.spaces
   .filter(space => space.revokedAt === null)
   .map(space => ({ id: space.id, name: space.name })))
-function taskMenuBindings(task: LocalConversationSummary) {
-  return task.spaceId === null
-    ? {
-        moveToSpaceAvailable: moveTargets.value.length > 0 && task.activity === 'idle' && !props.pendingConversationIds?.includes(task.id),
-        onMoveToSpace: () => taskMoveTargetId.value = task.id,
-      }
-    : {}
+function moveToSpaceAvailable(task: LocalConversationSummary) {
+  if (task.spaceId !== null)
+    return undefined
+  return moveTargets.value.length > 0 && task.activity === 'idle' && !props.pendingConversationIds?.includes(task.id)
 }
 function revealMovedTask(spaceId: string) {
   void props.sidebar.setSectionExpanded('spaces', true)
   void props.sidebar.setSpaceExpanded(spaceId, true)
 }
-const sidebarLayoutStyle = {
-  '--buddy-task-sidebar-row-height': `${DESKTOP_TASK_SIDEBAR_ROW_HEIGHT}px`,
-  '--buddy-task-sidebar-row-size': `${DESKTOP_TASK_SIDEBAR_ROW_SIZE}px`,
-  '--buddy-task-sidebar-section-header-size': `${DESKTOP_TASK_SIDEBAR_SECTION_HEADER_SIZE}px`,
-}
-const {
-  beginPinnedDrag,
-  confirmTaskDelete,
-  confirmTaskRename,
-  confirmSpaceDelete,
-  draggedPinnedItemKey,
-  dropPinnedItem,
-  endPinnedDrag,
-  enterPinnedDropTarget,
-  getTaskTitle,
-  getPinnedDropPosition,
-  isSectionExpanded,
-  isSpaceExpanded,
-  openSpaceCreator,
-  pinTask,
-  pinSpace,
-  pinnedItems: visiblePinnedItems,
-  pinnedRows,
-  recordScrollAnchor,
-  scrollAnchors,
-  setSectionExpanded,
-  spaceDeleteTarget,
-  spaceDialogOpen,
-  spaceEditTarget,
-  spaceActivities,
-  spaceRows,
-  relativeTimeNow,
-  requestTaskDelete,
-  requestTaskRename,
-  saveSpace,
-  selectSpaceMenuAction,
-  globalTasks,
-  taskDeleteTarget,
-  taskRenameTarget,
-  taskTitleDraft,
-  toggleSpace,
-  unpinItem,
-} = useTaskIndexController({
+const controller = useTaskIndexController({
+  activeConversationId: () => props.activeConversationId,
+  history: () => props.history,
+  onHistoryError: () => message.error(t('desktop.tasks.historyLoadFailed')),
   getUntitledLabel: () => t('desktop.tasks.untitled'),
   markStates: () => props.marks.states.value,
   onCreateSpace: input => props.createSpace(input),
@@ -145,9 +85,29 @@ const {
   tasks: toRef(props, 'tasks'),
 })
 
-function openSearchTask(conversationId: string) {
+const sections = computed<DesktopTaskSidebarSection[]>(() => controller.pinnedItems.value.length
+  ? ['pinned', 'spaces', 'tasks']
+  : ['spaces', 'tasks'])
+
+const {
+  confirmTaskDelete,
+  confirmTaskRename,
+  confirmSpaceDelete,
+  getTaskTitle,
+  spaceDeleteTarget,
+  spaceDialogOpen,
+  spaceEditTarget,
+  saveSpace,
+  taskDeleteTarget,
+  taskRenameTarget,
+  taskTitleDraft,
+} = controller
+
+async function openSearchTask(conversation: LocalConversationSummary) {
+  if (!await controller.revealTask(conversation) || !searchOpen.value)
+    return
   searchOpen.value = false
-  emit('openTask', conversationId)
+  emit('openTask', conversation.id)
 }
 
 function openSearchSpace(spaceId: string) {
@@ -195,148 +155,26 @@ function openSearchSpace(spaceId: string) {
         {{ t('desktop.marks.retry') }}
       </NButton>
     </NAlert>
-    <div class="min-h-0 flex-1 overflow-hidden py-2 px-0">
-      <nav :style="sidebarLayoutStyle">
-        <DesktopTaskSidebarSection
-          v-if="visiblePinnedItems.length > 0"
-          :expanded="isSectionExpanded('pinned')"
-          :items="pinnedRows"
-          key-field="key"
-          :label="t('desktop.tasks.pinnedSection')"
-          :priority="DESKTOP_TASK_SIDEBAR_SECTION_PRIORITIES.pinned"
-          :scroll-index="scrollAnchors.pinned"
-          section="pinned"
-          @scroll="index => recordScrollAnchor('pinned', index)"
-          @update:expanded="value => setSectionExpanded('pinned', value)"
-        >
-          <template #default="{ item }">
-            <div v-if="item.kind === 'space'" class="h-[var(--buddy-task-sidebar-row-size)] pr-[var(--buddy-task-sidebar-scrollbar-gutter)] pb-[calc(var(--buddy-task-sidebar-row-size)_-_var(--buddy-task-sidebar-row-height))] pl-[var(--buddy-task-sidebar-scrollbar-gutter)]">
-              <DesktopTaskSpaceRow
-                :dragging="draggedPinnedItemKey === item.pinKey"
-                :drop-position="item.pinnedTopLevel ? getPinnedDropPosition(item.pinKey) : undefined"
-                :expanded="isSpaceExpanded(item.space.id)"
-                :language="language"
-                pin-mode="unpin"
-                :activity="spaceActivities.get(item.space.id)"
-                :space="item.space"
-                :reorderable="item.pinnedTopLevel"
-                reorder-target
-                @drag-end="endPinnedDrag"
-                @drag-over="enterPinnedDropTarget(item.pinKey!, $event)"
-                @drag-start="beginPinnedDrag(item.pinKey!)"
-                @drop="dropPinnedItem(item.pinKey!, $event)"
-                @menu="selectSpaceMenuAction(item.space, $event)"
-                @pin="unpinItem(item.pinKey!)"
-                @toggle="toggleSpace(item.space.id)"
-              />
-            </div>
-            <DesktopTaskRow
-              v-else
-              :task-id="item.task.id"
-              :active="item.task.id === activeConversationId"
-              :activity="item.task.activity"
-              v-bind="{ ...markBindings(item.task.id), ...taskMenuBindings(item.task) }"
-              :dragging="item.pinnedTopLevel && draggedPinnedItemKey === item.pinKey"
-              :drop-position="item.pinnedTopLevel ? getPinnedDropPosition(item.pinKey) : undefined"
-              :language="language"
-              :now="relativeTimeNow"
-              :occurred-at="item.task.automationOccurrence?.scheduledFor ?? item.task.updatedAt"
-              :pin-mode="item.pinnedTopLevel ? 'unpin' : undefined"
-              :space-task="item.spaceTask"
-              :reorderable="item.pinnedTopLevel"
-              :reorder-target="item.pinnedTopLevel"
-              :title="getTaskTitle(item.task)"
-              @delete="requestTaskDelete(item.task)"
-              @drag-end="endPinnedDrag"
-              @drag-over="enterPinnedDropTarget(item.pinKey!, $event)"
-              @drag-start="beginPinnedDrag(item.pinKey!)"
-              @drop="dropPinnedItem(item.pinKey!, $event)"
-              @open="emit('openTask', item.task.id)"
-              @pin="unpinItem(item.pinKey!)"
-              @rename="requestTaskRename(item.task)"
-            />
-          </template>
-        </DesktopTaskSidebarSection>
-
-        <DesktopTaskSidebarSection
-          :expanded="isSectionExpanded('spaces')"
-          :items="spaceRows"
-          key-field="key"
-          :label="t('desktop.tasks.spacesSection')"
-          :priority="DESKTOP_TASK_SIDEBAR_SECTION_PRIORITIES.spaces"
-          :scroll-index="scrollAnchors.spaces"
-          section="spaces"
-          show-add
-          @add="openSpaceCreator"
-          @scroll="index => recordScrollAnchor('spaces', index)"
-          @update:expanded="value => setSectionExpanded('spaces', value)"
-        >
-          <template #default="{ item }">
-            <div v-if="item.kind === 'space'" class="h-[var(--buddy-task-sidebar-row-size)] pr-[var(--buddy-task-sidebar-scrollbar-gutter)] pb-[calc(var(--buddy-task-sidebar-row-size)_-_var(--buddy-task-sidebar-row-height))] pl-[var(--buddy-task-sidebar-scrollbar-gutter)]">
-              <DesktopTaskSpaceRow
-                :expanded="isSpaceExpanded(item.space.id)"
-                :language="language"
-                pin-mode="pin"
-                :activity="spaceActivities.get(item.space.id)"
-                :space="item.space"
-                @menu="selectSpaceMenuAction(item.space, $event)"
-                @pin="pinSpace(item.space.id)"
-                @toggle="toggleSpace(item.space.id)"
-              />
-            </div>
-            <DesktopTaskRow
-              v-else
-              :task-id="item.task.id"
-              :active="item.task.id === activeConversationId"
-              :activity="item.task.activity"
-              :language="language"
-              :now="relativeTimeNow"
-              :occurred-at="item.task.automationOccurrence?.scheduledFor ?? item.task.updatedAt"
-              :space-task="item.spaceTask"
-              v-bind="{ ...markBindings(item.task.id), ...taskMenuBindings(item.task) }"
-              :title="getTaskTitle(item.task)"
-              @delete="requestTaskDelete(item.task)"
-              @open="emit('openTask', item.task.id)"
-              @rename="requestTaskRename(item.task)"
-            />
-          </template>
-        </DesktopTaskSidebarSection>
-
-        <DesktopTaskSidebarSection
-          :expanded="isSectionExpanded('tasks')"
-          :items="globalTasks"
-          key-field="id"
-          :label="t('desktop.tasks.tasksSection')"
-          :priority="DESKTOP_TASK_SIDEBAR_SECTION_PRIORITIES.tasks"
-          :scroll-index="scrollAnchors.tasks"
-          section="tasks"
-          @scroll="index => recordScrollAnchor('tasks', index)"
-          @update:expanded="value => setSectionExpanded('tasks', value)"
-        >
-          <template #default="{ item: task }">
-            <DesktopTaskRow
-              :task-id="task.id"
-              :active="task.id === activeConversationId"
-              :activity="task.activity"
-              v-bind="{ ...markBindings(task.id), ...taskMenuBindings(task) }"
-              :language="language"
-              :now="relativeTimeNow"
-              :occurred-at="task.automationOccurrence?.scheduledFor ?? task.updatedAt"
-              pin-mode="pin"
-              :title="getTaskTitle(task)"
-              @delete="requestTaskDelete(task)"
-              @open="emit('openTask', task.id)"
-              @pin="pinTask(task.id)"
-              @rename="requestTaskRename(task)"
-            />
-          </template>
-        </DesktopTaskSidebarSection>
-      </nav>
-    </div>
+    <nav class="flex min-h-0 flex-1 flex-col gap-1 overflow-hidden py-2 px-0">
+      <DesktopTaskHistoryList
+        v-for="section in sections"
+        :key="section"
+        :section="section"
+        :active-conversation-id="activeConversationId"
+        :pending-conversation-ids="pendingConversationIds"
+        :controller="controller"
+        :language="language"
+        :marks="marks"
+        :move-to-space-available="moveToSpaceAvailable"
+        @open-task="emit('openTask', $event)"
+        @manage-marks="marksOpen = true"
+        @move-task="taskMoveTargetId = $event"
+      />
+    </nav>
 
     <DesktopTaskSearchDialog
       v-model:show="searchOpen"
-      :conversations="tasks"
+      :search="(query, cursor) => history.search(query, cursor)"
       :language="language"
       :spaces="spaces"
       @open-task="openSearchTask"
@@ -477,24 +315,6 @@ function openSearchSpace(spaceId: string) {
     outline: 2px solid var(--buddy-focus-ring);
     outline-offset: -2px;
   }
-}
-
-.desktop-task-sidebar nav {
-  --buddy-task-sidebar-section-gap: 0.25rem;
-  --buddy-task-sidebar-section-font-size: 13px;
-  --buddy-task-sidebar-item-font-size: 13px;
-  --buddy-task-sidebar-action-gap: 0.125rem;
-  --buddy-task-sidebar-action-inset: 0.4rem;
-  --buddy-task-sidebar-action-size: 1.5rem;
-  --buddy-task-sidebar-scrollbar-gutter: 0.5rem;
-  --buddy-task-sidebar-state-radius: 6px;
-
-  display: flex;
-  height: 100%;
-  min-height: 0;
-  flex-direction: column;
-  gap: var(--buddy-task-sidebar-section-gap);
-  overflow: hidden;
 }
 
 .desktop-task-sidebar__delete-space-content p {

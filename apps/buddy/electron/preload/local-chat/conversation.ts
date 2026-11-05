@@ -20,6 +20,11 @@ export function createConversationApi(): Pick<LocalChatApi, 'context' | 'workspa
       getNodeDetail: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsGetNodeDetail, input),
       getTree: conversationId => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsGetTree, { conversationId }),
       list: (limit, filter) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsList, { limit, filter: filter ? { spaceId: filter.spaceId, query: filter.query, excludeConversationId: filter.excludeConversationId } : undefined }),
+      listHistory: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsListHistory, {
+        ...input,
+        ...(input.excludeIds ? { excludeIds: [...input.excludeIds] } : {}),
+      }),
+      getHistoryEntries: ids => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsGetHistoryEntries, { ids: [...ids] }),
       get: conversationId => ipcRenderer.invoke(
         LOCAL_CHAT_IPC_CHANNELS.conversationsGet,
         { conversationId },

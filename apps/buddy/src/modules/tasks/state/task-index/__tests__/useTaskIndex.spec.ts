@@ -1,5 +1,6 @@
 import type { LexoraDesktopApi } from '@buddy-electron/shared/desktopApi'
 import type { LocalConversationSummary } from '@buddy-shared/conversation/conversationApi'
+import type { ConversationHistoryQuery } from '@buddy-shared/conversation/conversationHistoryApi'
 import type { LocalRunEvent } from '@buddy-shared/runs/runApi'
 import type { LocalSpace, SpaceChangeNotice } from '@buddy-shared/spaces/spaceApi'
 import type { ApplicationSettings } from '@/modules/settings'
@@ -59,7 +60,7 @@ function fixture() {
       savedSpaces = [space()]
       return savedSpaces[0]
     }, delete: async () => ({ ok: true }), selectDirectory: async () => null, revealFile: async () => {} },
-    conversations: { onChanged: () => () => {}, list: async () => savedTasks, delete: async (id: string) => {
+    conversations: { onChanged: () => () => {}, list: async () => savedTasks, listHistory: async (query: ConversationHistoryQuery) => ({ items: savedTasks.filter(task => query.kind === 'attention' ? task.activity !== 'idle' : task.activity === 'idle').map(historyItem), nextCursor: null }), getHistoryEntries: async (ids: readonly string[]) => savedTasks.filter(task => ids.includes(task.id)).map(historyItem), delete: async (id: string) => {
       savedTasks = savedTasks.filter(task => task.id !== id)
       return true
     } },
@@ -90,6 +91,9 @@ function fixture() {
     savedTasks = savedTasks.map(task => ({ ...task, activity: value }))
     for (const listener of listeners) listener({ type: 'approval.requested', runId: 'run', sequence: 1, payload: {}, createdAt: '2026-09-18T00:00:00Z' })
   } }
+}
+function historyItem(conversation: LocalConversationSummary) {
+  return { conversation, markState: { conversationId: conversation.id, markId: null, resultRunId: null, unread: false, readRevision: 0 } }
 }
 const input = { icon: 'folder' as const, iconColor: 'default' as const, name: 'Created', memoryScope: 'space_only' as const, primaryDirectory: null }
 

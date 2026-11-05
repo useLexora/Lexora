@@ -29,10 +29,11 @@ function fixture() {
   const lookup = deferred<LocalConversation>()
   const errors: unknown[] = []
   const persisted: (string | null)[] = []
+  const conversations = shallowRef([{ ...conversation('indexed'), activity: 'idle' as const, automationOccurrence: null }])
   const owner = scope.run(() => useChatConversations({
     api: { conversations: { get: () => lookup.promise, listBranches: async () => [], listMessages: async () => ({ items: [], nextCursor: null }) } },
     session,
-    taskIndexData: { conversations: shallowRef([{ ...conversation('indexed'), activity: 'idle' as const, automationOccurrence: null }]), applyConversation() {}, refreshIndex: async () => {} },
+    taskIndexData: { conversations, applyConversation() {}, refreshIndex: async () => {} },
     clearError() {},
     onError: error => errors.push(error),
     persistWorkspaceState: async () => {
@@ -43,18 +44,22 @@ function fixture() {
     restoreConversationModelSelection() {},
     selectDefaultModel() {},
   }))!
-  return { errors, lookup, owner, persisted, scope, session }
+  return { errors, lookup, owner, persisted, scope, session, conversations }
 }
 
 describe('task selection ownership', () => {
-  it('does not activate a looked-up task after a later indexed selection', async () => {
+  it.each(['resolve', 'reject'])('ignores a stale lookup %s after selecting an indexed task', async (outcome) => {
     const f = fixture()
     const old = f.owner.openConversation('old')
     await f.owner.openConversation('indexed')
-    f.lookup.resolve(conversation('old'))
+    if (outcome === 'resolve')
+      f.lookup.resolve(conversation('old'))
+    else
+      f.lookup.reject(new Error('old task is unavailable'))
     await old
     expect(f.session.activeConversationId.value).toBe('indexed')
     expect(f.persisted).toEqual(['indexed'])
+    expect(f.errors).toEqual([])
   })
 
   it.each(['abort', 'draft', 'dispose'])('discards an unlisted task after %s', async (operation) => {
@@ -74,13 +79,17 @@ describe('task selection ownership', () => {
     expect(f.errors).toEqual([])
   })
 
-  it('does not surface an old lookup error in the newly selected task', async () => {
+  it('retains an opened task when it leaves the visible sidebar window while still applying later metadata', async () => {
     const f = fixture()
-    const old = f.owner.openConversation('old')
     await f.owner.openConversation('indexed')
-    f.lookup.reject(new Error('old task is unavailable'))
-    await old
-    expect(f.session.activeConversationId.value).toBe('indexed')
-    expect(f.errors).toEqual([])
+    const updated = { ...f.conversations.value[0]!, title: 'Updated title', executionProfile: 'read_only' as const }
+    f.conversations.value = [updated]
+    expect(f.owner.activeConversation.value).toEqual(updated)
+    f.conversations.value = []
+    expect(f.owner.activeConversation.value).toEqual(updated)
+    f.owner.applyConversation({ ...updated, spaceId: 'moved' })
+    expect(f.owner.activeConversation.value?.spaceId).toBe('moved')
+    await f.owner.activateGlobalDraft()
+    expect(f.owner.activeConversation.value).toBeNull()
   })
 })

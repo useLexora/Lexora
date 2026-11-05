@@ -14,7 +14,7 @@ function fixture() {
   const scope = effectScope()
   scopes.push(scope)
   const index = scope.run(() => useTaskIndexData({ api: {
-    conversations: { list: async () => [] },
+    conversations: { listHistory: async () => ({ items: [], nextCursor: null }), getHistoryEntries: async () => [] },
     spaces: { list: () => {
       const request = deferred<readonly LocalSpace[]>()
       pending.push(request)
@@ -25,7 +25,7 @@ function fixture() {
 }
 
 describe('task index refresh', () => {
-  it('shares an initialized index across concurrent task consumers and retries failed initialization', async () => {
+  it('shares initialization across concurrent consumers and retries a failed initialization', async () => {
     const f = fixture()
     const failed = f.index.initialize()
     f.pending[0]!.reject(new Error('runtime unavailable'))
@@ -35,8 +35,6 @@ describe('task index refresh', () => {
     f.pending[1]!.resolve([space('shared')])
     await Promise.all([first, second])
     expect(f.index.spaces.value.map(item => item.name)).toEqual(['shared'])
-    await f.index.initialize()
-    expect(f.pending).toHaveLength(2)
   })
 
   it.each(['resolve', 'reject'] as const)('retains the newer Space list when an earlier request finishes with %s', async (outcome) => {
@@ -62,7 +60,7 @@ describe('task index refresh', () => {
     expect(f.index.spaces.value.map(item => item.name)).toEqual(['saved'])
   })
 
-  it('does not publish pending results or failures after disposal', async () => {
+  it('does not publish pending results after disposal', async () => {
     const f = fixture()
     f.index.replaceSpaces([space('before disposal')])
     const loading = f.index.refreshIndex()

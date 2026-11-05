@@ -1,6 +1,7 @@
-import type { DesktopTaskPinnedItem } from '@buddy-electron/shared/desktopApi'
+import type { DesktopTaskPinnedItem, DesktopTaskSidebarSection } from '@buddy-electron/shared/desktopApi'
 import type { LocalConversationSummary } from '@buddy-shared/conversation/conversationApi'
 import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
+import type { TaskIndex } from '../../contracts'
 
 export type TaskIndexRow
   = | {
@@ -19,6 +20,18 @@ export type TaskIndexRow
     spaceTask?: boolean
   }
 
+export type TaskHistoryRow = TaskIndexRow | {
+  key: string
+  kind: 'section'
+  section: DesktopTaskSidebarSection
+} | {
+  key: string
+  kind: 'more'
+  spaceId: string | null
+  initialized: boolean
+  loading: boolean
+}
+
 export interface TaskIndexProjection {
   pinnedItems: DesktopTaskPinnedItem[]
   pinnedRows: TaskIndexRow[]
@@ -31,6 +44,7 @@ export type DesktopTaskPinnedDropPosition = 'after' | 'before'
 export function resolveTaskIndexProjection(input: {
   expandedSpaceIds: ReadonlySet<string>
   markedTaskIds: ReadonlySet<string>
+  unreadTaskIds: ReadonlySet<string>
   pinnedItems: ReadonlyArray<DesktopTaskPinnedItem>
   spaces: ReadonlyArray<LocalSpace>
   tasks: ReadonlyArray<LocalConversationSummary>
@@ -49,9 +63,14 @@ export function resolveTaskIndexProjection(input: {
     tasksBySpace.set(task.spaceId, tasks)
   }
 
-  for (const tasks of tasksBySpace.values()) {
-    tasks.sort((left, right) => Number(input.markedTaskIds.has(right.id)) - Number(input.markedTaskIds.has(left.id)))
-  }
+  const compareTasks = (left: LocalConversationSummary, right: LocalConversationSummary) => (
+    Number(input.markedTaskIds.has(right.id)) - Number(input.markedTaskIds.has(left.id))
+    || Number(input.unreadTaskIds.has(right.id)) - Number(input.unreadTaskIds.has(left.id))
+    || right.updatedAt.localeCompare(left.updatedAt)
+  )
+  globalTasks.sort(compareTasks)
+  for (const tasks of tasksBySpace.values())
+    tasks.sort(compareTasks)
 
   const pinnedItems = resolveVisiblePinnedItems({
     items: input.pinnedItems,
@@ -72,7 +91,7 @@ export function resolveTaskIndexProjection(input: {
       if (item.kind === 'conversation') {
         return [{
           task: globalTasksById.get(item.id)!,
-          key: `pinned:${pinKey}`,
+          key: `conversation:${item.id}`,
           kind: 'task' as const,
           pinKey,
           pinnedTopLevel: true,
@@ -81,7 +100,7 @@ export function resolveTaskIndexProjection(input: {
 
       const space = spacesById.get(item.id)!
       const rows: TaskIndexRow[] = [{
-        key: `pinned:${pinKey}`,
+        key: `space:${space.id}`,
         kind: 'space',
         pinKey,
         pinnedTopLevel: true,
@@ -92,7 +111,7 @@ export function resolveTaskIndexProjection(input: {
       const spaceTasks = tasksBySpace.get(space.id) ?? []
       return rows.concat(spaceTasks.map(task => ({
         task,
-        key: `pinned:${pinKey}:conversation:${task.id}`,
+        key: `conversation:${task.id}`,
         kind: 'task' as const,
         pinKey,
         spaceTask: true,
@@ -107,6 +126,60 @@ export function resolveTaskIndexProjection(input: {
       )),
     globalTasks: globalTasks.filter(task => !pinnedConversationIds.has(task.id)),
   }
+}
+
+export function getTaskHistoryScopeKey(spaceId: string | null): string {
+  return spaceId === null ? 'global' : `space:${spaceId}`
+}
+
+export function resolveTaskHistoryRows(input: {
+  projection: TaskIndexProjection
+  collapsedSections: ReadonlySet<DesktopTaskSidebarSection>
+  expandedSpaceIds: ReadonlySet<string>
+  scopes: TaskIndex['history']['scopes']['value']
+}): TaskHistoryRow[] {
+  const rows: TaskHistoryRow[] = []
+  const addMore = (spaceId: string | null) => {
+    const scopeKey = getTaskHistoryScopeKey(spaceId)
+    const scope = input.scopes.get(scopeKey)
+    if (scope?.initialized && !scope.loading && !scope.hasMore)
+      return
+    rows.push({
+      key: `more:${scopeKey}`,
+      kind: 'more',
+      spaceId,
+      initialized: scope?.initialized ?? false,
+      loading: scope?.loading ?? false,
+    })
+  }
+  const addSection = (section: DesktopTaskSidebarSection, items: TaskIndexRow[]) => {
+    rows.push({ key: `section:${section}`, kind: 'section', section })
+    if (input.collapsedSections.has(section))
+      return
+    let spaceId: string | null = null
+    for (const row of items) {
+      if (spaceId !== null && (row.kind === 'space' || !row.spaceTask)) {
+        addMore(spaceId)
+        spaceId = null
+      }
+      rows.push(row)
+      if (row.kind === 'space' && input.expandedSpaceIds.has(row.space.id))
+        spaceId = row.space.id
+    }
+    if (spaceId !== null)
+      addMore(spaceId)
+    if (section === 'tasks')
+      addMore(null)
+  }
+  if (input.projection.pinnedRows.length)
+    addSection('pinned', input.projection.pinnedRows)
+  addSection('spaces', input.projection.spaceRows)
+  addSection('tasks', input.projection.globalTasks.map(task => ({
+    key: `conversation:${task.id}`,
+    kind: 'task',
+    task,
+  })))
+  return rows
 }
 
 export function prependDesktopTaskPinnedItem(
@@ -181,7 +254,7 @@ function createSpaceRows(
     return rows
   return rows.concat(tasks.map(task => ({
     task,
-    key: `space:${space.id}:conversation:${task.id}`,
+    key: `conversation:${task.id}`,
     kind: 'task' as const,
     spaceTask: true,
   })))

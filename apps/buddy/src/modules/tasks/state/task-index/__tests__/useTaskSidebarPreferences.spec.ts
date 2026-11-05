@@ -45,11 +45,11 @@ function createFixture(options: { failWrites?: boolean, initial?: SidebarDesktop
       return true
     },
   })
-  return { config, sidebar, writes }
+  return { sidebar, writes }
 }
 
 describe('task sidebar preferences', () => {
-  it('persists only the changed preference with whole-pixel widths and keeps optimistic state', async () => {
+  it('persists independent preference patches with whole-pixel widths', async () => {
     const { sidebar, writes } = createFixture()
     await sidebar.setSectionExpanded('pinned', false)
     await sidebar.setSpaceExpanded('space-a', false)
@@ -76,8 +76,6 @@ describe('task sidebar preferences', () => {
     expect(sidebar.collapsed.value).toBe(false)
     await expect(sidebar.setSpaceExpanded('space-a', false)).resolves.toBe(false)
     expect(sidebar.isSpaceExpanded('space-a')).toBe(true)
-    await expect(sidebar.setWidth(263.42)).resolves.toBe(false)
-    expect(sidebar.width.value).toBe(null)
   })
 
   it('drops folded Spaces that disappeared while keeping the preference before Spaces load', async () => {
@@ -92,12 +90,5 @@ describe('task sidebar preferences', () => {
     await Promise.resolve()
     expect([...sidebar.collapsedSpaceIds.value]).toEqual(['space-a'])
     expect(writes.at(-1)).toEqual({ taskSidebar: { collapsedSpaces: ['space-a'] } })
-  })
-
-  it('keeps the scroll anchor in memory without writing the profile', () => {
-    const { sidebar, writes } = createFixture()
-    sidebar.recordScrollAnchor('tasks', 7)
-    expect(sidebar.scrollAnchors.value).toEqual({ pinned: 0, spaces: 0, tasks: 7 })
-    expect(writes).toHaveLength(0)
   })
 })

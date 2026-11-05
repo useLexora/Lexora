@@ -1,27 +1,28 @@
 import type { LexoraDesktopApi } from '@buddy-electron/shared/desktopApi'
-import type { LocalConversation, LocalConversationSummary } from '@buddy-shared/conversation/conversationApi'
+import type { LocalConversation } from '@buddy-shared/conversation/conversationApi'
 import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
 
 import { onScopeDispose, readonly, shallowRef } from 'vue'
+import { useTaskHistory } from './useTaskHistory'
 
 interface UseTaskIndexDataOptions {
   api: {
-    conversations: Pick<LexoraDesktopApi['localChat']['conversations'], 'list'>
+    conversations: Pick<LexoraDesktopApi['localChat']['conversations'], 'listHistory' | 'getHistoryEntries'>
     spaces: Pick<LexoraDesktopApi['localChat']['spaces'], 'list'>
   }
+  onError?: (error: unknown) => void
 }
 
 export function useTaskIndexData(options: UseTaskIndexDataOptions) {
   const spaces = shallowRef<ReadonlyArray<LocalSpace>>([])
-  const conversations = shallowRef<ReadonlyArray<LocalConversationSummary>>([])
-  let conversationListGeneration = 0
+  const history = useTaskHistory(options.api.conversations)
   let spaceListGeneration = 0
   let disposed = false
   let initialized = false
   let initialization: Promise<void> | null = null
   function dispose() {
     disposed = true
-    conversationListGeneration += 1
+    history.dispose()
     spaceListGeneration += 1
   }
   onScopeDispose(dispose)
@@ -29,7 +30,7 @@ export function useTaskIndexData(options: UseTaskIndexDataOptions) {
   async function refreshIndex() {
     if (disposed)
       return
-    await Promise.all([refreshSpaces(), refreshConversations()])
+    await Promise.all([refreshSpaces(), history.refreshConversations()])
     initialized = true
   }
 
@@ -53,21 +54,6 @@ export function useTaskIndexData(options: UseTaskIndexDataOptions) {
     }
   }
 
-  async function refreshConversations() {
-    if (disposed)
-      return
-    const generation = ++conversationListGeneration
-    try {
-      const nextConversations = await options.api.conversations.list()
-      if (!disposed && generation === conversationListGeneration)
-        conversations.value = nextConversations
-    }
-    catch (error) {
-      if (!disposed && generation === conversationListGeneration)
-        throw error
-    }
-  }
-
   function applySpace(space: LocalSpace) {
     replaceSpaces([...spaces.value.filter(item => item.id !== space.id), space])
   }
@@ -78,38 +64,22 @@ export function useTaskIndexData(options: UseTaskIndexDataOptions) {
   }
 
   function applyConversation(conversation: LocalConversation) {
-    const existing = conversations.value.find(item => item.id === conversation.id)
-    if (!existing) {
-      void refreshConversations().catch(() => {})
-      return
-    }
-    conversationListGeneration += 1
-    conversations.value = conversations.value.map(item => item.id === conversation.id
-      ? { ...item, ...conversation }
-      : item)
+    void history.applyConversation(conversation).catch(error => options.onError?.(error))
   }
 
-  function updateConversationBranch(
-    conversationId: string,
-    branchId: string,
-    updatedAt: string,
-  ) {
-    conversationListGeneration += 1
-    conversations.value = conversations.value.map(conversation => conversation.id === conversationId
-      ? { ...conversation, activeBranchId: branchId, updatedAt }
-      : conversation)
+  function updateConversationBranch(conversationId: string, branchId: string, updatedAt: string) {
+    void history.updateConversationBranch(conversationId, branchId, updatedAt).catch(error => options.onError?.(error))
   }
 
   return {
+    ...history,
     dispose,
     initialize,
     applyConversation,
     applySpace,
-    conversations: readonly(conversations),
     spaces: readonly(spaces),
     refreshIndex,
     refreshSpaces,
-    refreshConversations,
     replaceSpaces,
     updateConversationBranch,
   }
