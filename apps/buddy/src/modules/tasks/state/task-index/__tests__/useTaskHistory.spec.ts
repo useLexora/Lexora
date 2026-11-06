@@ -141,6 +141,26 @@ describe('progressive task history', () => {
     expect(f.conversations.value.find(task => task.id === 'task-100')?.activity).toBe('awaiting_approval')
   })
 
+  it('applies model controls without invalidating loaded history or changing its order', async () => {
+    const f = fixture()
+    await f.history.ensureScope('space')
+    const before = f.conversations.value
+    const scopes = f.history.scopes.value
+    const queries = f.queries.length
+    const selection = { providerId: 'fixture', modelId: 'model-2', reasoning: 'high' as const, serviceTier: 'priority' as const }
+    const updated = { ...item(117, 'space'), conversation: { ...item(117, 'space').conversation, modelSelection: selection } }
+    f.replace(updated)
+    await f.applyConversation(updated.conversation)
+    expect(ids(f)).toEqual(before.map(task => task.id))
+    expect(f.conversations.value.find(task => task.id === 'task-117')).toMatchObject({ modelSelection: selection, updatedAt: updated.conversation.updatedAt })
+    expect(f.conversations.value[0]).toBe(before[0])
+    expect(f.history.scopes.value).toBe(scopes)
+    expect(f.queries).toHaveLength(queries)
+    await f.history.loadMore('space')
+    expect(f.conversations.value).toHaveLength(15)
+    expect(f.conversations.value.find(task => task.id === 'task-117')?.modelSelection).toEqual(selection)
+  })
+
   it('coalesces pagination and appends the next page without losing or duplicating loaded tasks', async () => {
     const f = fixture()
     await f.history.ensureScope(null)

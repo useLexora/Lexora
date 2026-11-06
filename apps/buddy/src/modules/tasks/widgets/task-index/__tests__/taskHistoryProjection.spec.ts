@@ -60,6 +60,20 @@ describe('task history projection', () => {
     expect(resolveTaskHistoryRows({ projection: projection({ expanded: false }), collapsedSections: new Set(['tasks']), expandedSpaceIds: new Set(), scopes }).map(row => row.key)).toEqual(['section:spaces', 'space:a', 'section:tasks'])
   })
 
+  it.each([false, true])('preserves loaded rows during background refresh with pinned space %s', (pinned) => {
+    const input = {
+      projection: projection({ pinnedItems: pinned ? [{ kind: 'space', id: 'a' }] : [] }),
+      collapsedSections: new Set<never>(),
+      expandedSpaceIds: new Set(['a']),
+    }
+    const scopes = (loading: boolean) => new Map(['space:a', 'global'].map(key => [key, { initialized: true, loading, hasMore: false }]))
+    const before = resolveTaskHistoryRows({ ...input, scopes: scopes(false) })
+    const refreshing = resolveTaskHistoryRows({ ...input, scopes: scopes(true) })
+    expect(before.filter(row => row.kind === 'task')).toHaveLength(5)
+    expect(refreshing).toEqual(before)
+    expect(resolveTaskHistoryRows({ ...input, scopes: scopes(false) })).toEqual(before)
+  })
+
   it('hides empty pins while retaining the space and task categories', () => {
     const empty = resolveTaskIndexProjection({ expandedSpaceIds: new Set(), markedTaskIds: new Set(), unreadTaskIds: new Set(), pinnedItems: [], spaces: [], tasks: [] })
     const rows = resolveTaskHistoryRows({ projection: empty, collapsedSections: new Set(), expandedSpaceIds: new Set(), scopes: new Map([['global', { initialized: true, loading: false, hasMore: false }]]) })

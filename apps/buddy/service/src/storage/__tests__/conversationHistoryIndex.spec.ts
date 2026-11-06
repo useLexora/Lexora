@@ -56,7 +56,7 @@ describe('bounded conversation history index', () => {
     f.marks.assign(taskId(9), mark.id)
     f.conversations.markDeleted(taskId(9), now)
     f.marks.assign(taskId(9999), mark.id)
-    f.conversations.setModelSelection({ id: taskId(0), modelSelection: { modelId: 'chosen-model', providerId: 'chosen-provider', reasoning: 'high', serviceTier: null }, updatedAt: old })
+    f.conversations.setModelSelection({ id: taskId(0), modelSelection: { modelId: 'chosen-model', providerId: 'chosen-provider', reasoning: 'high', serviceTier: null } })
     f.conversations.createMessage({ id: 'private-transcript', conversationId: taskId(0), branchId: `branch-${taskId(0)}`, runId: null, role: 'user', content: { text: 'Transcript-only-secret' }, createdAt: old })
 
     const attention = f.conversations.listHistory({ kind: 'attention', limit: 100 })

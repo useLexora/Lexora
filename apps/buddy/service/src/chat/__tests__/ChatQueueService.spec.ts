@@ -425,13 +425,13 @@ describe('persistent chat queue scheduling', () => {
   it('dispatches ordinary queued input to the current actor with its latest member model without altering the running actor', async () => {
     const f = fixture()
     const other = f.buddies.create({ name: 'Other' })
-    f.members.setModelSelection({ conversationId: 'conversation', actorId: 'default', modelSelection: { providerId: 'provider', modelId: 'actor-a-member', reasoning: 'low', serviceTier: null }, updatedAt: '2026-10-11T10:00:00.000Z' })
+    f.members.setModelSelection({ conversationId: 'conversation', actorId: 'default', modelSelection: { providerId: 'provider', modelId: 'actor-a-member', reasoning: 'low', serviceTier: null } })
     await f.enableDefinitions()
     const original = f.runs.findById('run-initial')!
     f.queue.enqueue({ ...f.input('A'), buddyId: 'default', actorSnapshot: original.actorSnapshot ?? undefined })
     f.conversations.addMember({ id: 'conversation', buddyId: other.id, updatedAt: '2026-10-11T10:00:01.000Z' })
     f.conversations.setBuddy({ id: 'conversation', buddyId: other.id, updatedAt: '2026-10-11T10:00:01.000Z' })
-    f.members.setModelSelection({ conversationId: 'conversation', actorId: other.id, modelSelection: { providerId: 'provider', modelId: 'actor-b-member', reasoning: 'high', serviceTier: 'priority' }, updatedAt: '2026-10-11T10:00:02.000Z' })
+    f.members.setModelSelection({ conversationId: 'conversation', actorId: other.id, modelSelection: { providerId: 'provider', modelId: 'actor-b-member', reasoning: 'high', serviceTier: 'priority' } })
     expect(await f.service.followUp('run-initial', f.controller.signal)).toBe(false)
     expect(await f.service.steer(f.target('A'))).toBe('incompatible')
     expect(f.delivered).toEqual([])
@@ -531,7 +531,7 @@ describe('persistent chat queue scheduling', () => {
         f.conversations.setBuddy({ id: 'conversation', buddyId: other.id, updatedAt: '2026-10-11T10:00:01.000Z' })
       }
       else if (change === 'member_model') {
-        f.members.setModelSelection({ conversationId: 'conversation', actorId: 'default', modelSelection: { providerId: 'provider', modelId: 'new-member-model', reasoning: null, serviceTier: null }, updatedAt: '2026-10-11T10:00:01.000Z' })
+        f.members.setModelSelection({ conversationId: 'conversation', actorId: 'default', modelSelection: { providerId: 'provider', modelId: 'new-member-model', reasoning: null, serviceTier: null } })
       }
       else {
         const buddy = f.buddies.get('default')

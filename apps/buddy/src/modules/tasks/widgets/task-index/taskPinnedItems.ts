@@ -142,7 +142,7 @@ export function resolveTaskHistoryRows(input: {
   const addMore = (spaceId: string | null) => {
     const scopeKey = getTaskHistoryScopeKey(spaceId)
     const scope = input.scopes.get(scopeKey)
-    if (scope?.initialized && !scope.loading && !scope.hasMore)
+    if (scope?.initialized && !scope.hasMore)
       return
     rows.push({
       key: `more:${scopeKey}`,

@@ -54,7 +54,6 @@ export interface SetConversationModelSelectionInput {
   id: string
   actorId?: string
   modelSelection: ConversationModelSelection | null
-  updatedAt: string
 }
 
 export interface ConversationRepository
@@ -272,7 +271,6 @@ export function createConversationRepository(database: DatabaseSync): Conversati
         conversationId: input.id,
         actorId: input.actorId ?? current.buddy_id,
         modelSelection: input.modelSelection,
-        updatedAt: input.updatedAt,
       })
       return requireConversationRecord(findConversation.get(input.id), input.id)
     },
