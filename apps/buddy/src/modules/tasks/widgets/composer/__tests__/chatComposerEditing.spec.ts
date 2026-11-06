@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, defineComponent, h, nextTick, shallowRef } from 'vue'
 import { chatComposerDocumentToUserContent, createChatComposerContentFromText, getChatComposerResourceIds } from '@/modules/prompt-input'
 import { replaceChatComposerDocument } from '@/modules/prompt-input/editor/chatComposerResourceEditing'
-import { insertChatComposerResources, insertChatComposerSessionReferences } from '@/modules/prompt-input/ui'
+import { CHAT_COMPOSER_CLIPBOARD_TYPE, insertChatComposerResources, insertChatComposerSessionReferences } from '@/modules/prompt-input/ui'
 import { useProvideWorkbenchCommands } from '@/shared/ui/contributions/workbenchCommands'
 import { copyReferenceClipboard } from '@/shared/ui/selection/referenceClipboard'
 import { useChatComposer } from '../useChatComposer'
@@ -114,15 +114,90 @@ async function mountComposer(options: {
     root.remove()
   })
   const editor = composer.editor.value!
+  editor.view.setProps({ handleScrollToSelection: () => true })
   function keydown(key: string, init: KeyboardEventInit = {}) {
     const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key, ...init })
     editor.view.dom.dispatchEvent(event)
     return event
   }
-  return { canSend, composer, content, draft, draftId, editorKey, isSending, editor, keydown, resources, selectedEffort, selectedServiceTier, sent, sentPayloads }
+  function paste(data: Record<string, string>) {
+    const event = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', { value: { files: [], getData: (type: string) => data[type] ?? '' } })
+    editor.view.dom.dispatchEvent(event)
+    return event
+  }
+  return { canSend, composer, content, draft, draftId, editorKey, isSending, editor, keydown, paste, resources, selectedEffort, selectedServiceTier, sent, sentPayloads }
 }
 
 describe('chat composer editing', () => {
+  it.each([
+    { name: 'browser address with an HTML title', text: 'https://example.com/docs', html: '<a href="https://example.com/docs">Documentation</a>' },
+    { name: 'URL query and fragment', text: 'https://example.com/search?q=a%20b&lang=zh#result', html: '<a href="https://example.com/search?q=a%20b&amp;lang=zh#result">Search results</a>' },
+    { name: 'literal HTML source', text: '<div>中文 &amp; <b>literal</b></div>', html: '<div>中文 &amp; <b>literal</b></div>' },
+    { name: 'plain-text code with blank lines and indentation', text: '  first\r\n\r\n\t<div>literal</div>\r\n  last  \r\n', html: '' },
+    { name: 'formatted code with blank lines and indentation', text: '  first\r\n\r\n\t<div>literal</div>\r  last  \n', html: '<pre>different formatted text</pre>' },
+    { name: 'whitespace-only text', text: ' \t\n\n  ', html: '<p>unwanted HTML text</p>' },
+  ])('pastes $name as literal text and sends the same content', async ({ text, html }) => {
+    const flow = await mountComposer()
+    flow.editor.commands.insertContent('before replace after')
+    flow.editor.commands.setTextSelection({ from: 8, to: 15 })
+    expect(flow.paste({ 'text/plain': text, 'text/html': html }).defaultPrevented).toBe(true)
+    const expected = `before ${text.replace(/\r\n?|\n/gu, '\n')} after`
+    expect(flow.editor.getText()).toBe(expected)
+    expect(flow.draft.value).toBe(expected)
+    expect(flow.editor.state.selection.empty).toBe(true)
+    flow.composer.submit()
+    expect(flow.sent).toEqual([expected])
+  })
+
+  it('keeps text paste separate from adjacent typing through undo and redo', async () => {
+    const flow = await mountComposer()
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now())
+    flow.editor.commands.insertContent('before ')
+    const before = flow.editor.getJSON()
+    flow.paste({ 'text/plain': 'https://example.com/docs', 'text/html': '<a href="https://example.com/docs">Documentation</a>' })
+    const pasted = flow.editor.getJSON()
+    flow.editor.commands.insertContent(' after')
+    const typed = flow.editor.getJSON()
+    expect(flow.editor.commands.undo()).toBe(true)
+    expect(flow.editor.getJSON()).toEqual(pasted)
+    expect(flow.editor.commands.undo()).toBe(true)
+    expect(flow.editor.getJSON()).toEqual(before)
+    expect(flow.editor.commands.redo()).toBe(true)
+    expect(flow.editor.getJSON()).toEqual(pasted)
+    expect(flow.editor.commands.redo()).toBe(true)
+    expect(flow.editor.getJSON()).toEqual(typed)
+  })
+
+  it('uses plain text for an unrecognized internal clipboard token', async () => {
+    const flow = await mountComposer()
+    flow.paste({
+      'text/plain': 'https://example.com/docs',
+      'text/html': '<a href="https://example.com/docs">Documentation</a>',
+      [CHAT_COMPOSER_CLIPBOARD_TYPE]: 'unknown-token',
+    })
+    expect(flow.editor.getText()).toBe('https://example.com/docs')
+    expect(getChatComposerResourceIds(flow.editor.getJSON())).toEqual([])
+  })
+
+  it('still accepts HTML-only clipboard data and ignores empty clipboard data', async () => {
+    const flow = await mountComposer()
+    flow.paste({ 'text/html': '<p>HTML-only <strong>content</strong></p>' })
+    expect(flow.editor.getText()).toBe('HTML-only content')
+    const before = flow.editor.getJSON()
+    flow.paste({})
+    expect(flow.editor.getJSON()).toEqual(before)
+  })
+
+  it('blocks plain-text paste while sending', async () => {
+    const flow = await mountComposer()
+    flow.editor.commands.insertContent('keep draft')
+    flow.isSending.value = true
+    await nextTick()
+    expect(flow.paste({ 'text/plain': 'https://example.com/docs' }).defaultPrevented).toBe(true)
+    expect(flow.editor.getText()).toBe('keep draft')
+  })
+
   it('keeps the focused editor mounted while locking submission and clears sent undo history', async () => {
     const flow = await mountComposer()
     flow.editor.commands.insertContent('sent message')
