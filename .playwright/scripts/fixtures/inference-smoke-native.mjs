@@ -1,15 +1,19 @@
 import assert from 'node:assert/strict'
 import { Buffer } from 'node:buffer'
 import { readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import process from 'node:process'
 
-export async function initialize({ configuration, resources }) {
+export async function initialize({ configuration, resources, resourceFiles }) {
   assert.equal(typeof process.versions.electron, 'string')
-  assert.equal(resources.fixture, '/resources/fixture')
-  assert.equal(await readFile(`${resources.fixture}/nested/payload.txt`, 'utf8'), configuration.challenge)
-  assert.equal(JSON.parse(await readFile('/plugin/extension.json', 'utf8')).id, 'smoke.inference')
-  for (const path of ['/plugin/write-probe', `${resources.fixture}/write-probe`])
-    await assert.rejects(writeFile(path, 'denied'), { code: 'EROFS' })
+  const payload = resourceFiles?.fixture?.['nested/payload.txt'] ?? join(resources.fixture, 'nested/payload.txt')
+  assert.equal(await readFile(payload, 'utf8'), configuration.challenge)
+  assert.equal(JSON.parse(await readFile(new URL('../extension.json', import.meta.url), 'utf8')).id, 'smoke.inference')
+  if (process.platform === 'linux') {
+    assert.equal(resources.fixture, '/resources/fixture')
+    for (const path of ['/plugin/write-probe', join(resources.fixture, 'write-probe')])
+      await assert.rejects(writeFile(path, 'denied'), { code: 'EROFS' })
+  }
   return {
     start(capability, input, invocation) {
       assert.equal(capability, 'echo')

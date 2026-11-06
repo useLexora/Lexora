@@ -5,8 +5,10 @@ import process from 'node:process'
 import { app } from 'electron'
 import inferenceBootstrap from 'virtual:extension-runtime/inference'
 import { checkInferenceSmoke } from '../../../../../.playwright/scripts/fixtures/inference-smoke'
+import { resolveBuddyProcessControl } from '../../../platform/native/nativeHost'
 import shellSandbox from '../../../platform/native/shellSandbox.json'
 import { currentTarget } from '../../../platform/target'
+import { resolveInferenceEnvironment } from '../../../shared/extensions/inferencePlatform'
 import { OPERATING_SYSTEM } from '../../../shared/platform/identifiers'
 import { readDesktopDistribution } from '../updates/DesktopUpdatePolicy'
 
@@ -40,11 +42,12 @@ export async function checkDesktopSmokeBridge(window: BrowserWindow): Promise<vo
   )
   if (!status || typeof status !== 'object' || status.status !== 'ready')
     throw new Error('Lexora Buddy Desktop Preload local chat IPC is unavailable')
-  if (process.platform === 'linux' && process.arch === 'x64') {
+  if (resolveInferenceEnvironment(process.platform, process.arch).platform !== null) {
     await checkInferenceSmoke({
       bootstrap: inferenceBootstrap,
       executable: process.execPath,
-      sandbox: join(app.isPackaged ? process.resourcesPath : app.getAppPath(), app.isPackaged ? shellSandbox.resource.to : `${shellSandbox.resource.from}/${currentTarget.id}`, 'bwrap'),
+      supervisor: resolveBuddyProcessControl({ appPath: app.getAppPath(), isPackaged: app.isPackaged, resourcesPath: process.resourcesPath }),
+      sandbox: process.platform === 'linux' ? join(app.isPackaged ? process.resourcesPath : app.getAppPath(), app.isPackaged ? shellSandbox.resource.to : `${shellSandbox.resource.from}/${currentTarget.id}`, 'bwrap') : undefined,
       appVersion: app.getVersion(),
     })
     process.stdout.write(`LEXORA_INFERENCE_SMOKE:passed:${app.isPackaged ? 'packaged' : 'build'}\n`)

@@ -6,6 +6,7 @@ const { nativeHostResources } = require('../../packaging/buddy/release/native-ho
 const { withDesktopNativeVersion } = require('../../packaging/buddy/release/native-version.mjs')
 const { excludedDependencyFiles, platformResources } = require('../../packaging/buddy/release/platform-definition.mjs')
 const { resolveBuildTarget } = require('../../packaging/buddy/release/targets.mjs')
+const { resolveInferenceEnvironment } = require('./shared/extensions/inferencePlatform.ts')
 const { OPERATING_SYSTEM } = require('./shared/platform/identifiers.ts')
 
 const target = resolveBuildTarget()
@@ -39,7 +40,8 @@ module.exports = withDesktopNativeVersion({
     enableNodeCliInspectArguments: false,
     enableNodeOptionsEnvironmentVariable: false,
     onlyLoadAppFromAsar: true,
-    runAsNode: target.id === 'linux-x64',
+    // Native inference launches this executable with ELECTRON_RUN_AS_NODE on every supported target.
+    runAsNode: resolveInferenceEnvironment(target.platform, target.architecture).platform !== null,
   },
   npmRebuild: false,
   forceCodeSigning: target.platform === OPERATING_SYSTEM.MacOS && signedMacos,
