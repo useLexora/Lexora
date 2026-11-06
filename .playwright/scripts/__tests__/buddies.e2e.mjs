@@ -1,4 +1,4 @@
-import { expect, test } from '../fixtures/electron.mjs'
+import { expect, test, useSyntheticCredentialStorage } from '../fixtures/electron.mjs'
 
 async function openBuddies(page) {
   await page.locator('#desktop-app-sidebar nav').getByRole('button', { name: '伙伴', exact: true }).click()
@@ -128,3 +128,114 @@ test('cancelling companion profile edits leaves the saved profile unchanged', as
   await expect(dialog).toBeHidden()
   expect(desktop.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })
+
+for (const kind of ['actor', 'npc']) {
+  test(`${kind} reasoning preferences persist and adapt to model capabilities`, async ({ buddy }, testInfo) => {
+    const instance = await buddy.createInstance(`${kind}-reasoning`)
+    let desktop = await instance.launch()
+    await useSyntheticCredentialStorage(desktop)
+    let { page } = desktop
+    const companion = await page.evaluate(async (kind) => {
+      const { providers, buddies } = window.lexoraDesktop.localChat
+      await providers.upsertCustom({
+        id: 'reasoning-fixture',
+        displayName: 'Reasoning fixture',
+        api: 'openai-completions',
+        baseUrl: 'http://127.0.0.1:9/v1',
+        enabled: true,
+        models: ['wide', 'compatible', 'limited', 'plain'].map(id => ({
+          id: `reasoning-${id}`,
+          name: `Reasoning ${id}`,
+          input: ['text'],
+          reasoning: id !== 'plain',
+          contextWindow: 128000,
+          maxTokens: 1024,
+        })),
+      })
+      const stop = providers.onAuthChallenge((challenge) => {
+        if (challenge.providerId === 'reasoning-fixture' && challenge.type === 'secret')
+          void providers.respondToAuth(challenge.challengeId, 'offline-fixture-key')
+      })
+      try {
+        await providers.login('reasoning-fixture', 'api_key')
+      }
+      finally {
+        stop()
+      }
+      for (const id of ['wide', 'compatible', 'limited']) {
+        await providers.setModelCapabilities('reasoning-fixture', `reasoning-${id}`, {
+          reasoningOptions: id === 'limited' ? ['low', 'medium'] : ['off', 'low', 'medium', 'high'],
+        })
+      }
+      return kind === 'actor' ? buddies.get('default') : buddies.create({ kind: 'npc', name: '推理核验员' })
+    }, kind)
+    await page.reload()
+    await openBuddies(page)
+    if (kind === 'npc')
+      await page.getByTestId('buddy-list').getByRole('link', { name: /推理核验员/ }).click()
+    const settings = () => page.getByTestId('buddy-settings')
+    const effort = () => settings().getByRole('button', { name: /^推理强度/ })
+    const save = () => page.getByTestId('buddy-settings-actions').getByRole('button', { name: '保存配置', exact: true })
+    const stored = () => page.evaluate(id => window.lexoraDesktop.localChat.buddies.get(id), companion.id)
+    const selectModel = async (id) => {
+      await settings().locator('.buddy-model-picker').click()
+      await page.locator('.desktop-model-picker').getByRole('menuitemradio', { name: `Reasoning ${id} reasoning-${id}`, exact: true }).click()
+    }
+    await expect(effort()).toHaveCount(0)
+    await selectModel('wide')
+    await expect(effort()).toHaveText('Medium')
+    await effort().click()
+    await expect(page.locator('.desktop-reasoning-picker').getByRole('menuitemradio')).toHaveText(['Off', 'Low', 'Medium', 'High'])
+    await page.getByRole('menuitemradio', { name: 'High', exact: true }).click()
+    await expect(effort()).toHaveText('High')
+    expect((await stored()).settings.model).toBeNull()
+    await save().click()
+    await expect(save()).toBeDisabled()
+    expect((await stored()).settings.model).toEqual({ providerId: 'reasoning-fixture', modelId: 'reasoning-wide', reasoning: 'high', serviceTier: null })
+    await selectModel('wide')
+    await expect(effort()).toHaveText('High')
+    await expect(save()).toBeDisabled()
+    await selectModel('compatible')
+    await expect(effort()).toHaveText('High')
+    await selectModel('limited')
+    await expect(effort()).toHaveText('Medium')
+    await effort().click()
+    await expect(page.locator('.desktop-reasoning-picker').getByRole('menuitemradio')).toHaveText(['Low', 'Medium'])
+    await page.getByRole('menuitemradio', { name: 'Low', exact: true }).click()
+    await selectModel('plain')
+    await expect(effort()).toHaveCount(0)
+    await save().click()
+    await expect(save()).toBeDisabled()
+    expect((await stored()).settings.model.reasoning).toBeNull()
+    await page.getByTestId('buddy-settings').getByRole('button', { name: kind === 'npc' ? '继承调用者当前请求模型' : '使用应用默认模型', exact: true }).click()
+    await save().click()
+    await expect(save()).toBeDisabled()
+    expect((await stored()).settings.model).toBeNull()
+    await selectModel('wide')
+    await effort().click()
+    await page.getByRole('menuitemradio', { name: 'High', exact: true }).click()
+    await save().click()
+    await expect(save()).toBeDisabled()
+    await settings().screenshot({ animations: 'disabled', path: testInfo.outputPath(`${kind}-reasoning-light.png`) })
+
+    await instance.stop()
+    desktop = await instance.launch()
+    await useSyntheticCredentialStorage(desktop)
+    page = desktop.page
+    await openBuddies(page)
+    if (kind === 'npc')
+      await page.getByTestId('buddy-list').getByRole('link', { name: /推理核验员/ }).click()
+    await expect(effort()).toHaveText('High')
+    expect((await stored()).settings.model.reasoning).toBe('high')
+    await page.evaluate(() => window.lexoraDesktop.themes.request({ action: 'preference', preference: { id: 'lexora.themes.classic-dark' } }))
+    await expect(page.locator('html')).toHaveAttribute('data-buddy-theme', 'dark')
+    await desktop.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(window => window.getTitle().includes('Lexora')).setSize(980, 640))
+    await effort().click()
+    await expect(page.getByRole('menuitemradio', { name: 'High', exact: true })).toBeChecked()
+    await page.screenshot({ animations: 'disabled', path: testInfo.outputPath(`${kind}-reasoning-dark-narrow.png`) })
+    await page.getByRole('menuitemradio', { name: 'Off', exact: true }).click()
+    await page.getByTestId('buddy-settings-actions').getByRole('button', { name: '放弃更改', exact: true }).click()
+    await expect(effort()).toHaveText('High')
+    expect(desktop.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
+  })
+}
