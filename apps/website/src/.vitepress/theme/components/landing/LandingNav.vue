@@ -2,7 +2,7 @@
 import type { LandingContent } from './landingContent'
 import { useData, withBase } from 'vitepress'
 import { onMounted, shallowRef } from 'vue'
-import { downloadUrl, repositoryUrl } from '../../../productLinks'
+import { releasesUrl, repositoryUrl } from '../../../productLinks'
 import LandingIcon from './LandingIcon.vue'
 
 defineProps<{ content: LandingContent['nav'], english: boolean }>()
@@ -22,8 +22,8 @@ onMounted(() => {
         <img :src="withBase('/landing/lexora-avatar.webp')" alt="" width="36" height="36"><span>Lexora</span>
       </a>
       <nav class="nav-links" :aria-label="english ? 'Main navigation' : '主导航'">
-        <a href="#crew">{{ content.crew }}</a>
         <a href="#workspace">{{ content.product }}</a>
+        <a href="#crew">{{ content.crew }}</a>
         <a href="#plugins">{{ content.plugins }}</a>
         <a :href="withBase(english ? '/en/guide/quick-start' : '/guide/quick-start')">{{ content.guide }}</a>
         <a :href="withBase(english ? '/en/plugins/' : '/plugins/')">{{ content.developers }}</a>
@@ -37,19 +37,19 @@ onMounted(() => {
           </button>
         </div>
         <a class="github-link" :href="repositoryUrl" aria-label="GitHub" title="GitHub" target="_blank" rel="noreferrer"><span>GitHub</span></a>
-        <a class="nav-download" :href="downloadUrl" target="_blank" rel="noreferrer">{{ content.download }} <LandingIcon name="arrow" /></a>
+        <a class="nav-download" :href="releasesUrl" target="_blank" rel="noreferrer">{{ content.changelog }} <LandingIcon name="arrow" /></a>
         <button class="menu-toggle" :aria-label="expanded ? content.close : content.menu" :aria-expanded="expanded" aria-controls="mobile-nav" @click="expanded = !expanded">
           <LandingIcon :name="expanded ? 'close' : 'menu'" />
         </button>
       </div>
       <nav v-if="expanded" id="mobile-nav" class="mobile-nav" :aria-label="english ? 'Mobile navigation' : '移动导航'" @click="expanded = false">
-        <a href="#crew">{{ content.crew }}</a>
         <a href="#workspace">{{ content.product }}</a>
+        <a href="#crew">{{ content.crew }}</a>
         <a href="#plugins">{{ content.plugins }}</a>
         <a :href="withBase(english ? '/en/guide/quick-start' : '/guide/quick-start')">{{ content.guide }}</a>
         <a :href="withBase(english ? '/en/plugins/' : '/plugins/')">{{ content.developers }}</a>
         <a :href="repositoryUrl" target="_blank" rel="noreferrer">GitHub <LandingIcon name="external" /></a>
-        <a :href="downloadUrl" target="_blank" rel="noreferrer">{{ content.download }} <LandingIcon name="arrow" /></a>
+        <a :href="releasesUrl" target="_blank" rel="noreferrer">{{ content.changelog }} <LandingIcon name="arrow" /></a>
       </nav>
     </header>
   </div>

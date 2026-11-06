@@ -11,9 +11,11 @@ Choose capabilities by scope. Themes manage selected application appearance, vie
 
 API 3 contributes.themes declares one or more themes with colors and optional welcome content and materials. A purely declarative theme needs no script or permission; the user selects it after enabling the plugin.
 
+Declare a theme's name, ID and light/dark appearance in the manifest. Theme JSON holds `colors`, optional `welcome` and `materials`. Installation does not select it automatically. Omitting `welcome` preserves the user's built-in welcome content; when declared, omitted or null text/images are hidden. Themes do not control user font size, line height or pane dimensions.
+
 Icon themes independently map file and directory icons. Package images and preserve their licenses. This does not replace host action-button icons.
 
-Theme editors use context.themes to validate, preview and save user copies with themeManagement permission. Do not modify application configuration files directly.
+Theme editors use `context.themes` to validate, preview and save user copies with `themeManagement` permission. Packaged themes stay read-only; save edits as user copies. Preview leases use their returned token/revision, and closing or restarting does not save an uncommitted preview. Images use packaged assets or resource references in `ThemeArchive.assets`, not arbitrary disk paths or remote image URLs. Do not modify application configuration files directly.
 
 ## View styles
 
@@ -27,7 +29,7 @@ Use complete class strings or styles.safelist for dynamic cases; plugin UnoCSS c
 
 ## Window styles and decorations
 
-WindowEffects permission enables background window.styles.set/remove. Use stable data-lexora-region selectors. Disabling, crashes and upgrades withdraw styles; restore them during activation. This does not expose host DOM scripting.
+`windowEffects` permission enables background `window.styles.set/remove`. Use stable data-lexora-region selectors. Disabling, crashes and upgrades withdraw styles; restore them during activation. This does not expose host DOM scripting.
 
 Animated decorations run in isolated views on declared anchors. Choose event source and display scope separately: window, task workspace, pane, history and composer are different regions. Input activity contains no characters or keys; coordinates are local to the anchor.
 

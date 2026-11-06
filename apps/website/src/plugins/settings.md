@@ -31,6 +31,8 @@ API 3 的 `contributes.settings` 包含 `modules`、`groups` 和 `items`。模�
 
 不要同时把原生设置保存一份到 storage。更改持久数据结构时递增 `dataVersion` 并导出 `migrate(previous,from,to)`，处理旧版本；失败时保留旧数据。
 
+推理引擎与权重通过[推理资源](./inference#准备资源)管理；推理凭据通过 `inference.credentials` 保存，MCP 凭据由[宿主连接配置](./capabilities#mcp)管理。不要把密钥放入 configuration、storage 或视图 state。
+
 二进制文件放在 resources 或 documents 中。JSON 只保存名称、资源 ID 和版本等元数据，避免把大文件编码进普通状态。
 
 ## 实例状态
@@ -43,7 +45,7 @@ API 3 的 `contributes.settings` 包含 `modules`、`groups` 和 `items`。模�
 
 UI 的 `when` 使用公开页面上下文控制呈现。需要依赖设置草稿、模型或任务状态的判断时，声明条件函数及其输入，通过 `conditions.register` 注册；条件不增加数据权限。
 
-`events.on` 支持当前作用域的精确事件与命名空间匹配。先读取快照再订阅变化；普通事件不会重放历史，也不会等候异步监听器完成。完整事件表和类型见 [API 参考](./api)。
+`events.on` 支持当前作用域的精确事件与命名空间匹配。先读取快照再订阅变化；普通事件不会重放历史，也不会等候异步监听器完成。完整事件表和类型见 [API 参考](./api)。[视图数据](./views#只读数据与绑定范围)使用 `data.observe` 时会交付初始快照，不另做 read-then-observe，也不用轮询代替订阅。
 
 ## 检查恢复
 

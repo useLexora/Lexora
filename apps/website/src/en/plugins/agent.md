@@ -1,15 +1,15 @@
 ---
-title: "Agent capabilities"
-description: "Declare tools, task actions, model requests and packaged Skills."
+title: "Agent tools and task actions"
+description: "Register model-callable tools and task actions with bound task context, models and authorized result channels."
 ---
 
-# Agent capabilities
+# Agent tools and task actions {#agent-capabilities}
 
-A plugin can provide tools selected by the main model or independent actions triggered by task events and user menus. Both receive host-created invocation contexts.
+A plugin can provide tools selected by the main model or independent actions triggered by task events and user menus. Both receive host-created invocation contexts. To provide a model backend, see [Models and multimodal capabilities](./inference). For reusable methods, remote connections or NPCs, see [Skills, MCP and NPCs](./capabilities).
 
 ## Register a tool
 
-Declare agent permission, a background entry and contributes.agent.tools. Each tool has a stable ID, title, description, parameters and read/write classification. This manifest fragment counts Unicode code points:
+Declare `agent: true`, a background entry and `contributes.agent.tools`. Each tool has a stable ID, title, description, parameters and read/write classification. This manifest fragment counts Unicode code points:
 
 ```json
 {
@@ -49,7 +49,7 @@ Parameters support bounded nested objects/arrays and string, number and boolean 
 
 A tool's second argument provides scope, task, models, references, artifacts, results and signal, each subject to its contract. Do not retain it for future tasks.
 
-Models generateText uses configured models while credentials remain in the host. The default model is captured for the invocation; no implicit conversation history is added. Reading task text requires taskMessages; see [References](./references) for user material.
+`models.generateText` uses configured models while credentials remain in the host. The default model is captured for the invocation; no implicit conversation history is added. Reading task text requires taskMessages; see [References](./references) for user material.
 
 Write tools can publish private files through artifacts.publish. Use results.addImage for native image results instead of base64 in JSON. Background actions do not have these result channels.
 
@@ -63,9 +63,7 @@ Return `{status:'completed'|'skipped',message?}`. Records and usage belong to th
 
 ## Packaged Skills
 
-API 4 contributes.skills declares `{id,path}` for a packaged directory containing SKILL.md and optional references, scripts and assets. A Skills-only package needs no background entry.
-
-Skills describe reusable methods; tool descriptions describe individual callable operations. A Skill does not automatically register tools, start MCP servers or grant file and command access.
+Skill declarations, directories, discovery and lifecycle are covered in [Skills, MCP and NPCs](./capabilities#skills). Skills describe reusable methods, not automatic tool registration; declare and register tools separately as described above.
 
 ## Verify behavior
 

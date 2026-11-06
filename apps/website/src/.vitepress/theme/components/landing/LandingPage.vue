@@ -2,10 +2,12 @@
 import { useData } from 'vitepress'
 import { computed } from 'vue'
 import { landingContent } from './landingContent'
+import LandingCrew from './LandingCrew.vue'
 import LandingFaq from './LandingFaq.vue'
 import LandingFilm from './LandingFilm.vue'
 import LandingFinalCta from './LandingFinalCta.vue'
 import LandingHero from './LandingHero.vue'
+import LandingLocal from './LandingLocal.vue'
 import { landingFilm } from './landingMedia'
 import LandingNav from './LandingNav.vue'
 import LandingPlugins from './LandingPlugins.vue'
@@ -20,10 +22,12 @@ const content = computed(() => landingContent[english.value ? 'en' : 'zh'])
   <div id="top" class="landing-page">
     <LandingNav :content="content.nav" :english="english" />
     <main id="main">
-      <LandingHero :content="content.hero" />
+      <LandingHero :content="content.hero" :crew="content.crew" :preview="content.workbench" :english="english" />
       <LandingFilm v-if="landingFilm.src" :content="content.film" />
       <LandingWorkbench :content="content.workbench" :english="english" />
+      <LandingCrew :content="content.crew" :english="english" />
       <LandingPlugins :content="content.plugins" :preview="content.workbench" :english="english" />
+      <LandingLocal :content="content.local" :english="english" />
       <LandingFaq :content="content.faq" />
       <LandingFinalCta :content="content.final" :english="english" />
     </main>

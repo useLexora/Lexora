@@ -29,7 +29,9 @@ Subscribe before submitting actions. Navigation away, disabling or view disposal
 
 Background storage get/set persists private JSON. Views read and write through their own commands; use broadcasts for changes and fetch an initial snapshot.
 
-Do not duplicate native settings in storage. Increment dataVersion and implement migrate(previous,from,to) for structural changes, preserving old data when migration fails.
+Do not duplicate native settings in storage. Increment `dataVersion` and implement `migrate(previous,from,to)` for structural changes, preserving old data when migration fails.
+
+Manage engines and weights with [inference resources](./inference#prepare-resources). Store inference credentials through `inference.credentials`; [host connection settings](./capabilities#mcp) own MCP credentials. Do not put secrets in configuration, storage or view state.
 
 Store binary content in resources or documents, with IDs and revisions in JSON. Do not encode large files into ordinary state.
 
@@ -43,7 +45,7 @@ Compare stateVersion with expectedStateVersion when upgrading, convert and save.
 
 The UI when declaration uses public page context. For settings drafts, model or task availability, declare a condition function and its inputs and register it through conditions.register. Conditions grant no additional data access.
 
-Events on supports exact names and scoped namespace matching. Read a snapshot before changes; ordinary events do not replay history or await asynchronous listeners. See the [API reference](./api) for event types.
+Events on supports exact names and scoped namespace matching. Read a snapshot before changes; ordinary events do not replay history or await asynchronous listeners. See the [API reference](./api) for event types. For [view data](./views#read-only-data-and-bound-scope), `data.observe` delivers the initial snapshot itself: do not add read-then-observe or replace subscriptions with polling.
 
 ## Verify restoration
 

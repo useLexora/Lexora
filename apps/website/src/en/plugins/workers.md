@@ -13,7 +13,9 @@ Source packages support self-contained TS/JS and relative imports. The fixed hos
 
 Prebuild Vue, React, editor engines and other runtime dependencies in your authoring project. Deliver browser JS, CSS, Workers, WASM and assets as a compiled package. Entry points still export activate or render; installation does not run third-party build configuration.
 
-Compiled-package build and pack operations preserve files and paths. Include all required modules and binaries. Avoid native Node modules, CDNs and external runtime imports.
+Compiled-package build and pack operations preserve files and paths. Include all required modules and binaries. Browser backgrounds, views and Workers cannot load native Node modules, CDNs or external runtime imports.
+
+To provide models requiring native engines, use the separate `native/*.mjs` channel and permissions in [Models and multimodal capabilities](./inference). It is not a Node mode for Workers and does not relax browser isolation. The plugin owns engine dependencies, platform selection and resource preparation.
 
 ## Create a Worker
 
