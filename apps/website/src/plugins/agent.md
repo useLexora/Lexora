@@ -1,11 +1,11 @@
 ---
-title: "Agent 能力"
-description: "声明可调用工具、任务动作、模型请求与配套 Skills。"
+title: "Agent 工具与任务动作"
+description: "注册模型可调用的工具与任务动作，使用原任务上下文、模型和授权结果通道。"
 ---
 
-# Agent 能力
+# Agent 工具与任务动作 {#agent-能力}
 
-插件可以提供由主模型选择的工具，也可以在任务事件或用户菜单操作时执行独立动作。两者都使用宿主创建的调用上下文。
+插件可以提供由主模型选择的工具，也可以在任务事件或用户菜单操作时执行独立动作。两者都使用宿主创建的调用上下文。向宿主提供模型后端见[模型与多模态能力](./inference)；声明可复用工作方法、远端连接或 NPC 见[Skills、MCP 与 NPC](./capabilities)。
 
 ## 注册工具
 
@@ -63,9 +63,7 @@ context.subscriptions.add(
 
 ## 配套 Skills
 
-API 4 的 `contributes.skills: [{id,path}]` 将包内标准 Skill 目录作为插件贡献提供。目录包含 `SKILL.md`，可附带 references、scripts 和 assets；纯 Skills 包可以没有后台入口。
-
-Skill 描述可复用工作方法；工具说明描述具体可调用能力。Skill 本身不会自动注册工具、启动 MCP 服务或授予文件和命令权限。
+Skills 的声明、目录、发现与生命周期已集中到 [Skills、MCP 与 NPC](./capabilities#skills)。Skill 提供工作方法，不会自动注册本页的工具；需要工具时仍须独立声明与注册。
 
 ## 验证
 

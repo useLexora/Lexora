@@ -9,6 +9,8 @@ const paths: Record<string, string> = {
   external: 'M14 3h7v7m0-7L10 14M10 3H4a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1v-6',
   down: 'M12 4v16m-6-6 6 6 6-6',
   folder: 'M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z',
+  split: 'M3 3h18v18H3ZM9 3v18M9 9h12',
+  image: 'M3 3h18v18H3ZM3 16l5-5 5 5 3-3 5 5M16 7h.01',
   check: 'm5 12 4 4L19 6',
   file: 'M14 2H5a1 1 0 0 0-1 1v18a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V8Zm0 0v6h6M8 13h8M8 17h5',
   clock: 'M12 8v4l3 2M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0',

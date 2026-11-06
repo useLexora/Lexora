@@ -17,7 +17,7 @@ cd Lexora
 pnpm install
 ```
 
-已有独立 Lexora Plugin SDK 时，也可使用其 check/package 命令；两种工具使用相同的包协议，见[构建与分发](./distribution)。
+已有独立 Lexora Plugin SDK 时，也可使用其 check/package 命令；仓库 CLI 可导出工具与类型快照，无需假设存在 npm SDK 包。两种工具使用相同的包协议，见[构建与分发](./distribution#独立-sdk)。
 
 创建一个与 Lexora 仓库并列的 `counter` 目录，将仓库中的 `apps/buddy/service/resources/skills/plugin-creator/references/api.d.ts` 复制为 `counter/lexora.d.ts`。它只提供类型，不是运行时依赖。
 
@@ -147,4 +147,4 @@ node extensions/tools.mjs pack .output/extensions/counter .output/extensions/cou
 
 修改源码后重新构建安装包，更新已安装版本时递增插件版本，并应用待生效更新。构建成功只代表产物可生成；以上交互应在实际宿主检查。
 
-接下来阅读[核心概念](./concepts)，或为面板加入[设置与状态](./settings)。
+接下来阅读[核心概念](./concepts)，或为面板加入[设置与状态](./settings)、[绑定范围数据](./views#只读数据与绑定范围)。若目标不是界面，可直接选择[工具与任务动作](./agent)、[模型与多模态能力](./inference)或 [Skills、MCP 与 NPC](./capabilities)；它们不要求照搬计数面板。

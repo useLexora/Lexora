@@ -17,7 +17,7 @@ cd Lexora
 pnpm install
 ```
 
-An existing independent Lexora Plugin SDK can also check and package this plugin; see [Build and distribute](./distribution).
+An existing independent Lexora Plugin SDK can also check and package this plugin. The repository CLI exports tools and a type snapshot; no npm SDK package is required. See [Build and distribute](./distribution#independent-sdk).
 
 Create a counter directory beside the Lexora checkout. Copy apps/buddy/service/resources/skills/plugin-creator/references/api.d.ts from the checkout to counter/lexora.d.ts. It is a type declaration, not a runtime dependency.
 
@@ -147,4 +147,4 @@ In Plugins, choose Install plugin package and review the generated file. Return 
 
 Rebuild after source changes. Increment the plugin version when updating an installation, and apply any pending update. A successful build only proves package generation; verify interaction in the real host.
 
-Continue with [Core concepts](./concepts) or [Settings and state](./settings).
+Continue with [Core concepts](./concepts), [Settings and state](./settings) or [Bound view data](./views#read-only-data-and-bound-scope). For non-UI features, choose [Tools and task actions](./agent), [Models and multimodal capabilities](./inference) or [Skills, MCP and NPCs](./capabilities); these do not require a counter panel.

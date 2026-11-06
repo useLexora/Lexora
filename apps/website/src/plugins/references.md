@@ -22,7 +22,7 @@ const accepted = await context.references.add({
 
 宿主让用户选择已有任务草稿、新任务或复制引用。成功返回 true，取消返回 false。整份文件使用 `{kind:'resource', resource}`，传递已有授权句柄。
 
-`text` 保存文字快照；`locator` 是插件定义的有界 JSON。它描述位置，不是文件路径授权。引用默认绑定当前资源；内容已由插件独立管理时，`none` 或 `optional-file` 视图可显式使用 `source: 'view'`。
+`text` 保存文字快照；`locator` 是插件定义的有界 JSON。它描述位置，不是文件路径授权。引用默认绑定当前资源；内容已由插件独立管理时，`none` 或 `optional-file` 视图可显式使用 `source: 'view'`。`selected-file` 视图不允许此策略；回源不会恢复原文件权限。
 
 ## 定位回原文
 
@@ -41,6 +41,8 @@ context.references.onReveal(async ({ locator, text }, signal) => {
 ## 自有菜单中的引用
 
 需要在编辑器菜单中呈现目标时，Lexora 0.17.0 起可使用 `capture → commit/release`。capture 固定当时的材料和可接收草稿；点击后提交所选目标，关闭菜单时释放。捕获不能跨视图或重启复用，也不能改投后来激活的任务。
+
+[视图数据](./views#只读数据与绑定范围)的统计快照不是引用正文，也不授予本节的材料解析资格。
 
 ## Agent 读取与编辑
 

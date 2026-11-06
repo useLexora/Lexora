@@ -17,14 +17,20 @@ Choose interfaces by execution context. The declaration below is included direct
 | DocumentApi / EditableDocument | Content revisions, original saves and recovery | [Documents](./files#edit-originals-and-recover) |
 | AgentToolContext / AgentActionContext | Original-task tools and independent actions | [Agent](./agent) |
 | ReferenceInput / ReferenceReveal | Material snapshots and source reveal | [References](./references) |
+| `ExtensionDataApi` / `ExtensionDataSnapshot` | Bound read-only sources, states and observation | [View data](./views#read-only-data-and-bound-scope) |
+| `InferenceContribution` / `InferenceApi` / `InferenceBinding` | Inference declarations, environment, resources, binding and credentials | [Models and multimodal capabilities](./inference) |
+| `InferenceModule` / `InferenceBackend` / `InferenceCall` | Native initialization, input sessions and output protocol | [Native entry](./inference#native-entry-and-protocol) |
+| `SkillContribution` / `McpConnectorContribution` / `SubagentContribution` | Independent Skill, connection and NPC declarations | [Capabilities](./capabilities) |
 | WorkerApi | Packaged Worker lifecycle | [Computation](./workers) |
 | EventSubscriber / TaskActionEvents | Scoped events and action causes | [State](./settings) |
 
 ## Manifest fields
 
-Extension.json requires schemaVersion 1, a stable id, name, version, apiVersion and engines.lexora. Format selects source/compiled. Provide entry when background code is needed. Declare permissions and contributions for actual capabilities; see [Your first plugin](./quick-start#declare-the-plugin).
+Extension.json requires schemaVersion 1, a stable id, name, version, apiVersion and engines.lexora. Format selects source/compiled. Provide entry when background code is needed. Declare permissions and contributions for actual capabilities. `inference` differs from the `models` permission for consuming models; `data` lists sources, and Skills/MCP/NPCs are independent declarations; see [Your first plugin](./quick-start#declare-the-plugin).
 
-Optional author attribution is independent of identity; icon points to a packaged image. DataVersion and a view's stateVersion govern separate migrations. Do not infer Lexora fields from another product's manifest.
+Command, view and Skill contribution IDs use the plugin ID prefix. MCP and NPC IDs are local to the package; NPC Skill dependencies still use full contribution IDs. Inference runtimes, capabilities and models use their own plugin-local IDs. Do not mix these naming rules.
+
+Optional author attribution is independent of identity; icon points to a packaged image. `dataVersion` and a view's `stateVersion` govern separate migrations. Do not infer Lexora fields from another product's manifest.
 
 ## Complete type declaration
 

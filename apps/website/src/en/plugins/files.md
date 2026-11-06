@@ -38,6 +38,8 @@ This is a contributes fragment: declare the referenced view and replace example 
 | Copy already authorized content | `importFile` |
 | Export to a confirmed destination | `saveFile` |
 
+These resources serve user files and plugin content. Large engines and weights use [inference resource sets](./inference#prepare-resources), bound by ID, revision and mount name; a resource handle is not an arbitrary disk path.
+
 Persist resource IDs and acquire fresh URLs per session. Handles do not reveal arbitrary disk paths. Create a new private version, commit its metadata pointer, then release the previous version; retain old content on failure.
 
 ## Remote text and pagination
@@ -50,7 +52,7 @@ Parse `rel="next"` and validate the next URL, origin, path and cursor before req
 
 Original editing uses API 4 fileEditing and the interactive view documents API. Plugins adopting this editing capability should require Lexora 0.17.0 or later and verify their target host.
 
-A Document represents editable content, either bound to a disk file or still unsaved. Plugins own format parsing, editing buffers and UI.
+An `EditableDocument` represents editable content, either bound to a disk file or still unsaved. Plugins own format parsing, editing buffers and UI.
 
 | Stage | API | User-visible meaning |
 | --- | --- | --- |

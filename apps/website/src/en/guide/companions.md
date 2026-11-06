@@ -27,7 +27,7 @@ The lead-type group in companion management stores roles that can join tasks. Wi
 
 <GuideImage src="/landing/screenshots/companions-en.webp" alt="Lexora companion settings and the NPC team" caption="Configure identity, instructions, models, and capabilities separately. An avatar does not select a model service." :width="1424" :height="968" />
 
-The description helps identify a role; its instructions define the working method. For a researcher:
+The name and description inform identity and responsibilities; instructions define the working method. None of them expands permissions. For a researcher:
 
 ```text
 Find material directly relevant to the current question.
@@ -36,9 +36,17 @@ Return a brief conclusion, sources, and questions still to verify.
 Do not edit another companion's draft.
 ```
 
+## Choose a model and reasoning effort
+
+Set a companion's default model, or use the task composer to choose a model for its current recipient. A task selection does not change other companions. Existing tasks also keep their selections when the app's default model changes.
+
+If the model supports it, adjust reasoning effort. Higher effort may take longer and use more tokens without guaranteeing a better answer. Start with the default for simple organization and compare options for harder reasoning. If an option is missing or a saved level is unsupported, choose from the current model's available levels.
+
+Before sending, check that the model selector belongs to the companion you intend to address. Changing a model during work affects later model requests, not completed answers.
+
 ## Add companions to a task
 
-Use the task's companion panel to add members. Ordinary input goes to the current lead. Select and mention a companion in the composer to direct a request to it.
+Use the task's companion panel to add members. Ordinary input goes to the current lead. Type `@` and choose one joined companion from the suggestions to direct that request without changing the lead. Typing a name as plain text is not a mention. Multiple mentions leave the current lead responsible for receiving and coordinating the request.
 
 After changing the lead, the next ordinary input goes to the new lead. Work already running retains its original executor.
 
@@ -46,16 +54,28 @@ After changing the lead, the next ordinary input goes to the new lead. Work alre
 
 Start with two roles: one writes a draft, another reviews it. Be explicit about responsibilities, especially when working on the same file: who edits, and who only makes suggestions?
 
+## Ask the author to revise or continue
+
+To ask the original author for changes, mention that companion alone and quote the answer or name the output and scope: “@Writer Continue revising your opening, keep the bell detail, and update the same draft.” During active work, messages follow the [steer-or-queue setting](./ai-chat#add-instructions-during-a-run).
+
+Without a mention, the current lead coordinates the revision; it does not automatically go to the last speaker. Identify the earlier work and output rather than only saying “continue.” An accepted handoff is not a completed revision: open and check the final file.
+
 ## Recruit NPCs
 
 Recruit roles in a companion's NPC team settings. Built-in roles include Explorer, Researcher, Executor, and Reviewer. You can create your own NPCs with their own instructions, models, and capabilities.
 
 Give NPCs bounded subtasks such as “Check only the sources for these three places and report questionable entries.” The lead uses the returned result to continue the overall task.
 
+- NPCs are not ordinary `@` members. A companion that recruited them delegates work; NPCs cannot delegate another level of subtasks.
+- New work uses separate context, not an automatic copy of the whole conversation. Specify materials, deliverables, and checks; identify the original work when continuing it.
+- NPCs can ask you questions. You can inspect their execution details, but their private process does not automatically become conversation text.
+- The team switch, enabled state, and capability selection affect availability. Turning the team off does not cancel work already accepted.
+- Companions may work in the same directory. Separate context is not file isolation; assign an editor and reviewers explicitly.
+
 ## When collaboration does not work as expected
 
 - **Cannot mention a companion:** add it to the current task, not just the management page.
-- **Cannot delegate to an NPC:** check that it is enabled and recruited by the caller.
+- **Cannot delegate to an NPC:** check the team switch, the NPC's enabled state, and whether the caller recruited it.
 - **Tools or Skills unavailable:** check installation or connection status and the companion's capability selection.
 - **Changing the default did not change an old task:** the default affects new tasks; switch an existing task's lead separately.
 

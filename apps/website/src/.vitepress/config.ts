@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import process from 'node:process'
 import { defineConfig } from 'vitepress'
-import { downloadUrl, repositoryUrl } from './productLinks'
+import { releasesUrl, repositoryUrl } from './productLinks'
 import { pageSeo } from './seo'
 
 const websiteBasePath = (process.env.WEBSITE_BASE_PATH ?? '').replace(/^\/+|\/+$/g, '')
@@ -16,8 +16,17 @@ const guideGroups = [
     en: 'Getting started',
     items: [
       { slug: 'what-is-lexora', zh: '认识 Lexora', en: 'Meet Lexora' },
-      { slug: 'quick-start', zh: '第一个任务', en: 'Your first task' },
-      { slug: 'settings-and-models', zh: '连接模型', en: 'Connect a model' },
+      { slug: 'quick-start', zh: '安装与第一个任务', en: 'Install and start a task' },
+    ],
+  },
+  {
+    zh: '模型与输入',
+    en: 'Models and input',
+    items: [
+      { slug: 'settings-and-models', zh: '模型服务与选择', en: 'Model services and selection' },
+      { slug: 'local-models', zh: '本地模型', en: 'Local models' },
+      { slug: 'images', zh: '识图与生图', en: 'Image understanding and generation' },
+      { slug: 'speech', zh: '语音输入与朗读', en: 'Voice input and read-aloud' },
     ],
   },
   {
@@ -27,11 +36,13 @@ const guideGroups = [
       { slug: 'ai-chat', zh: '任务与对话', en: 'Tasks and conversations' },
       { slug: 'files-and-spaces', zh: '文件与空间', en: 'Files and spaces' },
       { slug: 'companions', zh: '伙伴与协作', en: 'Companions and collaboration' },
+      { slug: 'web-browsing', zh: '搜索与网页', en: 'Search and web pages' },
+      { slug: 'documents', zh: '文档与 Office', en: 'Documents and Office' },
     ],
   },
   {
-    zh: '扩展工作方式',
-    en: 'Extend your workflow',
+    zh: '扩展与自动化',
+    en: 'Extensions and automation',
     items: [
       { slug: 'plugins', zh: '使用与制作插件', en: 'Using and creating plugins' },
       { slug: 'skills-and-mcp', zh: 'Skills 与 MCP', en: 'Skills and MCP' },
@@ -39,9 +50,10 @@ const guideGroups = [
     ],
   },
   {
-    zh: '管理与排错',
-    en: 'Manage and troubleshoot',
+    zh: '设置与维护',
+    en: 'Settings and maintenance',
     items: [
+      { slug: 'app-settings', zh: '应用设置与更新', en: 'App settings and updates' },
       { slug: 'permissions', zh: '执行权限', en: 'Execution permissions' },
       { slug: 'data-and-backup', zh: '数据与备份', en: 'Data and backups' },
       { slug: 'troubleshooting', zh: '常见问题', en: 'Troubleshooting' },
@@ -73,7 +85,9 @@ const pluginGroups = [
       { slug: 'views', zh: '视图与交互', en: 'Views and interaction' },
       { slug: 'files', zh: '文件与文档', en: 'Files and documents' },
       { slug: 'references', zh: '引用与来源定位', en: 'References and source reveal' },
-      { slug: 'agent', zh: 'Agent 能力', en: 'Agent capabilities' },
+      { slug: 'agent', zh: 'Agent 工具与任务动作', en: 'Agent tools and task actions' },
+      { slug: 'inference', zh: '提供模型与多模态能力', en: 'Provide models and multimodal capabilities' },
+      { slug: 'capabilities', zh: 'Skills、MCP 与 NPC', en: 'Skills, MCP, and NPCs' },
       { slug: 'settings', zh: '设置与状态', en: 'Settings and state' },
       { slug: 'appearance', zh: '主题与外观', en: 'Themes and appearance' },
       { slug: 'workers', zh: '依赖与计算', en: 'Dependencies and computation' },
@@ -134,10 +148,10 @@ export default defineConfig({
       lang: 'zh-CN',
       themeConfig: {
         nav: [
-          { text: '如何工作', link: '/#workspace' },
+          { text: '使用场景', link: '/#workspace' },
           { text: '使用指南', link: '/guide/quick-start' },
           { text: '插件开发', link: '/plugins/' },
-          { text: '下载 Lexora', link: downloadUrl },
+          { text: '更新日志', link: releasesUrl },
         ],
         sidebar: docSidebars('zh'),
         outline: { label: '本页内容', level: [2, 3] },
@@ -155,10 +169,10 @@ export default defineConfig({
       description: 'Lexora is a personal AI agent that evolves through hands-on work on your desktop. Beyond coding, it helps you organize research, refine creative projects, and plan everyday activities. Tell it what you want to accomplish, and it keeps working toward that goal, making words the starting point for work, creativity, and everyday life.',
       themeConfig: {
         nav: [
-          { text: 'How it works', link: '/en/#workspace' },
+          { text: 'Use cases', link: '/en/#workspace' },
           { text: 'Guide', link: '/en/guide/quick-start' },
           { text: 'Plugin development', link: '/en/plugins/' },
-          { text: 'Get Lexora', link: downloadUrl },
+          { text: 'Changelog', link: releasesUrl },
         ],
         sidebar: docSidebars('en'),
         outline: { label: 'On this page', level: [2, 3] },

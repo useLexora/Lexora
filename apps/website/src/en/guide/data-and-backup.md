@@ -1,70 +1,84 @@
 ---
-title: "Data and backups: local storage, restore, and remote backups"
-description: "Find out where Lexora stores data, create and restore backups, connect WebDAV or S3, and move the storage directory. Back up external working folders separately."
+title: "Data and backups: storage, scope, and restoration"
+description: "Understand data destinations, local and cloud backup scope, and the limits for plugins, local model resources, external files, and restoration."
 ---
 
 # Data and backups
 
-Lexora open-sources its own code, not yours. Project files are handled locally, and tasks and settings are stored locally. Online models and external tools receive the content their calls need.
+Lexora open-sources its own code, not yours. Tasks and settings stay on your computer. Online models and external tools receive the content their calls require.
 
 ## What stays on your computer
 
 | Content | Storage or destination |
 | --- | --- |
-| Tasks, conversations, companions, and settings | The current Lexora data directory |
+| Tasks, conversations, companions, and settings | The active Lexora data directory |
 | Managed workspace files | Inside the Lexora data directory |
-| External working directories you choose | Their original disk location; adding a space does not upload the entire directory |
-| API keys and login credentials | Encrypted locally using operating-system facilities |
-| Online model requests | Context goes directly to the configured endpoint, without a Lexora cloud relay |
-| External MCP and plugin calls | Required data goes to the connected or approved service |
-| Cloud backups | Your WebDAV or S3 storage, only after you configure and enable it |
+| External working directories | Their original locations; adding a space does not upload the whole folder |
+| API keys and login credentials | Saved locally through dedicated credential fields using OS encryption facilities |
+| Plugin packages, configuration, and private files | App-managed plugin storage; authorized external references remain at their original locations |
+| Plugin-managed models and engines | A separate local inference-resource area, not ordinary plugin-file backup |
+| External model servers | Files and data managed by those services |
+| Online models, independent image reading, speech, and OCR | Required text, images, or audio goes to the selected service |
+| MCP, web, and external plugin calls | Required data goes to the corresponding service; see [Web browsing](./web-browsing) for remote extraction |
+| Cloud backups | Your configured WebDAV or S3 storage, after you enable it |
 
-Context may contain conversation text, quotes, and code or file passages read by tools. Local-first does not mean no data leaves the computer when you use a remote model.
+Model context can include conversations, quotes, and passages read from files. Local-first does not mean everything stays offline or that only the current chat model receives content.
+
+::: info Not all configuration is encrypted credentials
+Dedicated API-key storage differs from ordinary configuration. Custom headers, task content, or plugin files may contain secrets you entered. A backup without the credentials option is not automatically safe to publish.
+:::
 
 ## Inspect the data directory and usage
 
-Open **Settings → Data storage** to see the active directory, open its folder, and inspect usage by category.
+Open **Settings → Data storage** to inspect the active directory, open its folder, and review usage by category.
 
 <GuideImage src="/guide/images/storage-en.webp" alt="Data storage settings with directory, category usage, local backups, and cloud backup controls" caption="The overview covers the current data directory. Manage external working directories separately." :width="1016" :height="1228" />
 
-The totals do not include every external working directory. Before cleaning up, distinguish task files, caches, logs, and backups. Do not manually delete an active database or configuration file.
+Totals do not include every external directory. Distinguish work files, inference resources, caches, logs, and backups before cleanup. Do not manually delete active databases, plugin resources, or model files.
 
 ## Create a local backup
 
-1. Choose **Create backup** in Data storage.
-2. Select the content to save: tasks and spaces, companions, models, Skills, plugins, settings, and other available categories.
-3. If including credentials, enable that option and set a password of at least eight characters.
-4. After completion, open **View backups** and confirm the new entry appears.
+1. Choose **Create backup** and select tasks and spaces, managed workspaces, companions, model services, connections, Skills, plugins, automations, or settings.
+2. To include credentials, enable the option and set a password of at least eight characters.
+3. Wait for completion, then open **View backups** to confirm the new entry and selected scope.
 
-Managed workspace files include files inside the Lexora data directory, not entire external project folders. Back up external originals, repositories, and other materials separately.
+### What is included
+
+| Selection or resource | Scope |
+| --- | --- |
+| Tasks and spaces | Related records and task-managed materials; managed workspace files have a separate selection |
+| Managed workspace files | App-managed working directories, not entire external projects |
+| Plugins | Packages, configuration, state, and supported plugin-owned files |
+| Local model weights and engines | **Managed inference resources are not part of the plugin backup above**; preserve or prepare them separately |
+| Plugin-referenced external files, external model servers, and external working directories | Not included merely because they are referenced |
+
+A backup saves selected content, not a disk image or complete runtime environment. For local model migration, record sources, versions, quantization, engines, and loading settings, and preserve needed files separately. Restored plugin settings do not prove that inference resources were restored.
 
 ::: info Credentials and passwords
-A backup without credentials can still preserve service configuration; enter keys again after restoring. The backup password cannot be recovered, so keep it separately. OAuth requires signing in again after restoration.
+A backup without credentials can preserve service configuration; enter credentials again after restoring. Passwords cannot be recovered, so keep them separately. OAuth requires signing in again after restoration.
 :::
 
-You can adjust the local backup limit. Older copies are removed according to the settings shown in the app. This limit does not automatically remove cloud backups or exported copies.
+Adjust the local backup retention limit in settings. Excess copies are cleaned up under that rule; cloud backups and exported copies are not automatically deleted with them.
 
 ## Restore a backup
 
-1. Save important current work and create a backup of the current state if needed.
-2. Select a backup under **View backups**, or use **Import backup** to choose a file.
-3. Choose what to restore and enter the password if restoring credentials.
-4. Confirm **Restart and restore**. After restart, inspect tasks, settings, and files before re-enabling extensions or schedules.
+1. Save current work and back up the current state if needed.
+2. Choose a backup under **View backups**, or select a file with **Import backup**.
+3. Select the restoration scope and enter the password when restoring credentials.
+4. Confirm **Restart and restore**, then inspect tasks, files, and settings.
 
-Restoration replaces matching records or files while keeping other content. The app preserves a recovery copy of the previous data. Restored automations, plugins, and Skills need re-enabling; OAuth needs authorization again.
+Restoration replaces matching records or same-name files, keeps other content, and preserves a pre-restore recovery copy. Restored automations, plugins, and Skills need re-enabling; OAuth needs authorization again. Plugin external-resource grants may need selecting again. Check local models and engines separately: an available plugin page does not prove restoration is complete.
 
 ## Use your own cloud backup storage
 
-Enable cloud backup in Data storage, select WebDAV or S3-compatible storage, and configure the endpoint, backup directory, and credentials.
+Enable cloud backup in Data storage. Choose WebDAV or S3-compatible storage and enter its endpoint, backup directory, and credentials. **Test connection**, select content and frequency, choose **Save and back up**, then inspect the actual backup status.
 
-Use **Test connection** to verify read and write access. Then choose content and frequency, and select **Save and back up**. Check the actual backup status afterwards, not only the connection test.
-
-Cloud backups are saved copies, not real-time collaboration or live two-way synchronization of external folders. Automatic backups require Lexora to keep running.
+Cloud backups follow the selected scope; they do not additionally include model weights or external directories. They are copies, not real-time collaboration or two-way file synchronization. Automatic backups require Lexora to keep running.
 
 ## Move the data directory
 
-Use **Data directory → Change location**, choose the destination, and confirm the restart and move. Choose an empty directory or a previous location of this data, with enough free space.
+Use **Data directory → Change location**, select a destination, and confirm the restart and move. Choose an empty directory or a previous location of this data, with enough space.
 
-Do not move folders manually during migration. If it fails, check permissions, free space, and the error. Keep the original location intact until the app is working correctly.
+Moving app data differs from creating a selective backup. External references do not become managed files. Do not move folders manually during migration. On failure, preserve the original location and backups, inspect permissions, space, and the error, and keep old data until the app works normally.
 
-For recovery or migration problems, see [Troubleshooting](./troubleshooting).
+See [Troubleshooting](./troubleshooting#backup-restoration-or-migration-did-not-complete).

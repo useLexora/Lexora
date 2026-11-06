@@ -16,13 +16,16 @@ If you have not connected a model, follow the getting-started sequence first. If
 | What you want to do | Start here |
 | --- | --- |
 | Install Lexora and finish a small task | [Your first task](./quick-start) |
-| Connect a provider or local model service | [Connect a model](./settings-and-models) |
+| Connect an online service or run a model locally | [Connect a model](./settings-and-models) · [Local models](./local-models) |
+| Understand or generate images, use speech, or research the web | [Images](./images) · [Speech](./speech) · [Web browsing](./web-browsing) |
+| Write documents, work with spreadsheets, or edit slides and PDFs | [Documents](./documents) |
 | Add instructions, quote content, or try a branch | [Tasks and conversations](./ai-chat) |
 | Organize local materials and split the workspace | [Files and spaces](./files-and-spaces) |
 | Bring in other companions and recruit NPCs | [Companions and collaboration](./companions) |
 | Install a plugin or make your own tool | [Using and creating plugins](./plugins) |
 | Add methods, external tools, or recurring work | [Skills and MCP](./skills-and-mcp) · [Automations](./automations) |
-| Choose permissions, back up data, or resolve a problem | [Execution permissions](./permissions) · [Data and backups](./data-and-backup) · [Troubleshooting](./troubleshooting) |
+| Adjust the app, choose permissions, and protect materials | [App settings](./app-settings) · [Execution permissions](./permissions) · [Data and backups](./data-and-backup) |
+| Find a failure's cause and continue | [Troubleshooting](./troubleshooting) |
 
 ## Three concepts to know
 
@@ -48,10 +51,8 @@ Before finishing for the day, ask: “Summarize what is done, where the results 
 
 Install Lexora and connect at least one usable model. No Lexora account is required. Model credits and charges come from your chosen provider.
 
-Tasks, companions, and settings are stored locally. When you use an online model, the relevant conversation and file context goes to your configured service. See [data and backups](./data-and-backup) for details.
+Tasks, companions, and settings are stored locally. With an online model, relevant conversation and file context goes to your configured service. Web tools, MCP, and plugins may also contact external services; a local model does not automatically make the whole task offline. See [Data and backups](./data-and-backup).
 
-::: details Curious about what runs underneath?
-Vue and Electron provide the desktop workspace, while an independent TypeScript runtime hosts the local agent. Pi provides the agent loop, and Rust handles native capabilities. Lexora organizes tasks, context, permissions, and outputs. Explore the [source on GitHub](https://github.com/useLexora/Lexora) for implementation details.
-:::
+This map shows workflows you can prepare, not capabilities that are all ready on installation. Models, tool connections, and optional plugins need their own setup. Office editing, for example, comes from an installable plugin, and image generation needs an available image service. Complete a small task first, then expand as needed.
 
 Ready? [Complete your first task](./quick-start).

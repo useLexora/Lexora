@@ -17,12 +17,18 @@ description: "查阅清单、后台上下文、视图、Agent 调用与事件的
 | `DocumentApi` / `EditableDocument` | 内容版本、原件保存和恢复 | [文档](./files#编辑原件与恢复) |
 | `AgentToolContext` / `AgentActionContext` | 原任务中的工具或独立动作 | [Agent](./agent) |
 | `ReferenceInput` / `ReferenceReveal` | 材料快照和来源定位 | [引用](./references) |
+| `ExtensionDataApi` / `ExtensionDataSnapshot` | 绑定范围的只读来源、状态与观察 | [视图数据](./views#只读数据与绑定范围) |
+| `InferenceContribution` / `InferenceApi` / `InferenceBinding` | 推理声明、环境、资源、绑定与凭据 | [模型与多模态](./inference) |
+| `InferenceModule` / `InferenceBackend` / `InferenceCall` | 原生初始化、输入会话与输出协议 | [原生入口](./inference#原生入口与协议) |
+| `SkillContribution` / `McpConnectorContribution` / `SubagentContribution` | 独立的 Skill、连接与 NPC 声明 | [能力包](./capabilities) |
 | `WorkerApi` | 包内 Worker 生命周期 | [计算](./workers) |
 | `EventSubscriber` / `TaskActionEvents` | 作用域事件与动作来源 | [状态与事件](./settings) |
 
 ## 清单字段
 
-`extension.json` 必须提供 `schemaVersion: 1`、稳定 `id`、`name`、`version`、`apiVersion` 和 `engines.lexora`。`format` 区分 source/compiled，`entry` 在需要后台代码时提供。`permissions` 和 `contributes` 按实际能力声明；完整结构示例见[第一个插件](./quick-start#声明插件)。
+`extension.json` 必须提供 `schemaVersion: 1`、稳定 `id`、`name`、`version`、`apiVersion` 和 `engines.lexora`。`format` 区分 source/compiled，`entry` 在需要后台代码时提供。`permissions` 和 `contributes` 按实际能力声明；`inference` 与调用模型的 `models` 权限不同，`data` 按来源列举，Skills/MCP/NPC 独立声明。完整结构示例见[第一个插件](./quick-start#声明插件)。
+
+命令、视图与 Skill 贡献 ID 使用插件 ID 前缀；MCP 与 NPC 使用包内局部 ID，NPC 的 Skill 依赖仍引用完整贡献 ID。推理的运行时、能力与模型使用各自的插件内 ID；不要混用这些命名规则。
 
 可选 `author` 是独立署名，`icon` 指向包内图标。`dataVersion` 与视图 `stateVersion` 分别管理数据和实例状态迁移。不要根据其他产品的 manifest 字段推测 Lexora 行为。
 

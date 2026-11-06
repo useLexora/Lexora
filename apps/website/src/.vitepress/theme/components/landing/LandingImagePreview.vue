@@ -12,6 +12,8 @@ defineProps<{
   original: string
   width: number
   height: number
+  eager?: boolean
+  thumbnail?: { src: string, width: number, height: number }
   mobilePosition?: string
   mobileSrc?: string
   mobileWidth?: number
@@ -29,7 +31,7 @@ function closeBackdrop(event: MouseEvent) {
     <button class="preview-trigger" :aria-label="`${enlarge} · ${title}`" @click="preview?.showModal()">
       <picture>
         <source v-if="mobileSrc" media="(max-width: 760px)" :srcset="withBase(mobileSrc)" :width="mobileWidth" :height="mobileHeight">
-        <img :src="withBase(src)" :alt="alt" :width="width" :height="height" loading="lazy">
+        <img :src="withBase(thumbnail?.src ?? src)" :alt="alt" :width="thumbnail?.width ?? width" :height="thumbnail?.height ?? height" :loading="eager ? 'eager' : 'lazy'" :fetchpriority="eager ? 'high' : 'auto'">
       </picture>
       <span class="preview-hint"><LandingIcon name="expand" /><span>{{ enlarge }}</span></span>
     </button>

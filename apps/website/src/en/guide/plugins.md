@@ -14,11 +14,17 @@ This chapter starts with installation, then walks through making a plugin from a
 Open **Plugins**. Browse the **Marketplace**, or install a local package you already have.
 
 1. Choose a marketplace plugin and start installation, or select **Install package** from the installation menu.
-2. Review the name, version, source, and requested permissions.
-3. Confirm installation and check its state under **Installed**.
+2. Wait for **Verifying plugin** to finish. Review the name, version, source, permissions, and default file openers.
+3. Confirm installation and check its state under **Installed**. If it fails, inspect the error; a finished download is not a successful installation.
 4. Use the page, panel, command, or tool the plugin provides.
 
 If the marketplace cannot refresh, try later or install a local package. Installation adds the plugin to your workspace; some plugins still need you to choose files, connect services, or complete their settings.
+
+### Verification and risk confirmation
+
+Marketplace installation checks package size, digest, and manifest. If the contents differ from the catalog, do not treat it as a routine update. Verify the source and actual permissions; cancel and check with the publisher when uncertain. Select **Install anyway** only after explicitly acknowledging the risk.
+
+Accepting the risk is not successful verification and does not bypass compatibility, identity, or package-structure checks. A matching digest confirms agreement with the recorded content, not that the plugin is risk-free. Install only needed plugins from sources you trust.
 
 ## Start with a small idea
 
@@ -53,16 +59,29 @@ For a timer, test Start, Pause, Reset, and completion rather than only checking 
 | Menus and input commands | Add entry points for frequent operations |
 | Agent instructions and tools | Give companions specialized analysis or conversion tools |
 | Configured models and approved local files | Process selected materials and return results to the task |
+| File editors and selection quotes | For example, use an installable Office plugin for [documents and spreadsheets](./documents) |
 | Task events, scheduled commands, and notifications | Run follow-up actions at useful moments |
 | Settings and private storage | Remember a plugin's configuration and state |
 
-The plugin must implement these capabilities and declare the corresponding permissions. Installing one does not grant arbitrary file or system-command access. Scheduled plugin actions also require Lexora to remain running.
+The plugin must implement these capabilities and declare the corresponding permissions. Browser backgrounds, views, and Workers access files and commands through controlled interfaces; installation does not give those contexts arbitrary system access. Scheduled plugin actions also require Lexora to remain running.
+
+::: warning Native inference has a different boundary
+Local model plugins can include native inference entry points. On Windows and macOS, supervised native processes run with the current account's permissions, without a filesystem or network sandbox. Install only trusted sources and check their [platform and resource limits](./local-models#platform-and-resource-limits). Browser-view isolation does not apply to all plugin code.
+:::
 
 ## Update, disable, or uninstall
 
-Manage plugins under **Installed**. Disable one when you only want to stop using it temporarily. When installing an update, check the version-switching option and which version is active.
+Manage plugins under **Installed**. When a card shows **Update available**, open the new-version review directly. The marketplace also provides an update entry. Read incompatibility notices rather than bypassing version requirements.
 
-Ordinary uninstall retains settings, private data, and view positions for reinstallation. **Uninstall and clear data** removes that content, so confirm that you no longer need it.
+The review defaults to switching after installation. You can defer switching and use **Update** later to apply the installed new version. Switching interrupts ongoing plugin operations, so save edits first. Restarting a plugin alone does not switch a pending version.
+
+| Action | Effect |
+| --- | --- |
+| Disable | Stop using it while retaining the installation and data for later |
+| Ordinary uninstall | Remove plugin code and revoke file access, but retain settings, private data, and view state; reinstallation still requires permission review |
+| Uninstall and clear data | Also permanently remove the plugin's settings, private data, view state, and its MCP/NPC configuration and credentials; this cannot be undone |
+
+Cleanup does not delete task content, exported outputs, or original user files referenced by the plugin. Export or back up needed plugin documents and data first; cleanup is not a routine reinstall step.
 
 Keep the creation task and source for future improvements or sharing. An installed plugin should not be your only source backup.
 

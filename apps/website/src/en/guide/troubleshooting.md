@@ -1,79 +1,118 @@
 ---
 title: "Troubleshooting and common questions"
-description: "Troubleshoot Lexora model connections, file access, tools, automations, plugins, and backups. Check likely causes and gather useful details before reporting an issue."
+description: "Diagnose model connections, pending questions, images, speech, local engines, tools, permissions, backups, and updates without blindly repeating actions."
 ---
 
 # Troubleshooting
 
-Start with the actual error in the task or settings page. Most problems can be narrowed down through model connections, execution status, paths, and extension enablement.
+Keep the actual error from the task or settings page, identify the failure stage, and start with a small check. Do not begin by clearing app data, disabling every protection, or repeating external actions.
 
 ## The composer says “No models found”
 
-1. Open **Settings → Model services** and check that a service exists.
-2. Complete authentication and enable at least one available model.
-3. Enable the service and select the model in the task again.
-4. If only one companion fails, check its model selection in this task.
+1. Under **Settings → Model services**, confirm authentication and service enablement.
+2. Enable at least one available **chat model**. Speech and image-generation models alone do not appear in the task's chat selector.
+3. Select the model again in the task. If only one companion fails, check its selection.
+4. For plugin models, check plugin enablement and prepared resources and engines.
 
-See [Connect a model](./settings-and-models). Saving an API key or syncing the catalog does not automatically mean a model is enabled.
+Saving a key or syncing the catalog does not enable a model automatically. See [Connect a model](./settings-and-models).
 
 ## Authentication, quota, or connection errors
 
-- **Authentication:** check that the key belongs to this service and is valid, or reauthorize OAuth.
-- **Balance or quota:** check API credits in the provider's console, not just a chat subscription.
-- **Unavailable model:** verify the model ID, account access, and the actual supported API.
-- **Timeout or unreachable service:** check the endpoint, network, and proxy. A local model server must remain running.
+- **Authentication:** check the key's service, validity, and permissions, or reauthorize OAuth.
+- **Quota:** check API credits and limits, not just a chat subscription.
+- **Missing model:** check the model ID, purpose, protocol, and account access.
+- **Timeout:** check the endpoint, proxy, and server state. External local servers must remain running.
 
-Try a short message without attachments or tools. Once it works, add the original task's conditions back one at a time.
+Test a short message without attachments or tools, then restore conditions one at a time. See [Proxy settings](./app-settings#application-and-download-proxies).
 
 ## A task seems stuck
 
-Check whether it is running, awaiting approval, or waiting to send a queued message. These need different responses.
+Distinguish these states:
 
-Resolve approval cards, inspect the queue, or repair a failed model or tool connection. If you stop the task, inspect completed actions before continuing so that you do not repeat an external action unnecessarily.
+| State | Next step |
+| --- | --- |
+| Running or waiting for resources | Inspect progress and tool records rather than repeatedly sending the same request |
+| Awaiting approval | Review the approval card's target and scope |
+| Waiting for your answer | Open the question card and submit choices or a custom answer; dismissing it is not an answer |
+| Queued or paused message | Inspect the queue and send or add input as needed; stopping may leave messages paused |
+| Failed or unknown outcome | Inspect the error and completed actions, then verify the actual result |
+
+An answer supplies information, not tool authorization. Stopping or cancelling does not prove external actions were rolled back. Verify purchases, publishing, image generation, and similar outcomes before retrying.
 
 ## A file was not saved where expected
 
-Check the task's space and working directory, then expand the file operation record to inspect its path. Verify the actual file even when the model says it saved one.
+Check the task's space and working directory, inspect the full path in the tool record, and open the actual file. A model saying “saved” does not prove it exists.
 
-Name the destination clearly: “Save as drafts/weekend-route.md in the current working directory.” If the task is local read-only, adjust [Execution permissions](./permissions) as needed.
+Name the destination clearly, such as “Save as drafts/weekend-route.md in the current working directory.” See [Execution permissions](./permissions) for read-only, additional-directory, and sandbox issues. A missing path alone is not proof of a permission failure.
+
+## Images cannot be read or generated
+
+- Reading failure: check model vision support, image-reading settings, and whether the image is actually accessible.
+- OCR returns text but not colors or states: use visual understanding, not transcription alone.
+- Generation failure: check the generator, credentials, credits, reference support, and output path.
+- Unknown outcome or incomplete saving: inspect existing outputs and service records; **do not blindly resubmit**.
+
+A saved file still needs visual checking. See [Images](./images).
+
+## Speech input or read-aloud is unavailable
+
+Use microphone testing, a short transcription test, and a voice preview separately under **Settings → Voice** to distinguish capture, transcription, and playback.
+
+Check microphone permission, input and output devices, the selected model, voice ID, credits, and networking. Check the engine for local sources. If no system voice exists, inspect OS speech components or choose a model source. Review recognized text after interruptions. See [Speech](./speech).
+
+## A local model or engine will not start
+
+1. Distinguish a local models plugin from an external compatible API. Inspect the plugin for the former and the external server for the latter.
+2. Verify OS, architecture, engine version, model format, and backend support.
+3. Check completed downloads, remaining files, valid resource permissions, RAM, VRAM, and disk space.
+4. Test a smaller known-supported model or request and preserve the loading error.
+
+An installed plugin does not mean engines and models are ready. Avoid repeatedly downloading large files or clearing resources to guess the cause. Success on another device does not establish support on yours. See [Local models](./local-models).
+
+## Search or page reading fails
+
+Check enabled sources, networking, rate limits, and the error. Distinguish script-rendered pages, login requirements, and missing remote-extraction configuration. Background rendering does not inherit login state; use interactive browsing when login is required. Do not treat an excerpt as a complete page. See [Search and web browsing](./web-browsing).
 
 ## An installed Skill or MCP tool is unavailable
 
-For Skills, check scope, enablement, same-name overrides, and the companion's capability selection. Refresh after editing files. If content has changed, select the Skill again before sending.
+For Skills, check scope, enablement, same-name overrides, and the companion's capability selection. Refresh after changes and reselect changed content.
 
-For MCP, check that the connection is enabled and connected. Cached tools do not prove current connectivity. A successful test of a disabled connection does not make it available to tasks. Code-orchestration-only connections also require the corresponding Runtime capability.
-
-See [Skills and MCP](./skills-and-mcp) for the full steps.
+For MCP, check enablement and an actual connection. Cached tool lists and an earlier successful test do not establish current task availability. Code-orchestration-only connections also need the corresponding Runtime capability. See [Skills and MCP](./skills-and-mcp).
 
 ## A plugin is installed but does not open or change
 
-Check its enabled state, active version, and errors under **Plugins → Installed**. A new version may be installed without being activated. Its entry point might be a command, tool, or theme rather than a separate page.
+Under **Plugins → Installed**, check enablement, active version, and errors. A newer version may be installed without activation. The entry point may be a command, tool, or theme, not a separate page.
 
-For your own plugin, return to the creation task with the exact error, reproduction steps, and current behavior. Specific feedback is more useful than “It does not work.”
+For a plugin you created, return to its original task with the exact error and reproduction steps. See [Plugins](./plugins) for installation and permissions.
 
 ## An automation did not run on time
 
-1. Confirm it is enabled and not paused, then check its next execution time and active date range.
-2. Check that the computer was awake and Lexora had not fully exited.
-3. Read run history to distinguish no trigger, failure, waiting for approval, and completion.
-4. Verify the linked space, fixed model, and required tools are still available.
-5. Use **Run now** to verify the repair without changing the schedule.
+1. Check enablement, pause state, next run time, and active dates.
+2. Confirm the computer was awake and Lexora had not fully exited.
+3. Inspect records to distinguish no trigger, failure, and completion.
+4. Check the space, fixed model, tools, and prior grants. Background runs cannot wait for approval and fail when it is required.
+5. After fixing the cause, use **Run now** without changing the schedule.
 
-See [Automations](./automations) for details.
+See [Automations](./automations).
 
 ## Backup, restoration, or migration did not complete
 
-Keep the error message and check free space, permissions, and the backup password. Finish active tasks or pending directory operations before retrying. A successful cloud connection test is not a completed upload; inspect backup status.
+Keep the error and check space, directory permissions, and the password. Finish active tasks or pending directory operations. A successful cloud connection test is not a completed upload.
 
-Do not clear the data directory just to retry. Keep backups and the original data until the app is working. See [Data and backups](./data-and-backup).
+Do not clear the data directory. Keep backups and original data, and check the restoration scope. Restoring a plugin does not restore large model weights or engines. See [Data and backups](./data-and-backup).
+
+## Update checks or installation fail
+
+- Check the version, update channel, network, and proxies. A cached previous result is not a successful current check.
+- Your platform or installation method may not support in-app downloads; follow the link to the official release page.
+- If package details are missing or verification fails, repair the download rather than bypass verification.
+- Automatic downloading does not install updates. Disabling automatic checks also pauses background downloads.
+- Switching from Beta to Stable does not downgrade automatically. Keep backups and do not open newer data in an arbitrary older version.
+
+See [App updates](./app-settings#stable-and-beta-updates).
 
 ## Still need help?
 
-Report the issue on [GitHub Issues](https://github.com/useLexora/Lexora/issues). Include:
+Report the issue on [GitHub Issues](https://github.com/useLexora/Lexora/issues) with the app version, OS and architecture, steps, expected and actual results, and the complete error. For model issues, include the service type and model ID, not credentials.
 
-- Lexora version, operating system, and architecture.
-- The starting page and steps you followed.
-- Expected and actual results, plus the complete error message.
-- A useful screenshot or relevant log excerpt.
-
-View application logs under **Settings → Logs**. Before sharing, remove API keys, account information, private paths, and private task content. Do not upload your entire data directory.
+Inspect application logs under **Settings → Logs**. Remove accounts, credentials, private paths, and task or document content before sharing. Do not upload the entire data directory.

@@ -22,7 +22,7 @@ const accepted = await context.references.add({
 
 The host offers existing drafts, a new task or copying the reference. Success returns true and cancellation returns false. Use `{kind:'resource',resource}` for a whole authorized file.
 
-Text is the captured content; locator is bounded plugin-defined JSON, not a path grant. References normally bind to the current resource. A none/optional-file view managing its own content can explicitly use `source: 'view'`.
+Text is the captured content; locator is bounded plugin-defined JSON, not a path grant. References normally bind to the current resource. A none/optional-file view managing its own content can explicitly use `source: 'view'`. A `selected-file` view cannot use that policy; source reveal does not restore original-file permission.
 
 ## Reveal the source
 
@@ -41,6 +41,8 @@ Implement revealSelection in your plugin and respect signal. Return false when t
 ## Use your own menu
 
 Lexora 0.17.0 introduces capture → commit/release for editor menus. Capture fixes the material and eligible draft targets; commit the chosen target after a click and release on dismissal. Captures cannot move between views, survive restart or retarget a later-focused task.
+
+Statistics from [view data](./views#read-only-data-and-bound-scope) are not reference content and grant no reference-resolution eligibility.
 
 ## Resolve references in Agent tools
 

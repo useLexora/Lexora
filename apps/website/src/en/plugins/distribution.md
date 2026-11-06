@@ -21,7 +21,13 @@ Check validates compatibility and package contents, build creates the artifact, 
 
 ## Independent SDK
 
-Export-sdk exports authoring tools and a type snapshot. If you already have an independent Lexora Plugin SDK, install its dependencies using its declared package manager and run:
+From `apps/buddy`, export authoring tools and public types:
+
+```sh
+node extensions/tools.mjs export-sdk /path/to/plugin-sdk/sdk
+```
+
+This exports `authoring.mjs`, `plugin.mjs` and `index.d.ts`. It neither installs an npm SDK package nor generates a complete independent project. If you already have an independent Lexora Plugin SDK, install its dependencies using its declared package manager and run:
 
 ```sh
 pnpm check /path/to/plugin-repository my-plugin
@@ -44,13 +50,13 @@ Inspect active and pending versions, entry loading and diagnostics. Build, permi
 
 Source packages use the fixed host compiler. Compiled packages preserve already-built browser modules and assets, including Workers, WASM and styles.
 
-Current limits are 64 MiB per file, 128 MiB compressed and 256 MiB expanded; up to 4096 files, 512 non-image files and 8192 archive entries. Do not force model weights or other oversized data into the installation archive; loading external content depends on available resource APIs.
+Current limits are 64 MiB per file, 128 MiB compressed and 256 MiB expanded; up to 4096 files, 512 non-image files and 8192 archive entries. Do not force model weights or other oversized data into the installation archive; prepare and verify them as [inference resources](./inference#prepare-resources). Native `native/*.mjs` entries must be precompiled: source builds preserve these scripts without installing Node native dependencies. Skill directories retain their paths; MCP declarations and NPC definitions contain no user credentials.
 
 ## Before distribution
 
 1. Verify stable identity, author, plugin version, permissions and minimum host version.
 2. Build and install the final package, then exercise its actual entries and main functions.
-3. Verify cancellation, closing, disabling, updating and restoration of existing data.
+3. Verify cancellation, closing, disabling, updating and restoration of existing data. Test real inference engines per platform, data-view binding and revocation, and actual MCP/NPC dependencies and user configuration.
 4. Preserve source, licenses, package size and SHA-256.
 5. For the current marketplace, follow [Lexora Plugins](https://github.com/useLexora/plugins) publication instructions.
 

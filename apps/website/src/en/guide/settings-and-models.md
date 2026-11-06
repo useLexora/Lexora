@@ -1,11 +1,11 @@
 ---
-title: "Connect model providers, local AI, and custom APIs"
-description: "Connect model providers to Lexora with API keys or OAuth. Configure custom and local APIs, enable models, set companion defaults, and troubleshoot connections."
+title: "Connect online model services"
+description: "Connect providers and custom APIs to Lexora, authenticate, enable models, and select models for tasks and companions."
 ---
 
 # Connect a model
 
-The model service interprets and generates content. Lexora brings conversations, files, tools, and execution into the same workspace. Before starting, authenticate a service and enable the models you want to use.
+Models interpret and generate content; Lexora organizes tasks, files, and tools. For an online model, connect a service and enable the models you need. For inference on your own computer, see [Local models](./local-models).
 
 ## Choose a connection type
 
@@ -13,75 +13,65 @@ Open **Settings → Model services → Add service**.
 
 | What you have | Choose | Prepare |
 | --- | --- | --- |
-| A listed provider | Built-in services | An API key or an OAuth account supported by that service |
-| A compatible API or company gateway | Custom API | API type, endpoint, credentials, and model ID |
-| A local or LAN model server | Custom API | A running compatible endpoint, model ID, and any required credentials |
+| A listed provider | Built-in service | An API key or supported OAuth account |
+| A compatible API or company gateway | Custom API | API type, base URL, credentials, and model ID |
+| A running local or LAN server | Custom API | A reachable compatible API; see [Local models](./local-models#external-compatible-apis) |
 
-Lexora does not install or start local model servers. Start the service according to its own instructions, then add its connection.
+A chat website subscription does not necessarily include API credits. Check the provider's account access and billing terms.
 
 ## Add a built-in service
 
-1. Find the provider under **Built-in** and choose **Add**.
-2. In **Configure connection**, choose **Configure API key** or **Use OAuth**. Obtain keys from the provider's console; follow the browser instructions for OAuth.
-3. In the model configuration step, enable the models you need.
-4. Choose **Finish and enable**. Return to a task, select the model, and send a short message to check the connection.
+1. Find the provider and choose **Add**.
+2. Under **Configure connection**, choose **Configure API key** or **Use OAuth** and authenticate.
+3. Enable the models you need in the model configuration step.
+4. Choose **Finish and enable**, select the model in a task, and send a short test message.
 
 <GuideImage src="/guide/images/model-connection-en.webp" alt="The DeepSeek connection step with its API key configuration button" caption="Enter credentials through the dedicated setup dialog, not in a task conversation." :width="1024" :height="378" />
 
-A saved-key status confirms storage. Successful requests still depend on valid credentials, model access, balance, and networking. A short conversation is the most direct check.
+A saved-key status confirms storage, not valid credentials, model access, or available credits. You can resume incomplete service setup later.
 
 ## Add a custom API
 
-Under **Custom API**, fill in the display name, identifier, API type, and endpoint, then configure authentication.
+Enter a display name, identifier, API type, and endpoint, then configure authentication.
 
-- **Display name** helps you recognize the connection, such as “Home model server.”
-- **Identifier** distinguishes configurations. Follow the form's rules and avoid duplicates.
-- **API type** must match the protocol the server actually provides. Supporting one interface does not imply support for all interfaces.
-- **Endpoint** is the API base URL from the service documentation, not its chat website.
-- **Model ID** is the name the server accepts, not just a display label you invented.
+- **API type** must match the actual protocol; compatibility with one interface does not imply all interfaces.
+- **Endpoint** is the API base URL, not a chat website.
+- **Model ID** is the name accepted by the server, not an arbitrary display label.
+- **Identifier** distinguishes connections and follows the form's rules; the display name helps you recognize them.
 
-After authentication, use **Sync models** if discovery is supported. Otherwise, choose **Add model manually**. In either case, explicitly enable the models you want to use.
+Use **Sync models** when discovery is supported, or **Add model manually** otherwise. Newly discovered models start disabled; manually added models start enabled. Check the actual switches afterwards. Refreshing public model metadata does not grant account access.
 
-::: details When should I change advanced settings?
-Only when the service needs extra request headers or you deliberately need to override model parameters. Context window, output limits, and input capabilities should match the service. Raising a number does not raise its server-side limit. Get a minimal request working with defaults first, then change one setting at a time.
+::: details Advanced settings
+Change extra headers or parameter overrides only when required. Context, output limits, native inputs, and tool-calling capabilities must match the model and protocol; changing a declaration does not add capabilities. Custom headers are stored as ordinary configuration, not encrypted credentials. Prefer the dedicated authentication field for secrets.
 :::
-
-## Connect a local AI model
-
-If you run a model service on your computer or local network, connect its compatible API to Lexora:
-
-1. Start the service and check that it has loaded a model and exposed its API.
-2. Add a **Custom API** with the protocol, base URL, and credentials it requires. `localhost` means the computer running Lexora; a service on another machine needs an address that Lexora can reach.
-3. Discover or manually add a model, enable it, and send a short message to check the connection.
-
-The local model handles inference; Lexora organizes tasks and tool execution. A local model does not make every action offline: web tools, remote MCP servers, and backups can still use the network.
 
 ## Choose models for tasks and companions
 
-Model selection is associated with companions. Set a default model in a companion's configuration, or select one for that companion in a task. Choosing a DeepSeek, Claude, or ChatGPT avatar does not connect the corresponding provider automatically.
+Set a companion's default model or select its model within a task. An avatar or name does not connect a provider. If no usable default exists, choose one explicitly.
 
-A fast model may suit simple organization. Images, complex material, and tool use need appropriate model capabilities. Check the actual configuration and service documentation rather than relying on the name.
+Chat, transcription, speech synthesis, and image generation are different purposes. A chat model is not necessarily an image generator or speech model; select those capabilities in their own settings. Capability labels do not replace testing an actual request.
+
+## Connect a local AI model
+
+Use a plugin to manage models and engines, or connect a compatible server you run yourself. See [Local models](./local-models) for preparation and limitations.
 
 ## Tool calling mode
 
-Open **Settings → Runtime → Tool calling mode** to choose a mode:
-
-- **Mixed**: call tools directly for simple actions, or use code to batch queries and filter results.
-- **Code orchestration**: ordinary tools must be called through scripts, requiring a model that reliably generates valid code.
-- **Off**: disable code orchestration and call available tools directly.
-
-Mode changes apply from the next run, and all calls follow task permissions. After upgrading, previously enabled configurations use Mixed mode; previously disabled configurations remain off. Select Code orchestration to keep calling ordinary tools exclusively through scripts.
+**Mixed**, **Code orchestration**, and **Off** change how the model calls tools, not its permissions. Configuration has moved to [App settings → Tool calling mode](./app-settings#tool-calling-mode).
 
 ## Inspect usage and resolve connection problems
 
-**Settings → Usage** shows the usage Lexora records, including task and model breakdowns. Your provider's console remains authoritative for billing and quotas.
+**Settings → Usage** covers calls initiated by Lexora; the provider's bill remains authoritative. See [Troubleshooting](./troubleshooting) for missing models, authentication failures, and timeouts.
 
-| Symptom | Check first |
-| --- | --- |
-| No models in the task | Service setup is complete and at least one available model is enabled |
-| Authentication required | Key validity or whether OAuth needs authorization again |
-| Model not found | Exact model ID and your account's access |
-| Connection times out | Server status, endpoint, network, and proxy settings |
-| Text works but images do not | Image support in this model and API protocol |
+## Continue configuring
 
-Once connected, return to [your first task](./quick-start), or read [Companions and collaboration](./companions) to assign different models to different roles.
+- [Images](./images): native vision, independent image reading, generation, and OCR.
+- [Speech](./speech): transcription, read-aloud sources, and testing.
+- [Search and web browsing](./web-browsing): search, direct reading, and browser interaction.
+- [App settings](./app-settings): preferences, usage, proxies, and updates.
+
+<a id="plugins-extend-the-workspace"></a>
+
+## Plugins
+
+For installation, permissions, and management, go to [Plugins: extend the workspace](./plugins). This entry preserves old links without duplicating the plugin guide.

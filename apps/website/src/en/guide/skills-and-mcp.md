@@ -25,11 +25,13 @@ Open **Settings → Skills**:
 4. Preview the discovered Skills. Read their names, descriptions, sources, and files.
 5. Select the entries you need and confirm installation.
 
-Installation copies resource files; it does not execute their scripts at installation time. Installed Skills become available in subsequent runs.
+Installation copies resource files; it does not execute their scripts at installation time. Installed Skills become available in subsequent runs. Review the source and content first: a Skill may guide a companion to call tools, so no script execution during installation does not mean later use is risk-free.
 
 ### Global or space-specific?
 
-Put broadly useful methods in the global scope. Install project-specific methods in a space. A working directory can also supply Skills. For duplicate names, inspect source and override hints to see which version is effective.
+Put broadly useful methods in the global scope and project-specific methods in a space. A working directory can also supply Skills. For duplicate names, the working directory takes precedence over space installations, then global ones. Inspect source and override hints. A disabled or broken higher-priority entry does not automatically fall back to a lower-priority namesake.
+
+App-provided Skills differ from user-installed ones. Plugin-provided Skills are enabled, disabled, updated, and removed with their plugin; do not install a duplicate copy.
 
 ## Use a Skill in a task
 
@@ -47,7 +49,7 @@ Choose **Create Skill**, or describe a recurring process in a task and ask Lexor
 
 ## Add an MCP connection
 
-Get connection instructions from the tool provider, then open **Settings → MCP**.
+Get connection instructions from the tool provider, then open **Settings → MCP**. A local command runs software on your computer; a remote service may receive supplied materials. Verify the source, account permissions, and data scope. Do not copy untrusted commands or put secrets into the conversation.
 
 | Connection | Configuration | Where it runs |
 | --- | --- | --- |
@@ -58,6 +60,8 @@ Get connection instructions from the tool provider, then open **Settings → MCP
 2. Saved connections are disabled by default. Use **Test connection** first. Testing or enabling a local command may ask you to confirm execution.
 3. Inspect the tool list for the capabilities you need.
 4. Enable the connection, return to a task, and try a small, specific request.
+
+Some HTTP services support browser-based OAuth login. A login entry appears only when the connection recognizes that authentication capability; otherwise configure a token or headers as instructed by the provider. A working connection does not imply permission for every account operation.
 
 ::: tip A successful test does not enable a connection
 A disabled connection can be tested and its tool list cached. Tasks can use it only after it is enabled and connected. A cached list does not prove the service is currently reachable.
@@ -82,6 +86,6 @@ Start with the default on-demand discovery. Expand this explanation when you nee
 
 Check connection enablement, exposure mode, the companion's tool selection, and task permissions. Use `/mcp` to inspect the connection and reconnect.
 
-Disabling MCP applies to all tasks, prevents new calls, and retains configuration, credentials, and cached tools. Check whether another task still needs it before disabling.
+Disabling an MCP connection affects all tasks using it, prevents new calls, and retains configuration, credentials, and cached tools. Check whether another task still needs it first. Disabling does not undo completed remote actions; a tool's read-only claim does not replace task permissions or checking its actual operation.
 
 For work that should recur on a schedule, continue with [Automations](./automations).

@@ -21,7 +21,13 @@ check 校验清单、兼容性和包文件；build 生成产物；pack 返回包
 
 ## 独立 SDK
 
-仓库 CLI 的 `export-sdk` 可导出工具与类型快照。已有独立 Lexora Plugin SDK 的作者，在 SDK 目录按其 packageManager 安装依赖后运行：
+在 `apps/buddy` 中导出开发工具与公共类型快照：
+
+```sh
+node extensions/tools.mjs export-sdk /path/to/plugin-sdk/sdk
+```
+
+这会导出 `authoring.mjs`、`plugin.mjs` 与 `index.d.ts`，不是安装一个 npm SDK 包，也不自动生成完整的独立工程。已有独立 Lexora Plugin SDK 的作者，在 SDK 目录按其 packageManager 安装依赖后运行：
 
 ```sh
 pnpm check /path/to/plugin-repository my-plugin
@@ -44,13 +50,13 @@ pnpm dev /path/to/plugin-repository my-plugin
 
 source 包使用宿主固定编译器；compiled 包保留作者已经构建的浏览器模块和资源。运行时需要的 Worker、WASM、样式与静态文件必须随包交付。
 
-当前包预算：单文件 64 MiB、压缩包 128 MiB、展开总计 256 MiB；最多 4096 个文件，非图片最多 512 个，归档条目最多 8192 个。模型权重或其他大型外部数据不应硬塞进插件安装包；是否可加载取决于实际开放的资源能力。
+当前包预算：单文件 64 MiB、压缩包 128 MiB、展开总计 256 MiB；最多 4096 个文件，非图片最多 512 个，归档条目最多 8192 个。模型权重或其他大型外部数据不应硬塞进插件安装包；使用[推理资源](./inference#准备资源)准备并校验。原生入口 `native/*.mjs` 必须预编译，source 构建也只保留这些脚本，不代装 Node 原生依赖。Skills 的独立目录按原路径保留，MCP 声明和 NPC 定义不携带用户凭据。
 
 ## 发布前完成一个完整流程
 
 1. 确认稳定 ID、作者、插件版本、权限与最低宿主版本。
 2. 构建并安装最终包，检查所有实际入口和主要功能。
-3. 验证取消、关闭、禁用、更新及已有数据恢复。
+3. 验证取消、关闭、禁用、更新及已有数据恢复；推理逐平台验证真实引擎，数据视图验证绑定与撤权，MCP/NPC 验证真实依赖和用户配置。
 4. 保存源码、许可证、安装包和对应大小、SHA-256。
 5. 需要进入现有市场时，按 [Lexora Plugins](https://github.com/useLexora/plugins) 的当前发布说明提交。
 

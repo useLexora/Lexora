@@ -16,13 +16,16 @@ Lexora 是在真实桌面实践中自我演化的个人 AI Agent。它不局限�
 | 你想做什么 | 从这里开始 |
 | --- | --- |
 | 安装应用，完成一次小任务 | [第一个任务](./quick-start) |
-| 接入自己的模型或本地服务 | [连接模型](./settings-and-models) |
+| 连接在线服务，或在本机运行模型 | [连接模型](./settings-and-models) · [本地模型](./local-models) |
+| 看图、生成图片、使用语音或查网页 | [图片](./images) · [语音](./speech) · [网页浏览](./web-browsing) |
+| 撰写文稿、整理表格、修改演示文稿或 PDF | [文档处理](./documents) |
 | 补充要求、引用内容、尝试分支 | [任务与对话](./ai-chat) |
 | 整理本地资料，并排查看文件与对话 | [文件与空间](./files-and-spaces) |
 | 让不同伙伴参与，给主角配备 NPC | [伙伴与协作](./companions) |
 | 安装插件，或把自己的想法做成工具 | [使用与制作插件](./plugins) |
 | 接入工作方法、外部工具或定时任务 | [Skills 与 MCP](./skills-and-mcp) · [自动化](./automations) |
-| 选择权限、备份资料、排查问题 | [执行权限](./permissions) · [数据与备份](./data-and-backup) · [常见问题](./troubleshooting) |
+| 调整应用、选择权限、保护资料 | [应用设置](./app-settings) · [执行权限](./permissions) · [数据与备份](./data-and-backup) |
+| 找到失败原因并继续 | [常见问题](./troubleshooting) |
 
 ## 先认识三个概念
 
@@ -48,10 +51,8 @@ Lexora 是在真实桌面实践中自我演化的个人 AI Agent。它不局限�
 
 你需要安装 Lexora，并连接至少一个可用模型。不需要注册 Lexora 账号；模型的额度与费用由你选择的服务商决定。
 
-任务、伙伴和配置保存在本机。使用在线模型时，相关对话和文件上下文会发送给你配置的服务。更多说明见[数据与备份](./data-and-backup)。
+任务、伙伴和配置保存在本机。使用在线模型时，相关对话和文件上下文会发送给你配置的服务；网页、MCP 和插件也可能连接外部服务。使用本地模型不等于整个任务自动离线。更多说明见[数据与备份](./data-and-backup)。
 
-::: details 想了解桌面之下的实现？
-Vue 与 Electron 承载桌面工作台，独立的 TypeScript Runtime 承载本地 Agent。Pi 提供 Agent Loop，Rust 处理原生能力；Lexora 组织任务、上下文、权限与成果。实现细节可以从 [GitHub 源码](https://github.com/useLexora/Lexora)继续了解。
-:::
+能力地图表示可选择的工作流程，不代表安装后全部就绪：模型、工具连接和可选插件需要分别准备。比如 Office 文档编辑由可安装的插件提供，生成图片也需要可用的图像服务。先完成一个小任务，再按需要扩展。
 
 准备好了，就来[完成第一个任务](./quick-start)。

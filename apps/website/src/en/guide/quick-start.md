@@ -41,6 +41,13 @@ Then open Lexora from Applications. This command removes the quarantine attribut
 
 ## 2. Connect a model
 
+Choose how you want to run it:
+
+- **Online model:** use a provider account with an API key or supported OAuth login, then follow the steps below. The provider supplies credits and billing.
+- **Local model:** to run inference on your computer, first prepare a model and runtime using [Local models](./local-models), then return to this exercise. Installing Lexora alone does not download or start a model.
+
+For an online service:
+
 1. Open **Settings → Model services** and choose **Add service**.
 2. Select your provider under **Built-in**. For a compatible endpoint or your own server, use **Custom API**.
 3. Configure an API key, or complete OAuth authorization if the service offers it.
@@ -69,13 +76,13 @@ List what I need to confirm before leaving.
 Do not invent shop names, addresses, or opening hours.
 ```
 
-This request needs neither browsing nor an existing file. Expect a route organized by time of day, plus details to confirm about places, transport, and opening hours. The wording will vary; check whether your requirements survived.
+This request needs neither web search nor an existing file; an online model still needs a network connection. Expect a route organized by time of day, plus details to confirm about places, transport, and opening hours. The wording will vary; check whether your requirements survived.
 
 If the composer says “No models found,” check that both the service and a model are enabled. For authentication or quota errors, see [Troubleshooting](./troubleshooting).
 
 ## 4. Save the result
 
-Continue in the same task:
+You do not need a space yet: a new task already has a managed working directory. To use your own folder, first select it as described in [Files and spaces](./files-and-spaces), then continue in the same task:
 
 ```text
 Save this route as weekend-route.md in the current working directory.
@@ -84,7 +91,7 @@ Keep the “To confirm” section and tell me where the file is saved.
 
 This step writes a file. If the task uses local read-only permissions, switch to a mode that allows changes. Choose manual approval if you want to review operations individually. When an approval appears, check its path and action before allowing it.
 
-Open the resulting file from the output entry or working directory. Check its name, location, route, and outstanding questions.
+Open the resulting file from the output entry or working directory. Check its name, location, route, and outstanding questions. Markdown shown in a reply is not proof that a file exists on disk.
 
 ## 5. Keep improving the same result
 

@@ -41,6 +41,39 @@ The `when` condition uses public page context. Visibility callbacks report wheth
 
 For slots and controls, show/hide changes availability in the current background lifecycle. Store persistent preferences separately. `setActive(false)` yields to the host's default content when the plugin has nothing to display.
 
+## Read-only data and bound scope
+
+Presentation, data sources and authorization are independent. Declare each source needed in the manifest:
+
+```json
+{ "permissions": { "data": ["task.metrics", "context.usage"] } }
+```
+
+`context.data.read({ source, scope: 'bound' })` reads a snapshot; `observe(query, listener)` observes changes. Both use only the scope bound by the host to this instance. They accept no arbitrary `taskId`, `branchId` or `actorId`, and never follow another pane's focus. An unbound page returns `no_target`; mounting in a footer, decoration or slot does not grant access. Backgrounds and Workers have no global data entry point.
+
+| Source | Scope and values |
+| --- | --- |
+| `task.metrics` | Visible branch run tree of the bound task; `turns`, `steps`, input/output and cache tokens, and `throughput` |
+| `context.usage` | Model context for the bound task, branch and actor; `tokens`, `window`, `percent`, not historical token totals |
+
+Statistics share the built-in task panel's source, but that panel defaults to the whole task: compare only equivalent scopes. `throughput.tokensPerSecond` divides valid samples' total output tokens by their total output duration. With no valid samples it is `null` and `samples` is 0. Do not invent missing context or timing facts.
+
+Snapshots are read-only `{ source, status, value }`. Only `ready` has a value. `denied` means missing source permission, `no_target` means no binding, and `unavailable` means temporarily unavailable; all three have null values. Do not show them as zero or retain another task's value. Protocol and transport failures still reject direct-read promises.
+
+```ts
+import type { ViewContext } from './lexora'
+
+export function render(context: ViewContext, container: HTMLElement) {
+  context.data.observe({ source: 'task.metrics', scope: 'bound' }, (snapshot) => {
+    container.textContent = snapshot.status === 'ready'
+      ? `Turns ${snapshot.value.turns} · Steps ${snapshot.value.steps}`
+      : ''
+  })
+}
+```
+
+`observe` asynchronously delivers the initial state, including denied, and keeps observing after no_target. Do not read first and then observe. Its Disposable stops callbacks early; view closure or signal cancellation cleans up subscriptions. Recovery supplies the current snapshot, not every intermediate value. The underlying `data:changed` event does not establish an observation by itself; normally no extra event listener is needed.
+
 ## Editor interactions
 
 `setDocumentInfo({title,dirty})` changes metadata, not file content. Use onBeforeClose to wait for saving, and maintain recovery drafts during editing; see [Files and documents](./files).
@@ -49,4 +82,4 @@ Clipboard read/write requires independent permissions and foreground visibility 
 
 ## Verify the interface
 
-Check independent instances, page switching, theme changes, reopen paths and disabling. Replacement controls also need stale-proposal rejection and a working default fallback on failure.
+Check independent instances, page switching, theme changes, reopen paths and disabling. For data views, also check pane binding, per-source denial, no-target state, recovery and revocation, not just rendered numbers. Replacement controls also need stale-proposal rejection and a working default fallback on failure.
