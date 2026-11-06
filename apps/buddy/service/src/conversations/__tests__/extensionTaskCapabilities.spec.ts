@@ -20,7 +20,7 @@ function fixture() {
   const createdAt = '2026-09-28T00:00:00.000Z'
   tasks.create({ id: 'task', branchId: 'branch', title: 'Original', spaceId: null, approvalPolicy: 'policy', executionProfile: 'workspace_write', createdAt })
   tasks.createMessage({ id: 'input', conversationId: 'task', branchId: 'branch', runId: null, role: 'user', content: 'Initial goal', createdAt })
-  tasks.setModelSelection({ id: 'task', modelSelection: { providerId: 'fixture', modelId: 'fixture', reasoning: null, serviceTier: null }, updatedAt: createdAt })
+  tasks.setModelSelection({ id: 'task', modelSelection: { providerId: 'fixture', modelId: 'fixture', reasoning: null, serviceTier: null } })
   const history = createExtensionTaskContextRepository(database, createConversationHistoryStore(database).lineage)
   const domain = new ExtensionTaskContext(tasks, history, createRunRepository(database), createRunInputRepository(database))
   const metadata = new ConversationMetadataService({ repository: tasks, resolveModelSelection: async value => value, sessions: { invalidateConversation: async () => ({ pending: 0, degraded: 0 }) } })

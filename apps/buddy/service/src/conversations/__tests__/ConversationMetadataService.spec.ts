@@ -61,6 +61,32 @@ describe('conversation metadata ownership', () => {
     expect(f.invalidate).toHaveBeenCalledTimes(2)
   })
 
+  it('persists and publishes model controls without changing task activity or history order', async () => {
+    const f = fixture()
+    const original = f.repository.findById('task-1')!
+    f.repository.create({ id: 'task-2', branchId: 'branch-2', spaceId: null, title: 'Newer', approvalPolicy: 'policy', executionProfile: 'workspace_write', createdAt: '2026-09-29T00:00:00.000Z' })
+    const changes: ConversationMetadataCommit[] = []
+    f.service.onDidCommit(event => changes.push(event))
+    const selection = { providerId: 'fixture', modelId: 'model-1', reasoning: null, serviceTier: null }
+    const selections = [
+      selection,
+      { ...selection, modelId: 'model-2' },
+      { ...selection, modelId: 'model-2', reasoning: 'high' as const },
+      { ...selection, modelId: 'model-2', reasoning: 'high' as const, serviceTier: 'priority' as const },
+      null,
+    ]
+    for (const modelSelection of selections) {
+      await expect(f.service.setModelSelection({ id: original.id, modelSelection })).resolves.toMatchObject({ updatedAt: original.updatedAt, modelSelection })
+      expect(f.members.find(original.id, 'default')).toMatchObject({ modelSelection, modelSelectionSource: modelSelection ? 'explicit' : null })
+      expect(f.service.getModelControls(original.id).next.modelSelection).toEqual(modelSelection)
+      expect(changes.at(-1)).toMatchObject({ kind: 'model', actorId: 'default', conversation: { id: original.id, updatedAt: original.updatedAt, modelSelection } })
+      const history = f.repository.listHistory({ kind: 'ordinary', spaceId: null })
+      expect(history.items.map(item => item.conversation.id)).toEqual(['task-2', 'task-1'])
+      expect(history.items[1]!.conversation.updatedAt).toBe(original.updatedAt)
+    }
+    expect(changes).toHaveLength(selections.length)
+  })
+
   it('rechecks the captured task after model resolution without publishing a no-op', async () => {
     const f = fixture()
     const selection = { providerId: 'provider-1', modelId: 'model-1', reasoning: null, serviceTier: null }
@@ -225,7 +251,7 @@ describe('conversation metadata ownership', () => {
     const selection = { providerId: 'fixture', modelId: 'model-1', reasoning: null, serviceTier: null }
     f.service.addMember({ id: 'task-1', buddyId: other.id })
     f.service.setBuddy({ id: 'task-1', buddyId: other.id })
-    f.members.setModelSelection({ conversationId: 'task-1', actorId: other.id, modelSelection: selection, source: 'legacy', updatedAt: '2026-10-11T10:00:00.000Z' })
+    f.members.setModelSelection({ conversationId: 'task-1', actorId: other.id, modelSelection: selection, source: 'legacy' })
     await f.service.setModelSelection({ id: 'task-1', modelSelection: selection })
     expect(f.members.find('task-1', other.id)?.modelSelectionSource).toBe('explicit')
     const gate = Promise.withResolvers<typeof selection>()

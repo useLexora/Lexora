@@ -22,7 +22,6 @@ export interface SetConversationMemberModelSelectionInput {
   conversationId: string
   actorId: string
   modelSelection: ConversationModelSelection | null
-  updatedAt: string
   source?: 'legacy' | 'explicit'
 }
 
@@ -81,7 +80,6 @@ export function createConversationMemberRepository(database: DatabaseSync) {
         const selection = input.modelSelection === null ? null : buddyComposerDraftModelSelectionSchema.parse(input.modelSelection)
         database.prepare('UPDATE conversation_members SET model_selection_json = ?, model_selection_source = ? WHERE conversation_id = ? AND actor_id = ?')
           .run(selection === null ? null : JSON.stringify(selection), selection === null ? null : input.source ?? 'explicit', input.conversationId, input.actorId)
-        database.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(input.updatedAt, input.conversationId)
         return find(input.conversationId, input.actorId)!
       })
     },

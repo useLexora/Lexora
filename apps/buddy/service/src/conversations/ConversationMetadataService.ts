@@ -232,7 +232,7 @@ export class ConversationMetadataService {
         this.#publish('model', current, actorId)
       return current
     }
-    const conversation = this.#options.repository.setModelSelection({ id, actorId, modelSelection: selection, updatedAt: new Date().toISOString() })
+    const conversation = this.#options.repository.setModelSelection({ id, actorId, modelSelection: selection })
     if (!conversation)
       throw new BuddyServiceError('VALIDATION_FAILED')
     this.#refreshActorModel(id, actorId, selection)

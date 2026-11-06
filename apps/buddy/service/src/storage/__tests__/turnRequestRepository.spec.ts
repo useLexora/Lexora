@@ -244,7 +244,7 @@ describe('turnRequestRepository', () => {
     const original = createComposerDraftRepository(database).findById('draft-1')!
     const selection = { providerId: 'fixture', modelId: 'new-model', reasoning: null, serviceTier: null }
     const captured = createConversationRepository(database).findById('conversation-1')!.modelSelection
-    createConversationRepository(database).setModelSelection({ id: 'conversation-1', modelSelection: selection, updatedAt: '2026-10-11T00:00:00.000Z' })
+    createConversationRepository(database).setModelSelection({ id: 'conversation-1', modelSelection: selection })
     expect(() => repository.prepare({ ...createInput(), expectedActorModelSelection: captured, runId: 'run-2', requestId: 'request-2', requestFingerprint: 'request-2', userMessageId: 'message-2', draft: { draftId: 'draft-1', expectedRevision: original.revision } })).toThrow(expect.objectContaining({ code: 'BUDDY_CONFLICT' }))
     expect(database.prepare('SELECT id FROM runs WHERE id = \'run-2\'').get()).toBeUndefined()
     expect(createComposerDraftRepository(database).findById('draft-1')).toEqual(original)
@@ -575,7 +575,7 @@ describe('turnRequestRepository', () => {
       expectedModelSelection: { modelId: 'replacement-model', providerId: 'replacement-provider', reasoning: 'low' as const, serviceTier: 'priority' as const },
     }
     const conversations = createConversationRepository(database)
-    conversations.setModelSelection({ id: 'conversation-1', modelSelection: regeneration.expectedModelSelection, updatedAt: regeneration.createdAt })
+    conversations.setModelSelection({ id: 'conversation-1', modelSelection: regeneration.expectedModelSelection })
 
     expect(repository.regenerate(regeneration)).toMatchObject({
       branchId: 'branch-2',

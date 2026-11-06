@@ -105,7 +105,7 @@ it('retries the complete accepted definition after configuration, member model a
   f.runs.setModelSelection(original.runId, effectiveModel)
   f.runs.reconcileTerminal(original.runId, 'failed', now, 'RUNTIME_RESTARTED')
   f.buddies.update({ buddyId: actor.id, expectedRevision: actor.revision, settings: { ...buddySettingsSchema.parse(actor.settings), instructions: 'CHANGED_INSTRUCTIONS', tools: { mode: 'all' }, limits: { fileAccess: 'inherit' } } })
-  f.conversations.setModelSelection({ id: 'conversation', actorId: actor.id, modelSelection: { providerId: 'new-provider', modelId: 'new-model', reasoning: null, serviceTier: null }, updatedAt: now })
+  f.conversations.setModelSelection({ id: 'conversation', actorId: actor.id, modelSelection: { providerId: 'new-provider', modelId: 'new-model', reasoning: null, serviceTier: null } })
   f.conversations.addMember({ id: 'conversation', buddyId: 'default', updatedAt: now })
   f.conversations.setBuddy({ id: 'conversation', buddyId: 'default', updatedAt: now })
   f.buddies.setDefault({ buddyId: 'default', expectedCatalogRevision: f.buddies.state().revision })

@@ -65,7 +65,7 @@ function setup(beforeResolve?: () => Promise<void>) {
   }
   function setMemberModel(conversationId: string, actorId: string, selection: InteractiveModelSelection) {
     members.join({ conversationId, actorId, joinedAt: timestamp })
-    members.setModelSelection({ conversationId, actorId, modelSelection: selection, updatedAt: timestamp })
+    members.setModelSelection({ conversationId, actorId, modelSelection: selection })
   }
   async function updateSettings(buddyId: string, changes: Partial<BuddySettings>) {
     const current = buddies.get(buddyId)
