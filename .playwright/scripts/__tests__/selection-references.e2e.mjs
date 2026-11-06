@@ -167,7 +167,7 @@ test('mixed input materials preserve exact draft snapshots, resource bytes and a
         { type: 'quote_ref', quoteKind: 'resource', quoteId: 'file-snapshot' },
         { type: 'quote_ref', quoteKind: 'resource', quoteId: 'file-snapshot' },
       ] }],
-      quotes: [{ id: 'message-snapshot', text: '    Frozen reply 文本\r\nKeep whitespace\n', textOffset: 7, source: { conversationId: 'source-conversation', branchId: 'source-branch', messageId: 'source-message', runId: null, role: 'assistant' } }],
+      quotes: [{ id: 'message-snapshot', text: '    Frozen reply 文本\r\nKeep whitespace\n', textOffset: 7, source: { conversationId: 'source-conversation', branchId: 'source-branch', messageId: 'source-message', runId: null, role: 'assistant', author: { buddyId: 'original-author', name: '原作者' } } }],
       resourceQuotes: [{ id: 'file-snapshot', text: '    Frozen file snapshot\n', range: { startLineNumber: 2, startColumn: 3, endLineNumber: 3, endColumn: 7 }, source: { kind: 'file', title: 'source.md', file: { spaceId: 'source-space', directoryId: 'source-directory', revision: 3, path: 'source.md' }, format: 'source' } }],
     }
     const saved = await api.composerDrafts.save({ draftId, expectedRevision: draft.revision, content, executionConfig: draft.executionConfig, modelSelection: draft.modelSelection })
@@ -190,6 +190,8 @@ test('mixed input materials preserve exact draft snapshots, resource bytes and a
   input = page.locator('.desktop-workbench-area__tasks .tiptap:visible').first()
   await expect(input.locator('[data-type="chat-quote-reference"]')).toHaveCount(3)
   await expect(input.locator('[data-type="chat-resource-reference"]')).toHaveCount(1)
+  await expect(input.locator('[data-type="chat-quote-reference"][data-quote-kind="message"]')).toHaveText('@引用 · 原作者')
+  await expect(page.locator('.desktop-chat-composer-wrap [data-material-key="message_quote:message-snapshot"]')).toContainText('引用 · 原作者')
   await expect(page.locator('.desktop-chat-composer-wrap [data-material-key]')).toHaveCount(3)
   const restored = await page.evaluate(async id => ({
     content: (await window.lexoraDesktop.localChat.composerDrafts.get(id)).content,

@@ -1,12 +1,18 @@
 import type { LocalMessage } from '@buddy-shared/conversation/conversationApi'
+import type { MaybeRefOrGetter } from 'vue'
 // @vitest-environment jsdom
 
 import { DEFAULT_DESKTOP_CHAT_PREFERENCES } from '@buddy-electron/shared/desktopApi'
-import { describe, expect, it } from 'vitest'
-import { createSSRApp, h, shallowRef } from 'vue'
+import { describe, expect, it, vi } from 'vitest'
+import { computed, createSSRApp, h, shallowRef, toValue } from 'vue'
 import { renderToString } from 'vue/server-renderer'
 import { useProvideDesktopUi } from '@/shared/ui/desktopUiContext'
 import BuddyChatMessageContent from '../BuddyChatMessageContent.vue'
+import { provideChatBuddyIdentity } from '../chatBuddyIdentity'
+
+vi.mock('@/modules/buddies', () => ({
+  useBuddyIdentity: (id: MaybeRefOrGetter<string>) => computed(() => toValue(id) === 'actor-1' ? { id: 'actor-1', name: '审查员' } : null),
+}))
 
 describe('buddyChatMessageContent', () => {
   it('renders user messages as literal plain text', async () => {
@@ -31,6 +37,16 @@ describe('buddyChatMessageContent', () => {
     expect(document.body.textContent).toContain('<img src="https://example.com/pixel.png" alt="像素">')
   })
 
+  it.each([
+    ['assistant', 'run-1', { buddyId: 'actor-1', name: '审查员' }],
+    ['assistant', 'unknown-run', undefined],
+    ['user', 'run-1', undefined],
+  ] as const)('attributes quote sources to the original author for %s / %s', async (role, runId, author) => {
+    const document = parseHtml(await renderMessage(role, 'Quoted text', runId))
+    const source = JSON.parse(document.querySelector('[data-quote-source]')!.getAttribute('data-quote-source')!)
+    expect(source).toEqual({ conversationId: 'conversation-1', branchId: 'branch-1', messageId: `${role}-message`, role, runId, ...(author ? { author } : {}) })
+  })
+
   it.each([false, true])('renders inline-only snapshots once above the body and keeps named references readable (independent attachment: %s)', async (panel) => {
     const html = await renderStructuredUserMessage(panel)
     const document = parseHtml(html)
@@ -52,7 +68,7 @@ function parseHtml(html: string): Document {
   return new DOMParser().parseFromString(html, 'text/html')
 }
 
-async function renderMessage(role: LocalMessage['role'], text: string): Promise<string> {
+async function renderMessage(role: LocalMessage['role'], text: string, runId: string | null = null): Promise<string> {
   const message = {
     attachments: [],
     branchId: 'branch-1',
@@ -61,7 +77,7 @@ async function renderMessage(role: LocalMessage['role'], text: string): Promise<
     createdAt: '2026-08-28T00:00:00.000Z',
     id: `${role}-message`,
     role,
-    runId: null,
+    runId,
   } as LocalMessage
 
   return renderContent(message)
@@ -107,6 +123,7 @@ async function renderStructuredUserMessage(panel: boolean): Promise<string> {
 function renderContent(message: LocalMessage) {
   return renderToString(createSSRApp({
     setup() {
+      provideChatBuddyIdentity(() => [{ id: 'run-1', buddyId: 'actor-1' }])
       useProvideDesktopUi({
         userName: shallowRef(''),
         language: shallowRef('zh-CN'),

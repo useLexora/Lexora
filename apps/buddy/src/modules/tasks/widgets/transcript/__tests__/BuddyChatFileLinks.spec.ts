@@ -10,6 +10,7 @@ import BuddyChatNarrationBody from '../BuddyChatNarrationBody.vue'
 import { useProvideChatContent } from '../chatContentContext'
 
 vi.mock('naive-ui', () => vi.importActual('naive-ui/es/index.mjs'))
+vi.mock('@/modules/buddies', () => ({ useBuddyIdentity: () => shallowRef(null) }))
 
 beforeEach(() => {
   vi.stubGlobal('matchMedia', (media: string) => ({

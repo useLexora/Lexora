@@ -2,13 +2,14 @@
 import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import type { BuddyQuoteReference } from '@buddy-shared/conversation/buddyInputMaterial'
 
-import type { BuddyPromptDirective } from '@buddy-shared/conversation/buddyUserContent'
+import type { BuddyMessageQuote, BuddyPromptDirective } from '@buddy-shared/conversation/buddyUserContent'
 import type { LocalMessage } from '@buddy-shared/conversation/conversationApi'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { isRetiredBuddyPromptCommand } from '@buddy-shared/conversation/buddyChatCommands'
 import { resolveBuddyQuoteReference } from '@buddy-shared/conversation/buddyInputMaterial'
 import { buddyPromptDirectiveToText } from '@buddy-shared/conversation/buddyUserContent'
 import { computed, useTemplateRef } from 'vue'
+import { useBuddyIdentity } from '@/modules/buddies'
 import BuddyChatMarkdownContent from '@/shared/ui/markdown/DesktopMarkdownContent.vue'
 import { resolveBuddyAttachmentPreviewUrl } from '../../model/attachments/chatAttachmentView'
 import { getInputMaterialViews, inputMaterialLabel } from '../../model/materials/inputMaterialView'
@@ -16,6 +17,7 @@ import { getChatMessageDisplayText, getChatMessageImageLabels, getChatMessageUse
 import ChatInputMaterialStrip from '../materials/ChatInputMaterialStrip.vue'
 import BuddyChatResourceReference from './BuddyChatResourceReference.vue'
 import BuddyChatUserBubble from './BuddyChatUserBubble.vue'
+import { useChatBuddyId } from './chatBuddyIdentity'
 import { tryUseChatContent } from './chatContentContext'
 
 const props = withDefaults(defineProps<{
@@ -30,6 +32,21 @@ const props = withDefaults(defineProps<{
 })
 
 const chatContent = tryUseChatContent()
+const buddyId = useChatBuddyId(() => props.message.role === 'assistant' ? props.message.runId : null, '')
+const buddy = useBuddyIdentity(buddyId)
+const quoteSource = computed<BuddyMessageQuote['source'] | undefined>(() => {
+  const message = props.message
+  if (message.role !== 'user' && message.role !== 'assistant')
+    return undefined
+  return {
+    conversationId: message.conversationId,
+    branchId: message.branchId,
+    messageId: message.id,
+    runId: message.runId,
+    role: message.role,
+    ...(message.role === 'assistant' && buddy.value ? { author: { buddyId: buddy.value.id, name: buddy.value.name } } : {}),
+  }
+})
 const fileLinkSource = computed(() => props.message.conversationId && props.message.runId
   ? { conversationId: props.message.conversationId, runId: props.message.runId }
   : undefined)
@@ -95,7 +112,7 @@ function handleMarkdownLink(href: string) {
   <div
     class="buddy-chat-message-content grid w-fit max-w-[min(42rem,_92%)] min-w-0 gap-[0.45rem] bg-transparent p-0"
     :class="`is-${message.role}`"
-    :data-quote-source="message.role === 'user' || message.role === 'assistant' ? JSON.stringify({ conversationId: message.conversationId, branchId: message.branchId, messageId: message.id, runId: message.runId, role: message.role }) : undefined"
+    :data-quote-source="quoteSource && JSON.stringify(quoteSource)"
   >
     <ChatInputMaterialStrip ref="materialStrip" :materials="materials" :language="language" expanded :align-end="message.role === 'user'" />
     <BuddyChatUserBubble
