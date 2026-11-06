@@ -34,6 +34,18 @@ Lexora 是在真实桌面实践中自我演化的个人 AI Agent。它不局限�
 <table>
 <tr>
 <td width="50%" valign="top">
+<h3>把模型装进自己的电脑</h3>
+<p>通过本地模型插件搜索、下载和管理模型，按需准备对话、识图、语音与生图能力。</p>
+<a href="apps/website/src/public/landing/screenshots/readme-local-models-zh.webp"><img src="apps/website/src/public/landing/screenshots/readme-local-models-zh.webp" width="640" alt="本地模型发现页：浏览 Hugging Face 模型，按对话、图片、语音和生图用途筛选" /></a>
+</td>
+<td width="50%" valign="top">
+<h3>从本地对话到本地生图</h3>
+<p>Qwen3.5-9B 理解需求、调用工具，Z-Image 在本机生成图片，成果直接在任务旁预览。</p>
+<a href="apps/website/src/public/landing/screenshots/readme-local-image-zh.webp"><img src="apps/website/src/public/landing/screenshots/readme-local-image-zh.webp" width="640" alt="Qwen3.5-9B 调用本地 Z-Image 生成橘白小猫，右侧预览真实生成的插画" /></a>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
 <h3>把资料整理成可用的成果</h3>
 <p>用 Office 插件集中处理文档、表格、演示文稿和 PDF，随时对照任务讨论与已有资料。</p>
 <a href="apps/website/src/public/landing/screenshots/readme-office-zh.webp"><img src="apps/website/src/public/landing/screenshots/readme-office-zh.webp" width="640" alt="左侧案例讨论，右侧 Office 首页与四种格式的最近使用文档" /></a>
@@ -75,7 +87,9 @@ Lexora 是在真实桌面实践中自我演化的个人 AI Agent。它不局限�
 - **空间与任务管理**：按项目或主题组织任务，置顶常用入口，通过搜索找回已有任务。
 - **执行中继续沟通**：工作没结束也能补充要求，选择排队处理，或把消息送入当前执行。
 - **对话分支**：从已有对话尝试不同方向，在分支画布中查看并继续，保留各次尝试。
-- **模型自由选择**：连接自己的模型服务，为不同伙伴和任务选择合适的模型。
+- **模型自由选择**：连接在线服务或使用本地模型，为不同伙伴和任务选择合适的模型。
+- **语音输入与朗读**：用语音说出想法，也可以听伙伴朗读回复。
+- **互动式澄清**：伙伴在需要时提出问题，你可以逐题作答，把要求说清楚再继续。
 - **Skills**：把写作规范、研究流程和项目约定保存为可复用的工作方法。
 - **MCP**：接入本地或远程服务，把已有工具带进任务。
 - **变更与执行记录**：查看工具做过什么、命令返回什么，以及已记录的文件改动。
@@ -101,6 +115,8 @@ Lexora 是在真实桌面实践中自我演化的个人 AI Agent。它不局限�
 
 ## 本地优先
 
+不只是资料留在本地：通过本地模型插件，也可以在自己的电脑上完成对话与生图。模型和引擎需单独准备，具体支持取决于平台、硬件与模型。
+
 Lexora 不会在后台把你的整个项目打包上传到我们的服务器，**不替你“开源”你的代码**。数据存在哪里、请求发给谁，写在这里：
 
 | 数据 | 保存位置或发送目标 |
@@ -108,16 +124,17 @@ Lexora 不会在后台把你的整个项目打包上传到我们的服务器，*
 | 项目文件 | 你的本地目录，直接在本机读写 |
 | 任务记录、伙伴与设置 | 保存在本机，支持备份与恢复 |
 | API Key 与登录凭据 | 使用操作系统提供的加密能力，在本机加密保存 |
-| 模型请求 | 从本机发往你配置的模型服务，不经过 Lexora 云端中转 |
+| 本地模型 | 模型与引擎保存在本机，对应推理在本机完成 |
+| 远程模型请求 | 从本机发往你配置的模型服务，不经过 Lexora 云端中转 |
 | 外部工具调用 | 发往你启用的 MCP 服务或插件获准访问的地址 |
 | 远程备份 | 由你配置并启用，上传到你指定的 WebDAV 或 S3 存储 |
 
-使用远程模型时，对话、引用内容，以及工具读到并放入上下文的代码或文件内容，会发送给对应的模型服务。外部工具也会收到调用所需的数据，具体处理方式取决于你选择的服务。
+使用远程模型时，对话、引用内容，以及工具读到并放入上下文的代码或文件内容，会发送给对应的模型服务。外部工具也会收到调用所需的数据，具体处理方式取决于你选择的服务。本地推理不等于所有操作都离线：联网工具、远程 MCP 和备份仍可能使用网络。
 
 ## 开始使用
 
 1. [下载安装包](https://github.com/useLexora/Lexora/releases/latest)：支持 Windows、Ubuntu / Debian、Fedora、Arch Linux 的 x64 / ARM64，以及 macOS 15+ 的 Apple Silicon。
-2. 在设置中连接模型服务，按服务商要求配置 API Key 或账号授权。
+2. 连接模型服务，或安装本地模型插件，准备并启用适合设备的模型。
 3. 新建任务，给 Lexora 一个目标；需要处理文件时，再选择工作目录。
 
 无需注册 Lexora 账号。Lexora 不内含模型额度，模型服务的使用条件与费用以服务商为准。

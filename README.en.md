@@ -34,6 +34,18 @@ Conversations and execution records stay with the task. Return later and pick up
 <table>
 <tr>
 <td width="50%" valign="top">
+<h3>Bring models onto your own computer.</h3>
+<p>Use the local models plugin to discover, download, and manage models for chat, image understanding, speech, and image generation.</p>
+<a href="apps/website/src/public/landing/screenshots/readme-local-models-en.webp"><img src="apps/website/src/public/landing/screenshots/readme-local-models-en.webp" width="640" alt="Local model discovery in the English app, browsing Hugging Face models; the plugin currently retains its Chinese interface" /></a>
+</td>
+<td width="50%" valign="top">
+<h3>From local chat to local image generation.</h3>
+<p>Qwen3.5-9B understands the request and calls the tool. Z-Image creates the picture locally, ready to preview beside the task.</p>
+<a href="apps/website/src/public/landing/screenshots/readme-local-image-en.webp"><img src="apps/website/src/public/landing/screenshots/readme-local-image-en.webp" width="640" alt="A real English task using Qwen3.5-9B and local Z-Image generation, with the resulting orange-and-white kitten illustration beside the conversation" /></a>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
 <h3>Turn research into useful deliverables.</h3>
 <p>Use the Office plugin for documents, spreadsheets, presentations, and PDFs. Keep the task discussion beside your files.</p>
 <a href="apps/website/src/public/landing/screenshots/readme-office-en.webp"><img src="apps/website/src/public/landing/screenshots/readme-office-en.webp" width="640" alt="Case discussion beside the Office home and recently used files in four formats" /></a>
@@ -75,7 +87,9 @@ Conversations and execution records stay with the task. Return later and pick up
 - **Spaces and tasks**: Organize work by project or topic, pin frequent destinations, and search for existing tasks.
 - **Talk while work continues**: Add instructions during a run, queue them for later, or send them into the current run.
 - **Conversation branches**: Explore different directions from an existing conversation. View and continue each attempt on the branch canvas.
-- **Model choice**: Connect your own model services and choose models for different companions and tasks.
+- **Model choice**: Connect online services or use local models, choosing what fits each companion and task.
+- **Voice input and read-aloud**: Speak your ideas and listen to your companion’s replies.
+- **Interactive clarification**: Companions can ask questions when needed. Answer them one at a time to clarify the task before work continues.
 - **Skills**: Reuse writing guidelines, research workflows, and project conventions across tasks.
 - **MCP**: Bring tools from local or remote services into your work.
 - **Changes and execution records**: Inspect tool activity, command output, and recorded file changes.
@@ -103,6 +117,8 @@ Plugins use host capabilities within declared permissions. Scheduled commands ne
 
 **Lexora open-sources its own code. Yours stays yours.**
 
+Local first goes beyond storing files: the local models plugin can run chat and image generation on your own computer. Models and engines are prepared separately; support depends on your platform, hardware, and chosen models.
+
 Lexora does not bundle your entire project and upload it to our servers in the background. Here is where data stays and where requests go:
 
 | Data | Storage or destination |
@@ -110,16 +126,17 @@ Lexora does not bundle your entire project and upload it to our servers in the b
 | Project files | Read and written in your local directories |
 | Tasks, companions, and settings | Stored on your computer, with backup and restore |
 | API keys and login credentials | Encrypted locally using your operating system’s encryption facilities |
-| Model requests | Sent from your computer to the model endpoint you configure, without a Lexora cloud relay |
+| Local models | Models and engines stay on your computer, with inference running locally |
+| Remote model requests | Sent from your computer to the model endpoint you configure, without a Lexora cloud relay |
 | External tool calls | Sent to MCP services you enable or addresses a plugin is allowed to access |
 | Remote backups | Configured and enabled by you, using your chosen WebDAV or S3 storage |
 
-When you use a remote model, conversations, quoted material, and code or file contents read by tools and included in context are sent to that model service. External tools also receive the data their calls require. The services you choose determine how that data is handled.
+When you use a remote model, conversations, quoted material, and code or file contents read by tools and included in context are sent to that model service. External tools also receive the data their calls require. The services you choose determine how that data is handled. Local inference does not make every operation offline: web tools, remote MCP services, and backups may still use the network.
 
 ## Get started
 
 1. [Download the app](https://github.com/useLexora/Lexora/releases/latest): available for Windows, Ubuntu / Debian, Fedora, and Arch Linux on x64 / ARM64, and macOS 15+ on Apple Silicon.
-2. Connect a model service in settings using its API key or account authorization.
+2. Connect a model service, or install the local models plugin and prepare a model suited to your device.
 3. Start a task and give Lexora a goal. Choose a working directory when you want to work with files.
 
 No Lexora account is required. Model credits are not included; providers have their own terms and charges.
