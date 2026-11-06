@@ -14,13 +14,6 @@ export default defineConfig({
   theme: {
     ...sharedTheme,
     fontFamily: { ...sharedTheme.fontFamily, brand: 'var(--buddy-font-brand)' },
-    borderRadius: {
-      ...sharedTheme.borderRadius,
-      'icon': 'var(--buddy-icon-button-radius)',
-      'menu': 'var(--buddy-menu-radius)',
-      'menu-item': 'var(--buddy-menu-item-radius)',
-      'control': 'var(--buddy-composer-control-radius)',
-    },
     width: {
       'app-sidebar': 'var(--buddy-app-sidebar-width)',
       'workspace-sidebar': 'var(--buddy-workspace-sidebar-width)',

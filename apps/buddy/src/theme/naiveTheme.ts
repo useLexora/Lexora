@@ -1,11 +1,15 @@
 import type { BuddyColorTheme } from '@buddy-shared/theme/buddyTheme'
-import type { ThemeColors } from '@buddy-shared/theme/themeDocument'
+import type { ThemeColors, ThemeDocument } from '@buddy-shared/theme/themeDocument'
 import type { GlobalThemeOverrides } from 'naive-ui'
 
-export function createBuddyNaiveThemeOverrides(theme: BuddyColorTheme, colors: ThemeColors): GlobalThemeOverrides {
+export function createBuddyNaiveThemeOverrides(theme: BuddyColorTheme, colors: ThemeColors, shape?: ThemeDocument['shape']): GlobalThemeOverrides {
   const { accent, state } = theme
+  const radius = shape?.radius
+  const control = radius?.control === undefined ? {} : { borderRadius: `${radius.control}px` }
+  const menu = radius?.menu === undefined ? {} : { borderRadius: `${radius.menu}px` }
   return {
     Button: {
+      ...(radius?.control === undefined ? {} : Object.fromEntries(['Tiny', 'Small', 'Medium', 'Large'].map(size => [`borderRadius${size}`, `${radius.control}px`]))),
       colorHover: state.hover,
       colorPressed: state.pressed,
       colorFocus: state.hover,
@@ -39,12 +43,14 @@ export function createBuddyNaiveThemeOverrides(theme: BuddyColorTheme, colors: T
       borderFocus: `1px solid ${accent.focus}`,
     },
     Input: {
+      ...control,
       caretColor: accent.text,
       borderHover: `1px solid ${accent.borderHover}`,
       borderFocus: `1px solid ${accent.focus}`,
       boxShadowFocus: `0 0 0 2px ${state.selected}`,
     },
     InternalSelection: {
+      ...control,
       caretColor: accent.text,
       borderHover: `1px solid ${accent.borderHover}`,
       borderActive: `1px solid ${accent.focus}`,
@@ -53,6 +59,7 @@ export function createBuddyNaiveThemeOverrides(theme: BuddyColorTheme, colors: T
       boxShadowFocus: `0 0 0 2px ${state.selected}`,
     },
     InternalSelectMenu: {
+      ...menu,
       optionTextColorActive: colors['selected-fg'],
       optionTextColorPressed: colors['pressed-fg'],
       optionCheckColor: accent.text,
@@ -61,6 +68,7 @@ export function createBuddyNaiveThemeOverrides(theme: BuddyColorTheme, colors: T
       optionColorActivePending: state.selectedHover,
     },
     Dropdown: {
+      ...menu,
       optionTextColorHover: colors['hover-fg'],
       optionTextColorActive: colors['selected-fg'],
       optionTextColorChildActive: accent.text,
@@ -132,8 +140,10 @@ export function createBuddyNaiveThemeOverrides(theme: BuddyColorTheme, colors: T
     TimePicker: { itemTextColorActive: accent.text },
     Spin: { color: accent.text, textColor: accent.text },
     Steps: { indicatorTextColorFinish: accent.text },
+    Popover: menu,
     Tooltip: {
       borderRadius: '6px',
+      ...menu,
       boxShadow: theme.shadow.overlay,
       color: theme.surface.raised,
       padding: '7px 10px',

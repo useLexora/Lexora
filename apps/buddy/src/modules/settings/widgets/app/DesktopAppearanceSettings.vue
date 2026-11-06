@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ApplicationSettingsProps } from './typing'
-import { DESKTOP_CHAT_OUTLINE_POSITIONS } from '@buddy-electron/shared/desktopApi'
+import { DESKTOP_CHAT_OUTLINE_POSITIONS, DESKTOP_CHAT_READING_WIDTHS } from '@buddy-electron/shared/desktopApi'
 import { NSelect, useMessage } from 'naive-ui'
 import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
@@ -16,13 +16,17 @@ import DesktopWelcomeSettings from './DesktopWelcomeSettings.vue'
 const props = defineProps<ApplicationSettingsProps>()
 const { t } = useBuddyI18n(() => props.language)
 const message = useMessage()
-const { pending, save } = useSettingMutation<'outlinePosition'>(
+const { pending, save } = useSettingMutation<'outlinePosition' | 'readingWidth'>(
   patch => props.updateSettings(patch),
   () => message.error(t('desktop.settings.saveFailed')),
 )
 const outlinePositionOptions = computed(() => DESKTOP_CHAT_OUTLINE_POSITIONS.map(position => ({
   label: t(`desktop.settings.outlinePosition.${position}`),
   value: position,
+})))
+const readingWidthOptions = computed(() => DESKTOP_CHAT_READING_WIDTHS.map(width => ({
+  label: t(`desktop.settings.readingWidth.${width}`),
+  value: width,
 })))
 </script>
 
@@ -42,6 +46,14 @@ const outlinePositionOptions = computed(() => DESKTOP_CHAT_OUTLINE_POSITIONS.map
         {{ t('desktop.settings.conversationAppearance') }}
       </h2>
       <DesktopSettingsGroup>
+        <DesktopSettingRow v-slot="{ controlAttrs }" :label="t('desktop.settings.readingWidth')" :description="t('desktop.settings.readingWidthDescription')" data-testid="chat-reading-width">
+          <NSelect
+            v-bind="controlAttrs" :options="readingWidthOptions" :value="config.desktop.chat.readingWidth"
+            :loading="pending.has('readingWidth')"
+            :disabled="pending.has('readingWidth')"
+            @update:value="save('readingWidth', { desktop: { chat: { readingWidth: $event } } })"
+          />
+        </DesktopSettingRow>
         <DesktopSettingRow v-slot="{ controlAttrs }" :label="t('desktop.settings.outlinePosition')" :description="t('desktop.settings.outlinePositionDescription')">
           <NSelect
             v-bind="controlAttrs" :options="outlinePositionOptions" :value="config.desktop.chat.outlinePosition"

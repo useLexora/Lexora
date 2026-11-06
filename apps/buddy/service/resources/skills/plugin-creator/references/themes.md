@@ -38,6 +38,42 @@
 
 颜色使用 `#RRGGBB` 或 `#RRGGBBAA`。完整键与范围见 `ThemeDocument` 类型或 `themes.describe()` 返回的 JSON Schema。缺失值由明暗基础主题与已合并的颜色派生；显式 hover、selected、selected-hover、pressed 等值优先。状态颜色、编辑器与语法、终端、正文、侧栏、输入框可以分别配置。`code-header`、`code-border`、`code-line-number` 控制代码块配套，`table-stripe`、`table-hover` 控制表格状态，`canvas-grid` 控制画布网格；省略时沿用已合并的相关颜色。代码区、编辑器与终端的默认底色和前景成对派生，显式设置优先。主题不改变用户字号、行高、分屏尺寸、键盘行为或 Space 标记色。
 
+## 圆角与状态过渡
+
+可选的 `shape` 与 `motion` 只提供主题能力，不增加用户设置项：
+
+```json
+{
+  "schemaVersion": 1,
+  "shape": {
+    "radius": { "micro": 4, "icon": 4, "control": 6, "menu": 8, "menu-item": 4 }
+  },
+  "motion": { "state-duration": 120 }
+}
+```
+
+圆角值为 0–24 的数字，单位 px；0 表示直角，可使用小数。每个字段独立可选，省略时保留原外观，不按原数值自动分档。
+
+| 字段 | 接入范围 |
+| --- | --- |
+| `micro` | 使用微圆角 token 的紧凑状态面、分段控件与消息辅助部件 |
+| `icon` | 使用图标按钮 token 的操作按钮；省略时跟随 `micro` |
+| `control` | 已接入的 Composer 工具栏控件、Naive UI 普通按钮、输入框和选择器 |
+| `menu` | 共用菜单、Naive UI 下拉/选择菜单、Popover 与 Tooltip |
+| `menu-item` | 共用菜单项及 Naive UI 下拉/选择菜单项 |
+
+未声明时，共用 token 的默认值依次为 6px、跟随 micro、8px、6px、3px；Naive UI 控件继续保留自身原默认值。头像、状态点、显式圆形控件及尚未接入的局部圆角不受影响；不承诺调整所有卡片、对话输入框外壳或编辑器内部圆角。
+
+`motion.state-duration` 为 0–400 的数字，单位 ms，仅影响已经使用状态过渡 token 的效果，不控制加载动画、侧栏展开或全部组件库动画。宿主通过 `--buddy-theme-motion-state-duration` 提供主题值，控件消费有效变量 `--buddy-motion-state-duration`；省略时为 100ms，系统减少动态效果时为 0ms。
+
+隔离插件视图获得 `--lexora-radius-micro/icon/control/menu/menu-item`，可使用对应的 `rounded-micro/icon/control/menu/menu-item` 工具类；状态过渡应消费 `--lexora-motion-state-duration`，不要直接使用主题输入变量，以保留系统减少动态效果优先级。主题切换和取消预览会同步恢复这些值，不重建视图。
+
+阅读宽度属于用户的「对话外观」偏好，不是主题字段，主题切换不会修改它。侧栏尺寸、控件高度与字号也不在本接口中。
+
+发布使用新字段的主题时，`engines.lexora` 的下界必须设为实际首次支持这些字段的发布版本，不能沿用本文基础主题示例中的旧下界。新版本继续读取旧主题；旧版本严格校验会拒绝新字段。
+
+## 材质与欢迎内容
+
 图片使用 PNG/JPEG/WebP/SVG 资产名，通过包内文件或 `ThemeArchive.assets` 的受控资源提供；不得使用绝对路径、远端 URL、CSS 或脚本。每个材质锚点最多一层：
 
 | 锚点 | 范围 |

@@ -81,7 +81,7 @@ async function footer(pluginId, uno, context, container) {
   window.fixture = { instance: crypto.randomUUID(), visible: context.visible }
   context.onVisibilityChange(visible => window.fixture.visible = visible)
   if (uno)
-    container.className = 'h-full grid place-items-center bg-accent text-on-accent text-[14px] font-sans'
+    container.className = 'h-full grid place-items-center rounded-control bg-accent text-on-accent text-[14px] font-sans transition-colors duration-[var(--lexora-motion-state-duration)]'
   else
     container.style.cssText = 'height:100%;display:grid;place-items:center;color:var(--lexora-text);font:14px system-ui'
   container.textContent = `${pluginId} content`

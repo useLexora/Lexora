@@ -32,6 +32,7 @@ import { useProvideWorkbenchUi } from '@/shared/ui/contributions/workbenchUiCont
 import { useProvideDesktopUi } from '@/shared/ui/desktopUiContext'
 import { useReferenceTargetPicker } from '@/shared/ui/selection/useReferenceTargetPicker'
 import { workbenchSelectionReferencesKey } from '@/shared/ui/selection/workbenchSelectionReferences'
+import { useDesktopReadingWidth } from '@/theme/desktopReadingWidth'
 import { useDesktopTypography } from '@/theme/desktopTypography'
 import { ThemeMaterialController } from '@/theme/ThemeMaterialController'
 import { useDesktopTheme } from '@/theme/useDesktopTheme'
@@ -68,6 +69,7 @@ const { stores } = appState
 const cloudBackup = useCloudBackupFeedback({ api: api.sync, language: stores.applicationSettings.language, notify: (type, content) => message[type](content) })
 
 useDesktopTypography(() => stores.applicationSettings.config.value?.desktop.typography)
+useDesktopReadingWidth(() => stores.applicationSettings.config.value?.desktop.chat.readingWidth)
 useProvideDesktopUpdates(stores.updates)
 const buddyDirectory = useProvideBuddiesContext({ api: api.localChat.buddies, ready: computed(() => stores.runtimeSupervisor.runtimeState.value.status === 'ready') })
 const taskIndex = useTaskIndex({

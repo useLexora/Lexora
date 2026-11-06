@@ -12,7 +12,7 @@ const [useProvideDesktopTheme, injectDesktopTheme] = createInjectionState(() => 
   const isDark = computed(() => resolved.value.descriptor.appearance === 'dark')
   const theme = computed(() => projectBuddyTheme(resolved.value))
   const variables = computed(() => resolved.value.variables)
-  const overrides = computed(() => createBuddyNaiveThemeOverrides(theme.value, resolved.value.colors))
+  const overrides = computed(() => createBuddyNaiveThemeOverrides(theme.value, resolved.value.colors, resolved.value.document.shape))
   const extensionColors = computed(() => ({
     ...createExtensionThemeColors(variables.value),
     'font-ui': desktopTypography.value.ui,

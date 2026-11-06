@@ -56,7 +56,7 @@
   --buddy-menu-row-height: 32px;
   --buddy-menu-row-gap: 2px;
   --buddy-menu-icon-size: 16px;
-  --buddy-motion-state-duration: 100ms;
+  --buddy-motion-state-duration: var(--buddy-theme-motion-state-duration, 100ms);
   --buddy-motion-state-easing: cubic-bezier(0.2, 0, 0, 1);
   --buddy-chat-final-color: var(--buddy-text-primary);
   --buddy-chat-agent-name-color: color-mix(in srgb, var(--buddy-text-strong) 50%, var(--buddy-text-secondary) 50%);
@@ -139,6 +139,11 @@ input,
 textarea,
 select {
   font: inherit;
+}
+
+.n-dropdown-menu .n-dropdown-option-body::before,
+.n-base-select-menu .n-base-select-option::before {
+  border-radius: var(--buddy-menu-item-radius);
 }
 
 .buddy-icon-button.n-button {

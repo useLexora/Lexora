@@ -18,6 +18,7 @@ import { themePreferenceSchema } from '../../shared/theme/themePreferences'
 import { typographyPreferencesSchema } from '../../shared/typography/typographyPreferences'
 import {
   DESKTOP_CHAT_OUTLINE_POSITIONS,
+  DESKTOP_CHAT_READING_WIDTHS,
   DESKTOP_PROFILE_AVATAR_MAX_DATA_URL_LENGTH,
   DESKTOP_TASK_SIDEBAR_SECTIONS,
 } from './desktopApi'
@@ -96,6 +97,7 @@ export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({
     chat: z.object({
       followUpBehavior: z.enum(['queue', 'steer']).optional(),
       outlinePosition: z.enum(DESKTOP_CHAT_OUTLINE_POSITIONS).optional(),
+      readingWidth: z.enum(DESKTOP_CHAT_READING_WIDTHS).optional(),
       pasteTextAsAttachment: z.boolean().optional(),
       permissionMode: z.enum(BUDDY_PERMISSION_MODES).optional(),
       welcome: z.string().trim().min(1).max(64).optional(),

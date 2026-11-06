@@ -570,6 +570,10 @@ export interface ThemeDocument {
   schemaVersion: 1
   colors?: Partial<Record<ThemeColor, string>>
   shadows?: Partial<Record<'soft' | 'raised' | 'overlay' | 'window' | 'illustration', { x: number, y: number, blur: number, spread?: number, color: string }[]>>
+  /** Optional semantic radii in px, each 0–24. Omitted fields retain host defaults. */
+  shape?: { radius?: Partial<Record<'micro' | 'icon' | 'control' | 'menu' | 'menu-item', number>> }
+  /** State transitions only, in ms (0–400); system reduced-motion takes precedence. */
+  motion?: { 'state-duration'?: number }
   materials?: ThemeMaterial[]
   welcome?: { text?: { 'zh-CN': string, 'en-US': string } | null, image?: string | null }
 }

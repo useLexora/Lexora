@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { extensionPathSchema } from '../extensions/extensionPath.ts'
 import { workbenchRegionSchema } from '../workbench/workbenchRegions.ts'
 import { themeIdSchema } from './themePreferences.ts'
-import { semanticColorTokens } from './themeTokens.ts'
+import { semanticColorTokens, themeRadiusNames } from './themeTokens.ts'
 
 export const themeColorSchema = z.string().regex(/^#[\da-f]{6}(?:[\da-f]{2})?$/i, 'Expected #RRGGBB or #RRGGBBAA')
 export const themeAppearanceSchema = z.enum(['light', 'dark'])
@@ -42,6 +42,8 @@ export const themeDocumentSchema = z.object({
   schemaVersion: z.literal(1),
   colors: z.partialRecord(z.enum(themeColorNames), themeColorSchema).default({}),
   shadows: z.partialRecord(z.enum(['soft', 'raised', 'overlay', 'window', 'illustration']), z.array(shadowSchema).max(4)).default({}),
+  shape: z.object({ radius: z.partialRecord(z.enum(themeRadiusNames), z.number().min(0).max(24)).optional() }).strict().optional(),
+  motion: z.object({ 'state-duration': z.number().min(0).max(400).optional() }).strict().optional(),
   materials: z.array(materialSchema).max(themeAnchorSchema.options.length).default([]),
   welcome: z.object({ text: localizedText.nullable().optional(), image: themeImageSchema.nullable().optional() }).strict().optional(),
 }).strict().superRefine((document, context) => {
