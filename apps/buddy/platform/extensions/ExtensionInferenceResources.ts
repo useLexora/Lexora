@@ -363,7 +363,7 @@ export class ExtensionInferenceResources {
     }
     const after = await handle.stat({ bigint: true })
     signal.throwIfAborted()
-    if (before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || hash.digest('hex') !== expected)
+    if (before.size !== after.size || before.mtimeNs !== after.mtimeNs || hash.digest('hex') !== expected)
       throw new Error('EXTENSION_INFERENCE_CHECKSUM_MISMATCH')
     return position
   }

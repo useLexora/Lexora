@@ -1,7 +1,7 @@
 import type { InferencePrepare, InferenceResourceProgress, InferenceResourceSet } from '../../../shared/extensions/extensionInference'
 import type { InferenceResourceSource } from '../ExtensionInferenceResources'
 import { createHash } from 'node:crypto'
-import { mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { link, mkdir, open, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import process from 'node:process'
 import { deferred } from '@buddy-tests/deferred'
@@ -57,6 +57,50 @@ async function contents(store: ExtensionInferenceResources, resource: InferenceR
     await lease.release()
   }
 }
+
+it.each(['link', 'unlink'] as const)('verifies content while another runtime changes a resource hardlink with %s', async (operation) => {
+  const { root, store, resources, source } = await fixture()
+  const original = join(root, 'shared-model.bin')
+  const mapped = join(root, 'other-runtime-model.bin')
+  await writeFile(original, 'weights')
+  const [grant] = await resources.grant(owner, [original], current)
+  const prepared = await store.prepare(owner, {
+    ...plan(),
+    files: [{ path: 'model.bin', sha256: hash('weights'), source: { resourceId: grant!.id, reference: true } }],
+  }, source, signal(), current)
+  if (operation === 'unlink')
+    await link(original, mapped)
+  const lease = await store.acquire(owner, prepared, {
+    ...source,
+    openReference: async (id) => {
+      const handle = await resources.openReference(owner, id)
+      const read = handle.read.bind(handle)
+      vi.spyOn(handle, 'read').mockImplementationOnce(async (...args: Parameters<typeof read>) => {
+        const result = await read(...args)
+        if (operation === 'link')
+          await link(original, mapped)
+        else
+          await rm(mapped)
+        return result
+      })
+      return handle
+    },
+  }, signal())
+  try {
+    expect(await lease.files[0]!.handle.readFile('utf8')).toBe('weights')
+  }
+  finally {
+    await lease.release()
+  }
+  const writer = await open(original, 'r+')
+  try {
+    await writer.write('changed', 0)
+  }
+  finally {
+    await writer.close()
+  }
+  await expect(store.acquire(owner, prepared, source, signal())).rejects.toThrow('EXTENSION_INFERENCE_RESOURCE_CHANGED')
+})
 
 it.each([-1, 0.5, Number.MAX_SAFE_INTEGER + 1])('rejects invalid file size %s', (size) => {
   expect(inferenceResourceFileSchema.safeParse({ ...plan().files[0], size }).success).toBe(false)

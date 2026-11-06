@@ -132,10 +132,10 @@ it.each(['signal', 'close', 'disable', 'revoke'] as const)('stops resource hashi
     f.service.closeView(view.id, view.generation, view.token)
   else if (ending === 'revoke')
     await f.store.resources.revoke('tests.reader', resource!.id)
-  const disabling = ending === 'disable' ? f.service.enable('tests.reader', false) : undefined
+  if (ending === 'disable')
+    await f.service.enable('tests.reader', false)
   release.resolve()
   await rejected
-  await disabling
   expect((await readFile(path)).length).toBe(4 * 1024 * 1024)
 })
 
