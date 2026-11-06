@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
+import { resolveInferenceEnvironment } from '../../../apps/buddy/shared/extensions/inferencePlatform.ts'
 import { writeError, writeOutput } from '../../shared/cli-output.mjs'
 import { resolveBuddyOutputPaths } from '../release/output-paths.mjs'
 
@@ -65,7 +66,7 @@ export async function prepareStandalonePetSmokeFixture(smokeRoot) {
 }
 
 export async function runDesktopSmoke(executablePath, env, timeoutMs = 30_000, args = []) {
-  const requiresInference = process.platform === 'linux' && process.arch === 'x64'
+  const requiresInference = resolveInferenceEnvironment(process.platform, process.arch).platform !== null
   return new Promise((resolveSmoke, rejectSmoke) => {
     const child = spawnGui(executablePath, {
       ...env,
@@ -96,6 +97,10 @@ export async function runDesktopSmoke(executablePath, env, timeoutMs = 30_000, a
         const inference = stdout.match(/^LEXORA_INFERENCE_SMOKE:passed:(packaged|build)$/m)?.[1]
         if (requiresInference && !inference) {
           rejectSmoke(new Error(`Desktop smoke exited without native inference handshake, I/O and cleanup verification; ${stderr.trim()}`))
+          return
+        }
+        if (requiresInference && env.LEXORA_DESKTOP_SMOKE_EXPECTED_FORMAT && inference !== 'packaged') {
+          rejectSmoke(new Error(`Desktop distribution smoke expected packaged native inference verification, received ${inference}; ${stderr.trim()}`))
           return
         }
         resolveSmoke({ inference: requiresInference ? inference : `unsupported on ${process.platform}-${process.arch}` })
