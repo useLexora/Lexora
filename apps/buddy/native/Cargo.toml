@@ -18,6 +18,12 @@ serde_json = "1"
 thiserror = "2"
 windows-sys = "0.61"
 
+# cap-primitives 4.0.3 strips `\\?\` from `\\?\UNC\server\share` and yields an
+# invalid `UNC\server\share`, which breaks directory listing and creation on
+# \\wsl.localhost. vendor/cap-primitives/README-PATCH.md records the change.
+[patch.crates-io]
+cap-primitives = { path = "vendor/cap-primitives" }
+
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 
