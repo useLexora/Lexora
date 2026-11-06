@@ -27,6 +27,7 @@ export const ChatComposerResourceClipboard = Extension.create<{
 }>({
   name: 'chatComposerResourceClipboard',
   addProseMirrorPlugins() {
+    const editor = this.editor
     const options = this.options
     const editorSessionId = crypto.randomUUID()
     return [new Plugin({
@@ -52,10 +53,24 @@ export const ChatComposerResourceClipboard = Extension.create<{
         },
         handlePaste(view, event) {
           const token = event.clipboardData?.getData(CHAT_COMPOSER_CLIPBOARD_TYPE)
-          if (!copiedSlice || copiedSlice.token !== token || copiedSlice.draftId !== options.draftId() || copiedSlice.editorKey !== options.editorKey() || copiedSlice.editorSessionId !== editorSessionId)
-            return false
+          let slice: Slice
+          if (copiedSlice && copiedSlice.token === token && copiedSlice.draftId === options.draftId() && copiedSlice.editorKey === options.editorKey() && copiedSlice.editorSessionId === editorSessionId) {
+            slice = copiedSlice.slice
+          }
+          else {
+            // Browser address copies can contain an HTML title instead of the URL.
+            // Preserve external text literally; only our own live slice keeps structure.
+            const text = event.clipboardData?.getData('text/plain')
+            if (!text)
+              return false
+            slice = new Slice(plainTextFragment(editor, text), 0, 0)
+          }
           event.preventDefault()
-          view.dispatch(closeHistory(view.state.tr.replaceSelection(copiedSlice.slice)).setMeta(RESOURCE_EDIT_META, true))
+          view.dispatch(closeHistory(view.state.tr.replaceSelection(slice))
+            .setMeta(RESOURCE_EDIT_META, true)
+            .setMeta('paste', true)
+            .setMeta('uiEvent', 'paste')
+            .scrollIntoView())
           return true
         },
       },
