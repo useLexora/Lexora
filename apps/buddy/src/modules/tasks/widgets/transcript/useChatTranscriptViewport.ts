@@ -1,7 +1,7 @@
 import type { ComponentPublicInstance, Ref } from 'vue'
 import type { ChatTranscriptDisplayRow } from '../../model/transcript/chatMessageTime'
 import type { BuddyChatTranscriptViewportHandle, ChatMessageScrollAnchor, ChatMessageScrollMetrics } from './chatMessageViewport'
-import { elementScroll, measureElement, observeElementRect, useVirtualizer } from '@tanstack/vue-virtual'
+import { elementScroll, measureElement, observeElementOffset, observeElementRect, useVirtualizer } from '@tanstack/vue-virtual'
 import { useEventListener } from '@vueuse/core'
 import { computed, nextTick, onBeforeUnmount, shallowRef, watch } from 'vue'
 import { createChatFrameTask } from './chatMessageViewport'
@@ -113,6 +113,12 @@ export function useChatTranscriptViewport(
       width = rect.width
       callback(rect)
     }),
+    observeElementOffset: (instance, callback) => observeElementOffset(instance, (offset, scrolling) => {
+      if (instance.scrollElement?.clientHeight)
+        callback(offset, scrolling)
+      else if (!scrolling && instance.scrollOffset !== null)
+        callback(instance.scrollOffset, false)
+    }),
     measureElement: (element, entry, instance) => {
       const height = measureElement(element, entry, instance)
       if (height || element.offsetParent)
@@ -199,7 +205,7 @@ export function useChatTranscriptViewport(
 
   function readScrollMetrics(): ChatMessageScrollMetrics | null {
     const element = viewport.value
-    return element ? { clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, scrollTop: element.scrollTop } : null
+    return element?.clientHeight ? { clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, scrollTop: element.scrollTop } : null
   }
 
   function captureScrollAnchor(): ChatMessageScrollAnchor | null {

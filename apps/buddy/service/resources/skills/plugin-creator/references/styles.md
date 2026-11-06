@@ -8,6 +8,8 @@ API 3 的 `contributes.iconThemes` 可贡献独立的文件与目录图标主题
 
 源码包可在清单声明 `"styles": { "uno": true }`，编译器提取包内 TS/JS 的完整类名并生成 `lexora-uno.css`，宿主在视图渲染前自动加载。该文件名保留给编译器，源码不要自行创建。不需要安装 UnoCSS，也不执行插件的 UnoCSS 配置或构建脚本。预编译包使用同一编译工具生成并携带该 CSS。使用此能力时，`engines.lexora` 的最低版本须覆盖提供该能力的宿主。
 
+圆角工具类 `rounded-micro`、`rounded-icon`、`rounded-control`、`rounded-menu`、`rounded-menu-item` 分别消费同名 `--lexora-radius-*` 变量，随主题变化。状态过渡可用 `transition-duration: var(--lexora-motion-state-duration)`，系统减少动态效果时为 0ms；这些变量不自动改写插件自己的 CSS 或所有 `rounded-*` 类。
+
 例如 `container.className = 'flex items-center gap-2 rounded-micro bg-accent-surface text-accent-text p-3'`。常用语义类包括 `bg-surface`、`bg-raised`、`text-fg`、`text-muted`、`border-border`、`bg-accent`、`text-on-accent`、`hover:bg-accent-hover`、`text-danger`、`font-sans` 和 `font-mono`。普通交互背景使用 `hover:bg-hover`、`active:bg-pressed`，选中及选中后悬浮使用 `bg-selected`、`hover:bg-selected-hover`；实色按钮使用 `bg-accent hover:bg-accent-hover active:bg-accent-pressed text-on-accent`，强调文字使用 `text-accent-text`。这些颜色会一起响应主题切换；警告、错误和中性底色保留各自语义。动态状态使用完整类名映射；无法静态提取的完整类名放在 `styles.safelist` 数组，不拼接 `bg-${color}`。
 
 颜色来自 `context.environment`，跟随当前主题实时更新，无需重建视图。原有 `--lexora-background`、`--lexora-text`、`--lexora-muted`、`--lexora-border`、`--lexora-accent`、`--lexora-accent-solid` 保持可用；其中 `accent` 是强调文字色，`bg-accent` 使用 `accent-solid`。更多语义变量与工具类同名，如 `--lexora-accent-surface`、`--lexora-focus`。Canvas 等绘制逻辑可通过 `context.onEnvironmentChange` 响应变化。

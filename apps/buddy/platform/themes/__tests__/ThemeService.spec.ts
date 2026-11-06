@@ -12,7 +12,7 @@ import { ExtensionPackageStore } from '../../extensions/ExtensionPackageStore'
 import { bundledThemeFiles, seedBundledThemes } from '../bundledThemes'
 import { ThemeService } from '../ThemeService'
 
-const archive: ThemeArchiveInput = { schemaVersion: 1, label: 'Ocean', appearance: 'light', document: { schemaVersion: 1, colors: { accent: '#207cba' } } }
+const archive: ThemeArchiveInput = { schemaVersion: 1, label: 'Ocean', appearance: 'light', document: { schemaVersion: 1, colors: { accent: '#207cba' }, shape: { radius: { control: 0, menu: 12 } }, motion: { 'state-duration': 250 } } }
 
 async function fixture() {
   const home = await createTemporaryDirectory('lexora-themes-')
@@ -315,11 +315,15 @@ describe('theme data and lifecycle', () => {
     expect(restored.snapshot.preview).toBe(false)
     expect(restored.snapshot.active.descriptor.id).toBe(saved.id)
     expect(restored.snapshot.active.descriptor.label).toBe('Ocean')
+    expect(restored.snapshot.active.document).toMatchObject(archive.document)
+    expect(restored.snapshot.active.variables).toMatchObject({ '--buddy-composer-control-radius': '0px', '--buddy-menu-radius': '12px', '--buddy-theme-motion-state-duration': '250ms' })
     await expect(restored.request('editor', { action: 'save', id: 'lexora.themes.classic-light', archive })).rejects.toThrow('READONLY')
     const exported = await restored.request('editor', { action: 'export', id: saved.id }) as string
     const imported = await restored.request('editor', { action: 'import', content: exported }) as ThemeDescriptor
     expect(imported.id).not.toBe(saved.id)
     expect(imported.swatch).toBe(saved.swatch)
+    expect(JSON.parse(exported).document).toMatchObject(archive.document)
+    expect(await restored.request('editor', { action: 'get', id: imported.id })).toMatchObject({ document: archive.document })
     await restored.request('editor', { action: 'remove', id: saved.id })
     expect(restored.snapshot.unavailable).toBe(saved.id)
     await restored.dispose()

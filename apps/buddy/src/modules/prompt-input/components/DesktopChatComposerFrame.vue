@@ -85,7 +85,7 @@ withDefaults(defineProps<{
 
 :deep(.desktop-chat-composer__editor-scrollbar) {
   --editor-height-limit: max(calc(1lh + var(--desktop-chat-composer-editor-padding-top) + var(--desktop-chat-composer-editor-padding-bottom)), var(--desktop-chat-composer-editor-max-height, 100vh));
-  min-height: min(calc(2lh + var(--desktop-chat-composer-editor-padding-top) + var(--desktop-chat-composer-editor-padding-bottom)), var(--editor-height-limit));
+  min-height: min(calc(3lh + var(--desktop-chat-composer-editor-padding-top) + var(--desktop-chat-composer-editor-padding-bottom)), var(--editor-height-limit));
   max-height: min(calc(8lh + var(--desktop-chat-composer-editor-padding-top) + var(--desktop-chat-composer-editor-padding-bottom)), var(--editor-height-limit));
   font-family: var(--buddy-font-body);
   font-size: var(--buddy-chat-user-font-size);
@@ -93,7 +93,7 @@ withDefaults(defineProps<{
 }
 
 :deep(.desktop-chat-composer__prosemirror) {
-  min-height: calc(2lh + var(--desktop-chat-composer-editor-padding-top) + var(--desktop-chat-composer-editor-padding-bottom));
+  min-height: calc(3lh + var(--desktop-chat-composer-editor-padding-top) + var(--desktop-chat-composer-editor-padding-bottom));
   border: 0;
   outline: 0;
   color: var(--buddy-composer-fg);

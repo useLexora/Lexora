@@ -118,6 +118,16 @@ export const semanticColorTokens = {
   'data-blue': '--buddy-data-blue',
 } as const
 
+export const themeRadiusTokens = {
+  'micro': { variable: '--buddy-radius-micro', fallback: '6px' },
+  'icon': { variable: '--buddy-icon-button-radius', fallback: '6px' },
+  'control': { variable: '--buddy-composer-control-radius', fallback: '8px' },
+  'menu': { variable: '--buddy-menu-radius', fallback: '6px' },
+  'menu-item': { variable: '--buddy-menu-item-radius', fallback: '3px' },
+} as const
+
+export const themeRadiusNames = Object.keys(themeRadiusTokens) as Array<keyof typeof themeRadiusTokens>
+
 export const themeFonts = {
   ui: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", "Noto Sans", sans-serif',
   mono: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
@@ -133,7 +143,7 @@ export function createUnoTheme(namespace: 'buddy' | 'lexora'): PresetWind3Theme 
       sans: `var(--${namespace}-font-ui)`,
       mono: `var(--${namespace}-font-mono)`,
     },
-    borderRadius: { micro: `var(--${namespace}-radius-micro)` },
+    borderRadius: Object.fromEntries(themeRadiusNames.map(name => [name, `var(${namespace === 'buddy' ? themeRadiusTokens[name].variable : `--lexora-radius-${name}`})`])),
   }
 }
 
@@ -146,6 +156,10 @@ export function createExtensionThemeColors(variables: Record<string, string>): R
     'accent-solid': variables['--buddy-accent-solid']!,
     'font-ui': themeFonts.ui,
     'font-mono': themeFonts.mono,
-    'radius-micro': '6px',
+    ...Object.fromEntries(themeRadiusNames.map(name => [
+      `radius-${name}`,
+      variables[themeRadiusTokens[name].variable] ?? (name === 'icon' ? variables[themeRadiusTokens.micro.variable] : undefined) ?? themeRadiusTokens[name].fallback,
+    ])),
+    'theme-motion-state-duration': variables['--buddy-theme-motion-state-duration'] ?? '100ms',
   }
 }

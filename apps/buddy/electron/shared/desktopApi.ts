@@ -165,9 +165,13 @@ export const DESKTOP_CHAT_OUTLINE_POSITIONS = [
 
 export type DesktopChatOutlinePosition = typeof DESKTOP_CHAT_OUTLINE_POSITIONS[number]
 
+export const DESKTOP_CHAT_READING_WIDTHS = ['narrow', 'standard', 'wide'] as const
+export type DesktopChatReadingWidth = typeof DESKTOP_CHAT_READING_WIDTHS[number]
+
 export interface DesktopChatPreferences {
   followUpBehavior: 'queue' | 'steer'
   outlinePosition: DesktopChatOutlinePosition
+  readingWidth: DesktopChatReadingWidth
   pasteTextAsAttachment: boolean
   permissionMode: import('../../shared/permissions/permissionMode').BuddyPermissionMode
   welcome: DesktopChatWelcomePreference
@@ -182,6 +186,7 @@ export interface DesktopChatPreferences {
 export const DEFAULT_DESKTOP_CHAT_PREFERENCES: Readonly<DesktopChatPreferences> = {
   followUpBehavior: 'steer',
   outlinePosition: 'top-right',
+  readingWidth: 'standard',
   pasteTextAsAttachment: true,
   permissionMode: BUDDY_DEFAULT_PERMISSION_MODE,
   welcome: 'random',

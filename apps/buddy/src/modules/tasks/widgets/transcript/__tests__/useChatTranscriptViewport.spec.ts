@@ -129,7 +129,7 @@ async function mountViewport() {
   host.append(mountPoint, scrollport)
   document.body.append(host)
   Object.defineProperties(scrollport, {
-    clientHeight: { get: () => 200 },
+    clientHeight: { configurable: true, get: () => 200 },
     scrollHeight: { get: () => 24 + 10 * geometry.rowHeight + 16 },
   })
   scrollport.scrollTop = 234
@@ -180,6 +180,16 @@ async function mountViewport() {
     },
   }
 }
+
+it('does not interpret a hidden viewport as a measured empty transcript', async () => {
+  const fixture = await mountViewport()
+  const measured = fixture.handle.readScrollMetrics()
+  Object.defineProperty(fixture.scrollport, 'clientHeight', { configurable: true, value: 0 })
+  expect(fixture.handle.readScrollMetrics()).toBeNull()
+  expect(fixture.handle.captureScrollAnchor()).toBeNull()
+  Object.defineProperty(fixture.scrollport, 'clientHeight', { configurable: true, value: 200 })
+  expect(fixture.handle.readScrollMetrics()).toEqual(measured)
+})
 
 type Navigation = 'message' | 'tail' | 'restore'
 const expectedTargets = {

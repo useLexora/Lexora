@@ -29,7 +29,7 @@ import { speechPreferencesSchema } from '../../../shared/speech/speechApi'
 import { DEFAULT_LOCAL_BACKUP_LIMIT, localBackupLimitSchema } from '../../../shared/storage/backupRetention'
 import { DESKTOP_ACCENT_COLORS, legacyThemePreferenceSchema, migrateThemePreference, themePreferenceSchema } from '../../../shared/theme/themePreferences'
 import { DEFAULT_TYPOGRAPHY, typographyPreferencesSchema } from '../../../shared/typography/typographyPreferences'
-import { DEFAULT_DESKTOP_CHAT_PREFERENCES, DEFAULT_DESKTOP_CHAT_WELCOME_ITEMS, DESKTOP_CHAT_OUTLINE_POSITIONS, DESKTOP_PROFILE_AVATAR_MAX_DATA_URL_LENGTH, DESKTOP_TASK_SIDEBAR_SECTIONS } from '../../shared/desktopApi'
+import { DEFAULT_DESKTOP_CHAT_PREFERENCES, DEFAULT_DESKTOP_CHAT_WELCOME_ITEMS, DESKTOP_CHAT_OUTLINE_POSITIONS, DESKTOP_CHAT_READING_WIDTHS, DESKTOP_PROFILE_AVATAR_MAX_DATA_URL_LENGTH, DESKTOP_TASK_SIDEBAR_SECTIONS } from '../../shared/desktopApi'
 
 import { desktopChatWelcomeItemsSchema } from '../../shared/desktopApiSchemas'
 import { isPresetWelcomeId, normalizeDesktopChatWelcomePreference } from '../../shared/desktopChatWelcome'
@@ -88,6 +88,7 @@ const desktopConfigSchema = z.object({
   chat: z.object({
     follow_up_behavior: z.enum(['queue', 'steer']).default(DEFAULT_DESKTOP_CHAT_PREFERENCES.followUpBehavior),
     outline_position: z.enum(DESKTOP_CHAT_OUTLINE_POSITIONS).default(DEFAULT_DESKTOP_CHAT_PREFERENCES.outlinePosition),
+    reading_width: z.enum(DESKTOP_CHAT_READING_WIDTHS).default(DEFAULT_DESKTOP_CHAT_PREFERENCES.readingWidth),
     paste_text_as_attachment: z.boolean().default(DEFAULT_DESKTOP_CHAT_PREFERENCES.pasteTextAsAttachment),
     permission_mode: z.enum(BUDDY_PERMISSION_MODES).default(DEFAULT_DESKTOP_CHAT_PREFERENCES.permissionMode),
     welcome: z.string().max(64).default(DEFAULT_DESKTOP_CHAT_PREFERENCES.welcome).transform(val => val === 'orchestrating' ? 'writing' : val),
@@ -142,6 +143,7 @@ const desktopConfigSchema = z.object({
   chat: {
     follow_up_behavior: DEFAULT_DESKTOP_CHAT_PREFERENCES.followUpBehavior,
     outline_position: DEFAULT_DESKTOP_CHAT_PREFERENCES.outlinePosition,
+    reading_width: DEFAULT_DESKTOP_CHAT_PREFERENCES.readingWidth,
     paste_text_as_attachment: DEFAULT_DESKTOP_CHAT_PREFERENCES.pasteTextAsAttachment,
     permission_mode: DEFAULT_DESKTOP_CHAT_PREFERENCES.permissionMode,
     welcome: DEFAULT_DESKTOP_CHAT_PREFERENCES.welcome,
@@ -437,6 +439,7 @@ function decodeConfig(value: unknown): LexoraConfig {
       pluginAuthor: config.desktop.plugin_author,
       chat: {
         outlinePosition: config.desktop.chat.outline_position,
+        readingWidth: config.desktop.chat.reading_width,
         pasteTextAsAttachment: config.desktop.chat.paste_text_as_attachment,
         followUpBehavior: config.desktop.chat.follow_up_behavior,
         permissionMode: config.desktop.chat.permission_mode,
@@ -518,6 +521,7 @@ function encodeConfig(config: LexoraConfig) {
       plugin_author: config.desktop.pluginAuthor,
       chat: {
         outline_position: config.desktop.chat.outlinePosition,
+        reading_width: config.desktop.chat.readingWidth,
         paste_text_as_attachment: config.desktop.chat.pasteTextAsAttachment,
         follow_up_behavior: config.desktop.chat.followUpBehavior,
         permission_mode: config.desktop.chat.permissionMode,
@@ -615,6 +619,7 @@ function mergeConfig(current: LexoraConfig, patch: LexoraConfigPatch): LexoraCon
         welcomeCompanionImages: normalizeWelcomeCompanionImages(welcomeCompanionImages, welcomeCompanionImage),
         welcome: normalizeDesktopChatWelcomePreference(patch.desktop?.chat?.welcome ?? current.desktop.chat.welcome, welcomeItems),
         followUpBehavior: z.enum(['queue', 'steer']).parse(patch.desktop?.chat?.followUpBehavior ?? current.desktop.chat.followUpBehavior),
+        readingWidth: z.enum(DESKTOP_CHAT_READING_WIDTHS).parse(patch.desktop?.chat?.readingWidth ?? current.desktop.chat.readingWidth),
         permissionMode: z.enum(BUDDY_PERMISSION_MODES).parse(
           patch.desktop?.chat?.permissionMode ?? current.desktop.chat.permissionMode,
         ),

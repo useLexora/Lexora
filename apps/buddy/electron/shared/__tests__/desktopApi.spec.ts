@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DESKTOP_NAVIGATION_LAYOUTS, DESKTOP_PROFILE_AVATAR_MAX_DATA_URL_LENGTH } from '../desktopApi'
+import { DESKTOP_CHAT_READING_WIDTHS, DESKTOP_NAVIGATION_LAYOUTS, DESKTOP_PROFILE_AVATAR_MAX_DATA_URL_LENGTH } from '../desktopApi'
 import { feedbackIssueInputSchema, lexoraConfigPatchSchema, releasePageInputSchema } from '../desktopApiSchemas'
 
 describe('desktop Preload API contract', () => {
@@ -23,6 +23,15 @@ describe('desktop Preload API contract', () => {
     expect(() => parse([{ kind: 'custom', id: 'a', text: ' ' }])).toThrow()
     expect(() => parse([{ kind: 'preset', id: 'writing' }, { kind: 'preset', id: 'writing' }])).toThrow()
     expect(() => parse([{ kind: 'custom', id: 'a', text: 'x'.repeat(201) }])).toThrow()
+  })
+
+  it('accepts reading width presets and rejects arbitrary dimensions at the bridge', () => {
+    for (const readingWidth of DESKTOP_CHAT_READING_WIDTHS) {
+      const patch = { desktop: { chat: { readingWidth } } }
+      expect(lexoraConfigPatchSchema.parse(patch)).toEqual(patch)
+    }
+    for (const readingWidth of ['50rem', 'full', '', null, 800, true])
+      expect(() => lexoraConfigPatchSchema.parse({ desktop: { chat: { readingWidth } } })).toThrow()
   })
 
   it('rejects unknown outline positions before updating the application configuration', () => {

@@ -7,6 +7,7 @@ import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { parse } from 'smol-toml'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_TYPOGRAPHY } from '../../../../shared/typography/typographyPreferences'
+import { DESKTOP_CHAT_READING_WIDTHS } from '../../../shared/desktopApi'
 import { LexoraConfigStore } from '../LexoraConfigStore'
 
 const welcomePng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO/aU1cAAAAASUVORK5CYII='
@@ -23,6 +24,36 @@ async function createConfigStore(content?: string) {
 }
 
 describe('lexoraConfigStore', () => {
+  it.each(['', '[desktop]\nlanguage="en-US"\n', '[desktop.chat]\noutline_position="bottom-left"\n'])('defaults missing reading width without rewriting existing configuration: %s', async (content) => {
+    const { store, configPath } = await createConfigStore(content)
+    expect((await store.read()).desktop.chat.readingWidth).toBe('standard')
+    expect(await readFile(configPath, 'utf8')).toBe(content)
+  })
+
+  it.each(DESKTOP_CHAT_READING_WIDTHS)('persists %s reading width independently of theme and other conversation preferences', async (readingWidth) => {
+    const { store, configPath } = await createConfigStore('[desktop.chat]\noutline_position="bottom-left"\nwelcome="none"\nfuture=true\n')
+    await store.update({ desktop: { chat: { readingWidth } } })
+    await store.update({ desktop: { theme: { id: 'lexora.themes.classic-dark' }, chat: { welcomeGreetingEnabled: false } } })
+    await store.update({ desktop: { theme: { id: 'system' } } })
+    expect((await new LexoraConfigStore({ configPath }).read()).desktop.chat).toMatchObject({
+      readingWidth,
+      outlinePosition: 'bottom-left',
+      welcome: 'none',
+      welcomeGreetingEnabled: false,
+    })
+    expect(parse(await readFile(configPath, 'utf8'))).toMatchObject({
+      desktop: { chat: { reading_width: readingWidth, future: true } },
+    })
+  })
+
+  it('rejects invalid reading widths without changing saved preferences', async () => {
+    const { store, configPath } = await createConfigStore('[desktop.chat]\nreading_width="wide"\n')
+    const before = await readFile(configPath, 'utf8')
+    await expect(store.update({ desktop: { chat: { readingWidth: '50rem' } } } as unknown as LexoraConfigPatch)).rejects.toThrow()
+    expect(await readFile(configPath, 'utf8')).toBe(before)
+    expect((await store.read()).desktop.chat.readingWidth).toBe('wide')
+  })
+
   it('defaults existing installations to stable and preserves explicit Beta choice across writes and restarts', async () => {
     const content = '[desktop]\nauto_download_updates=false\nfuture=true\n'
     const { store, configPath } = await createConfigStore(content)
