@@ -66,7 +66,6 @@ export function useExecutionCanvas(container: Readonly<Ref<HTMLElement | null>>,
   }
 
   function sync() {
-    frame = 0
     const value = graph.value
     if (!value)
       return
@@ -123,16 +122,20 @@ export function useExecutionCanvas(container: Readonly<Ref<HTMLElement | null>>,
   }
 
   function updateVisibility() {
+    frame = 0
     const element = surface.value
     if (!nearby.value || !container.value || !element?.clientWidth || !element.clientHeight) {
       release()
       return
     }
     if (graph.value) {
+      sync()
       if (graph.value.options.width !== element.clientWidth || graph.value.options.height !== element.clientHeight) {
         graph.value.resize(element.clientWidth, element.clientHeight)
         place(true)
       }
+      if (pendingFocus)
+        focus(pendingFocus)
       return
     }
     const value = new Graph({
@@ -179,13 +182,14 @@ export function useExecutionCanvas(container: Readonly<Ref<HTMLElement | null>>,
       focus(pendingFocus)
   }
 
+  function schedule() {
+    if (!frame)
+      frame = requestAnimationFrame(updateVisibility)
+  }
+
   useIntersectionObserver(surface, ([entry]) => nearby.value = entry?.isIntersecting ?? false, { rootMargin: '240px' })
-  useResizeObserver(surface, updateVisibility)
-  watch(nearby, updateVisibility, { flush: 'post' })
-  watch(geometry, () => {
-    if (graph.value && !frame)
-      frame = requestAnimationFrame(sync)
-  }, { flush: 'post' })
+  useResizeObserver(surface, schedule)
+  watch([nearby, geometry], schedule, { flush: 'post' })
   onBeforeUnmount(release)
 
   return {
@@ -196,7 +200,7 @@ export function useExecutionCanvas(container: Readonly<Ref<HTMLElement | null>>,
     arrange: () => {
       manualPositions.clear()
       cancelAnimationFrame(frame)
-      sync()
+      updateVisibility()
       place(false)
     },
     zoomBy: (amount: number) => graph.value?.zoom(amount),
