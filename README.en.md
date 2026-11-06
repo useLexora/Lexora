@@ -16,7 +16,7 @@ Lexora is a personal AI agent that evolves through hands-on work on your desktop
 </p>
 
 <p align="center">
-  <a href="https://github.com/useLexora/Lexora/releases/latest">Download Lexora</a> · <a href="https://uselexora.app/en/">Website</a> · <a href="https://uselexora.app/en/guide/quick-start">Guide</a>
+  <a href="https://github.com/useLexora/Lexora/releases/latest">Download Lexora</a> · <a href="https://uselexora.app/en/">Website</a> · <a href="https://uselexora.app/en/guide/quick-start">Guide</a> · <a href="https://space.bilibili.com/35758871/lists/9170785">Bilibili</a> · <a href="https://www.youtube.com/@shanyuhai-m3j">YouTube</a>
 </p>
 
 <p align="center"><a href="./README.md">中文</a> · <strong>English</strong></p>

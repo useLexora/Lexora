@@ -16,7 +16,7 @@ Lexora 是在真实桌面实践中自我演化的个人 AI Agent。它不局限�
 </p>
 
 <p align="center">
-  <a href="https://github.com/useLexora/Lexora/releases/latest">下载 Lexora</a> · <a href="https://uselexora.app/">官网</a> · <a href="https://uselexora.app/guide/quick-start">使用指南</a>
+  <a href="https://github.com/useLexora/Lexora/releases/latest">下载 Lexora</a> · <a href="https://uselexora.app/">官网</a> · <a href="https://uselexora.app/guide/quick-start">使用指南</a> · <a href="https://space.bilibili.com/35758871/lists/9170785">Bilibili</a> · <a href="https://www.youtube.com/@shanyuhai-m3j">YouTube</a>
 </p>
 
 <p align="center"><strong>中文</strong> · <a href="./README.en.md">English</a></p>
@@ -138,6 +138,14 @@ pnpm dev
 ### 参与贡献
 
 发现问题，欢迎[提个 Issue](https://github.com/useLexora/Lexora/issues)。若你已经动手实现了自己的想法，欢迎按[贡献说明](CONTRIBUTING.md)提交 PR，和大家分享你的方案。
+
+### 交流反馈
+
+也欢迎加入 **Lexora 微信交流群**参与讨论，交流使用体验、反馈，或聊聊你的新想法。
+
+<p>
+  <a href="apps/website/src/public/community/wechat-group.png"><img src="apps/website/src/public/community/wechat-group.png" width="320" alt="Lexora 微信交流群二维码，有效期见图片" /></a>
+</p>
 
 ## 许可证
 
