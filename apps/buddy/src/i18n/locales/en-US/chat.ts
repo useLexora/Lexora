@@ -128,6 +128,7 @@ export default {
   'desktop.chat.addAttachment': 'Add attachment',
   'desktop.chat.addLocalFile': 'Add from device',
   'desktop.chat.quoteSelection': 'Quote',
+  'desktop.chat.quoteFromActor': 'Quote · {name}',
   'desktop.chat.quoteFromAssistant': 'Quote · Companion’s answer',
   'desktop.chat.quoteFromUser': 'Quote · Your message',
   'desktop.chat.removeQuote': 'Remove quote',

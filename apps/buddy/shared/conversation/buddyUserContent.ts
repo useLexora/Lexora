@@ -42,6 +42,10 @@ export const buddyMessageQuoteSchema = z.object({
     messageId: buddyResourceIdSchema,
     role: z.enum(['user', 'assistant']),
     runId: buddyResourceIdSchema.nullable(),
+    author: z.object({
+      buddyId: idSchema,
+      name: z.string().trim().min(1).max(80),
+    }).strict().readonly().optional().describe('引用时的原消息作者，仅用于来源展示，不参与输入路由'),
   }).strict().readonly(),
 }).strict().readonly()
 

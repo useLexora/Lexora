@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
+import type { BuddyMessageQuote } from '@buddy-shared/conversation/buddyUserContent'
 import { afterEach, describe, expect, it } from 'vitest'
+import { inputMaterialLabel } from '../../../model/materials/inputMaterialView'
 import { readChatQuoteSelection } from '../chatQuoteSelection'
 
 const root = document.createElement('div')
@@ -9,10 +11,10 @@ afterEach(() => {
   root.remove()
 })
 
-function message(text: string) {
+function message(text: string, author?: BuddyMessageQuote['source']['author']) {
   document.body.append(root)
   const host = document.createElement('div')
-  host.dataset.quoteSource = JSON.stringify({ conversationId: 'conversation-1', branchId: 'branch-1', messageId: 'message-1', role: 'assistant', runId: 'run-1' })
+  host.dataset.quoteSource = JSON.stringify({ conversationId: 'conversation-1', branchId: 'branch-1', messageId: 'message-1', role: 'assistant', runId: 'run-1', author })
   const body = document.createElement('pre')
   body.className = 'buddy-chat-message-content__text'
   body.textContent = text
@@ -39,6 +41,18 @@ describe('chat quote selection', () => {
     body.textContent = 'streamed replacement'
     expect(result.quote.text).toBe('    enabled: true\n\n')
     expect(result.quote.source.messageId).toBe('message-1')
+  })
+
+  it.each([{ buddyId: 'default', name: 'Lexora' }, { buddyId: 'reviewer', name: '审查员' }])('preserves the selected author and shares their label across quote surfaces: $name', (author) => {
+    const body = message('Original reply', author)
+    const { quote } = readChatQuoteSelection(root, select(body.firstChild!))!
+    body.parentElement!.dataset.quoteSource = '{}'
+    expect(quote.source.author).toEqual(author)
+    const material = { kind: 'message_quote' as const, id: quote.id, quote }
+    expect(inputMaterialLabel(material, 'zh-CN')).toBe(`引用 · ${author.name}`)
+    expect(inputMaterialLabel(material, 'en-US')).toBe(`Quote · ${author.name}`)
+    expect(inputMaterialLabel({ ...material, quote: { ...quote, source: { ...quote.source, author: undefined } } }, 'zh-CN')).toBe('引用 · 伙伴的回答')
+    expect(inputMaterialLabel({ ...material, quote: { ...quote, source: { ...quote.source, role: 'user' } } }, 'zh-CN')).toBe('引用 · 你的消息')
   })
 
   it('rejects cross-message, empty, excluded and outside selections', () => {

@@ -28,8 +28,14 @@ export function getInputMaterialViews(content: BuddyUserContentV1, resource: (id
 export function inputMaterialLabel(material: Exclude<BuddyInputMaterial, { kind: 'resource' }>, language: BuddyLocale): string {
   if (material.kind === 'session')
     return material.reference.title
-  if (material.kind === 'message_quote')
-    return translateBuddy(language, material.quote.source.role === 'assistant' ? 'desktop.chat.quoteFromAssistant' : 'desktop.chat.quoteFromUser')
+  if (material.kind === 'message_quote') {
+    const { role, author } = material.quote.source
+    if (role === 'user')
+      return translateBuddy(language, 'desktop.chat.quoteFromUser')
+    return author
+      ? translateBuddy(language, 'desktop.chat.quoteFromActor', { name: author.name })
+      : translateBuddy(language, 'desktop.chat.quoteFromAssistant')
+  }
   const quote = material.quote
   const title = quote.source.kind === 'artifact' ? `${translateBuddy(language, 'desktop.chat.turnOutputs')} · ${quote.source.title}` : quote.source.title
   return `${title}${'range' in quote && quote.range ? ` · L${quote.range.startLineNumber}–${quote.range.endLineNumber}` : ''}`

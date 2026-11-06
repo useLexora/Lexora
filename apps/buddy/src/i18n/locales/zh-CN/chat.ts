@@ -126,6 +126,7 @@ export default {
   'desktop.chat.addAttachment': '添加附件',
   'desktop.chat.addLocalFile': '从本机添加',
   'desktop.chat.quoteSelection': '引用',
+  'desktop.chat.quoteFromActor': '引用 · {name}',
   'desktop.chat.quoteFromAssistant': '引用 · 伙伴的回答',
   'desktop.chat.quoteFromUser': '引用 · 你的消息',
   'desktop.chat.removeQuote': '移除引用',
