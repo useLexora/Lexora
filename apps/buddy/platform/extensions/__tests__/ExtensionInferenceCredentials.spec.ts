@@ -2,9 +2,11 @@ import type { ExtensionServicePorts } from '../ExtensionService'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
+import process from 'node:process'
 import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { expect, it, onTestFinished } from 'vitest'
-import { inferenceBindingSchema } from '../../../shared/extensions/extensionInference'
+import { inferenceBindingSchema, inferencePlatformSchema } from '../../../shared/extensions/extensionInference'
+import { resolveInferenceEnvironment } from '../../../shared/extensions/inferencePlatform'
 import { ExtensionInferenceCredentials } from '../ExtensionInferenceCredentials'
 import { ExtensionPackageStore } from '../ExtensionPackageStore'
 import { ExtensionService } from '../ExtensionService'
@@ -66,7 +68,7 @@ it('enforces origin permission and credential availability before inference, pre
     contributes: {
       commands: [{ id: `${owner}.open`, title: 'Open' }],
       inference: {
-        runtimes: [{ id: 'api', entry: 'native/api.mjs', platforms: ['linux-x64'] }],
+        runtimes: [{ id: 'api', entry: 'native/api.mjs', platforms: inferencePlatformSchema.options }],
         capabilities: [{ id: 'image', title: 'Image', kind: 'image.generate', runtime: 'api' }],
       },
     },
@@ -118,7 +120,7 @@ it('enforces origin permission and credential availability before inference, pre
   binding.endpoints[0]!.url = `${origin}/v1/images/generations`
   await broker('inference.bind', binding)
   const available = await service.inferenceImageModels()
-  expect(available).toHaveLength(1)
+  expect(available).toHaveLength(resolveInferenceEnvironment(process.platform, process.arch).platform ? 1 : 0)
   await broker('inference.credentials.remove', { id: 'images' })
   expect(await service.inferenceImageModels()).toEqual([])
   await expect(service.prepareInference(owner, store.installed[owner]!.current.revision, 'image')).rejects.toThrow('CREDENTIAL_UNAVAILABLE')

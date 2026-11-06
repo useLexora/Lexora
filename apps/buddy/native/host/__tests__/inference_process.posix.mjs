@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { Buffer } from 'node:buffer'
 import { execFileSync, spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { closeSync, constants, openSync, readFileSync, writeSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -139,52 +139,46 @@ for (const ending of ['eof', 'supervisor-crash']) {
 for (const transport of ['socket', 'pipe']) {
   nativeTest.test(`closing ${transport} stdin terminates blocked forwarding while the parent stays alive`, options, async (t) => {
     const f = await fixture(t, true)
-    let descriptor
-    t.after(() => {
-      if (descriptor !== undefined)
-        closeSync(descriptor)
-    })
-    let child
-    if (transport === 'pipe') {
-      const fifo = join(f.configuration.directory, 'input.fifo')
-      execFileSync('mkfifo', [fifo])
-      child = f.track(spawn('/bin/sh', ['-c', 'exec "$1" --supervise-inference < "$2"', 'inference-fixture', supervisor, fifo], { stdio: ['ignore', 'pipe', 'pipe'] }))
-      descriptor = await waitUntil(() => {
-        try {
-          return openSync(fifo, constants.O_WRONLY | constants.O_NONBLOCK)
-        }
-        catch (error) {
-          if (error.code !== 'ENXIO')
-            throw error
-        }
-      }, 'helper did not open the input pipe')
-    }
-    else {
-      child = f.track(spawn(supervisor, ['--supervise-inference'], { stdio: 'pipe' }))
-    }
+    const child = f.track(transport === 'pipe'
+      ? spawn('python3', ['-c', `
+import json, os, subprocess, sys, time
+configuration = json.loads(sys.stdin.buffer.readline())
+configuration['parentPid'] = os.getpid()
+worker = subprocess.Popen([sys.argv[1], '--supervise-inference'], stdin=subprocess.PIPE, bufsize=0)
+try:
+    worker.stdin.write(json.dumps(configuration).encode() + b'\\n')
+    assert sys.stdin.buffer.readline() == b'fill\\n'
+    os.set_blocking(worker.stdin.fileno(), False)
+    written = 0
+    deadline = time.monotonic() + 0.1
+    while time.monotonic() < deadline:
+        try:
+            while written < 8 * 1024 * 1024:
+                written += os.write(worker.stdin.fileno(), bytes(65536))
+        except BlockingIOError:
+            pass
+        time.sleep(0.01)
+    assert 0 < written < 8 * 1024 * 1024, 'pipe did not reach backpressure'
+    print('pipe-backpressure', file=sys.stderr, flush=True)
+    assert sys.stdin.buffer.readline() == b'close\\n'
+    worker.stdin.close()
+    result = worker.wait(timeout=5)
+    print('supervisor-exit:' + str(result), file=sys.stderr, flush=True)
+    assert sys.stdin.buffer.readline() == b''
+    sys.exit(result)
+finally:
+    if worker.poll() is None:
+        worker.kill()
+        worker.wait()
+`, supervisor], { stdio: 'pipe' })
+      : spawn(supervisor, ['--supervise-inference'], { stdio: 'pipe' }))
     const observed = observe(child)
     const configuration = `${JSON.stringify(f.configuration)}\n`
-    if (descriptor !== undefined)
-      writeSync(descriptor, configuration)
-    else
-      child.stdin.write(configuration)
+    child.stdin.write(configuration)
     const started = f.record(await identity(observed))
-    if (descriptor !== undefined) {
-      const payload = Buffer.alloc(65536)
-      let written = 0
-      const deadline = Date.now() + 100
-      do {
-        try {
-          while (written < 8 * 1024 * 1024)
-            written += writeSync(descriptor, payload)
-        }
-        catch (error) {
-          if (error.code !== 'EAGAIN')
-            throw error
-        }
-        await delay(10)
-      } while (Date.now() < deadline)
-      assert.ok(written > 0 && written < 8 * 1024 * 1024, 'pipe must reach backpressure before closure')
+    if (transport === 'pipe') {
+      child.stdin.write('fill\n')
+      await waitUntil(() => observed.diagnostic().includes('pipe-backpressure'), 'anonymous pipe must reach backpressure before closure')
     }
     else {
       child.stdin.write(Buffer.alloc(8 * 1024 * 1024))
@@ -192,14 +186,15 @@ for (const transport of ['socket', 'pipe']) {
       assert.ok(child.stdin.writableLength > 0, 'socket must reach backpressure before closure')
     }
     assert.ok(alive(child.pid) && alive(started.runtime) && alive(started.descendant))
-    if (descriptor !== undefined) {
-      closeSync(descriptor)
-      descriptor = undefined
-    }
-    else {
+    if (transport === 'pipe')
+      child.stdin.write('close\n')
+    else
       child.stdin.destroy()
+    await waitUntil(() => (transport === 'pipe' ? observed.diagnostic().includes('supervisor-exit:0') : child.exitCode === 0) && !alive(started.runtime) && !alive(started.descendant), 'stdin closure left the blocked process group alive', 1000)
+    if (transport === 'pipe') {
+      assert.ok(alive(child.pid), 'the supervising parent must remain alive after stdin closes')
+      child.stdin.end()
     }
-    await waitUntil(() => child.exitCode !== null && !alive(started.runtime) && !alive(started.descendant), 'stdin closure left the blocked process group alive', 1000)
     const [code] = await observed.closed
     assert.equal(code, 0)
     assert.equal(f.configuration.parentPid, process.pid)

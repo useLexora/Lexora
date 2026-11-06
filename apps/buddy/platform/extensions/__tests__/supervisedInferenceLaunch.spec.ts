@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { build } from 'vite'
 import { afterEach, expect, it } from 'vitest'
 import { inferenceBindingSchema, inferenceLimits } from '../../../shared/extensions/extensionInference'
+import { resolveInferenceEnvironment } from '../../../shared/extensions/inferencePlatform'
 import { readInferenceInitialization } from '../inferenceInitialization'
 import { NativeInferenceProcess } from '../NativeInferenceProcess'
 import { prepareSupervisedInferenceLaunch } from '../supervisedInferenceLaunch'
@@ -156,7 +157,7 @@ it('keeps an external resource lease mapped to the original file on the Darwin b
   expect(await readFile(f.original, 'utf8')).toBe('synthetic weights')
 })
 
-it.skipIf(!['win32', 'darwin'].includes(process.platform))('runs the validated worker with mapped resources through the actual platform supervisor', async () => {
+it.skipIf(resolveInferenceEnvironment(process.platform, process.arch).executionMode !== 'supervised')('runs the validated worker with mapped resources through the actual platform supervisor', async () => {
   const f = await fixture()
   expect(process.env.LEXORA_BUDDY_PROCESS_CONTROL, 'freshly built platform process-control helper').toBeTruthy()
   const worker = await NativeInferenceProcess.start({
@@ -176,7 +177,7 @@ it.skipIf(!['win32', 'darwin'].includes(process.platform))('runs the validated w
   expect(worker.stopped).toBe(true)
 })
 
-it.skipIf(!['win32', 'darwin'].includes(process.platform))('initializes more than 64 KiB of managed and external mappings through the supervised worker without changing wire budgets', async () => {
+it.skipIf(resolveInferenceEnvironment(process.platform, process.arch).executionMode !== 'supervised')('initializes more than 64 KiB of managed and external mappings through the supervised worker without changing wire budgets', async () => {
   const f = await fixture()
   expect(process.env.LEXORA_BUDDY_PROCESS_CONTROL).toBeTruthy()
   const directory = join(f.root, 'managed-model-view-完整角色目录初始化预算测试')

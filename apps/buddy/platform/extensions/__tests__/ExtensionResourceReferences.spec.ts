@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { expect, it } from 'vitest'
@@ -13,7 +13,7 @@ it('resolves only current owned grants without copying or modifying original fil
   const store = new ExtensionResourceStore(join(root, 'extensions'))
   const [resource] = await store.grant(owner, [path], () => {})
   const before = await stat(path, { bigint: true })
-  expect(await store.referencePath(owner, resource!.id)).toBe(path)
+  expect(await store.referencePath(owner, resource!.id)).toBe(await realpath(path))
   const handle = await store.openReference(owner, resource!.id)
   try {
     expect(await handle.readFile('utf8')).toBe('fixture weights')
@@ -40,7 +40,7 @@ it('rejects a replacement at a granted path and revocation of a directory grant'
   await expect(store.referencePath(owner, resource!.id)).rejects.toThrow('EXTENSION_RESOURCE_CHANGED')
   const granted = await store.grantDirectory(owner, directory, () => {})
   const input = { directoryId: granted.id, path: 'weights.gguf' }
-  expect(await store.directoryReferencePath(owner, input)).toBe(path)
+  expect(await store.directoryReferencePath(owner, input)).toBe(await realpath(path))
   await expect(store.directoryReferencePath(owner, { ...input, path: '../outside' })).rejects.toThrow()
   await expect(store.directoryReferencePath('tests.other', input)).rejects.toThrow()
   await store.revokeDirectory(owner, granted.id, () => {})
