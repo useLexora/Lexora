@@ -16,6 +16,7 @@ const props = defineProps<{
   english: boolean
   content: {
     currentOs: string
+    linuxHint: string
     allReleases: string
     windows: MenuItemConfig
     macOS: MenuItemConfig
@@ -105,7 +106,7 @@ const platformItems = computed(() => {
       architecture: 'x64' as DownloadArchitecture,
       format: 'deb' as DownloadFormat,
       fallbackUrl: `${repositoryUrl}/releases/download/v0.20.0/Lexora-Buddy-0.20.0-linux-amd64.deb`,
-      isRecommended: detectedSystem.value === 'linux',
+      isRecommended: false,
     },
     {
       id: 'linux-arch',
@@ -208,6 +209,9 @@ onUnmounted(() => {
         role="dialog"
         :aria-label="label"
       >
+        <p v-if="detectedSystem === 'linux'" class="download-hint">
+          {{ content.linuxHint }}
+        </p>
         <div class="download-list">
           <a
             v-for="item in platformItems"
@@ -328,6 +332,14 @@ onUnmounted(() => {
   box-sizing: border-box;
   transform: translateZ(0);
   backface-visibility: hidden;
+}
+
+.download-hint {
+  margin: 0;
+  padding: 10px 12px;
+  color: rgba(200, 213, 245, 0.85);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .download-list {
