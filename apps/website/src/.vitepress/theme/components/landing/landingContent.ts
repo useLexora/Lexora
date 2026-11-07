@@ -9,6 +9,7 @@ const zh = {
     platforms: 'Windows · macOS · Linux',
     downloadMenu: {
       currentOs: '当前系统',
+      linuxHint: '检测到 Linux，请按发行版选择安装包。',
       allReleases: '查看全部版本与校验文件',
       windows: {
         title: 'Windows',
@@ -138,6 +139,7 @@ const en: typeof zh = {
     platforms: 'Windows · macOS · Linux',
     downloadMenu: {
       currentOs: 'Current OS',
+      linuxHint: 'Linux detected. Choose a package for your distribution.',
       allReleases: 'All releases & checksums',
       windows: {
         title: 'Windows',
