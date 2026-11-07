@@ -8,12 +8,12 @@ import type { DesktopTaskPinnedDropPosition } from '@/modules/tasks/widgets/task
 import {
   ApprovalsApp20Regular,
   MoreHorizontal20Regular,
-  SpinnerIos20Regular,
 } from '@vicons/fluent'
 import { NDropdown, NTooltip } from 'naive-ui'
 import { computed, h, shallowRef, useId, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopOverflowingLabel from '@/modules/tasks/widgets/task-index/DesktopOverflowingLabel.vue'
+import BuddyChatActivitySpinner from '@/modules/tasks/widgets/transcript/BuddyChatActivitySpinner.vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopTaskMarkSwatch from './DesktopTaskMarkSwatch.vue'
 import { formatTaskRelativeTime } from './taskRelativeTime'
@@ -71,9 +71,6 @@ watch(() => props.loading, (loading, _, cleanup) => {
 const relativeTimeLabel = computed(() => (
   formatTaskRelativeTime(props.occurredAt, props.now, props.language)
 ))
-const activityIcon = computed(() => props.activity === 'awaiting_approval'
-  ? ApprovalsApp20Regular
-  : SpinnerIos20Regular)
 const activityLabel = computed(() => props.activity === 'awaiting_approval'
   ? t('activity.approval')
   : t('run.status.running'))
@@ -195,7 +192,7 @@ useTaskHistoryDrag({
         :aria-busy="loading || undefined"
         @click="emit('open')"
       >
-        <span v-if="opening" class="desktop-task-row__opening flex flex-none mr-[6px]" :class="active ? 'text-inherit' : 'text-muted'" aria-hidden="true"><DesktopIcon :size="16" :component="SpinnerIos20Regular" /></span>
+        <span v-if="opening" class="desktop-task-row__opening flex flex-none items-center mr-[6px]" aria-hidden="true"><BuddyChatActivitySpinner /></span>
         <DesktopOverflowingLabel class="flex-1" :paused="dragging" :text="title" />
       </button>
       <div class="grid w-[calc(2_*_var(--buddy-task-sidebar-action-size,_1.75rem)_+_var(--buddy-task-sidebar-action-gap,_0.125rem)_+_var(--buddy-task-sidebar-action-inset,_0.25rem))] flex-none items-center pr-[var(--buddy-task-sidebar-action-inset,_0.25rem)]">
@@ -215,7 +212,8 @@ useTaskHistoryDrag({
           role="status"
           :aria-label="activityLabel"
         >
-          <DesktopIcon :size="16" :component="activityIcon" />
+          <BuddyChatActivitySpinner v-if="activity === 'running'" />
+          <DesktopIcon v-else :size="16" :component="ApprovalsApp20Regular" />
         </span>
         <div class="desktop-task-row__actions flex items-center gap-[var(--buddy-task-sidebar-action-gap,_0.125rem)] opacity-0 pointer-events-none [grid-area:1/1] justify-self-end">
           <NDropdown class="buddy-spaced-submenus" trigger="click" placement="bottom-start" :options="actions" @select="handleAction">
@@ -276,16 +274,4 @@ useTaskHistoryDrag({
   }
 }
 
-.desktop-task-row__activity.is-running .n-icon,
-.desktop-task-row__opening .n-icon {
-  animation: desktop-task-row-spin 1s linear infinite;
-
-  @media (prefers-reduced-motion: reduce) {
-    animation: none;
-  }
-}
-
-@keyframes desktop-task-row-spin {
-  to { transform: rotate(360deg); }
-}
 </style>
