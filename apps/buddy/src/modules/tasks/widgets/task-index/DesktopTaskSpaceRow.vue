@@ -12,13 +12,13 @@ import {
   ChevronRight16Regular,
   FolderOpen20Regular,
   MoreHorizontal20Regular,
-  SpinnerIos20Regular,
 } from '@vicons/fluent'
 import { NDropdown } from 'naive-ui'
 import { computed, h, shallowRef, useId, useTemplateRef } from 'vue'
 import { useRouter } from 'vue-router'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopOverflowingLabel from '@/modules/tasks/widgets/task-index/DesktopOverflowingLabel.vue'
+import BuddyChatActivitySpinner from '@/modules/tasks/widgets/transcript/BuddyChatActivitySpinner.vue'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import SkillIcon from '@/shared/ui/icon/SkillIcon.vue'
@@ -83,9 +83,6 @@ const menuThemeOverrides = {
 }
 const showActivity = computed(() => !props.expanded
   && (props.activity === 'running' || props.activity === 'awaiting_approval'))
-const activityIcon = computed(() => props.activity === 'awaiting_approval'
-  ? ApprovalsApp20Regular
-  : SpinnerIos20Regular)
 const activityLabel = computed(() => props.activity === 'awaiting_approval'
   ? t('activity.approval')
   : t('run.status.running'))
@@ -212,7 +209,8 @@ useTaskHistoryDrag({
       role="status"
       :aria-label="activityLabel"
     >
-      <DesktopIcon :component="activityIcon" :size="16" />
+      <BuddyChatActivitySpinner v-if="activity === 'running'" />
+      <DesktopIcon v-else :component="ApprovalsApp20Regular" :size="16" />
     </span>
   </div>
 </template>
@@ -286,10 +284,6 @@ button {
 .desktop-task-space-row__activity {
   transform: translateY(-50%);
 
-  &.is-running .n-icon {
-    animation: desktop-task-space-row-spin 1s linear infinite;
-  }
-
   &.is-awaiting-approval {
     color: var(--buddy-status-warning-text);
   }
@@ -298,18 +292,6 @@ button {
 .desktop-task-space-row:hover .desktop-task-space-row__activity,
 .desktop-task-space-row:has(:focus-visible) .desktop-task-space-row__activity {
   opacity: 0;
-}
-
-@keyframes desktop-task-space-row-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .desktop-task-space-row__activity.is-running .n-icon {
-    animation: none;
-  }
 }
 
 .desktop-task-space-row__action {
