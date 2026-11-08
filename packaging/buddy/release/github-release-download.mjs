@@ -11,11 +11,11 @@ class DownloadError extends Error {
   }
 }
 
-async function request(url, accept) {
+async function request(url, accept, timeoutMs = 60_000) {
   const token = url.startsWith('https://api.github.com/') ? process.env.GH_TOKEN || process.env.GITHUB_TOKEN : undefined
   const response = await fetch(url, {
     headers: { Accept: accept, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    signal: AbortSignal.timeout(60_000),
+    signal: AbortSignal.timeout(timeoutMs),
   })
   if (!response.ok) {
     await response.body?.cancel()
@@ -24,12 +24,12 @@ async function request(url, accept) {
   return response
 }
 
-export async function downloadGithubReleaseAsset(release, archive) {
+export async function downloadGithubReleaseAsset(release, archive, { timeoutMs = 60_000 } = {}) {
   const source = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/releases\/download\/([^/]+)$/.exec(release)
   if (!source)
     throw new Error(`Unsupported GitHub release URL: ${release}`)
   try {
-    const response = await request(`${release}/${encodeURIComponent(archive)}`, 'application/octet-stream')
+    const response = await request(`${release}/${encodeURIComponent(archive)}`, 'application/octet-stream', timeoutMs)
     return Buffer.from(await response.arrayBuffer())
   }
   catch (error) {
@@ -45,6 +45,6 @@ export async function downloadGithubReleaseAsset(release, archive) {
   const asset = releaseMetadata.assets.find(asset => asset.name === archive)
   if (!asset || !Number.isSafeInteger(asset.id) || asset.id <= 0)
     throw new Error(`GitHub release asset not found: ${archive}`)
-  const download = await request(`${repository}/releases/assets/${asset.id}`, 'application/octet-stream')
+  const download = await request(`${repository}/releases/assets/${asset.id}`, 'application/octet-stream', timeoutMs)
   return Buffer.from(await download.arrayBuffer())
 }

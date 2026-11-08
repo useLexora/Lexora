@@ -5,12 +5,11 @@ import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
 const repoRoot = resolve(import.meta.dirname, '../..')
-const ciInputs = new Set([
-  '.github/actions/install-workspace-dependencies/action.yml',
-  '.github/workflows/ci.yml',
-  '.github/workflows/ci-cache.yml',
-  '.github/scripts/resolve-ci-scope.mjs',
-])
+const ciPrefixes = [
+  '.github/actions/',
+  '.github/scripts/',
+  '.github/workflows/',
+]
 const rustInputs = new Set([
   'rust-toolchain',
   'rust-toolchain.toml',
@@ -53,15 +52,16 @@ const ignoredPrefixes = [
 const websitePrefixes = [
   'apps/website/',
 ]
-const buddyPrefixes = [
+const integrationPrefixes = [
   '.playwright/scripts/',
-  'apps/buddy/',
+  'apps/buddy/service/',
+  'apps/buddy/electron/',
+  'apps/buddy/platform/',
   'packaging/buddy/',
-  'patches/',
 ]
 const inactivePrefixes = [
   'legacy/',
-  '.playwright/scripts/community',
+  '.playwright/scripts/community/',
   'apps/agent/',
   'apps/api/',
   'apps/web/',
@@ -71,7 +71,6 @@ const inactivePrefixes = [
 ]
 const repositoryPrefixes = [
   '.github/',
-  'packaging/',
   'infrastructure/',
 ]
 
@@ -80,6 +79,7 @@ export function classifyCiScope(files) {
     return fullScope()
 
   let workspace = false
+  let integration = false
   let native = false
   let website = false
   let repository = false
@@ -90,16 +90,9 @@ export function classifyCiScope(files) {
     if (ignoredInputs.has(path) || ignoredPrefixes.some(prefix => path.startsWith(prefix)) || inactivePrefixes.some(prefix => path.startsWith(prefix)))
       continue
 
-    if (ciInputs.has(path)) {
-      workspace = true
-      native = true
-      website = true
-      repository = true
-      continue
-    }
-
     if (rustInputs.has(path) || rustPrefixes.some(prefix => path.startsWith(prefix))) {
       workspace = true
+      integration = true
       native = true
       if (path.startsWith('.github/') || path.startsWith('packages/assets/'))
         repository = true
@@ -111,20 +104,25 @@ export function classifyCiScope(files) {
       continue
     }
 
-    if (workspaceInputs.has(path)) {
+    if (workspaceInputs.has(path) || ciPrefixes.some(prefix => path.startsWith(prefix)) || path.startsWith('.playwright/scripts/fixtures/'))
+      return fullScope()
+
+    if (path.startsWith('apps/buddy/src/')) {
       workspace = true
-      repository = true
       continue
     }
 
     if (path.startsWith('packages/assets/')) {
       workspace = true
+      integration = true
+      website = true
       repository = true
       continue
     }
 
-    if (buddyPrefixes.some(prefix => path.startsWith(prefix))) {
+    if (integrationPrefixes.some(prefix => path.startsWith(prefix))) {
       workspace = true
+      integration = true
       continue
     }
 
@@ -133,27 +131,25 @@ export function classifyCiScope(files) {
       continue
     }
 
-    workspace = true
-    native = true
-    repository = true
+    return fullScope()
   }
 
-  return { workspace, native, website, repository }
+  return { workspace, integration, native, website, repository }
 }
 
 export function listChangedFiles(base, head, cwd = repoRoot) {
   const output = execFileSync('git', [
     'diff',
     '--name-only',
+    '-z',
     '--no-renames',
-    '--diff-filter=ACMRD',
     `${base}...${head}`,
   ], {
     cwd,
     encoding: 'utf8',
   })
 
-  return output.split('\n').filter(Boolean)
+  return output.split('\0').filter(Boolean)
 }
 
 export function resolveCiScope(base, head, cwd = repoRoot) {
@@ -163,8 +159,9 @@ export function resolveCiScope(base, head, cwd = repoRoot) {
 function fullScope() {
   return {
     workspace: true,
+    integration: true,
     native: true,
-    website: false,
+    website: true,
     repository: true,
   }
 }
