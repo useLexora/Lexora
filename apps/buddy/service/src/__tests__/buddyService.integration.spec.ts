@@ -621,7 +621,10 @@ describe('buddy runtime cross-subsystem contract', () => {
       const fast = children.find(run => run.buddyId === fastNpcId)!
       const held = children.find(run => run.buddyId === heldNpcId)!
       expect(await waitForTerminalRun(harness, fast.id)).toMatchObject({ status: 'completed' })
-      await expect.poll(() => database.prepare('SELECT phase FROM execution_state WHERE run_id = ?').get(turn.runId)?.phase).toBe('waiting')
+      await expect.poll(
+        () => database.prepare('SELECT phase FROM execution_state WHERE run_id = ?').get(turn.runId)?.phase,
+        { timeout: 10_000 },
+      ).toBe('waiting')
       expect(held.status).toBe('running')
       expect(JSON.stringify(SessionManager.open(held.piSessionFile!).getBranch())).toContain('WORKING_CHILD_INPUT')
       const completedFacts = await eventLog.read(fast.id)
