@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { Ref } from 'vue'
 import type { ChatTranscriptDisplayRow } from '../../../model/transcript/chatMessageTime'
-import type { ChatMessageScrollAnchor } from '../chatMessageViewport'
+import type { ChatMessageScrollAnchor, ChatMessageScrollMetrics } from '../chatMessageViewport'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick, onScopeDispose, shallowRef, watch } from 'vue'
 import { useChatTranscriptViewport } from '../useChatTranscriptViewport'
@@ -36,6 +36,10 @@ class GeometryVirtualizer {
   constructor(public options: GeometryOptions) {
     for (let index = 0; index < options.count; index++)
       this.itemSizeCache.set(options.getItemKey(index), geometry.rowHeight)
+  }
+
+  get scrollElement() {
+    return this.options.getScrollElement()
   }
 
   setOptions(options: GeometryOptions) {
@@ -153,6 +157,7 @@ async function mountViewport() {
   })
   scrollport.scrollTop = 234
   let viewport!: ReturnType<typeof useChatTranscriptViewport>
+  const observations: ChatMessageScrollMetrics[] = []
   const app = createApp({
     setup() {
       viewport = useChatTranscriptViewport(shallowRef(host), shallowRef(content), {
@@ -163,9 +168,9 @@ async function mountViewport() {
         editingMessageId: () => null,
       }, {
         onActiveMessageChange: () => {},
-        onContentResize: () => {},
+        onContentResize: metrics => observations.push(metrics),
         onReaderScrollIntent: () => {},
-        onScroll: () => {},
+        onScroll: metrics => observations.push(metrics),
       })
       return () => null
     },
@@ -182,6 +187,7 @@ async function mountViewport() {
     content,
     rows,
     instance: currentVirtualizer,
+    observations,
     report() {
       viewport.handleScroll()
       runFrame()
@@ -243,6 +249,27 @@ it('does not accept a bottom clamp before the remaining tail is measured', async
   expect(fixture.handle.captureScrollAnchor()).toMatchObject({ rowKey: 'row-8', messageOffsetTop: -16 })
 })
 
+it('does not publish a transient tail clamp while a reading anchor is still being restored', async () => {
+  const fixture = await mountViewport()
+  fixture.handle.restoreScrollAnchor({ rowKey: 'row-2', rowSize: 100, messageId: 'message-2', messageOffsetTop: -10, metrics: fixture.handle.readScrollMetrics()! })
+  fixture.scrollport.scrollTop = 840
+  fixture.report()
+  expect(fixture.observations).toEqual([])
+  fixture.scrollport.scrollTop = 234
+  fixture.measured(2)
+  fixture.report()
+  expect(fixture.observations).toEqual([{ clientHeight: 200, scrollHeight: 1040, scrollTop: 234 }])
+})
+
+it('resumes viewport observations when a pending anchor row is removed', async () => {
+  const fixture = await mountViewport()
+  fixture.handle.scrollToMessage('message-2')
+  fixture.rows.value = fixture.rows.value.filter(row => row.key !== 'row-2')
+  await nextTick()
+  fixture.report()
+  expect(fixture.observations.length).toBeGreaterThan(0)
+})
+
 it('normalizes an obsolete reading depth after a completed message shrinks', async () => {
   const fixture = await mountViewport()
   fixture.measured(2)
@@ -251,6 +278,37 @@ it('normalizes an obsolete reading depth after a completed message shrinks', asy
   fixture.report()
   expect(fixture.handle.captureScrollAnchor()).toMatchObject({ rowKey: 'row-2', messageOffsetTop: 0 })
   expect(fixture.content.style.height).toBe('1040px')
+})
+
+it('normalizes an unreachable reading depth in an execution input and resumes metrics', async () => {
+  const fixture = await mountViewport()
+  fixture.rows.value = fixture.rows.value.map(row => row.key === 'row-2'
+    ? {
+        kind: 'execution-input',
+        key: row.key,
+        input: {
+          kind: 'supplement',
+          messageId: 'supplement-1',
+          text: 'A long supplementary input',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          state: 'consumed',
+          conversationId: 'conversation-test',
+          branchId: 'branch-test',
+          runId: 'run-test',
+          rootRunId: 'run-test',
+          buddyId: 'default',
+          buddyName: 'Lexora',
+          task: '',
+        },
+      }
+    : row)
+  await nextTick()
+  fixture.measured(2)
+  fixture.handle.restoreScrollAnchor({ rowKey: 'row-2', rowSize: 600, messageId: '', messageOffsetTop: -500, metrics: { clientHeight: 200, scrollHeight: 1540, scrollTop: 724 } })
+  fixture.report()
+  fixture.report()
+  expect(fixture.handle.captureScrollAnchor()).toMatchObject({ rowKey: 'row-2', messageOffsetTop: 0 })
+  expect(fixture.observations.at(-1)).toEqual({ clientHeight: 200, scrollHeight: 1040, scrollTop: 224 })
 })
 
 it('does not treat an incomplete streaming render as a completed message shrinking', async () => {

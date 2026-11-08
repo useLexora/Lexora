@@ -6,6 +6,7 @@ import { elementScroll, measureElement, observeElementOffset, observeElementRect
 import { useEventListener } from '@vueuse/core'
 import { computed, nextTick, onBeforeUnmount, shallowRef, watch } from 'vue'
 import { createChatFrameTask } from './chatMessageViewport'
+import { createChatTranscriptEstimator, readChatTranscriptEstimateLayout } from './chatTranscriptEstimates'
 import { useChatTranscriptRetention } from './useChatTranscriptRetention'
 
 interface TranscriptViewportEvents {
@@ -36,6 +37,8 @@ export function useChatTranscriptViewport(
       element.dataset.chatScrollViewport = ''
     }
   }, { flush: 'post' })
+  const estimateHeight = createChatTranscriptEstimator()
+  const estimateLayout = shallowRef({ width: 800, fontSize: 14, lineHeight: 24, codeFontSize: 12, rem: 16 })
   const replacementGapKey = 'turn-replacement-gap'
   const replacement = shallowRef<{ anchorKey: string, height: number, following: boolean } | null>(null)
   const rows = computed(() => {
@@ -46,7 +49,7 @@ export function useChatTranscriptViewport(
         divider = row
         continue
       }
-      result.push({ key: row.key, messageId: messageId(row), estimate: estimateHeight(row) + (divider ? 52 : 0), items: divider ? [divider, row] : [row] })
+      result.push({ key: row.key, messageId: messageId(row), estimate: estimateHeight(row, estimateLayout.value) + (divider ? 52 : 0), items: divider ? [divider, row] : [row] })
       if (replacement.value?.following && replacement.value.anchorKey === row.key)
         result.push({ key: replacementGapKey, messageId: null, estimate: 0, items: [], spacer: true })
       divider = null
@@ -116,7 +119,14 @@ export function useChatTranscriptViewport(
       const offset = instance.scrollOffset
       if (width && offset !== null && instance.scrollElement && Math.abs(instance.scrollElement.scrollTop - offset) > 1)
         instance.scrollToOffset(offset)
-      if (width && Math.abs(width - rect.width) > 0.5) {
+      const layout = readChatTranscriptEstimateLayout(instance.scrollElement!, rect.width)
+      if (Object.entries(layout).some(([key, value]) => value !== estimateLayout.value[key as keyof typeof layout])) {
+        if (width)
+          layoutAnchor ??= captureScrollAnchor()
+        estimateLayout.value = layout
+        relayout.schedule()
+      }
+      else if (width && Math.abs(width - rect.width) > 0.5) {
         layoutAnchor ??= captureScrollAnchor()
         relayout.schedule()
       }
@@ -163,7 +173,9 @@ export function useChatTranscriptViewport(
     if (!requestedAnchor.value)
       return
     const index = anchorIndex(requestedAnchor.value)
-    if (index !== undefined && current[index] !== previous[index])
+    if (index === undefined)
+      requestedAnchor.value = null
+    else if (current[index] !== previous[index])
       restoreScrollAnchor(requestedAnchor.value)
   }, { flush: 'post' })
 
@@ -218,7 +230,7 @@ export function useChatTranscriptViewport(
         const tail = items.filter(row => row.index >= item.index)
         const measuredTail = tail.length === rows.value.length - item.index && tail.every(isMeasured)
         const message = rows.value[item.index]!.items.find(row => row.kind === 'message')
-        if (item.size < -anchor.messageOffsetTop && message?.kind === 'message' && !message.streaming) {
+        if (item.size < -anchor.messageOffsetTop && !message?.streaming) {
           restoreScrollAnchor({
             ...anchor,
             rowSize: item.size,
@@ -239,6 +251,8 @@ export function useChatTranscriptViewport(
         }
       }
     }
+    if (layoutAnchor || requestedAnchor.value)
+      return
     events.onContentResize(metrics)
     if (options.following() && metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop > 1)
       virtualizer.value.scrollToEnd()
@@ -379,7 +393,7 @@ export function useChatTranscriptViewport(
 
   function handleScroll() {
     const metrics = readScrollMetrics()
-    if (metrics) {
+    if (metrics && !layoutAnchor && !requestedAnchor.value) {
       const programmatic = programmaticTop !== null && Math.abs(programmaticTop - metrics.scrollTop) < 1
       programmaticTop = null
       events.onScroll(metrics, { userInitiated: !programmatic && (pointerDragging || performance.now() < interactingUntil) })
@@ -438,12 +452,4 @@ export function useChatTranscriptViewport(
 
 function messageId(row: ChatTranscriptDisplayRow): string | null {
   return row.kind === 'message' ? row.message.id : row.kind === 'turn-result' ? row.turn.finalMessageId : null
-}
-
-function estimateHeight(row: ChatTranscriptDisplayRow): number {
-  if (row.kind === 'day-divider')
-    return 52
-  if (row.kind === 'message')
-    return row.message.role === 'user' ? 160 : 320
-  return row.kind === 'activity' || row.kind === 'compaction' ? 64 : 160
 }
