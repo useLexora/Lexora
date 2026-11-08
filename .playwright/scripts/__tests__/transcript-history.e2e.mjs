@@ -92,6 +92,9 @@ async function installObservations(page) {
         gutter: element.offsetWidth - element.clientWidth - element.clientLeft - Number.parseFloat(style.borderRightWidth),
         overflowY: style.overflowY,
         width: style.scrollbarWidth,
+        color: style.scrollbarColor,
+        thumbFraction: element.clientHeight / element.scrollHeight,
+        trackFraction: element.scrollTop / Math.max(1, element.scrollHeight - element.clientHeight),
         top: element.scrollTop,
         height: element.scrollHeight,
         viewport: element.clientHeight,
@@ -128,13 +131,15 @@ async function installObservations(page) {
         const content = anchor ? contentAnchor(element, anchor) : null
         state.samples.push({
           at: performance.now(),
+          mountedRows: element.querySelectorAll('[data-virtual-row-key]').length,
+          nodes: element.querySelectorAll('*').length,
           rows: Number(element.querySelector('[data-transcript-row-count]')?.dataset.transcriptRowCount),
           scrollbar: scrollbar(element),
           ...(anchor ? { anchor: content, wheelDistance: state.wheelDistance, drift: content ? content.y - anchor.y - state.wheelDistance : null } : {}),
         })
         frameId = requestAnimationFrame(frame)
       }
-      frameId = requestAnimationFrame(frame)
+      frame()
       state.stop = () => {
         cancelAnimationFrame(frameId)
         element.removeEventListener('wheel', wheel)
@@ -152,12 +157,13 @@ async function installObservations(page) {
 
 const test = base.extend({
   historyShape: ['short', { option: true }],
-  history: async ({ buddy, historyShape }, use, testInfo) => {
+  historyMessageCount: [messageCount, { option: true }],
+  history: async ({ buddy, historyShape, historyMessageCount }, use, testInfo) => {
     const instance = await buddy.createInstance(`transcript-${historyShape}`)
     const desktop = await instance.launch()
     const { app, page } = desktop
-    const histories = [makeHistory(historyShape), makeHistory('other', 4)]
-    const report = { shape: historyShape, comparisons: [], geometry: [], unavailableAnchors: [] }
+    const histories = [makeHistory(historyShape, historyMessageCount), makeHistory('other', 4)]
+    const report = { shape: historyShape, messageCount: historyMessageCount, comparisons: [], geometry: [], unavailableAnchors: [] }
     try {
       await expect(page.locator('.desktop-shell')).toBeVisible()
       await page.evaluate(() => window.lexoraDesktop.localChat.conversations.list(1))
@@ -278,9 +284,20 @@ async function beginObservation(owner, anchor = null) {
 
 async function endObservation(history, name) {
   const samples = await history.page.evaluate(() => window.__transcriptHistory.stop())
+  const intervals = samples.slice(1).map((sample, index) => sample.at - samples[index].at).sort((a, b) => a - b)
+  const heightSteps = samples.slice(1).map((sample, index) => Math.abs(sample.scrollbar.height - samples[index].scrollbar.height))
   const summary = {
     name,
     frames: samples.length,
+    frameP95Ms: intervals[Math.floor(intervals.length * 0.95)] ?? null,
+    maxFrameMs: Math.max(0, ...intervals),
+    framesOver50Ms: intervals.filter(interval => interval > 50).length,
+    maxMountedRows: Math.max(0, ...samples.map(sample => sample.mountedRows)),
+    maxNodes: Math.max(0, ...samples.map(sample => sample.nodes)),
+    heightCorrections: heightSteps.filter(delta => delta > 1).length,
+    heightTravel: heightSteps.reduce((total, delta) => total + delta, 0),
+    maxHeightStep: Math.max(0, ...heightSteps),
+    maxTrackFractionStep: Math.max(0, ...samples.slice(1).map((sample, index) => Math.abs(sample.scrollbar.trackFraction - samples[index].scrollbar.trackFraction))),
     overflowingFrames: samples.filter(sample => sample.scrollbar.overflowing).length,
     missingGutters: samples.filter(sample => sample.scrollbar.overflowing && sample.scrollbar.gutter <= 0).length,
     gutterVariation: samples.length ? Math.max(...samples.map(sample => sample.scrollbar.gutter)) - Math.min(...samples.map(sample => sample.scrollbar.gutter)) : null,
@@ -764,13 +781,13 @@ test.describe('long transcript reading', () => {
       await settle(owner)
       const after = await snapshot(owner)
       const layout = await bodyLayout()
+      history.report.comparisons.push({ name: `body-reflow-${width}-${height}`, before: previousLayout, after: layout, state: after })
       const currentAnchor = requireAnchor(history, `reader-resize-${width}-${height}`, after)
       expect(currentAnchor.messageId).toBe(`history-long-${messageCount - 1}`)
       await expect(lastMessage).toBeInViewport()
       await expect(owner.getByRole('button', { name: '回到最新', exact: true })).toBeVisible()
       expect(after.height - after.viewport - after.top, 'Resizing while reading must not jump to the tail').toBeGreaterThan(after.viewport)
       expect(layout.paragraphText).toBe(initialLayout.paragraphText)
-      history.report.comparisons.push({ name: `body-reflow-${width}-${height}`, before: previousLayout, after: layout, state: after })
       if (Math.abs(after.width - previous.width) < 1) {
         compare(history, `reader-height-resize-${width}-${height}`, previous, await snapshot(owner, previous.anchor))
         expect(Math.abs(layout.paragraphWidth - previousLayout.paragraphWidth)).toBeLessThan(1)
