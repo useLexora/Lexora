@@ -1,4 +1,3 @@
-import { Buffer } from 'node:buffer'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
@@ -8,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import searchTools from '../../../apps/buddy/platform/native/searchTools.json' with { type: 'json' }
 import { OPERATING_SYSTEM } from '../../../apps/buddy/shared/platform/identifiers.ts'
 import { writeError, writeOutput } from '../../shared/cli-output.mjs'
+import { downloadGithubReleaseAsset } from './github-release-download.mjs'
 import { assertNativeExecutable } from './native-host.mjs'
 import { resolveBuddyOutputPaths } from './output-paths.mjs'
 import { resolveBuildTarget } from './targets.mjs'
@@ -90,10 +90,7 @@ async function prepareArchive(tool, cache) {
     return path
   }
   writeOutput(`Preparing ${tool.name} ${tool.version}: ${tool.archive}`)
-  const response = await fetch(`${tool.release}/${tool.archive}`, { signal: AbortSignal.timeout(60_000) })
-  if (!response.ok)
-    throw new Error(`Unable to download ${tool.archive}: HTTP ${response.status}`)
-  const content = Buffer.from(await response.arrayBuffer())
+  const content = await downloadGithubReleaseAsset(tool.release, tool.archive)
   assertSha256(content, tool.sha256, tool.archive)
   const staging = mkdtempSync(join(cache, 'download-'))
   try {
