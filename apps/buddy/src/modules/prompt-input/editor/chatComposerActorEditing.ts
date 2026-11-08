@@ -2,6 +2,7 @@ import type { BuddyActorReference } from '@buddy-shared/conversation/buddyUserCo
 import type { Editor } from '@tiptap/core'
 import { buddyActorReferenceSchema } from '@buddy-shared/conversation/buddyUserContent'
 import { Node } from '@tiptap/core'
+import { TextSelection } from '@tiptap/pm/state'
 import { CHAT_ACTOR_REFERENCE_NODE_NAME } from '../model/chatComposerDocument'
 import { dispatchComposerEdit } from './chatComposerResourceEditing'
 
@@ -21,8 +22,10 @@ export function insertChatComposerActorReference(editor: Editor, value: BuddyAct
     return false
   const reference = buddyActorReferenceSchema.parse(value)
   const { from, to } = range ?? editor.state.selection
-  return dispatchComposerEdit(editor, editor.state.tr.replaceWith(from, to, [
+  const transaction = editor.state.tr.replaceWith(from, to, [
     editor.schema.nodes[CHAT_ACTOR_REFERENCE_NODE_NAME]!.create({ actorId: reference.actorId, name: reference.name }),
     editor.schema.text(' '),
-  ]))
+  ])
+  transaction.setSelection(TextSelection.near(transaction.doc.resolve(transaction.mapping.map(to))))
+  return dispatchComposerEdit(editor, transaction)
 }

@@ -1,6 +1,6 @@
 import type { BuddyChatCommandName } from '@buddy-shared/conversation/buddyChatCommands'
 import type { BuddyInputMaterial } from '@buddy-shared/conversation/buddyInputMaterial'
-import type { BuddyMessageQuote } from '@buddy-shared/conversation/buddyUserContent'
+import type { BuddyActorReference, BuddyMessageQuote } from '@buddy-shared/conversation/buddyUserContent'
 import type { BuddyComposerSource } from '@buddy-shared/conversation/composerResource'
 import type { JSONContent } from '@tiptap/core'
 import type { UseChatComposerOptions } from './typing'
@@ -273,6 +273,18 @@ export function useChatComposer(options: UseChatComposerOptions) {
     return removeChatComposerResource(current, resourceId)
   }
 
+  function mentionActor(reference: BuddyActorReference) {
+    const current = editor.value
+    if (!current || !current.isEditable || options.isSending.value)
+      return false
+    const position = current.state.selection.to
+    if (!insertChatComposerActorReference(current, reference, { from: position, to: position }))
+      return false
+    query.closeSuggestions()
+    current.commands.focus()
+    return true
+  }
+
   function selectSuggestion(option: ChatPromptContextOption | undefined, action: 'complete' | 'select' = 'select') {
     const currentEditor = editor.value
     const trigger = query.activeTrigger.value
@@ -401,6 +413,7 @@ export function useChatComposer(options: UseChatComposerOptions) {
     leaveSessions,
     sessionScope: query.sessionScope,
     modelInputIssue,
+    mentionActor,
     panelResources,
     quotes,
     resourceQuotes,

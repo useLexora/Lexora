@@ -415,6 +415,30 @@ describe('chat composer editing', () => {
     })
   })
 
+  it('inserts an external actor mention without replacing selected draft text and restores it through undo', async () => {
+    const flow = await mountComposer()
+    const reference = { type: 'actor_ref' as const, actorId: 'actor-two', name: '星野' }
+    flow.editor.commands.insertContent('before after')
+    flow.editor.commands.setTextSelection({ from: 1, to: 8 })
+    expect(flow.composer.mentionActor(reference)).toBe(true)
+    expect(flow.editor.getText()).toBe('before @星野 after')
+    expect(flow.editor.state.selection.empty).toBe(true)
+    expect(chatComposerDocumentToUserContent(flow.editor.getJSON()).body[0]?.content).toEqual([
+      { type: 'text', text: 'before ' },
+      reference,
+      { type: 'text', text: ' after' },
+    ])
+    expect(flow.sentPayloads).toEqual([])
+    flow.editor.commands.undo()
+    expect(flow.editor.getText()).toBe('before after')
+    flow.editor.commands.redo()
+    flow.editor.commands.insertContent('check ')
+    expect(flow.editor.getText()).toBe('before @星野 check after')
+    flow.isSending.value = true
+    expect(flow.composer.mentionActor(reference)).toBe(false)
+    expect(flow.editor.getText()).toBe('before @星野 check after')
+  })
+
   it('keeps a referenced session unsendable until the body contains non-whitespace text', async () => {
     const flow = await mountComposer()
     insertChatComposerSessionReferences(flow.editor, [{ id: 'session-1', title: 'History' }])

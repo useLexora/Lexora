@@ -81,6 +81,7 @@ const {
   sessionScope,
   loadContextOptions,
   modelInputIssue,
+  mentionActor,
   quotePasteLimitMessage,
   materials,
   removeMaterial,
@@ -145,6 +146,7 @@ defineExpose({
       editor.value.view.focus()
   },
   quote: (quote: BuddyMessageQuote) => addQuote(quote),
+  mentionActor,
 })
 
 const sourceMenuOpen = shallowRef(false)

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { BuddyMessageQuote } from '@buddy-shared/conversation/buddyUserContent'
+import type { BuddyActorReference, BuddyMessageQuote } from '@buddy-shared/conversation/buddyUserContent'
 import type { TaskComposerHostProps } from './typing'
 import type { ChatComposerSubmitPayload } from '@/modules/prompt-input'
 import { useTemplateRef } from 'vue'
@@ -20,6 +20,7 @@ defineExpose({
   focus: () => composerRef.value?.focus(),
   openModelSelector: () => composerRef.value?.openModelSelector(),
   quote: (quote: BuddyMessageQuote) => composerRef.value?.quote(quote) ?? 'unavailable',
+  mentionActor: (reference: BuddyActorReference) => composerRef.value?.mentionActor(reference) ?? false,
 })
 
 const { bindings, sendMessage } = useTaskComposer(props)
