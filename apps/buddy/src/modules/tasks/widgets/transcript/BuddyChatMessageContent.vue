@@ -55,6 +55,7 @@ const fileLinkMenu = computed(() => {
   const source = fileLinkSource.value
   return provider ? (href: string) => provider(href, source) : undefined
 })
+const resolveImage = computed(() => chatContent?.createImageResolver?.(props.message.conversationId))
 const materialStrip = useTemplateRef('materialStrip')
 const text = computed(() => getChatMessageDisplayText(
   props.message,
@@ -181,6 +182,7 @@ function handleMarkdownLink(href: string) {
       :write-clipboard-text="writeClipboardText"
       :open-web-link="chatContent?.openWebLink"
       :file-link-menu="fileLinkMenu"
+      :resolve-image="resolveImage"
       :on-link-error="chatContent?.onLinkError"
       @open-link="handleMarkdownLink"
     />

@@ -18,7 +18,7 @@ export async function withArtifactPreview(buddy, options, verify) {
     const publishing = requests.length === 1
     const delta = publishing
       ? { tool_calls: [{ index: 0, id: 'present-fixtures', type: 'function', function: { name: 'lexora_output_present', arguments: JSON.stringify({ paths: names }) } }] }
-      : { content: 'Preview fixtures are ready.' }
+      : { content: ['Preview fixtures are ready.', options.markdown].filter(Boolean).join('\n\n') }
     const common = { id: 'preview-fixture', model: 'preview-fixture', object: 'chat.completion.chunk', created: 1 }
     response.writeHead(200, { 'content-type': 'text/event-stream' })
     response.write(`data: ${JSON.stringify({ ...common, choices: [{ index: 0, delta: { role: 'assistant', ...delta }, finish_reason: null }] })}\n\n`)
