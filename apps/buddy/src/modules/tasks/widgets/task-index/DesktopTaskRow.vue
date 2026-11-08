@@ -273,5 +273,4 @@ useTaskHistoryDrag({
     }
   }
 }
-
 </style>
