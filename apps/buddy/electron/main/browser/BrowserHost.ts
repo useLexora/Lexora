@@ -47,6 +47,7 @@ import {
 
 export const BROWSER_DEFAULT_PARTITION = 'persist:buddy-browser-default-v1'
 const BROWSER_GUEST_ATTACH_TIMEOUT_MS = 10_000
+const BROWSER_NAVIGATION_WAIT_TIMEOUT_MS = 30_000
 const BROWSER_FAILED_NAVIGATION_SETTLE_MS = 200
 const BROWSER_NAVIGATION_SETTLE_TIMEOUT_MS = 15_000
 const BROWSER_ACTION_NAVIGATION_DETECTION_MS = 50
@@ -333,7 +334,9 @@ export class BrowserHost {
           await session.networkAuthorization.authorize(url)
         return result
       }, () => {
-        if (session.page && !session.page.isDestroyed())
+        if (this.#sessions.get(sessionId) === session && session.state.status === 'loading')
+          this.stop(sessionId)
+        else if (session.page && !session.page.isDestroyed())
           session.page.stop()
       })
     }
@@ -690,28 +693,90 @@ export class BrowserHost {
     readiness: 'load' | 'document-ready',
     assertControl: () => void,
   ): Promise<DesktopBrowserState> {
-    if (readiness === 'load')
-      return session.runWhileActive(() => this.#loadPageToCompletion(sessionId, session, navigationSequence, url, assertControl))
-    const startedAt = performance.now()
-    const page = session.requirePage()
-    let resolveReady!: () => void
-    const ready = new Promise<void>((resolve) => {
-      resolveReady = resolve
-    })
-    const onDocumentReady = () => {
-      if (session.mainFrameCommitSequence === navigationSequence)
-        resolveReady()
-    }
-    page.on('dom-ready', onDocumentReady)
-    try {
-      const loading = this.#loadPageToCompletion(sessionId, session, navigationSequence, url, assertControl)
-      const state = await session.runWhileActive(() => Promise.race([loading, ready.then(() => this.getState(sessionId))]))
-      this.#recordTiming(session, 'document_ready', startedAt)
-      return state
-    }
-    finally {
-      page.off('dom-ready', onDocumentReady)
-    }
+    return session.runWhileActive(async () => {
+      const startedAt = performance.now()
+      const page = session.requirePage()
+      const pageId = session.state.pageId
+      let hasCommittedDocument = false
+      let resolveWait!: (state: DesktopBrowserState) => void
+      let rejectWait!: (error: unknown) => void
+      const waiting = new Promise<DesktopBrowserState>((resolve, reject) => {
+        resolveWait = resolve
+        rejectWait = reject
+      })
+      const checkInterrupted = (): boolean => {
+        try {
+          this.#requireSession(sessionId)
+          this.#assertCurrentPage(session, pageId, 'while waiting for navigation')
+          assertControl()
+          if (!this.#shouldContinuePageAction(session, navigationSequence)) {
+            resolveWait(snapshot(session.state))
+            return true
+          }
+          const error = session.state.error
+          if (error?.code === 'BROWSER_PAGE_CRASHED' || error?.code === 'BROWSER_PAGE_UNRESPONSIVE')
+            throw new BrowserHostError(error.code, error.message, error.reason)
+          return false
+        }
+        catch (error) {
+          rejectWait(error)
+          return true
+        }
+      }
+      const onDocumentCommitted = () => {
+        if (this.#shouldContinuePageAction(session, navigationSequence))
+          hasCommittedDocument = true
+      }
+      const onDocumentReady = () => {
+        if (checkInterrupted() || readiness !== 'document-ready' || session.mainFrameCommitSequence !== navigationSequence)
+          return
+        this.#recordTiming(session, 'document_ready', startedAt)
+        resolveWait(snapshot(session.state))
+      }
+      const subscription = this.onDidChange((change) => {
+        if ((change.kind === 'state' || change.kind === 'session') && change.state.sessionId === sessionId)
+          checkInterrupted()
+      })
+      page.on('did-navigate', onDocumentCommitted)
+      page.on('dom-ready', onDocumentReady)
+      const timer = setTimeout(() => {
+        if (checkInterrupted())
+          return
+        const failure = session.state.error
+        if (failure) {
+          rejectWait(new BrowserHostError(failure.code, failure.message, failure.reason))
+          return
+        }
+        if (hasCommittedDocument && session.mainFrameCommitSequence === navigationSequence) {
+          resolveWait(snapshot(session.state))
+          return
+        }
+        const message = 'Browser navigation did not commit before its deadline'
+        rejectWait(new BrowserHostError('BROWSER_PAGE_FAILED', message))
+        session.navigationSequence += 1
+        this.#finishPageAction(session, navigationSequence)
+        this.#failedNavigationTargets.set(session, url)
+        session.state.error = { code: 'BROWSER_PAGE_FAILED', message }
+        session.state.status = 'error'
+        try {
+          page.stop()
+        }
+        catch {}
+        this.#publish(session)
+      }, BROWSER_NAVIGATION_WAIT_TIMEOUT_MS)
+      try {
+        return await Promise.race([
+          waiting,
+          this.#loadPageToCompletion(sessionId, session, navigationSequence, url, assertControl),
+        ])
+      }
+      finally {
+        clearTimeout(timer)
+        subscription.dispose()
+        page.off('did-navigate', onDocumentCommitted)
+        page.off('dom-ready', onDocumentReady)
+      }
+    }, { timeoutMs: null })
   }
 
   async #loadPageToCompletion(
