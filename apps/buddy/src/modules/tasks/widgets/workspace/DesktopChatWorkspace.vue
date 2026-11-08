@@ -18,6 +18,7 @@ import { useConversationDetailResize } from '../canvas/useConversationDetailResi
 import BuddyUserQuestions from '../questions/BuddyUserQuestions.vue'
 import { useChatQuoteNavigation } from '../quotes/useChatQuoteNavigation'
 import { useTaskResultRead } from '../task-index/useTaskResultRead'
+import { useProvideChatActorMention } from '../transcript/chatActorMentionContext'
 import { provideChatBuddyIdentity } from '../transcript/chatBuddyIdentity'
 import DesktopChatTranscript from '../transcript/DesktopChatTranscript.vue'
 import DesktopChatWelcome from '../welcome/DesktopChatWelcome.vue'
@@ -40,6 +41,20 @@ provideChatBuddyIdentity(() => [
 ])
 const DesktopConversationCanvas = defineAsyncComponent(() => import('../canvas/DesktopConversationCanvas.vue'))
 const composerRef = useTemplateRef<InstanceType<typeof DesktopTaskComposer>>('composerRef')
+function canMentionActor(actorId: string) {
+  return props.active && props.workspace.status.runtimeState.value.status === 'ready'
+    && !props.workspace.status.isClosing.value
+    && !props.workspace.execution.isSending.value
+    && !props.workspace.execution.isMutatingBranch.value
+    && props.workspace.session.members.memberIds.value.includes(actorId)
+}
+useProvideChatActorMention({
+  canMentionActor,
+  mentionActor: (reference) => {
+    if (canMentionActor(reference.actorId))
+      composerRef.value?.mentionActor(reference)
+  },
+})
 const canvasRef = useTemplateRef<InstanceType<typeof DesktopConversationCanvas>>('canvasRef')
 const canvasVisited = shallowRef(false)
 const nodeDetail = useConversationNodeDetail({
