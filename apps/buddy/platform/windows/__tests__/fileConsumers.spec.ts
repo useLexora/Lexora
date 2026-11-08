@@ -8,6 +8,7 @@ import { classifyPath } from '../../../service/src/permissions/classifyPath'
 import { createSensitivePathMatcher } from '../../../service/src/permissions/sensitivePaths'
 import { filePaths, relativeCanonicalPath } from '../../filesystem/filePaths'
 
+vi.mock('electron', () => ({ protocol: {} }))
 vi.mock('../../currentPlatform', async () => {
   const { resolveBuddyPlatform } = await import('../../../shared/platform')
   return { currentPlatform: resolveBuddyPlatform('win32') }
