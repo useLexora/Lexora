@@ -186,6 +186,8 @@ jobs:
           path: ${{ runner.temp }}/buddy-test-runtime
 
       - name: Prepare test tools
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           tar -xf "$RUNNER_TEMP/buddy-test-runtime/buddy-test-runtime.tar" -C apps/buddy
           node packaging/buddy/release/search-tools.mjs
@@ -247,8 +249,14 @@ jobs:
         with:
           toolchain: ${{ env.BUDDY_RUST_TOOLCHAIN }}
 
+      - name: Test release asset downloads
+        if: github.event_name == 'pull_request'
+        run: node --test packaging/buddy/release/__tests__/github-release-download.spec.mjs
+
       - name: Prepare native test programs
         if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           sudo apt-get update
           sudo apt-get install -y libcap-dev meson ninja-build

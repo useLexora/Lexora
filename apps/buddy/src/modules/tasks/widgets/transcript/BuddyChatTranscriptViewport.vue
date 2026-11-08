@@ -4,7 +4,6 @@ import type {
   BuddyChatTranscriptViewportHandle,
   ChatMessageScrollMetrics,
 } from './chatMessageViewport'
-import { NScrollbar } from 'naive-ui'
 import { useTemplateRef } from 'vue'
 import BuddyChatReturnToLatest from './BuddyChatReturnToLatest.vue'
 import BuddyChatVirtualRow from './BuddyChatVirtualRow.vue'
@@ -46,13 +45,7 @@ defineExpose<BuddyChatTranscriptViewportHandle>(handle)
 
 <template>
   <div ref="root" class="buddy-chat-transcript-viewport relative h-full min-h-0">
-    <NScrollbar
-      class="buddy-chat-transcript-viewport__scrollbar"
-      container-class="buddy-chat-transcript-viewport__scrollport"
-      content-style="min-height: 100%"
-      trigger="none"
-      @scroll="handleScroll"
-    >
+    <div class="buddy-chat-transcript-viewport__scrollport h-full overflow-x-hidden overflow-y-scroll" @scroll="handleScroll">
       <div
         ref="content"
         class="buddy-chat-transcript-viewport__content relative min-h-full"
@@ -73,7 +66,7 @@ defineExpose<BuddyChatTranscriptViewportHandle>(handle)
           <slot v-if="!row.items.length && !row.spacer" name="tail" />
         </BuddyChatVirtualRow>
       </div>
-    </NScrollbar>
+    </div>
     <Transition name="buddy-chat-return-to-latest">
       <div
         v-if="showReturnToLatest"
@@ -93,23 +86,22 @@ defineExpose<BuddyChatTranscriptViewportHandle>(handle)
   container-type: inline-size;
 }
 
-:deep(.buddy-chat-transcript-viewport__scrollbar) {
-  height: 100%;
-
-  .n-scrollbar-rail--vertical .n-scrollbar-rail__scrollbar {
-    transition:
-      height 160ms ease-out,
-      background-color 160ms ease-out;
-
-    &:active {
-      transition: none;
-    }
-  }
-}
-
-:deep(.buddy-chat-transcript-viewport__scrollport) {
+.buddy-chat-transcript-viewport__scrollport {
   overflow-anchor: none;
   overscroll-behavior: contain;
+
+  &::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: var(--buddy-border-strong);
+
+    &:hover {
+      background: var(--buddy-text-disabled);
+    }
+  }
 
   &:focus-visible {
     outline: 0;
@@ -117,7 +109,12 @@ defineExpose<BuddyChatTranscriptViewportHandle>(handle)
 }
 
 .buddy-chat-transcript-viewport__content {
-  width: 100cqw;
+  width: 100%;
+
+  :deep(.markdown-renderer) {
+    content-visibility: visible;
+    contain-intrinsic-size: none;
+  }
 }
 
 .buddy-chat-transcript-viewport__return {
@@ -144,10 +141,6 @@ defineExpose<BuddyChatTranscriptViewportHandle>(handle)
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :deep(.buddy-chat-transcript-viewport__scrollbar .n-scrollbar-rail--vertical .n-scrollbar-rail__scrollbar) {
-    transition: none;
-  }
-
   .buddy-chat-return-to-latest-enter-active,
   .buddy-chat-return-to-latest-leave-active {
     transition: none;

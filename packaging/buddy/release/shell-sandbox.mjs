@@ -1,4 +1,3 @@
-import { Buffer } from 'node:buffer'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -8,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import sandbox from '../../../apps/buddy/platform/native/shellSandbox.json' with { type: 'json' }
 import { OPERATING_SYSTEM } from '../../../apps/buddy/shared/platform/identifiers.ts'
 import { writeError, writeOutput } from '../../shared/cli-output.mjs'
+import { downloadGithubReleaseAsset } from './github-release-download.mjs'
 import { assertNativeExecutable } from './native-host.mjs'
 import { resolveBuddyOutputPaths } from './output-paths.mjs'
 import { requireNativeBuildTarget, resolveBuildTarget } from './targets.mjs'
@@ -45,10 +45,7 @@ export async function prepareShellSandbox({ cwd = repoRoot, platformId = process
   const staging = mkdtempSync(join(dirname(output), 'prepare-'))
   try {
     writeOutput(`Preparing bubblewrap ${sandbox.version}`)
-    const response = await fetch(`${sandbox.release}/${sandbox.archive}`, { signal: AbortSignal.timeout(60_000) })
-    if (!response.ok)
-      throw new Error(`Unable to download bubblewrap: HTTP ${response.status}`)
-    const content = Buffer.from(await response.arrayBuffer())
+    const content = await downloadGithubReleaseAsset(sandbox.release, sandbox.archive)
     if (createHash('sha256').update(content).digest('hex') !== sandbox.sha256)
       throw new Error('Shell sandbox download checksum mismatch')
     const archive = join(staging, sandbox.archive)

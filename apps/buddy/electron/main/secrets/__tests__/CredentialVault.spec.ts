@@ -20,6 +20,8 @@ import {
 } from '../CredentialVault'
 import { isAllowedExternalUrl, registerCredentialHostRpc } from '../registerCredentialHostRpc'
 
+vi.mock('electron', () => ({ safeStorage: {}, shell: {} }))
+
 const reversibleCipher: SecretCipher = {
   available: () => true,
   decrypt: value => Buffer.from([...value].map(byte => byte ^ 0xA5)).toString('utf8'),

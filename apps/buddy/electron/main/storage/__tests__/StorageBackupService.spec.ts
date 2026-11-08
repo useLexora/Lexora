@@ -6,11 +6,13 @@ import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import process from 'node:process'
 import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { resolveBuddyPrivateDirectories } from '../../../../platform/native/nativeHost'
 import { writeSnapshotManifest } from '../../../../platform/storage/SnapshotRepository'
 import { LexoraConfigStore } from '../../config/LexoraConfigStore'
 import { StorageBackupService } from '../StorageBackupService'
+
+vi.mock('electron', () => ({ safeStorage: {} }))
 
 async function retentionFixture() {
   const root = await createTemporaryDirectory('lexora-backup-retention-')
