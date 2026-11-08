@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { BuddyLocale } from '@/i18n/buddyI18n'
+import { computed } from 'vue'
 import DesktopMarkdownContent from '@/shared/ui/markdown/DesktopMarkdownContent.vue'
 import { useChatContent } from './chatContentContext'
 
@@ -9,6 +10,7 @@ defineProps<{
 }>()
 
 const actions = useChatContent()
+const resolveImage = computed(() => actions.createImageResolver?.())
 
 function handleMarkdownLink(href: string) {
   actions.previewFile(href)
@@ -23,6 +25,7 @@ function handleMarkdownLink(href: string) {
     :write-clipboard-text="actions.writeClipboardText"
     :open-web-link="actions.openWebLink"
     :file-link-menu="actions.fileLinkMenu"
+    :resolve-image="resolveImage"
     :on-link-error="actions.onLinkError"
     @open-link="handleMarkdownLink"
   />

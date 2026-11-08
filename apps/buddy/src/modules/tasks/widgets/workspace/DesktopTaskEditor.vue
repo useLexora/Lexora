@@ -8,6 +8,7 @@ import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { useFileOpening } from '@/modules/files'
 import { DesktopMcpDialog } from '@/modules/settings/ui'
 import { provideSpeechScope } from '@/modules/speech'
+import { createChatImageResolver } from '@/modules/tasks/state/artifacts/createChatImageResolver'
 import { createFileLinkMenu } from '@/modules/tasks/state/artifacts/createFileLinkMenu'
 import { provideConversationMcpPanel } from '@/modules/tasks/state/runs/conversationMcpPanel'
 import { provideConversationStatusPanel } from '@/modules/tasks/state/runs/conversationStatusPanel'
@@ -91,6 +92,7 @@ useProvideChatContent({
   canPreviewFile: contextActions.canPreviewFile,
   previewFile: contextActions.previewFile,
   fileLinkMenu: createFileLinkMenu({ resources: contextActions, task: () => tasks, artifacts: artifactActions, files: requireDesktopApi().localChat.taskFiles, opening: useFileOpening()!, language: () => language.value, writeClipboardText: clipboard.writeText }),
+  createImageResolver: conversationId => createChatImageResolver(conversationId ?? chatSession.activeConversationId.value, requireDesktopApi().localChat.taskFiles.resolve),
   onLinkError: contextActions.onFileError,
   writeClipboardText: text => clipboard.writeText(text),
 })
