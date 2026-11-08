@@ -280,6 +280,219 @@ describe('browserHost sessions and navigation', () => {
     fixture.host.dispose()
   })
 
+  it.each(['load', 'document-ready'] as const)('preserves a committed page after the %s navigation budget and tracks its eventual completion', async (readiness) => {
+    vi.useFakeTimers()
+    const fixture = createFixture()
+    const load = createDeferred<void>()
+    try {
+      const session = fixture.host.ensureSession('conversation-1')
+      const listeners = fixture.webContents.listenerCount('dom-ready')
+      const phases: string[] = []
+      fixture.host.onDidChange((change) => {
+        if (change.kind === 'timing')
+          phases.push(change.phase)
+      })
+      fixture.webContents.loadURL.mockImplementationOnce(async (url) => {
+        fixture.webContents.currentUrl = url
+        fixture.webContents.emit('did-navigate', {}, url)
+        if (readiness === 'load')
+          fixture.webContents.emit('dom-ready')
+        await load.promise
+      })
+      const opening = fixture.host.navigate(session.sessionId, 'https://example.com/slow', readiness)
+      await vi.advanceTimersByTimeAsync(30_001)
+      await expect(opening).resolves.toMatchObject({ pageId: session.pageId, status: 'loading', error: null })
+      expect(fixture.webContents.isDestroyed()).toBe(false)
+      expect(fixture.webContents.listenerCount('dom-ready')).toBe(listeners)
+      expect(phases).not.toContain('document_ready')
+
+      await vi.advanceTimersByTimeAsync(6_000)
+      load.resolve()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fixture.host.getState(session.sessionId)).toMatchObject({ pageId: session.pageId, status: 'ready', error: null, url: 'https://example.com/slow' })
+      expect(phases).toContain('load_complete')
+    }
+    finally {
+      load.resolve()
+      fixture.host.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['resolve', 'reject'] as const)('fails an uncommitted navigation without destroying the page or accepting its late %s and allows retry', async (settlement) => {
+    vi.useFakeTimers()
+    const fixture = createFixture()
+    const load = createDeferred<void>()
+    try {
+      const session = fixture.host.ensureSession('conversation-1')
+      await fixture.host.navigate(session.sessionId, 'https://example.com/previous')
+      fixture.webContents.emit('did-navigate', {}, 'https://example.com/previous')
+      fixture.webContents.loadURL.mockImplementationOnce(() => load.promise)
+      const failure = expect(fixture.host.navigate(session.sessionId, 'https://example.com/uncommitted'))
+        .rejects
+        .toMatchObject({ code: 'BROWSER_PAGE_FAILED', message: 'Browser navigation did not commit before its deadline' })
+      await vi.advanceTimersByTimeAsync(30_001)
+      await failure
+      expect(fixture.host.getState(session.sessionId)).toMatchObject({ pageId: session.pageId, status: 'error', error: { code: 'BROWSER_PAGE_FAILED' } })
+      expect(fixture.webContents.isDestroyed()).toBe(false)
+      expect(fixture.webContents.stop).toHaveBeenCalledOnce()
+
+      if (settlement === 'resolve')
+        load.resolve()
+      else
+        load.reject(new Error('ERR_ABORTED'))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fixture.host.getState(session.sessionId).status).toBe('error')
+      await fixture.host.reload(session.sessionId)
+      expect(fixture.host.getState(session.sessionId)).toMatchObject({ pageId: session.pageId, status: 'ready', error: null, url: 'https://example.com/uncommitted' })
+    }
+    finally {
+      load.resolve()
+      fixture.host.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['same-document-change', 'stop-error'] as const)('keeps an uncommitted navigation bounded despite %s', async (scenario) => {
+    vi.useFakeTimers()
+    const fixture = createFixture()
+    const load = createDeferred<void>()
+    try {
+      const session = fixture.host.ensureSession('conversation-1')
+      await fixture.host.navigate(session.sessionId, 'https://example.com/previous')
+      fixture.webContents.loadURL.mockImplementationOnce(() => load.promise)
+      const failure = expect(fixture.host.navigate(session.sessionId, 'https://other.example/pending', 'document-ready'))
+        .rejects
+        .toMatchObject({ code: 'BROWSER_PAGE_FAILED', message: 'Browser navigation did not commit before its deadline' })
+      await vi.advanceTimersByTimeAsync(0)
+      if (scenario === 'same-document-change') {
+        fixture.webContents.currentUrl = 'https://example.com/previous#changed'
+        fixture.webContents.emit('did-navigate-in-page', {}, fixture.webContents.currentUrl, true)
+      }
+      else {
+        fixture.webContents.stop.mockImplementationOnce(() => {
+          throw new Error('Object has been destroyed')
+        })
+      }
+      await vi.advanceTimersByTimeAsync(30_001)
+      await failure
+      expect(fixture.host.getState(session.sessionId)).toMatchObject({ pageId: session.pageId, status: 'error', error: { code: 'BROWSER_PAGE_FAILED' } })
+      expect(fixture.webContents.isDestroyed()).toBe(false)
+      expect(vi.getTimerCount()).toBe(0)
+    }
+    finally {
+      fixture.host.dispose()
+      load.resolve()
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['stop', 'replace', 'takeover', 'crash', 'unresponsive'] as const)('settles a navigation on %s even when loadURL does not settle', async (interruption) => {
+    vi.useFakeTimers()
+    const fixture = createFixture()
+    const load = createDeferred<void>()
+    try {
+      const session = fixture.host.ensureSession('conversation-1')
+      const lease = fixture.host.acquireControl({ sessionId: session.sessionId, pageId: session.pageId })
+      fixture.webContents.loadURL.mockImplementationOnce(() => load.promise)
+      const opening = fixture.host.navigate(session.sessionId, 'https://example.com/pending', 'document-ready', () => fixture.host.assertControl(lease))
+      const outcome = Promise.allSettled([opening])
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fixture.webContents.loadURL).toHaveBeenCalledOnce()
+      if (interruption === 'stop')
+        fixture.host.stop(session.sessionId)
+      else if (interruption === 'replace')
+        await fixture.host.navigate(session.sessionId, 'https://example.com/replacement')
+      else if (interruption === 'takeover')
+        fixture.host.takeControl(session.sessionId)
+      else
+        fixture.webContents.emit(interruption === 'crash' ? 'render-process-gone' : 'unresponsive')
+      await vi.advanceTimersByTimeAsync(0)
+      const result = await outcome
+      if (interruption === 'stop' || interruption === 'replace') {
+        expect(result[0]).toMatchObject({ status: 'fulfilled' })
+      }
+      else {
+        expect(result[0]).toMatchObject({ status: 'rejected', reason: { code: interruption === 'takeover' ? 'BROWSER_CONTROL_REQUIRED' : interruption === 'crash' ? 'BROWSER_PAGE_CRASHED' : 'BROWSER_PAGE_UNRESPONSIVE' } })
+      }
+      const state = fixture.host.getState(session.sessionId)
+      await vi.advanceTimersByTimeAsync(31_000)
+      expect(fixture.webContents.isDestroyed()).toBe(false)
+      expect(fixture.host.getState(session.sessionId)).toEqual(state)
+      if (interruption !== 'stop')
+        expect(fixture.webContents.stop).not.toHaveBeenCalled()
+    }
+    finally {
+      fixture.host.dispose()
+      load.resolve()
+      vi.useRealTimers()
+    }
+  })
+
+  it('settles a signal-cancelled navigation without waiting for loadURL or destroying the page', async () => {
+    vi.useFakeTimers()
+    const fixture = createFixture()
+    const load = createDeferred<void>()
+    try {
+      const session = fixture.host.ensureSession('conversation-1')
+      const controller = new AbortController()
+      fixture.webContents.loadURL.mockImplementationOnce(() => load.promise)
+      const opening = fixture.host.withNetworkAuthorization(session.sessionId, async () => {}, controller.signal, () => fixture.host.navigate(session.sessionId, 'https://example.com/pending'))
+      const failure = expect(opening).rejects.toThrow('Navigation cancelled')
+      await vi.advanceTimersByTimeAsync(0)
+      controller.abort(new Error('Navigation cancelled'))
+      await failure
+      await vi.advanceTimersByTimeAsync(31_000)
+      expect(fixture.webContents.isDestroyed()).toBe(false)
+      expect(fixture.webContents.stop).toHaveBeenCalledOnce()
+      expect(fixture.host.getState(session.sessionId)).toMatchObject({ pageId: session.pageId, error: null })
+    }
+    finally {
+      fixture.host.dispose()
+      load.resolve()
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['close', 'cancel'] as const)('keeps the destruction barrier when pending navigation is explicitly removed by %s', async (action) => {
+    vi.useFakeTimers()
+    const fixture = createFixture()
+    const load = createDeferred<void>()
+    try {
+      const owner = { runId: 'run-navigation', buddyId: 'actor-navigation' }
+      const session = fixture.host.ensureAgentSession('conversation-1', owner)
+      const lease = fixture.host.acquireControl({ owner, sessionId: session.sessionId, pageId: session.pageId })
+      fixture.webContents.loadURL.mockImplementationOnce(() => load.promise)
+      fixture.webContents.close.mockImplementation(() => {})
+      const opening = fixture.host.navigate(session.sessionId, 'https://example.com/pending', 'document-ready', () => fixture.host.assertControl(lease))
+      const outcome = Promise.allSettled([opening])
+      let settled = false
+      void outcome.then(() => {
+        settled = true
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      const cleanup = action === 'close'
+        ? fixture.host.close(session.sessionId)
+        : fixture.host.cancelExecution('conversation-1', owner)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(settled).toBe(false)
+      expect(fixture.webContents.isDestroyed()).toBe(false)
+      fixture.webContents.destroyed = true
+      fixture.webContents.emit('destroyed')
+      await cleanup
+      expect((await outcome)[0]).toMatchObject({ status: 'rejected', reason: { code: action === 'close' ? 'BROWSER_PAGE_FAILED' : 'BROWSER_CONTROL_REQUIRED' } })
+      expect(fixture.webContents.isDestroyed()).toBe(true)
+      expect(vi.getTimerCount()).toBe(0)
+    }
+    finally {
+      fixture.webContents.destroyed = true
+      fixture.webContents.emit('destroyed')
+      fixture.host.dispose()
+      load.resolve()
+      vi.useRealTimers()
+    }
+  })
+
   it('does not return an observation when the document changes during readiness', async () => {
     const fixture = createFixture()
     const session = fixture.host.ensureSession('conversation-1')
