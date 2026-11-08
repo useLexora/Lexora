@@ -217,12 +217,17 @@ jobs:
           name: native-test-runtime-linux
           path: ${{ runner.temp }}/buddy-test-runtime
 
+      - name: Test Electron preparation
+        run: node --test .github/scripts/__tests__/prepare-test-electron.spec.mjs
+
       - name: Prepare test tools
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tar -xf "$RUNNER_TEMP/buddy-test-runtime/buddy-test-runtime.tar" -C apps/buddy
           node packaging/buddy/release/search-tools.mjs
+          node .github/scripts/prepare-test-electron.mjs "$RUNNER_TEMP/test-electron"
+          echo "ELECTRON_OVERRIDE_DIST_PATH=$RUNNER_TEMP/test-electron" >> "$GITHUB_ENV"
           sudo apt-get install -y socat
           if sudo apparmor_status --enabled; then
             sandbox_binary="$(realpath apps/buddy/.output/build/shell-sandbox/linux-x64/bwrap)"

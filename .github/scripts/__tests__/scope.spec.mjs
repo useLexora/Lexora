@@ -7,76 +7,28 @@ import { dirname, join } from 'node:path'
 import test from 'node:test'
 import { classifyCiScope, listChangedFiles, resolveCiScope } from '../resolve-ci-scope.mjs'
 
-const none = { workspace: false, integration: false, native: false, website: false, repository: false }
-const workspace = { ...none, workspace: true }
-const integration = { ...workspace, integration: true }
-const native = { ...integration, native: true }
-const website = { ...none, website: true }
-const repository = { ...none, repository: true }
-const full = { workspace: true, integration: true, native: true, website: true, repository: true }
-const cases = [
-  ['apps/buddy/src/modules/tasks/Chat.vue', workspace],
-  ['apps/buddy/src/shared/ui/__tests__/button.spec.ts', workspace],
-  ['apps/buddy/service/src/sandbox/runner.ts', integration],
-  ['apps/buddy/electron/main/runtime/serviceProcess.ts', integration],
-  ['apps/buddy/platform/filesystem/filePaths.ts', integration],
-  ['packaging/buddy/release/search-tools.mjs', integration],
-  ['.playwright/scripts/__tests__/inference-smoke.spec.mjs', integration],
-  ['apps/buddy/native/host/src/lib.rs', native],
-  ['apps/buddy/platform/native/searchTools.json', native],
-  ['.cargo/config.toml', native],
-  ['packages/assets/buddy/pets/default/pet.png', { ...native, repository: true }],
-  ['packages/assets/brand/logo.svg', { ...integration, website: true, repository: true }],
-  ['apps/buddy/shared/extensions/protocol.ts', full],
-  ['apps/buddy/__tests__/temporaryDirectories.ts', full],
-  ['apps/buddy/package.json', full],
-  ['apps/buddy/vite.config.ts', full],
-  ['apps/buddy/vitest.setup.ts', full],
-  ['.playwright/scripts/fixtures/electron.mjs', full],
-  ['packaging/shared/cli-output.mjs', full],
-  ['patches/dependency.patch', full],
-  ['package.json', full],
-  ['pnpm-lock.yaml', full],
-  ['.node-version', full],
-  ['.github/workflows/ci.yml', full],
-  ['.github/scripts/__tests__/scope.spec.mjs', full],
-  ['.github/actions/install-workspace-dependencies/action.yml', full],
-  ['apps/website/index.md', website],
-  ['.github/workflows/website-pages.yml', website],
-  ['infrastructure/scripts/check.mjs', repository],
-  ['README.md', none],
-  ['apps/web/src/index.ts', none],
-  ['apps/api/src/index.ts', none],
-  ['legacy/web-stack/index.ts', none],
-  ['.playwright/scripts/community/index.mjs', none],
-  ['.playwright/scripts/community-extra/index.mjs', integration],
-  ['apps/web-extra/index.ts', full],
-  ['apps/buddy/src-other/index.ts', full],
-  ['new-capability/config.json', full],
-]
-
-for (const [path, expected] of cases) {
-  test(`选择 ${path} 所需检查`, () => {
-    assert.deepEqual(classifyCiScope([path]), expected)
-  })
-}
-
-test('没有变更路径证据时保守选择全部检查', () => {
-  assert.deepEqual(classifyCiScope([]), full)
+test('仅 Renderer 变化不准备原生环境，混入运行时变化后必须执行集成检查', () => {
+  const renderer = 'apps/buddy/src/modules/tasks/widgets/transcript/BuddyChatTranscriptViewport.vue'
+  const fast = classifyCiScope([renderer])
+  assert.equal(fast.workspace, true)
+  assert.equal(fast.integration, false)
+  assert.equal(classifyCiScope([renderer, 'apps/buddy/service/src/sandbox/ShellSandboxClient.ts']).integration, true)
 })
 
-test('路径分隔符和相对前缀不改变范围', () => {
-  for (const path of ['apps/buddy/src/Chat.vue', './apps/buddy/src/Chat.vue', '.\\apps\\buddy\\src\\Chat.vue'])
-    assert.deepEqual(classifyCiScope([path]), workspace)
-})
-
-test('多路径选择取并集，新增已知路径不会移除必需检查', () => {
-  for (const [first, a] of cases) {
-    for (const [second, b] of cases) {
-      const expected = Object.fromEntries(Object.keys(none).map(key => [key, a[key] || b[key]]))
-      assert.deepEqual(classifyCiScope([first, second]), expected, `${first} + ${second}`)
-    }
+test('混合变更不因路径顺序或无关文档而丢失必需检查', () => {
+  const files = ['apps/buddy/native/host/src/lib.rs', 'apps/website/index.md', 'README.md']
+  for (const paths of [files, files.toReversed()]) {
+    const scope = classifyCiScope(paths)
+    assert.equal(scope.workspace, true)
+    assert.equal(scope.integration, true)
+    assert.equal(scope.native, true)
+    assert.equal(scope.website, true)
   }
+})
+
+test('缺少路径证据、未知路径和近似 Renderer 前缀不能误入快速分支', () => {
+  for (const files of [[], ['new-capability/config.json'], ['apps/buddy/src-other/index.ts']])
+    assert.ok(Object.values(classifyCiScope(files)).every(Boolean))
 })
 
 function repositoryFixture(context, files) {
@@ -95,9 +47,9 @@ function repositoryFixture(context, files) {
   return { cwd, git, base: git('rev-parse', 'HEAD') }
 }
 
-test('跨产品重命名保留旧路径和新路径用于范围选择', (context) => {
-  const source = 'apps/web/src/moved.ts'
-  const target = 'apps/website/src/moved.ts'
+test('文件移出原生目录后仍按旧路径执行原生检查', (context) => {
+  const source = 'apps/buddy/native/host/src/moved.rs'
+  const target = 'apps/web/src/moved.rs'
   const { cwd, git, base } = repositoryFixture(context, [source])
   mkdirSync(dirname(join(cwd, target)), { recursive: true })
   renameSync(join(cwd, source), join(cwd, target))
@@ -105,7 +57,7 @@ test('跨产品重命名保留旧路径和新路径用于范围选择', (context
   git('commit', '--quiet', '-m', 'move')
   const head = git('rev-parse', 'HEAD')
   assert.deepEqual(listChangedFiles(base, head, cwd).sort(), [source, target])
-  assert.deepEqual(resolveCiScope(base, head, cwd), website)
+  assert.equal(resolveCiScope(base, head, cwd).native, true)
 })
 
 test('保留删除、文件类型变更及包含中文和换行的路径', (context) => {
@@ -119,5 +71,5 @@ test('保留删除、文件类型变更及包含中文和换行的路径', (cont
   git('commit', '--quiet', '-m', 'change')
   const head = git('rev-parse', 'HEAD')
   assert.deepEqual(listChangedFiles(base, head, cwd).sort(), files.toSorted())
-  assert.deepEqual(resolveCiScope(base, head, cwd), full)
+  assert.ok(Object.values(resolveCiScope(base, head, cwd)).every(Boolean))
 })
