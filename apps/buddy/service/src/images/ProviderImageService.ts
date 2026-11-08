@@ -1,10 +1,11 @@
 import type { ProviderService } from '../providers/ProviderService'
 import type { ImageGenerationErrorDiagnostic, ImageGenerationInput, ImageGenerationResult } from './ImageGenerationGateway'
-import { Buffer } from 'node:buffer'
 import { imageOutputOptionsSchema } from '../../../shared/images/imagePreferences'
 import { ImageGenerationError } from './ImageGenerationGateway'
+import { supportsImageRequest } from './imageGenerationSupport'
 import { imageHttpFailure, imageResponseDiagnostic, imageTransportFailure } from './imageHttpDiagnostic'
 import { decodePng, readBoundedResponse } from './imageResponseBody'
+import { resolveProviderImageAdapter } from './providerImageAdapters'
 
 export class ProviderImageService {
   readonly providers: ProviderService
@@ -37,31 +38,21 @@ export class ProviderImageService {
       throw new ImageGenerationError('IMAGE_GENERATION_UNSUPPORTED', { retryable: true })
     input.signal.throwIfAborted()
     const output = imageOutputOptionsSchema.parse(input.output ?? {})
-    const fields = { model: modelId, prompt: input.prompt, n: 1, output_format: 'png', ...Object.fromEntries(Object.entries(output).filter(([, value]) => value !== 'auto')) }
+    const adapter = resolveProviderImageAdapter(request.baseUrl)
+    if (!supportsImageRequest(adapter.support, input.inputImages.length ? 'edit' : 'generate', input.inputImages.length, output))
+      throw new ImageGenerationError('IMAGE_GENERATION_UNSUPPORTED', { retryable: true })
+    const prepared = adapter.buildRequest(modelId, input, output)
     const headers = new Headers(request.headers)
     let body: string | FormData
-    if (input.inputImages.length) {
-      const form = new FormData()
-      for (const [name, value] of Object.entries(fields))
-        form.set(name, String(value))
-      let total = 0
-      for (const [index, image] of input.inputImages.entries()) {
-        if (!['image/png', 'image/jpeg', 'image/webp'].includes(image.mimeType))
-          throw new ImageGenerationError('IMAGE_GENERATION_UNSUPPORTED', { retryable: true })
-        const bytes = Buffer.from(image.data, 'base64')
-        total += bytes.byteLength
-        if (total > 32 * 1024 * 1024)
-          throw new ImageGenerationError('IMAGE_GENERATION_UNSUPPORTED', { retryable: true })
-        form.append('image[]', new Blob([bytes], { type: image.mimeType }), `reference-${index}.${image.mimeType.split('/')[1]}`)
-      }
+    if (prepared.body instanceof FormData) {
       headers.delete('Content-Type')
-      body = form
+      body = prepared.body
     }
     else {
       headers.set('Content-Type', 'application/json')
-      body = JSON.stringify(fields)
+      body = JSON.stringify(prepared.body)
     }
-    const endpoint = `${request.baseUrl.replace(/\/$/, '')}/images/${input.inputImages.length ? 'edits' : 'generations'}`
+    const endpoint = `${request.baseUrl.replace(/\/+$/, '')}/${prepared.path}`
     const diagnostic: ImageGenerationErrorDiagnostic = { stage: 'submitting', localRequestId: input.requestId }
     await input.onSubmitting?.()
     input.signal.throwIfAborted()

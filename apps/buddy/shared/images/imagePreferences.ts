@@ -67,7 +67,9 @@ export const imageOutputOptionsSchema = z.object({
   size: z.string().regex(/^(?:auto|[1-9]\d{1,3}x[1-9]\d{1,3})$/).default('auto'),
   quality: z.enum(['auto', 'low', 'medium', 'high']).default('auto'),
   background: z.enum(['auto', 'opaque', 'transparent']).default('auto'),
-}).strict()
+  resolution: z.enum(['1K', '2K', '3K', '4K']).optional(),
+  aspectRatio: z.enum(['1:1', '3:4', '4:3', '16:9', '9:16', '2:3', '3:2', '21:9']).optional(),
+}).strict().refine(value => value.size === 'auto' || (!value.resolution && !value.aspectRatio), 'Pixel size cannot be combined with resolution or aspect ratio')
 export type ImageOutputOptions = z.infer<typeof imageOutputOptionsSchema>
 export const imageSupportSchema = z.object({
   operations: z.array(z.enum(['generate', 'edit'])).min(1).max(2),
@@ -75,6 +77,8 @@ export const imageSupportSchema = z.object({
   sizes: z.array(imageOutputOptionsSchema.shape.size).min(1).max(32),
   qualities: z.array(imageOutputOptionsSchema.shape.quality).min(1).max(4),
   backgrounds: z.array(imageOutputOptionsSchema.shape.background).min(1).max(3),
+  resolutions: z.array(imageOutputOptionsSchema.shape.resolution.unwrap()).min(1).max(4).optional(),
+  aspectRatios: z.array(imageOutputOptionsSchema.shape.aspectRatio.unwrap()).min(1).max(8).optional(),
 }).strict().refine(value => !value.operations.includes('edit') || value.maxReferenceImages > 0, 'Editing requires reference images')
 export type ImageSupport = z.infer<typeof imageSupportSchema>
 export const imageCandidateSchema = z.object({

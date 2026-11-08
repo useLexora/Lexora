@@ -13,6 +13,9 @@ export function imageResponseDiagnostic(response: Response, body?: unknown): Ima
   catch { value = undefined }
   const record = value && typeof value === 'object' ? value as Record<string, unknown> : undefined
   const error = record?.error && typeof record.error === 'object' ? record.error as Record<string, unknown> : record
+  const unsupportedParameter = typeof error?.message === 'string'
+    ? /^(model|prompt|n|size|quality|background|response_format|output_format|ratio) is not supported\b/.exec(error.message)?.[1]
+    : undefined
   return {
     stage: 'receiving',
     httpStatus: response.status,
@@ -20,7 +23,7 @@ export function imageResponseDiagnostic(response: Response, body?: unknown): Ima
     ...readImageDiagnostic({
       responseId: record?.id,
       providerCode: error?.code,
-      providerParameter: error?.param ?? error?.parameter,
+      providerParameter: error?.param || error?.parameter || unsupportedParameter,
       requestId: response.headers.get('x-request-id') ?? response.headers.get('openai-request-id'),
     }),
   }
