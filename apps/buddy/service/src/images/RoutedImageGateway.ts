@@ -5,7 +5,8 @@ import type { ImageGenerationDescription, ImageGenerationGateway, ImageGeneratio
 import { randomUUID } from 'node:crypto'
 import { imageOutputOptionsSchema, imagePolicyTargets, resolveImagePolicy } from '../../../shared/images/imagePreferences'
 import { ImageGenerationError } from './ImageGenerationGateway'
-import { nativeImageSupport } from './imageGenerationSupport'
+import { nativeImageSupport, supportsImageRequest } from './imageGenerationSupport'
+import { resolveProviderImageAdapter } from './providerImageAdapters'
 import { ProviderImageService } from './ProviderImageService'
 
 export { nativeImageSupport } from './imageGenerationSupport'
@@ -64,7 +65,7 @@ export class RoutedImageGateway implements ImageGenerationGateway {
     for (const model of await this.options.providers.listModels()) {
       const provider = providers.find(provider => provider.id === model.providerId)
       if (model.type === 'image-generation' && model.api === 'openai-images') {
-        candidates.push({ target: { kind: 'model', providerId: model.providerId, modelId: model.id }, title: model.displayName, owner: provider?.displayName ?? model.providerId, available: Boolean(model.available && model.enabled && provider?.enabled && provider.status === 'available'), managementPage: true, support: nativeImageSupport })
+        candidates.push({ target: { kind: 'model', providerId: model.providerId, modelId: model.id }, title: model.displayName, owner: provider?.displayName ?? model.providerId, available: Boolean(model.available && model.enabled && provider?.enabled && provider.status === 'available'), managementPage: true, support: resolveProviderImageAdapter(provider?.baseUrl).support })
         continue
       }
       try {
@@ -83,7 +84,7 @@ export class RoutedImageGateway implements ImageGenerationGateway {
     const policy = resolveImagePolicy(input.preferences ?? await this.options.preferences(), operation)
     const output = imageOutputOptionsSchema.parse(input.output ?? {})
     const current: ImageTarget = { kind: 'model', providerId: input.model.provider, modelId: input.model.id }
-    const nativeSupported = this.options.native.supports(input.model) && this.#supports(nativeImageSupport, operation, input.inputImages.length, output)
+    const nativeSupported = this.options.native.supports(input.model) && supportsImageRequest(nativeImageSupport, operation, input.inputImages.length, output)
     const targets = policy.mode === 'native' ? [current] : [...policy.mode === 'auto' && nativeSupported ? [current] : [], ...imagePolicyTargets(policy)]
     if (!targets.length)
       throw new ImageGenerationError('IMAGE_GENERATION_UNSUPPORTED', { retryable: true })
@@ -99,7 +100,10 @@ export class RoutedImageGateway implements ImageGenerationGateway {
       input.signal.throwIfAborted()
       try {
         const plugin = target.kind === 'plugin' ? plugins.find(candidate => JSON.stringify(candidate.target) === JSON.stringify(target)) : undefined
-        this.#assertSupport(target, plugin, operation, input.inputImages.length, output)
+        const selected = target.kind === 'model' ? (await this.options.providers.listModels(target.providerId)).find(model => model.id === target.modelId) : undefined
+        const provider = selected?.type === 'image-generation' && target.kind === 'model' ? (await this.options.providers.listProviders()).find(provider => provider.id === target.providerId) : undefined
+        const support = target.kind === 'plugin' ? plugin?.support : selected?.type === 'image-generation' ? resolveProviderImageAdapter(provider?.baseUrl).support : nativeImageSupport
+        this.#assertSupport(support, operation, input.inputImages.length, output)
         await input.onAttempt?.(target, index + 1)
         const onSubmitted = (backendRequestId: string) => input.onAttempt?.(target, index + 1, backendRequestId) ?? Promise.resolve()
         if (plugin && input.inputImages.some(image => !['image/png', 'image/jpeg', 'image/webp'].includes(image.mimeType)))
@@ -119,7 +123,6 @@ export class RoutedImageGateway implements ImageGenerationGateway {
         else {
           if (target.kind !== 'model')
             throw new ImageGenerationError('IMAGE_GENERATION_UNSUPPORTED', { retryable: true })
-          const selected = (await this.options.providers.listModels(target.providerId)).find(model => model.id === target.modelId)
           if (selected?.type === 'image-generation') {
             title = selected.displayName
             owner = target.providerId
@@ -157,13 +160,8 @@ export class RoutedImageGateway implements ImageGenerationGateway {
     throw failure ?? new ImageGenerationError('IMAGE_GENERATION_UNSUPPORTED')
   }
 
-  #assertSupport(target: ImageTarget, plugin: ImageCandidate | undefined, operation: 'generate' | 'edit', references: number, output: ReturnType<typeof imageOutputOptionsSchema.parse>) {
-    const support = target.kind === 'plugin' ? plugin?.support : nativeImageSupport
-    if (!support || !this.#supports(support, operation, references, output))
+  #assertSupport(support: ImageSupport | undefined, operation: 'generate' | 'edit', references: number, output: ReturnType<typeof imageOutputOptionsSchema.parse>) {
+    if (!support || !supportsImageRequest(support, operation, references, output))
       throw new ImageGenerationError('IMAGE_GENERATION_UNSUPPORTED', { retryable: true })
-  }
-
-  #supports(support: ImageSupport, operation: 'generate' | 'edit', references: number, output: ReturnType<typeof imageOutputOptionsSchema.parse>): boolean {
-    return support.operations.includes(operation) && references <= support.maxReferenceImages && support.sizes.includes(output.size) && support.qualities.includes(output.quality) && support.backgrounds.includes(output.background)
   }
 }

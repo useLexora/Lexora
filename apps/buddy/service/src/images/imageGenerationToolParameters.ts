@@ -22,13 +22,22 @@ export function createImageGenerationParameters(description?: ImageGenerationDes
     }),
   }
   if (supports.length) {
-    const variants = supports.map((support) => {
+    const variants = supports.flatMap((support) => {
       const fields = Object.fromEntries(([['size', 'sizes'], ['quality', 'qualities'], ['background', 'backgrounds']] as const).map(([field, key]) => {
         const values = support[key]
         const schema = Type.Union(values.map(value => Type.Literal(value)))
         return [field, values.includes('auto') ? Type.Optional(schema) : schema]
       }))
-      return Type.Object(fields, { additionalProperties: false })
+      const variants: TSchema[] = [Type.Object(fields, { additionalProperties: false })]
+      if (support.sizes.includes('auto') && (support.resolutions || support.aspectRatios)) {
+        variants.push(Type.Object({
+          ...fields,
+          size: Type.Optional(Type.Literal('auto')),
+          ...(support.resolutions ? { resolution: Type.Optional(Type.Union(support.resolutions.map(value => Type.Literal(value)))) } : {}),
+          ...(support.aspectRatios ? { aspectRatio: Type.Optional(Type.Union(support.aspectRatios.map(value => Type.Literal(value)))) } : {}),
+        }, { additionalProperties: false }))
+      }
+      return variants
     })
     const unique = [...new Map(variants.map(variant => [JSON.stringify(variant), variant])).values()]
     const output = unique.length === 1 ? unique[0]! : Type.Union(unique)
@@ -54,7 +63,7 @@ export function describeImageGeneration(description?: ImageGenerationDescription
   if (!description)
     return `${base} Backend capabilities have not been declared; accepted adapter parameters do not guarantee backend support for generation, editing or transparency.`
   const routes = (operation: 'generate' | 'edit') => description[operation].length
-    ? description[operation].map(route => `${route.title}: ${route.capabilitySource}; sizes=${route.support.sizes.join(',')}; quality=${route.support.qualities.join(',')}; background=${route.support.backgrounds.join(',')}${operation === 'edit' ? `; references<=${Math.min(4, route.support.maxReferenceImages)}` : ''}`).join(' | ')
+    ? description[operation].map(route => `${route.title}: ${route.capabilitySource}; sizes=${route.support.sizes.join(',')}; quality=${route.support.qualities.join(',')}; background=${route.support.backgrounds.join(',')}${route.support.resolutions ? `; resolution=${route.support.resolutions.join(',')}` : ''}${route.support.aspectRatios ? `; aspectRatio=${route.support.aspectRatios.join(',')}` : ''}${operation === 'edit' ? `; references<=${Math.min(4, route.support.maxReferenceImages)}` : ''}`).join(' | ')
     : 'unavailable under the current policy'
-  return `${base} Current routes in priority order: generate [${routes('generate')}]; edit [${routes('edit')}]. backend_declaration is advertised by the backend; adapter_constraints are accepted transport parameters and actual model capabilities are unverified. Each output variant is a complete parameter combination from one candidate. Select a variant belonging to the requested generate or edit operation; required output may be {} when that operation supports auto defaults; fallback remains limited to the configured policy.`
+  return `${base} Current routes in priority order: generate [${routes('generate')}]; edit [${routes('edit')}]. backend_declaration is advertised by the backend; adapter_constraints are accepted transport parameters and actual model capabilities are unverified. Each output variant is a complete parameter combination from one candidate. Pixel size cannot be combined with resolution or aspectRatio. Select a variant belonging to the requested generate or edit operation; required output may be {} when that operation supports auto defaults; fallback remains limited to the configured policy.`
 }
