@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath, URL } from 'node:url'
 import vue from '@vitejs/plugin-vue'
 import UnoCSS from 'unocss/vite'
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
 import { extensionRuntimePlugin } from './electron/extensionRuntimePlugin.ts'
 
 const buddyVersion = JSON.parse(
@@ -55,6 +55,7 @@ export default defineConfig({
             '{src,shared,eslint,__tests__}/**/*.{test,spec}.?(c|m)[jt]s?(x)',
             '../../.playwright/scripts/__tests__/*.spec.mjs',
           ],
+          exclude: [...configDefaults.exclude, '../../.playwright/scripts/__tests__/inference-smoke.spec.mjs'],
         },
       },
       {
@@ -70,7 +71,10 @@ export default defineConfig({
         test: {
           name: 'platform',
           testTimeout: 15_000,
-          include: ['platform/**/*.{test,spec}.?(c|m)[jt]s?(x)'],
+          include: [
+            'platform/**/*.{test,spec}.?(c|m)[jt]s?(x)',
+            '../../.playwright/scripts/__tests__/inference-smoke.spec.mjs',
+          ],
         },
       },
     ],
