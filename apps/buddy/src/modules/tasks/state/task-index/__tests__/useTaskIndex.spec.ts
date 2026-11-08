@@ -68,6 +68,7 @@ function fixture() {
       listeners.add(listener)
       return () => listeners.delete(listener)
     } },
+    executions: { list: async () => [], onChanged: () => () => {} },
     taskMarks: { list: async () => [], states: async () => [] },
     workspaceState: { read: async () => null },
   } as unknown as LexoraDesktopApi['localChat']

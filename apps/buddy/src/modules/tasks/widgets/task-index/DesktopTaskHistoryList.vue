@@ -175,7 +175,7 @@ async function loadMore(row: Extract<TaskHistoryRow, { kind: 'more' }>, event: M
             v-else-if="item.kind === 'task'"
             :task-id="item.task.id"
             :active="item.task.id === activeConversationId"
-            :activity="item.task.activity"
+            :activity="controller.taskActivities.value.get(item.task.id) ?? item.task.activity"
             :loading="pendingConversationIds?.includes(item.task.id)"
             :marks="marks.items.value"
             :mark-state="marks.states.value.get(item.task.id)"

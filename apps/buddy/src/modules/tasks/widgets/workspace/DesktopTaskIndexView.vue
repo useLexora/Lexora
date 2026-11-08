@@ -21,6 +21,7 @@ const { language, appSidebarCollapsed } = useDesktopUi()
     :spaces="index.spaces.value"
     :select-space-directory="index.selectSpaceDirectory"
     :tasks="index.tasks.value"
+    :activities="index.activities.value"
     :create-space="index.createSpace"
     :move-task-to-space="index.moveTaskToSpace"
     :update-space="index.updateSpace"

@@ -1,20 +1,19 @@
 <script setup lang="ts">
-import type { LocalConversationSummary } from '@buddy-shared/conversation/conversationApi'
 import type { LocalTaskMark, LocalTaskMarkState } from '@buddy-shared/conversation/taskMarkApi'
 import type { DropdownOption } from 'naive-ui'
+import type { TaskActivity } from '../../contracts'
 
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { DesktopTaskPinnedDropPosition } from '@/modules/tasks/widgets/task-index/taskPinnedItems'
 import {
-  ApprovalsApp20Regular,
   MoreHorizontal20Regular,
 } from '@vicons/fluent'
 import { NDropdown, NTooltip } from 'naive-ui'
 import { computed, h, shallowRef, useId, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopOverflowingLabel from '@/modules/tasks/widgets/task-index/DesktopOverflowingLabel.vue'
-import BuddyChatActivitySpinner from '@/modules/tasks/widgets/transcript/BuddyChatActivitySpinner.vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
+import DesktopTaskActivity from './DesktopTaskActivity.vue'
 import DesktopTaskMarkSwatch from './DesktopTaskMarkSwatch.vue'
 import { formatTaskRelativeTime } from './taskRelativeTime'
 import { useTaskHistoryDrag } from './useTaskHistoryDrag'
@@ -27,7 +26,7 @@ const props = withDefaults(defineProps<{
   marks: readonly LocalTaskMark[]
   markState?: LocalTaskMarkState
   marksBusy: boolean
-  activity: LocalConversationSummary['activity']
+  activity: TaskActivity
   moveToSpaceAvailable?: boolean
   dragging?: boolean
   dropPosition?: DesktopTaskPinnedDropPosition
@@ -71,9 +70,6 @@ watch(() => props.loading, (loading, _, cleanup) => {
 const relativeTimeLabel = computed(() => (
   formatTaskRelativeTime(props.occurredAt, props.now, props.language)
 ))
-const activityLabel = computed(() => props.activity === 'awaiting_approval'
-  ? t('activity.approval')
-  : t('run.status.running'))
 const pinLabel = computed(() => props.pinMode === 'pin'
   ? t('desktop.tasks.pin')
   : t('desktop.tasks.unpin'))
@@ -202,19 +198,13 @@ useTaskHistoryDrag({
           :class="active ? 'text-inherit' : 'text-muted'"
           :datetime="occurredAt"
         >{{ relativeTimeLabel }}</time>
-        <span
+        <DesktopTaskActivity
           v-else
-          class="desktop-task-row__activity grid w-[var(--buddy-task-sidebar-action-size,_1.75rem)] h-[var(--buddy-task-sidebar-action-size,_1.75rem)] place-items-center pointer-events-none [grid-area:1/1] justify-self-end"
-          :class="[{
-            'is-awaiting-approval text-warning': activity === 'awaiting_approval',
-            'is-running': activity === 'running',
-          }, activity === 'running' ? active ? 'text-inherit' : 'text-muted' : '']"
-          role="status"
-          :aria-label="activityLabel"
-        >
-          <BuddyChatActivitySpinner v-if="activity === 'running'" />
-          <DesktopIcon v-else :size="16" :component="ApprovalsApp20Regular" />
-        </span>
+          class="desktop-task-row__activity grid w-[var(--buddy-task-sidebar-action-size,_1.75rem)] h-[var(--buddy-task-sidebar-action-size,_1.75rem)] place-items-center [grid-area:1/1] justify-self-end"
+          :class="activity === 'running' ? active ? 'text-inherit' : 'text-muted' : ''"
+          :activity="activity"
+          :language="language"
+        />
         <div class="desktop-task-row__actions flex items-center gap-[var(--buddy-task-sidebar-action-gap,_0.125rem)] opacity-0 pointer-events-none [grid-area:1/1] justify-self-end">
           <NDropdown class="buddy-spaced-submenus" trigger="click" placement="bottom-start" :options="actions" @select="handleAction">
             <button

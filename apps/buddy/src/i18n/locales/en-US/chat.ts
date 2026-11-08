@@ -88,6 +88,7 @@ export default {
   'activity.status.failed': 'Failed',
   'activity.status.running': 'Running',
   'activity.approval': 'Waiting for approval',
+  'activity.awaitingAnswer': 'Waiting for answer',
   'activity.creditsDepleted': 'Provider credits are depleted or limited',
   'activity.diff': 'Changes',
   'activity.diffUpdated': 'Updated change preview',

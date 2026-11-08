@@ -21,6 +21,7 @@ import DesktopTaskMarkManager from './DesktopTaskMarkManager.vue'
 import DesktopTaskMoveToSpaceDialog from './DesktopTaskMoveToSpaceDialog.vue'
 
 const props = defineProps<{
+  activities: TaskIndex['activities']['value']
   activeConversationId: string | null
   pendingConversationIds?: readonly string[]
   marks: TaskMarks
@@ -66,6 +67,7 @@ function revealMovedTask(spaceId: string) {
   void props.sidebar.setSpaceExpanded(spaceId, true)
 }
 const controller = useTaskIndexController({
+  activities: () => props.activities,
   activeConversationId: () => props.activeConversationId,
   history: () => props.history,
   onHistoryError: () => message.error(t('desktop.tasks.historyLoadFailed')),
