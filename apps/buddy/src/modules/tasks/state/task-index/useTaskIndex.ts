@@ -8,6 +8,7 @@ import { useDebounceFn } from '@vueuse/core'
 import { onScopeDispose, readonly, shallowRef, watch } from 'vue'
 import { resolveLocalChatErrorMessage } from '@/shared/lib/localChatError'
 import { migrateLegacyTaskDrafts } from '../drafts/migrateLegacyTaskDrafts'
+import { useTaskActivities } from './useTaskActivities'
 import { useTaskIndexData } from './useTaskIndexData'
 import { useTaskMarks } from './useTaskMarks'
 import { useTaskPinnedItems } from './useTaskPinnedItems'
@@ -34,6 +35,7 @@ export function useTaskIndex(options: TaskIndexOptions) {
       errorMessage.value = resolveLocalChatErrorMessage(error, applicationSettings.language.value)
   }
   const data = useTaskIndexData({ api, onError: setError })
+  const activity = useTaskActivities({ api: api.executions, tasks: data.conversations, onError: setError })
   const stopConversationChanges = api.conversations.onChanged(conversation => data.applyConversation(conversation))
   const pins = useTaskPinnedItems(applicationSettings)
   const sidebar = useTaskSidebarPreferences(applicationSettings)
@@ -67,6 +69,7 @@ export function useTaskIndex(options: TaskIndexOptions) {
     }
   }
   const index: TaskIndex = {
+    activities: activity.activities,
     history: data.history,
     marks,
     pinnedItems: pins.pinnedItems,
@@ -180,6 +183,7 @@ export function useTaskIndex(options: TaskIndexOptions) {
   function dispose() {
     disposed = true
     stopEvents()
+    activity.dispose()
     stopConversationChanges()
     stopSpaceChanges()
     stopPins()

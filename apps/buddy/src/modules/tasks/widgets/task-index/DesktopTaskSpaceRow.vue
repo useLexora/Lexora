@@ -1,13 +1,12 @@
 <script setup lang="ts">
-import type { LocalConversationSummary } from '@buddy-shared/conversation/conversationApi'
 import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
-
 import type { DropdownOption } from 'naive-ui'
+
+import type { TaskActivity } from '../../contracts'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { DesktopTaskPinnedDropPosition } from '@/modules/tasks/widgets/task-index/taskPinnedItems'
 import type { TaskSpaceMenuAction } from '@/modules/tasks/widgets/task-index/useTaskIndexManagement'
 import {
-  ApprovalsApp20Regular,
   ChevronDown16Regular,
   ChevronRight16Regular,
   FolderOpen20Regular,
@@ -18,11 +17,11 @@ import { computed, h, shallowRef, useId, useTemplateRef } from 'vue'
 import { useRouter } from 'vue-router'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopOverflowingLabel from '@/modules/tasks/widgets/task-index/DesktopOverflowingLabel.vue'
-import BuddyChatActivitySpinner from '@/modules/tasks/widgets/transcript/BuddyChatActivitySpinner.vue'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import SkillIcon from '@/shared/ui/icon/SkillIcon.vue'
 import DesktopSpaceIcon from '../space/DesktopSpaceIcon.vue'
+import DesktopTaskActivity from './DesktopTaskActivity.vue'
 import { useTaskHistoryDrag } from './useTaskHistoryDrag'
 
 const props = defineProps<{
@@ -34,7 +33,7 @@ const props = defineProps<{
   space: LocalSpace
   reorderable?: boolean
   reorderTarget?: boolean
-  activity?: LocalConversationSummary['activity']
+  activity?: TaskActivity
 }>()
 const emit = defineEmits<{
   dragEnd: []
@@ -81,11 +80,7 @@ const menuThemeOverrides = {
   optionIconPrefixWidthSmall: '28px',
   optionSuffixWidthSmall: '12px',
 }
-const showActivity = computed(() => !props.expanded
-  && (props.activity === 'running' || props.activity === 'awaiting_approval'))
-const activityLabel = computed(() => props.activity === 'awaiting_approval'
-  ? t('activity.approval')
-  : t('run.status.running'))
+const showActivity = computed(() => !props.expanded && props.activity && props.activity !== 'idle')
 const pinLabel = computed(() => props.pinMode === 'pin'
   ? t('desktop.tasks.pin')
   : t('desktop.tasks.unpin'))
@@ -199,19 +194,13 @@ useTaskHistoryDrag({
         <DesktopIcon :name="pinMode === 'pin' ? 'windowPin' : 'pinOff'" :size="16" />
       </button>
     </div>
-    <span
-      v-if="showActivity"
-      class="desktop-task-space-row__activity absolute top-[50%] right-[var(--buddy-task-sidebar-action-inset)] grid w-[var(--buddy-task-sidebar-action-size)] h-[var(--buddy-task-sidebar-action-size)] place-items-center text-muted pointer-events-none"
-      :class="{
-        'is-awaiting-approval': activity === 'awaiting_approval',
-        'is-running': activity === 'running',
-      }"
-      role="status"
-      :aria-label="activityLabel"
-    >
-      <BuddyChatActivitySpinner v-if="activity === 'running'" />
-      <DesktopIcon v-else :component="ApprovalsApp20Regular" :size="16" />
-    </span>
+    <DesktopTaskActivity
+      v-if="showActivity && activity"
+      class="desktop-task-space-row__activity absolute top-[50%] right-[var(--buddy-task-sidebar-action-inset)] grid w-[var(--buddy-task-sidebar-action-size)] h-[var(--buddy-task-sidebar-action-size)] place-items-center"
+      :class="activity === 'running' ? 'text-muted' : ''"
+      :activity="activity"
+      :language="language"
+    />
   </div>
 </template>
 
@@ -283,10 +272,6 @@ button {
 
 .desktop-task-space-row__activity {
   transform: translateY(-50%);
-
-  &.is-awaiting-approval {
-    color: var(--buddy-status-warning-text);
-  }
 }
 
 .desktop-task-space-row:hover .desktop-task-space-row__activity,

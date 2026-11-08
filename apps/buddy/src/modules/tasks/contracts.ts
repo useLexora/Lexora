@@ -70,7 +70,10 @@ export interface TaskHistory {
   recordAnchor: (section: DesktopTaskSidebarSection, anchor: TaskHistoryAnchor | null) => void
 }
 
+export type TaskActivity = LocalConversationSummary['activity'] | 'awaiting_answer'
+
 export interface TaskIndex {
+  activities: Readonly<Ref<ReadonlyMap<string, TaskActivity>>>
   history: TaskHistory
   marks: TaskMarks
   pinnedItems: State<readonly DesktopTaskPinnedItem[]>

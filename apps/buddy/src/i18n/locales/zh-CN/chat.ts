@@ -86,6 +86,7 @@ export default {
   'activity.status.failed': '失败',
   'activity.status.running': '进行中',
   'activity.approval': '等待确认',
+  'activity.awaitingAnswer': '等待回答',
   'activity.creditsDepleted': 'Provider 额度不足或已触发限制',
   'activity.diff': '变更',
   'activity.diffUpdated': '更新了变更预览',

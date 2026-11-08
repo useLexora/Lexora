@@ -1,7 +1,7 @@
 import type { DesktopTaskPinnedItem, DesktopTaskSidebarSection } from '@buddy-electron/shared/desktopApi'
 import type { LocalConversationSummary } from '@buddy-shared/conversation/conversationApi'
 import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
-import type { TaskIndex } from '../../contracts'
+import type { TaskActivity, TaskIndex } from '../../contracts'
 
 export type TaskIndexRow
   = | {
@@ -223,19 +223,20 @@ export function getDesktopTaskPinnedItemKey(item: DesktopTaskPinnedItem): string
   return `${item.kind}:${item.id}`
 }
 
+const activityPriority: Record<TaskActivity, number> = { idle: 0, running: 1, awaiting_answer: 2, awaiting_approval: 3 }
+
 export function resolveSpaceActivities(
   tasks: ReadonlyArray<LocalConversationSummary>,
-): ReadonlyMap<string, LocalConversationSummary['activity']> {
-  const activities = new Map<string, LocalConversationSummary['activity']>()
+  taskActivities: ReadonlyMap<string, TaskActivity> = new Map(),
+): ReadonlyMap<string, TaskActivity> {
+  const activities = new Map<string, TaskActivity>()
   for (const task of tasks) {
-    if (!task.spaceId || task.activity === 'idle')
+    const activity = taskActivities.get(task.id) ?? task.activity
+    if (!task.spaceId || activity === 'idle')
       continue
-    const current = activities.get(task.spaceId)
-    // Waiting for approval needs the user, so it outranks running.
-    if (current === 'awaiting_approval')
-      continue
-    if (current === undefined || task.activity === 'awaiting_approval')
-      activities.set(task.spaceId, task.activity)
+    const current = activities.get(task.spaceId) ?? 'idle'
+    if (activityPriority[activity] > activityPriority[current])
+      activities.set(task.spaceId, activity)
   }
   return activities
 }

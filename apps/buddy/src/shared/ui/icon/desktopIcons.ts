@@ -5,6 +5,7 @@ import contextPanelUrl from './assets/context-panel.svg'
 import deleteUrl from './assets/delete.svg'
 import editFilledUrl from './assets/edit-filled.svg'
 import editUrl from './assets/edit.svg'
+import messageAwaitingInputUrl from './assets/message-awaiting-input.svg'
 import messageBranchNextUrl from './assets/message-branch-next.svg'
 import messageBranchPreviousUrl from './assets/message-branch-previous.svg'
 import messageBranchUrl from './assets/message-branch.svg'
@@ -40,6 +41,7 @@ export const DESKTOP_ICON_URLS = {
   delete: deleteUrl,
   edit: editUrl,
   editFilled: editFilledUrl,
+  messageAwaitingInput: messageAwaitingInputUrl,
   messageBranch: messageBranchUrl,
   messageBranchNext: messageBranchNextUrl,
   messageBranchPrevious: messageBranchPreviousUrl,

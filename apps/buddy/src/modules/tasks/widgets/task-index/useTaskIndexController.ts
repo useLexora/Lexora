@@ -21,6 +21,7 @@ import {
 import { useTaskIndexManagement } from './useTaskIndexManagement'
 
 interface UseTaskIndexControllerOptions extends TaskIndexManagementOptions {
+  activities: () => TaskIndex['activities']['value']
   activeConversationId: () => string | null
   history: () => TaskIndex['history']
   onHistoryError: () => void
@@ -69,7 +70,8 @@ export function useTaskIndexController(options: UseTaskIndexControllerOptions) {
   const pinnedRows = computed(() => projection.value.pinnedRows)
   const spaceRows = computed(() => projection.value.spaceRows)
   const globalTasks = computed(() => projection.value.globalTasks)
-  const spaceActivities = computed(() => resolveSpaceActivities(options.tasks.value))
+  const taskActivities = computed(options.activities)
+  const spaceActivities = computed(() => resolveSpaceActivities(options.tasks.value, taskActivities.value))
   const historyRows = computed(() => resolveTaskHistoryRows({
     projection: projection.value,
     collapsedSections: options.sidebar().collapsedSections.value,
@@ -271,6 +273,7 @@ export function useTaskIndexController(options: UseTaskIndexControllerOptions) {
     revealTask,
     setSectionExpanded,
     spaceActivities,
+    taskActivities,
     spaceRows,
     relativeTimeNow,
     toggleSpace,

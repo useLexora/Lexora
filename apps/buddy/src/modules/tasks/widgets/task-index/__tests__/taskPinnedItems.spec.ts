@@ -17,6 +17,16 @@ function createTask(
 }
 
 describe('resolveSpaceActivities', () => {
+  it('prioritizes approval, then user answers, then running regardless of task order', () => {
+    const tasks = [createTask('working', 'space', 'running'), createTask('waiting', 'space', 'running')]
+    const activities = new Map([['waiting', 'awaiting_answer' as const]])
+    expect(resolveSpaceActivities(tasks, activities).get('space')).toBe('awaiting_answer')
+    expect(resolveSpaceActivities(tasks.toReversed(), activities).get('space')).toBe('awaiting_answer')
+    const approval = createTask('approval', 'space', 'awaiting_approval')
+    expect(resolveSpaceActivities([...tasks, approval], activities).get('space')).toBe('awaiting_approval')
+    expect(resolveSpaceActivities([approval, ...tasks], activities).get('space')).toBe('awaiting_approval')
+  })
+
   it('summarizes each Space with its most urgent activity', () => {
     const tasks = [
       createTask('task-a1', 'space-a', 'running'),

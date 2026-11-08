@@ -71,6 +71,7 @@ function createController(input: {
   const history = input.history ?? historyFixture()
   scopes.push(scope)
   return scope.run(() => useTaskIndexController({
+    activities: () => new Map(),
     activeConversationId: () => null,
     history: () => history,
     onHistoryError: input.onHistoryError ?? (() => {}),
