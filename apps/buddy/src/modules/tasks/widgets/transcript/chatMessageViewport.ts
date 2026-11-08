@@ -6,6 +6,8 @@ export interface ChatMessageScrollMetrics {
 
 export interface ChatMessageScrollAnchor {
   rowKey?: string
+  rowSize?: number
+  contentOffsetTop?: number
   messageId: string
   messageOffsetTop: number
   metrics: ChatMessageScrollMetrics

@@ -598,17 +598,40 @@ describe('chat viewport operations', () => {
     expect(fixture.original.metrics.scrollTop).toBe(150)
   })
 
-  it('keeps reader ownership when only the list owner is replaced', async () => {
+  it.each([false, true])('restores the same content coordinate on list replacement (intermediate unmount: %s)', async (unmount) => {
     const fixture = createViewport(async () => false)
-    fixture.viewport.handleReaderLayoutIntent()
+    fixture.original.metrics.scrollTop = 150
+    fixture.viewport.handleScroll(fixture.original.metrics, { userInitiated: true })
+    const anchor = fixture.original.handle.captureScrollAnchor()!
+    if (unmount) {
+      fixture.options.list.value = null
+      await nextTick()
+    }
     const replacement = createList()
+    replacement.geometry.anchorTop = 400
+    replacement.metrics.scrollHeight = 1400
     replacement.metrics.scrollTop = 250
     fixture.options.list.value = replacement.handle
     await nextTick()
     fixture.viewport.handleContentResize(replacement.metrics)
 
-    expect(replacement.metrics.scrollTop).toBe(250)
+    expect(replacement.metrics.scrollTop).toBe(530)
+    expect(replacement.handle.captureScrollAnchor()?.messageOffsetTop).toBe(anchor.messageOffsetTop)
     expect(fixture.viewport.showReturnToLatest.value).toBe(true)
+  })
+
+  it('keeps reader ownership when restoring initially reports a clamped bottom position', async () => {
+    const positions: ChatReadingPositions = new Map([['conversation-1:branch-1', {
+      messageId: 'visible',
+      messageOffsetTop: -700,
+      metrics: { clientHeight: 400, scrollHeight: 2000, scrollTop: 720 },
+    }]])
+    const fixture = createViewport(async () => false, { readingPositions: positions, listMounted: false })
+    fixture.original.handle.restoreScrollAnchor = () => ({ clientHeight: 400, scrollHeight: 1000, scrollTop: 600 })
+    fixture.options.list.value = fixture.original.handle
+    await nextTick()
+    expect(fixture.viewport.showReturnToLatest.value).toBe(true)
+    expect(fixture.viewport.isPositioning.value).toBe(false)
   })
 
   it('loads enough history to reveal the requested message and keeps following disabled', async () => {

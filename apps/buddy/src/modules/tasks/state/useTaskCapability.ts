@@ -490,7 +490,6 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     activateBranch,
     canMutateBranch,
     canSend,
-    queuedMessages,
     pendingQueueActions,
     cancelQueuedMessage,
     steerQueuedMessage,
@@ -504,6 +503,18 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     send,
     submitEditedMessage,
   } = execution
+  const queuedMessages = computed<typeof execution.queuedMessages.value>(() => {
+    const items = execution.queuedMessages.value
+    if (!items.length)
+      return items
+    const committedIds = new Set(messages.value.filter(message => message.role === 'user').map(message => message.id))
+    const pending: (typeof items)[number][] = []
+    for (const item of items) {
+      if (!committedIds.has(item.id))
+        pending.push(item)
+    }
+    return pending
+  })
   const canUpdatePermissionSettings = computed(() => (
     permissionSettingsState.canUpdate.value
     && !isSending.value

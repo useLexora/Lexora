@@ -1,6 +1,7 @@
 import type { LexoraDesktopApi } from '@buddy-electron/shared/desktopApi'
 import type { BuddyUserMessageContentV1 } from '@buddy-shared/conversation/buddyUserContent'
 import type { LocalStartTurnRequest } from '@buddy-shared/conversation/chatApi'
+import type { LocalChatQueueItem } from '@buddy-shared/conversation/chatQueueApi'
 import type { LocalComposerDraft } from '@buddy-shared/conversation/composerApi'
 import type { BuddyComposerResourceAccept } from '@buddy-shared/conversation/composerResource'
 import type { LocalConversation, LocalConversationSummary } from '@buddy-shared/conversation/conversationApi'
@@ -20,6 +21,51 @@ import { useTaskIndex } from '../task-index/useTaskIndex'
 import { useTaskCapability } from '../useTaskCapability'
 
 describe('useTaskCapability', () => {
+  it.each(['waiting', 'paused'] as const)('removes a committed %s input from the queue as soon as history arrives, including after a stale queue refresh', async (state) => {
+    const api = createBranchingDesktopApi()
+    const content = { userContent: createBuddyUserContent('Same input'), resourceSnapshots: [] }
+    const queued: LocalChatQueueItem[] = ['delivered', 'waiting', 'paused'].map(id => ({
+      id,
+      buddyId: 'default',
+      conversationId: 'conversation-1',
+      branchId: 'branch-root',
+      state: id === 'delivered' ? state : id === 'paused' ? 'paused' : 'waiting',
+      content,
+      attachments: [],
+      createdAt: '2026-08-20T00:00:00.000Z',
+    }))
+    api.localChat.chat.listQueue = vi.fn(async () => [...queued])
+    api.localChat.chat.steerQueued = vi.fn(async () => 'unavailable' as const)
+    vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
+    const scope = effectScope()
+    const chat = scope.run(() => createTestTask(api, { conversationId: 'conversation-1', branchId: 'branch-root', spaceId: null }))!
+    try {
+      await chat.initialize()
+      await vi.waitFor(() => expect(chat.workspace.execution.queuedMessages.value.map(item => item.id)).toEqual(['delivered', 'waiting', 'paused']))
+      const timeline = await api.localChat.conversations.listTimeline({ conversationId: 'conversation-1', branchId: 'branch-root' })
+      vi.mocked(api.localChat.conversations.listTimeline).mockResolvedValue({
+        ...timeline,
+        items: [...timeline.items, { ...message('delivered', 'user', 'branch-root'), kind: 'message', content, createdAt: queued[0]!.createdAt }],
+      })
+      for (const [listener] of vi.mocked(api.localChat.conversations.onTimelineChanged).mock.calls)
+        listener({ sourceId: '00000000-0000-4000-8000-000000000001', revision: 1, conversationId: 'conversation-1', branchId: 'branch-root' })
+      const messageIds = () => {
+        const messages: readonly { id: string }[] = chat.workspace.transcript.messages.value
+        return messages.map(message => message.id)
+      }
+      await vi.waitFor(() => expect(messageIds().filter(id => id === 'delivered')).toHaveLength(1))
+      expect(chat.workspace.execution.queuedMessages.value.map(item => item.id)).toEqual(['waiting', 'paused'])
+      await chat.workspace.execution.steerQueuedMessage('waiting')
+      expect(chat.workspace.execution.queuedMessages.value.map(item => item.id)).toEqual(['waiting', 'paused'])
+      expect(messageIds()).not.toContain('waiting')
+      expect(messageIds()).not.toContain('paused')
+    }
+    finally {
+      chat.dispose()
+      scope.stop()
+    }
+  })
+
   it('binds current actor-child context to the execution instead of the actors public history', async () => {
     const api = createBranchingDesktopApi()
     const publicRun = { ...queuedRun(), id: 'public-run', branchId: 'branch-root', status: 'completed' as const }

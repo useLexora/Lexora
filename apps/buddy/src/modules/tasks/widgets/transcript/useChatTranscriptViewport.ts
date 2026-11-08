@@ -1,3 +1,4 @@
+import type { VirtualItem, Virtualizer } from '@tanstack/vue-virtual'
 import type { ComponentPublicInstance, Ref } from 'vue'
 import type { ChatTranscriptDisplayRow } from '../../model/transcript/chatMessageTime'
 import type { BuddyChatTranscriptViewportHandle, ChatMessageScrollAnchor, ChatMessageScrollMetrics } from './chatMessageViewport'
@@ -63,14 +64,22 @@ export function useChatTranscriptViewport(
   const rangeExtractor = useChatTranscriptRetention(root, rowKeys, editingKey)
   const navigationOffset = shallowRef(0)
   const widthEstimates = new Map<string, number>()
+  const contentInsets = new Map<string, number>()
   watch(rowKeys, (keys) => {
     const current = new Set(keys)
-    for (const key of widthEstimates.keys()) {
-      if (!current.has(key))
-        widthEstimates.delete(key)
+    for (const cache of [widthEstimates, contentInsets]) {
+      for (const key of cache.keys()) {
+        if (!current.has(key))
+          cache.delete(key)
+      }
     }
   })
-  let requestedAnchor: ChatMessageScrollAnchor | null = null
+  const requestedAnchor = shallowRef<ChatMessageScrollAnchor | null>(null)
+  const navigationRange = computed(() => {
+    const extract = rangeExtractor.value
+    const index = requestedAnchor.value ? anchorIndex(requestedAnchor.value) : undefined
+    return index === undefined ? extract : (range: Parameters<typeof extract>[0]) => [...new Set([...extract(range), index])].sort((a, b) => a - b)
+  })
   let layoutAnchor: ChatMessageScrollAnchor | null = null
   let width = 0
   let generation = 0
@@ -91,12 +100,13 @@ export function useChatTranscriptViewport(
     paddingStart: options.hasOlderMessages() ? 32 : 24,
     paddingEnd: 16,
     scrollPaddingStart: navigationOffset.value,
-    rangeExtractor: rangeExtractor.value,
+    rangeExtractor: navigationRange.value,
     anchorTo: 'end' as const,
     followOnAppend: options.following(),
     scrollEndThreshold: options.following() ? 48 : 0,
     onChange: () => report.schedule(),
     scrollToFn: (offset, scrollOptions, instance) => {
+      commitContentHeight(instance)
       programmaticTop = offset + (scrollOptions.adjustments ?? 0)
       elementScroll(offset, scrollOptions, instance)
     },
@@ -121,15 +131,41 @@ export function useChatTranscriptViewport(
     }),
     measureElement: (element, entry, instance) => {
       const height = measureElement(element, entry, instance)
-      if (height || element.offsetParent)
+      if (height || element.offsetParent) {
+        measureContentInset(element, instance)
         return height
+      }
       return instance.itemSizeCache.get(element.dataset.virtualRowKey!) ?? widthEstimates.get(element.dataset.virtualRowKey!) ?? rows.value[Number(element.dataset.index)]?.estimate ?? 0
     },
   })))
 
+  virtualizer.value.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => {
+    const offset = instance.scrollOffset ?? 0
+    if (requestedAnchor.value && item.index === anchorIndex(requestedAnchor.value))
+      return false
+    return instance.itemSizeCache.has(item.key) ? item.end <= offset : item.start < offset
+  }
+
+  function contentHeight(instance: Virtualizer<HTMLElement, HTMLElement>): number {
+    return Math.max(instance.getTotalSize(), replacement.value?.height ?? 0, requestedAnchor.value?.rowSize !== undefined ? requestedAnchor.value.metrics.scrollHeight : 0, options.hasTail() ? instance.scrollRect?.height ?? 0 : 0)
+  }
+
+  function commitContentHeight(instance: Virtualizer<HTMLElement, HTMLElement>) {
+    if (content.value)
+      content.value.style.height = `${contentHeight(instance)}px`
+  }
+
   const virtualRows = computed(() => virtualizer.value.getVirtualItems().map(item => ({ ...item, items: rows.value[item.index]!.items, spacer: rows.value[item.index]!.spacer })))
-  const totalHeight = computed(() => Math.max(virtualizer.value.getTotalSize(), replacement.value?.height ?? 0, options.hasTail() ? virtualizer.value.scrollRect?.height ?? 0 : 0))
+  const totalHeight = computed(() => contentHeight(virtualizer.value))
   const tailOffset = computed(() => Math.max(0, totalHeight.value - virtualizer.value.getTotalSize()))
+
+  watch(rowKeys, (current, previous) => {
+    if (!requestedAnchor.value)
+      return
+    const index = anchorIndex(requestedAnchor.value)
+    if (index !== undefined && current[index] !== previous[index])
+      restoreScrollAnchor(requestedAnchor.value)
+  }, { flush: 'post' })
 
   watch([virtualizer, replacement], () => {
     const index = indexes.value.keys.get(replacementGapKey)
@@ -169,20 +205,74 @@ export function useChatTranscriptViewport(
   }
 
   function reportMetrics() {
-    const metrics = readScrollMetrics()
+    let metrics = readScrollMetrics()
     if (!metrics)
       return
-    if (requestedAnchor) {
-      const index = anchorIndex(requestedAnchor)
-      const target = index === undefined ? undefined : virtualizer.value.getOffsetForIndex(index, 'start')?.[0]
-      if (target !== undefined && Math.abs(metrics.scrollTop - target) < 1)
-        requestedAnchor = null
+    const anchor = requestedAnchor.value
+    if (anchor) {
+      const instance = virtualizer.value
+      const index = anchorIndex(anchor)
+      const items = instance.getVirtualItems()
+      const item = items.find(item => item.index === index)
+      if (item && isMeasured(item)) {
+        const tail = items.filter(row => row.index >= item.index)
+        const measuredTail = tail.length === rows.value.length - item.index && tail.every(isMeasured)
+        const message = rows.value[item.index]!.items.find(row => row.kind === 'message')
+        if (item.size < -anchor.messageOffsetTop && message?.kind === 'message' && !message.streaming) {
+          restoreScrollAnchor({
+            ...anchor,
+            rowSize: item.size,
+            messageOffsetTop: -Math.max(0, item.size - metrics.clientHeight),
+            metrics: { ...metrics, scrollHeight: instance.getTotalSize() },
+          })
+          return
+        }
+        const rawTarget = item.start - anchor.messageOffsetTop
+        const max = Math.max(0, instance.getTotalSize() - metrics.clientHeight)
+        const target = Math.max(0, Math.min(rawTarget, max))
+        const reached = Math.abs(metrics.scrollTop - rawTarget) < 1
+          || (Math.abs(metrics.scrollTop - target) < 1 && measuredTail)
+        if (item.size >= -anchor.messageOffsetTop && reached) {
+          requestedAnchor.value = null
+          commitContentHeight(instance)
+          metrics = readScrollMetrics() ?? metrics
+        }
+      }
     }
     events.onContentResize(metrics)
     if (options.following() && metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop > 1)
       virtualizer.value.scrollToEnd()
     const current = virtualizer.value.getVirtualItems().find(item => item.end > metrics.scrollTop && item.start < metrics.scrollTop + metrics.clientHeight && rows.value[item.index]?.messageId)
     events.onActiveMessageChange(current ? rows.value[current.index]?.messageId ?? null : null)
+  }
+
+  function measureContentInset(element: HTMLElement, instance: Virtualizer<HTMLElement, HTMLElement>) {
+    const key = element.dataset.virtualRowKey!
+    const body = element.querySelector<HTMLElement>('[data-message-id] .buddy-chat-message__body')
+    if (!body || !element.offsetParent)
+      return
+    const inset = body.getBoundingClientRect().top - element.getBoundingClientRect().top
+    const previous = contentInsets.get(key)
+    contentInsets.set(key, inset)
+    const index = Number(element.dataset.index)
+    const anchor = requestedAnchor.value
+    if (anchor && anchorIndex(anchor) === index && anchor.contentOffsetTop !== undefined && anchor.contentOffsetTop !== inset) {
+      const offset = anchor.messageOffsetTop + anchor.contentOffsetTop - inset
+      restoreScrollAnchor({ ...anchor, messageOffsetTop: offset, contentOffsetTop: inset })
+    }
+    else if (!anchor && previous !== undefined && previous !== inset && !options.following()) {
+      const item = instance.measurementsCache[index]
+      const offset = instance.scrollOffset ?? 0
+      const metrics = readScrollMetrics()
+      if (item && metrics && item.start <= offset && item.end > offset) {
+        restoreScrollAnchor({ rowKey: key, rowSize: item.size, contentOffsetTop: inset, messageId: rows.value[index]?.messageId ?? '', messageOffsetTop: item.start - offset + previous - inset, metrics })
+      }
+    }
+  }
+
+  function isMeasured(item: VirtualItem): boolean {
+    const element = virtualizer.value.elementsCache.get(item.key)
+    return !!element?.isConnected && !!element.offsetParent && Math.abs(element.offsetHeight - item.size) < 1
   }
 
   function rebuildLayout() {
@@ -212,13 +302,13 @@ export function useChatTranscriptViewport(
     const metrics = readScrollMetrics()
     if (!metrics)
       return null
-    if (requestedAnchor)
-      return { ...requestedAnchor, metrics }
+    if (requestedAnchor.value)
+      return { ...requestedAnchor.value, metrics }
     const items = virtualizer.value.getVirtualItems()
     const item = items.find(item => item.end > metrics.scrollTop && !rows.value[item.index]?.spacer)
       ?? items.findLast(item => item.start <= metrics.scrollTop && !rows.value[item.index]?.spacer)
     const row = item && rows.value[item.index]
-    return item && row ? { rowKey: row.key, messageId: row.messageId ?? '', messageOffsetTop: item.start - metrics.scrollTop, metrics } : null
+    return item && row ? { rowKey: row.key, rowSize: item.size, ...(contentInsets.has(row.key) ? { contentOffsetTop: contentInsets.get(row.key)! } : {}), messageId: row.messageId ?? '', messageOffsetTop: item.start - metrics.scrollTop, metrics } : null
   }
 
   function anchorIndex(anchor: ChatMessageScrollAnchor): number | undefined {
@@ -229,13 +319,23 @@ export function useChatTranscriptViewport(
     const index = anchorIndex(anchor)
     if (index === undefined)
       return null
+    const inset = contentInsets.get(rows.value[index]!.key)
+    if (inset !== undefined && anchor.contentOffsetTop !== undefined)
+      anchor = { ...anchor, messageOffsetTop: anchor.messageOffsetTop + anchor.contentOffsetTop - inset, contentOffsetTop: inset }
     generation++
     layoutAnchor = null
-    requestedAnchor = anchor
+    requestedAnchor.value = anchor
     navigationOffset.value = anchor.messageOffsetTop
     const instance = virtualizer.value
+    if (anchor.rowSize !== undefined && !instance.itemSizeCache.has(rows.value[index]!.key)) {
+      for (const [key, height] of instance.itemSizeCache)
+        widthEstimates.set(String(key), height)
+      widthEstimates.set(rows.value[index]!.key, anchor.rowSize)
+      instance.measure()
+    }
     instance.setOptions({ ...instance.options, scrollPaddingStart: navigationOffset.value })
     instance.getVirtualItems()
+    commitContentHeight(instance)
     instance.scrollToIndex(index, { align: 'start' })
     return readScrollMetrics()
   }
@@ -248,9 +348,10 @@ export function useChatTranscriptViewport(
     generation++
     layoutAnchor = null
     navigationOffset.value = 0
-    requestedAnchor = { rowKey: rows.value[index]!.key, messageId: id, messageOffsetTop: 0, metrics }
+    requestedAnchor.value = { rowKey: rows.value[index]!.key, messageId: id, messageOffsetTop: 0, metrics }
     const instance = virtualizer.value
     instance.setOptions({ ...instance.options, scrollPaddingStart: 0 })
+    commitContentHeight(instance)
     const target = instance.getOffsetForIndex(index, 'start')?.[0] ?? 0
     const animate = behavior === 'smooth' && Math.abs(target - metrics.scrollTop) <= metrics.clientHeight * 2
       && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -261,14 +362,15 @@ export function useChatTranscriptViewport(
   function scrollToTail(): ChatMessageScrollMetrics | null {
     generation++
     layoutAnchor = null
-    requestedAnchor = null
+    requestedAnchor.value = null
+    commitContentHeight(virtualizer.value)
     virtualizer.value.scrollToEnd()
     return readScrollMetrics()
   }
 
   function readerIntent() {
     generation++
-    requestedAnchor = null
+    requestedAnchor.value = null
     layoutAnchor = null
     virtualizer.value.cancelScroll()
     interactingUntil = performance.now() + 160
