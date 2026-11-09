@@ -42,7 +42,12 @@ function disposable(cleanup) {
 bridge.subscribe(async ({ id, method, params }) => {
   try {
     let result = null
-    if (method === 'activate') {
+    if (method === 'ping') {
+      // This runs on the plugin's own event loop, independently of unresolved
+      // command promises. A slow async operation must not look like a dead host.
+      result = null
+    }
+    else if (method === 'activate') {
       manifest = params.manifest
       source.updatePanes(params.panes ?? [])
       entry = manifest.entry ? await import(`/__package/${manifest.entry}`) : {}

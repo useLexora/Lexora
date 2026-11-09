@@ -10,9 +10,10 @@ import { BrowserWindow, session } from 'electron'
 import { z } from 'zod'
 import { EXTENSION_IPC, extensionError, extensionJsonSchema } from '../../../shared/extensions/extensionApi'
 import { ExtensionRequestError } from '../../../shared/extensions/extensionDiagnostic'
-import { waitsForExtensionIo } from '../../../shared/extensions/extensionRequestLifecycle'
 
-interface Pending { method: string, resolve: (value: JsonValue) => void, reject: (error: Error) => void, timer?: ReturnType<typeof setTimeout>, timeout: number, expire: () => void, cleanup: () => void }
+interface Pending { method: string, resolve: (value: JsonValue) => void, reject: (error: Error) => void, cleanup: () => void }
+const heartbeatInterval = 5000
+const heartbeatTimeout = 15000
 const replySchema = z.object({ id: z.string().uuid(), ok: z.boolean(), value: extensionJsonSchema }).strict()
 const replyIdentitySchema = z.object({ id: z.string().uuid() })
 
@@ -25,7 +26,9 @@ export class SandboxedExtensionHost implements ExtensionHost {
   readonly #onFailure: (failure: ExtensionHostFailure) => void
   #resolveReady!: () => void
   #rejectReady!: (error: Error) => void
-  #io = 0
+  #heartbeatTimer?: ReturnType<typeof setInterval>
+  #probe?: { id: string, time: number }
+  #failed = false
   #closing = false
   #disposal: Promise<void> | undefined
   #started = false
@@ -87,7 +90,7 @@ export class SandboxedExtensionHost implements ExtensionHost {
 
   async request(method: unknown, params: unknown): Promise<JsonValue> {
     try {
-      if (this.#closing)
+      if (this.#closing || this.#failed)
         throw new Error('EXTENSION_HOST_STOPPED')
       if (method === 'ready') {
         if (this.#started)
@@ -99,22 +102,7 @@ export class SandboxedExtensionHost implements ExtensionHost {
       }
       if (!this.#started || typeof method !== 'string' || method.length > 80)
         throw new Error('EXTENSION_METHOD_DENIED')
-      const io = waitsForExtensionIo(method)
-      if (io && this.#io++ === 0) {
-        for (const pending of this.#pending.values())
-          clearTimeout(pending.timer)
-      }
-      try {
-        return await this.#broker(method, params)
-      }
-      finally {
-        if (io && --this.#io === 0 && !this.#closing) {
-          for (const pending of this.#pending.values()) {
-            if (pending.timeout)
-              pending.timer = setTimeout(pending.expire, pending.timeout)
-          }
-        }
-      }
+      return await this.#broker(method, params)
     }
     catch (error) {
       throw new Error(extensionError(error))
@@ -134,6 +122,11 @@ export class SandboxedExtensionHost implements ExtensionHost {
       return
     }
     const { id, ok, value } = parsed.data
+    if (id === this.#probe?.id) {
+      if (ok && value === null)
+        this.#probe = undefined
+      return
+    }
     const pending = this.#pending.get(id)
     if (!pending)
       return
@@ -146,11 +139,13 @@ export class SandboxedExtensionHost implements ExtensionHost {
 
   async call(method: string, params: JsonValue, signal?: AbortSignal): Promise<JsonValue> {
     await this.#ready
-    if (this.#closing || this.window.isDestroyed())
+    if (this.#closing || this.#failed || this.window.isDestroyed())
       throw new Error('EXTENSION_HOST_STOPPED')
     if (this.#pending.size >= 64)
       throw new Error('EXTENSION_REQUEST_LIMIT')
-    return this.#send(method, params, method === 'agent.invoke' ? 0 : 15000, signal)
+    // A pending async operation is not evidence of a hung renderer. Callers own
+    // operation cancellation; the independent probe checks the host event loop.
+    return this.#send(method, params, 0, signal)
   }
 
   devtools(): void {
@@ -196,29 +191,77 @@ export class SandboxedExtensionHost implements ExtensionHost {
     return new Promise((resolve, reject) => {
       const id = randomUUID()
       const pending = this.#pending
-      let entry: Pending
-      function cleanup() {
-        clearTimeout(entry.timer)
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const cleanup = () => {
+        clearTimeout(timer)
         signal?.removeEventListener('abort', cancel)
+        if (!pending.size)
+          this.#clearHeartbeat()
       }
       function cancel() {
-        cleanup()
         pending.delete(id)
+        cleanup()
         reject(new Error('EXTENSION_AGENT_CANCELLED'))
       }
       const expire = () => {
-        cleanup()
         pending.delete(id)
+        cleanup()
         reject(new Error('EXTENSION_REQUEST_TIMEOUT'))
-        if (method !== 'deactivate')
-          this.#fail({ code: 'EXTENSION_REQUEST_TIMEOUT', method, stage: 'timeout' })
       }
-      const timer = timeout && (!this.#io || method === 'deactivate') ? setTimeout(expire, timeout) : undefined
-      entry = { method, resolve, reject, timer, timeout, expire, cleanup }
-      pending.set(id, entry)
+      // Only forced deactivation has a transport-owned completion deadline.
+      timer = timeout ? setTimeout(expire, timeout) : undefined
+      pending.set(id, { method, resolve, reject, cleanup })
       signal?.addEventListener('abort', cancel, { once: true })
-      this.window.webContents.send(EXTENSION_IPC.hostMessage, { id, method, params })
+      try {
+        this.window.webContents.send(EXTENSION_IPC.hostMessage, { id, method, params })
+        this.#watchResponsiveness()
+      }
+      catch (error) {
+        pending.delete(id)
+        cleanup()
+        reject(error)
+        this.#fail()
+      }
     })
+  }
+
+  #watchResponsiveness(): void {
+    if (this.#closing || this.#failed || !this.#pending.size || this.#heartbeatTimer || this.#probe)
+      return
+    let lastCheck = Date.now()
+    let nextProbe = lastCheck + heartbeatInterval
+    this.#heartbeatTimer = setInterval(() => {
+      const now = Date.now()
+      // Like the view watchdog, require continuous observations. A suspended
+      // machine/main event loop (or clock adjustment) invalidates an old probe.
+      if (now < lastCheck || now - lastCheck > 3000) {
+        this.#probe = undefined
+        nextProbe = now
+      }
+      lastCheck = now
+      if (this.#probe) {
+        if (now - this.#probe.time >= heartbeatTimeout)
+          this.#fail({ code: 'EXTENSION_HOST_UNRESPONSIVE', method: 'ping', stage: 'timeout' })
+        return
+      }
+      if (now < nextProbe)
+        return
+      const id = randomUUID()
+      this.#probe = { id, time: now }
+      nextProbe = now + heartbeatInterval
+      try {
+        this.window.webContents.send(EXTENSION_IPC.hostMessage, { id, method: 'ping', params: null })
+      }
+      catch {
+        this.#fail()
+      }
+    }, 1000)
+  }
+
+  #clearHeartbeat(): void {
+    clearInterval(this.#heartbeatTimer)
+    this.#heartbeatTimer = undefined
+    this.#probe = undefined
   }
 
   #closeDeveloperWindow(): void {
@@ -237,18 +280,20 @@ export class SandboxedExtensionHost implements ExtensionHost {
   }
 
   #fail(failure: ExtensionHostFailure = { code: 'EXTENSION_HOST_CRASHED', method: 'unknown', stage: 'process' }): void {
-    if (this.#closing)
+    if (this.#closing || this.#failed)
       return
+    this.#failed = true
     this.#rejectAll(failure.code)
     this.#onFailure(failure)
   }
 
-  #rejectAll(readyError = 'EXTENSION_HOST_STOPPED'): void {
+  #rejectAll(reason = 'EXTENSION_HOST_STOPPED'): void {
     clearTimeout(this.#readyTimer)
-    this.#rejectReady(new Error(readyError))
+    this.#clearHeartbeat()
+    this.#rejectReady(new Error(reason))
     for (const pending of this.#pending.values()) {
       pending.cleanup()
-      pending.reject(new Error('EXTENSION_HOST_STOPPED'))
+      pending.reject(new Error(reason))
     }
     this.#pending.clear()
   }

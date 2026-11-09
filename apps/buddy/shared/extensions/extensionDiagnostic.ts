@@ -13,6 +13,7 @@ const methods = new Set([
   'inference.resources.remove',
   'activate',
   'ready',
+  'ping',
   'deactivate',
   'command',
   'agent.invoke',
