@@ -1,22 +1,22 @@
 diff --git a/dist/api/openai-completions.js b/dist/api/openai-completions.js
+index 12ec37ea..1bbbbea7 100644
 --- a/dist/api/openai-completions.js
 +++ b/dist/api/openai-completions.js
-@@ -298,7 +298,9 @@
+@@ -287,7 +287,9 @@ export const stream = (model, context, options) => {
                  const name = toolCall.function?.name ?? toolCall.custom?.name ?? "";
                  let block = streamIndex !== undefined ? toolCallBlocksByIndex.get(streamIndex) : undefined;
                  if (!block && toolCall.id) {
 -                    block = toolCallBlocksById.get(toolCall.id);
 +                    const byId = toolCallBlocksById.get(toolCall.id);
-+                    if (streamIndex === undefined || byId?.streamIndex === undefined)
++                    if (streamIndex === undefined || toolCallStates.get(byId)?.streamIndex === undefined)
 +                        block = byId;
                  }
                  if (!block) {
                      // Note: the "input" fallback here should/must not be taken.  in case the LLM makes up
-@@ -1133,6 +1135,14 @@
-             continue;
+@@ -1116,6 +1118,14 @@ export function convertMessages(model, context, compat, options) {
          }
          lastRole = msg.role;
-+    }
+     }
 +    if (params.some((message) => message.role === "assistant" &&
 +        typeof message.reasoning_content === "string")) {
 +        for (const message of params) {
@@ -24,13 +24,15 @@ diff --git a/dist/api/openai-completions.js b/dist/api/openai-completions.js
 +                message.reasoning_content = "";
 +            }
 +        }
-     }
++    }
      return params;
  }
+ function convertTools(tools, compat) {
 diff --git a/dist/api/openai-responses-shared.js b/dist/api/openai-responses-shared.js
+index 3901bfc4..653abd58 100644
 --- a/dist/api/openai-responses-shared.js
 +++ b/dist/api/openai-responses-shared.js
-@@ -421,7 +421,11 @@
+@@ -408,7 +408,11 @@ export async function processResponsesStream(openaiStream, output, stream, model
          }
          if (item.type === "message") {
              applyMessagePhaseStopReason(item);
@@ -44,9 +46,10 @@ diff --git a/dist/api/openai-responses-shared.js b/dist/api/openai-responses-sha
              const slot = { type: "text", block, contentIndex: output.content.length - 1 };
              outputSlots.set(outputIndex, slot);
 diff --git a/dist/api/transform-messages.js b/dist/api/transform-messages.js
+index 6a364cbc..80404ccf 100644
 --- a/dist/api/transform-messages.js
 +++ b/dist/api/transform-messages.js
-@@ -139,6 +139,7 @@
+@@ -139,6 +139,7 @@ export function transformMessages(messages, model, normalizeToolCallId) {
      // This preserves thinking signatures and satisfies API requirements
      const result = [];
      let pendingToolCalls = [];
@@ -54,7 +57,7 @@ diff --git a/dist/api/transform-messages.js b/dist/api/transform-messages.js
      let existingToolResultIds = new Set();
      // System messages are transparent to tool-call accounting: one that lands between a tool
      // call and its results is held back and emitted after the results (synthetic ones
-@@ -152,7 +153,7 @@
+@@ -152,7 +153,7 @@ export function transformMessages(messages, model, normalizeToolCallId) {
                          role: "toolResult",
                          toolCallId: tc.id,
                          toolName: tc.name,
@@ -63,7 +66,7 @@ diff --git a/dist/api/transform-messages.js b/dist/api/transform-messages.js
                          isError: true,
                          timestamp: Date.now(),
                      });
-@@ -161,6 +162,7 @@
+@@ -161,6 +162,7 @@ export function transformMessages(messages, model, normalizeToolCallId) {
              pendingToolCalls = [];
              existingToolResultIds = new Set();
          }
@@ -71,15 +74,13 @@ diff --git a/dist/api/transform-messages.js b/dist/api/transform-messages.js
          result.push(...heldSystemMessages);
          heldSystemMessages.length = 0;
      };
-@@ -180,13 +182,22 @@
+@@ -180,13 +182,22 @@ export function transformMessages(messages, model, normalizeToolCallId) {
              }
              // Track tool calls from this assistant message
              const toolCalls = assistantMsg.content.filter((b) => b.type === "toolCall");
 -            if (toolCalls.length > 0) {
 -                pendingToolCalls = toolCalls;
 -                existingToolResultIds = new Set();
--            }
--            result.push(msg);
 +            const isValidName = (call) => typeof call.name === "string" && call.name.length > 0 && call.name.length <= 128 && !/[\s\x00-\x1f\x7f]/.test(call.name);
 +            rejectedToolCallIds = new Set(toolCalls.filter((call) => !isValidName(call)).map((call) => call.id));
 +            pendingToolCalls = toolCalls.filter(isValidName);
@@ -91,7 +92,8 @@ diff --git a/dist/api/transform-messages.js b/dist/api/transform-messages.js
 +                result.push({ ...assistantMsg, content });
 +            } else {
 +                result.push(msg);
-+            }
+             }
+-            result.push(msg);
          }
          else if (msg.role === "toolResult") {
 +            if (rejectedToolCallIds.has(msg.toolCallId))
@@ -100,9 +102,10 @@ diff --git a/dist/api/transform-messages.js b/dist/api/transform-messages.js
              result.push(msg);
          }
 diff --git a/dist/utils/retry.js b/dist/utils/retry.js
+index d33b8069..7874f866 100644
 --- a/dist/utils/retry.js
 +++ b/dist/utils/retry.js
-@@ -203,6 +203,12 @@
+@@ -206,6 +206,12 @@ export function isRetryableAssistantError(message) {
      if (message.stopReason !== "error" || !message.errorMessage)
          return false;
      const errorMessage = message.errorMessage;
