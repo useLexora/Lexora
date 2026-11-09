@@ -194,14 +194,39 @@ export class ExtensionResourceStore {
   }
 
   async readBytes(id: string, resourceId: string, offset: number, length: number, signal: AbortSignal, allowLocal = true): Promise<{ base64: string, size: number, eof: boolean }> {
-    const url = 'https://resource.invalid/'
-    const metadata = await this.response(id, resourceId, new Request(url, { method: 'HEAD' }), signal, allowLocal)
-    const size = Number(metadata.headers.get('content-length'))
-    if (offset >= size)
-      return { base64: '', size, eof: true }
-    const response = await this.response(id, resourceId, new Request(url, { headers: { range: `bytes=${offset}-${offset + length - 1}` } }), signal, allowLocal)
-    const bytes = Buffer.from(await response.arrayBuffer())
-    return { base64: bytes.toString('base64'), size, eof: offset + bytes.length >= size }
+    signal.throwIfAborted()
+    if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(length) || length < 1 || length > 128 * 1024)
+      throw new Error('EXTENSION_RESOURCE_RANGE_INVALID')
+    // Keep the inclusive end safe even for a valid offset at MAX_SAFE_INTEGER.
+    const end = offset + Math.min(length - 1, Number.MAX_SAFE_INTEGER - offset)
+    const response = await this.response(id, resourceId, new Request('https://resource.invalid/', { headers: { range: `bytes=${offset}-${end}` } }), signal, allowLocal)
+    try {
+      signal.throwIfAborted()
+      const range = response.headers.get('content-range') ?? ''
+      if (response.status === 416) {
+        const match = /^bytes \*\/(\d+)$/.exec(range)
+        const size = match ? Number(match[1]) : Number.NaN
+        if (!Number.isSafeInteger(size) || size < 0 || offset < size || response.headers.get('content-length') !== '0')
+          throw new Error('EXTENSION_RESOURCE_RANGE_INVALID')
+        return { base64: '', size, eof: true }
+      }
+      const match = response.status === 206 ? /^bytes (\d+)-(\d+)\/(\d+)$/.exec(range) : null
+      const start = match ? Number(match[1]) : Number.NaN
+      const last = match ? Number(match[2]) : Number.NaN
+      const size = match ? Number(match[3]) : Number.NaN
+      if (![start, last, size].every(Number.isSafeInteger) || start !== offset || last < start || last !== Math.min(end, size - 1) || response.headers.get('content-length') !== String(last - start + 1))
+        throw new Error('EXTENSION_RESOURCE_RANGE_INVALID')
+      // Never consume an unexpected full response or infer size from a partial Content-Length.
+      const bytes = Buffer.from(await response.arrayBuffer())
+      signal.throwIfAborted()
+      if (bytes.length !== last - start + 1)
+        throw new Error('EXTENSION_RESOURCE_RANGE_INVALID')
+      return { base64: bytes.toString('base64'), size, eof: last === size - 1 }
+    }
+    finally {
+      if (!response.bodyUsed)
+        await response.body?.cancel().catch(() => {})
+    }
   }
 
   async readText(id: string, resourceId: string, signal: AbortSignal, allowLocal = true): Promise<string> {
