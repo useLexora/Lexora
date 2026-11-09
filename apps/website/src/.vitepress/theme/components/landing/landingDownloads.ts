@@ -11,6 +11,13 @@ export interface DownloadAsset {
   size: number
 }
 
+export interface DownloadSelection {
+  title: string
+  name: string
+  url: string
+  releaseUrl: string
+}
+
 export interface DownloadRelease {
   tag: string
   version: string

@@ -11,6 +11,15 @@ const zh = {
       currentOs: '当前系统',
       linuxHint: '检测到 Linux，请按发行版选择安装包。',
       allReleases: '查看全部版本与校验文件',
+      help: {
+        trigger: '下载未开始？尝试代理下载',
+        title: '选择下载代理',
+        description: '无法直连 GitHub 时，可手动选择以下第三方代理下载同一个安装包。代理可用性取决于所在网络。',
+        note: '代理由第三方运营。下载后建议使用对应版本的校验文件核对安装包。',
+        direct: '重试 GitHub 直连',
+        checksums: '查看此版本与校验文件',
+        close: '关闭下载代理选择',
+      },
       windows: {
         title: 'Windows',
         desc: '适用于 Windows 10 / 11 (64 位)',
@@ -141,6 +150,15 @@ const en: typeof zh = {
       currentOs: 'Current OS',
       linuxHint: 'Linux detected. Choose a package for your distribution.',
       allReleases: 'All releases & checksums',
+      help: {
+        trigger: 'Download not starting? Try a proxy',
+        title: 'Choose a download proxy',
+        description: 'If GitHub is unreachable, choose a third-party proxy to download the same package. Availability depends on your network.',
+        note: 'Proxies are operated by third parties. Verify the downloaded package against the checksums for this release.',
+        direct: 'Retry directly from GitHub',
+        checksums: 'View this release & checksums',
+        close: 'Close download proxy selection',
+      },
       windows: {
         title: 'Windows',
         desc: 'Windows 10 / 11 (64-bit)',
