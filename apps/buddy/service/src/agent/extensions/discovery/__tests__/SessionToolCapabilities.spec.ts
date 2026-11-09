@@ -40,6 +40,39 @@ describe('session capability facts', () => {
     expect(Object.isFrozen(events.at(-1)?.snapshot.active)).toBe(true)
   })
 
+  it('accepts Pi preserving active tool order and records that confirmed order', () => {
+    const { state } = setup()
+    state.search({ toolNames: ['create_image'] }, { model })
+    let active = ['read']
+    const adapter = {
+      getActiveTools: () => [...active],
+      setActiveTools: (desired: string[]) => {
+        active = [...active.filter(name => desired.includes(name)), ...desired.filter(name => !active.includes(name))]
+      },
+    }
+    state.apply(state.resolve({ model }), 'discovery', adapter)
+    expect(state.snapshot).toMatchObject({ status: 'ready', active: ['read', 'create_image'] })
+    const revision = state.snapshot.revision
+    state.apply(state.resolve({ model }), 'context', adapter)
+    expect(state.snapshot.revision).toBe(revision)
+    state.apply(state.resolve({ model: { ...model, id: 'text' } }), 'model', adapter)
+    expect(state.snapshot).toMatchObject({ status: 'ready', active: ['read'] })
+  })
+
+  it.each([
+    { actual: ['read'] },
+    { actual: ['read', 'create_image', 'unexpected'] },
+    { actual: ['read', 'read'] },
+  ])('rejects an incorrect active tool set $actual without publishing it', ({ actual }) => {
+    const { state } = setup()
+    state.search({ toolNames: ['create_image'] }, { model })
+    expect(() => state.apply(state.resolve({ model }), 'discovery', {
+      getActiveTools: () => actual,
+      setActiveTools: () => {},
+    })).toThrow('SESSION_TOOLS_APPLICATION_MISMATCH')
+    expect(state.snapshot).toMatchObject({ status: 'degraded', active: ['read'] })
+  })
+
   it('separates model filtering from restored disclosure and rejects writes after disposal', () => {
     const { state, events, adapter } = setup()
     state.search({ toolNames: ['create_image'] }, { model })

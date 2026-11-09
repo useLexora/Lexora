@@ -92,10 +92,14 @@ export class SessionToolCapabilities {
     this.#assertCurrent()
     const { active: desired, direct, model: nextModel, catalog } = resolution
     try {
-      if (JSON.stringify(adapter.getActiveTools()) !== JSON.stringify(desired))
+      const desiredNames = new Set(desired)
+      const matchesDesired = (names: readonly string[]) => names.length === desiredNames.size
+        && new Set(names).size === desiredNames.size
+        && names.every(name => desiredNames.has(name))
+      if (!matchesDesired(adapter.getActiveTools()))
         adapter.setActiveTools(desired)
       const actual = Object.freeze([...adapter.getActiveTools()])
-      if (JSON.stringify(actual) !== JSON.stringify(desired))
+      if (!matchesDesired(actual))
         throw new Error('SESSION_TOOLS_APPLICATION_MISMATCH')
       const changed = this.#status !== 'ready' || JSON.stringify(actual) !== JSON.stringify(this.#active) || JSON.stringify(direct) !== JSON.stringify(this.#direct) || JSON.stringify(nextModel) !== JSON.stringify(this.#model) || JSON.stringify(catalog) !== JSON.stringify(this.#catalog)
       this.#active = actual
