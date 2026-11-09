@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import type { LandingContent } from './landingContent'
+import type { DownloadSelection } from './landingDownloads'
 import { withBase } from 'vitepress'
+import { shallowRef } from 'vue'
+import LandingDownloadHelp from './LandingDownloadHelp.vue'
 import LandingDownloadMenu from './LandingDownloadMenu.vue'
 import LandingHeroScene from './LandingHeroScene.vue'
 import LandingIcon from './LandingIcon.vue'
@@ -11,6 +14,8 @@ defineProps<{
   preview: LandingContent['workbench']
   english: boolean
 }>()
+
+const selectedDownload = shallowRef<DownloadSelection | null>(null)
 </script>
 
 <template>
@@ -28,9 +33,10 @@ defineProps<{
             {{ content.description }}
           </p>
           <div class="hero-actions">
-            <LandingDownloadMenu :label="content.download" :content="content.downloadMenu" :english="english" />
+            <LandingDownloadMenu :label="content.download" :content="content.downloadMenu" :english="english" @download="selectedDownload = $event" />
             <a class="guide-link" :href="withBase(`${english ? '/en' : ''}/guide/quick-start`)">{{ content.guide }}<LandingIcon name="arrow" /></a>
           </div>
+          <LandingDownloadHelp v-if="selectedDownload" :download="selectedDownload" :content="content.downloadMenu.help" />
           <p class="platforms">
             {{ content.platforms }}
           </p>

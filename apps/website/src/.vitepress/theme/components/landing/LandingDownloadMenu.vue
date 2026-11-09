@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { DownloadArchitecture, DownloadFormat, DownloadRelease, DownloadSystem } from './landingDownloads'
+import type { DownloadArchitecture, DownloadFormat, DownloadRelease, DownloadSelection, DownloadSystem } from './landingDownloads'
 import { computed, onMounted, onUnmounted, ref, shallowRef } from 'vue'
 import { releasesUrl, repositoryUrl } from '../../../productLinks'
 import { detectDownloadSystem, matchDownloadAsset, parseDownloadRelease } from './landingDownloads'
@@ -23,6 +23,10 @@ const props = defineProps<{
     linuxDeb: MenuItemConfig
     linuxArch: MenuItemConfig
   }
+}>()
+
+const emit = defineEmits<{
+  download: [selection: DownloadSelection]
 }>()
 
 const isOpen = ref(false)
@@ -126,12 +130,20 @@ const platformItems = computed(() => {
     return {
       ...cfg,
       url: matched?.url ?? cfg.fallbackUrl,
+      name: matched?.name ?? cfg.fallbackUrl.slice(cfg.fallbackUrl.lastIndexOf('/') + 1),
+      releaseUrl: matched ? currentRelease.value.url : fallbackRelease.url,
     }
   })
 })
 
 function toggleMenu() {
   isOpen.value = !isOpen.value
+}
+
+function selectDownload(item: DownloadSelection) {
+  emit('download', { title: item.title, name: item.name, url: item.url, releaseUrl: item.releaseUrl })
+  isOpen.value = false
+  triggerRef.value?.focus()
 }
 
 function handlePointerDown(event: PointerEvent) {
@@ -221,6 +233,8 @@ onUnmounted(() => {
             :class="{ 'is-recommended': item.isRecommended }"
             target="_blank"
             rel="noreferrer"
+            @click="selectDownload(item)"
+            @auxclick.middle="selectDownload(item)"
           >
             <div class="item-icon-box">
               <!-- Windows -->
