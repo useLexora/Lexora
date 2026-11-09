@@ -67,12 +67,15 @@ jobs:
         run: cargo test --locked --manifest-path apps/buddy/native/Cargo.toml --target-dir apps/buddy/.output/build/native --workspace ${{ steps.target.outputs.cargo-args }}
 
       - name: Verify shell isolation
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           node packaging/buddy/release/search-tools.mjs
           pnpm --filter @uselexora/lexora-buddy test:runtime service/src/sandbox/__tests__/macosSandbox.spec.ts
 
       - name: Build macOS package
         env:
+          GH_TOKEN: ${{ github.token }}
           NODE_OPTIONS: --max-old-space-size=4096
           CSC_LINK: ${{ inputs.signing == 'developer-id' && secrets.MACOS_CSC_LINK || '' }}
           CSC_KEY_PASSWORD: ${{ inputs.signing == 'developer-id' && secrets.MACOS_CSC_KEY_PASSWORD || '' }}

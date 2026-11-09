@@ -44,6 +44,7 @@ module.exports = withDesktopNativeVersion({
     runAsNode: resolveInferenceEnvironment(target.platform, target.architecture).platform !== null,
   },
   npmRebuild: false,
+  electronDownload: { checksums: require('electron/checksums.json') },
   forceCodeSigning: target.platform === OPERATING_SYSTEM.MacOS && signedMacos,
   directories: {
     output: '.output/package/desktop',

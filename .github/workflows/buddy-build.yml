@@ -71,6 +71,8 @@ jobs:
           node packaging/buddy/release/artifacts.mjs --format deb --github-output "$GITHUB_OUTPUT"
 
       - name: Build Ubuntu package
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: pnpm --filter @uselexora/lexora-buddy package:deb
 
       - name: Install built Desktop deb
@@ -146,6 +148,8 @@ jobs:
           node packaging/buddy/release/artifacts.mjs --format pacman --github-output "$GITHUB_OUTPUT"
 
       - name: Build first-party Arch package
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: pnpm --filter @uselexora/lexora-buddy package:arch
 
       - name: Upload Arch package for installation
@@ -299,6 +303,8 @@ jobs:
           node packaging/buddy/release/artifacts.mjs --format rpm --github-output "$GITHUB_OUTPUT"
 
       - name: Build Fedora RPM
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: pnpm --filter @uselexora/lexora-buddy package:rpm
 
       - name: Upload RPM for installation
@@ -454,6 +460,8 @@ jobs:
         run: node packaging/buddy/release/artifacts.mjs --format windows-zip --github-output "$GITHUB_OUTPUT"
 
       - name: Build Windows packages
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: pnpm --filter @uselexora/lexora-buddy package:windows
 
       - name: Test platform runtime
