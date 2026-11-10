@@ -52,7 +52,12 @@ defineSlots<{
 const { t } = useBuddyI18n(() => props.language)
 const deepSearchLabelId = useId()
 const list = useTemplateRef<HTMLElement>('list')
-watch(() => [props.activeIndex, props.options], () => {
+let pointerHighlighted = false
+watch(() => [props.activeIndex, props.options] as const, ([nextIndex, nextOptions], [prevIndex, prevOptions]) => {
+  const skipScroll = pointerHighlighted && nextOptions === prevOptions && nextIndex !== prevIndex
+  pointerHighlighted = false
+  if (skipScroll)
+    return
   const container = list.value
   const active = container?.querySelector<HTMLElement>('[aria-selected="true"]')
   if (!container || !active)
@@ -129,9 +134,11 @@ function select(option: ChatPromptContextOption) {
   emit('select', option)
 }
 
-function highlight(index: number) {
-  if (keyboardNavigation.value && props.activeIndex !== index)
+function highlight(index: number, fromPointer = false) {
+  if (keyboardNavigation.value && props.activeIndex !== index) {
+    pointerHighlighted = fromPointer
     emit('highlight', index)
+  }
 }
 </script>
 
@@ -170,7 +177,7 @@ function highlight(index: number) {
             'is-skill': option.kind === 'skill',
           }"
           role="presentation"
-          @pointermove="highlight(index)"
+          @pointermove="highlight(index, true)"
           @mousedown.prevent
           @click="select(option)"
         >

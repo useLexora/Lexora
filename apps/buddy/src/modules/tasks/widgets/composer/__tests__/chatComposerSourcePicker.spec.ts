@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { BuddyComposerDirectory } from '@buddy-shared/conversation/composerResource'
 import type { ChatPromptContextOption } from '@/modules/prompt-input'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, defineComponent, h, nextTick, shallowRef } from 'vue'
 import ChatComposerSourcePicker from '../ChatComposerSourcePicker.vue'
 
@@ -131,9 +131,22 @@ describe('composer source picker', () => {
     await nextTick()
     input.focus()
     const rows = root.querySelectorAll('.chat-composer-source-picker__row')
+    const list = root.querySelector<HTMLElement>('.chat-composer-source-picker__list')!
+    Object.defineProperty(list, 'clientHeight', { value: 40, configurable: true })
+    list.scrollTop = 0
+    vi.spyOn(list, 'getBoundingClientRect').mockReturnValue({ top: 0, bottom: 40, left: 0, right: 200, width: 200, height: 40, x: 0, y: 0, toJSON: () => ({}) })
+    const secondOption = rows[1]!.querySelector<HTMLElement>('[role="option"]')!
+    Object.defineProperty(secondOption, 'offsetHeight', { value: 36, configurable: true })
+    vi.spyOn(secondOption, 'getBoundingClientRect').mockReturnValue({ top: 30, bottom: 66, left: 0, right: 200, width: 200, height: 36, x: 0, y: 30, toJSON: () => ({}) })
     rows[1]!.dispatchEvent(new Event('pointermove', { bubbles: true }))
     await nextTick()
     expect(root.querySelector('[aria-selected="true"]')?.textContent).toContain('assets')
+    expect(list.scrollTop).toBe(0)
+    activeIndex.value = 0
+    await nextTick()
+    activeIndex.value = 1
+    await nextTick()
+    expect(list.scrollTop).toBe(32)
     const enter = rows[1]!.querySelector<HTMLButtonElement>('.chat-composer-source-picker__enter')!
     const down = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
     enter.dispatchEvent(down)
