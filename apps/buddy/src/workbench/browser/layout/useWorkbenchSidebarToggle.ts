@@ -23,12 +23,12 @@ export function useWorkbenchSidebarToggle(options: {
     frame = requestAnimationFrame(() => {
       frame = null
       options.collapsed.value = !options.collapsed.value
-      timer = window.setTimeout(finishSidebarTransition, 280)
+      timer = window.setTimeout(finishSidebarTransition, 140)
     })
   }
 
   function finishSidebarTransition(event?: TransitionEvent): void {
-    if (event && (event.target !== options.sidebar.value || event.propertyName !== 'width'))
+    if (event && (event.target !== options.sidebar.value || event.propertyName !== 'opacity'))
       return
     if (timer !== null)
       window.clearTimeout(timer)

@@ -93,7 +93,6 @@ const {
       v-if="$slots.sidebar"
       ref="sidebar"
       class="desktop-workbench-layout__sidebar relative flex min-w-0 min-h-0 flex-none overflow-hidden"
-      data-workbench-layout-transition="width"
       data-theme-surface="layout"
       :class="sidebarVisible() ? 'w-workspace-sidebar opacity-100' : 'is-collapsed w-0 opacity-0 pointer-events-none invisible'"
       :aria-hidden="!sidebarVisible()"
@@ -176,15 +175,7 @@ const {
 
 <style scoped lang="scss">
 .desktop-workbench-layout__sidebar {
-  transition:
-    width 240ms cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 100ms ease,
-    visibility 0s linear;
-  will-change: width, opacity;
-
-  &.is-collapsed {
-    transition-delay: 0ms, 0ms, 240ms;
-  }
+  transition: opacity 100ms ease;
 }
 
 .desktop-workbench-layout__resizer::before,
@@ -246,7 +237,6 @@ const {
   pointer-events: auto;
   transform: translate(0, -50%);
   transition:
-    left 240ms cubic-bezier(0.4, 0, 0.2, 1),
     opacity 220ms ease-out,
     transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
     color var(--buddy-motion-state-duration) var(--buddy-motion-state-easing);

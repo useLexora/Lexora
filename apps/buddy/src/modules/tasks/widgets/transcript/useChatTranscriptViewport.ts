@@ -92,7 +92,13 @@ export function useChatTranscriptViewport(
   let programmaticTop: number | null = null
 
   const report = createChatFrameTask(reportMetrics, requestAnimationFrame, cancelAnimationFrame)
-  const relayout = createChatFrameTask(rebuildLayout, requestAnimationFrame, cancelAnimationFrame)
+  let layoutTimer: ReturnType<typeof setTimeout> | undefined
+  let pendingLayout: typeof estimateLayout.value | null = null
+  function scheduleLayout(layout: typeof estimateLayout.value) {
+    pendingLayout = layout
+    clearTimeout(layoutTimer)
+    layoutTimer = setTimeout(rebuildLayout, 150)
+  }
 
   const virtualizer = useVirtualizer<HTMLElement, HTMLElement>(computed(() => ({
     count: rows.value.length,
@@ -123,12 +129,11 @@ export function useChatTranscriptViewport(
       if (Object.entries(layout).some(([key, value]) => value !== estimateLayout.value[key as keyof typeof layout])) {
         if (width)
           layoutAnchor ??= captureScrollAnchor()
-        estimateLayout.value = layout
-        relayout.schedule()
+        scheduleLayout(layout)
       }
       else if (width && Math.abs(width - rect.width) > 0.5) {
         layoutAnchor ??= captureScrollAnchor()
-        relayout.schedule()
+        scheduleLayout(layout)
       }
       width = rect.width
       callback(rect)
@@ -290,6 +295,15 @@ export function useChatTranscriptViewport(
   }
 
   function rebuildLayout() {
+    layoutTimer = undefined
+    if (!readScrollMetrics()) {
+      pendingLayout = null
+      layoutAnchor = null
+      return
+    }
+    if (pendingLayout)
+      estimateLayout.value = pendingLayout
+    pendingLayout = null
     const anchor = layoutAnchor
     layoutAnchor = null
     const revision = generation
@@ -445,7 +459,7 @@ export function useChatTranscriptViewport(
   onBeforeUnmount(() => {
     disposed = true
     report.cancel()
-    relayout.cancel()
+    clearTimeout(layoutTimer)
   })
   return { handle, handleScroll, measureRow, virtualRows, totalHeight, tailOffset }
 }

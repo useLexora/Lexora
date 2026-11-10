@@ -1,7 +1,7 @@
 import type { Ref } from 'vue'
 import type { ExecutionCanvasNode } from '../../model/executions/executionCanvas'
 import { Graph } from '@antv/x6'
-import { useIntersectionObserver, useResizeObserver } from '@vueuse/core'
+import { useEventListener, useIntersectionObserver, useResizeObserver } from '@vueuse/core'
 import { computed, onBeforeUnmount, shallowRef, watch } from 'vue'
 import { conversationCanvasConnection } from '../../model/canvas/conversationCanvasConnections'
 import { executionNeedsAttention } from '../../model/executions/executionCanvas'
@@ -18,10 +18,36 @@ export function useExecutionCanvas(container: Readonly<Ref<HTMLElement | null>>,
   let applying = false
   let pendingFocus: string | null = null
   const geometry = computed(() => JSON.stringify(nodes.value.map(node => [node.execution.runId, node.parentId, node.x, node.y, node.width, node.height])))
-  const viewport = useChatTranscriptValue<{ tx: number, ty: number, scale: number, width: number, height: number } | null>('execution-canvas:viewport', null)
+  const viewport = useChatTranscriptValue<{ tx: number, ty: number, scale: number, fittedSize: string | null } | null>('execution-canvas:viewport', null)
   let frame = 0
+  let fittedSize: string | null = null
+  let syncedGeometry: string | null = null
+  let fitTimer: ReturnType<typeof setTimeout> | undefined
+
+  function cancelFit() {
+    clearTimeout(fitTimer)
+    fitTimer = undefined
+  }
+
+  function scheduleFit() {
+    cancelFit()
+    fitTimer = setTimeout(() => {
+      fitTimer = undefined
+      const element = surface.value
+      if (element && fittedSize !== `${element.clientWidth}:${element.clientHeight}`)
+        place(true)
+    }, 150)
+  }
+
+  function preserveViewport() {
+    cancelFit()
+    const element = surface.value
+    if (element?.clientWidth && element.clientHeight)
+      fittedSize = `${element.clientWidth}:${element.clientHeight}`
+  }
 
   function focus(id: string) {
+    preserveViewport()
     const value = graph.value
     const node = value?.getCellById(id)
     const element = surface.value
@@ -35,6 +61,7 @@ export function useExecutionCanvas(container: Readonly<Ref<HTMLElement | null>>,
   }
 
   function place(readable: boolean) {
+    cancelFit()
     const value = graph.value
     const element = surface.value
     if (!value || !element || !nodes.value.length)
@@ -49,6 +76,7 @@ export function useExecutionCanvas(container: Readonly<Ref<HTMLElement | null>>,
       y: readable && bounds.height * scale > element.clientHeight - 32 ? focusBounds.center.y : bounds.y + bounds.height / 2,
     }
     value.positionPoint(center, element.clientWidth / 2, element.clientHeight / 2)
+    fittedSize = `${element.clientWidth}:${element.clientHeight}`
   }
 
   function updateEdge(id: string) {
@@ -107,18 +135,22 @@ export function useExecutionCanvas(container: Readonly<Ref<HTMLElement | null>>,
         manualPositions.delete(id)
     }
     applying = false
+    syncedGeometry = geometry.value
   }
 
   function release() {
     cancelAnimationFrame(frame)
     frame = 0
+    cancelFit()
+    syncedGeometry = null
     if (graph.value) {
-      viewport.value = { ...graph.value.translate(), scale: graph.value.zoom(), width: graph.value.options.width, height: graph.value.options.height }
+      viewport.value = { ...graph.value.translate(), scale: graph.value.zoom(), fittedSize }
       savedPositions.value = new Map(manualPositions)
       graph.value.dispose()
       graph.value = null
       host.hosts.clear()
     }
+    fittedSize = null
   }
 
   function updateVisibility() {
@@ -129,10 +161,11 @@ export function useExecutionCanvas(container: Readonly<Ref<HTMLElement | null>>,
       return
     }
     if (graph.value) {
-      sync()
+      if (syncedGeometry !== geometry.value)
+        sync()
       if (graph.value.options.width !== element.clientWidth || graph.value.options.height !== element.clientHeight) {
         graph.value.resize(element.clientWidth, element.clientHeight)
-        place(true)
+        scheduleFit()
       }
       if (pendingFocus)
         focus(pendingFocus)
@@ -171,9 +204,12 @@ export function useExecutionCanvas(container: Readonly<Ref<HTMLElement | null>>,
         updateEdge(edge.id)
     })
     sync()
-    if (viewport.value && viewport.value.width === element.clientWidth && viewport.value.height === element.clientHeight) {
+    if (viewport.value) {
       value.zoomTo(viewport.value.scale)
       value.translate(viewport.value.tx, viewport.value.ty)
+      fittedSize = viewport.value.fittedSize
+      if (fittedSize !== `${element.clientWidth}:${element.clientHeight}`)
+        scheduleFit()
     }
     else {
       place(true)
@@ -189,6 +225,7 @@ export function useExecutionCanvas(container: Readonly<Ref<HTMLElement | null>>,
 
   useIntersectionObserver(surface, ([entry]) => nearby.value = entry?.isIntersecting ?? false, { rootMargin: '240px' })
   useResizeObserver(surface, schedule)
+  useEventListener(container, ['pointerdown', 'wheel'], preserveViewport, { passive: true })
   watch([nearby, geometry], schedule, { flush: 'post' })
   onBeforeUnmount(release)
 
@@ -199,11 +236,15 @@ export function useExecutionCanvas(container: Readonly<Ref<HTMLElement | null>>,
     fit: () => place(false),
     arrange: () => {
       manualPositions.clear()
+      syncedGeometry = null
       cancelAnimationFrame(frame)
       updateVisibility()
       place(false)
     },
-    zoomBy: (amount: number) => graph.value?.zoom(amount),
+    zoomBy: (amount: number) => {
+      preserveViewport()
+      graph.value?.zoom(amount)
+    },
     focus,
   }
 }

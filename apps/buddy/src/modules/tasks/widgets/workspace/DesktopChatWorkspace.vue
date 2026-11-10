@@ -264,7 +264,7 @@ function openDetailChanges(id: string) {
 
 <template>
   <DesktopRuntimePane :loading="isLoading" :language="language" :animate="false">
-    <section ref="pageRef" class="desktop-chat-page relative grid min-w-0 min-h-0 flex-1 grid-cols-[minmax(0,_1fr)] grid-rows-[minmax(0,_1fr)_auto] bg-reading text-reading-fg" :class="{ 'is-loading': isLoading, 'is-empty': isEmpty && viewMode !== 'canvas', 'has-node-detail': detailVisible, 'is-question-preview': !composerVisible, 'is-resizing-detail': detailResize.dragging.value }" :style="{ '--conversation-detail-width': `${detailResize.width.value}px` }" :data-view-mode="viewMode" data-theme-surface="layout">
+    <section ref="pageRef" class="desktop-chat-page relative grid min-w-0 min-h-0 flex-1 grid-cols-[minmax(0,_1fr)] grid-rows-[minmax(0,_1fr)_auto] bg-reading text-reading-fg" :class="{ 'is-loading': isLoading, 'is-empty': isEmpty && viewMode !== 'canvas', 'has-node-detail': detailVisible, 'is-question-preview': !composerVisible, 'is-resizing-detail': detailResize.dragging.value }" :style="detailVisible ? { '--conversation-detail-width': `${detailResize.width.value}px` } : undefined" :data-view-mode="viewMode" data-theme-surface="layout">
       <main class="desktop-chat-page__content [grid-area:content] flex min-w-0 min-h-0 flex-1 flex-col overflow-hidden">
         <DesktopConversationCanvas
           v-if="canvasVisited"
