@@ -7,6 +7,40 @@ const notice: ConnectorChangeNotice = { sourceId: '00000000-0000-4000-8000-00000
 const connector: LocalConnector = { id: 'fixture', name: 'Fixture', toolNamespace: 'fixture', toolExposure: 'deferred', enabled: false, credentialConfigured: false, executionConfirmed: false, transport: 'streamable-http', url: 'https://example.test/mcp', runtime: { status: 'disabled', authorization: null, errorCode: null, toolCount: 0, updatedAt: null } }
 
 describe('mcpSettingsCapability', () => {
+  it('clears the initial load error after a successful retry', async () => {
+    let fail = true
+    const mutate = async () => ({ ok: true as const })
+    const scope = effectScope()
+    const capability = scope.run(() => useMcpSettingsCapability({ language: shallowRef('zh-CN'), api: {
+      list: async () => {
+        if (fail)
+          throw new Error('offline')
+        return [connector]
+      },
+      onChanged: () => () => {},
+      setEnabled: mutate,
+      test: async () => connector.runtime,
+      tools: async () => [],
+      login: mutate,
+      cancelLogin: mutate,
+      upsert: async () => [],
+      remove: mutate,
+      confirmExecution: mutate,
+      setCredential: mutate,
+      clearCredential: mutate,
+    } }))!
+
+    await capability.load()
+    expect(capability.error.value).toBeTruthy()
+    expect(capability.loaded.value).toBe(false)
+
+    fail = false
+    await capability.load()
+    expect(capability.error.value).toBeNull()
+    expect(capability.loaded.value).toBe(true)
+    scope.stop()
+  })
+
   it('reconciles a notice arriving during the initial snapshot and ignores late results after scope disposal', async () => {
     const listeners = new Set<(event: ConnectorChangeNotice) => void>()
     const first = Promise.withResolvers<readonly LocalConnector[]>()

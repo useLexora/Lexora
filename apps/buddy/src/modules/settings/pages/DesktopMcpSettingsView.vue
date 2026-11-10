@@ -7,7 +7,7 @@ const { applicationSettings, mcpSettings, ready } = useSettingsContext()
 </script>
 
 <template>
-  <DesktopSettingsModuleLayout :loading="!mcpSettings.loaded.value">
+  <DesktopSettingsModuleLayout :loading="!mcpSettings.loaded.value && !mcpSettings.error.value">
     <DesktopMcpManager :mcp="mcpSettings" :ready="ready" :codemode-enabled="(applicationSettings.config.value?.runtime.codemode ?? 'off') !== 'off'" />
   </DesktopSettingsModuleLayout>
 </template>
