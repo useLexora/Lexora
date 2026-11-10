@@ -39,6 +39,7 @@ import { createExtensionSpeechBackend } from './createExtensionSpeechBackend'
 import { createExtensionClipboard } from './ExtensionClipboard'
 import { processExtensionPackageInBackground } from './ExtensionPackageWorker'
 import { ExtensionProtocol } from './ExtensionProtocol'
+import { createInferenceHardwareProvider } from './inferenceHardware'
 import { SandboxedExtensionHost } from './SandboxedExtensionHost'
 
 export function registerExtensionIpc(options: {
@@ -111,12 +112,14 @@ export function registerExtensionIpc(options: {
         await options.syncCapabilities?.(descriptors, clearExtensionId)
     },
     inference: {
+      hardware: createInferenceHardwareProvider({ getGPUInfo: () => app.getGPUInfo('basic'), getSystemMemoryInfo: () => process.getSystemMemoryInfo() }),
       bootstrap: inferenceBootstrap,
       executable: process.execPath,
       supervisor: resolveBuddyProcessControl({ appPath: app.getAppPath(), isPackaged: app.isPackaged, resourcesPath: process.resourcesPath }),
       sandbox: process.platform === 'linux' ? join(app.isPackaged ? process.resourcesPath : app.getAppPath(), app.isPackaged ? shellSandbox.resource.to : `${shellSandbox.resource.from}/${currentTarget.id}`, 'bwrap') : undefined,
       admit: options.inferenceAdmission,
       request: options.inferenceRequest,
+      record: options.record,
       credentials,
     },
     themes: options.themes,

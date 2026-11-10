@@ -1,3 +1,4 @@
+import type { ApplicationDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { InferenceFrame } from '../inferenceWire'
 import type { InferenceInvocation } from '../NativeInferenceProcess'
 import { EventEmitter } from 'node:events'
@@ -9,7 +10,7 @@ export function invocation(input: Partial<InferenceInvocation> = {}): InferenceI
   return { id: 'call', capability: 'local', input: {}, signal: new AbortController().signal, event() {}, ...input }
 }
 
-export function memoryInference(options: { ignoreExit?: boolean } = {}) {
+export function memoryInference(options: { ignoreExit?: boolean, record?: ApplicationDiagnosticReporter } = {}) {
   const child = new EventEmitter()
   const stdin = new PassThrough()
   const stdout = new PassThrough()
@@ -33,7 +34,7 @@ export function memoryInference(options: { ignoreExit?: boolean } = {}) {
     if (!options.ignoreExit)
       close()
   })
-  const worker = Reflect.construct(NativeInferenceProcess, [child]) as NativeInferenceProcess
+  const worker = Reflect.construct(NativeInferenceProcess, [child, undefined, undefined, { extensionId: 'fixture.inference', record: options.record }]) as NativeInferenceProcess
   const reading = (async () => {
     for await (const { message, bytes } of readInferenceFrames(stdin)) {
       const id = message.id!
@@ -70,6 +71,7 @@ export function memoryInference(options: { ignoreExit?: boolean } = {}) {
   })
   return {
     worker,
+    stderr,
     frames,
     send,
     close,

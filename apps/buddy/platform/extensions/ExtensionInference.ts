@@ -1,4 +1,4 @@
-import type { InferenceBinding, InferenceCapability, InferenceRuntimeReference } from '../../shared/extensions/extensionInference'
+import type { InferenceBinding, InferenceCapability, InferenceHardware, InferenceObservation, InferenceRuntimeReference } from '../../shared/extensions/extensionInference'
 import type { ExtensionInferenceCredentials } from './ExtensionInferenceCredentials'
 import type { InferenceResourceLease, InferenceResourceSource } from './ExtensionInferenceResources'
 import type { ExtensionPackage, ExtensionPackageStore } from './ExtensionPackageStore'
@@ -6,12 +6,15 @@ import type { InferenceInvocation, NativeInferenceOptions } from './NativeInfere
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
 import process from 'node:process'
-import { inferenceBindingSchema, inferenceLimits, inferenceNetworkOptionsSchema } from '../../shared/extensions/extensionInference'
+import { safeDiagnosticReporter } from '../../shared/diagnostics/applicationDiagnostic'
+import { inferenceDiagnosticCodeSchema, inferenceStderrDiagnosticSchema } from '../../shared/diagnostics/inferenceDiagnostic'
+import { inferenceBindingSchema, inferenceLimits, inferenceNetworkOptionsSchema, inferenceObservationSchema } from '../../shared/extensions/extensionInference'
 import { ExtensionInvocationQueue } from '../../shared/extensions/ExtensionInvocationQueue'
 import { supportsInferenceRuntime } from '../../shared/extensions/inferencePlatform'
 import { NativeInferenceProcess, waitForInference } from './NativeInferenceProcess'
 
 export interface ExtensionInferencePorts extends NativeInferenceOptions {
+  hardware?: (includeGpu: boolean) => Promise<InferenceHardware | undefined>
   credentials?: ExtensionInferenceCredentials
   request?: (url: string, input: { method: 'POST', headers: Record<string, string>, body: Uint8Array, signal: AbortSignal }) => Promise<Response>
   admit: (extensionId: string, invocationId: string, signal: AbortSignal, parentInvocationId?: string) => Promise<() => Promise<void>>
@@ -21,6 +24,7 @@ interface Instance {
   runtime: string
   ready: Promise<NativeInferenceProcess>
   worker?: NativeInferenceProcess
+  observation: { current?: InferenceObservation }
   capacity: ExtensionInvocationQueue
   waiters: number
   active: number
@@ -216,6 +220,7 @@ export class ExtensionInference {
         active: instance.active,
         pending: instance.waiters - instance.active,
         cancelling: instance.worker?.cancelling ?? 0,
+        ...(!instance.abort.signal.aborted && !instance.worker?.stopped && instance.observation.current ? { observation: structuredClone(instance.observation.current) } : {}),
       })),
     }))
   }
@@ -274,12 +279,36 @@ export class ExtensionInference {
       if (!instance) {
         const abort = new AbortController()
         const leases: InferenceResourceLease[] = []
+        const observation: Instance['observation'] = {}
         const loading = AbortSignal.any([abort.signal, this.#stop.signal, AbortSignal.timeout(inferenceLimits.startTimeoutMs)])
         const ready = (async () => {
           for (const resource of binding.resources)
             leases.push(await this.store.inference.acquire(this.pkg.manifest.id, resource, this.source, loading))
           this.assertCurrent()
-          return NativeInferenceProcess.start({ ...this.ports, network: async (name, body, signal, rawOptions) => {
+          return NativeInferenceProcess.start({ ...this.ports, record: (event) => {
+            safeDiagnosticReporter(this.ports.record)(event)
+            if (abort.signal.aborted || event.component !== 'models.inference' || event.extensionId !== this.pkg.manifest.id || !inferenceStderrDiagnosticSchema.shape.event.safeParse(event.event).success)
+              return
+            const error = inferenceDiagnosticCodeSchema.safeParse(event.errorCode)
+            if (event.event === 'chat.gpu.exit') {
+              observation.current = error.success ? { error: error.data, observedAt: Date.now() } : undefined
+              return
+            }
+            if (event.event === 'chat.gpu.start')
+              observation.current = undefined
+            if (event.event === 'chat.gpu.invoke' && observation.current)
+              delete observation.current.error
+            const parsed = inferenceObservationSchema.safeParse({ ...event.inference, ...(error.success ? { error: error.data } : {}), observedAt: Date.now() })
+            if (!parsed.success || Object.keys(parsed.data).length === 1)
+              return
+            const previous = observation.current
+            observation.current = {
+              ...previous,
+              ...parsed.data,
+              ...(parsed.data.context ? { context: { ...previous?.context, ...parsed.data.context } } : {}),
+              ...(parsed.data.timings ? { timings: { ...previous?.timings, ...parsed.data.timings } } : {}),
+            }
+          }, network: async (name, body, signal, rawOptions) => {
             const endpoint = binding.endpoints.find(item => item.id === name)
             this.assertCurrent()
             if (!endpoint || !this.ports.request)
@@ -298,7 +327,7 @@ export class ExtensionInference {
             return this.ports.request(endpoint.url, { method: 'POST', headers, body, signal })
           } }, this.store, this.pkg, runtime, binding, leases, loading)
         })()
-        const created: Instance = { abort, runtime: runtime.id, ready, capacity: new ExtensionInvocationQueue({ concurrent: runtime.capacity, concurrentPerExtension: runtime.capacity, queued: 1024 }), waiters: 0, active: 0, leases }
+        const created: Instance = { abort, runtime: runtime.id, ready, observation, capacity: new ExtensionInvocationQueue({ concurrent: runtime.capacity, concurrentPerExtension: runtime.capacity, queued: 1024 }), waiters: 0, active: 0, leases }
         instance = created
         this.#instances.set(key, created)
         void ready.then((worker) => {

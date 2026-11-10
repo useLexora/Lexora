@@ -49,7 +49,7 @@ import { extensionConditionInvalidationSchema } from '../../shared/extensions/ex
 import { extensionDiagnostic, ExtensionRequestError } from '../../shared/extensions/extensionDiagnostic'
 import { extensionDocumentInfoSchema } from '../../shared/extensions/extensionDocumentInfo'
 import { extensionFileHandlerBindings } from '../../shared/extensions/extensionFileOpening'
-import { inferenceBindingSchema, inferenceCredentialReferenceSchema, inferenceCredentialSchema, inferenceHashSchema, inferenceIdSchema, inferencePrepareSchema, inferenceRuntimeReferenceSchema } from '../../shared/extensions/extensionInference'
+import { inferenceBindingSchema, inferenceCredentialReferenceSchema, inferenceCredentialSchema, inferenceHardwareSchema, inferenceHashSchema, inferenceIdSchema, inferencePrepareSchema, inferenceRuntimeReferenceSchema } from '../../shared/extensions/extensionInference'
 import { extensionCompatible, extensionPathSchema } from '../../shared/extensions/extensionManifest'
 import { projectExtensionNetworkHeaders } from '../../shared/extensions/extensionNetwork'
 import { extensionReferenceCaptureSchema, extensionReferenceCommitSchema, extensionReferenceInputSchema, extensionReferenceOpeningSchema, extensionReferenceTargetSchema } from '../../shared/extensions/extensionReferences'
@@ -816,8 +816,14 @@ export class ExtensionService {
       }
       throw new Error('EXTENSION_METHOD_DENIED')
     }
-    if (method === 'inference.environment')
-      return { ...resolveInferenceEnvironment(process.platform, process.arch) }
+    if (method === 'inference.environment') {
+      const hardware = inferenceHardwareSchema.safeParse(await this.#ports.inference?.hardware?.(permissions.inferenceGpu).catch(() => undefined))
+      this.#assertCurrent(running)
+      return {
+        ...resolveInferenceEnvironment(process.platform, process.arch),
+        ...(hardware.success ? { hardware: { ...hardware.data, gpus: permissions.inferenceGpu ? hardware.data.gpus : [] } } : {}),
+      }
+    }
     if (method === 'inference.status')
       return running.inference?.status() ?? []
     if (method === 'inference.stop') {

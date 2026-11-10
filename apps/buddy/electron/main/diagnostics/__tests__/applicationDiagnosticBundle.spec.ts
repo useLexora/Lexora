@@ -1,9 +1,11 @@
 import type { ApplicationLogRecord } from '../../../../shared/diagnostics/applicationLog'
 import { appendFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { PassThrough } from 'node:stream'
 import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { strFromU8, unzipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
+import { observeInferenceDiagnostics } from '../../../../platform/extensions/inferenceDiagnostics'
 import { DesktopDiagnosticLogger } from '../../desktopDiagnostics'
 import { createApplicationDiagnosticBundle } from '../applicationDiagnosticBundle'
 import { ApplicationLogReader } from '../ApplicationLogReader'
@@ -26,6 +28,32 @@ function unpack(bytes: Uint8Array) {
 }
 
 describe('application diagnostic bundles', () => {
+  it('makes native inference facts available to log queries and exports without raw stderr or private data', async () => {
+    const directory = await createTemporaryDirectory('lexora-inference-diagnostic-bundle-')
+    const logger = new DesktopDiagnosticLogger({ directory, appVersion: '0.21.0', userHome: '/fixture' })
+    const stderr = new PassThrough()
+    const operationId = crypto.randomUUID()
+    const requestId = crypto.randomUUID()
+    observeInferenceDiagnostics(stderr, 'fixture.inference', operationId, event => logger.record({ ...event, scope: 'desktop' }))
+    const facts = { engine: { name: 'llama.cpp', version: 'b9999' }, backend: { requested: 'cuda', observed: ['cuda'] }, device: [{ backend: 'cuda', index: 0 }], architecture: 'llama', offload: { layers: 32, total: 33 }, timings: { prompt: { tokens: 12, ms: 30 }, decode: { tokens: 4, ms: 40, tokensPerSecond: 100 } } }
+    stderr.write('private stderr /fixture/private-model Bearer fixture-secret\n')
+    stderr.write(`${JSON.stringify({ event: 'chat.gpu.done', id: requestId, ...facts, usage: { input: 12, output: 4 }, reason: 'stop', ms: 70, input: 'fixture-private-prompt' })}\n`)
+    stderr.write(`${JSON.stringify({ event: 'chat.gpu.error', id: requestId, code: 'EXTENSION_INFERENCE_ENGINE_TOO_OLD', ...facts, path: '/fixture/private-model' })}\n`)
+    stderr.end()
+    await logger.close()
+    const reader = new ApplicationLogReader(directory, logger.launchId, '/fixture')
+    const page = await reader.query({ search: 'chat.gpu' })
+    expect(page.skippedRecords).toBe(0)
+    expect(page.records).toHaveLength(2)
+    expect(page.records[0]).toMatchObject({ event: 'chat.gpu.error', operationId, requestId, extensionId: 'fixture.inference', errorCode: 'EXTENSION_INFERENCE_ENGINE_TOO_OLD', inference: facts })
+    const bundle = unpack((await createApplicationDiagnosticBundle(reader, 'current'))!.bytes)
+    expect(bundle.errors).toHaveLength(1)
+    expect(bundle.errors[0]).toMatchObject({ event: 'chat.gpu.error', inference: facts })
+    expect(bundle.context.map(record => record.event)).toEqual(['chat.gpu.done', 'chat.gpu.error'])
+    expect(bundle.context[0]).toMatchObject({ requestId, inference: { ...facts, usage: { input: 12, output: 4 }, reason: 'stop', ms: 70 } })
+    expect(JSON.stringify({ page, errors: bundle.errors, context: bundle.context })).not.toMatch(/fixture-private|fixture-secret|\/fixture\//)
+  })
+
   it('preserves space and directory identities through encoding, reading and export without admitting file details', async () => {
     const directory = await createTemporaryDirectory('lexora-space-diagnostic-bundle-')
     const logger = new DesktopDiagnosticLogger({ directory, appVersion: '0.9.2', userHome: '/fixture' })

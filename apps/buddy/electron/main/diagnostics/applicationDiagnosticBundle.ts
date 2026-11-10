@@ -46,6 +46,7 @@ const bundleRecordSchema = applicationLogRecordSchema.pick({
   errorType: true,
   failure: true,
   providerRequest: true,
+  inference: true,
   recorderLoss: true,
   performanceSample: true,
   cpuProfile: true,

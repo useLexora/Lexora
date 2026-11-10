@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { inferenceDiagnosticSchema } from '../diagnostics/inferenceDiagnostic.ts'
 import { imageReadingSupportSchema, imageSupportSchema } from '../images/imagePreferences.ts'
 import { modelCatalogReferenceSchema } from '../providers/providerCatalog.ts'
 import { extensionPathSchema } from './extensionPath.ts'
@@ -8,7 +9,38 @@ export type InferencePlatform = z.infer<typeof inferencePlatformSchema>
 export interface InferenceEnvironment {
   platform: InferencePlatform | null
   executionMode: 'isolated' | 'supervised' | 'unsupported'
+  hardware?: InferenceHardware
 }
+
+const memoryBytes = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
+export const inferenceHardwareSchema = z.object({
+  sampledAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  logicalCores: z.number().int().positive().max(65536),
+  totalMemoryBytes: memoryBytes,
+  availableMemoryBytes: memoryBytes.optional(),
+  gpus: z.array(z.object({
+    name: z.string().trim().min(1).max(256),
+    vendor: z.enum(['nvidia', 'amd', 'intel', 'apple', 'unknown']),
+    totalMemoryBytes: memoryBytes.optional(),
+    availableMemoryBytes: memoryBytes.optional(),
+  }).strip()).max(16),
+}).strip()
+export type InferenceHardware = z.infer<typeof inferenceHardwareSchema>
+export const inferenceObservationSchema = inferenceDiagnosticSchema.pick({
+  engine: true,
+  backend: true,
+  device: true,
+  architecture: true,
+  context: true,
+  offload: true,
+  degraded: true,
+  loadMs: true,
+  timings: true,
+  prompt: true,
+  decode: true,
+  error: true,
+}).extend({ observedAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) })
+export type InferenceObservation = z.infer<typeof inferenceObservationSchema>
 
 export const inferenceIdSchema = z.string().min(1).max(80).regex(/^[a-z][a-z0-9.-]*$/)
 export const inferenceProviderNameSchema = z.string().trim().min(1).max(100)

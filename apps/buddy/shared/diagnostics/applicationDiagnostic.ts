@@ -8,6 +8,7 @@ import { webResourceFactSchema } from '../network/webProtocol'
 import { sandboxProcessStateSchema } from '../permissions/sandboxLifecycle'
 import { credentialVaultFailureSchema } from './credentialVaultFailure'
 import { desktopBootstrapFailureSchema, processExitSchema, rendererLoadFailureSchema } from './desktopStartupDiagnostic'
+import { inferenceDiagnosticSchema } from './inferenceDiagnostic'
 import { networkStartupFailureSchema } from './networkStartupFailure'
 import { cpuProfileSummarySchema, performanceSampleSchema } from './performanceDiagnostic'
 import { privateDirectoryFailureSchema } from './privateDirectoryFailure'
@@ -50,6 +51,7 @@ export const applicationDiagnosticSchema = z.object({
   errorType: z.string().regex(/^[a-z]\w{0,95}$/i).optional(),
   failure: z.union([privateDirectoryFailureSchema, desktopBootstrapFailureSchema, networkStartupFailureSchema, credentialVaultFailureSchema]).optional(),
   providerRequest: providerRequestDiagnosticSchema.optional(),
+  inference: inferenceDiagnosticSchema.optional(),
   imageGeneration: imageGenerationDiagnosticSchema.optional(),
   extensionRequest: extensionDiagnosticSchema.optional(),
   performanceSample: performanceSampleSchema.optional(),
