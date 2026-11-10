@@ -26,6 +26,7 @@ const plugins = computed(() => (props.snapshot?.plugins ?? []).filter((item) => 
   const version = installed?.pending?.manifest.version ?? installed?.manifest.version ?? retained?.manifest.version
   return { ...item, installed, installedVersion: version, available: !version || gt(item.manifest.version, version) }
 }))
+const initialLoading = computed(() => props.loading && !props.snapshot?.plugins.length)
 </script>
 
 <template>
@@ -43,8 +44,9 @@ const plugins = computed(() => (props.snapshot?.plugins ?? []).filter((item) => 
     <NAlert v-if="snapshot?.invalidEntries" type="warning">
       {{ en ? 'Some plugin information could not be read. Other plugins remain available.' : '部分插件信息无法读取，其他插件仍可正常使用。' }}
     </NAlert>
-    <NSpin :show="loading && !snapshot">
-      <NEmpty v-if="!plugins.length" class="extension-catalog__empty" :description="en ? 'No plugins to display' : '暂无可展示的插件'" />
+    <NSpin :show="initialLoading">
+      <div v-if="initialLoading" class="extension-catalog__loading" data-testid="catalog-loading" />
+      <NEmpty v-else-if="!plugins.length" class="extension-catalog__empty" :description="en ? 'No plugins to display' : '暂无可展示的插件'" />
       <div v-else class="grid grid-cols-[repeat(auto-fill,_minmax(min(100%,_280px),_1fr))] gap-[12px]">
         <DesktopExtensionCatalogCard v-for="item in plugins" :key="item.manifest.id" :data-catalog-id="item.manifest.id" class="extension-catalog__card" :manifest="item.manifest" :icon-url="item.iconUrl" :repository="item.repository" :language="language">
           <template #actions>
@@ -66,6 +68,10 @@ const plugins = computed(() => (props.snapshot?.plugins ?? []).filter((item) => 
 .extension-catalog__search :deep(.n-select) {
   width: 130px;
   flex: none;
+}
+
+.extension-catalog__loading {
+  min-height: 240px;
 }
 
 .extension-catalog__empty {
