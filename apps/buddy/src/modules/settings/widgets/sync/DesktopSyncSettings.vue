@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { BackupOptions } from '@buddy-shared/storage/backupScope'
 import type { SyncConnectionInput, SyncState } from '@buddy-shared/sync/syncApi'
-import { NSwitch, useMessage } from 'naive-ui'
+import { NButton, NSwitch, useMessage } from 'naive-ui'
 import { computed, onMounted, onUnmounted, shallowRef, useId, watch } from 'vue'
 import CloudBackupIcon from '@/shared/ui/icon/CloudBackupIcon.vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
@@ -39,6 +39,8 @@ watch(showSelection, (visible) => {
     pendingConnection.value = undefined
 })
 const status = computed(() => {
+  if (!loaded.value && !running.value)
+    return text('云备份状态暂时无法读取，请重试。', 'Cloud backup status is unavailable. Please retry.')
   if (!state.value.enabled)
     return text('未开启', 'Not enabled')
   if (!active.value)
@@ -104,14 +106,18 @@ async function backupNow(options: BackupOptions) {
     showSelection.value = false
   })
 }
-onMounted(() => {
-  unsubscribe = api().onChanged((next) => {
-    state.value = next
-  })
-  void perform(async () => {
+async function loadState() {
+  await perform(async () => {
     state.value = await api().state()
     loaded.value = true
   })
+}
+onMounted(() => {
+  unsubscribe = api().onChanged((next) => {
+    state.value = next
+    loaded.value = true
+  })
+  void loadState()
 })
 onUnmounted(() => unsubscribe?.())
 </script>
@@ -124,7 +130,10 @@ onUnmounted(() => unsubscribe?.())
           <DesktopIcon :component="CloudBackupIcon" :size="16" class="text-muted" />
         </template>
         <template #default="{ controlAttrs }">
-          <NSwitch v-bind="controlAttrs" :round="false" :value="state.enabled" :disabled="running || !loaded" :aria-disabled="running || !loaded" @update:value="perform(async () => { state = await api().setEnabled($event) })" />
+          <NButton v-if="!loaded && !running" size="small" @click="loadState">
+            {{ text('重试', 'Retry') }}
+          </NButton>
+          <NSwitch v-else v-bind="controlAttrs" :round="false" :value="state.enabled" :disabled="running || !loaded" :aria-disabled="running || !loaded" @update:value="perform(async () => { state = await api().setEnabled($event) })" />
         </template>
       </DesktopSettingRow>
       <template v-if="loaded && state.enabled">

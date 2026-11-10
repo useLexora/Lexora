@@ -65,6 +65,33 @@ describe('provider settings prop reactivity', () => {
     expect(document.body.textContent).toContain(translateBuddy('zh-CN', heading))
   })
 
+  it('displays the model catalog error and retries loading from settings', async () => {
+    const store = createStore('Alpha')
+    const loadModelCatalog = vi.fn(async () => true)
+    store.loadModelCatalog = loadModelCatalog
+    const root = document.createElement('div')
+    document.body.append(root)
+    const app = createApp({
+      setup: () => () => h(DesktopModelsSettings, { providerSettings: store }),
+    })
+    app.mount(root)
+    cleanups.push(() => {
+      app.unmount()
+      root.remove()
+    })
+    await nextTick()
+
+    store.modelProviderError.value = 'Unable to load model catalog'
+    await nextTick()
+    expect(root.textContent).toContain('Unable to load model catalog')
+
+    const retry = [...root.querySelectorAll<HTMLButtonElement>('button')]
+      .find(button => button.textContent?.trim() === translateBuddy('zh-CN', 'desktop.loading.retry'))
+    expect(retry).toBeDefined()
+    retry?.click()
+    expect(loadModelCatalog).toHaveBeenCalledWith(true)
+  })
+
   it('keeps provider logos paired with their names when the add dialog is filtered', async () => {
     const store = createStore('OpenAI')
     store.builtinPresets.value = [
