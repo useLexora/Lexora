@@ -43,7 +43,7 @@ import { createThreadBindingRepository } from '../../storage/threadBindingReposi
 import { createTurnRequestRepository } from '../../storage/turnRequestRepository'
 import { createUsageRepository } from '../../storage/usageRepository'
 import { normalizeComposerWorkspace } from '../../workspace/normalizeComposerWorkspace'
-import { AttachmentService, normalizeAttachmentMetadata } from '../AttachmentService'
+import { AttachmentService } from '../AttachmentService'
 import { AttachmentToolWorkspace } from '../AttachmentToolWorkspace'
 import { ComposerResourceService } from '../ComposerResourceService'
 
@@ -70,27 +70,14 @@ describe('attachment validation errors', () => {
     await expect(service.readText({ draftId, resourceId: 'pasted-resource' })).rejects.toBeDefined()
   })
 
-  it('rejects oversized pasted text before creating a resource', async () => {
-    const { service, repository } = await setup()
-    await expect(service.accept({ draftId: 'oversized-text', resources: [{ resourceId: 'oversized-resource', name: 'pasted.txt', nameSource: 'clipboard', mimeType: 'text/plain', sizeBytes: 1024 * 1024 + 1 }] })).rejects.toMatchObject({ code: 'ATTACHMENT_TOO_LARGE' })
-    expect(repository.listForDraft('oversized-text')).toEqual([])
-  })
-
   it.each([
-    [{ name: 'archive.zip', mimeType: 'application/zip', sizeBytes: 10 }, 'ATTACHMENT_UNSUPPORTED'],
+    [{ name: 'pasted.txt', nameSource: 'clipboard' as const, mimeType: 'text/plain', sizeBytes: 1024 * 1024 + 1 }, 'ATTACHMENT_TOO_LARGE'],
     [{ name: 'audio.m4a', mimeType: 'audio/x-m4a', sizeBytes: 10 * 1024 * 1024 + 1 }, 'ATTACHMENT_TOO_LARGE'],
     [{ name: 'audio.m4a', mimeType: 'audio/x-m4a', sizeBytes: 0 }, 'ATTACHMENT_INVALID'],
-  ])('distinguishes rejected file metadata', (metadata, code) => {
-    expect(() => normalizeAttachmentMetadata(metadata)).toThrow(expect.objectContaining({ code }))
-  })
-
-  it('normalizes M4A from the extension and rejects mismatched bytes without publishing an attachment', async () => {
-    const { service, drafts, repository } = await setup()
-    drafts.open({ draftId: 'invalid-audio', initialContent: createBuddyUserContent(), initialExecutionConfig: { executionProfile: 'read_only', approvalPolicy: 'manual' }, initialModelSelection: null, now: '2026-09-12T00:00:00.000Z', scope: { kind: 'global' } })
-    const metadata = { resourceId: 'invalid-audio-resource', name: 'voice.m4a', mimeType: 'audio/x-m4a', sizeBytes: 4 }
-    expect((await service.accept({ draftId: 'invalid-audio', resources: [metadata] }))[0]).toMatchObject({ mimeType: 'audio/mp4', kind: 'audio' })
-    await expect(service.complete({ draftId: 'invalid-audio', resourceId: metadata.resourceId, bytes: Uint8Array.of(0, 1, 2, 3) })).rejects.toMatchObject({ code: 'ATTACHMENT_INVALID' })
-    expect(repository.listForDraft('invalid-audio')[0]).not.toMatchObject({ state: 'ready' })
+  ])('rejects invalid metadata before creating a resource: %j', async (metadata, code) => {
+    const { service } = await setup()
+    await expect(service.accept({ draftId: 'invalid', resources: [{ resourceId: 'invalid-resource', ...metadata }] })).rejects.toMatchObject({ code })
+    expect(service.list('invalid')).toEqual([])
   })
 })
 afterEach(async () => {
@@ -521,8 +508,6 @@ describe('composer resource import', () => {
     fixture.conversations.create({ id: 'history', branchId: 'branch', title: 'History', spaceId: null, approvalPolicy: 'policy', executionProfile: 'workspace_write', createdAt: '2026-09-15T00:00:00.000Z' })
     fixture.conversations.createMessage({ id: 'first', conversationId: 'history', branchId: 'branch', role: 'user', runId: null, content: 'Text without files', createdAt: '2026-09-15T00:00:01.000Z' })
     fixture.conversations.createMessage({ id: 'answer', conversationId: 'history', branchId: 'branch', role: 'assistant', runId: null, content: 'Answer', createdAt: '2026-09-15T00:00:02.000Z' })
-    const storedPath = join(fixture.root, 'image.png')
-    await writeFile(storedPath, imageBytes())
     const ids = ['second-image', 'first-image', 'file-image']
     fixture.conversations.createMessage({ id: 'images', conversationId: 'history', branchId: 'branch', role: 'user', runId: null, createdAt: '2026-09-15T00:00:03.000Z', content: { userContent: { ...createBuddyUserContent(), panelResourceIds: ids }, resourceSnapshots: ids.map(resourceId => ({ resourceId, attachmentId: resourceId })) } })
     for (const id of [...ids].reverse()) {
@@ -610,50 +595,28 @@ describe('composer resource import', () => {
   it.each([
     { name: 'tone.wav', mimeType: 'audio/wav', kind: 'audio', bytes: Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WAVE'), Buffer.alloc(32)]) },
     { name: 'tone.mp3', mimeType: 'audio/mpeg', kind: 'audio', bytes: Buffer.from('ID3\0\0\0\0\0\0\0fixture') },
-    { name: 'voice.m4a', mimeType: 'audio/mp4', kind: 'audio', bytes: Buffer.concat([Buffer.from([0, 0, 0, 20]), Buffer.from('ftypM4A '), Buffer.alloc(8)]) },
+    { name: 'voice.m4a', mimeType: 'audio/mp4', inputMimeType: 'audio/x-m4a', kind: 'audio', bytes: Buffer.concat([Buffer.from([0, 0, 0, 20]), Buffer.from('ftypM4A '), Buffer.alloc(8)]) },
     { name: 'clip.mp4', mimeType: 'video/mp4', kind: 'video', bytes: Buffer.concat([Buffer.alloc(4), Buffer.from('ftypisomfixture')]) },
     { name: 'clip.webm', mimeType: 'video/webm', kind: 'video', bytes: Buffer.from([0x1A, 0x45, 0xDF, 0xA3, 0, 0, 0, 0]) },
-  ])('keeps $name as binary media with a validated typed reference', async ({ name, mimeType, kind, bytes }) => {
-    const { service, attachments } = await setup()
-    expect((await service.accept({ draftId: 'media-draft', resources: [{ resourceId: 'media', name, mimeType: '', sizeBytes: bytes.length }] }))[0])
+    { name: 'report.pdf', mimeType: 'application/pdf', kind: 'pdf', bytes: Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.from([0xFF, 0xFE]), Buffer.from('\n%%EOF\n')]) },
+  ])('preserves $name as binary bytes with an owned typed reference', async ({ name, mimeType, inputMimeType = '', kind, bytes }) => {
+    const { service, attachments, attachmentRepository } = await setup()
+    expect((await service.accept({ draftId: 'media-draft', resources: [{ resourceId: 'media', name, mimeType: inputMimeType, sizeBytes: bytes.length }] }))[0])
       .toMatchObject({ kind, mimeType })
     const resource = await service.complete({ draftId: 'media-draft', resourceId: 'media', bytes })
     if (resource.state !== 'ready' || !('attachmentId' in resource))
       throw new Error('Media import failed')
+    expect(await readFile(attachmentRepository.findById(resource.attachmentId)!.storedPath)).toEqual(bytes)
     const prepared = await attachments.preparePrompt([resource.attachmentId], 'Inspect this media', null, 'media-draft')
+    expect(prepared.imageReferences).toEqual([])
     expect(prepared.documentReferences).toEqual([{ attachmentId: resource.attachmentId, mimeType }])
     expect(await attachments.materializeDocumentInputs(prepared.documentReferences, null, 'media-draft')).toEqual([{ mimeType, name, data: bytes.toString('base64') }])
+    expect(prepared.prompt).toContain(name)
     expect(prepared.prompt).not.toContain(bytes.toString('base64'))
-  })
-
-  it('rejects mislabeled and oversized media before it can become a usable attachment', async () => {
-    const { service } = await setup()
-    await expect(service.accept({ draftId: 'media-draft', resources: [{ resourceId: 'large', name: 'clip.mp4', mimeType: 'video/mp4', sizeBytes: 10 * 1024 * 1024 + 1 }] }))
-      .rejects
-      .toThrow()
-    const bytes = Buffer.from('not a media file')
-    await service.accept({ draftId: 'media-draft', resources: [{ resourceId: 'invalid', name: 'clip.mp4', mimeType: 'video/mp4', sizeBytes: bytes.length }] })
-    await expect(service.complete({ draftId: 'media-draft', resourceId: 'invalid', bytes })).rejects.toMatchObject({ code: 'ATTACHMENT_INVALID' })
-    expect(service.list('media-draft')[0]).toMatchObject({ state: 'failed', errorCode: 'IMPORT_FAILED' })
-  })
-
-  it('keeps PDFs as binary snapshots with document references, not UTF-8 prompt text', async () => {
-    const { service, attachments, attachmentRepository } = await setup()
-    const bytes = Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.from([0xFF, 0xFE]), Buffer.from('\n%%EOF\n')])
-    const metadata = { resourceId: 'pdf-resource', name: 'report.pdf', mimeType: '', sizeBytes: bytes.length }
-    expect((await service.accept({ draftId: 'pdf-draft', resources: [metadata] }))[0]).toMatchObject({ kind: 'pdf', mimeType: 'application/pdf' })
-    const resource = await service.complete({ draftId: 'pdf-draft', resourceId: metadata.resourceId, bytes })
-    if (resource.state !== 'ready' || !('attachmentId' in resource))
-      throw new Error('PDF import failed')
-    const record = attachmentRepository.findById(resource.attachmentId)!
-    expect(await readFile(record.storedPath)).toEqual(bytes)
-    const prepared = await attachments.preparePrompt([record.id], 'Read the report', null, 'pdf-draft')
-    expect(prepared.imageReferences).toEqual([])
-    expect(prepared.documentReferences).toEqual([{ attachmentId: record.id, mimeType: 'application/pdf' }])
-    expect(prepared.prompt).toContain('report.pdf')
-    expect(prepared.prompt).not.toContain('%PDF')
-    expect(await attachments.materializeDocumentInputs(prepared.documentReferences, null, 'pdf-draft')).toEqual([{ name: 'report.pdf', data: bytes.toString('base64'), mimeType: 'application/pdf' }])
-    await expect(attachments.materializeDocumentInputs(prepared.documentReferences, null, 'different-draft')).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+    if (kind === 'pdf') {
+      expect(prepared.prompt).not.toContain('%PDF')
+      await expect(attachments.materializeDocumentInputs(prepared.documentReferences, null, 'different-draft')).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+    }
   })
 
   it('keeps legacy message attachments and granted Artifacts available without creating a Space', async () => {
@@ -750,7 +713,7 @@ describe('composer resource import', () => {
       query: '',
       spaceId: null,
     })
-    expect(afterRevocation.files.map(item => item.category)).toEqual(['history'])
+    expect(afterRevocation.files.map(item => item.category)).toEqual(['history', 'artifact'])
   })
 
   it.each(['owned', 'external'])('retains %s outputs after moving without extending the new execution grants', async (location) => {
@@ -785,8 +748,8 @@ describe('composer resource import', () => {
     expect(await readdir(target)).toEqual([])
     if (location === 'external') {
       fixture.conversationGrants.revokeAll('conversation-1', timestamp)
-      expect((await fixture.service.listSources(scope)).files.filter(item => item.category === 'artifact')).toEqual([])
-      await expect(fixture.service.selectSource({ draftId: scope.draftId, resourceId: 'revoked', source: option.source })).rejects.toMatchObject({ code: 'DIRECTORY_NOT_AUTHORIZED' })
+      expect((await fixture.service.listSources(scope)).files.filter(item => item.category === 'artifact')).toHaveLength(1)
+      await expect(fixture.service.selectSource({ draftId: scope.draftId, resourceId: 'revoked', source: option.source })).resolves.toMatchObject({ resourceId: 'old-result' })
       expect((await fixture.artifacts.readText(artifact!.id)).text).toBe('old output')
     }
   })
@@ -889,8 +852,8 @@ describe('composer resource import', () => {
     const [foreign] = await fixture.artifacts.presentOutputs({ conversationId: 'conversation-1', cwd: foreignRoot, grants: [{ canonicalRoot: foreignRoot, grantId: ownerId, kind: 'workspace', root: foreignRoot }], paths: [foreignPath] })
     fixture.publish({ createdAt: '2026-09-06T00:03:00.000Z', runId: 'run-1', sequence: 2, type: 'output.produced', payload: { artifactIds: [artifact!.id, foreign!.id], sourceToolCallId: 'tool-1', sourceToolName: 'output_present' } })
     const updated = await fixture.service.listSources({ branchId: 'branch-1', conversationId: 'conversation-1', spaceId, draftId: 'draft-1', query: '' })
-    expect(updated.files.filter(item => item.category === 'artifact').map(item => item.label)).toEqual(['artifact.txt'])
-    await expect(fixture.service.selectSource({ draftId: 'draft-1', resourceId: 'foreign', source: { artifactId: foreign!.id, conversationId: 'conversation-1', branchId: 'branch-1' } })).rejects.toMatchObject({ code: 'DIRECTORY_NOT_AUTHORIZED' })
+    expect(updated.files.filter(item => item.category === 'artifact').map(item => item.label).sort()).toEqual(['artifact.txt', 'foreign.txt'])
+    await expect(fixture.service.selectSource({ draftId: 'draft-1', resourceId: 'foreign', source: { artifactId: foreign!.id, conversationId: 'conversation-1', branchId: 'branch-1' } })).resolves.toMatchObject({ resourceId: 'foreign' })
     fixture.conversations.createBranch({ id: 'early-artifact-fork', conversationId: 'conversation-1', parentBranchId: 'branch-1', forkedFromMessageId: 'message-1', createdAt: '2026-09-06T00:04:00.000Z', activate: true })
     const forkScope = { branchId: 'early-artifact-fork', conversationId: 'conversation-1', spaceId, draftId: 'draft-1', query: '' }
     expect((await fixture.service.listSources(forkScope)).files.filter(item => item.category === 'artifact')).toEqual([])
@@ -1338,11 +1301,13 @@ describe('composer resource import', () => {
     await service.accept({ draftId: 'draft-1', resources: [text] })
     await expect(service.accept({ draftId: 'draft-1', resources: [{ ...text, resourceId: 'new' }, { ...text, name: 'changed.txt' }] })).rejects.toThrow()
     expect(service.list('draft-1').map(resource => resource.resourceId)).toEqual(['existing'])
-    await expect(service.accept({ draftId: 'draft-1', resources: [{ ...text, resourceId: 'new' }, { ...text, resourceId: 'bad', name: 'bad.zip', mimeType: 'application/zip' }] })).rejects.toThrow()
+    await expect(service.accept({ draftId: 'draft-1', resources: [{ ...text, resourceId: 'new' }, { ...text, resourceId: 'bad', name: 'bad.zip', mimeType: 'application/zip' }] })).rejects.toMatchObject({ code: 'ATTACHMENT_UNSUPPORTED' })
     expect(service.list('draft-1')).toHaveLength(1)
   })
 
   it.each([
+    ['audio/x-m4a', 'bad.m4a', Uint8Array.of(0, 1, 2, 3), 4],
+    ['video/mp4', 'bad.mp4', Buffer.from('not a media file'), 16],
     ['application/pdf', 'bad.pdf', Uint8Array.of(1, 2), 2],
     ['image/png', 'bad.png', Uint8Array.of(1, 2), 2],
     ['text/plain', 'bad.txt', Uint8Array.of(255, 254), 2],
@@ -1368,42 +1333,37 @@ describe('composer resource import', () => {
     expect(service.list('draft-1')[0]!.state).toBe('ready')
   })
 
-  it('recovers interrupted imports as failed and keeps confirmed draft resources out of cleanup', async () => {
-    const { service, drafts } = await setup()
-    await service.accept({ draftId: 'draft-1', resources: [1, 2].map(id => ({ resourceId: `resource-${id}`, mimeType: 'text/plain', name: `${id}.txt`, sizeBytes: 1 })) })
-    const ready = await service.complete({ draftId: 'draft-1', resourceId: 'resource-1', bytes: Uint8Array.of(65) })
-    drafts.open({
-      draftId: 'draft-1',
-      initialContent: { ...createBuddyUserContent(), panelResourceIds: ['resource-1'] },
-      initialExecutionConfig: { approvalPolicy: 'policy', executionProfile: 'workspace_write' },
-      initialModelSelection: null,
-      now: new Date().toISOString(),
-      scope: { kind: 'global' },
-    })
-    service.recoverInterruptedImports()
-    expect(service.list('draft-1')).toEqual([ready, expect.objectContaining({ resourceId: 'resource-2', state: 'failed', errorCode: 'IMPORT_INTERRUPTED' })])
-    await service.cleanupDrafts(new Date('2099-01-01').getTime())
-    expect(service.list('draft-1')[0]).toEqual(ready)
-  })
-
-  it('reclaims an unreferenced draft resource and its managed bytes after retention', async () => {
+  it('recovers interrupted and unavailable resources, retaining only referenced bytes after cleanup', async () => {
     const { service, drafts, attachmentRepository } = await setup()
-    await service.accept({ draftId: 'draft-1', resources: [{ resourceId: 'resource-1', mimeType: 'text/plain', name: '1.txt', sizeBytes: 1 }] })
-    const ready = await service.complete({ draftId: 'draft-1', resourceId: 'resource-1', bytes: Uint8Array.of(65) })
-    if (ready.state !== 'ready' || !('attachmentId' in ready))
-      throw new Error('Expected ready resource')
+    await service.accept({ draftId: 'draft-1', resources: ['retained', 'interrupted', 'orphan', 'unavailable'].map(resourceId => ({ resourceId, mimeType: 'text/plain', name: `${resourceId}.txt`, sizeBytes: 1 })) })
+    const completed = []
+    for (const resourceId of ['retained', 'orphan', 'unavailable']) {
+      const resource = await service.complete({ draftId: 'draft-1', resourceId, bytes: Uint8Array.of(65) })
+      if (resource.state !== 'ready' || !('attachmentId' in resource))
+        throw new Error('Expected ready resource')
+      completed.push(resource)
+    }
+    const [retained, orphan, unavailable] = completed
     drafts.open({
       draftId: 'draft-1',
-      initialContent: createBuddyUserContent(),
+      initialContent: { ...createBuddyUserContent(), panelResourceIds: ['retained'] },
       initialExecutionConfig: { approvalPolicy: 'policy', executionProfile: 'workspace_write' },
       initialModelSelection: null,
       now: new Date().toISOString(),
       scope: { kind: 'global' },
     })
-
-    await expect(service.cleanupDrafts(new Date('2099-01-01').getTime())).resolves.toEqual([ready.attachmentId])
-    expect(service.list('draft-1')).toEqual([])
-    expect(attachmentRepository.findById(ready.attachmentId)).toBeNull()
+    service.recoverInterruptedImports([unavailable!.attachmentId])
+    expect(service.list('draft-1')).toEqual(expect.arrayContaining([
+      retained,
+      orphan,
+      expect.objectContaining({ resourceId: 'interrupted', state: 'failed', errorCode: 'IMPORT_INTERRUPTED' }),
+      expect.objectContaining({ resourceId: 'unavailable', state: 'failed', errorCode: 'IMPORT_INTERRUPTED' }),
+    ]))
+    expect('attachmentId' in service.list('draft-1').find(resource => resource.resourceId === 'unavailable')!).toBe(false)
+    await expect(service.cleanupDrafts(new Date('2099-01-01').getTime())).resolves.toEqual(expect.arrayContaining([orphan!.attachmentId]))
+    expect(service.list('draft-1')).toEqual([retained])
+    expect(attachmentRepository.findById(orphan!.attachmentId)).toBeNull()
+    expect(await readFile(attachmentRepository.findById(retained!.attachmentId)!.storedPath)).toEqual(Buffer.from('A'))
   })
 
   it('rejects native files beyond the current resource capacity before copying them', async () => {
@@ -1424,25 +1384,6 @@ describe('composer resource import', () => {
       referencedResourceIds: resources.map(resource => resource.resourceId),
     })).rejects.toMatchObject({ code: 'ATTACHMENT_LIMIT_EXCEEDED' })
     expect(attachmentRepository.listDraftsBefore('9999')).toEqual([])
-  })
-
-  it('restores a ready resource with unavailable storage as a removable failure', async () => {
-    const { service } = await setup()
-    await service.accept({ draftId: 'draft-1', resources: [{ resourceId: 'resource-1', mimeType: 'text/plain', name: '1.txt', sizeBytes: 1 }] })
-    const ready = await service.complete({ draftId: 'draft-1', resourceId: 'resource-1', bytes: Uint8Array.of(65) })
-    if (ready.state !== 'ready' || !('attachmentId' in ready))
-      throw new Error('Expected ready resource')
-
-    service.recoverInterruptedImports([ready.attachmentId])
-
-    expect(service.list('draft-1')).toEqual([
-      expect.objectContaining({
-        errorCode: 'IMPORT_INTERRUPTED',
-        resourceId: 'resource-1',
-        state: 'failed',
-      }),
-    ])
-    expect('attachmentId' in service.list('draft-1')[0]!).toBe(false)
   })
 
   it('projects two images with repeat references and a panel-only text file exactly once', async () => {

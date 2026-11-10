@@ -1,10 +1,12 @@
 import type { NativeFileStream } from '../../platform/filesystem/nativeFileStream'
 import type { MediaPreviewLocation } from '../../shared/files/mediaPreview'
 import type { BuddyServiceSupervisor } from './runtime/BuddyServiceSupervisor'
+import { ZodError } from 'zod'
 import { fileRange } from '../../platform/filesystem/fileRange'
 import { openNativeFileStream } from '../../platform/filesystem/nativeFileStream'
 import { artifactsRpc } from '../../shared/artifacts/artifactApi'
 import { isImageMimeType } from '../../shared/files/fileMimeTypes'
+import { FileReadError, fileReadErrorResponse } from '../../shared/files/fileReadError'
 import { mediaPreviewLocationSchema } from '../../shared/files/mediaPreview'
 import { taskFilesRpc } from '../../shared/files/taskFileApi'
 import { skillsRpc } from '../../shared/skills/skillApi'
@@ -28,7 +30,7 @@ export async function handleMediaRequest(request: Request, runtime: Pick<BuddySe
       return await createMediaResponse(request, async () => {
         const preview = mediaPreviewLocationSchema.parse(await runtime.request(artifactsRpc.resolveMedia.method, input, { signal: request.signal }))
         if (url.hostname === 'preview' && !isImageMimeType(preview.mimeType))
-          throw new Error('IMAGE_PREVIEW_REQUIRED')
+          throw new FileReadError('FILE_UNSUPPORTED')
         return preview
       }, executable)
     }
@@ -64,8 +66,10 @@ export async function handleMediaRequest(request: Request, runtime: Pick<BuddySe
     }
     return new Response(null, { status: 404 })
   }
-  catch {
-    return new Response(null, { status: 404 })
+  catch (error) {
+    return error instanceof ZodError || error instanceof URIError
+      ? new Response(null, { status: 400 })
+      : fileReadErrorResponse(error)
   }
 }
 
@@ -73,9 +77,10 @@ export async function createMediaResponse(request: Request, resolve: () => Promi
   if (request.method !== 'GET' && request.method !== 'HEAD')
     return new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } })
   let stream: NativeFileStream | undefined
+  let preview: MediaPreviewLocation | undefined
   try {
     request.signal.throwIfAborted()
-    const preview = mediaPreviewLocationSchema.parse(await resolve())
+    preview = mediaPreviewLocationSchema.parse(await resolve())
     const range = fileRange(preview.sizeBytes, request.method === 'HEAD' ? null : request.headers.get('range'))
     const noBody = request.method === 'HEAD' || range.status === 416 || preview.sizeBytes === 0
     stream = await openNativeFileStream({
@@ -89,7 +94,7 @@ export async function createMediaResponse(request: Request, resolve: () => Promi
     }, request.signal, executable)
     const current = mediaPreviewLocationSchema.parse(await resolve())
     if (!sameMediaFile(preview, current))
-      throw new Error('MEDIA_FILE_CHANGED')
+      throw new FileReadError('FILE_CHANGED')
     request.signal.throwIfAborted()
     const headers = {
       ...range.headers,
@@ -105,9 +110,19 @@ export async function createMediaResponse(request: Request, resolve: () => Promi
     stream.start()
     return new Response(stream.body, { status: range.status, headers })
   }
-  catch {
+  catch (error) {
     await stream?.dispose()
-    return new Response(null, { status: 404 })
+    if (preview && !request.signal.aborted) {
+      try {
+        const current = mediaPreviewLocationSchema.parse(await resolve())
+        if (!sameMediaFile(preview, current))
+          return fileReadErrorResponse(new FileReadError('FILE_CHANGED'))
+      }
+      catch (currentError) {
+        return fileReadErrorResponse(currentError)
+      }
+    }
+    return fileReadErrorResponse(error)
   }
 }
 

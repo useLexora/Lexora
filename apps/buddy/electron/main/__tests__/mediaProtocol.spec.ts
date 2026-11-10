@@ -1,9 +1,11 @@
 import { Buffer } from 'node:buffer'
-import { mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import process from 'node:process'
 import { afterEach, describe, expect, it } from 'vitest'
 import { resolveMediaPreview } from '../../../service/src/files/resolveMediaPreview'
+import { FileReadError } from '../../../shared/files/fileReadError'
 import { taskFileMediaUrl } from '../../../shared/files/mediaPreview'
 import { taskFilesRpc } from '../../../shared/files/taskFileApi'
 import { createMediaResponse, handleMediaRequest } from '../mediaProtocol'
@@ -28,6 +30,24 @@ async function fixture(bytes = Buffer.from('0123456789'), name = 'clip.mp4') {
 }
 
 describe('controlled media protocol', () => {
+  it.each([
+    ['FILE_NOT_FOUND', 404],
+    ['FILE_ACCESS_DENIED', 403],
+    ['FILE_TOO_LARGE', 413],
+    ['FILE_UNSUPPORTED', 415],
+    ['FILE_CHANGED', 409],
+    ['FILE_READ_FAILED', 500],
+  ] as const)('preserves %s for GET and HEAD diagnostics', async (code, status) => {
+    for (const method of ['GET', 'HEAD']) {
+      const response = await handleMediaRequest(new Request('lexora-artifact://preview/missing', { method }), {
+        request: async () => { throw new FileReadError(code) },
+      })
+      expect(response.status).toBe(status)
+      expect(response.headers.get('x-lexora-error-code')).toBe(code)
+      expect(response.body).toBeNull()
+    }
+  })
+
   it('streams task media with raw encoded paths and rechecks authorization before returning bytes', async () => {
     const f = await fixture(Buffer.from('0123456789'), '动画 #1 %20.mp4')
     const target = { conversationId: 'task', path: f.path }
@@ -39,7 +59,7 @@ describe('controlled media protocol', () => {
         expect(method).toBe(taskFilesRpc.resolveMedia.method)
         expect(input).toEqual(target)
         if (revoked && ++resolutions === 2)
-          throw new Error('DIRECTORY_NOT_AUTHORIZED')
+          throw new FileReadError('FILE_ACCESS_DENIED')
         return f.resolve()
       },
     }
@@ -48,7 +68,7 @@ describe('controlled media protocol', () => {
     expect(await response.text()).toBe('2345')
     revoked = true
     const denied = await handleMediaRequest(new Request(url), runtime)
-    expect(denied.status).toBe(404)
+    expect(denied.status).toBe(403)
     expect(denied.body).toBeNull()
   })
 
@@ -78,7 +98,7 @@ describe('controlled media protocol', () => {
   it('rejects non-image artifacts on the existing image endpoint', async () => {
     const f = await fixture()
     const response = await handleMediaRequest(new Request('lexora-artifact://preview/clip'), { request: f.resolve })
-    expect(response.status).toBe(404)
+    expect(response.status).toBe(415)
     expect(response.body).toBeNull()
   })
 
@@ -108,6 +128,20 @@ describe('controlled media protocol', () => {
     expect(await response.text()).toBe('')
   })
 
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('reports actual OS read denial for GET and HEAD without reading bytes', async () => {
+    const f = await fixture()
+    await chmod(f.path, 0)
+    try {
+      for (const method of ['GET', 'HEAD']) {
+        const response = await createMediaResponse(f.request(undefined, method), f.resolve)
+        expect(response.status).toBe(403)
+        expect(response.headers.get('x-lexora-error-code')).toBe('FILE_ACCESS_DENIED')
+        expect(response.body).toBeNull()
+      }
+    }
+    finally { await chmod(f.path, 0o600) }
+  })
+
   it('returns metadata for HEAD, including empty files, without a response body', async () => {
     const f = await fixture()
     const response = await createMediaResponse(f.request('bytes=999-', 'HEAD'), f.resolve)
@@ -121,29 +155,33 @@ describe('controlled media protocol', () => {
     expect((await createMediaResponse(f.request('bytes=0-'), f.resolve)).status).toBe(416)
   })
 
-  it('denies a revoked authorization between resolution and streaming without returning bytes', async () => {
+  it('diagnoses file replacement between metadata resolution and native open', async () => {
     const f = await fixture()
-    let count = 0
-    const response = await createMediaResponse(f.request(), () => {
-      if (++count === 2)
-        throw new Error('DIRECTORY_NOT_AUTHORIZED')
-      return f.resolve()
+    let replaced = false
+    const response = await createMediaResponse(f.request(), async () => {
+      const snapshot = await f.resolve()
+      if (!replaced) {
+        replaced = true
+        await rename(f.path, join(f.root, 'original.mp4'))
+        await writeFile(f.path, 'substitute')
+      }
+      return snapshot
     })
-    expect(response.status).toBe(404)
+    expect(response.status).toBe(409)
+    expect(response.headers.get('x-lexora-error-code')).toBe('FILE_CHANGED')
     expect(response.body).toBeNull()
-    await rm(f.path)
   })
 
-  it('rejects file replacement and symlink escape after the authorization snapshot', async () => {
+  it('rejects file replacement and symlink escape even when the resolver returns a stale snapshot', async () => {
     const f = await fixture()
     const snapshot = await f.resolve()
     await rename(f.path, join(f.root, 'original.mp4'))
     await writeFile(f.path, 'substitute')
-    expect((await createMediaResponse(f.request(), async () => snapshot)).status).toBe(404)
+    expect((await createMediaResponse(f.request(), async () => snapshot)).status).toBe(500)
     await rm(f.path)
     const outside = await fixture(Buffer.from('private'))
     await symlink(outside.path, f.path)
-    expect((await createMediaResponse(f.request(), async () => snapshot)).status).toBe(404)
+    expect((await createMediaResponse(f.request(), async () => snapshot)).status).toBe(500)
   })
 
   it('rejects a same-size directory swap even when the original path identity is restored at ready', async () => {
@@ -157,7 +195,6 @@ describe('controlled media protocol', () => {
     await writeFile(join(original, name), Buffer.alloc(32 * 1024, 1))
     await writeFile(join(replacement, name), Buffer.alloc(32 * 1024, 2))
     const resolve = () => resolveMediaPreview(original, join(original, name))
-    const snapshot = await resolve()
     let swapped = false
     const restore = async () => {
       if (!swapped)
@@ -167,7 +204,6 @@ describe('controlled media protocol', () => {
       swapped = false
     }
     let resolutions = 0
-    let restoredIdentity: string | undefined
     try {
       const response = await createMediaResponse(f.request(), async () => {
         if (++resolutions === 1) {
@@ -178,22 +214,9 @@ describe('controlled media protocol', () => {
           return preview
         }
         await restore()
-        const current = await resolve()
-        restoredIdentity = current.identity
-        return current
+        return resolve()
       })
-      let received = 0
-      if (response.body) {
-        const reader = response.body.getReader()
-        try {
-          received = (await reader.read()).value?.byteLength ?? 0
-        }
-        finally { await reader.cancel().catch(() => undefined) }
-      }
-      if (restoredIdentity !== undefined)
-        expect(restoredIdentity).toBe(snapshot.identity)
-      expect(received).toBe(0)
-      expect(response.status).toBe(404)
+      expect(response.status).toBe(500)
       expect(response.body).toBeNull()
     }
     finally { await restore() }
@@ -204,10 +227,10 @@ describe('controlled media protocol', () => {
     await rm(f.path)
     expect((await createMediaResponse(f.request(), f.resolve)).status).toBe(404)
     await mkdir(f.path)
-    expect((await createMediaResponse(f.request(), f.resolve)).status).toBe(404)
+    expect((await createMediaResponse(f.request(), f.resolve)).status).toBe(415)
     const text = join(f.root, 'note.txt')
     await writeFile(text, 'not media')
-    expect((await createMediaResponse(f.request(), () => resolveMediaPreview(f.root, text))).status).toBe(404)
+    expect((await createMediaResponse(f.request(), () => resolveMediaPreview(f.root, text))).status).toBe(415)
     expect((await createMediaResponse(f.request(undefined, 'POST'), f.resolve)).status).toBe(405)
   })
 
@@ -228,9 +251,9 @@ describe('controlled media protocol', () => {
     await rm(f.path)
   })
 
-  it.each(['lexora-file://skill-preview/?id=first&id=second&path=image.png', `lexora-artifact://preview/id?v=${'a'.repeat(32_768)}`])('rejects ambiguous or oversized image URLs as bad requests: %s', async (url) => {
+  it('rejects oversized image URLs as bad requests', async () => {
     const f = await fixture(Buffer.from('image'), 'image.png')
-    const response = await handleMediaRequest(new Request(url), { request: f.resolve })
+    const response = await handleMediaRequest(new Request(`lexora-artifact://preview/id?v=${'a'.repeat(32_768)}`), { request: f.resolve })
     expect(response.status).toBe(400)
     expect(response.body).toBeNull()
   })

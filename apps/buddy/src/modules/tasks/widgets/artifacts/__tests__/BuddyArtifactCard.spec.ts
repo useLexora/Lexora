@@ -23,7 +23,7 @@ const artifact: LocalArtifact = {
   createdAt: '2026-10-01T00:00:00Z',
   updatedAt: '2026-10-01T00:00:00Z',
 }
-function mountCard() {
+function mountCard(error: unknown = new Error('private path')) {
   const root = document.createElement('div')
   document.body.append(root)
   const opened: LocalArtifact[] = []
@@ -33,7 +33,7 @@ function mountCard() {
         language: () => 'zh-CN',
         task: () => null,
         resources: { locateFile: () => {} },
-        revealFile: async () => { throw new Error('private path') },
+        revealFile: async () => { throw error },
         writeClipboardText: async () => {},
       })
       return () => h(BuddyArtifactCard, { artifact, language: 'zh-CN', onOpenArtifact: id => opened.push(id) })
@@ -48,6 +48,17 @@ function mountCard() {
   return { root, opened }
 }
 const menuItems = () => [...document.querySelectorAll<HTMLElement>('.n-dropdown-option-body')].filter(item => !item.closest('[style*="display: none"]'))
+
+it('reports denied access when revealing an artifact without opening its preview', async () => {
+  const f = mountCard(new Error('LEXORA_LOCAL_CHAT_ERROR:FILE_ACCESS_DENIED:0'))
+  const card = f.root.querySelector<HTMLElement>('.buddy-artifact-collection__item')!
+  card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+  await expect.poll(() => menuItems().map(item => item.textContent)).toContain('打开所在文件夹')
+  menuItems().find(item => item.textContent === '打开所在文件夹')!.click()
+  await expect.poll(() => document.querySelectorAll('.n-message').length).toBe(1)
+  expect(document.querySelector('.n-message')?.textContent).toContain('操作系统拒绝访问该文件')
+  expect(f.opened).toEqual([])
+})
 
 it('supports pointer and keyboard menus and reports reveal failure without leaking errors or opening the artifact', async () => {
   const f = mountCard()

@@ -31,7 +31,6 @@ import type { SpaceRepository } from '../storage/spaceRepository'
 import type { AttachmentService, PreparedAttachmentUploads } from './AttachmentService'
 import type { ComposerResourceChange, ComposerResourceChangeReason } from './composerResourceEvents'
 import { createHash, randomUUID } from 'node:crypto'
-import { realpath } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative } from 'node:path'
 import { readBoundedFile } from '../../../platform/filesystem/boundedFile'
 import { BUDDY_ATTACHMENT_COUNT_LIMIT, BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT, getAttachmentKind } from '../../../shared/conversation/attachmentPolicy'
@@ -39,6 +38,7 @@ import { getBuddyUserContentResourceIds, readBuddyUserMessageContent } from '../
 import { buddyComposerResourceAcceptSchema, buddyComposerSourceListSchema, buddyComposerSourceSelectSchema, buddyComposerSpaceFileSelectSchema } from '../../../shared/conversation/composerResource'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
+import { resolveArtifactFile } from '../artifacts/ArtifactFileAccess'
 import { resolveGrantedPath } from '../directories/resolveGrantedPath'
 import { createSensitivePathMatcher } from '../permissions/sensitivePaths'
 import { BuddyServiceError } from '../rpc/runtimeRequest'
@@ -84,11 +84,9 @@ export class ComposerResourceService {
   #disposed = false
   readonly #attachments: ComposerResourceServiceOptions['attachments']
   readonly #artifacts: ComposerResourceServiceOptions['artifacts']
-  readonly #conversationGrants: ComposerResourceServiceOptions['conversationGrants']
   readonly #conversations: ComposerResourceServiceOptions['conversations']
   readonly #drafts: ComposerResourceServiceOptions['drafts']
   readonly #publications: ComposerResourceServiceOptions['publications']
-  readonly #paths: ComposerResourceServiceOptions['paths']
   readonly #repository: ComposerResourceRepository
   readonly #importing = new Set<string>()
   readonly #spaces: ComposerResourceServiceOptions['spaces']
@@ -98,11 +96,9 @@ export class ComposerResourceService {
   constructor(options: ComposerResourceServiceOptions) {
     this.#attachments = options.attachments
     this.#artifacts = options.artifacts
-    this.#conversationGrants = options.conversationGrants
     this.#conversations = options.conversations
     this.#drafts = options.drafts
     this.#publications = options.publications
-    this.#paths = options.paths
     this.#repository = options.repository
     this.#spaces = options.spaces
     this.#directories = new ComposerDirectorySources(options)
@@ -347,7 +343,7 @@ export class ComposerResourceService {
         conversationId: scope.conversationId!,
       }
       try {
-        const location = await this.#validateArtifactGrant(source)
+        const location = await this.#resolveArtifactSource(source)
         const metadata = await inspectLocalResource(location.path)
         return {
           category: 'artifact',
@@ -387,7 +383,7 @@ export class ComposerResourceService {
     }
     if ('artifactId' in source) {
       this.#requireVisibleArtifact(source)
-      const { artifact, path } = await this.#validateArtifactGrant(source)
+      const { artifact, path } = await this.#resolveArtifactSource(source)
       if (!artifact)
         throw new AttachmentError('ATTACHMENT_NOT_FOUND')
       const localReference = await inspectLocalResource(path)
@@ -412,7 +408,7 @@ export class ComposerResourceService {
       if (scope.branchId !== source.branchId)
         throw new BuddyServiceError('DIRECTORY_NOT_AUTHORIZED')
       this.#requireVisibleArtifact(source)
-      const resolved = await this.#validateArtifactGrant(source)
+      const resolved = await this.#resolveArtifactSource(source)
       const bytes = await readBoundedFile(
         resolved.root,
         resolved.path,
@@ -464,7 +460,7 @@ export class ComposerResourceService {
     }
     if (origin && 'artifactId' in origin) {
       this.#requireVisibleArtifact(origin)
-      if ((await this.#validateArtifactGrant(origin)).path !== source.localReference.path)
+      if ((await this.#resolveArtifactSource(origin)).path !== source.localReference.path)
         throw new BuddyServiceError('DIRECTORY_NOT_AUTHORIZED')
     }
     const localReference = await inspectLocalResource(source.localReference.path)
@@ -528,7 +524,7 @@ export class ComposerResourceService {
       throw new AttachmentError('ATTACHMENT_NOT_FOUND')
   }
 
-  async #validateArtifactGrant(source: BuddyArtifactSource): Promise<{
+  async #resolveArtifactSource(source: BuddyArtifactSource): Promise<{
     artifact: ArtifactResource
     path: string
     root: string
@@ -537,45 +533,10 @@ export class ComposerResourceService {
       source.conversationId,
       source.artifactId,
     )
-    const artifact = location?.resource
-    const conversation = this.#conversations?.findById(source.conversationId)
-    if (!artifact || !conversation)
+    if (!location)
       throw new AttachmentError('ATTACHMENT_NOT_FOUND')
-    const conversationGrants = this.#conversationGrants?.listActive(conversation.id) ?? []
-    const grants = conversation.spaceId
-      ? (() => {
-          const space = requireActiveSpace(this.#spaces?.findById(conversation.spaceId) ?? null)
-          return [space.primaryDirectory, ...space.additionalDirectories, ...conversationGrants.filter(grant => grant.id === artifact.directoryGrantId)]
-        })()
-          .filter(grant => grant !== null)
-      : conversationGrants
-    const ownerId = conversation.spaceId ?? conversation.id
-    const ownedRoot = artifact.directoryGrantId === conversation.id
-      ? this.#paths.conversationWorkspace(conversation.id)
-      : artifact.directoryGrantId === ownerId
-        ? conversation.spaceId ? this.#paths.spaceWorkspace(ownerId) : this.#paths.conversationWorkspace(ownerId)
-        : null
-    const grant = grants.find(item => item.id === artifact.directoryGrantId) ?? (
-      ownedRoot
-        ? { canonicalRoot: await realpath(ownedRoot), id: artifact.directoryGrantId, root: ownedRoot }
-        : null
-    )
-    if (!grant)
-      throw new BuddyServiceError('DIRECTORY_NOT_AUTHORIZED')
-    if (grant.canonicalRoot !== location.canonicalRoot)
-      throw new BuddyServiceError('DIRECTORY_NOT_AUTHORIZED')
-    const resolution = await resolveGrantedPath(
-      [{ canonicalRoot: grant.canonicalRoot, grantId: grant.id, kind: 'workspace', root: grant.root }],
-      join(grant.canonicalRoot, artifact.relativePath),
-      'existing',
-    )
-    if (resolution.canonicalPath !== location.canonicalPath)
-      throw new BuddyServiceError('DIRECTORY_NOT_AUTHORIZED')
-    return {
-      artifact,
-      path: resolution.canonicalPath,
-      root: grant.canonicalRoot,
-    }
+    const target = await resolveArtifactFile({ currentPath: location.canonicalPath })
+    return { artifact: location.resource, path: target.path, root: target.root }
   }
 
   async #resolveSpaceFile(source: BuddySpaceFileSource): Promise<{

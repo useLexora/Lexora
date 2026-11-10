@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import type { FilePreviewErrorKey } from '@/shared/lib/filePreviewError'
 import { NButton } from 'naive-ui'
 import { computed, onBeforeUnmount, shallowRef, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import { diagnoseFilePreviewError } from '@/shared/lib/filePreviewError'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
 
 const props = withDefaults(defineProps<{
@@ -15,7 +17,10 @@ const { t } = useBuddyI18n(() => props.language)
 const { isDark } = useDesktopUi()
 const player = useTemplateRef<HTMLMediaElement>('player')
 const ready = shallowRef(false)
-const failed = shallowRef(false)
+const errorKey = shallowRef<FilePreviewErrorKey | null>(null)
+const failed = computed(() => errorKey.value !== null)
+let diagnosis: AbortController | null = null
+let disposed = false
 const retryKey = shallowRef<string | null>(null)
 const requestUrl = computed(() => {
   if (!retryKey.value)
@@ -26,23 +31,39 @@ const requestUrl = computed(() => {
 })
 
 function reset() {
+  diagnosis?.abort()
+  diagnosis = null
   ready.value = false
-  failed.value = false
+  errorKey.value = null
 }
 function retry() {
   player.value?.pause()
   reset()
   retryKey.value = crypto.randomUUID()
 }
+function isCurrentPlayer(event: Event) {
+  return !disposed && event.currentTarget === player.value && player.value?.getAttribute('src') === requestUrl.value
+}
 function loaded(event: Event) {
-  if (event.currentTarget === player.value)
+  if (isCurrentPlayer(event)) {
+    diagnosis?.abort()
+    errorKey.value = null
     ready.value = true
+  }
 }
-function fail(event: Event) {
-  if (event.currentTarget === player.value)
-    failed.value = true
+async function fail(event: Event) {
+  if (!isCurrentPlayer(event))
+    return
+  diagnosis?.abort()
+  const request = new AbortController()
+  diagnosis = request
+  const src = requestUrl.value
+  errorKey.value = 'desktop.context.mediaPlaybackFailed'
+  const result = await diagnoseFilePreviewError(src, request.signal, 'desktop.context.mediaPlaybackFailed')
+  if (!request.signal.aborted && !disposed && src === requestUrl.value)
+    errorKey.value = result
 }
-watch(() => props.src, () => {
+watch([() => props.src, () => props.kind], () => {
   player.value?.pause()
   retryKey.value = null
   reset()
@@ -51,7 +72,11 @@ watch(() => props.visible, (visible) => {
   if (!visible)
     player.value?.pause()
 }, { flush: 'sync' })
-onBeforeUnmount(() => player.value?.pause())
+onBeforeUnmount(() => {
+  disposed = true
+  diagnosis?.abort()
+  player.value?.pause()
+})
 </script>
 
 <template>
@@ -72,7 +97,7 @@ onBeforeUnmount(() => player.value?.pause())
       @error="fail"
     />
     <div v-if="failed" class="flex flex-col items-center gap-3 max-w-96 text-center text-muted text-[13px]" role="alert">
-      <span>{{ t('desktop.context.mediaPlaybackFailed') }}</span>
+      <span>{{ t(errorKey ?? 'desktop.context.mediaPlaybackFailed') }}</span>
       <NButton size="small" @click="retry">
         {{ t('desktop.context.retry') }}
       </NButton>

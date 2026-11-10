@@ -1,62 +1,70 @@
 import type { ArtifactRecord } from '../storage/artifactRepository'
-import type { BuddyDataPaths } from '../storage/BuddyDataPaths'
-import type { ConversationDirectoryGrantRepository } from '../storage/conversationDirectoryGrantRepository'
-import type { ConversationRepository } from '../storage/conversationRepository'
-import type { SpaceRepository } from '../storage/spaceRepository'
-import { realpath } from 'node:fs/promises'
-import { resolve } from 'node:path'
-import { resolveGrantedPath } from '../directories/resolveGrantedPath'
-import { createSensitivePathMatcher } from '../permissions/sensitivePaths'
-import { BuddyServiceError } from '../rpc/runtimeRequest'
-import { requireActiveSpace } from '../spaces/requireActiveSpace'
+import { Buffer } from 'node:buffer'
+import { constants } from 'node:fs'
+import { access, lstat, realpath } from 'node:fs/promises'
+import { dirname } from 'node:path'
+import { openNativeFileStream } from '../../../platform/filesystem/nativeFileStream'
+import { FileReadError, fileReadErrorCode } from '../../../shared/files/fileReadError'
+import { mediaFileIdentity } from '../../../shared/files/mediaPreview'
 
-interface ArtifactFileAccessOptions {
-  conversations: Pick<ConversationRepository, 'findById'>
-  conversationGrants: Pick<ConversationDirectoryGrantRepository, 'listActive'>
-  spaces: Pick<SpaceRepository, 'findById'>
-  paths: BuddyDataPaths
+export async function resolveArtifactFile(artifact: Pick<ArtifactRecord, 'currentPath'>) {
+  try {
+    const path = await realpath(artifact.currentPath)
+    if (path !== artifact.currentPath)
+      throw new FileReadError('FILE_CHANGED')
+    const metadata = await lstat(path, { bigint: true })
+    if (metadata.isSymbolicLink())
+      throw new FileReadError('FILE_CHANGED')
+    if (!metadata.isFile() && !metadata.isDirectory())
+      throw new FileReadError('FILE_UNSUPPORTED')
+    return { path, root: dirname(path), kind: metadata.isDirectory() ? 'directory' as const : 'file' as const, size: metadata.size, identity: mediaFileIdentity(metadata) }
+  }
+  catch (error) {
+    throw new FileReadError(fileReadErrorCode(error), { cause: error })
+  }
 }
 
-export class ArtifactFileAccess {
-  readonly #options: ArtifactFileAccessOptions
-
-  constructor(options: ArtifactFileAccessOptions) {
-    this.#options = options
-  }
-
-  async resolve(artifact: ArtifactRecord): Promise<{ root: string, path: string }> {
-    const grant = await this.grant(artifact)
-    if (grant.canonicalRoot !== artifact.directoryRoot || await realpath(grant.root) !== grant.canonicalRoot)
-      throw new BuddyServiceError('DIRECTORY_NOT_AUTHORIZED')
-    const requestedPath = resolve(grant.canonicalRoot, artifact.relativePath)
-    const result = await resolveGrantedPath([{ ...grant, grantId: artifact.directoryGrantId, kind: 'workspace' }], requestedPath, 'existing')
-    const sensitive = createSensitivePathMatcher()
-    if (result.canonicalPath !== artifact.currentPath || sensitive.matches(grant.root)
-      || sensitive.matches(requestedPath) || sensitive.matches(result.canonicalPath)
-      || JSON.stringify(await this.grant(artifact)) !== JSON.stringify(grant)) {
-      throw new BuddyServiceError('DIRECTORY_NOT_AUTHORIZED')
+export async function readArtifactFile(artifact: Pick<ArtifactRecord, 'currentPath'>, maxBytes: number, signal = new AbortController().signal) {
+  let target: Awaited<ReturnType<typeof resolveArtifactFile>> | undefined
+  try {
+    signal.throwIfAborted()
+    target = await resolveArtifactFile(artifact)
+    if (target.kind !== 'file')
+      throw new FileReadError('FILE_UNSUPPORTED')
+    await access(target.path, constants.R_OK)
+    if (target.size > BigInt(maxBytes))
+      throw new FileReadError('FILE_TOO_LARGE')
+    const stream = await openNativeFileStream({
+      root: target.root,
+      path: target.path,
+      fileId: target.identity.split(':').slice(0, 2).join(':'),
+      sizeBytes: Number(target.size),
+      start: 0,
+      length: Number(target.size),
+    }, signal)
+    try {
+      if ((await resolveArtifactFile(artifact)).identity !== target.identity)
+        throw new FileReadError('FILE_CHANGED')
+      stream.start()
+      return Buffer.from(await new Response(stream.body).arrayBuffer())
     }
-    return { root: grant.canonicalRoot, path: result.canonicalPath }
+    finally {
+      await stream.dispose()
+    }
   }
-
-  private async grant(artifact: ArtifactRecord): Promise<{ root: string, canonicalRoot: string, revision?: number }> {
-    const { conversations, conversationGrants, spaces, paths } = this.#options
-    const conversation = conversations.findById(artifact.conversationId)
-    if (!conversation || conversation.deletedAt !== null)
-      throw new BuddyServiceError('DIRECTORY_NOT_AUTHORIZED')
-    const space = conversation.spaceId ? requireActiveSpace(spaces.findById(conversation.spaceId)) : null
-    const grants = [
-      ...(space ? [space.primaryDirectory, ...space.additionalDirectories] : []),
-      ...conversationGrants.listActive(conversation.id),
-    ]
-    const grant = grants.find(grant => grant?.id === artifact.directoryGrantId && !grant.revokedAt)
-    if (grant)
-      return { root: grant.root, canonicalRoot: grant.canonicalRoot, ...('revision' in grant ? { revision: grant.revision } : {}) }
-    const ownedRoot = artifact.directoryGrantId === conversation.id
-      ? paths.conversationWorkspace(conversation.id)
-      : space && artifact.directoryGrantId === space.id ? paths.spaceWorkspace(space.id) : null
-    if (!ownedRoot)
-      throw new BuddyServiceError('DIRECTORY_NOT_AUTHORIZED')
-    return { root: ownedRoot, canonicalRoot: await realpath(ownedRoot) }
+  catch (error) {
+    signal.throwIfAborted()
+    if (target && !(error instanceof FileReadError)) {
+      try {
+        const current = await resolveArtifactFile(artifact)
+        if (current.identity !== target.identity)
+          throw new FileReadError('FILE_CHANGED')
+        await access(current.path, constants.R_OK)
+      }
+      catch (currentError) {
+        throw new FileReadError(fileReadErrorCode(currentError), { cause: currentError })
+      }
+    }
+    throw new FileReadError(fileReadErrorCode(error), { cause: error })
   }
 }
