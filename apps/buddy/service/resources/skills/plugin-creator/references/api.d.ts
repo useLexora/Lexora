@@ -605,6 +605,30 @@ export type InferencePlatform = 'linux-x64' | 'windows-x64' | 'macos-arm64'
 export interface InferenceEnvironment {
   platform: InferencePlatform | null
   executionMode: 'isolated' | 'supervised' | 'unsupported'
+  hardware?: InferenceHardware
+}
+export interface InferenceHardware {
+  sampledAt: number
+  logicalCores: number
+  totalMemoryBytes: number
+  availableMemoryBytes?: number
+  gpus: { name: string, vendor: 'nvidia' | 'amd' | 'intel' | 'apple' | 'unknown', totalMemoryBytes?: number, availableMemoryBytes?: number }[]
+}
+export interface InferenceTiming { tokens: number, ms: number, tokensPerSecond?: number }
+export interface InferenceObservation {
+  observedAt: number
+  engine?: { name: 'llama.cpp', version?: string }
+  backend?: { requested: 'cpu' | 'vulkan' | 'cuda' | 'metal' | 'unknown', observed: ('cpu' | 'vulkan' | 'cuda' | 'metal')[] }
+  device?: { backend: 'cpu' | 'vulkan' | 'cuda' | 'metal', index: number }[]
+  architecture?: string
+  context?: { requested?: number, actual?: number, train?: number }
+  offload?: { layers: number, total: number }
+  degraded?: boolean
+  loadMs?: number
+  timings?: { prompt?: InferenceTiming, decode?: InferenceTiming }
+  prompt?: InferenceTiming
+  decode?: InferenceTiming
+  error?: string
 }
 export interface InferenceContribution {
   /** Trimmed, nonblank, 1–100 characters. Defaults to manifest.name; does not change provider or model IDs. */
@@ -669,7 +693,7 @@ export interface InferenceBinding {
 export interface InferenceApi {
   readonly capabilities: { readonly nativeRuntime: true, readonly runtimeIsolation: true, readonly chatImageInput: true, readonly chatToolMatching: true, readonly chatReasoning: true, readonly resumableDownloads: true }
   environment: () => Promise<InferenceEnvironment>
-  status: () => Promise<{ runtime: string, configured: boolean, platforms: string[], instances: { id: string | null, state: 'loading' | 'ready' | 'stopping' | 'stopped', active: number, pending: number, cancelling: number }[] }[]>
+  status: () => Promise<{ runtime: string, configured: boolean, platforms: string[], instances: { id: string | null, state: 'loading' | 'ready' | 'stopping' | 'stopped', active: number, pending: number, cancelling: number, observation?: InferenceObservation }[] }[]>
   stop: (input?: { runtime: string }) => Promise<void>
   unbind: (input: { runtime: string }) => Promise<void>
   bind: (binding: InferenceBinding) => Promise<void>

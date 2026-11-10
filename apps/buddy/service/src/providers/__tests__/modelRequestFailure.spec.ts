@@ -36,4 +36,16 @@ describe('plugin inference failures', () => {
   ])('preserves the actionable meaning of %s', (message, code) => {
     expect(normalizeModelRequestFailure(message).code).toBe(code)
   })
+
+  it.each([
+    ['EXTENSION_INFERENCE_ENGINE_TOO_OLD', 'MODEL_ENGINE_TOO_OLD'],
+    ['EXTENSION_INFERENCE_MODEL_ARCHITECTURE_UNSUPPORTED', 'MODEL_ARCHITECTURE_UNSUPPORTED'],
+    ['EXTENSION_INFERENCE_MODEL_QUANTIZATION_UNSUPPORTED', 'MODEL_QUANTIZATION_UNSUPPORTED'],
+    ['EXTENSION_INFERENCE_DRIVER_INCOMPATIBLE', 'MODEL_DRIVER_INCOMPATIBLE'],
+    ['EXTENSION_INFERENCE_BACKEND_UNAVAILABLE', 'MODEL_BACKEND_UNAVAILABLE'],
+    ['EXTENSION_INFERENCE_LOAD_TIMEOUT', 'MODEL_REQUEST_TIMED_OUT'],
+    ['EXTENSION_INFERENCE_REQUEST_TIMEOUT', 'MODEL_REQUEST_TIMED_OUT'],
+  ] as const)('classifies %s without losing the plugin failure code', (message, code) => {
+    expect(normalizeModelRequestFailure({ errorMessage: message, diagnostics: [] })).toEqual({ code, message })
+  })
 })

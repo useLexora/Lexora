@@ -1,5 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { FileHandle } from 'node:fs/promises'
+import type { ApplicationDiagnosticReporter } from '../../shared/diagnostics/applicationDiagnostic'
 import type { InferenceBinding, InferenceRuntime } from '../../shared/extensions/extensionInference'
 import type { JsonValue } from '../../shared/workbench/workbenchState'
 import type { InferenceResourceLease } from './ExtensionInferenceResources'
@@ -14,6 +15,7 @@ import { basename, dirname, isAbsolute, join } from 'node:path'
 import process from 'node:process'
 import { inferenceLimits } from '../../shared/extensions/extensionInference'
 import { supportsInferenceRuntime } from '../../shared/extensions/inferencePlatform'
+import { observeInferenceDiagnostics } from './inferenceDiagnostics'
 import { InferenceNetworkHost } from './InferenceNetworkHost'
 import { enqueueInferenceFrame, readInferenceFrames, writeInferenceFrame } from './inferenceWire'
 import { prepareSupervisedInferenceLaunch } from './supervisedInferenceLaunch'
@@ -71,6 +73,7 @@ export interface NativeInferenceOptions {
   bootstrap: string
   supervisor?: string
   network?: InferenceNetworkRequest
+  record?: ApplicationDiagnosticReporter
 }
 export class NativeInferenceProcess {
   readonly instanceId = randomUUID()
@@ -82,7 +85,7 @@ export class NativeInferenceProcess {
   #stopped = false
   #cancelTimer?: ReturnType<typeof setTimeout>
   #stopPromise?: Promise<void>
-  private constructor(child: ChildProcessWithoutNullStreams, request?: InferenceNetworkRequest, dispose?: () => Promise<void>) {
+  private constructor(child: ChildProcessWithoutNullStreams, request?: InferenceNetworkRequest, dispose?: () => Promise<void>, diagnostics?: { extensionId: string, record?: ApplicationDiagnosticReporter }) {
     this.#child = child
     const network = this.#network = new InferenceNetworkHost(child.stdin, request)
     const fail = (error: unknown) => {
@@ -95,7 +98,7 @@ export class NativeInferenceProcess {
       }
     }
     child.stdin.on('error', fail)
-    child.stderr.resume()
+    observeInferenceDiagnostics(child.stderr, diagnostics?.extensionId ?? '', this.instanceId, diagnostics?.record)
     child.on('error', fail)
     child.once('close', () => {
       this.#stopped = true
@@ -224,7 +227,7 @@ export class NativeInferenceProcess {
       args.push(`/runtime/${basename(options.executable)}`, '/bootstrap.mjs', `/plugin/${runtime.entry}`)
       signal.throwIfAborted()
       const child = spawn(options.sandbox, args, { stdio: ['pipe', 'pipe', 'pipe', ...mounts.map(mount => mount.handle.fd)], env: { PATH: '/usr/bin' } }) as ChildProcessWithoutNullStreams
-      worker = new NativeInferenceProcess(child, options.network)
+      worker = new NativeInferenceProcess(child, options.network, undefined, { extensionId: pkg.manifest.id, record: options.record })
       const abort = () => {
         void worker!.stop()
       }
@@ -263,7 +266,7 @@ export class NativeInferenceProcess {
           ? { SystemRoot: process.env.SystemRoot, TEMP: launch.directory, TMP: launch.directory }
           : { HOME: launch.directory, TMPDIR: launch.directory, PATH: '/usr/bin:/bin' },
       })
-      worker = new NativeInferenceProcess(child, options.network, launch.dispose)
+      worker = new NativeInferenceProcess(child, options.network, launch.dispose, { extensionId: pkg.manifest.id, record: options.record })
       const abort = () => {
         void worker!.stop().catch(() => {})
       }
