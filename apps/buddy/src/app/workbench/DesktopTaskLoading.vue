@@ -51,7 +51,7 @@ const { labels } = useWorkbench()
 
       <main class="flex-1 grid place-items-center min-w-0 min-h-0 p-6">
         <div class="desktop-task-loading__status inline-flex items-center gap-2 py-[0.35rem] px-3 rounded-micro border-1 border-solid border-border bg-raised text-muted text-[0.74rem] shadow-soft" role="status">
-          <span class="desktop-task-loading__spinner w-[0.8rem] h-[0.8rem] rounded-full" aria-hidden="true" />
+          <span class="desktop-task-loading__spinner block shrink-0 w-[12px] h-[12px] rounded-full" aria-hidden="true" />
           <span>{{ labels.loading }}</span>
         </div>
       </main>

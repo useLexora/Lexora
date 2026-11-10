@@ -20,7 +20,7 @@ defineSlots<{ default: () => unknown }>()
     <Transition name="pane-reveal" :css="animate">
       <div v-if="loading || error" class="absolute z-3 inset-0 grid place-items-center bg-surface" :role="error ? 'alert' : 'status'">
         <div class="flex max-w-96 flex-col items-center gap-[0.9rem] p-6 text-muted text-[0.75rem] leading-[1.6] text-center">
-          <span v-if="!error" class="desktop-pane-boundary__spinner w-[1.1rem] h-[1.1rem] rounded-full" aria-hidden="true" />
+          <span v-if="!error" class="desktop-pane-boundary__spinner block shrink-0 w-[18px] h-[18px] rounded-full" aria-hidden="true" />
           <span>{{ error || label }}</span>
           <NButton v-if="error" size="small" secondary @click="emit('retry')">
             {{ retryLabel }}
