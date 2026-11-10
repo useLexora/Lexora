@@ -84,6 +84,7 @@ defineExpose<BuddyChatTranscriptViewportHandle>(handle)
 <style scoped lang="scss">
 .buddy-chat-transcript-viewport {
   container-type: inline-size;
+  contain: strict;
 }
 
 .buddy-chat-transcript-viewport__scrollport {

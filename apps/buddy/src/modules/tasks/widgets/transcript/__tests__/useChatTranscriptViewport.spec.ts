@@ -102,6 +102,7 @@ vi.mock('@tanstack/vue-virtual', async (importOriginal) => {
 })
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
   geometry.rowHeight = 100
   geometry.nextRowHeight = 100
   rectListeners.clear()
@@ -117,6 +118,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanups.splice(0).reverse().forEach(cleanup => cleanup())
   vi.unstubAllGlobals()
+  vi.useRealTimers()
   frames.clear()
   rectListeners.clear()
 })
@@ -201,8 +203,8 @@ async function mountViewport() {
       })
       currentVirtualizer.elementsCache.set(`row-${index}`, element)
     },
-    resize() {
-      rectListeners.forEach(listener => listener({ width: 700, height: 200 }))
+    resize(width = 700) {
+      rectListeners.forEach(listener => listener({ width, height: 200 }))
     },
   }
 }
@@ -362,8 +364,12 @@ describe('transcript resize and explicit navigation ordering', () => {
     expect(fixture.handle.captureScrollAnchor()).toMatchObject({ rowKey: 'row-2', messageOffsetTop: -10 })
     geometry.nextRowHeight = 110
     fixture.resize()
-    expect(frames.size).toBe(1)
-    runFrame()
+    vi.advanceTimersByTime(100)
+    fixture.resize(600)
+    vi.advanceTimersByTime(149)
+    expect(geometry.rowHeight).toBe(100)
+    expect(fixture.scrollport.scrollTop).toBe(234)
+    vi.advanceTimersByTime(1)
     expect(fixture.scrollport.scrollTop).toBe(234)
     await nextTick()
     expect(fixture.scrollport.scrollTop).toBe(254)
@@ -375,18 +381,18 @@ describe('transcript resize and explicit navigation ordering', () => {
     })
   })
 
-  describe.each(['before-frame', 'after-frame-before-tick'] as const)('%s', (timing) => {
+  describe.each(['before-settle', 'after-settle-before-tick'] as const)('%s', (timing) => {
     it.each(['message', 'tail', 'restore'] as const)('keeps explicit %s positioning instead of returning to the queued resize anchor', async (target) => {
       const fixture = await mountViewport()
       expect(fixture.handle.captureScrollAnchor()).toMatchObject({ rowKey: 'row-2', messageOffsetTop: -10 })
       fixture.resize()
-      expect(frames.size).toBe(1)
-      if (timing === 'after-frame-before-tick')
-        runFrame()
+      expect(fixture.scrollport.scrollTop).toBe(234)
+      if (timing === 'after-settle-before-tick')
+        vi.advanceTimersByTime(150)
       expect(navigate(fixture, target)?.scrollTop).toBe(expectedTargets[target].top)
       expectTarget(fixture, target)
-      if (timing === 'before-frame')
-        runFrame()
+      if (timing === 'before-settle')
+        vi.advanceTimersByTime(150)
       await nextTick()
       expectTarget(fixture, target)
       runFrame()
