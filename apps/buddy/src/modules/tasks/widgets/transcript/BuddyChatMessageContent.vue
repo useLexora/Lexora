@@ -4,6 +4,7 @@ import type { BuddyQuoteReference } from '@buddy-shared/conversation/buddyInputM
 
 import type { BuddyMessageQuote, BuddyPromptDirective } from '@buddy-shared/conversation/buddyUserContent'
 import type { LocalMessage } from '@buddy-shared/conversation/conversationApi'
+import type { InputMaterialView } from '../../model/materials/inputMaterialView'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { isRetiredBuddyPromptCommand } from '@buddy-shared/conversation/buddyChatCommands'
 import { resolveBuddyQuoteReference } from '@buddy-shared/conversation/buddyInputMaterial'
@@ -14,6 +15,7 @@ import BuddyChatMarkdownContent from '@/shared/ui/markdown/DesktopMarkdownConten
 import { resolveBuddyAttachmentPreviewUrl } from '../../model/attachments/chatAttachmentView'
 import { getInputMaterialViews, inputMaterialLabel } from '../../model/materials/inputMaterialView'
 import { getChatMessageDisplayText, getChatMessageImageLabels, getChatMessageUserContent } from '../../model/transcript/chatMessageContent'
+import { useArtifactActions } from '../artifacts/artifactActionsContext'
 import ChatInputMaterialStrip from '../materials/ChatInputMaterialStrip.vue'
 import BuddyChatResourceReference from './BuddyChatResourceReference.vue'
 import BuddyChatUserBubble from './BuddyChatUserBubble.vue'
@@ -32,6 +34,7 @@ const props = withDefaults(defineProps<{
 })
 
 const chatContent = tryUseChatContent()
+const resourceActions = useArtifactActions()
 const buddyId = useChatBuddyId(() => props.message.role === 'assistant' ? props.message.runId : null, '')
 const buddy = useBuddyIdentity(buddyId)
 const quoteSource = computed<BuddyMessageQuote['source'] | undefined>(() => {
@@ -84,6 +87,18 @@ const materials = computed(() => {
 })
 const hasStructuredBody = computed(() => hasText.value || structuredUserContent.value?.userContent.body.some(paragraph => paragraph.content.some(node => node.type === 'quote_ref' || node.type === 'session_ref')))
 
+async function referenceImage(material: InputMaterialView) {
+  if (material.kind !== 'resource' || !resourceActions)
+    return false
+  const { conversationId, branchId, id: messageId } = props.message
+  return resourceActions.referenceSource(conversationId, {
+    conversationId,
+    branchId,
+    messageId,
+    ...structuredUserContent.value ? { resourceId: material.id } : { attachmentId: material.id },
+  })
+}
+
 function quoteLabel(reference: BuddyQuoteReference) {
   const content = structuredUserContent.value?.userContent
   const material = content && resolveBuddyQuoteReference(content, reference)
@@ -115,7 +130,7 @@ function handleMarkdownLink(href: string) {
     :class="`is-${message.role}`"
     :data-quote-source="quoteSource && JSON.stringify(quoteSource)"
   >
-    <ChatInputMaterialStrip ref="materialStrip" :materials="materials" :language="language" expanded :align-end="message.role === 'user'" />
+    <ChatInputMaterialStrip ref="materialStrip" :materials="materials" :language="language" expanded :align-end="message.role === 'user'" :reference-image="resourceActions ? referenceImage : undefined" />
     <BuddyChatUserBubble
       v-if="structuredUserContent && hasStructuredBody"
       :key="message.id"

@@ -10,7 +10,7 @@ import { scrollWheelHorizontally } from '@/shared/lib/scrollWheelHorizontally'
 import BuddyImagePreview from '@/shared/ui/media/BuddyImagePreview.vue'
 import ChatInputMaterialCard from './ChatInputMaterialCard.vue'
 
-const props = defineProps<{ materials: readonly InputMaterialView[], language: BuddyLocale, removable?: boolean, disabled?: boolean, compact?: boolean, expanded?: boolean, alignEnd?: boolean, wheelToHorizontal?: boolean }>()
+const props = defineProps<{ materials: readonly InputMaterialView[], language: BuddyLocale, removable?: boolean, disabled?: boolean, compact?: boolean, expanded?: boolean, alignEnd?: boolean, wheelToHorizontal?: boolean, referenceImage?: (material: InputMaterialView) => Promise<boolean> }>()
 const emit = defineEmits<{ remove: [material: BuddyInputMaterial], retry: [id: string], previewText: [id: string] }>()
 const track = useTemplateRef<HTMLElement>('track')
 const reducedMotion = usePreferredReducedMotion()
@@ -18,7 +18,15 @@ const highlighted = shallowRef<string | null>(null)
 const { start } = useTimeoutFn(() => highlighted.value = null, 1400, { immediate: false })
 const failedUrls = shallowRef<ReadonlySet<string>>(new Set())
 const materials = computed(() => props.materials.map(material => material.kind === 'resource' && material.previewUrl && failedUrls.value.has(material.previewUrl) ? { ...material, previewUrl: null } : material))
-const sources = computed(() => materials.value.flatMap(material => material.kind === 'resource' && material.previewUrl ? [material.previewUrl] : []))
+const previewMaterials = computed(() => materials.value.filter((material): material is Extract<InputMaterialView, { kind: 'resource' }> & { previewUrl: string } => material.kind === 'resource' && !!material.previewUrl))
+const sources = computed(() => previewMaterials.value.map(material => material.previewUrl))
+const previewNames = computed(() => previewMaterials.value.map(material => material.resource.name))
+const referenceImage = computed(() => props.referenceImage
+  ? async (index: number) => {
+    const material = previewMaterials.value[index]
+    return material && props.referenceImage ? props.referenceImage(material) : false
+  }
+  : undefined)
 const previewOpen = shallowRef(false)
 const previewIndex = shallowRef(0)
 
@@ -73,7 +81,7 @@ defineExpose({ highlightMaterial, highlightResource: (id: string) => highlightMa
         />
       </div>
     </NScrollbar>
-    <BuddyImagePreview v-if="sources.length" v-model:show="previewOpen" v-model:current="previewIndex" :language="language" :sources="sources" />
+    <BuddyImagePreview v-if="sources.length" v-model:show="previewOpen" v-model:current="previewIndex" :language="language" :sources="sources" :names="previewNames" :reference-image="referenceImage" :referenced="removable" />
   </div>
 </template>
 

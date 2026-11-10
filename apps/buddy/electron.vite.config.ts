@@ -7,9 +7,9 @@ import { defineConfig } from 'electron-vite'
 import UnoCSS from 'unocss/vite'
 import { extensionRuntimePlugin } from './electron/extensionRuntimePlugin.ts'
 
-const PRODUCTION_CONNECT_SRC = 'connect-src \'self\' lexora-artifact://preview lexora-artifact://media;'
+const PRODUCTION_CONNECT_SRC = 'connect-src \'self\' lexora-attachment://preview lexora-attachment://local-preview lexora-artifact://preview lexora-artifact://media;'
 const DEVELOPMENT_CONNECT_SRC
-  = 'connect-src \'self\' lexora-artifact://preview lexora-artifact://media ws://localhost:* ws://127.0.0.1:*;'
+  = 'connect-src \'self\' lexora-attachment://preview lexora-attachment://local-preview lexora-artifact://preview lexora-artifact://media ws://localhost:* ws://127.0.0.1:*;'
 
 function allowDevelopmentWebSockets(): Plugin {
   return {

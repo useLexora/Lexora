@@ -3,6 +3,7 @@ import type { ComponentPublicInstance } from 'vue'
 import type { DesktopShellBindings } from '../shell/desktopShellBindings'
 import { computed, useTemplateRef, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
+import { useProvideArtifactActions } from '@/modules/tasks'
 import { DesktopTaskResourcePanel } from '@/modules/tasks/ui'
 import { useWorkbenchAnchor } from '@/shared/ui/contributions/workbenchUiContext'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
@@ -24,6 +25,13 @@ const route = useRoute()
 const contextVisible = computed(() => props.bindings.lifecycle.state.value.hasBeenReady && (props.tasksVisible || props.bindings.contextPanelGlobal.value) && props.bindings.resources.isOpen.value)
 watch([contextVisible, () => route.path], panels.restore)
 const { language } = useDesktopUi()
+useProvideArtifactActions({
+  task: () => props.tasksVisible ? props.bindings.workbench.activeTask.value : null,
+  resources: props.bindings.resources,
+  revealFile: input => props.bindings.workbench.api.localChat.artifacts.revealFile(input),
+  writeClipboardText: text => props.bindings.workbench.api.clipboard.writeText(text),
+  language: () => language.value,
+})
 const sidebar = props.bindings.taskIndex.sidebar
 const collapsed = computed({ get: () => sidebar.collapsed.value, set: value => void sidebar.setCollapsed(value) })
 const width = computed({ get: () => sidebar.width.value, set: value => void sidebar.setWidth(value) })

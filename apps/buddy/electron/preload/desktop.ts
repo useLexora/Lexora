@@ -134,6 +134,7 @@ export function createDesktopApi(): Pick<LexoraDesktopApi, 'app' | 'clipboard' |
       ),
     }),
     clipboard: Object.freeze({
+      writeImage: (png: Uint8Array) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.clipboardWriteImage, { png }),
       getFilePath: (file: File) => webUtils.getPathForFile(file),
       writeText: (text: string, html?: string) => ipcRenderer.invoke(
         DESKTOP_IPC_CHANNELS.clipboardWriteText,

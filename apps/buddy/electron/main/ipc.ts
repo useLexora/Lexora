@@ -19,6 +19,7 @@ import {
   lexoraConfigPatchSchema,
   releasePageInputSchema,
 } from '../shared/desktopApiSchemas'
+import { clipboardWriteImageInputSchema } from '../shared/desktopClipboard'
 import { getDesktopCommand, isDesktopCommandId } from '../shared/desktopCommands'
 import { getSystemUserProfile } from './platform/systemProfile'
 import { readDesktopWindowState } from './window'
@@ -76,6 +77,12 @@ export function registerDesktopIpc(options: RegisterDesktopIpcOptions): void {
     if (html === undefined)
       await clipboard.writeText(text)
     else await clipboard.write([new ClipboardItem({ 'text/plain': text, 'text/html': html })])
+  })
+
+  ipcMain.handle(DESKTOP_IPC_CHANNELS.clipboardWriteImage, async (event, input: unknown) => {
+    assertTrustedSender(event, options.getWindow())
+    const { png } = clipboardWriteImageInputSchema.parse(input)
+    await clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(png)], { type: 'image/png' }) })])
   })
 
   ipcMain.handle(DESKTOP_IPC_CHANNELS.commandExecute, async (event, commandId: unknown) => {
