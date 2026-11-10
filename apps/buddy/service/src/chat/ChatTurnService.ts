@@ -52,6 +52,7 @@ import { readBoundedFile } from '../../../platform/filesystem/boundedFile'
 import {
   isBuddyReviewCommand,
   isBuddyRunChatCommand,
+  isBuddyUpdateCommand,
   isRetiredBuddyPromptCommand,
   parseBuddyChatCommand,
 } from '../../../shared/conversation/buddyChatCommands'
@@ -79,7 +80,7 @@ import {
   formatBuddySkillPrompt,
 } from '../skills/SkillService'
 import { requireActiveSpace } from '../spaces/requireActiveSpace'
-import { BUDDY_REVIEW_PROMPT, buildBuddyReviewPrompt, isReviewUserMessage } from './buddyReviewPrompt'
+import { BUDDY_REVIEW_PROMPT, buildBuddyReviewPrompt, buildBuddyUpdatePrompt, isReviewUserMessage } from './buddyReviewPrompt'
 import { createConversationTitle } from './conversationTitle'
 import { combinePreparedAttachments, persistPreparedTurn } from './persistPreparedTurn'
 import { resolveAuthorizedSessionReferences } from './sessionReferenceAuthorization'
@@ -890,11 +891,21 @@ async function materializeComposerDirectives(
     throw new BuddyServiceError('VALIDATION_FAILED')
   const hasReviewDirective = directives.some(node => node.directive === 'slash_command' && isBuddyReviewCommand(node.value))
   const reviewsAsText = textCommand?.name === 'review' && !hasReviewDirective
+  const hasUpdateDirective = directives.some(node => node.directive === 'slash_command' && isBuddyUpdateCommand(node.value))
+  const updatesAsText = textCommand?.name === 'update' && !hasUpdateDirective
   const selections = directives.flatMap(node => node.directive === 'skill' ? [node.skill ?? node.value] : [])
   const loaded = await skills.materializeForSpace(space?.id ?? null, selections)
+  const updateSkill = (hasUpdateDirective || updatesAsText)
+    ? (await skills.materializeForSpace(space?.id ?? null, ['agents-md-improver']).catch(() => []))[0]
+    : undefined
+  const updateSkillPrompt = updateSkill ? formatBuddySkillPrompt(updateSkill) : undefined
   return {
     reviewRequested: hasReviewDirective || reviewsAsText,
-    contextSuffix: reviewsAsText ? BUDDY_REVIEW_PROMPT : '',
+    contextSuffix: reviewsAsText
+      ? BUDDY_REVIEW_PROMPT
+      : updatesAsText
+        ? buildBuddyUpdatePrompt(textCommand.arguments, updateSkillPrompt)
+        : '',
     contextItems: loaded.map(skill => ({ kind: 'skill' as const, value: skill.name, skill: skill.reference })),
     resolveDirective(directive: BuddyPromptDirective): string {
       if (directive.directive === 'skill') {
@@ -904,6 +915,8 @@ async function materializeComposerDirectives(
         return directive.value
       if (isBuddyReviewCommand(directive.value) && directive.commandMode === 'prompt')
         return buildBuddyReviewPrompt(parseBuddyChatCommand(directive.value)!.arguments)
+      if (isBuddyUpdateCommand(directive.value) && directive.commandMode === 'prompt')
+        return buildBuddyUpdatePrompt(parseBuddyChatCommand(directive.value)!.arguments, updateSkillPrompt)
       throw new BuddyServiceError('VALIDATION_FAILED')
     },
   }

@@ -1,4 +1,4 @@
-export type BuddyChatCommandName = 'compact' | 'mcp' | 'new' | 'review' | 'skills' | 'status'
+export type BuddyChatCommandName = 'compact' | 'mcp' | 'new' | 'review' | 'skills' | 'status' | 'update'
 export type BuddyChatCommandDescriptionKey = `desktop.chat.command.${BuddyChatCommandName}`
 
 export type BuddyChatCommandDefinition = {
@@ -59,6 +59,12 @@ const commandsByName: Readonly<Record<BuddyChatCommandName, BuddyChatCommandDefi
     descriptionKey: 'desktop.chat.command.status',
     name: 'status',
   },
+  update: {
+    kind: 'prompt',
+    argumentHint: 'focus',
+    descriptionKey: 'desktop.chat.command.update',
+    name: 'update',
+  },
 }
 
 export const BUDDY_CHAT_COMMANDS: ReadonlyArray<BuddyChatCommandDefinition> = Object.values(commandsByName)
@@ -87,6 +93,11 @@ export function isBuddyRunChatCommand(name: string): boolean {
 export function isBuddyReviewCommand(value: string): boolean {
   const invocation = parseBuddyChatCommandInvocation(value)
   return invocation?.name === 'review'
+}
+
+export function isBuddyUpdateCommand(value: string): boolean {
+  const invocation = parseBuddyChatCommandInvocation(value)
+  return invocation?.name === 'update'
 }
 
 export function isRetiredBuddyPromptCommand(value: string): boolean {

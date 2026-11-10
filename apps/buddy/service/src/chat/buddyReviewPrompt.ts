@@ -40,6 +40,13 @@ export function buildBuddyReviewPrompt(focus: string): string {
   return focus ? `${BUDDY_REVIEW_PROMPT}\n\n用户补充：${focus}` : BUDDY_REVIEW_PROMPT
 }
 
+export const BUDDY_UPDATE_PROMPT = '请使用 agents-md-improver 技能，根据当前对话与工作区变化，按轻量索引原则创建或更新 AGENTS.md（或 CLAUDE.md）与 README.md（若不存在则按需新建）。'
+
+export function buildBuddyUpdatePrompt(focus: string, skillPrompt?: string): string {
+  const base = skillPrompt ? `${skillPrompt}\n\n${BUDDY_UPDATE_PROMPT}` : BUDDY_UPDATE_PROMPT
+  return focus ? `${base}\n\n用户补充：${focus}` : base
+}
+
 export function isReviewUserMessage(content: unknown): boolean {
   const structured = buddyUserMessageContentV1Schema.safeParse(content)
   if (structured.success) {
