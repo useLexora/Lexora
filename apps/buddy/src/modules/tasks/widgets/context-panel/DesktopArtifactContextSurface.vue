@@ -5,7 +5,7 @@ import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { ArtifactViewMode } from '@/modules/tasks/model/context-panel/taskContextPanel'
 import { isTextArtifactMimeType } from '@buddy-shared/artifacts/artifactApi'
 import { resolveBuiltinFileOpening } from '@buddy-shared/files/fileOpening'
-import { NSpin } from 'naive-ui'
+import { NButton, NSpin } from 'naive-ui'
 import { computed, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { fileOpeningHandler, useFileOpening } from '@/modules/files'
@@ -61,12 +61,13 @@ const selection = useResourceSelectionQuote({
 })
 
 const { t } = useBuddyI18n(() => props.language)
-const { refreshText, failImage, previewFailed, openPreview, previewIndex, previewOpen, previewSources, previewUrl, textPreview, textPreviewFailed, textPreviewLoading, textPreviewMissing } = useArtifactPreview({
+const { refreshText, failImage, previewError, openPreview, previewIndex, previewOpen, previewSources, previewUrl, textPreview, textPreviewError, textPreviewLoading } = useArtifactPreview({
   artifact: () => props.artifact,
   imageEnabled: () => image.value,
   textEnabled: () => handler.value ? handler.value.input === 'text' : isTextArtifactMimeType(props.artifact.mimeType),
   readText: () => props.readArtifactText,
 })
+const previewErrorKey = computed(() => image.value && viewMode.value === 'preview' ? previewError.value : textPreviewError.value)
 const document = useTemplateRef<InstanceType<typeof DesktopDocumentContent>>('document')
 useResourceQuoteReveal({
   viewId: () => props.tabId,
@@ -105,12 +106,12 @@ watch(textPreview, selection.close, { flush: 'sync' })
           @error="failImage"
         >
       </button>
-      <div v-else-if="textPreviewLoading" class="desktop-artifact-context-surface__fallback grid max-w-96 gap-2 text-muted text-center">
+      <div v-else-if="textPreviewLoading && (!image || viewMode === 'source')" class="desktop-artifact-context-surface__fallback grid max-w-96 gap-2 text-muted text-center">
         <NSpin size="small" />
         <span>{{ t('common.loading') }}</span>
       </div>
       <DesktopDocumentContent
-        v-else-if="textPreview"
+        v-else-if="textPreview && (!image || viewMode === 'source')"
         ref="document" :mode="markdown ? viewMode : 'source'" :name="artifact.name" :text="textPreview.text" :language="language" :write-clipboard-text="writeClipboardText"
         :quote-source="selection.enabled ? quoteSource : undefined" :prepare-quote="selection.prepare"
       />
@@ -124,7 +125,10 @@ watch(textPreview, selection.close, { flush: 'sync' })
         <span v-if="artifact.kind === 'directory'" class="desktop-artifact-context-surface__path">
           {{ artifact.path }}
         </span>
-        <span v-else>{{ t(textPreviewMissing ? 'desktop.context.previewFileMissing' : textPreviewFailed || previewFailed ? 'desktop.context.previewLoadFailed' : 'desktop.context.previewUnavailable') }}</span>
+        <span v-else role="status">{{ t(previewErrorKey ?? 'desktop.context.previewUnavailable') }}</span>
+        <NButton v-if="previewErrorKey" size="small" @click="refreshText">
+          {{ t('desktop.context.retry') }}
+        </NButton>
       </div>
     </div>
     <ResourceSelectionQuoteMenu v-if="selection.enabled && textPreview" :selection="selection" :language="language" />

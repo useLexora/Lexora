@@ -6,9 +6,8 @@ import type {
   ArtifactRecord,
   ArtifactRepository,
 } from '../storage/artifactRepository'
-import type { ArtifactFileAccess } from './ArtifactFileAccess'
 import { randomUUID } from 'node:crypto'
-import { readFile, stat } from 'node:fs/promises'
+import { stat } from 'node:fs/promises'
 import {
   basename,
   dirname,
@@ -22,9 +21,11 @@ import { relativeCanonicalPath } from '../../../platform/filesystem/filePaths'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { inferFileMimeType, isImageMimeType } from '../../../shared/files/fileMimeTypes'
+import { FileReadError } from '../../../shared/files/fileReadError'
 import { resolveGrantedPath } from '../directories/resolveGrantedPath'
-import { resolveMediaPreview } from '../files/resolveMediaPreview'
+import { resolveMediaFile } from '../files/resolveMediaPreview'
 import { runNativeImage } from '../images/runNativeImage'
+import { readArtifactFile, resolveArtifactFile } from './ArtifactFileAccess'
 
 export const BUDDY_ARTIFACT_COUNT_LIMIT = 512
 export const BUDDY_ARTIFACT_TOTAL_BYTES_LIMIT = 32 * 1024 * 1024
@@ -95,7 +96,6 @@ interface GeneratedImagesInput {
 
 export class ArtifactService {
   readonly #repository: ArtifactRepository
-  readonly #fileAccess?: ArtifactFileAccess
   readonly #sourceId = randomUUID()
   readonly #changes: Emitter<ArtifactEvent>
   readonly onDidChange
@@ -103,9 +103,8 @@ export class ArtifactService {
   #revision = 0
   #disposed = false
 
-  constructor(options: { repository: ArtifactRepository, fileAccess?: ArtifactFileAccess, onListenerError?: (error: unknown) => void }) {
+  constructor(options: { repository: ArtifactRepository, onListenerError?: (error: unknown) => void }) {
     this.#repository = options.repository
-    this.#fileAccess = options.fileAccess
     this.#changes = new Emitter(options.onListenerError ?? (() => console.error('ARTIFACT_OBSERVER_FAILED')))
     this.onDidChange = this.#changes.event
   }
@@ -129,8 +128,6 @@ export class ArtifactService {
     return this.#batch(request.conversationId, 'generated', 1, async (batch) => {
       await input.assertCurrent()
       const location = await resolveArtifactLocation(request.grants, request.outputPath, 'create')
-      if (isSensitivePath(location.relativePath))
-        throw new ArtifactError('ARTIFACT_SENSITIVE_PATH')
       if (!writeFiles)
         throw new ArtifactError('ARTIFACT_PUBLICATION_FAILED')
       await writeFiles([location.canonicalPath], async (publish) => {
@@ -222,8 +219,6 @@ export class ArtifactService {
         ? requestedPath
         : resolve(input.cwd, requestedPath)
       const location = await resolveArtifactLocation(input.grants, absolutePath)
-      if (isSensitivePath(location.relativePath))
-        throw new ArtifactError('ARTIFACT_SENSITIVE_PATH')
       const metadata = await stat(location.canonicalPath)
       if (!metadata.isFile() && !metadata.isDirectory())
         throw new ArtifactError('VALIDATION_FAILED')
@@ -307,8 +302,6 @@ export class ArtifactService {
     await writeFiles(outputPaths, async (publish) => {
       for (const [index, image] of input.images.entries()) {
         const location = await resolveArtifactLocation(input.grants, outputPaths[index]!, 'create')
-        if (isSensitivePath(location.relativePath))
-          throw new ArtifactError('ARTIFACT_SENSITIVE_PATH')
         batch.stage = 'file'
         batch.unconfirmedWrites += 1
         await publish({ path: location.canonicalPath, bytes: image.bytes, size: image.bytes.byteLength, overwrite: true })
@@ -358,12 +351,7 @@ export class ArtifactService {
     const artifact = this.#requireConversationArtifact(conversationId, artifactId)
     if (artifact.kind !== 'file')
       throw new ArtifactError('VALIDATION_FAILED')
-    const metadata = await stat(artifact.currentPath)
-    if (metadata.size > BUDDY_ARTIFACT_TOTAL_BYTES_LIMIT)
-      throw new ArtifactError('ARTIFACT_SIZE_LIMIT')
-    const bytes = await readFile(artifact.currentPath)
-    if (bytes.byteLength > BUDDY_ARTIFACT_TOTAL_BYTES_LIMIT)
-      throw new ArtifactError('ARTIFACT_SIZE_LIMIT')
+    const bytes = await readArtifactFile(artifact, BUDDY_ARTIFACT_TOTAL_BYTES_LIMIT)
     return {
       bytes,
       resource: toArtifactResource(artifact),
@@ -383,45 +371,31 @@ export class ArtifactService {
     ) {
       throw new ArtifactError('VALIDATION_FAILED')
     }
-    return {
-      entryPath: artifact.currentPath,
-      rootPath: artifact.directoryRoot === artifact.currentPath
-        ? dirname(artifact.currentPath)
-        : artifact.directoryRoot,
-    }
+    const target = await resolveArtifactFile(artifact)
+    if (target.kind !== 'file')
+      throw new FileReadError('FILE_UNSUPPORTED')
+    return { entryPath: target.path, rootPath: artifact.directoryRoot === target.path ? dirname(target.path) : artifact.directoryRoot }
   }
 
-  resolvePreview(id: string): { mimeType: string, path: string } {
-    const artifact = this.#requireVisibleArtifact(id)
-    if (artifact.kind !== 'file' || !artifact.mimeType.startsWith('image/'))
-      throw new ArtifactError('VALIDATION_FAILED')
-    return { mimeType: artifact.mimeType, path: artifact.currentPath }
+  async resolvePreview(id: string): Promise<{ mimeType: string, path: string }> {
+    const preview = await this.resolveMedia(id)
+    if (!isImageMimeType(preview.mimeType))
+      throw new FileReadError('FILE_UNSUPPORTED')
+    return { mimeType: preview.mimeType, path: preview.path }
   }
 
   async locate(id: string): Promise<{ path: string, kind: 'file' | 'directory' }> {
     const artifact = this.#requireVisibleArtifact(id)
-    if (!this.#fileAccess)
-      throw new ArtifactError('DIRECTORY_NOT_AUTHORIZED')
-    const target = await this.#fileAccess.resolve(artifact)
-    const metadata = await stat(target.path)
-    if (!metadata.isFile() && !metadata.isDirectory())
-      throw new ArtifactError('VALIDATION_FAILED')
-    const current = await this.#fileAccess.resolve(this.#requireVisibleArtifact(id))
-    if (current.root !== target.root || current.path !== target.path)
-      throw new ArtifactError('DIRECTORY_NOT_AUTHORIZED')
-    return { path: target.path, kind: metadata.isDirectory() ? 'directory' : 'file' }
+    const target = await resolveArtifactFile(artifact)
+    return { path: target.path, kind: target.kind }
   }
 
   async resolveMedia(id: string) {
     const artifact = this.#requireVisibleArtifact(id)
-    if (artifact.kind !== 'file' || !this.#fileAccess)
-      throw new ArtifactError('DIRECTORY_NOT_AUTHORIZED')
-    const target = await this.#fileAccess.resolve(artifact)
-    const preview = await resolveMediaPreview(target.root, target.path, isImageMimeType(artifact.mimeType) ? { mimeType: artifact.mimeType } : {})
-    const current = await this.#fileAccess.resolve(this.#requireVisibleArtifact(id))
-    if (current.root !== preview.root || current.path !== preview.path)
-      throw new ArtifactError('DIRECTORY_NOT_AUTHORIZED')
-    return preview
+    const target = await resolveArtifactFile(artifact)
+    if (target.kind !== 'file')
+      throw new FileReadError('FILE_UNSUPPORTED')
+    return resolveMediaFile(target.root, target.path, isImageMimeType(artifact.mimeType) ? { mimeType: artifact.mimeType } : {})
   }
 
   async readText(id: string): Promise<{
@@ -433,21 +407,16 @@ export class ArtifactService {
     if (
       artifact.kind !== 'file'
       || (!isTextArtifact(artifact.mimeType) && !['text/markdown', 'image/svg+xml'].includes(inferArtifactMimeType(artifact.name)))
-      || artifact.sizeBytes > BUDDY_ARTIFACT_TEXT_BYTES_LIMIT
     ) {
-      throw new ArtifactError('VALIDATION_FAILED')
+      throw new FileReadError('FILE_UNSUPPORTED')
     }
-    const bytes = await readFile(artifact.currentPath).catch((error: NodeJS.ErrnoException) => {
-      throw error.code === 'ENOENT' || error.code === 'ENOTDIR' ? new ArtifactError('FILE_NOT_FOUND') : error
-    })
-    if (bytes.byteLength > BUDDY_ARTIFACT_TEXT_BYTES_LIMIT)
-      throw new ArtifactError('ARTIFACT_SIZE_LIMIT')
+    const bytes = await readArtifactFile(artifact, BUDDY_ARTIFACT_TEXT_BYTES_LIMIT)
     let text: string
     try {
       text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
     }
     catch {
-      throw new ArtifactError('VALIDATION_FAILED')
+      throw new FileReadError('FILE_UNSUPPORTED')
     }
     return {
       artifactId: artifact.id,
@@ -475,13 +444,11 @@ export class ArtifactService {
           })
     const images = await Promise.all(selected.map(async (artifact): Promise<ImageContent> => {
       access.signal?.throwIfAborted()
-      await this.#fileAccess?.resolve(artifact)
       const location = await resolveGrantedPath(access.grants, resolve(access.cwd, artifact.currentPath), 'existing')
       if (location.canonicalPath !== artifact.currentPath)
         throw new ArtifactError('DIRECTORY_NOT_AUTHORIZED')
       const bytes = await readBoundedFile(location.root, location.canonicalPath, BUDDY_ARTIFACT_TOTAL_BYTES_LIMIT, access.signal)
       await runNativeImage(bytes, { operation: 'validate', options: { mimeType: artifact.mimeType } }, access.signal)
-      await this.#fileAccess?.resolve(artifact)
       return { data: bytes.toString('base64'), mimeType: artifact.mimeType, type: 'image' }
     }))
     return { images, records: selected }
@@ -577,18 +544,6 @@ function extensionForImageMimeType(mimeType: string): string {
   if (!extension)
     throw new ArtifactError('VALIDATION_FAILED')
   return extension
-}
-
-function isSensitivePath(path: string): boolean {
-  return path.split('/').some((segment) => {
-    const name = segment.toLowerCase()
-    const extension = extname(name)
-    const isEnv = name === '.env' || name.startsWith('.env.')
-    const isTemplate = /\.(?:example|sample|template|defaults?|dist|schema)$/i.test(name)
-    return (isEnv && !isTemplate)
-      || ['.credential', '.key', '.p12', '.pem'].includes(extension)
-      || ['id_dsa', 'id_ecdsa', 'id_ed25519', 'id_rsa'].includes(name)
-  })
 }
 
 export function inferArtifactMimeType(path: string): string {

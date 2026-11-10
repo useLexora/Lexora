@@ -5,6 +5,7 @@ import { createInjectionState } from '@vueuse/core'
 import { useMessage } from 'naive-ui'
 import { onScopeDispose } from 'vue'
 import { translateBuddy } from '@/i18n/buddyI18n'
+import { resolveFileErrorKey } from '@/shared/lib/filePreviewError'
 import { createArtifactActions } from '../../state/artifacts/createArtifactActions'
 
 const [useProvideArtifactActions, injectArtifactActions] = createInjectionState((options: ArtifactActionsOptions & { language: () => BuddyLocale }) => {
@@ -20,9 +21,9 @@ const [useProvideArtifactActions, injectArtifactActions] = createInjectionState(
       try {
         await actions.execute(action, artifact)
       }
-      catch {
+      catch (error) {
         if (!disposed && task === options.task() && draftId === task?.workspace.composer.draftId.value)
-          message.error(translateBuddy(options.language(), `desktop.artifacts.${action}Failed`))
+          message.error(translateBuddy(options.language(), resolveFileErrorKey(error) ?? `desktop.artifacts.${action}Failed`))
       }
     },
   }

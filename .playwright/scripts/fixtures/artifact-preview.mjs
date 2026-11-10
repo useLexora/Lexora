@@ -17,7 +17,7 @@ export async function withArtifactPreview(buddy, options, verify) {
     requests.push(JSON.parse(Buffer.concat(chunks).toString('utf8')))
     const publishing = requests.length === 1
     const delta = publishing
-      ? { tool_calls: [{ index: 0, id: 'present-fixtures', type: 'function', function: { name: 'lexora_output_present', arguments: JSON.stringify({ paths: names }) } }] }
+      ? { tool_calls: [{ index: 0, id: 'present-fixtures', type: 'function', function: { name: 'lexora_output_present', arguments: JSON.stringify({ paths: options.bindDirectory === false ? names.map(name => path.join(directory, name)) : names }) } }] }
       : { content: ['Preview fixtures are ready.', options.markdown].filter(Boolean).join('\n\n') }
     const common = { id: 'preview-fixture', model: 'preview-fixture', object: 'chat.completion.chunk', created: 1 }
     response.writeHead(200, { 'content-type': 'text/event-stream' })
@@ -51,12 +51,14 @@ export async function withArtifactPreview(buddy, options, verify) {
     }, directory)
     await page.reload()
     await expect(page.locator('.desktop-workbench-area__tasks .tiptap:visible')).toBeVisible()
-    await page.locator('[data-row-key="section:spaces"] .desktop-task-sidebar__section-add').dispatchEvent('click')
-    const dialog = page.locator('.desktop-space-dialog')
-    await dialog.getByPlaceholder('输入空间名称').fill('文件产物验收')
-    await dialog.getByRole('button', { name: '选择目录', exact: true }).click()
-    await dialog.getByRole('button', { name: '确定', exact: true }).click()
-    await expect(dialog).toBeHidden()
+    if (options.bindDirectory !== false) {
+      await page.locator('[data-row-key="section:spaces"] .desktop-task-sidebar__section-add').dispatchEvent('click')
+      const dialog = page.locator('.desktop-space-dialog')
+      await dialog.getByPlaceholder('输入空间名称').fill('文件产物验收')
+      await dialog.getByRole('button', { name: '选择目录', exact: true }).click()
+      await dialog.getByRole('button', { name: '确定', exact: true }).click()
+      await expect(dialog).toBeHidden()
+    }
     await page.locator('.desktop-workbench-area__tasks .tiptap:visible').fill('Present the prepared files.')
     await page.getByRole('button', { name: '发送消息', exact: true }).click()
     const outputs = page.locator('.buddy-artifact-collection__item')

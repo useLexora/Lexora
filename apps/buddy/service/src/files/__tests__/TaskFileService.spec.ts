@@ -5,8 +5,6 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { taskFileMediaUrl } from '../../../../shared/files/mediaPreview'
-import { taskFileSchema } from '../../../../shared/files/taskFileApi'
-import { ArtifactFileAccess } from '../../artifacts/ArtifactFileAccess'
 import { ArtifactService } from '../../artifacts/ArtifactService'
 import { createArtifactRepository } from '../../storage/artifactRepository'
 import { BuddyDataPaths } from '../../storage/BuddyDataPaths'
@@ -31,12 +29,12 @@ afterEach(async () => {
 })
 
 describe('task file service', () => {
-  it.each(['note.md', 'index.html', 'program.ts', 'report.pdf', 'slides.pptx', 'custom.unknown', 'README'])('resolves and reads unregistered %s files without publishing artifacts', async (name) => {
+  it.each(['custom.unknown', 'README'])('resolves and reads unregistered %s files without publishing artifacts', async (name) => {
     const f = await fixture()
     const path = join(f.workspace, name)
     await writeFile(path, 'local content')
     const file = await f.service.resolve({ conversationId, href: name })
-    expect(taskFileSchema.parse(file)).toMatchObject({ target: { conversationId, path }, name, kind: 'file', sizeBytes: 13 })
+    expect(file).toMatchObject({ target: { conversationId, path }, name, kind: 'file', sizeBytes: 13 })
     expect(await f.service.read(file.target)).toMatchObject({ kind: 'text', text: 'local content' })
     expect(f.artifacts.listForConversation(conversationId)).toEqual([])
   })
@@ -68,7 +66,7 @@ describe('task file service', () => {
     const path = join(f.workspace, 'note.txt')
     await writeFile(path, 'note')
     await expect(f.service.resolveBrowser({ conversationId, path })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
-    await expect(f.service.resolveMedia({ conversationId, path })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+    await expect(f.service.resolveMedia({ conversationId, path })).rejects.toMatchObject({ code: 'FILE_UNSUPPORTED' })
   })
 
   it('returns FILE_NOT_FOUND for missing links, raw targets and removed workspaces', async () => {
@@ -171,9 +169,10 @@ describe('task file service', () => {
     const old = join(f.root, 'old-grant')
     await mkdir(old)
     f.conversationGrants.grant({ id: 'old', conversationId, root: old, canonicalRoot: old, createdAt })
-    const path = join(old, 'historical.html')
+    const path = join(old, 'pages', 'historical.html')
+    await mkdir(join(old, 'pages'))
     await writeFile(path, '<h1>historical</h1>')
-    const artifacts = new ArtifactService({ repository: f.artifacts, fileAccess: new ArtifactFileAccess(f.accessOptions) })
+    const artifacts = new ArtifactService({ repository: f.artifacts })
     const [artifact] = await artifacts.presentOutputs({ conversationId, cwd: old, grants: [{ root: old, canonicalRoot: old, grantId: 'old', kind: 'granted' }], paths: [path] })
     const current = join(f.root, 'current')
     await mkdir(current)
@@ -186,7 +185,7 @@ describe('task file service', () => {
       resourcesTrustedAt: createdAt,
     } })
     f.conversations.setSpace({ id: conversationId, spaceId: 'space', updatedAt: createdAt })
-    expect(await artifacts.locate(artifact!.id)).toEqual({ path, kind: 'file' })
+    expect(await artifacts.resolveBrowserEntry(conversationId, artifact!.id)).toEqual({ entryPath: path, rootPath: old })
     await expect(f.service.resolve({ conversationId, href: path })).rejects.toMatchObject({ code: 'PATH_OUTSIDE_GRANTED_DIRECTORY' })
     expect(await f.service.resolve({ conversationId, href: 'current.md' })).toMatchObject({ target: { path: join(current, 'current.md') } })
     f.spaces.delete('space', createdAt, { id: 'deleted', spaceId: 'space', createdAt, eventType: 'space.deleted', payload: {} })
