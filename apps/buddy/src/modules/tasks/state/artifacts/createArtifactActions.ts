@@ -41,15 +41,24 @@ export function createArtifactActions(options: ArtifactActionsOptions) {
     const resourceId = await composer.selectSource(source, draftId)
     if (!resourceId || options.task() !== task || referenceTask(conversationId) !== task
       || composer.draftId.value !== draftId || composer.editorKey.value !== editorKey || session.activeBranchId.value !== branchId) {
-      return
+      return false
     }
     const content = composer.composerContent.value
     composer.updateComposerContent(composer.draft.value, {
       ...content,
       attrs: { ...content.attrs, panelResourceIds: [...new Set([...content.attrs?.panelResourceIds ?? [], resourceId])] },
     })
+    return true
+  }
+  async function referenceArtifact(artifact: LocalArtifact) {
+    const task = referenceTask(artifact.conversationId)
+    if (!task)
+      throw new Error('ARTIFACT_REFERENCE_UNAVAILABLE')
+    return reference(artifact.conversationId, { artifactId: artifact.artifactId, conversationId: artifact.conversationId, branchId: task.workspace.session.activeBranchId.value! })
   }
   return {
+    referenceSource: reference,
+    referenceArtifact,
     canReference: (artifact: LocalArtifact) => !!referenceTask(artifact.conversationId),
     canReferenceFile: (conversationId: string) => !!referenceTask(conversationId),
     referenceFile: (conversationId: string, path: string) => reference(conversationId, { localPath: path }),
@@ -68,10 +77,7 @@ export function createArtifactActions(options: ArtifactActionsOptions) {
         options.resources.locateFile(target, artifact.kind, { conversationId: artifact.conversationId, runId: artifact.runId })
         return
       }
-      const task = referenceTask(artifact.conversationId)
-      if (!task)
-        throw new Error('ARTIFACT_REFERENCE_UNAVAILABLE')
-      await reference(artifact.conversationId, { artifactId: artifact.artifactId, conversationId: artifact.conversationId, branchId: task.workspace.session.activeBranchId.value! })
+      await referenceArtifact(artifact)
     },
   }
 }

@@ -17,28 +17,32 @@ const FILE_PROTOCOL = 'lexora-file'
 
 export const attachmentSchemePrivileges: Electron.CustomScheme[] = [ATTACHMENT_PROTOCOL, ARTIFACT_PROTOCOL, FILE_PROTOCOL].map(scheme => ({
   scheme,
-  privileges: { secure: true, standard: true, stream: true, supportFetchAPI: true, corsEnabled: scheme === ARTIFACT_PROTOCOL },
+  privileges: { secure: true, standard: true, stream: true, supportFetchAPI: true, corsEnabled: scheme === ARTIFACT_PROTOCOL || scheme === ATTACHMENT_PROTOCOL },
 }))
 
 export function installAttachmentProtocol(runtime: BuddyServiceSupervisor): () => void {
   const fileReader = resolveBuddyFileReader({ appPath: app.getAppPath(), isPackaged: app.isPackaged, resourcesPath: process.resourcesPath })
   const developmentUrl = resolveDevelopmentRendererUrl(process.env.ELECTRON_RENDERER_URL, app.isPackaged)
   const rendererOrigin = developmentUrl ? new URL(developmentUrl).origin : 'lexora-app://renderer'
-  const installPreviewProtocol = (
-    scheme: string,
-    idKey: 'artifactId' | 'attachmentId',
-    method: 'artifacts.resolvePreview' | 'attachments.resolvePreview',
-    schema: typeof artifactsRequestSchemas.artifactPreview | typeof attachmentsRequestSchemas.attachmentPreview,
-  ) => protocol.handle(scheme, async (request) => {
-    if (scheme === ARTIFACT_PROTOCOL && ['media', 'preview'].includes(new URL(request.url).hostname)) {
-      const response = await handleMediaRequest(request, runtime, fileReader)
-      if (request.method === 'HEAD' && request.headers.get('origin') === rendererOrigin) {
+  function allowRendererRead(handler: (request: Request) => Promise<Response>) {
+    return async (request: Request) => {
+      const response = await handler(request)
+      if (request.headers.get('origin') === rendererOrigin) {
         response.headers.set('access-control-allow-origin', rendererOrigin)
         response.headers.set('access-control-expose-headers', 'x-lexora-error-code')
         response.headers.set('vary', 'Origin')
       }
       return response
     }
+  }
+  const installPreviewProtocol = (
+    scheme: string,
+    idKey: 'artifactId' | 'attachmentId',
+    method: 'artifacts.resolvePreview' | 'attachments.resolvePreview',
+    schema: typeof artifactsRequestSchemas.artifactPreview | typeof attachmentsRequestSchemas.attachmentPreview,
+  ) => protocol.handle(scheme, allowRendererRead(async (request) => {
+    if (scheme === ARTIFACT_PROTOCOL && ['media', 'preview'].includes(new URL(request.url).hostname))
+      return handleMediaRequest(request, runtime, fileReader)
     if (request.method !== 'GET')
       return new Response(null, { status: 405 })
 
@@ -83,7 +87,7 @@ export function installAttachmentProtocol(runtime: BuddyServiceSupervisor): () =
     catch {
       return new Response(null, { status: 404 })
     }
-  })
+  }))
 
   void installPreviewProtocol(
     ATTACHMENT_PROTOCOL,

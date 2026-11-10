@@ -57,10 +57,10 @@ describe('artifact card actions', () => {
     const f = fixture()
     const pending = Promise.withResolvers<string>()
     f.pending(pending.promise)
-    const request = f.actions.execute('reference', artifact)
+    const request = f.actions.referenceArtifact(artifact)
     f.content.value = { ...f.content.value, attrs: { ...f.content.value.attrs, panelResourceIds: ['existing', 'newer'] } }
     pending.resolve('resource')
-    await request
+    expect(await request).toBe(true)
     expect(f.selected).toEqual([{ source: { artifactId: 'artifact', conversationId: 'conversation', branchId: 'branch' }, draftId: 'draft' }])
     expect(f.content.value).toEqual({
       type: 'doc',
@@ -73,11 +73,22 @@ describe('artifact card actions', () => {
     const f = fixture()
     const pending = Promise.withResolvers<string>()
     f.pending(pending.promise)
-    const request = f.actions.execute('reference', artifact)
+    const request = f.actions.referenceArtifact(artifact)
     ;({ draft: f.draftId, editor: f.editorKey, branch: f.branchId })[identity].value = 'changed'
     pending.resolve('late')
-    await request
+    expect(await request).toBe(false)
     expect(f.content.value.attrs?.panelResourceIds).toEqual(['existing'])
+  })
+
+  it.each([{ attachmentId: 'attachment' }, { resourceId: 'message-resource' }])('references a message image without replacing the draft: %o', async (resource) => {
+    const f = fixture()
+    const source = { conversationId: 'conversation', branchId: 'branch', messageId: 'message', ...resource }
+    const before = f.content.value
+    expect(await f.actions.referenceSource('conversation', source)).toBe(true)
+    expect(f.selected).toEqual([{ source, draftId: 'draft' }])
+    expect(f.content.value).toEqual({ ...before, attrs: { ...before.attrs, panelResourceIds: ['existing', 'resource'] } })
+    await expect(f.actions.referenceSource('other', { ...source, conversationId: 'other' })).rejects.toThrow('ARTIFACT_REFERENCE_UNAVAILABLE')
+    expect(f.content.value.attrs?.panelResourceIds).toEqual(['existing', 'resource'])
   })
 
   it('locates only the bound target without changing selection on failure', async () => {

@@ -15,6 +15,7 @@ import BuddyImagePreview from '@/shared/ui/media/BuddyImagePreview.vue'
 import ResourceSelectionQuoteMenu from '@/shared/ui/selection/ResourceSelectionQuoteMenu.vue'
 import { useResourceQuoteReveal } from '@/shared/ui/selection/useResourceQuoteReveal'
 import { useResourceSelectionQuote } from '@/shared/ui/selection/useResourceSelectionQuote'
+import { useArtifactActions } from '../artifacts/artifactActionsContext'
 import { artifactMediaKind } from './artifactContextPresentation'
 import DesktopArtifactToolbar from './DesktopArtifactToolbar.vue'
 import { useArtifactPreview } from './useArtifactPreview'
@@ -30,6 +31,8 @@ const props = defineProps<{
 }>()
 const viewMode = defineModel<ArtifactViewMode>('viewMode', { required: true })
 const opening = useFileOpening()
+const artifactActions = useArtifactActions()
+const referenceImage = computed(() => artifactActions ? () => artifactActions.referenceArtifact(props.artifact) : undefined)
 const provider = computed(() => {
   const selected = props.providerId
     ? opening?.snapshot.value.providers.find(provider => provider.id === props.providerId && provider.available)
@@ -88,6 +91,8 @@ watch(textPreview, selection.close, { flush: 'sync' })
       v-model:show="previewOpen"
       :language="language"
       :sources="previewSources"
+      :names="[artifact.name]"
+      :reference-image="referenceImage"
     />
 
     <div class="desktop-artifact-context-surface__viewport grid min-w-0 min-h-0 flex-1 overflow-auto bg-subtle p-4 place-items-center" :class="{ 'desktop-artifact-context-surface__viewport--document': (textPreview && (!image || viewMode === 'source')) || mediaKind }">
