@@ -48,6 +48,7 @@ export function useMcpSettingsCapability(options: {
           if (!disposed) {
             connectors.value = value
             loaded.value = true
+            error.value = null
           }
         }
         catch (cause) {
