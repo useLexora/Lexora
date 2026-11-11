@@ -166,9 +166,9 @@ function sync() {
   closeRequests.reconcile()
   props.layout.invalidate()
 }
-function assertClipboardFocus(frame: Frame) {
+function assertFocusedView(frame: Frame, errorCode: string) {
   if (!frame.visible || !frame.surface.visible || !frame.surface.eligible || !frame.surface.active || !frame.surface.ready || frame.surface.error || isOverlay(frame.surface) || document.visibilityState !== 'visible' || !document.hasFocus() || document.activeElement !== frame.element)
-    throw new Error('EXTENSION_CLIPBOARD_UNAVAILABLE')
+    throw new Error(errorCode)
 }
 async function receive(event: MessageEvent) {
   const data = event.data
@@ -204,7 +204,9 @@ async function receive(event: MessageEvent) {
   let ok = false
   try {
     if (data.method === 'clipboard.read' || data.method === 'clipboard.write')
-      assertClipboardFocus(frame)
+      assertFocusedView(frame, 'EXTENSION_CLIPBOARD_UNAVAILABLE')
+    if (data.method === 'taskCleanup.delete')
+      assertFocusedView(frame, 'EXTENSION_TASK_CLEANUP_UNAVAILABLE')
     if ((['resources.pickFiles', 'resources.pickDirectory', 'resources.beginSave', 'documents.pick', 'references.add', 'references.capture', 'references.commit'].includes(data.method) || (data.method === 'documents.beginWrite' && data.params?.mode === 'saveAs')) && (!frame.visible || document.visibilityState !== 'visible' || !document.hasFocus()))
       throw new Error('EXTENSION_RESOURCE_PICKER_UNAVAILABLE')
     if (data.method === 'events.snapshot') {
@@ -229,7 +231,7 @@ async function receive(event: MessageEvent) {
     if (frames.get(data.token) !== frame || frame.surface.session !== session)
       return
     if (data.method === 'clipboard.read')
-      assertClipboardFocus(frame)
+      assertFocusedView(frame, 'EXTENSION_CLIPBOARD_UNAVAILABLE')
     if (data.method === 'bootstrap' && value && typeof value === 'object') {
       projections.refresh(frame)
       const { snapshot, ...eventCursor } = frame.projection.synchronization

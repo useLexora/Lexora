@@ -104,6 +104,13 @@ const resources = computed<ReviewResource[]>(() => {
       ].join(english.value ? ' ' : ''),
     },
     {
+      key: 'legacyTaskCleanup',
+      title: english.value ? 'Legacy removed tasks' : '旧版已移除任务',
+      icon: Document20Regular,
+      operations: [{ key: 'delete', label: english.value ? 'Read metadata and delete' : '读取元数据与删除', permissions: p.legacyTaskCleanup ? ['legacyTaskCleanup'] : [] }],
+      scope: english.value ? 'Read metadata of tasks removed by older versions and permanently clean them up after host confirmation. Cannot delete active tasks or arbitrary files. Deletion cannot be undone.' : '读取旧版已移除任务的元数据，经宿主确认后永久清理；不允许删除活动任务或任意文件。删除后不可恢复。',
+    },
+    {
       key: 'data',
       title: english.value ? 'Bound data sources' : '绑定范围的数据源',
       icon: Document20Regular,

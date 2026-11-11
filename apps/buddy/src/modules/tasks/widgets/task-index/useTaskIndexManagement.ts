@@ -10,7 +10,7 @@ export interface TaskIndexManagementOptions {
   spaces: Readonly<Ref<readonly LocalSpace[]>>
   getUntitledLabel: () => string
   onCreateSpace: (input: TaskSpaceInput) => Promise<boolean>
-  onDeleteTask: (conversationId: string) => void
+  onDeleteTask: (conversationId: string, expectedRevision: number) => void
   onDeleteSpace: (spaceId: string) => void
   onNewTask: (spaceId: string) => void
   onOpenSpaceDirectory: (spaceId: string) => void
@@ -48,7 +48,7 @@ export function useTaskIndexManagement(options: TaskIndexManagementOptions) {
   }
 
   function requestTaskDelete(conversation: LocalConversation) {
-    taskDeleteTarget.value = conversation
+    taskDeleteTarget.value = { ...conversation }
   }
 
   function confirmTaskRename() {
@@ -61,9 +61,10 @@ export function useTaskIndexManagement(options: TaskIndexManagementOptions) {
   }
 
   function confirmTaskDelete() {
-    if (!taskDeleteTarget.value)
+    const target = taskDeleteTarget.value
+    if (!target || target.metadataRevision === undefined)
       return
-    options.onDeleteTask(taskDeleteTarget.value.id)
+    options.onDeleteTask(target.id, target.metadataRevision)
     taskDeleteTarget.value = null
   }
 

@@ -382,7 +382,10 @@ export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: s
       return
     let prepared = !destination.prepareInput
     try {
-      const task = await pool.open(resource)
+      const opened = controller.layout.views[id]
+      if (!opened)
+        return
+      const task = await pool.open(opened.resource)
       if (!destination.signal?.aborted && controller.layout.views[id] && version === routeVersion) {
         if (destination.prepareInput) {
           prepared = await destination.prepareInput(id)

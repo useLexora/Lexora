@@ -57,6 +57,7 @@ export interface UseTaskCapabilityOptions {
   questionInteraction?: ReturnType<typeof createUserQuestionInteractionState>
   buddyCatalog?: Readonly<Ref<BuddyCatalog | null>>
   index: TaskIndexController
+  initialConversation?: LocalConversation | null
   initialTarget: { draftKey?: string, conversationId: string | null, branchId: string | null, spaceId: string | null }
   api: LexoraDesktopApi
   applicationSettings: ApplicationSettings
@@ -215,6 +216,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     openConversation,
     refreshBranches,
   } = useChatConversations({
+    initialConversation: options.initialConversation,
     api: api.localChat,
     taskIndexData,
     clearError: () => errorMessage.value = null,
@@ -373,7 +375,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     resolvingApprovalIds,
   } = useChatApprovals({
     api: api.localChat,
-    approvals,
+    approvals: computed(() => activeConversation.value?.archivedAt ? [] : approvals.value),
     onError: setError,
     refresh: runSync.refreshActiveConversation,
   })
@@ -458,6 +460,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     selection: taskModels,
   })
   const execution = useChatExecution({
+    archived: computed(() => !!activeConversation.value?.archivedAt),
     branchActiveRun: computed(() => runs.value.find(run => run.status === 'queued' || run.status === 'running') ?? null),
     actorInput,
     getNewBuddyId: () => activeConversationId.value ? undefined : draftBuddyId.value ?? undefined,
@@ -465,7 +468,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     activeRun,
     approvalPolicy: permissionSettingsState.approvalPolicy,
     api: api.localChat,
-    canSendDraft: computed(() => !isSelectingBuddy.value && !isClosing.value && workspacePersistence.restorationState.value === 'ready' && composerModelInputIssue.value === null),
+    canSendDraft: computed(() => !activeConversation.value?.archivedAt && !isSelectingBuddy.value && !isClosing.value && workspacePersistence.restorationState.value === 'ready' && composerModelInputIssue.value === null),
     taskIndexData,
     session: chatSession,
     drafts,
@@ -516,7 +519,8 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     return pending
   })
   const canUpdatePermissionSettings = computed(() => (
-    permissionSettingsState.canUpdate.value
+    !activeConversation.value?.archivedAt
+    && permissionSettingsState.canUpdate.value
     && !isSending.value
     && !isMutatingBranch.value
   ))

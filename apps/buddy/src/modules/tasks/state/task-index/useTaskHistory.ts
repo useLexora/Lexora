@@ -51,6 +51,12 @@ export function useTaskHistory(api: Pick<LocalChatApi['conversations'], 'listHis
   function merge(items: readonly LocalConversationHistoryItem[]) {
     for (const item of items) {
       const id = item.conversation.id
+      if (item.conversation.archivedAt || item.conversation.deletedAt) {
+        entries.delete(id)
+        signatures.delete(id)
+        attentionIds.delete(id)
+        continue
+      }
       const signature = JSON.stringify(item)
       if (signatures.get(id) === signature)
         continue
@@ -369,7 +375,7 @@ export function useTaskHistory(api: Pick<LocalChatApi['conversations'], 'listHis
     if (disposed)
       return Promise.resolve()
     const previous = entries.get(conversation.id)
-    if (previous && !conversation.deletedAt
+    if (previous && !conversation.deletedAt && !conversation.archivedAt
       && previous.conversation.spaceId === conversation.spaceId
       && previous.conversation.updatedAt === conversation.updatedAt
       && previous.conversation.activeBranchId === conversation.activeBranchId) {
@@ -382,7 +388,7 @@ export function useTaskHistory(api: Pick<LocalChatApi['conversations'], 'listHis
     invalidateScope(conversation.spaceId)
     if (previous) {
       invalidateScope(previous.conversation.spaceId)
-      if (conversation.deletedAt) {
+      if (conversation.deletedAt || conversation.archivedAt) {
         entries.delete(conversation.id)
         signatures.delete(conversation.id)
         attentionIds.delete(conversation.id)
@@ -446,7 +452,10 @@ export function useTaskHistory(api: Pick<LocalChatApi['conversations'], 'listHis
     ensureScope: spaceId => readScope(getScope(spaceId)),
     loadMore: spaceId => readScope(getScope(spaceId), true),
     setActiveTask,
-    search: (query, cursor) => api.listHistory({ kind: 'search', query, limit: 50, ...(cursor ? { cursor } : {}) }),
+    async search(query, cursor) {
+      const page = await api.listHistory({ kind: 'search', query, limit: 50, ...(cursor ? { cursor } : {}) })
+      return { ...page, items: page.items.filter(item => !item.conversation.archivedAt && !item.conversation.deletedAt) }
+    },
     recordAnchor: (section, value) => anchors.value = { ...anchors.value, [section]: value },
   }
   return { history, conversations: readonly(conversations), markStates: readonly(markStates), dispose, applyConversation, applyMarkState, ensureConversation, refreshAttention, refreshConversations, setPinnedIds, updateConversationBranch }

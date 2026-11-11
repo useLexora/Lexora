@@ -17,6 +17,7 @@ const ioMethods = new Set([
   'resources.commitSave',
   'resources.cancelSave',
   'themes.request',
+  'taskCleanup.delete',
   'documents.pick',
   'documents.open',
   'documents.resume',

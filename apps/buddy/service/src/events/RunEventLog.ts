@@ -81,6 +81,15 @@ export class RunEventLogClosedError extends Error {
   }
 }
 
+export class RunEventPurgeInProgressError extends Error {
+  readonly code = 'CONVERSATION_BUSY'
+
+  constructor() {
+    super('Task event history is being removed')
+    this.name = 'RunEventPurgeInProgressError'
+  }
+}
+
 export class RunEventLog implements RunEventLogPort {
   readonly #nextSequences = new Map<string, number>()
   readonly #maintenance: RunEventMaintenanceService
@@ -96,6 +105,7 @@ export class RunEventLog implements RunEventLogPort {
   readonly #queries: RunEventQueryPort
   readonly #store: RunEventStorePort
   readonly #tails = new Map<string, Promise<void>>()
+  readonly #purging = new Set<string>()
   #compactionTail: Promise<void> = Promise.resolve()
   #closePromise: Promise<void> | null = null
   #closed = false
@@ -350,8 +360,30 @@ export class RunEventLog implements RunEventLogPort {
     }
   }
 
+  async withConversationPurge<T>(conversationId: string, operation: () => Promise<T>): Promise<T> {
+    this.#assertMutationAllowed()
+    const runIds = this.#queries.listRunIds(conversationId)
+    if (runIds.some(id => this.#purging.has(id)))
+      throw new RunEventPurgeInProgressError()
+    for (const id of runIds)
+      this.#purging.add(id)
+    try {
+      await Promise.all(runIds.map(id => this.#tails.get(id)))
+      const result = await operation()
+      for (const id of runIds) {
+        this.#nextSequences.delete(id)
+        this.#quarantined.delete(id)
+      }
+      return result
+    }
+    finally {
+      for (const id of runIds)
+        this.#purging.delete(id)
+    }
+  }
+
   compactTerminalRun(runId: string): Promise<number> {
-    const result = this.#compactionTail.then(() => this.#enqueueMutation(runId, () => this.#compactTerminalRun(runId)))
+    const result = this.#compactionTail.then(() => this.#purging.has(runId) ? 0 : this.#enqueueMutation(runId, () => this.#compactTerminalRun(runId)))
     this.#compactionTail = result.then(() => undefined, () => undefined)
     return result
   }
@@ -665,6 +697,8 @@ export class RunEventLog implements RunEventLogPort {
   #enqueue<T>(runId: string, operation: () => Promise<T>): Promise<T> {
     if (this.#closed)
       return Promise.reject(new RunEventLogClosedError())
+    if (this.#purging.has(runId))
+      return Promise.reject(new RunEventPurgeInProgressError())
     buddyRunIdSchema.parse(runId)
     const previous = this.#tails.get(runId) ?? Promise.resolve()
     const result = previous.catch(() => {}).then(operation)

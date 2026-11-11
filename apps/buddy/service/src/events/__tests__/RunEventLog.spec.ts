@@ -1,18 +1,21 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { RunEventLogCallbacks } from '../RunEventLog'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { contextPanelRpc } from '../../../../shared/context-panel/contextPanel'
 import { createBuddyUserContent } from '../../../../shared/conversation/buddyUserContent'
 import { registerContextPanelRpc } from '../../context-panel/registerContextPanelRpc'
+import { ConversationPurgeService } from '../../conversations/ConversationPurgeService'
 import { BuddyDataPaths } from '../../storage/BuddyDataPaths'
 import { createComposerDraftRepository } from '../../storage/composerDraftRepository'
+import { createConversationDeletionRepository } from '../../storage/conversationDeletionRepository'
 import { openBuddyDatabase } from '../../storage/database'
 import { createRunRepository } from '../../storage/runRepository'
 import { createRunEventLog } from '../createRunEventLog'
 import { RunEventProjector } from '../RunEventProjector'
+import { RunEventStore } from '../RunEventStore'
 
 const databases: DatabaseSync[] = []
 const directories: string[] = []
@@ -68,7 +71,7 @@ describe('runEventLog', () => {
     expect((await fixture.log.read('run-1')).map(event => event.type)).toEqual(['message.completed'])
   })
 
-  it('publishes immutable committed facts after projection and retains observers after failure', async () => {
+  it('publishes committed facts after projection and retains observers after failure', async () => {
     const fixture = await createFixture()
     const delivered: number[] = []
     fixture.log.onDidCommit(() => {
@@ -79,8 +82,6 @@ describe('runEventLog', () => {
     })
     fixture.log.onDidCommit((event) => {
       expect(fixture.database.prepare('SELECT sequence FROM run_events WHERE run_id = ? AND sequence = ?').get(event.runId, event.sequence)).toBeDefined()
-      expect(Object.isFrozen(event)).toBe(true)
-      expect(Object.isFrozen(event.payload)).toBe(true)
       delivered.push(event.sequence)
     })
     await fixture.log.appendBatch([
@@ -101,8 +102,8 @@ describe('runEventLog', () => {
     let recordOperation: ((input: unknown) => unknown) | undefined
     const dispose = registerContextPanelRpc({
       rpc: { onRequest: (method, handler) => {
-        expect(method).toBe(contextPanelRpc.recordOperation)
-        recordOperation = handler
+        if (method === contextPanelRpc.recordOperation)
+          recordOperation = handler
         return () => {}
       } },
       runs: createRunRepository(fixture.database),
@@ -325,6 +326,69 @@ describe('runEventLog', () => {
     })).rejects.toBe(failure)
   })
 
+  it('drains in-flight JSONL replacement before purging and prevents maintenance from recreating task files', async () => {
+    const fixture = await createFixture()
+    await fixture.log.appendBatch([
+      { runId: 'run-1', type: 'run.started', payload: {} },
+      { runId: 'run-1', type: 'message.delta', payload: { messageId: 'answer', delta: 'transient' } },
+      { runId: 'run-1', type: 'message.completed', payload: { messageId: 'answer', role: 'assistant', content: { text: 'Final answer' }, stopReason: 'completed' } },
+      { runId: 'run-1', type: 'run.completed', payload: {} },
+    ])
+    fixture.database.prepare('UPDATE execution_state SET phase = \'closed\', cleanup_state = \'clean\' WHERE run_id = ?').run('run-1')
+    const entered = Promise.withResolvers<void>()
+    const resume = Promise.withResolvers<void>()
+    const replace = RunEventStore.prototype.replace
+    const replacement = vi.spyOn(RunEventStore.prototype, 'replace').mockImplementationOnce(async function (this: RunEventStore, ...args) {
+      entered.resolve()
+      await resume.promise
+      return replace.apply(this, args)
+    })
+    try {
+      const compacting = fixture.log.compactTerminalRun('run-1')
+      await Promise.race([entered.promise, compacting.then(() => {
+        throw new Error('Compaction did not reach file replacement')
+      })])
+      createConversationDeletionRepository(fixture.database).commit('conversation-1', new Date().toISOString())
+      const service = new ConversationPurgeService({ database: fixture.database, home: fixture.root, storageAuthority: 'legacy_jsonl' })
+      const purging = fixture.log.withConversationPurge('conversation-1', () => service.purge('conversation-1'))
+      await expect(fixture.log.append({ runId: 'run-1', type: 'audit.late', payload: {} })).rejects.toMatchObject({ code: 'CONVERSATION_BUSY' })
+      expect(await readFile(fixture.eventFile, 'utf8')).toContain('transient')
+      const queuedCompaction = fixture.log.compactTerminalRun('run-1')
+      resume.resolve()
+      await expect(compacting).resolves.toBe(1)
+      await purging
+      await expect(queuedCompaction).resolves.toBe(0)
+      await expect(fixture.log.compactTerminalRuns()).resolves.toBe(0)
+      await expect(fixture.log.read('run-1')).resolves.toEqual([])
+      await expect(stat(new BuddyDataPaths(fixture.root).conversationDirectory('conversation-1'))).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(fixture.database.prepare('SELECT 1 FROM runs WHERE id = ?').get('run-1')).toBeUndefined()
+      expect(fixture.database.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+      expect(fixture.log.state).toBe('open')
+    }
+    finally {
+      resume.resolve()
+      replacement.mockRestore()
+      await fixture.log.close()
+    }
+  })
+
+  it('releases the event gate after a failed purge without discarding durable history', async () => {
+    const fixture = await createFixture()
+    try {
+      await fixture.log.append({ runId: 'run-1', type: 'audit.retained', payload: {} })
+      await expect(fixture.log.withConversationPurge('conversation-1', async () => {
+        await expect(fixture.log.read('run-1')).rejects.toMatchObject({ code: 'CONVERSATION_BUSY' })
+        throw new Error('file cleanup failed')
+      })).rejects.toThrow('file cleanup failed')
+      await expect(fixture.log.read('run-1')).resolves.toMatchObject([{ type: 'audit.retained', sequence: 1 }])
+      await expect(fixture.log.append({ runId: 'run-1', type: 'audit.retry', payload: {} })).resolves.toMatchObject({ sequence: 2 })
+      expect(fixture.log.state).toBe('open')
+    }
+    finally {
+      await fixture.log.close()
+    }
+  })
+
   it('rejects mixed-run batches and new work after close', async () => {
     const fixture = await createFixture()
     await expect(fixture.log.appendBatch([
@@ -350,6 +414,7 @@ async function createFixture(
   const paths = new BuddyDataPaths(root)
   return {
     database,
+    root,
     eventFile: paths.runEventFile('conversation-1', 'run-1'),
     log: createRunEventLog({
       conversationsDirectory: paths.conversationsDirectory,

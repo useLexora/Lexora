@@ -20,6 +20,7 @@ import type {
 } from '../../shared/conversation/composerResource'
 import type { LocalContextUsageSnapshot, LocalContextUsageSnapshotRequest } from '../../shared/conversation/contextApi'
 import type { ConversationListFilter, ConversationModelControls, ConversationTimelineChangeNotice, LocalConversation, LocalConversationBranch, LocalConversationMember, LocalConversationSummary, LocalConversationTimelinePage, LocalMessagePage } from '../../shared/conversation/conversationApi'
+import type { ConversationArchivePage, ConversationArchivePolicy, ConversationArchiveQuery } from '../../shared/conversation/conversationArchiveApi'
 import type { ConversationHistoryQuery, LocalConversationHistoryItem, LocalConversationHistoryPage } from '../../shared/conversation/conversationHistoryApi'
 import type { ConversationNodeDetailRequest, LocalConversationTree } from '../../shared/conversation/conversationTree'
 import type { LocalTaskMark, LocalTaskMarkState, TaskMarkClearInput, TaskMarkInput, TaskMarkReadInput } from '../../shared/conversation/taskMarkApi'
@@ -168,6 +169,13 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   connectorsSetCredential: 'lexora:buddy:connectors:set-credential',
   connectorsConfirmExecution: 'lexora:buddy:connectors:confirm-execution',
   connectorsUpsert: 'lexora:buddy:connectors:upsert',
+  conversationsDeletePermanently: 'lexora:buddy:conversations:delete-permanently',
+  conversationsArchive: 'lexora:buddy:conversations:archive',
+  conversationsRestoreArchive: 'lexora:buddy:conversations:restore-archive',
+  conversationsDeleteArchived: 'lexora:buddy:conversations:delete-archived',
+  conversationsListArchived: 'lexora:buddy:conversations:list-archived',
+  conversationsGetArchivePolicy: 'lexora:buddy:conversations:get-archive-policy',
+  conversationsSetArchivePolicy: 'lexora:buddy:conversations:set-archive-policy',
   conversationsDelete: 'lexora:buddy:conversations:delete',
   conversationsActivateBranch: 'lexora:buddy:conversations:activate-branch',
   conversationsGet: 'lexora:buddy:conversations:get',
@@ -509,6 +517,13 @@ export interface LocalChatApi {
     getHistoryEntries: (ids: readonly string[]) => Promise<readonly LocalConversationHistoryItem[]>
     get: (conversationId: string) => Promise<LocalConversation>
     getModelControls: (conversationId: string, actorId?: string) => Promise<ConversationModelControls>
+    deletePermanently: (conversationId: string, expectedRevision: number) => Promise<boolean>
+    archive: (conversationId: string, expectedRevision: number) => Promise<boolean>
+    restoreArchive: (conversationId: string, expectedRevision: number) => Promise<boolean>
+    deleteArchived: (conversationId: string, expectedRevision: number) => Promise<boolean>
+    listArchived: (query: ConversationArchiveQuery) => Promise<ConversationArchivePage>
+    getArchivePolicy: () => Promise<ConversationArchivePolicy>
+    setArchivePolicy: (days: ConversationArchivePolicy['days']) => Promise<ConversationArchivePolicy>
     delete: (conversationId: string) => Promise<boolean>
     activateBranch: (input: {
       branchId: string

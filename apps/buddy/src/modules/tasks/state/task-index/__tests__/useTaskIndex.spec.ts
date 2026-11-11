@@ -34,6 +34,7 @@ function fixture() {
     activeBranchId: 'branch',
     spaceId: null,
     deletedAt: null,
+    metadataRevision: 4,
     createdAt: '2026-09-18T00:00:00Z',
     updatedAt: '2026-09-18T00:00:00Z',
     approvalPolicy: 'policy',
@@ -60,7 +61,9 @@ function fixture() {
       savedSpaces = [space()]
       return savedSpaces[0]
     }, delete: async () => ({ ok: true }), selectDirectory: async () => null, revealFile: async () => {} },
-    conversations: { onChanged: () => () => {}, list: async () => savedTasks, listHistory: async (query: ConversationHistoryQuery) => ({ items: savedTasks.filter(task => query.kind === 'attention' ? task.activity !== 'idle' : task.activity === 'idle').map(historyItem), nextCursor: null }), getHistoryEntries: async (ids: readonly string[]) => savedTasks.filter(task => ids.includes(task.id)).map(historyItem), delete: async (id: string) => {
+    conversations: { onChanged: () => () => {}, list: async () => savedTasks, listHistory: async (query: ConversationHistoryQuery) => ({ items: savedTasks.filter(task => query.kind === 'attention' ? task.activity !== 'idle' : task.activity === 'idle').map(historyItem), nextCursor: null }), getHistoryEntries: async (ids: readonly string[]) => savedTasks.filter(task => ids.includes(task.id)).map(historyItem), deletePermanently: async (id: string, expectedRevision: number) => {
+      if (savedTasks.find(task => task.id === id)?.metadataRevision !== expectedRevision)
+        throw new Error('CONVERSATION_REVISION_CONFLICT')
       savedTasks = savedTasks.filter(task => task.id !== id)
       return true
     } },
@@ -85,7 +88,9 @@ function fixture() {
     selectDefaultModel() {},
     spaceId,
   }))!
-  return { index, changeSpace(value: LocalSpace, revision: number) {
+  return { index, reviseTask() {
+    savedTasks = savedTasks.map(task => ({ ...task, metadataRevision: 5 }))
+  }, changeSpace(value: LocalSpace, revision: number) {
     savedSpaces = [value]
     for (const listener of spaceListeners) listener({ sourceId: 'source', spaceId: value.id, kind: 'updated', revision })
   }, creation, draftId, errors, owner, persistWorkspaceState, listSpaces, scope, paneScope, spaceId, beforeDelete, deleted, activity(value: LocalConversationSummary['activity']) {
@@ -129,12 +134,24 @@ describe('shared task index ownership', () => {
     const f = fixture()
     await f.index.initialize()
     f.beforeDelete.mockResolvedValueOnce(false)
-    await f.index.index.deleteTask('task')
+    await f.index.index.deleteTask('task', 4)
     expect(f.index.index.tasks.value.map(task => task.id)).toEqual(['task'])
     expect(f.deleted).toEqual([])
-    await f.index.index.deleteTask('task')
+    await f.index.index.deleteTask('task', 4)
     expect(f.index.index.tasks.value).toEqual([])
     expect(f.deleted).toEqual(['task'])
+  })
+  it('keeps the confirmed revision when closing working copies changes the task', async () => {
+    const f = fixture()
+    await f.index.initialize()
+    f.beforeDelete.mockImplementationOnce(async () => {
+      f.reviseTask()
+      return true
+    })
+    await f.index.index.deleteTask('task', 4)
+    expect(f.index.index.tasks.value.map(task => task.id)).toEqual(['task'])
+    expect(f.deleted).toEqual([])
+    expect(f.index.errorMessage.value).not.toBeNull()
   })
   it('retains a successful update when the subsequent index refresh fails', async () => {
     const f = fixture()

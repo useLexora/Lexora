@@ -85,7 +85,7 @@ export default {
   'desktop.automations.history.today': 'Today',
   'desktop.automations.history.yesterday': 'Yesterday',
   'desktop.automations.history.deleteTitle': 'Delete run record?',
-  'desktop.automations.history.deleteMessage': 'This “{name}” run, its task, and its notification will be deleted.',
+  'desktop.automations.history.deleteMessage': 'Permanently delete this “{name}” run, its task and notification, including the task-owned workspace and attachment copies. This cannot be undone. External directories and their files are not affected.',
   'desktop.automations.blocked.space': 'The space directory is unavailable. Repair access, then resume this plan.',
   'desktop.automations.blocked.model': 'The pinned model is unavailable. Repair the model, then resume this plan.',
   'desktop.automations.editor.modelUnavailable': 'The pinned model is unavailable. Select another model or use the default model.',

@@ -41,6 +41,7 @@ export interface ConversationMetadataServiceOptions {
     applyPermissionSettings?: (conversation: ConversationRecord) => Promise<{ pending: number, degraded: number }>
     refreshModelSelection?: (runId: string) => void
   }
+  assertWritable?: (conversationId: string) => void
   onObserverError?: (error: unknown) => void
 }
 
@@ -63,7 +64,7 @@ export class ConversationMetadataService {
   }
 
   rename(input: RenameConversationInput): ConversationRecord {
-    this.#requireActive(input.id)
+    this.#requireWritable(input.id)
     const conversation = this.#options.repository.rename(input)
     this.#publish('title', conversation)
     return conversation
@@ -72,6 +73,10 @@ export class ConversationMetadataService {
   renameGenerated(input: RenameConversationInput & { expectedRevision: number, userInitiated?: boolean }): ConversationRecord | null {
     if (this.#disposed)
       throw new BuddyServiceError('VALIDATION_FAILED')
+    const current = this.#options.repository.findById(input.id)
+    if (!current || current.deletedAt || current.archivedAt)
+      return null
+    this.#options.assertWritable?.(input.id)
     const conversation = this.#options.repository.renameGenerated(input)
     if (conversation)
       this.#publish('title', conversation)
@@ -84,7 +89,7 @@ export class ConversationMetadataService {
 
   async #setPermissionSettings(input: Omit<SetConversationPermissionSettingsInput, 'updatedAt'>): Promise<ConversationRecord> {
     const { id, approvalPolicy, executionProfile } = input
-    const current = this.#requireActive(id)
+    const current = this.#requireWritable(id)
     if (current.approvalPolicy === approvalPolicy && current.executionProfile === executionProfile) {
       await this.#applyPermissions(id)
       return current
@@ -99,26 +104,26 @@ export class ConversationMetadataService {
   }
 
   listMembers(conversationId: string) {
-    this.#requireActive(conversationId)
+    this.#requireReadable(conversationId)
     return this.#options.repository.listMembers(conversationId).map(({ actorId, joinedAt }) => ({ actorId, joinedAt }))
   }
 
   addMember(input: { id: string, buddyId: string }) {
-    this.#requireActive(input.id)
+    this.#requireWritable(input.id)
     this.#options.repository.addMember({ ...input, updatedAt: new Date().toISOString() })
     this.#publish('buddy', this.#requireActive(input.id))
     return this.listMembers(input.id)
   }
 
   removeMember(input: { id: string, buddyId: string }) {
-    this.#requireActive(input.id)
+    this.#requireWritable(input.id)
     this.#options.repository.removeMember({ ...input, updatedAt: new Date().toISOString() })
     this.#publish('buddy', this.#requireActive(input.id))
     return this.listMembers(input.id)
   }
 
   setBuddy(input: { id: string, buddyId: string }): ConversationRecord {
-    const current = this.#requireActive(input.id)
+    const current = this.#requireWritable(input.id)
     const conversation = this.#options.repository.setBuddy({ ...input, updatedAt: new Date().toISOString() })
     if (!conversation)
       throw new BuddyServiceError('VALIDATION_FAILED')
@@ -136,6 +141,7 @@ export class ConversationMetadataService {
     const spaces = this.#options.spaces
     if (!moves || !spaces)
       throw new BuddyServiceError('VALIDATION_FAILED')
+    this.#options.assertWritable?.(input.id)
     return moves.mutations.run(input.id, async () => {
       const current = this.#requireActive(input.id)
       requireActiveSpace(spaces.findById(input.spaceId))
@@ -170,11 +176,11 @@ export class ConversationMetadataService {
   }
 
   getModelControls(conversationId: string, actorId?: string) {
-    const conversation = this.#requireActive(conversationId)
+    const conversation = this.#requireReadable(conversationId)
     const nextActorId = actorId ?? conversation.buddyId
     const run = this.#options.runs?.findActiveForConversation(conversationId, nextActorId)
     const buddy = this.#options.buddies?.get(nextActorId)
-    if (buddy && (buddy.kind !== 'actor' || !buddy.enabled || buddy.deletedAt))
+    if (!conversation.archivedAt && buddy && (buddy.kind !== 'actor' || !buddy.enabled || buddy.deletedAt))
       throw new BuddyServiceError('BUDDY_NOT_ACTOR')
     const member = this.#options.repository.findMember(conversationId, nextActorId)
     return {
@@ -201,11 +207,11 @@ export class ConversationMetadataService {
     const id = input.id
     const actorId = input.actorId ?? this.#targetRunActor(input.runId, id) ?? this.#requireActive(id).buddyId
     this.#targetRunActor(input.runId, id, actorId)
-    this.#requireActive(id)
+    this.#requireWritable(id)
     if (!input.runId && !this.#options.repository.findMember(id, actorId))
       throw new BuddyServiceError('VALIDATION_FAILED')
     const resolved = input.modelSelection === null ? null : await this.#options.resolveModelSelection({ ...input.modelSelection })
-    const current = this.#requireActive(id)
+    const current = this.#requireWritable(id)
     const selection: ConversationModelSelection | null = resolved === null
       ? null
       : {
@@ -260,7 +266,7 @@ export class ConversationMetadataService {
   }
 
   activateBranch(input: { conversationId: string, branchId: string }): ConversationRecord {
-    const current = this.#requireActive(input.conversationId)
+    const current = this.#requireWritable(input.conversationId)
     if (current.activeBranchId === input.branchId)
       return current
     const conversation = this.#options.repository.activateBranch({ ...input, updatedAt: new Date().toISOString() })
@@ -289,7 +295,19 @@ export class ConversationMetadataService {
     return pending.promise
   }
 
+  #requireWritable(id: string): ConversationRecord {
+    this.#options.assertWritable?.(id)
+    return this.#requireActive(id)
+  }
+
   #requireActive(id: string): ConversationRecord {
+    const conversation = this.#requireReadable(id)
+    if (conversation.archivedAt)
+      throw new BuddyServiceError('VALIDATION_FAILED')
+    return conversation
+  }
+
+  #requireReadable(id: string): ConversationRecord {
     const conversation = this.#options.repository.findById(id)
     if (this.#disposed || !conversation || conversation.deletedAt !== null)
       throw new BuddyServiceError('VALIDATION_FAILED')

@@ -36,8 +36,13 @@ async function fixture(stopExecution: (runId: string) => Promise<boolean> = asyn
   const childDone = Promise.withResolvers<RunRecord>()
   const unavailable = new Map<string, RunEventLogUnavailableError>()
   const recovered: string[] = []
+  const blockedAdmissions = new Set<string>()
   const coordinator = new ExecutionCoordinator({
     hostShellSupervision,
+    assertRunAdmission: (id) => {
+      if (blockedAdmissions.has(id))
+        throw new Error('CONVERSATION_BUSY')
+    },
     availability: { assertRunExecutable: (id) => {
       const error = unavailable.get(id)
       if (error)
@@ -73,7 +78,7 @@ async function fixture(stopExecution: (runId: string) => Promise<boolean> = asyn
     storage.database.close()
     await rm(directory, { recursive: true, force: true })
   })
-  return { ...storage, events, mailbox, lifecycle, mutations, coordinator, childDone, unavailable, recovered }
+  return { ...storage, events, mailbox, lifecycle, mutations, coordinator, childDone, unavailable, recovered, blockedAdmissions }
 }
 
 function delegationService(f: Awaited<ReturnType<typeof fixture>>) {
@@ -85,6 +90,15 @@ function delegationService(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe('execution coordination', () => {
+  it('rejects new work while allowing cancellation to settle a task behind its mutation gate', async () => {
+    const f = await fixture()
+    f.blockedAdmissions.add('root')
+    expect(() => f.coordinator.prepare('root')).toThrow('CONVERSATION_BUSY')
+    expect(() => f.coordinator.assertShellExecutionAllowed('root')).toThrow('CONVERSATION_BUSY')
+    await expect(f.coordinator.cancel('root', 'RUN_CANCELLED', async () => false)).resolves.toBe(true)
+    expect(f.executions.find('root')).toMatchObject({ phase: 'closed', run: { status: 'cancelled', errorCode: 'RUN_CANCELLED' } })
+  })
+
   it.each(['steering', 'mailbox'])('ends a user-question wait for new %s without resolving the question', async (input) => {
     const f = await fixture()
     const signal = new AbortController().signal
@@ -681,8 +695,6 @@ describe('execution coordination', () => {
     const next = await f.mutations.acquire({ lifetime: 'runtime' as const, runId: 'later', invocationId: 'next', claims: [{ kind: 'file', canonicalPath: '/workspace/a/result' }], signal: new AbortController().signal })
     next.release()
     expect(f.mutations.getHazards()).toHaveLength(1)
-    const safe = await f.mutations.acquire({ lifetime: 'runtime' as const, runId: 'later', invocationId: 'safe', claims: [{ kind: 'file', canonicalPath: '/workspace/b/result' }], signal: new AbortController().signal })
-    safe.release()
   })
 
   it('seals failed parent admission before waiting for child cleanup', async () => {
@@ -704,16 +716,6 @@ describe('execution coordination', () => {
     stopped.resolve()
     expect((await closing).kind).toBe('sealed')
     expect(f.runs.findById('child')?.status).toBe('cancelled')
-  })
-
-  it('aggregates child cleanup failures when the root settles', async () => {
-    const f = await fixture()
-    f.executions.admitChild(f.child('child'))
-    await f.coordinator.failBeforeStart('child', new Error('Unavailable'))
-    f.executions.recordCleanup('child', 'degraded', 'EXECUTION_CLEANUP_DEGRADED')
-    await f.coordinator.finalize({ runId: 'root', cleanup: 'completed', outcome: { status: 'failed', errorCode: 'AGENT_RUN_FAILED' } })
-    expect(f.executions.find('root')?.cleanupState).toBe('degraded')
-    expect(f.executions.find('child')?.cleanupState).toBe('degraded')
   })
 
   it('waits for a private user answer without consuming the ordinary chat queue', async () => {

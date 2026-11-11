@@ -7,6 +7,7 @@ import type { TaskIndexData } from '@/modules/tasks/state/task-index/useTaskInde
 import { computed, onScopeDispose, readonly, shallowRef, watch } from 'vue'
 
 interface UseChatConversationsOptions {
+  initialConversation?: LocalConversation | null
   api: { conversations: Pick<LocalChatApi['conversations'], 'get' | 'listBranches' | 'listMessages'> }
   taskIndexData: Pick<TaskIndexData, 'applyConversation' | 'conversations' | 'refreshIndex'>
   clearError: () => void
@@ -32,7 +33,7 @@ export function useChatConversations(options: UseChatConversationsOptions) {
   onScopeDispose(() => {
     disposed = true
   })
-  const openedConversation = shallowRef<LocalConversation | null>(null)
+  const openedConversation = shallowRef<LocalConversation | null>(options.initialConversation ?? null)
   watch(() => options.taskIndexData.conversations.value.find(
     conversation => conversation.id === options.session.activeConversationId.value,
   ), (conversation) => {

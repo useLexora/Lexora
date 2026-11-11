@@ -17,6 +17,7 @@ import { combineSpeechBackends } from '../../../platform/speech/combineSpeechBac
 import { ThemeService } from '../../../platform/themes/ThemeService'
 import { artifactsRpc } from '../../../shared/artifacts/artifactApi'
 import { CONVERSATION_CHANGED, conversationSchema } from '../../../shared/conversation/conversationApi'
+import { conversationCleanupRpc } from '../../../shared/conversation/conversationCleanupApi'
 import { extensionActionRpc } from '../../../shared/extensions/extensionActionApi'
 import { extensionAgentRpc } from '../../../shared/extensions/extensionAgent'
 import { extensionJsonSchema } from '../../../shared/extensions/extensionApi'
@@ -177,6 +178,10 @@ export class DesktopIntegrations {
       getDownloadSettings: () => runtime.config?.downloads,
       notificationsEnabled: () => runtime.config?.desktop.notificationsEnabled ?? true,
       conditionRuntime: async (input, signal) => extensionConditionSnapshotRpc.response.parse(await service.request(extensionConditionSnapshotRpc.method, input, { signal, timeoutMs: 5000 })),
+      conversationCleanup: {
+        list: async input => conversationCleanupRpc.list.response.parse(await service.request(conversationCleanupRpc.list.method, input)),
+        delete: async input => conversationCleanupRpc.delete.response.parse(await service.request(conversationCleanupRpc.delete.method, input, { timeoutMs: null })),
+      },
       taskActions: async () => extensionActionRpc.list.response.parse(await service.request(extensionActionRpc.list.method, {})),
       invokeTaskAction: async input => extensionActionRpc.invoke.response.parse(await service.request(extensionActionRpc.invoke.method, input, { timeoutMs: null })),
       modelsChanged: () => service.notify(extensionChatRpc.changed, {}),

@@ -8,6 +8,7 @@ export const settingsPageRenderers: Record<Exclude<BuiltinSettingsCategory, 'gen
   'speech': defineAsyncComponent(() => import('./DesktopSpeechSettingsView.vue')),
   'pet': defineAsyncComponent(() => import('./DesktopPetSettingsView.vue')),
   'shortcuts': defineAsyncComponent(() => import('./DesktopShortcutsSettingsView.vue')),
+  'task-archive': defineAsyncComponent(() => import('./DesktopTaskArchiveSettingsView.vue')),
   'models': defineAsyncComponent(() => import('./DesktopModelsSettingsView.vue')),
   'prompts': defineAsyncComponent(() => import('./DesktopPromptsSettingsView.vue')),
   'runtime': defineAsyncComponent(() => import('./DesktopRuntimeSettingsView.vue')),

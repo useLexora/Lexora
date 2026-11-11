@@ -7,13 +7,31 @@ import { buddyUserContentToText, createBuddyUserContent } from '@buddy-shared/co
 import { buddyComposerDraftModelSelectionSchema } from '@buddy-shared/conversation/composerDraft'
 import { deferred } from '@buddy-tests/deferred'
 import { describe, expect, it, vi } from 'vitest'
-import { computed } from 'vue'
+import { computed, shallowReactive } from 'vue'
 import { chatComposerDocumentToUserContent, createChatComposerContentFromText } from '@/modules/prompt-input'
 import { useChatSession } from '@/modules/tasks/state/conversations/useChatSession'
 import { useChatDrafts } from '@/modules/tasks/state/drafts/useChatDrafts'
 import { useTaskWorkspacePersistence } from '../useTaskWorkspacePersistence'
 
 describe('workspace Draft persistence', () => {
+  it('opens archived history without creating or saving a draft and restores editing only after unarchive', async () => {
+    const archived = { ...createConversation('workspace_write'), archivedAt: '2026-11-01T00:00:00.000Z' }
+    const scope = { kind: 'conversation_branch' as const, conversationId: archived.id, branchId: 'branch-1' }
+    const fixture = await createFixture({ initialConversation: archived, confirmedContent: 'preserved unsent draft', confirmedScope: scope })
+    expect(fixture.persistence.restorationState.value).toBe('ready')
+    expect(await fixture.persistence.flushPending()).toBe(true)
+    expect(fixture.opens).toEqual([])
+    expect(fixture.saves).toEqual([])
+    expect(buddyUserContentToText(fixture.runtimeDraft(scopeKey(scope))!.content)).toBe('preserved unsent draft')
+
+    fixture.conversations.set(archived.id, { ...archived, archivedAt: null })
+    await vi.waitFor(() => expect(fixture.drafts.draft.value).toBe('preserved unsent draft'))
+    expect(fixture.persistence.restorationState.value).toBe('ready')
+    expect(fixture.opens.map(input => input.scope)).toEqual([scope])
+    expect(fixture.saves).toEqual([])
+    fixture.persistence.dispose()
+  })
+
   it.each(['ready', 'open'] as const)('retries a failed initial %s without writing an empty Draft or confirming exit', async (operation) => {
     let failing = true
     const failInitially = async () => {
@@ -321,25 +339,7 @@ describe('workspace Draft persistence', () => {
     expect(fixture.drafts.isPersisted(fixture.drafts.snapshot('global'))).toBe(true)
   })
 
-  it('keeps unsaved editor state after failure and retries the latest value', async () => {
-    let fail = true
-    const fixture = await createFixture({ beforeSave: async () => {
-      if (fail)
-        throw new Error('storage unavailable')
-    } })
-    updateText(fixture.drafts, 'unsaved')
-
-    expect(await fixture.persistence.persist()).toBe(false)
-    expect(fixture.drafts.draft.value).toBe('unsaved')
-    expect(fixture.errors).toHaveLength(1)
-    fail = false
-    updateText(fixture.drafts, 'latest retry')
-
-    expect(await fixture.persistence.flushPending()).toBe(true)
-    expect(buddyUserContentToText(fixture.runtimeDraft('global')!.content)).toBe('latest retry')
-  })
-
-  it('preserves the dirty draft and revision when saving and reading both fail', async () => {
+  it('preserves the dirty draft and revision when saving and reading both fail, then retries the latest edit', async () => {
     let failing = true
     const unavailable = async () => {
       if (failing)
@@ -356,18 +356,40 @@ describe('workspace Draft persistence', () => {
     expect(fixture.runtimeDraft('global')?.content).toEqual(createBuddyUserContent('previously saved'))
     expect(fixture.errors).toHaveLength(1)
     failing = false
-    expect(await fixture.persistence.persist()).toBe(true)
-    expect(fixture.runtimeDraft('global')?.content).toEqual(content)
+    const latest = { ...createBuddyUserContent('latest retry'), panelResourceIds: content.panelResourceIds }
+    fixture.drafts.setUserContent(latest)
+    expect(await fixture.persistence.flushPending()).toBe(true)
+    expect(fixture.runtimeDraft('global')?.content).toEqual(latest)
     fixture.persistence.dispose()
   })
 
-  it('hydrates the latest Runtime-confirmed Draft after a renderer restart', async () => {
-    const fixture = await createFixture({ confirmedContent: 'confirmed before restart' })
-
-    expect(fixture.drafts.draft.value).toBe('confirmed before restart')
-    expect(fixture.drafts.draftId.value).toBe('runtime-confirmed-draft')
-    expect(fixture.drafts.isPersisted(fixture.drafts.snapshot('global'))).toBe(true)
-    expect(fixture.saves).toEqual([])
+  it.each([false, true])('compares recovered local input with the persisted base before resuming saves (changed=%s)', async (changed) => {
+    const previous = await createFixture({ confirmedContent: 'persisted base' })
+    previous.drafts.setUserContent(createBuddyUserContent('local input before crash'))
+    const snapshot = previous.drafts.snapshot('global')
+    const owner = { serviceId: 'service', profileId: 'profile', dataGeneration: 'generation', deviceId: 'desktop' }
+    const writes: unknown[] = []
+    const fixture = await createFixture({
+      hydrate: false,
+      confirmedContent: changed ? 'changed on service' : 'persisted base',
+      draftRecovery: {
+        load: async () => ({ owner, records: [{ owner, sequence: 1, snapshot }] }),
+        write: async (value) => { writes.push(value) },
+        remove: async () => {},
+      },
+    })
+    expect(await fixture.persistence.restore()).toBe(!changed)
+    expect(fixture.drafts.draft.value).toBe('local input before crash')
+    if (changed) {
+      expect(fixture.persistence.restorationState.value).toBe('conflict')
+      expect(fixture.saves).toEqual([])
+      expect(fixture.persistence.restorationConflict.value?.remote.content).toEqual(createBuddyUserContent('changed on service'))
+    }
+    else {
+      expect(fixture.saves).toHaveLength(1)
+      expect(fixture.runtimeDraft('global')?.content).toEqual(createBuddyUserContent('local input before crash'))
+      expect(writes).toEqual(expect.arrayContaining([expect.objectContaining({ snapshot: expect.objectContaining({ revision: 1 }) })]))
+    }
   })
 
   it('does not write navigation or Draft state before hydration succeeds', async () => {
@@ -380,6 +402,8 @@ describe('workspace Draft persistence', () => {
 })
 
 async function createFixture(options: {
+  initialConversation?: LocalConversation
+  draftRecovery?: NonNullable<LocalChatApi['draftRecovery']>
   afterSave?: () => void
   beforeGet?: () => Promise<void>
   beforeOpen?: (input: LocalComposerDraftOpen) => Promise<void>
@@ -391,13 +415,17 @@ async function createFixture(options: {
   confirmedScope?: BuddyComposerDraftScope
 } = {}) {
   const draftsByScope = new Map<string, LocalComposerDraft>()
-  const conversations = new Map<string, LocalConversation>()
+  const conversations = shallowReactive(new Map<string, LocalConversation>())
   const draftsById = new Map<string, LocalComposerDraft>()
   const saves: LocalComposerDraftSave[] = []
   const opens: LocalComposerDraftOpen[] = []
   const errors: unknown[] = []
   let scheduleSave = () => {}
   const session = useChatSession()
+  if (options.initialConversation) {
+    conversations.set(options.initialConversation.id, options.initialConversation)
+    session.activateConversation(options.initialConversation)
+  }
   const drafts = useChatDrafts({
     onChange: () => scheduleSave(),
     targetKey: computed(() => session.activeConversationId.value && session.activeBranchId.value
@@ -459,7 +487,7 @@ async function createFixture(options: {
     draftsById.set(confirmed.draftId, confirmed)
   }
   const draftPersistence = useTaskWorkspacePersistence({
-    api: { composerDrafts },
+    api: { composerDrafts, draftRecovery: options.draftRecovery },
     beforePersist: options.beforePersist,
     getConversation: id => conversations.get(id) ?? null,
     drafts,

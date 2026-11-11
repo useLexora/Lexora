@@ -3,6 +3,7 @@ import { chatRequestSchemas, chatRpc } from '../../../shared/conversation/chatAp
 import { chatQueueRpc } from '../../../shared/conversation/chatQueueApi'
 import { contextRequestSchemas, contextRpc } from '../../../shared/conversation/contextApi'
 import { conversationRequestSchemas, conversationsRpc } from '../../../shared/conversation/conversationApi'
+import { conversationArchiveRpc } from '../../../shared/conversation/conversationArchiveApi'
 import { conversationHistoryRpc } from '../../../shared/conversation/conversationHistoryApi'
 import { conversationTreeRpc } from '../../../shared/conversation/conversationTree'
 import { LOCAL_WORKSPACE_STATE_KEY, workspaceRequestSchemas, workspaceStateRpc } from '../../../shared/conversation/workspaceApi'
@@ -35,6 +36,14 @@ export function registerConversationIpc(context: LocalChatIpcContext): void {
 
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsGet, (_event, input) => request(conversationsRpc.get, conversationRequestSchemas.conversationId.parse(input)))
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsGetModelControls, (_event, input) => request(conversationsRpc.getModelControls, conversationRequestSchemas.modelControls.parse(input)))
+
+  handle(LOCAL_CHAT_IPC_CHANNELS.conversationsDeletePermanently, (_event, input) => request(conversationArchiveRpc.deletePermanently, conversationArchiveRpc.deletePermanently.input.parse(input)))
+  handle(LOCAL_CHAT_IPC_CHANNELS.conversationsArchive, (_event, input) => request(conversationArchiveRpc.archive, conversationArchiveRpc.archive.input.parse(input)))
+  handle(LOCAL_CHAT_IPC_CHANNELS.conversationsRestoreArchive, (_event, input) => request(conversationArchiveRpc.restoreArchive, conversationArchiveRpc.restoreArchive.input.parse(input)))
+  handle(LOCAL_CHAT_IPC_CHANNELS.conversationsDeleteArchived, (_event, input) => request(conversationArchiveRpc.deleteArchived, conversationArchiveRpc.deleteArchived.input.parse(input)))
+  handle(LOCAL_CHAT_IPC_CHANNELS.conversationsListArchived, (_event, input) => request(conversationArchiveRpc.listArchived, conversationArchiveRpc.listArchived.input.parse(input)))
+  handle(LOCAL_CHAT_IPC_CHANNELS.conversationsGetArchivePolicy, () => request(conversationArchiveRpc.getArchivePolicy, {}))
+  handle(LOCAL_CHAT_IPC_CHANNELS.conversationsSetArchivePolicy, (_event, input) => request(conversationArchiveRpc.setArchivePolicy, conversationArchiveRpc.setArchivePolicy.input.parse(input)))
 
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsDelete, (_event, input) => request(conversationsRpc.delete, conversationRequestSchemas.conversationId.parse(input)))
 

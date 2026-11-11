@@ -61,6 +61,7 @@ const SUPPORTED_IMAGE_MIME_TYPES = new Set(
 const textExtensions = new Set<string>(BUDDY_TEXT_ATTACHMENT_EXTENSIONS)
 
 export interface AttachmentServiceOptions {
+  assertConversationWritable?: (conversationId: string) => void
   paths: BuddyDataPaths
   readFile?: AttachmentFileReader
   repository: AttachmentRepository
@@ -121,11 +122,13 @@ export class AttachmentService {
   readonly #paths: BuddyDataPaths
   readonly #readFile: AttachmentFileReader
   readonly #repository: AttachmentRepository
+  readonly #assertConversationWritable?: (conversationId: string) => void
 
   constructor(options: AttachmentServiceOptions) {
     this.#paths = options.paths
     this.#readFile = options.readFile ?? readFile
     this.#repository = options.repository
+    this.#assertConversationWritable = options.assertConversationWritable
   }
 
   registerFiles(draftId: string, paths: readonly string[], limits = { count: BUDDY_ATTACHMENT_COUNT_LIMIT, errorCode: 'VALIDATION_FAILED', totalBytes: BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT }): Promise<AttachmentRecord[]> {
@@ -179,7 +182,10 @@ export class AttachmentService {
 
   prepareMessageAttachments(input: { attachmentIds: readonly string[], conversationId: string, draftId: string, messageId: string }): Promise<PreparedMessageAttachments> {
     const owned = { ...input, attachmentIds: [...input.attachmentIds] }
-    return this.#storage(() => this.#prepareMessageAttachments(owned))
+    return this.#storage(() => {
+      this.#assertConversationWritable?.(owned.conversationId)
+      return this.#prepareMessageAttachments(owned)
+    })
   }
 
   release(ids: readonly string[]): Promise<string[]> {
@@ -193,6 +199,10 @@ export class AttachmentService {
 
   reconcileStorage(): Promise<AttachmentStorageReconciliation> {
     return this.#storage(() => this.#reconcileStorage())
+  }
+
+  withStorageScope<T>(operation: () => Promise<T>): Promise<T> {
+    return this.#storage(operation)
   }
 
   async dispose(): Promise<void> {

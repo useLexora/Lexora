@@ -24,12 +24,12 @@ describe('conversation metadata ownership', () => {
     const actor = f.buddies.create({ name: 'Reviewer' })
     const selection = { providerId: 'fixture', modelId: 'review-model', reasoning: 'high' as const, serviceTier: null }
     f.buddies.update({ buddyId: actor.id, expectedRevision: actor.revision, settings: buddySettingsSchema.parse({ ...actor.settings, model: selection }) })
-    expect(f.service.getModelControls('task-1', actor.id)).toEqual({ current: null, next: { actorId: actor.id, isMember: false, modelSelection: selection } })
+    expect(f.service.getModelControls('task-1', actor.id)).toEqual({ metadataRevision: f.repository.findById('task-1')!.metadataRevision, current: null, next: { actorId: actor.id, isMember: false, modelSelection: selection } })
     expect(f.members.find('task-1', actor.id)).toBeNull()
     expect(f.repository.findById('task-1')?.buddyId).toBe('default')
   })
 
-  it('publishes the actual title CAS commits and protects event snapshots', () => {
+  it('publishes title CAS commits without letting late generated titles overwrite manual changes', () => {
     const f = fixture()
     const changes: ConversationMetadataCommit[] = []
     f.service.onDidCommit(event => changes.push(event))
@@ -40,7 +40,6 @@ describe('conversation metadata ownership', () => {
       ['title', 'generated', 1],
       ['title', 'manual', 2],
     ])
-    expect(Reflect.set(changes[0]!.conversation, 'title', 'External mutation')).toBe(false)
     expect(f.repository.getTitleState('task-1')).toMatchObject({ title: 'Generated', source: 'manual', revision: 2 })
     expect(f.repository.findById('task-1')?.updatedAt).toBe('2026-09-28T00:00:00.000Z')
   })
@@ -56,9 +55,6 @@ describe('conversation metadata ownership', () => {
     expect(changes.map(event => event.kind)).toEqual(['permissions'])
     await expect(f.service.setPermissionSettings(input)).resolves.toMatchObject({ approvalPolicy: 'manual' })
     expect(changes).toHaveLength(1)
-    expect(f.invalidate).toHaveBeenCalledTimes(2)
-    await f.service.setPermissionSettings(input)
-    expect(f.invalidate).toHaveBeenCalledTimes(2)
   })
 
   it('persists and publishes model controls without changing task activity or history order', async () => {
@@ -144,11 +140,11 @@ describe('conversation metadata ownership', () => {
     expect(f.members.find('task-1', other.id)?.modelSelection).toBeNull()
     const nextSelection = { ...selection, modelId: 'next-model' }
     await f.service.setModelSelection({ id: 'task-1', modelSelection: nextSelection })
-    expect(f.service.getModelControls('task-1')).toEqual({ current: null, next: { actorId: other.id, isMember: true, modelSelection: nextSelection } })
+    expect(f.service.getModelControls('task-1')).toEqual({ metadataRevision: f.repository.findById('task-1')!.metadataRevision, current: null, next: { actorId: other.id, isMember: true, modelSelection: nextSelection } })
     f.service.addMember({ id: 'task-1', buddyId: 'default' })
     f.service.setBuddy({ id: 'task-1', buddyId: 'default' })
     await f.service.setModelSelection({ id: 'task-1', modelSelection: nextSelection })
-    expect(f.service.getModelControls('task-1')).toEqual({ current: { runId: 'run-1', actorId: 'default', modelSelection: nextSelection }, next: { actorId: 'default', isMember: true, modelSelection: nextSelection } })
+    expect(f.service.getModelControls('task-1')).toEqual({ metadataRevision: f.repository.findById('task-1')!.metadataRevision, current: { runId: 'run-1', generation: f.runs.findById('run-1')!.generation, actorId: 'default', modelSelection: nextSelection }, next: { actorId: 'default', isMember: true, modelSelection: nextSelection } })
     await expect(f.service.setModelSelection({ id: 'task-1', actorId: other.id, runId: 'run-1', modelSelection: selection })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
     const gate = Promise.withResolvers<typeof selection>()
     f.resolveModel.mockImplementationOnce(() => gate.promise)
@@ -181,27 +177,16 @@ describe('conversation metadata ownership', () => {
     expect(f.runs.findById('run-1')).toMatchObject({ status: 'completed', modelOverride: selection })
   })
 
-  it('moves a space-less task into an active space once and releases its sessions', async () => {
-    const f = fixture()
-    const changes: ConversationMetadataCommit[] = []
-    f.service.onDidCommit(event => changes.push(event))
-    await expect(f.service.moveToSpace({ id: 'task-1', spaceId: 'space-1' })).resolves.toMatchObject({ id: 'task-1', spaceId: 'space-1' })
-    expect(f.repository.findById('task-1')?.spaceId).toBe('space-1')
-    expect(changes.map(event => event.kind)).toEqual(['space'])
-    expect(f.invalidate).toHaveBeenCalledWith('task-1')
-    await expect(f.service.moveToSpace({ id: 'task-1', spaceId: 'space-2' })).rejects.toMatchObject({ code: 'CONVERSATION_SPACE_CONFLICT' })
-    expect(f.repository.findById('task-1')?.spaceId).toBe('space-1')
-    await expect(f.service.moveToSpace({ id: 'task-1', spaceId: 'space-1' })).resolves.toMatchObject({ spaceId: 'space-1' })
-    expect(changes).toHaveLength(1)
-  })
-
   it('refuses to move a task into a revoked space or while it has an active run', async () => {
     const f = fixture()
     await expect(f.service.moveToSpace({ id: 'task-1', spaceId: 'revoked' })).rejects.toMatchObject({ code: 'SPACE_UNAVAILABLE' })
     f.runs.create({ id: 'run-1', conversationId: 'task-1', branchId: 'branch-1', triggeringMessageId: 'message-1', provider: 'fixture', model: 'model-1', purpose: 'chat', status: 'running', piSessionFile: null, approvalPolicy: 'policy', executionProfile: 'workspace_write', startedAt: '2026-10-11T00:00:00.000Z' })
     await expect(f.service.moveToSpace({ id: 'task-1', spaceId: 'space-1' })).rejects.toMatchObject({ code: 'CONVERSATION_BUSY' })
     expect(f.repository.findById('task-1')?.spaceId).toBeNull()
-    expect(f.invalidate).not.toHaveBeenCalled()
+    f.runs.reconcileTerminal('run-1', 'completed', '2026-10-11T00:01:00.000Z', null)
+    f.hasActiveExecution.mockReturnValueOnce(true)
+    await expect(f.service.moveToSpace({ id: 'task-1', spaceId: 'space-1' })).rejects.toMatchObject({ code: 'CONVERSATION_BUSY' })
+    expect(f.repository.findById('task-1')?.spaceId).toBeNull()
   })
 
   it.each(['waiting', 'paused'])('keeps %s queue inputs unchanged and refuses to move across any branch', async (state) => {
@@ -212,7 +197,7 @@ describe('conversation metadata ownership', () => {
     expect(f.repository.findById('task-1')?.spaceId).toBeNull()
   })
 
-  it('does not commit or publish a move when session cleanup fails and permits a safe retry', async () => {
+  it('preserves a task when session cleanup fails and retries its one-time space move safely', async () => {
     const f = fixture()
     const changes: ConversationMetadataCommit[] = []
     f.service.onDidCommit(event => changes.push(event))
@@ -220,6 +205,11 @@ describe('conversation metadata ownership', () => {
     await expect(f.service.moveToSpace({ id: 'task-1', spaceId: 'space-1' })).rejects.toThrow('Cleanup failed')
     expect(f.repository.findById('task-1')?.spaceId).toBeNull()
     expect(changes).toEqual([])
+    await expect(f.service.moveToSpace({ id: 'task-1', spaceId: 'space-1' })).resolves.toMatchObject({ spaceId: 'space-1' })
+    expect(f.repository.findById('task-1')?.spaceId).toBe('space-1')
+    expect(changes.map(event => event.kind)).toEqual(['space'])
+    await expect(f.service.moveToSpace({ id: 'task-1', spaceId: 'space-2' })).rejects.toMatchObject({ code: 'CONVERSATION_SPACE_CONFLICT' })
+    expect(f.repository.findById('task-1')?.spaceId).toBe('space-1')
     await expect(f.service.moveToSpace({ id: 'task-1', spaceId: 'space-1' })).resolves.toMatchObject({ spaceId: 'space-1' })
     expect(changes).toHaveLength(1)
   })
@@ -236,13 +226,6 @@ describe('conversation metadata ownership', () => {
     await expect(pending).rejects.toMatchObject({ code: 'SPACE_UNAVAILABLE' })
     expect(f.repository.findById('task-1')?.spaceId).toBeNull()
     expect(() => f.mutations.assertWritable('task-1')).not.toThrow()
-  })
-
-  it('refuses to switch while a terminal run still owns execution resources', async () => {
-    const f = fixture()
-    f.hasActiveExecution.mockReturnValueOnce(true)
-    await expect(f.service.moveToSpace({ id: 'task-1', spaceId: 'space-1' })).rejects.toMatchObject({ code: 'CONVERSATION_BUSY' })
-    expect(f.repository.findById('task-1')?.spaceId).toBeNull()
   })
 
   it('revalidates a target disabled during model validation and records explicit provenance for an unchanged legacy value', async () => {

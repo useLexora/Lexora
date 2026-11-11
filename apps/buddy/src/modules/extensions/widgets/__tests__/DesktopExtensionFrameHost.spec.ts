@@ -100,3 +100,68 @@ it('scopes broadcasts by extension and generation and header actions by exact vi
   await flushMessages()
   expect(frames[0]!.actions).toHaveLength(1)
 })
+
+it('allows legacy deletion only from a focused visible ready frame and preserves accepted results after focus changes', async () => {
+  const installed = shallowRef<ExtensionStatus[]>([{ manifest: extensionManifestSchema.parse({ schemaVersion: 1, id: 'tests.cleanup', name: 'Cleanup', version: '1.0.0', apiVersion: 4, engines: { lexora: '*' }, contributes: {} }), revision: 'first', enabled: true, compatible: true, development: false, pending: null, state: 'active', generation: crypto.randomUUID(), error: null, activationMs: null, logs: [] }])
+  const viewRequest = vi.fn<ExtensionApi['viewRequest']>().mockResolvedValue({ status: 'deleted' })
+  const api: Partial<ExtensionApi> = {
+    openView: async input => ({ id: input.viewId, extensionId: input.extensionId, generation: installed.value[0]!.generation!, token: crypto.randomUUID(), url: 'about:blank' }),
+    closeView: async () => {},
+    viewRequest,
+  }
+  let layoutChanged = () => {}
+  const layout: SurfaceLayout = { attach: (_element, options) => {
+    layoutChanged = () => options.onLayout?.({ visible: true, width: 100, height: 100 })
+    return { update: () => {}, dispose: () => {} }
+  }, invalidate: () => {} }
+  const controller = new WorkbenchController(new ContributionRegistry())
+  let views!: ExtensionViews
+  const root = document.createElement('div')
+  document.body.append(root)
+  const app = createApp({ setup() {
+    views = useExtensionViews(api as ExtensionApi, installed, shallowRef({}))
+    useProvideExtensionContext({ settingsLocation: () => null, state: { installed, api } as ExtensionContext['state'], views, ui: useExtensionUiContributions(installed, controller.configuration), anchors: new SemanticAnchorRegistry(), workbench: shallowRef({ values: {}, pages: [] }), language: shallowRef('en-US'), themeColors: shallowRef({}), isDark: shallowRef(false), endInteraction: () => {}, focusView: () => {}, authoring: { author: shallowRef(''), save: async () => true }, startCreation: async () => {} })
+    return () => h(DesktopExtensionFrameHost, { layout })
+  } })
+  app.mount(root)
+  disposables.push(() => {
+    app.unmount()
+    root.remove()
+  })
+  views.show({ extensionId: 'tests.cleanup', viewId: crypto.randomUUID(), viewType: 'tests.cleanup.page', resource: null, state: {}, stateVersion: 1 }, root, true)
+  await vi.waitFor(() => expect(root.querySelector('iframe')).not.toBeNull())
+  const frame = root.querySelector('iframe')!
+  const surface = views.surfaces.get(frame.dataset.extensionView!)!
+  const session = surface.session!
+  const target = frame.contentWindow!
+  const request = () => new Promise<{ ok: boolean, value: unknown }>((resolve) => {
+    const id = crypto.randomUUID()
+    const receive = ({ data }: MessageEvent) => {
+      if (data.id === id) {
+        target.removeEventListener('message', receive)
+        resolve(data)
+      }
+    }
+    target.addEventListener('message', receive)
+    window.dispatchEvent(new MessageEvent('message', { source: target, data: { channel: 'lexora-extension', token: session.token, id, method: 'taskCleanup.delete', params: { conversationId: 'removed-task' } } }))
+  })
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+  vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+  layoutChanged()
+  frame.focus()
+  expect(await request()).toMatchObject({ ok: false, value: 'EXTENSION_TASK_CLEANUP_UNAVAILABLE' })
+  surface.ready = true
+  surface.visible = false
+  expect(await request()).toMatchObject({ ok: false, value: 'EXTENSION_TASK_CLEANUP_UNAVAILABLE' })
+  surface.visible = true
+  document.body.tabIndex = -1
+  document.body.focus()
+  expect(await request()).toMatchObject({ ok: false, value: 'EXTENSION_TASK_CLEANUP_UNAVAILABLE' })
+  expect(viewRequest).not.toHaveBeenCalled()
+  frame.focus()
+  viewRequest.mockImplementationOnce(async () => {
+    document.body.focus()
+    return { status: 'deleted' }
+  })
+  expect(await request()).toMatchObject({ ok: true, value: { status: 'deleted' } })
+})

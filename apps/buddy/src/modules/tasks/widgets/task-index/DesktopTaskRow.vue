@@ -6,6 +6,7 @@ import type { TaskActivity } from '../../contracts'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { DesktopTaskPinnedDropPosition } from '@/modules/tasks/widgets/task-index/taskPinnedItems'
 import {
+  Archive20Regular,
   MoreHorizontal20Regular,
 } from '@vicons/fluent'
 import { NDropdown, NTooltip } from 'naive-ui'
@@ -44,6 +45,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   delete: []
+  archive: []
   assignMark: [markId: string]
   clearMarks: []
   setRead: [read: boolean]
@@ -88,7 +90,9 @@ const { actions: taskActions, select: selectTaskAction } = useTaskMenuActions({
 const actions = computed<DropdownOption[]>(() => [
   ...taskActions.value,
   { icon: () => h(DesktopIcon, { name: 'edit' }), key: 'rename', label: t('desktop.tasks.renameTask') },
-  { icon: () => h(DesktopIcon, { name: 'delete' }), key: 'delete', label: t('desktop.tasks.deleteTask') },
+  { icon: () => h(DesktopIcon, { component: Archive20Regular }), key: 'archive', label: t('desktop.archive.archive') },
+  { type: 'divider', key: 'delete-divider' },
+  { icon: () => h(DesktopIcon, { name: 'delete', class: 'text-danger' }), key: 'delete', label: () => h('span', { class: 'text-danger' }, t('desktop.tasks.deleteTask')) },
 ])
 
 function handleAction(action: string | number) {
@@ -97,6 +101,8 @@ function handleAction(action: string | number) {
     emit('rename')
   if (action === 'delete')
     emit('delete')
+  if (action === 'archive')
+    emit('archive')
 }
 
 // 右键行弹出与“更多”相同的菜单，位置跟随鼠标。

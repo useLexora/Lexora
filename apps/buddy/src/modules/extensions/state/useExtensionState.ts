@@ -1,12 +1,13 @@
 import type { ExtensionTaskAction } from '@buddy-shared/extensions/extensionActionApi'
 import type { ExtensionApi, ExtensionStatus, ExtensionUnavailableInstallation } from '@buddy-shared/extensions/extensionApi'
 import type { ExtensionInstallation } from '@buddy-shared/extensions/extensionInstallation'
-import { computed, onScopeDispose, shallowRef } from 'vue'
+import { computed, onScopeDispose, shallowReactive, shallowRef } from 'vue'
 import { useExtensionOperations } from './useExtensionOperations'
 
 export function useExtensionState(api: ExtensionApi) {
   const taskActions = shallowRef<ExtensionTaskAction[]>([])
   const installed = shallowRef<ExtensionStatus[]>([])
+  const pendingActions = shallowReactive(new Map<string, readonly string[]>())
   const unavailable = shallowRef<ExtensionUnavailableInstallation[]>([])
   const unavailableError = shallowRef('')
   const installedError = shallowRef('')
@@ -27,8 +28,7 @@ export function useExtensionState(api: ExtensionApi) {
           let completed: number
           do {
             completed = revision
-            const current = completed
-            await read(() => !disposed && current === revision)
+            await read(() => !disposed)
             if (disposed)
               return
           } while (completed !== revision)
@@ -93,7 +93,27 @@ export function useExtensionState(api: ExtensionApi) {
     disposed = true
   })
   const operations = useExtensionOperations(api, refreshStatus)
-  return { api, taskActions, installed, unavailable, installations, error, refresh, refreshInstallations, ...operations }
+  async function executeAction(id: string, menu: string) {
+    if (disposed || operations.busyIds.has(id) || pendingActions.get(id)?.includes(menu))
+      return false
+    pendingActions.set(id, [...pendingActions.get(id) ?? [], menu])
+    try {
+      await api.executeMenu(id, menu, { target: 'extension.actions', resource: null })
+      return !disposed
+    }
+    catch (reason) {
+      if (!disposed)
+        throw reason
+      return false
+    }
+    finally {
+      const remaining = pendingActions.get(id)?.filter(value => value !== menu) ?? []
+      if (remaining.length)
+        pendingActions.set(id, remaining)
+      else pendingActions.delete(id)
+    }
+  }
+  return { api, taskActions, installed, unavailable, installations, error, refresh, refreshInstallations, pendingActions, executeAction, ...operations }
 }
 
 export function extensionErrorCode(reason: unknown): string {

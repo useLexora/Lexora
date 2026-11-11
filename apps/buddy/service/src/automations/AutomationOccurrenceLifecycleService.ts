@@ -13,7 +13,7 @@ export interface AutomationOccurrenceDeletionResult {
 
 export interface AutomationOccurrenceLifecycleServiceOptions {
   automations: AutomationService
-  conversationLifecycle: Pick<ConversationLifecycleService, 'delete'>
+  conversationLifecycle: Pick<ConversationLifecycleService, 'delete' | 'recover'>
   notifications: Pick<AttentionNotificationService, 'removeAutomationRun'>
   onObserverError?: (error: unknown) => void
 }
@@ -78,8 +78,17 @@ export class AutomationOccurrenceLifecycleService {
   }
 
   async recoverPendingDeletions(): Promise<void> {
-    for (const occurrence of this.#automations.listPendingDeletions())
-      await this.deleteOccurrence(occurrence.id)
+    for (const occurrence of this.#automations.listPendingDeletions()) {
+      try {
+        if (occurrence.runId)
+          await this.#notifications.removeAutomationRun(occurrence.runId)
+        if (occurrence.conversationId)
+          await this.#conversationLifecycle.recover(occurrence.conversationId)
+      }
+      catch (error) {
+        this.#cleanup.fire(copyEventSnapshot({ operationId: randomUUID(), occurrenceId: occurrence.id, automationId: occurrence.automationId, conversationId: occurrence.conversationId, status: 'failed', errorCode: readDiagnosticErrorCode(error) }))
+      }
+    }
   }
 
   async dispose(): Promise<void> {

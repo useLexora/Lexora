@@ -59,45 +59,61 @@ it('publishes installed contributions while installation jobs are pending or fai
   finally { scope.stop() }
 })
 
-it('coalesces overlapping refreshes and rejects stale and disposed results', async () => {
-  const delayed = deferred<ExtensionStatus[]>()
+it('publishes serial snapshots during a change burst and ignores reads after disposal', async () => {
+  const first = deferred<ExtensionStatus[]>()
+  const second = deferred<ExtensionStatus[]>()
+  const third = deferred<ExtensionStatus[]>()
+  const reads = [first, second, third]
   let requests = 0
-  const { state, scope } = setup({ list: () => ++requests === 1 ? delayed.promise : Promise.resolve([extension]) })
+  const { state, scope, statusChanged } = setup({ list: () => reads[requests++]!.promise })
   try {
-    const previous = state.refresh()
+    const pending = state.refresh()
     await expect.poll(() => requests).toBe(1)
-    const refreshes = Array.from({ length: 20 }, () => state.refresh())
-    expect(requests).toBe(1)
-    delayed.resolve([])
-    await Promise.all([previous, ...refreshes])
-    expect(state.installed.value).toEqual([extension])
-    expect(requests).toBe(2)
+    statusChanged()
+    first.resolve([{ ...extension, revision: 'progress-1' }])
+    await expect.poll(() => requests).toBe(2)
+    expect(state.installed.value[0]?.revision).toBe('progress-1')
+    statusChanged()
+    second.resolve([{ ...extension, revision: 'progress-2' }])
+    await expect.poll(() => requests).toBe(3)
+    expect(state.installed.value[0]?.revision).toBe('progress-2')
     scope.stop()
-    await state.refresh()
-    expect(state.installed.value).toEqual([extension])
-    expect(requests).toBe(2)
+    third.resolve([{ ...extension, revision: 'disposed' }])
+    await pending
+    expect(state.installed.value[0]?.revision).toBe('progress-2')
   }
   finally { scope.stop() }
 })
 
-it('updates progress without replacing installed contributions or requesting their data', async () => {
-  let listRequests = 0
+it('deduplicates only the running menu action while allowing other plugin interactions', async () => {
+  const pending = deferred<null>()
+  const { state, scope } = setup({ executeMenu: async (_id, menu) => menu === 'work' ? pending.promise : null })
+  try {
+    const work = state.executeAction('test.panel', 'work')
+    expect(state.pendingActions.get('test.panel')).toEqual(['work'])
+    expect(await state.executeAction('test.panel', 'work')).toBe(false)
+    expect(await state.executeAction('test.panel', 'show-result')).toBe(true)
+    expect(state.pendingActions.get('test.panel')).toEqual(['work'])
+    expect(state.busyIds.has('test.panel')).toBe(false)
+    pending.resolve(null)
+    expect(await work).toBe(true)
+    expect(state.pendingActions.size).toBe(0)
+  }
+  finally {
+    pending.resolve(null)
+    scope.stop()
+  }
+})
+
+it('updates installation progress while keeping installed contributions available', async () => {
   let jobs = [job]
-  const { state, scope, progressChanged } = setup({
-    list: async () => {
-      listRequests++
-      return [extension]
-    },
-    installations: async () => jobs,
-  })
+  const { state, scope, progressChanged } = setup({ installations: async () => jobs })
   try {
     await state.refresh()
-    const original = state.installed.value
     jobs = [{ ...job, stage: 'install' }]
     progressChanged()
     await expect.poll(() => state.installations.value[0]?.stage).toBe('install')
-    expect(state.installed.value).toBe(original)
-    expect(listRequests).toBe(1)
+    expect(state.installed.value).toEqual([extension])
   }
   finally { scope.stop() }
 })

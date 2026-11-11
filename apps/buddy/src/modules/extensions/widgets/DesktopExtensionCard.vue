@@ -2,6 +2,7 @@
 import type { ExtensionStatus, ExtensionUnavailableInstallation } from '@buddy-shared/extensions/extensionApi'
 import type { ExtensionCatalogListing } from '@buddy-shared/extensions/extensionCatalog'
 import type { ExtensionInstallation } from '@buddy-shared/extensions/extensionInstallation'
+import type { WorkbenchContextValues } from '@buddy-shared/workbench/workbenchContext'
 import type { DropdownOption } from 'naive-ui'
 import type { ExtensionPendingInstall } from '../state/useExtensionOperations'
 import { MoreHorizontal20Regular } from '@vicons/fluent'
@@ -10,12 +11,14 @@ import { computed } from 'vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopPluginIcon from '@/shared/ui/icon/DesktopPluginIcon.vue'
 import { extensionLabels } from '../extensionLabels'
+import { extensionCardActions } from '../state/extensionCardActions'
 import DesktopExtensionCompatibilityHint from './DesktopExtensionCompatibilityHint.vue'
 import DesktopExtensionInstallationStatus from './DesktopExtensionInstallationStatus.vue'
 import DesktopExtensionTags from './DesktopExtensionTags.vue'
 
-const props = defineProps<{ item: ExtensionStatus, unavailablePending?: ExtensionUnavailableInstallation, catalogUpdate?: ExtensionCatalogListing, language: string, busy: boolean, canOpen: boolean, installation?: ExtensionPendingInstall, job?: ExtensionInstallation }>()
+const props = defineProps<{ contextValues?: WorkbenchContextValues, pendingActions?: readonly string[], item: ExtensionStatus, unavailablePending?: ExtensionUnavailableInstallation, catalogUpdate?: ExtensionCatalogListing, language: string, busy: boolean, canOpen: boolean, installation?: ExtensionPendingInstall, job?: ExtensionInstallation }>()
 const emit = defineEmits<{
+  executeAction: [menu: string]
   toggle: []
   restart: []
   applyUpdate: []
@@ -36,8 +39,12 @@ const warning = computed(() => {
   return issue ? { issue, version: props.item.incompatibility ? undefined : update.value?.manifest.version } : null
 })
 const status = computed(() => props.item.incompatibility ? (props.language === 'en-US' ? 'Unavailable' : '暂不可用') : labels.value[props.item.state === 'failed' ? 'failedState' : props.item.state])
+const actionMenuProps = { 'role': 'menuitem', 'data-testid': 'extension-actions' }
+const commands = computed(() => extensionCardActions(props.item, props.contextValues).map(command => ({ ...command, disabled: props.pendingActions?.includes(command.key) ?? false })))
 const actions = computed<DropdownOption[]>(() => {
   const pluginActions: DropdownOption[] = []
+  if (commands.value.length)
+    pluginActions.push({ key: 'plugin-actions', label: props.language === 'en-US' ? 'Plugin actions' : '插件操作', props: actionMenuProps, children: commands.value })
   if (props.item.manifest.permissions.localResources || props.item.manifest.permissions.fileEditing)
     pluginActions.push({ key: 'file-access', label: props.language === 'en-US' ? 'File access' : '文件访问', props: { role: 'menuitem' }, children: [{ key: 'revoke-resources', label: props.language === 'en-US' ? 'Revoke all access' : '撤销全部授权', props: { role: 'menuitem' } }] })
   return [
@@ -57,7 +64,11 @@ function requestUpdate() {
     emit('applyUpdate')
 }
 function handleAction(key: string | number) {
-  if (key === 'restart')
+  if (props.busy)
+    return
+  if (commands.value.some(command => command.key === key))
+    emit('executeAction', String(key))
+  else if (key === 'restart')
     emit('restart')
   else if (key === 'apply-update')
     emit('applyUpdate')

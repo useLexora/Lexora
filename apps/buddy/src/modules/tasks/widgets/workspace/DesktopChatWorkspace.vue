@@ -78,7 +78,7 @@ const pageRef = useTemplateRef<HTMLElement>('pageRef')
 const detailResize = useConversationDetailResize(pageRef, detailVisible)
 const editingQuestion = computed(() => nodeDetail.target.value?.kind === 'question'
   && props.workspace.execution.editingMessageId.value === nodeDetail.target.value.messageId)
-const composerVisible = computed(() => !detailVisible.value || nodeDetail.target.value?.kind === 'answer' || editingQuestion.value)
+const composerVisible = computed(() => !props.workspace.session.activeConversation.value?.archivedAt && (!detailVisible.value || nodeDetail.target.value?.kind === 'answer' || editingQuestion.value))
 const followup = computed(() => {
   const target = props.workspace.composer.target.value
   return target.kind === 'message_followup' ? target : null

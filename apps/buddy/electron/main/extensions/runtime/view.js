@@ -120,6 +120,7 @@ async function initialize() {
     const api = Object.freeze({
       workers,
       clipboard: Object.freeze({ read: () => request('clipboard.read'), write: data => request('clipboard.write', data) }),
+      taskCleanup: Object.freeze({ list: (input = {}) => request('taskCleanup.list', input), delete: input => request('taskCleanup.delete', input) }),
       setDocumentInfo: info => request('view.setDocumentInfo', info),
       setSettingsHeaderActions: actions => request('view.setSettingsHeaderActions', actions),
       onSettingsHeaderAction: listener => events.on('view:settings-header-action:activated', event => listener(event.data.id)),

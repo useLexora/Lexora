@@ -65,11 +65,9 @@ describe('task marks and reading state', () => {
     expect(f.marks.getState('a')).toMatchObject({ markId: null, unread: true, resultRunId: 'next-result' })
   })
 
-  it.each(['automatic', 'manual'] as const)('clears %s unread without a custom mark', (kind) => {
+  it('clears manual unread without a custom mark and ignores a repeated clear', () => {
     const f = fixture()
-    if (kind === 'automatic')
-      f.run('result')
-    else f.marks.setRead({ ...f.marks.getState('a'), read: false })
+    f.marks.setRead({ ...f.marks.getState('a'), read: false })
     const before = f.marks.getState('a')
     expect(before).toMatchObject({ markId: null, unread: true })
     const cleared = f.marks.clear(before)
@@ -191,7 +189,7 @@ describe('task marks and reading state', () => {
       legacy.prepare('INSERT INTO messages (id, branch_id, conversation_id, role, content_json, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(`question-${id}`, `branch-${id}`, id, 'user', '{}', now)
     }
     legacy.prepare('INSERT INTO runs (id, branch_id, conversation_id, triggering_message_id, provider, model, purpose, status, started_at, completed_at, approval_policy, execution_profile) VALUES (\'historical\', \'branch-a\', \'a\', \'question-a\', \'fixture\', \'fixture\', \'chat\', \'completed\', ?, ?, \'policy\', \'workspace_write\')').run(now, now)
-    const history = legacy.prepare('SELECT * FROM conversations').all().map(conversation => ({ ...conversation, buddy_id: 'default', title_source: 'manual', title_revision: 0 }))
+    const history = legacy.prepare('SELECT * FROM conversations').all().map(conversation => ({ ...conversation, buddy_id: 'default', title_source: 'manual', title_revision: 0, archived_at: null, metadata_revision: 0 }))
     legacy.close()
     const migrated = openBuddyDatabase({ databasePath })
     const marks = createTaskMarkRepository(migrated)

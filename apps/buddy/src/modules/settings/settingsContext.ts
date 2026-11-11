@@ -1,6 +1,7 @@
 import type { DesktopAppInfo, DesktopBrowserApi } from '@buddy-electron/shared/desktopApi'
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { BuddyCapabilities } from '@buddy-shared/platform'
+import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
 import type { SyncApi } from '@buddy-shared/sync/syncApi'
 import type { Ref } from 'vue'
 import type { ApplicationSettings, ShortcutSettings } from './contracts'
@@ -12,6 +13,7 @@ import type { StorageStore } from './state/useStorageStore'
 import type { StorageUsageStore } from './state/useStorageUsageStore'
 import type { WebSettingsCapability } from './state/useWebSettingsCapability'
 import type { ModelProvidersStore } from '@/modules/models'
+import type { TaskArchiveActions } from '@/modules/tasks/contracts'
 import { createInjectionState } from '@vueuse/core'
 
 export interface SettingsContext {
@@ -30,6 +32,8 @@ export interface SettingsContext {
   prompts: LocalChatApi['prompts']
   writeClipboardText: (text: string) => Promise<void>
   ready: Promise<void>
+  taskArchive: TaskArchiveActions
+  taskArchiveSpaces: Readonly<Ref<readonly LocalSpace[]>>
   openTask: (conversationId: string) => Promise<void>
   openOnboarding: () => Promise<void>
   featureDiscovery: { open: () => Promise<void>, unreadCount: Readonly<Ref<number>> }

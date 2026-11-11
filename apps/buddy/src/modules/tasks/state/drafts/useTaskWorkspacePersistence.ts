@@ -5,7 +5,7 @@ import type { ChatDraftSnapshot, DraftRestorationConflict, DraftRestorationState
 
 import type { ChatSession } from '@/modules/tasks/state/conversations/useChatSession'
 import type { useChatDrafts } from '@/modules/tasks/state/drafts/useChatDrafts'
-import { computed, readonly, shallowRef } from 'vue'
+import { computed, readonly, shallowRef, watch } from 'vue'
 import { parseDraftScopeKey } from '../../model/drafts/draftScope'
 import { createDraftValueFingerprint } from '../../model/drafts/draftValueFingerprint'
 
@@ -60,18 +60,30 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
     return restoration
   }
 
+  function isReadOnlyTarget(targetKey: string): boolean {
+    const scope = parseDraftScopeKey(targetKey)
+    return 'conversationId' in scope && !!options.getConversation(scope.conversationId)?.archivedAt
+  }
+
+  const stopReadOnly = watch(() => isReadOnlyTarget(options.drafts.targetKey.value), (readOnly, previous) => {
+    if (previous && !readOnly && !disposed) {
+      restorationState.value = 'pending'
+      void restore()
+    }
+  })
+
   async function restoreWorkspace(navigationReady: Promise<unknown>): Promise<boolean> {
     try {
       await navigationReady
       if (disposed)
         return false
 
-      let unopened = options.drafts.listSnapshots().find(snapshot => snapshot.revision === null)
+      let unopened = options.drafts.listSnapshots().find(snapshot => snapshot.revision === null && !isReadOnlyTarget(snapshot.targetKey))
       while (unopened) {
         await ensureDraft(unopened.targetKey, true)
         if (disposed)
           return false
-        unopened = options.drafts.listSnapshots().find(snapshot => snapshot.revision === null)
+        unopened = options.drafts.listSnapshots().find(snapshot => snapshot.revision === null && !isReadOnlyTarget(snapshot.targetKey))
       }
       restorationState.value = 'ready'
       if (requestedVersion > confirmedVersion)
@@ -201,6 +213,8 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
   }
 
   async function persistSnapshot(submitted: ChatDraftSnapshot): Promise<void> {
+    if (isReadOnlyTarget(submitted.targetKey))
+      return
     let snapshot = submitted.revision === null
       ? await ensureDraft(submitted.targetKey)
       : submitted
@@ -269,6 +283,7 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
   return {
     dispose() {
       disposed = true
+      stopReadOnly()
       cancelScheduledSave()
       if (restorationState.value === 'ready' && confirmedVersion < requestedVersion)
         void flush()

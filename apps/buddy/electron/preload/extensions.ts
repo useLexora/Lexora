@@ -9,6 +9,8 @@ export function createExtensionApi(): ExtensionApi {
     taskActions: () => request({ action: 'taskActions' }),
     invokeTaskAction: input => request({ action: 'invokeTaskAction', input }),
     list: () => request({ action: 'list' }),
+    taskCleanupConfirmations: () => request({ action: 'taskCleanupConfirmations' }),
+    confirmTaskCleanup: (id, operationId, confirmed) => request({ action: 'confirmTaskCleanup', id, operationId, confirmed }),
     fileOpeners: () => request({ action: 'fileOpeners' }),
     setFileOpener: choice => request({ action: 'setFileOpener', choice }),
     prepareFileOpening: input => request({ action: 'prepareFileOpening', input }),

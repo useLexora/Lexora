@@ -30,6 +30,7 @@ interface ValueRef<T> {
 export interface UseChatBranchMutationsOptions {
   flushModelSelection?: () => Promise<boolean>
   activeRun: ValueRef<LocalRun | null>
+  archived?: ValueRef<boolean>
   api: {
     chat: Pick<LocalChatApi['chat'], 'editUserMessage' | 'regenerateAssistant'>
     conversations: Pick<LocalChatApi['conversations'], 'activateBranch' | 'getNodeDetail'>
@@ -66,6 +67,7 @@ export function useChatBranchMutations(options: UseChatBranchMutationsOptions) {
   const requestIds = createRequestIdRegistry()
   const canRunBranchMutation = computed(() =>
     options.runtimeSupervisor.runtimeState.value.status === 'ready'
+    && !options.archived?.value
     && options.session.activeConversationId.value !== null
     && options.session.activeBranchId.value !== null
     && !options.activeRun.value
@@ -257,7 +259,7 @@ export function useChatBranchMutations(options: UseChatBranchMutationsOptions) {
     options.setErrorMessage(null)
     try {
       options.drafts.setUserContent(payload.userContent ?? createBuddyUserContent(payload.content))
-      if (!await options.persistWorkspaceState() || !isSourceViewCurrent() || editingMessage.value !== editing)
+      if (!await options.persistWorkspaceState() || !isSourceViewCurrent() || editingMessage.value !== editing || options.archived?.value)
         return false
       const draft = options.drafts.snapshot(editScopeKey)
       if (!options.drafts.isPersisted(draft))
@@ -270,6 +272,8 @@ export function useChatBranchMutations(options: UseChatBranchMutationsOptions) {
       }
       const operationKey = `edit:${await createRequestFingerprint(requestInput)}`
       const requestId = requestIds.resolve(operationKey)
+      if (options.archived?.value || !isSourceViewCurrent())
+        return false
       const turn = await options.api.chat.editUserMessage({ ...requestInput, requestId })
       if (!turn.draftReceipt)
         throw new Error('Edited turn did not commit its Composer draft')
@@ -334,7 +338,7 @@ export function useChatBranchMutations(options: UseChatBranchMutationsOptions) {
     try {
       if (options.flushModelSelection && !await options.flushModelSelection())
         return false
-      if (!isSourceViewCurrent())
+      if (!isSourceViewCurrent() || options.archived?.value)
         return false
       const turn = await options.api.chat.regenerateAssistant({
         conversationId,

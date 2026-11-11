@@ -29,6 +29,7 @@ const emit = defineEmits<{
   openTask: [id: string]
   manageMarks: []
   moveTask: [id: string]
+  archiveTask: [task: LocalConversationSummary]
 }>()
 const { t } = useBuddyI18n(() => props.language)
 const root = useTemplateRef<HTMLElement>('root')
@@ -197,6 +198,7 @@ async function loadMore(row: Extract<TaskHistoryRow, { kind: 'more' }>, event: M
             @manage-marks="emit('manageMarks')"
             @move-to-space="emit('moveTask', item.task.id)"
             @delete="controller.requestTaskDelete(item.task)"
+            @archive="emit('archiveTask', item.task)"
             @drag-end="controller.endPinnedDrag"
             @drag-over="controller.enterPinnedDropTarget(item.pinKey!, $event)"
             @drag-start="controller.beginPinnedDrag(item.pinKey!)"

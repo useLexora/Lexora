@@ -394,7 +394,7 @@ describe('buddy schema', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
     databases.push(migrated)
     expect(migrated.prepare('SELECT * FROM runs').all()).toEqual(before.runs.map(run => ({ ...run, buddy_id: 'default', actor_snapshot_json: null, model_override_json: null, root_run_id: run.id, parent_run_id: null, execution_kind: 'root', thread_id: 'actor:["conversation-1","default"]', generation: 0, scheduling_lane: 'conversation' })))
     expect(migrated.prepare('SELECT rowid, * FROM messages').all()).toEqual(before.messages)
-    expect(migrated.prepare('SELECT * FROM conversations').all()).toEqual(before.conversations.map(conversation => ({ ...conversation, buddy_id: 'default' })))
+    expect(migrated.prepare('SELECT * FROM conversations').all()).toEqual(before.conversations.map(conversation => ({ ...conversation, buddy_id: 'default', archived_at: null, metadata_revision: 0 })))
     expect(migrated.prepare('PRAGMA foreign_key_check').all()).toEqual([])
     expect(migrated.prepare('PRAGMA user_version').get()).toEqual({ user_version: BUDDY_SCHEMA_VERSION })
   })
@@ -430,7 +430,7 @@ describe('buddy schema', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
     previous.close()
     const upgraded = openBuddyDatabase({ databasePath })
     databases.push(upgraded)
-    expect(upgraded.prepare('SELECT * FROM usage_records').all()).toEqual(before.map(record => ({ ...record, invocation_id: null })))
+    expect(upgraded.prepare('SELECT * FROM usage_records').all()).toEqual(before.map(record => ({ ...record, invocation_id: null, detached: 0 })))
     const invocations = createExtensionInvocationRepository(upgraded)
     invocations.start({ id: 'invocation', extensionId: 'test.action', actionId: 'test.action.generate', conversationId: 'conversation-1', trigger: 'user', startedAt: '2026-08-14T00:02:00.000Z' })
     const usage = createUsageRepository(upgraded)
@@ -565,7 +565,7 @@ describe('buddy schema', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
     const migrated = openBuddyDatabase({ databasePath })
     expect(migrated.prepare('SELECT * FROM spaces').get()).toEqual({ ...space, icon: 'folder', icon_color: 'default' })
     expect(migrated.prepare('SELECT * FROM space_directory_bindings').all()).toEqual(grants)
-    expect(migrated.prepare('SELECT * FROM conversations').all()).toEqual(tasks.map(conversation => ({ ...conversation, buddy_id: 'default', title_source: 'manual', title_revision: 0 })))
+    expect(migrated.prepare('SELECT * FROM conversations').all()).toEqual(tasks.map(conversation => ({ ...conversation, buddy_id: 'default', title_source: 'manual', title_revision: 0, archived_at: null, metadata_revision: 0 })))
     expect(migrated.prepare('SELECT * FROM runs').all()).toEqual(runs.map(run => ({ ...run, buddy_id: 'default', actor_snapshot_json: null, model_override_json: null, root_run_id: run.id, parent_run_id: null, execution_kind: 'root', thread_id: 'actor:["conversation-1","default"]', generation: 0, scheduling_lane: 'conversation' })))
     migrated.exec('UPDATE spaces SET icon = \'code\', icon_color = \'blue\' WHERE id = \'space-1\'')
     migrated.close()
@@ -714,7 +714,7 @@ describe('buddy schema', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
     database.exec(`PRAGMA user_version = ${BUDDY_SCHEMA_VERSION}`)
     database.close()
 
-    expect(() => openBuddyDatabase({ databasePath })).toThrow(/incomplete schema version/i)
+    expect(() => openBuddyDatabase({ databasePath })).toThrow(/incompatible schema lineage/i)
   })
 
   it('migrates v8 to v9 without interpreting legacy workspace Draft content', () => {

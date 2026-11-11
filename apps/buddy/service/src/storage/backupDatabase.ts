@@ -1,7 +1,7 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 import type { BackupScope } from '../../../shared/storage/backupScope'
 import { storageError } from '../../../platform/storage/storageFiles'
-import { backupCapabilityOwners, backupMergeColumns, backupTables, backupTableScopes, databaseRowScope } from './backupDatabasePolicy'
+import { backupCapabilityOwners, backupIdentityTables, backupMergeColumns, backupTables, backupTableScopes, databaseRowScope } from './backupDatabasePolicy'
 import { reconcileRestoredTaskState } from './restoreTaskState'
 
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`
@@ -22,7 +22,7 @@ export function selectBackupDatabase(database: DatabaseSync, scopes: readonly Ba
             insert.run(row.__id!)
         }
       }
-      else if (scopes.includes(backupTableScopes.get(table)!)) {
+      else if (backupIdentityTables.has(table) || scopes.includes(backupTableScopes.get(table)!)) {
         database.exec(`INSERT INTO temp.${quote(`keep_${table}`)} SELECT rowid FROM ${quote(table)}`)
       }
     }
@@ -108,7 +108,7 @@ export function mergeBackupDatabase(target: DatabaseSync, source: DatabaseSync, 
   target.exec('PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE')
   try {
     const capabilities = restoredCapabilityIds(target, source, scopes)
-    const triggers = target.prepare('SELECT name, sql FROM sqlite_master WHERE type = \'trigger\' AND sql LIKE \'%AFTER %\'').all()
+    const triggers = target.prepare('SELECT name, sql FROM sqlite_master WHERE type = \'trigger\' AND (sql LIKE \'%AFTER %\' OR name IN (\'runs_require_active_conversation\', \'runs_retry_requires_active_conversation\'))').all()
     for (const trigger of triggers)
       target.exec(`DROP TRIGGER ${quote(String(trigger.name))}`)
     for (const table of backupTables) {

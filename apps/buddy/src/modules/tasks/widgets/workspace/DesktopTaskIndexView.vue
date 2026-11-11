@@ -18,6 +18,7 @@ const { language, appSidebarCollapsed } = useDesktopUi()
     :pinned-items="index.pinnedItems.value"
     :sidebar="index.sidebar"
     :history="index.history"
+    :archive="index.archive"
     :spaces="index.spaces.value"
     :select-space-directory="index.selectSpaceDirectory"
     :tasks="index.tasks.value"
