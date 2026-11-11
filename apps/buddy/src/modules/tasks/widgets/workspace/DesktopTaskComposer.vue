@@ -54,6 +54,7 @@ function manageSkills() {
     v-bind="bindings"
     :speech-enabled="focusReady"
     :paste-text-as-attachment="chat.pasteTextAsAttachment"
+    :chinese-input-triggers="chat.chineseInputTriggers"
     :manage-skills="manageSkills"
     :has-queued-messages="execution.queuedMessages.value.length > 0"
     :inline-materials="inlineMaterials"

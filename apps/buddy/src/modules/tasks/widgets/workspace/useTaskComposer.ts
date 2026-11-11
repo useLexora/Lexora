@@ -4,7 +4,7 @@ import type { ChatComposerSubmitPayload } from '@/modules/prompt-input'
 import { computed } from 'vue'
 
 export function useTaskComposer(props: Readonly<TaskComposerHostProps>) {
-  const bindings = computed<Omit<DesktopChatComposerProps, 'pasteTextAsAttachment'>>(() => {
+  const bindings = computed<Omit<DesktopChatComposerProps, 'pasteTextAsAttachment' | 'chineseInputTriggers'>>(() => {
     const composer = props.composer
     const execution = props.execution
     return {

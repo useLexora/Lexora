@@ -38,6 +38,7 @@ export function useChatComposer(options: UseChatComposerOptions) {
   const query = useChatComposerSuggestions(options, selectSuggestion, getImageLabel)
   const { editor, contentJSON, imageLabels, serializedContent, quotePasteLimitMessage } = useChatComposerEditor({
     pasteTextAsAttachment: options.pasteTextAsAttachment,
+    chineseInputTriggers: options.chineseInputTriggers,
     composerContent: options.composerContent,
     draft: options.draft,
     draftId: options.draftId,

@@ -413,6 +413,8 @@ export default {
   'desktop.settings.themeSystem': 'System',
   'desktop.settings.themeSystemDescription': 'Match the system’s light or dark appearance',
   'desktop.settings.conversationInput': 'Message input',
+  'desktop.settings.chineseInputTriggers': 'Chinese input method triggers',
+  'desktop.settings.chineseInputTriggersDescription': 'Use 、 for slash commands and ￥ for skill suggestions. Text stays unchanged unless you select a suggestion.',
   'desktop.settings.pasteTextAsAttachment': 'Paste long text as an attachment',
   'desktop.settings.pasteTextAsAttachmentDescription': 'Convert pasted text over 1500 characters or 20 lines into a text attachment. When disabled, paste directly into the message.',
   'desktop.settings.readingWidth': 'Reading width',

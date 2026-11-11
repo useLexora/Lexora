@@ -2,32 +2,22 @@ import { describe, expect, it } from 'vitest'
 import { findChatComposerTrigger } from '../chatComposerInput'
 
 describe('findChatComposerTrigger', () => {
-  it('recognizes the ideographic comma as a slash trigger like /', () => {
-    expect(findChatComposerTrigger('、rev')).toEqual({ kind: 'slash', query: 'rev' })
-    expect(findChatComposerTrigger('/rev')).toEqual({ kind: 'slash', query: 'rev' })
+  it.each([['、', '/'], ['￥', '$']])('recognizes %s only when Chinese input triggers are enabled', (alias, ascii) => {
+    expect(findChatComposerTrigger(`${alias}review`)).toBeNull()
+    expect(findChatComposerTrigger(`${alias}review`, true)).toEqual(findChatComposerTrigger(`${ascii}review`))
+    expect(findChatComposerTrigger(`${alias}re view`, true)).toBeNull()
+    expect(findChatComposerTrigger(`word${alias}review`, true)).toBeNull()
   })
 
-  it('recognizes the fullwidth yuan sign as a skill trigger like $', () => {
-    expect(findChatComposerTrigger('￥contract')).toEqual({ kind: 'skill', query: 'contract' })
-    expect(findChatComposerTrigger('$contract')).toEqual({ kind: 'skill', query: 'contract' })
+  it('keeps slash commands at the start but allows skills mid-text without rewriting the query', () => {
+    expect(findChatComposerTrigger('正文 、review', true)).toBeNull()
+    expect(findChatComposerTrigger('正文 ￥a、b', true)).toEqual({ kind: 'skill', query: 'a、b' })
+    expect(findChatComposerTrigger('$first ￥second', true)).toEqual({ kind: 'skill', query: 'second' })
   })
 
-  it('recognizes the fullwidth yuan sign mid-text after whitespace', () => {
-    expect(findChatComposerTrigger('帮我用 ￥contract')).toEqual({ kind: 'skill', query: 'contract' })
-  })
-
-  it.each(['“', '”', '‘', '’', '（', '【'])('accepts the Chinese punctuation %s as a trigger boundary', (boundary) => {
-    expect(findChatComposerTrigger(`${boundary}￥contract`)).toEqual({ kind: 'skill', query: 'contract' })
-    expect(findChatComposerTrigger(`${boundary}$contract`)).toEqual({ kind: 'skill', query: 'contract' })
-    expect(findChatComposerTrigger(`${boundary}@文件`)).toEqual({ kind: 'mention', query: '文件' })
-  })
-
-  it('does not trigger when preceded by a word character', () => {
-    expect(findChatComposerTrigger('abc￥contract')).toBeNull()
-    expect(findChatComposerTrigger('abc$contract')).toBeNull()
-  })
-
-  it('does not trigger when the query contains whitespace', () => {
-    expect(findChatComposerTrigger('￥con tract')).toBeNull()
+  it('accepts Chinese punctuation boundaries independently of the alias setting', () => {
+    expect(findChatComposerTrigger('“$review')).toEqual({ kind: 'skill', query: 'review' })
+    expect(findChatComposerTrigger('（@文件')).toEqual({ kind: 'mention', query: '文件' })
+    expect(findChatComposerTrigger('【￥review', true)).toEqual({ kind: 'skill', query: 'review' })
   })
 })

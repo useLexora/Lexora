@@ -39,6 +39,7 @@ function resource(resourceId: string): ComposerResourceView {
 async function mountComposer() {
   const props = shallowReactive<DesktopChatComposerProps>({
     pasteTextAsAttachment: true,
+    chineseInputTriggers: false,
     canUpdatePermissionSettings: true,
     canSend: true,
     composerContent: createChatComposerContentFromText(''),

@@ -73,6 +73,16 @@ export interface ChatComposerSubmitPayload {
 
 const TRIGGER_BOUNDARY_PATTERN = /[\s([{，。！？；：、"'“”‘’（）【】`]$/u
 const CHAT_COMPOSER_SUGGESTION_LIMIT = 8
+const TRIGGER_KINDS: Readonly<Record<string, ChatComposerTrigger['kind']>> = {
+  '/': 'slash',
+  '$': 'skill',
+  '@': 'mention',
+}
+const CHINESE_TRIGGER_KINDS: Readonly<Record<string, ChatComposerTrigger['kind']>> = {
+  ...TRIGGER_KINDS,
+  '、': 'slash',
+  '￥': 'skill',
+}
 
 export function createEmptyChatComposerContent(): JSONContent {
   return { content: [{ type: 'paragraph' }], type: 'doc' }
@@ -93,22 +103,18 @@ export function serializeChatComposerContent(content: JSONContent): ChatComposer
   return { content: buddyUserContentToText(userContent).trim(), userContent }
 }
 
-export function findChatComposerTrigger(textBeforeCursor: string): ChatComposerTrigger | null {
-  const candidateSlashIndex = Math.max(
-    findTriggerStart(textBeforeCursor, '/'),
-    findTriggerStart(textBeforeCursor, '、'),
-  )
-  const slashIndex = candidateSlashIndex >= 0
-    && textBeforeCursor.slice(0, candidateSlashIndex).trim().length === 0
-    ? candidateSlashIndex
-    : -1
-  const skillIndex = Math.max(
-    findTriggerStart(textBeforeCursor, '$'),
-    findTriggerStart(textBeforeCursor, '￥'),
-  )
-  const mentionIndex = findTriggerStart(textBeforeCursor, '@')
-  const triggerIndex = Math.max(slashIndex, skillIndex, mentionIndex)
-  if (triggerIndex < 0)
+export function findChatComposerTrigger(textBeforeCursor: string, chineseInputTriggers = false): ChatComposerTrigger | null {
+  const triggers = chineseInputTriggers ? CHINESE_TRIGGER_KINDS : TRIGGER_KINDS
+  let triggerIndex = -1
+  let kind: ChatComposerTrigger['kind'] | null = null
+  for (const [character, triggerKind] of Object.entries(triggers)) {
+    const index = findTriggerStart(textBeforeCursor, character)
+    if (index <= triggerIndex || (triggerKind === 'slash' && textBeforeCursor.slice(0, index).trim().length > 0))
+      continue
+    triggerIndex = index
+    kind = triggerKind
+  }
+  if (!kind)
     return null
 
   const query = textBeforeCursor.slice(triggerIndex + 1)
@@ -124,10 +130,7 @@ export function findChatComposerTrigger(textBeforeCursor: string): ChatComposerT
   }
   if (/\s/u.test(query))
     return null
-  return {
-    kind: trigger === '/' || trigger === '、' ? 'slash' : trigger === '$' || trigger === '￥' ? 'skill' : 'mention',
-    query,
-  }
+  return { kind, query }
 }
 
 export function createChatComposerSuggestions(
@@ -177,7 +180,7 @@ export function shouldSubmitChatComposerKey(
     && !event.metaKey
 }
 
-function findTriggerStart(value: string, trigger: '/' | '、' | '$' | '￥' | '@'): number {
+function findTriggerStart(value: string, trigger: string): number {
   const index = value.lastIndexOf(trigger)
   if (index < 0 || (index > 0 && !TRIGGER_BOUNDARY_PATTERN.test(value[index - 1] ?? '')))
     return -1
