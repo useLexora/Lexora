@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createConversationArchiveRepository } from '../../storage/conversationArchiveRepository'
 import { createConversationDeletionRepository } from '../../storage/conversationDeletionRepository'
 import { createConversationRepository } from '../../storage/conversationRepository'
-import { openBuddyDatabase, openBuddySqliteDatabase } from '../../storage/database'
+import { openBuddyDatabase } from '../../storage/database'
 import { ConversationArchiveService } from '../ConversationArchiveService'
 import { ConversationLifecycleService } from '../ConversationLifecycleService'
 import { ConversationMutationGuard } from '../ConversationMutationGuard'
@@ -19,8 +19,8 @@ afterEach(() => {
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
 })
 
-function fixture(storageAuthority: 'legacy_jsonl' | 'sqlite', stop: () => Promise<number> = async () => 0) {
-  const database = (storageAuthority === 'sqlite' ? openBuddySqliteDatabase : openBuddyDatabase)({ databasePath: ':memory:' })
+function fixture(stop: () => Promise<number> = async () => 0) {
+  const database = openBuddyDatabase({ databasePath: ':memory:' })
   databases.push(database)
   const home = mkdtempSync(join(tmpdir(), 'lexora-archive-service-'))
   directories.push(home)
@@ -28,7 +28,7 @@ function fixture(storageAuthority: 'legacy_jsonl' | 'sqlite', stop: () => Promis
   const repository = createConversationArchiveRepository(database)
   const deletion = createConversationDeletionRepository(database)
   const mutations = new ConversationMutationGuard()
-  const purge = new ConversationPurgeService({ database, home, storageAuthority })
+  const purge = new ConversationPurgeService({ database, home })
   const lifecycle = new ConversationLifecycleService({ conversations, deletion, assertWritable: id => mutations.assertWritable(id), runner: { cancelAndWaitForConversation: stop }, cancelQueuedRuns: async () => {}, sessions: { invalidateConversation: async () => ({ pending: 0, degraded: 0 }) }, purge: id => purge.purge(id) })
   const service = new ConversationArchiveService({ database, repository, conversations, mutations, lifecycle, now: () => new Date('2026-11-15T00:00:00.000Z'), onError: () => {} })
   const seed = (id: string) => {
@@ -48,9 +48,9 @@ function fixture(storageAuthority: 'legacy_jsonl' | 'sqlite', stop: () => Promis
   return { database, home, conversations, repository, deletion, mutations, lifecycle, service, seed }
 }
 
-describe.each(['legacy_jsonl', 'sqlite'] as const)('conversation archive lifecycle (%s)', (storageAuthority) => {
+describe('conversation archive lifecycle', () => {
   it('does not clear archives by default and expires only explicitly archived tasks', async () => {
-    const f = fixture(storageAuthority)
+    const f = fixture()
     const expired = f.seed('expired')
     const recent = f.seed('recent')
     const legacy = f.seed('legacy')
@@ -72,9 +72,28 @@ describe.each(['legacy_jsonl', 'sqlite'] as const)('conversation archive lifecyc
     await f.lifecycle.dispose()
   })
 
+  it('holds the mutation gate while stopping and rejects stale restore without losing archive data', async () => {
+    const stop = Promise.withResolvers<number>()
+    const f = fixture(() => stop.promise)
+    const directory = f.seed('task')
+    const revision = f.conversations.findById('task')!.metadataRevision!
+    const archiving = f.service.archive({ conversationId: 'task', expectedRevision: revision })
+    expect(() => f.mutations.assertWritable('task')).toThrow()
+    expect(f.conversations.findById('task')!.archivedAt).toBeNull()
+    stop.resolve(0)
+    expect(await archiving).toBe(true)
+    expect(existsSync(directory)).toBe(true)
+    expect(() => f.service.restore({ conversationId: 'task', expectedRevision: revision })).toThrow()
+    expect(f.conversations.listRecent()).toEqual([])
+    expect(f.service.restore({ conversationId: 'task', expectedRevision: f.conversations.findById('task')!.metadataRevision })).toBe(true)
+    expect(f.conversations.listRecent().map(item => item.id)).toEqual(['task'])
+    await f.service.dispose()
+    await f.lifecycle.dispose()
+  })
+
   it('persists a stop failure and never turns a legacy tombstone into a purge during recovery', async () => {
     let fail = true
-    const f = fixture(storageAuthority, async () => {
+    const f = fixture(async () => {
       if (fail)
         throw new Error('fixture stop failure')
       return 0
@@ -82,29 +101,31 @@ describe.each(['legacy_jsonl', 'sqlite'] as const)('conversation archive lifecyc
     const directory = f.seed('task')
     const legacy = f.seed('legacy')
     f.conversations.markDeleted('legacy', '2026-10-01T00:00:00.000Z')
-    await expect(f.lifecycle.delete('task')).rejects.toThrow()
+    await expect(f.service.deletePermanently({ conversationId: 'task', expectedRevision: f.conversations.findById('task')!.metadataRevision })).resolves.toBe(true)
+    await f.lifecycle.settleDeletion('task').catch(() => {})
     expect(f.repository.list({ kind: 'deleting' }).items).toMatchObject([{ id: 'task', deletionStatus: 'failed' }])
     expect(existsSync(directory)).toBe(true)
     fail = false
     await f.lifecycle.recover('legacy')
     expect(existsSync(legacy)).toBe(true)
     expect(f.deletion.has('legacy')).toBe(false)
-    await f.lifecycle.delete('task')
+    await f.service.deletePermanently({ conversationId: 'task', expectedRevision: f.conversations.findById('task')!.metadataRevision })
+    await f.lifecycle.settleDeletion('task')
     expect(existsSync(directory)).toBe(false)
     await f.service.dispose()
     await f.lifecycle.dispose()
   })
 
   it('restricts legacy cleanup to the confirmed removed revision', async () => {
-    const f = fixture(storageAuthority)
+    const f = fixture()
     const active = f.seed('active')
     const legacy = f.seed('legacy')
-    expect(() => f.service.commitDeleteLegacyRemoved('active', f.conversations.findById('active')!.metadataRevision)).toThrow()
+    await expect(f.service.deleteLegacyRemoved({ conversationId: 'active', expectedRevision: f.conversations.findById('active')!.metadataRevision })).rejects.toThrow()
     f.conversations.markDeleted('legacy', '2026-10-01T00:00:00.000Z')
     const revision = f.conversations.findById('legacy')!.metadataRevision!
-    expect(() => f.service.commitDeleteLegacyRemoved('legacy', revision + 1)).toThrow()
-    const committed = f.service.commitDeleteLegacyRemoved('legacy', revision)
-    await f.service.finishDeletion(committed)
+    await expect(f.service.deleteLegacyRemoved({ conversationId: 'legacy', expectedRevision: revision + 1 })).rejects.toThrow()
+    expect(await f.service.deleteLegacyRemoved({ conversationId: 'legacy', expectedRevision: revision })).toBe(true)
+    await f.lifecycle.settleDeletion('legacy')
     expect(existsSync(legacy)).toBe(false)
     expect(existsSync(active)).toBe(true)
     await f.service.dispose()

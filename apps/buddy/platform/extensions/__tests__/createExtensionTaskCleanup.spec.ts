@@ -38,3 +38,12 @@ it('preserves the exact target and revision without letting the plugin expand th
   await expect(adapter.delete({ conversationId: 'removed', expectedRevision: 4 })).resolves.toEqual({ status: 'deleted' })
   expect([...records.keys()]).toEqual(['active'])
 })
+
+it('keeps accepted cleanup separate from completion and preserves failure diagnostics', async () => {
+  const adapter = createExtensionTaskCleanup({
+    list: async () => ({ items: [], nextCursor: null }),
+    delete: async input => input.conversationId === 'pending' ? { status: 'pending' } : { status: 'failed', errorCode: 'CONVERSATION_FILES_REFERENCED' },
+  })
+  await expect(adapter.delete({ conversationId: 'pending', expectedRevision: 4 })).resolves.toEqual({ status: 'pending' })
+  await expect(adapter.delete({ conversationId: 'failed', expectedRevision: 4 })).resolves.toEqual({ status: 'failed', errorCode: 'CONVERSATION_FILES_REFERENCED' })
+})

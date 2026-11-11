@@ -90,16 +90,16 @@ describe('progressive task history', () => {
     expect(ids(f)).toContain('task-30')
   })
 
-  it('retains marks exceeding the initial quota and adds ten ordinary tasks on expansion', async () => {
+  it.each([5, 7])('counts %i marked tasks toward the initial five and adds ten on expansion', async (count) => {
     const f = fixture()
-    const marked = Array.from({ length: 7 }, (_, index) => ({ ...item(100 + index, 'space'), markState: { ...item(100 + index).markState, markId: 'keep' } }))
+    const marked = Array.from({ length: count }, (_, index) => ({ ...item(100 + index, 'space'), markState: { ...item(100 + index).markState, markId: 'keep' } }))
     marked.forEach(entry => f.replace(entry))
     await f.refreshAttention()
     await f.history.ensureScope('space')
-    expect(ids(f)).toHaveLength(7)
+    expect(ids(f)).toHaveLength(Math.max(5, count))
     expect(ids(f)).toEqual(expect.arrayContaining(marked.map(entry => entry.conversation.id)))
     await f.history.loadMore('space')
-    expect(ids(f)).toHaveLength(17)
+    expect(ids(f)).toHaveLength(Math.max(5, count) + 10)
     expect(new Set(ids(f)).size).toBe(ids(f).length)
   })
 
@@ -162,12 +162,17 @@ describe('progressive task history', () => {
     const f = fixture()
     await f.history.ensureScope('space')
     const before = f.conversations.value
+    const scopes = f.history.scopes.value
+    const queries = f.queries.length
     const selection = { providerId: 'fixture', modelId: 'model-2', reasoning: 'high' as const, serviceTier: 'priority' as const }
     const updated = { ...item(117, 'space'), conversation: { ...item(117, 'space').conversation, modelSelection: selection } }
     f.replace(updated)
     await f.applyConversation(updated.conversation)
     expect(ids(f)).toEqual(before.map(task => task.id))
     expect(f.conversations.value.find(task => task.id === 'task-117')).toMatchObject({ modelSelection: selection, updatedAt: updated.conversation.updatedAt })
+    expect(f.conversations.value[0]).toBe(before[0])
+    expect(f.history.scopes.value).toBe(scopes)
+    expect(f.queries).toHaveLength(queries)
     await f.history.loadMore('space')
     expect(f.conversations.value).toHaveLength(15)
     expect(f.conversations.value.find(task => task.id === 'task-117')?.modelSelection).toEqual(selection)

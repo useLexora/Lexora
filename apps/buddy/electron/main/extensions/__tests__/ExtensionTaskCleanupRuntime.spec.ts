@@ -34,9 +34,6 @@ async function runtime(execute: (context: { taskCleanup?: CleanupCommand }) => P
     AbortController,
     Worker: class {},
     createExtensionWorkers: () => ({}),
-    createExtensionResourceClient: () => ({}),
-    createExtensionNetworkClient: () => ({}),
-    createExtensionInferenceClient: () => ({}),
     ExtensionHostEvents: class { events = {} },
     addEventListener: (_name: string, callback: () => void) => { pagehide = callback },
   })
@@ -69,6 +66,7 @@ it('routes by command token, isolates callback failures and releases listeners b
   expect(await run).toEqual({ success: true, result })
   await f.progress('current', { ...progress, phase: 'scanning', total: null, processed: 0 })
   expect(received).toHaveLength(2)
+  expect(result.summary).toEqual(summary)
 })
 
 it('keeps concurrent command callbacks isolated and removes rejected and unloaded listeners', async () => {

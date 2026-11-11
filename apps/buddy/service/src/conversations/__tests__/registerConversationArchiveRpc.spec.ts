@@ -13,10 +13,12 @@ import { openBuddyDatabase } from '../../storage/database'
 import { ConversationArchiveService } from '../ConversationArchiveService'
 import { ConversationCleanupService } from '../ConversationCleanupService'
 import { ConversationLifecycleService } from '../ConversationLifecycleService'
+import { ConversationMetadataService } from '../ConversationMetadataService'
 import { ConversationMutationGuard } from '../ConversationMutationGuard'
 import { ConversationPurgeService } from '../ConversationPurgeService'
 import { registerConversationArchiveRpc } from '../registerConversationArchiveRpc'
 import { registerConversationCleanupRpc } from '../registerConversationCleanupRpc'
+import { registerConversationRpc } from '../registerConversationRpc'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => {
@@ -24,7 +26,7 @@ afterEach(async () => {
 })
 const now = '2026-11-15T00:00:00.000Z'
 
-function fixture(options: { legacyWrites?: boolean, stop?: () => Promise<number> } = {}) {
+function fixture(options: { stop?: () => Promise<number> } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'lexora-legacy-archive-rpc-'))
   const path = join(home, 'buddy.sqlite3')
   const database = openBuddyDatabase({ databasePath: path })
@@ -32,7 +34,7 @@ function fixture(options: { legacyWrites?: boolean, stop?: () => Promise<number>
   const repository = createConversationArchiveRepository(database)
   const mutations = new ConversationMutationGuard()
   const deletion = createConversationDeletionRepository(database)
-  const purge = new ConversationPurgeService({ database, home, storageAuthority: 'legacy_jsonl' })
+  const purge = new ConversationPurgeService({ database, home })
   const errors: unknown[] = []
   const lifecycle = new ConversationLifecycleService({
     conversations,
@@ -44,7 +46,7 @@ function fixture(options: { legacyWrites?: boolean, stop?: () => Promise<number>
     purge: id => purge.purge(id),
   })
   const archive = new ConversationArchiveService({ database, repository, conversations, mutations, lifecycle, onError: error => errors.push(error), now: () => new Date(now) })
-  const cleanup: ConversationCleanupService = new ConversationCleanupService({ database, archive, lifecycle, execute: input => cleanup.execute(input) })
+  const cleanup = new ConversationCleanupService({ database, archive, lifecycle })
   const handlers = new Map<string, RuntimeRequestHandler>()
   const rpc = { onRequest: (method: string, handler: RuntimeRequestHandler) => {
     handlers.set(method, handler)
@@ -52,11 +54,27 @@ function fixture(options: { legacyWrites?: boolean, stop?: () => Promise<number>
       handlers.delete(method)
     }
   } }
-  const dispose = registerConversationArchiveRpc({ archive, legacyWrites: options.legacyWrites ?? true, rpc })
+  const dispose = registerConversationArchiveRpc({ archive, rpc })
   const disposeCleanup = registerConversationCleanupRpc({ rpc, cleanup })
+  const metadata = new ConversationMetadataService({ repository: conversations, assertWritable: id => mutations.assertWritable(id), resolveModelSelection: async input => input, sessions: { invalidateConversation: async () => ({ pending: 0, degraded: 0 }) } })
+  const disposeConversations = registerConversationRpc({
+    rpc,
+    conversations,
+    metadata,
+    deleteConversation: id => lifecycle.delete(id),
+    isDeleting: id => lifecycle.isDeleting(id),
+    artifacts: { listForConversation: () => [] },
+    attachments: { listForConversation: () => [] },
+    changes: { listSummariesForRuns: () => [] },
+    eventLog: { verifyRun: async () => {}, listForRuns: () => [] },
+    runInputs: { findByRunId: () => null },
+    runs: { listForTimeline: () => [] },
+  })
   cleanups.push(async () => {
     dispose()
     disposeCleanup()
+    disposeConversations()
+    await metadata.dispose()
     await archive.dispose()
     await lifecycle.dispose()
     database.close()
@@ -71,8 +89,9 @@ function fixture(options: { legacyWrites?: boolean, stop?: () => Promise<number>
   }
   const target = (conversationId: string) => ({ conversationId, expectedRevision: conversations.findById(conversationId)!.metadataRevision! })
   const invoke = (method: keyof typeof conversationArchiveRpc, input: unknown) => Promise.resolve().then(() => handlers.get(conversationArchiveRpc[method].method)!(input, new AbortController().signal))
+  const invokeRaw = (method: string, input: unknown) => Promise.resolve().then(() => handlers.get(method)!(input, new AbortController().signal))
   const invokeCleanup = (method: keyof typeof conversationCleanupRpc, input: unknown) => Promise.resolve().then(() => handlers.get(conversationCleanupRpc[method].method)!(input, new AbortController().signal))
-  return { database, path, conversations, repository, mutations, deletion, lifecycle, archive, cleanup, invokeCleanup, errors, seed, target, invoke }
+  return { database, path, conversations, repository, mutations, deletion, lifecycle, archive, cleanup, invokeCleanup, errors, seed, target, invoke, invokeRaw }
 }
 
 describe('legacy conversation archive RPC', () => {
@@ -100,9 +119,10 @@ describe('legacy conversation archive RPC', () => {
     expect(existsSync(archived)).toBe(true)
   })
 
-  it('archives, restores, saves policy and deletes while preserving task data until deletion', async () => {
+  it('archives, restores, saves policy and deletes through the actual v42 runtime lifecycle', async () => {
     const f = fixture()
     const directory = f.seed('task')
+    expect(f.database.prepare('PRAGMA user_version').get()!.user_version).toBe(42)
     const initial = f.target('task')
     await expect(f.invoke('archive', initial)).resolves.toBe(true)
     expect(existsSync(directory)).toBe(true)
@@ -161,7 +181,7 @@ describe('legacy conversation archive RPC', () => {
   it('requires a fixed numeric revision for every raw task mutation', async () => {
     const f = fixture()
     f.seed('task')
-    for (const method of ['archive', 'restoreArchive', 'deleteArchived'] as const) {
+    for (const method of ['archive', 'restoreArchive', 'deleteArchived', 'deletePermanently'] as const) {
       for (const expectedRevision of [undefined, -1, 1.5, '0', Number.MAX_SAFE_INTEGER + 1]) {
         await expect(f.invoke(method, { conversationId: 'task', expectedRevision })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
       }
@@ -171,15 +191,68 @@ describe('legacy conversation archive RPC', () => {
     expect(f.conversations.findById('task')!.archivedAt).toBeNull()
   })
 
-  it('rejects raw writes when legacy mode is not explicitly enabled', async () => {
-    const f = fixture({ legacyWrites: false })
-    f.seed('task')
-    for (const method of ['archive', 'restoreArchive', 'deleteArchived', 'setArchivePolicy'] as const) {
-      await expect(f.invoke(method, method === 'setArchivePolicy' ? { days: 3 } : f.target('task'))).rejects.toMatchObject({ code: 'METHOD_NOT_AVAILABLE' })
+  it('permanently deletes active tasks only at the confirmed revision and excludes legacy tombstones', async () => {
+    const f = fixture()
+    const active = f.seed('active')
+    const removed = f.seed('removed')
+    const input = f.target('active')
+    await expect(f.invoke('deletePermanently', { ...input, expectedRevision: input.expectedRevision + 1 })).rejects.toMatchObject({ code: 'SOURCE_CHANGED' })
+    expect(f.deletion.has('active')).toBe(false)
+    expect(existsSync(active)).toBe(true)
+    f.conversations.markDeleted('removed', now)
+    await expect(f.invoke('deletePermanently', f.target('removed'))).rejects.toMatchObject({ code: 'SOURCE_CHANGED' })
+    expect(f.deletion.has('removed')).toBe(false)
+    await expect(f.invoke('deletePermanently', input)).resolves.toBe(true)
+    await f.lifecycle.settleDeletion('active')
+    expect(f.conversations.findById('active')).toBeNull()
+    expect(existsSync(active)).toBe(false)
+    expect(existsSync(removed)).toBe(true)
+  })
+
+  it('retries a failed active-task deletion from the archive manager without broadening legacy cleanup', async () => {
+    let fail = true
+    const f = fixture({ stop: async () => {
+      if (fail)
+        throw new Error('Stop failed')
+      return 0
+    } })
+    const directory = f.seed('active')
+    await expect(f.invoke('deletePermanently', f.target('active'))).resolves.toBe(true)
+    await f.lifecycle.settleDeletion('active')
+    expect(f.conversations.findById('active')!.archivedAt).toBeNull()
+    expect(f.database.prepare('SELECT status, origin FROM conversation_deletion_jobs').get()).toMatchObject({ status: 'failed', origin: 'conversation' })
+    expect(existsSync(directory)).toBe(true)
+    expect(f.cleanup.list({ scope: 'legacy_removed' }).items).toEqual([])
+    fail = false
+    await expect(f.invoke('deleteArchived', f.target('active'))).resolves.toBe(true)
+    await f.lifecycle.settleDeletion('active')
+    expect(f.conversations.findById('active')).toBeNull()
+    expect(existsSync(directory)).toBe(false)
+  })
+
+  it('preserves old raw delete as soft removal and permits explicit plugin cleanup afterwards', async () => {
+    const started = Promise.withResolvers<void>()
+    const stop = Promise.withResolvers<number>()
+    const f = fixture({ stop: () => {
+      started.resolve()
+      return stop.promise
+    } })
+    const directory = f.seed('task')
+    const pending = f.invokeRaw('conversations.delete', { conversationId: 'task' })
+    await started.promise
+    try {
+      await expect(f.cleanup.execute(f.target('task'))).rejects.toMatchObject({ code: 'CONVERSATION_BUSY' })
+      expect(f.cleanup.list({ scope: 'legacy_removed' }).items).toMatchObject([{ conversationId: 'task', canDelete: false, blockedReason: 'CONVERSATION_BUSY' }])
+      expect(f.deletion.has('task')).toBe(false)
     }
-    await expect(f.invoke('listArchived', { kind: 'archived' })).resolves.toEqual({ items: [], nextCursor: null })
-    await expect(f.invoke('getArchivePolicy', {})).resolves.toEqual({ days: 0 })
-    expect(f.conversations.findById('task')!.archivedAt).toBeNull()
+    finally { stop.resolve(0) }
+    await expect(pending).resolves.toBe(true)
+    expect(f.conversations.findById('task')!.deletedAt).not.toBeNull()
+    expect(f.deletion.has('task')).toBe(false)
+    expect(existsSync(directory)).toBe(true)
+    await expect(f.invoke('deletePermanently', f.target('task'))).rejects.toMatchObject({ code: 'SOURCE_CHANGED' })
+    await expect(f.cleanup.delete({ ...f.target('task'), scope: 'legacy_removed' })).resolves.toEqual({ status: 'deleted' })
+    expect(existsSync(directory)).toBe(false)
   })
 
   it('returns deletion admission before physical cleanup while holding the mutation gate until completion', async () => {
@@ -206,9 +279,13 @@ describe('legacy conversation archive RPC', () => {
       started.resolve()
       return stop.promise
     } })
+    const active = f.seed('active')
     const removed = f.seed('removed')
+    await expect(f.cleanup.execute(f.target('active'))).resolves.toBe(false)
     f.conversations.markDeleted('removed', now)
     const input = f.target('removed')
+    await expect(f.cleanup.execute({ ...input, expectedRevision: input.expectedRevision - 1 })).resolves.toBe(false)
+    expect(f.deletion.has('removed')).toBe(false)
     await f.mutations.run('removed', async () => {
       await expect(f.cleanup.execute(input)).rejects.toMatchObject({ code: 'CONVERSATION_BUSY' })
     })
@@ -224,5 +301,24 @@ describe('legacy conversation archive RPC', () => {
     stop.resolve(0)
     await expect(pending).resolves.toEqual({ status: 'deleted' })
     expect(existsSync(removed)).toBe(false)
+    expect(existsSync(active)).toBe(true)
+  })
+
+  it('keeps failed cleanup durable and retryable without claiming data was deleted', async () => {
+    let fail = true
+    const f = fixture({ stop: async () => {
+      if (fail)
+        throw new Error('Stop failed')
+      return 0
+    } })
+    const directory = f.seed('removed')
+    f.conversations.markDeleted('removed', now)
+    await expect(f.cleanup.delete({ ...f.target('removed'), scope: 'legacy_removed' })).resolves.toMatchObject({ status: 'failed' })
+    expect(existsSync(directory)).toBe(true)
+    expect(f.database.prepare('SELECT status, origin FROM conversation_deletion_jobs').get()).toMatchObject({ status: 'failed', origin: 'legacy_removed' })
+    expect(f.cleanup.list({ scope: 'legacy_removed' }).items).toMatchObject([{ conversationId: 'removed', canDelete: true, expectedRevision: f.target('removed').expectedRevision }])
+    fail = false
+    await expect(f.cleanup.delete({ ...f.target('removed'), scope: 'legacy_removed' })).resolves.toEqual({ status: 'deleted' })
+    expect(existsSync(directory)).toBe(false)
   })
 })

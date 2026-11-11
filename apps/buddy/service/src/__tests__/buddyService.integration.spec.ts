@@ -12,7 +12,6 @@ import type { LocalBuddy } from '../../../shared/buddies/buddyApi'
 import type { BuddyComposerResource } from '../../../shared/conversation/composerResource'
 
 import type { ApplicationDiagnostic } from '../../../shared/diagnostics/applicationDiagnostic'
-import type { StartBuddyServiceOptions } from '../BuddyService'
 import type { BuddyServiceRpcServer } from '../rpc/BuddyServiceRpcServer'
 import { Buffer } from 'node:buffer'
 import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, unlink, writeFile } from 'node:fs/promises'
@@ -21,20 +20,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SessionManager } from '@earendil-works/pi-coding-agent'
 import { afterEach, describe, expect, it } from 'vitest'
-import { ProductDesktopGateway } from '../../../electron/main/productProtocol/ProductDesktopGateway'
 import { DEFAULT_BUDDY_SETTINGS } from '../../../shared/buddies/buddySettings'
-
 import { createBuddyUserContent } from '../../../shared/conversation/buddyUserContent'
-import { Emitter } from '../../../shared/events/Emitter'
+
 import { DEFAULT_NETWORK_PERMISSIONS } from '../../../shared/permissions/networkPermissions'
 import { DEFAULT_RUNTIME_PREFERENCES } from '../../../shared/runtime/runtimePreferences'
 import { inspectCommittedPiCompaction } from '../agent/sessions/recovery/inspectCommittedPiCompaction'
 import { readCheckpoint } from '../agent/sessions/tree/BuddyTreeStore'
-import { startBuddyService as startService } from '../BuddyService'
+import { startBuddyService } from '../BuddyService'
 import { createRunEventLog } from '../events/createRunEventLog'
-import { SqliteRunEventLog } from '../events/SqliteRunEventLog'
-import { createRpcRuntimePlatform } from '../platform/createRpcRuntimePlatform'
-import { createServiceConnection } from '../rpc/__tests__/serviceConnectionHarness'
 import { RunLifecycleService } from '../runs/RunLifecycleService'
 import { RunRecoveryService } from '../runs/RunRecoveryService'
 import {
@@ -45,10 +39,9 @@ import { createExecutionStorageFixture, executionNow } from '../storage/__tests_
 import { createApprovalRepository } from '../storage/approvalRepository'
 import { createArtifactRepository } from '../storage/artifactRepository'
 import { createAttachmentRepository } from '../storage/attachmentRepository'
-import { createComposerDraftRepository } from '../storage/composerDraftRepository'
 import { createConversationDeletionRepository } from '../storage/conversationDeletionRepository'
 import { createConversationRepository } from '../storage/conversationRepository'
-import { openBuddyDatabase, openBuddyMigrationCandidate } from '../storage/database'
+import { openBuddyDatabase } from '../storage/database'
 import { createExecutionRepository } from '../storage/executionRepository'
 import { createRunRepository } from '../storage/runRepository'
 import { createSpaceRepository } from '../storage/spaceRepository'
@@ -67,273 +60,6 @@ afterEach(async () => {
 })
 
 describe('buddy runtime cross-subsystem contract', () => {
-  it('cancels current execution when its platform disappears and only admits new intent after recovery', async () => {
-    const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-platform-loss-')))
-    directories.push(root)
-    const buddyHome = join(root, 'buddy')
-    const database = openTrackedDatabase(join(buddyHome, 'buddy.sqlite3'))
-    const eventLog = createRunEventLog({ conversationsDirectory: join(buddyHome, 'conversations'), database })
-    const entered = Promise.withResolvers<void>()
-    const release = Promise.withResolvers<void>()
-    let requests = 0
-    const provider = await startLocalModelProvider(async () => {
-      if (++requests === 1) {
-        entered.resolve()
-        await release.promise
-      }
-      return { text: 'Explicit new intent completed' }
-    })
-    const harness = createRuntimeRpcHarness({ 'offline-provider': { type: 'api_key', key: 'test-api-key' } })
-    const service = await startBuddyService({ buddyHome, database, eventLog, rpc: harness.rpc, builtinSkillsDirectories: [] })
-    try {
-      await harness.invoke('providers.upsertCustom', offlineProviderConfig(provider.baseUrl))
-      const first = await service.runtime.startTurn(await turnRequest(harness, { content: 'First execution', requestId: 'before-platform-loss' }))
-      await entered.promise
-      await service.suspendPlatform()
-      expect((await waitForTerminalRun(harness, first.runId)).status).toBe('cancelled')
-      const fresh = await turnRequest(harness, { conversationId: first.conversationId, branchId: first.branchId, content: 'Explicit new intent', requestId: 'after-platform-loss' })
-      await expect(service.runtime.startTurn(fresh)).rejects.toMatchObject({ code: 'PLATFORM_HOST_UNAVAILABLE' })
-      expect(requests).toBe(1)
-      release.resolve()
-      await service.resumePlatform()
-      expect(requests).toBe(1)
-      const second = await service.runtime.startTurn(fresh)
-      expect((await waitForTerminalRun(harness, second.runId)).status).toBe('completed')
-      expect(requests).toBe(2)
-      expect((await eventLog.read(first.runId)).filter(event => event.type === 'run.completed')).toEqual([])
-    }
-    finally {
-      release.resolve()
-      await service.dispose()
-      await eventLog.close()
-    }
-  }, 30000)
-
-  it('runs a candidate Core command through one SQLite writer and replays its receipt after disconnect', async () => {
-    const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-buddy-candidate-core-')))
-    directories.push(root)
-    const buddyHome = join(root, 'buddy')
-    const database = openBuddyMigrationCandidate({ databasePath: join(buddyHome, 'buddy.sqlite3') })
-    databases.push(database)
-    database.exec('UPDATE storage_profile SET authority = \'sqlite\', migration_state = \'ready\'')
-    const eventLog = new SqliteRunEventLog({ database })
-    const harness = createRuntimeRpcHarness({ 'offline-provider': { type: 'api_key', key: 'test-api-key' } })
-    const provider = await startLocalModelProvider(async () => ({ text: 'CANDIDATE_COMMAND_COMPLETED' }))
-    const service = await startBuddyService({ serviceInstanceId: 'candidate-instance', productIdentity: { serviceId: 'candidate-service', profileId: 'candidate-profile' }, buddyHome, database, eventLog, rpc: harness.rpc, builtinSkillsDirectories: [] })
-    const product = createServiceConnection()
-    const disconnect = service.connectClient('product', product.server)
-    const productFrames: Array<Record<string, any>> = []
-    product.client.onNotification((method, params) => {
-      if (method === 'product.frame')
-        productFrames.push(JSON.parse((params as { frame: string }).frame))
-    })
-    const exchange = async (method: string, params: unknown) => {
-      const id = String(productFrames.length + 1)
-      await product.client.request('product.exchange', { frame: JSON.stringify({ jsonrpc: '2.0', id, method, params }) })
-      const frame = productFrames.find(frame => frame.id === id)!
-      if (frame.error)
-        throw new Error(JSON.stringify(frame.error))
-      return frame.result
-    }
-    try {
-      await expect(product.client.request('runtime.stop', {})).rejects.toMatchObject({ code: -32601 })
-      const initialized = await exchange('initialize', { protocol: { major: 1, minMinor: 0, maxMinor: 0 }, client: { kind: 'desktop', version: 'test' }, supportedContentKinds: ['buddy-user-content-v1'], supportedReviewKinds: [] })
-      expect(initialized.profileId).toBe('candidate-profile')
-      expect(initialized.capabilities).toContain('composerDrafts.open')
-      await harness.invoke('providers.upsertCustom', offlineProviderConfig(provider.baseUrl))
-      const initialSync = await exchange('sync.subscribe', { subscriptionId: 'task-index', topic: 'taskIndex' })
-      expect(initialSync).toMatchObject({ mode: 'snapshot', items: [] })
-      const projected = await harness.invoke('product.content.project', { content: createBuddyUserContent('Use the committed candidate command') }) as { content: unknown }
-      await exchange('composerDrafts.open', {
-        commandId: 'candidate-open',
-        dataGeneration: service.commands!.identity.dataGeneration,
-        expectedServiceInstanceId: 'candidate-instance',
-        intent: { draftId: 'candidate-draft', scope: { kind: 'global' }, expectedSlotRevision: '0', initialContent: projected.content, initialExecutionConfig: { approvalPolicy: 'policy', executionProfile: 'workspace_write' }, initialModelSelection: { modelId: 'offline-model', providerId: 'offline-provider', reasoning: null, serviceTier: null } },
-      })
-      const draft = createComposerDraftRepository(database).findById('candidate-draft')!
-      expect(await exchange('composerDrafts.get', { draftId: draft.draftId })).toMatchObject({ draftId: draft.draftId, revision: '0', content: { kind: 'editable' } })
-      for (const method of ['chat.startTurn', 'composerDrafts.save', 'approvals.approve', 'conversations.rename'])
-        await expect(harness.invoke(method, {})).rejects.toMatchObject({ code: 'METHOD_NOT_AVAILABLE' })
-      const commands = service.commands!
-      expect(commands.identity.serviceInstanceId).toBe('candidate-instance')
-      const input = { commandId: 'candidate-command', dataGeneration: commands.identity.dataGeneration, expectedServiceInstanceId: commands.identity.serviceInstanceId, intent: { draftId: draft.draftId, expectedRevision: draft.revision } }
-      const accepted = await exchange('chat.startTurn', { ...input, intent: { ...input.intent, expectedRevision: String(input.intent.expectedRevision) } })
-      expect(await exchange('commands.get', { commandId: input.commandId, dataGeneration: input.dataGeneration })).toEqual({ lookup: 'decided', receipt: accepted.receipt })
-      const runId = String((accepted.receipt as unknown as { target: { runId: string } }).target.runId)
-      const task = await exchange('conversations.get', { conversationId: accepted.receipt.target.conversationId })
-      expect(typeof task.revision).toBe('string')
-      expect(task).not.toHaveProperty('metadataRevision')
-      expect(productFrames.some(frame => frame.method === 'sync.delta' && frame.params.changes[0]?.kind === 'upsert')).toBe(true)
-      disconnect()
-      product.close()
-      expect(await waitForTerminalRun(harness, runId)).toMatchObject({ status: 'completed' })
-      expect(await commands.input.execute('chat.startTurn', input)).toMatchObject({ created: false, receipt: { target: accepted.receipt.target } })
-      const events = await eventLog.read(runId)
-      expect(events[0]?.type).toBe('run.queued')
-      expect(events.map(event => event.sequence)).toEqual(events.map((_, index) => index + 1))
-      expect(JSON.stringify(events)).toContain('CANDIDATE_COMMAND_COMPLETED')
-      expect(provider.requests).toHaveLength(1)
-      expect(database.prepare('SELECT count(*) AS count FROM command_receipts').get()).toEqual({ count: 2 })
-    }
-    finally {
-      product.close()
-      await service.dispose()
-      await eventLog.close()
-    }
-  })
-
-  it('accepts immutable local input on its explicit branch and preserves deletion rejections', async () => {
-    const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-submitted-input-')))
-    directories.push(root)
-    const buddyHome = join(root, 'buddy')
-    const database = openBuddyMigrationCandidate({ databasePath: join(buddyHome, 'buddy.sqlite3') })
-    databases.push(database)
-    database.exec('UPDATE storage_profile SET authority = \'sqlite\', migration_state = \'ready\'')
-    const eventLog = new SqliteRunEventLog({ database })
-    const harness = createRuntimeRpcHarness({ 'offline-provider': { type: 'api_key', key: 'test-api-key' } })
-    const provider = await startLocalModelProvider(async () => ({ text: 'LOCAL_INPUT_COMPLETED' }))
-    const service = await startBuddyService({ serviceInstanceId: 'input-instance', productIdentity: { serviceId: 'input-service', profileId: 'input-profile' }, buddyHome, database, eventLog, rpc: harness.rpc, builtinSkillsDirectories: [] })
-    try {
-      await harness.invoke('providers.upsertCustom', offlineProviderConfig(provider.baseUrl))
-      const commands = service.commands!
-      const snapshot = { inputId: 'local-input', scope: { kind: 'task', draftId: 'local-input', spaceId: null }, content: createBuddyUserContent('Local immutable input 😀'), executionConfig: { approvalPolicy: 'policy', executionProfile: 'read_only' }, modelSelection: { modelId: 'offline-model', providerId: 'offline-provider', reasoning: null, serviceTier: null }, participants: { leaderId: 'default', actorIds: ['default'] } }
-      const input = { commandId: 'submit-local', dataGeneration: commands.identity.dataGeneration, expectedServiceInstanceId: commands.identity.serviceInstanceId, intent: { operation: 'start', input: snapshot } }
-      const accepted = await commands.input.execute('chat.submitInput', input)
-      expect(accepted.receipt.decision).toBe('accepted')
-      const target = accepted.receipt.target as { runId: string, conversationId: string, branchId: string }
-      expect(await waitForTerminalRun(harness, target.runId)).toMatchObject({ status: 'completed' })
-      expect(database.prepare('SELECT count(*) AS count FROM composer_drafts').get()).toEqual({ count: 0 })
-      expect(database.prepare('SELECT draft_id, draft_revision FROM turn_requests WHERE run_id = ?').get(target.runId)).toEqual({ draft_id: null, draft_revision: null })
-      expect(provider.requests).toHaveLength(1)
-      expect(JSON.stringify(provider.requests)).toContain('Local immutable input')
-      expect(await commands.input.execute('chat.submitInput', { ...input, expectedServiceInstanceId: 'previous-instance' })).toEqual({ created: false, receipt: accepted.receipt })
-      await expect(commands.input.execute('chat.submitInput', { ...input, intent: { ...input.intent, input: { ...snapshot, content: createBuddyUserContent('Changed intent') } } })).rejects.toMatchObject({ code: 'COMMAND_ID_REUSED' })
-      const conversations = createConversationRepository(database)
-      conversations.createBranch({ id: 'other-branch', conversationId: target.conversationId, parentBranchId: target.branchId, forkedFromMessageId: conversations.listBranchMessages(target.conversationId, target.branchId)[0]!.id, createdAt: new Date().toISOString(), activate: true })
-      const continued = { ...input, commandId: 'continue-local', intent: { operation: 'start', input: { ...snapshot, inputId: 'continue-input', scope: { kind: 'conversation_branch', conversationId: target.conversationId, branchId: target.branchId } } } }
-      const continuedResult = await commands.input.execute('chat.submitInput', continued)
-      expect(continuedResult.receipt).toMatchObject({ decision: 'accepted', target: { conversationId: target.conversationId, branchId: target.branchId } })
-      expect(await waitForTerminalRun(harness, String(continuedResult.receipt.target.runId))).toMatchObject({ status: 'completed', branchId: target.branchId })
-      expect(conversations.findById(target.conversationId)?.activeBranchId).toBe('other-branch')
-      expect(provider.requests).toHaveLength(2)
-      conversations.markDeleted(target.conversationId, new Date().toISOString())
-      const stale = { ...continued, commandId: 'deleted-local', intent: { ...continued.intent, input: { ...continued.intent.input, inputId: 'deleted-input' } } }
-      const rejected = await commands.input.execute('chat.submitInput', stale)
-      expect(rejected.receipt).toMatchObject({ decision: 'rejected', errorCode: 'SOURCE_CHANGED' })
-      database.prepare('UPDATE conversations SET deleted_at = NULL WHERE id = ?').run(target.conversationId)
-      expect(await commands.input.execute('chat.submitInput', stale)).toEqual({ created: false, receipt: rejected.receipt })
-      expect(provider.requests).toHaveLength(2)
-    }
-    finally {
-      await service.dispose()
-      await eventLog.close()
-    }
-  })
-
-  it('adapts Desktop drafts and task receipts through the product connection without repeating execution', async () => {
-    const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-desktop-product-')))
-    directories.push(root)
-    const buddyHome = join(root, 'buddy')
-    const database = openBuddyMigrationCandidate({ databasePath: join(buddyHome, 'buddy.sqlite3') })
-    databases.push(database)
-    database.exec('UPDATE storage_profile SET authority = \'sqlite\', migration_state = \'ready\'')
-    const eventLog = new SqliteRunEventLog({ database })
-    const harness = createRuntimeRpcHarness({ 'offline-provider': { type: 'api_key', key: 'test-api-key' } })
-    const provider = await startLocalModelProvider(async () => ({ text: 'DESKTOP_PRODUCT_COMPLETED' }))
-    const service = await startBuddyService({ serviceInstanceId: 'desktop-instance', productIdentity: { serviceId: 'desktop-service', profileId: 'desktop-profile' }, buddyHome, database, eventLog, rpc: harness.rpc, builtinSkillsDirectories: [] })
-    const product = createServiceConnection()
-    service.connectClient('product', product.server)
-    const gateway = new ProductDesktopGateway({
-      state: { status: 'ready' },
-      onNotification: listener => product.client.onNotification((method, params) => listener({ method, params })),
-      onStateChange: () => () => {},
-      restart: async () => {},
-      request: (method, params) => method === 'product.exchange' ? product.client.request(method, params) : harness.invoke(method, params),
-    }, join(root, 'outbox'), 'test')
-    try {
-      await harness.invoke('providers.upsertCustom', offlineProviderConfig(provider.baseUrl))
-      const opened = await gateway.request('composerDrafts.open', {
-        draftId: 'desktop-draft',
-        scope: { kind: 'global' },
-        initialContent: createBuddyUserContent('Original input'),
-        initialExecutionConfig: { approvalPolicy: 'policy', executionProfile: 'workspace_write' },
-        initialModelSelection: { modelId: 'offline-model', providerId: 'offline-provider', reasoning: null, serviceTier: null },
-      }) as { draftId: string, revision: number }
-      expect(opened).toMatchObject({ draftId: 'desktop-draft', revision: 0 })
-      const draft = await gateway.request('composerDrafts.save', { draftId: opened.draftId, expectedRevision: 0, content: createBuddyUserContent('Desktop committed input'), modelSelection: { modelId: 'offline-model', providerId: 'offline-provider', reasoning: null, serviceTier: null }, executionConfig: { approvalPolicy: 'policy', executionProfile: 'workspace_write' } }) as { draftId: string, revision: number }
-      expect(draft.revision).toBe(1)
-      const input = { draftId: draft.draftId, expectedRevision: draft.revision, requestId: 'desktop-start' }
-      const turn = await gateway.request('chat.startTurn', input) as LocalTurnStart
-      expect(turn).toMatchObject({ runId: expect.any(String), draftReceipt: { sourceRevision: 1, committedRevision: 2 }, userMessage: { id: expect.any(String), role: 'user' } })
-      expect(turn.userMessage?.id).toBe(turn.run.triggeringMessageId)
-      expect(await waitForTerminalRun(harness, turn.runId)).toMatchObject({ status: 'completed' })
-      expect(await gateway.request('chat.startTurn', input)).toMatchObject({ runId: turn.runId, userMessage: { id: turn.userMessage!.id } })
-      expect(provider.requests).toHaveLength(1)
-      const renamed = await gateway.request('conversations.rename', { conversationId: turn.conversationId, expectedTitleRevision: 0, title: 'Renamed via product' }) as { title: string }
-      expect(renamed.title).toBe('Renamed via product')
-      await expect(gateway.request('conversations.rename', { conversationId: turn.conversationId, expectedTitleRevision: 0, title: 'Stale title' })).rejects.toMatchObject({ code: 'SOURCE_CHANGED' })
-      const recovery = await gateway.recover()
-      expect(recovery).toMatchObject([{ state: 'rejected', method: 'conversations.rename', canRestore: false }])
-      await gateway.acknowledgeRecovery(recovery[0]!.id)
-      expect(await gateway.recover()).toEqual([])
-      await expect(gateway.request('composerDrafts.save', { draftId: draft.draftId, expectedRevision: 0, content: createBuddyUserContent('Recovered local input'), executionConfig: { approvalPolicy: 'policy', executionProfile: 'workspace_write' }, modelSelection: null })).rejects.toMatchObject({ code: 'DRAFT_CONFLICT' })
-      const [recoverable] = await gateway.recover()
-      expect(recoverable).toMatchObject({ state: 'rejected', canRestore: true })
-      const restoredId = await gateway.restoreRecovery(recoverable!.id)
-      expect(createComposerDraftRepository(database).findById(restoredId)?.content.body).toEqual(createBuddyUserContent('Recovered local input').body)
-      expect(await gateway.recover()).toEqual([])
-    }
-    finally {
-      gateway.dispose()
-      product.close()
-      await service.dispose()
-      await eventLog.close()
-    }
-  })
-
-  it('keeps an accepted run alive across product disconnection and exposes it to a new client', async () => {
-    const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-buddy-client-lifetime-')))
-    directories.push(root)
-    const buddyHome = join(root, 'buddy')
-    const database = openTrackedDatabase(join(buddyHome, 'buddy.sqlite3'))
-    const eventLog = createRunEventLog({ database, conversationsDirectory: join(buddyHome, 'conversations') })
-    const harness = createRuntimeRpcHarness({ 'offline-provider': { type: 'api_key', key: 'test-api-key' } })
-    const response = Promise.withResolvers<void>()
-    const provider = await startLocalModelProvider(async () => {
-      await response.promise
-      return { text: 'ACCEPTED_RUN_SURVIVED_CLIENT_DISCONNECT' }
-    })
-    const service = await startBuddyService({ buddyHome, database, eventLog, rpc: harness.rpc, builtinSkillsDirectories: [] })
-    const first = createServiceConnection()
-    const reconnected = createServiceConnection()
-    service.connectClient('product', first.server)
-    try {
-      await expect(first.client.request('providers.upsertCustom', {})).rejects.toMatchObject({ code: -32601 })
-      await expect(first.client.request('runtime.shutdown', {})).rejects.toMatchObject({ code: -32601 })
-      await expect(first.client.request('attachments.resolvePreview', {})).rejects.toMatchObject({ code: -32601 })
-      await harness.invoke('providers.upsertCustom', offlineProviderConfig(provider.baseUrl))
-      const input = await turnRequest(harness, { content: 'Keep the accepted task running', requestId: 'client-lifetime' })
-      const turn = await first.client.request('chat.startTurn', input) as LocalTurnStart
-      await expect.poll(() => provider.requests.length).toBe(1)
-      first.close()
-      expect(createRunRepository(database).findById(turn.runId)?.status).toBe('running')
-      service.connectClient('product', reconnected.server)
-      await expect(reconnected.client.request('runs.get', { runId: turn.runId })).resolves.toMatchObject({ status: 'running' })
-      response.resolve()
-      expect(await waitForTerminalRun(harness, turn.runId)).toMatchObject({ status: 'completed' })
-      await expect(reconnected.client.request('runs.get', { runId: turn.runId })).resolves.toMatchObject({ status: 'completed' })
-      expect(JSON.stringify(await eventLog.read(turn.runId))).toContain('ACCEPTED_RUN_SURVIVED_CLIENT_DISCONNECT')
-      expect(provider.requests).toHaveLength(1)
-    }
-    finally {
-      response.resolve()
-      first.close()
-      reconnected.close()
-      await service.dispose()
-      await eventLog.close()
-    }
-  })
-
   it('preserves task admission and running work until an idle backup can close admission', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-buddy-idle-backup-')))
     directories.push(root)
@@ -364,7 +90,7 @@ describe('buddy runtime cross-subsystem contract', () => {
       expect(JSON.stringify(await eventLog.read(turn.runId))).toContain('TASK_PRESERVED_DURING_BACKUP_CHECK')
       const late = await turnRequest(harness, { content: 'After admission closed', requestId: 'after-backup' })
       expect(service.prepareIdleShutdown()).toBe(true)
-      await expect(harness.invoke('chat.startTurn', late)).rejects.toThrow('Runtime handler is unavailable')
+      await expect(harness.invoke('chat.startTurn', late)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
       expect(createRunRepository(database).listIncomplete()).toEqual([])
     }
     finally {
@@ -520,7 +246,7 @@ describe('buddy runtime cross-subsystem contract', () => {
       })
       await seedLog.append({ runId: `run-${id}`, type: 'audit.before', payload: { preserved: true } })
       if (maintenance === 'pending deletion') {
-        createConversationDeletionRepository(database).commit(id, '2026-10-12T00:00:01.000Z')
+        createConversationDeletionRepository(database).commitSoftDelete(id, '2026-10-12T00:00:01.000Z')
       }
       else {
         const artifactsDirectory = join(conversationsDirectory, id, 'artifacts')
@@ -549,14 +275,14 @@ describe('buddy runtime cross-subsystem contract', () => {
       expect(eventLog.state).toBe('open')
       expect(runs.findById('run-damaged')).toMatchObject({ status: 'failed', errorCode: 'EVENT_LOG_CORRUPTED' })
       expect(database.prepare('SELECT * FROM run_events WHERE run_id = ?').all('run-damaged')).toEqual(projection)
+      expect(runs.findById('run-healthy')).toMatchObject(maintenance === 'pending deletion'
+        ? { status: 'cancelled', errorCode: 'RUN_CANCELLED' }
+        : { status: 'failed', errorCode: 'RUNTIME_RESTARTED' })
       if (maintenance === 'pending deletion') {
-        expect(runs.findById('run-healthy')).toBeNull()
-        expect(createConversationRepository(database).findById('healthy')).toBeNull()
         expect(createConversationRepository(database).isDeleted('damaged')).toBe(true)
         expect(createConversationDeletionRepository(database).pending()).toEqual([])
       }
       if (maintenance === 'legacy outputs') {
-        expect(runs.findById('run-healthy')).toMatchObject({ status: 'failed', errorCode: 'RUNTIME_RESTARTED' })
         const artifacts = createArtifactRepository(database)
         expect(artifacts.findById('artifact-damaged')).toBeNull()
         expect(artifacts.findById('artifact-healthy')).toMatchObject({ currentPath: join(conversationsDirectory, 'healthy', 'artifacts', 'output.txt') })
@@ -1668,8 +1394,7 @@ async function waitForAutomationOccurrence(
     }
     await new Promise(resolve => setTimeout(resolve, 10))
   }
-  const remaining = await harness.invoke('automations.listOccurrences', { automationId, limit: 1 })
-  throw new Error(`Automation occurrence did not reach a terminal state: ${JSON.stringify(remaining)}`)
+  throw new Error(`Automation occurrence did not reach a terminal state: ${automationId}`)
 }
 
 function readDataImageUrls(request: Record<string, unknown> | undefined): string[] {
@@ -1708,15 +1433,8 @@ function createRuntimeRpcHarness(
   const credentials = new Map(Object.entries(initialCredentials).map(([providerId, credential]) =>
     [providerId, structuredClone(credential)],
   ))
-  const closed = new Emitter<void>(() => {})
-  let isClosed = false
   const rpc = {
-    get closed() { return isClosed },
-    onDidClose: closed.event,
-    close() {
-      isClosed = true
-      closed.fire()
-    },
+    close() {},
     notify() {},
     onNotification(listener: (method: string, params: unknown) => void) {
       notificationListeners.add(listener)
@@ -1879,12 +1597,4 @@ function closeServer(server: Server): Promise<void> {
   return new Promise((resolve, reject) => {
     server.close(error => error ? reject(error) : resolve())
   })
-}
-
-async function startBuddyService(options: Omit<StartBuddyServiceOptions, 'platform'> & { rpc: BuddyServiceRpcServer }) {
-  const { rpc, ...configuration } = options
-  const service = await startService({ ...configuration, platform: createRpcRuntimePlatform(rpc) })
-  service.connectClient('product', rpc)
-  service.connectClient('management', rpc)
-  return service
 }

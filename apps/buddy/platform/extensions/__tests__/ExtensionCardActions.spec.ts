@@ -23,6 +23,7 @@ async function fixture(confirmBatch: NonNullable<NonNullable<ExtensionServicePor
   await store.install((await reviewPackage(root, store, manifest({ id: 'tests.peer', contributes: { commands: [{ id: 'tests.peer.noop', title: 'Peer' }] } }))).token)
   let broker!: (method: string, params: unknown) => Promise<JsonValue>
   const deleted: { conversationId: string, expectedRevision: number }[] = []
+  let genericChanges = 0
   let hostGeneration = 0
   const progressMessages: { extensionId: string, generation: number, params: Record<string, JsonValue> }[] = []
   let onProgress = async (_params: Record<string, JsonValue>) => {}
@@ -51,6 +52,7 @@ async function fixture(confirmBatch: NonNullable<NonNullable<ExtensionServicePor
         return null
       }, dispose: async () => {}, devtools: () => {} }
     },
+    changed: () => { genericChanges++ },
     createView: () => { throw new Error('NO_VIEW') },
     workbench: async () => null,
     readText: async () => '',
@@ -70,7 +72,7 @@ async function fixture(confirmBatch: NonNullable<NonNullable<ExtensionServicePor
   await service.execute(definition.id, 'tests.reader.cleanup', null)
   return { service, deleted, progressMessages, onProgress: (handler: typeof onProgress) => {
     onProgress = handler
-  }, broker: (method: string, params: unknown) => broker(method, params), token: () => capturedToken, onCommand: (handler: typeof onCommand) => {
+  }, genericChanges: () => genericChanges, broker: (method: string, params: unknown) => broker(method, params), token: () => capturedToken, onCommand: (handler: typeof onCommand) => {
     onCommand = handler
   }, run: (trusted = true, menu = 'tests.reader.action') => service.executeMenu(definition.id, menu, { target: 'extension.actions', resource: null }, trusted) }
 }
@@ -81,6 +83,7 @@ it('accepts a main-only command, confirms once and returns host-owned per-item r
     counts.push(count)
     return true
   })
+  expect((await f.service.list())[0]?.registeredCommands).toEqual(['tests.reader.cleanup'])
   expect(await f.run()).toMatchObject({ taskCleanup: { status: 'completed', results: [{ conversationId: 'legacy', expectedRevision: 8, status: 'deleted' }], summary: { phase: 'completed', total: 1, processed: 1, deleted: 1, pending: 0 } } })
   expect(counts).toEqual([1])
   expect(f.deleted).toEqual([{ conversationId: 'legacy', expectedRevision: 8 }])
@@ -152,6 +155,7 @@ it('publishes host confirmation and durable summaries independently of plugin re
     if (change.kind === 'task-cleanup')
       started.resolve()
   })
+  const initialChanges = f.genericChanges()
   const result = f.run()
   await started.promise
   const operation = f.service.taskCleanupConfirmations()[0]!
@@ -162,6 +166,7 @@ it('publishes host confirmation and durable summaries independently of plugin re
   await f.service.confirmTaskCleanup('tests.reader', operation.id, true)
   expect(await result).toMatchObject({ taskCleanup: { summary: { phase: 'completed', processed: 1, total: 1, deleted: 1, pending: 0 } } })
   expect(f.service.taskCleanupConfirmations()).toEqual([])
+  expect(f.genericChanges()).toBe(initialChanges + 2)
   subscription.dispose()
 })
 
@@ -266,9 +271,10 @@ it('invalidates a confirmation if the plugin stops awaiting its invocation', asy
   subscription.dispose()
 })
 
-it('pushes bounded progress only to the initiating token and generation', async () => {
+it('pushes ordered bounded progress only to the initiating token and generation, without catalog progress refreshes', async () => {
   const f = await fixture()
   await f.service.execute('tests.peer', 'tests.peer.noop', null)
+  const before = f.genericChanges()
   const entered = deferred<void>()
   const release = deferred<void>()
   f.onProgress(async (params) => {
@@ -281,9 +287,11 @@ it('pushes bounded progress only to the initiating token and generation', async 
   await entered.promise
   expect(f.progressMessages).toHaveLength(1)
   expect(f.deleted).toEqual([])
+  expect(f.genericChanges()).toBe(before)
   release.resolve()
   const result = await run as { taskCleanup: { summary: JsonValue } }
   expect(f.progressMessages.at(-1)!.params.progress).toEqual(result.taskCleanup.summary)
+  expect(f.genericChanges()).toBe(before + 2)
   expect(new Set(f.progressMessages.map(item => item.generation)).size).toBe(1)
   const previous = f.progressMessages[0]!
   for (const message of f.progressMessages) {

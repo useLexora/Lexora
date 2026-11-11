@@ -38,9 +38,49 @@ it('reads all pages before one confirmation and freezes every target and revisio
   expect(deletes.some(item => item.conversationId === 'late-task')).toBe(false)
 })
 
-it('publishes real progress and distinct outcomes without retrying failed or blocked targets', async () => {
-  const snapshots: ExtensionTaskCleanupProgress[] = []
+it('does not submit jobs on cancellation or incomplete reads', async () => {
+  const deleted: string[] = []
+  const result = await runExtensionTaskCleanupBatch({ assertCurrent: () => {}, confirm: async () => false, cleanup: {
+    list: async () => ({ items: [item('cancelled')], nextCursor: null }),
+    delete: async (target) => {
+      deleted.push(target.conversationId)
+      return { status: 'deleted' }
+    },
+  } })
+  expect(result).toMatchObject({ status: 'cancelled', results: [], summary: { phase: 'cancelled', total: 1, processed: 0 } })
+  await expect(runExtensionTaskCleanupBatch({ assertCurrent: () => {}, confirm: async () => {
+    throw new Error('MUST_NOT_CONFIRM')
+  }, cleanup: {
+    list: async ({ cursor }) => {
+      if (cursor)
+        throw new Error('READ_FAILED')
+      return { items: [item('partial')], nextCursor: 'next' }
+    },
+    delete: async (target) => {
+      deleted.push(target.conversationId)
+      return { status: 'deleted' }
+    },
+  } })).resolves.toMatchObject({ status: 'completed', results: [], summary: { phase: 'failed', total: null, processed: 0 } })
+  expect(deleted).toEqual([])
+})
+
+it('reports failed and pending items separately without refreshing CAS or retrying', async () => {
   const calls: string[] = []
+  const result = await runExtensionTaskCleanupBatch({ assertCurrent: () => {}, confirm: async () => true, cleanup: {
+    list: async () => ({ items: [item('failed'), item('pending'), item('deleted'), { ...item('busy'), canDelete: false }], nextCursor: null }),
+    delete: async ({ conversationId }) => {
+      calls.push(conversationId)
+      if (conversationId === 'failed')
+        throw new Error('SOURCE_CHANGED')
+      return { status: conversationId === 'pending' ? 'pending' : 'deleted' }
+    },
+  } })
+  expect(calls).toEqual(['failed', 'pending', 'deleted'])
+  expect(result.results.map(item => item.status)).toEqual(['failed', 'pending', 'deleted'])
+})
+
+it('publishes unknown totals while scanning and real processed counts including failures', async () => {
+  const snapshots: ExtensionTaskCleanupProgress[] = []
   const result = await runExtensionTaskCleanupBatch({
     assertCurrent: () => {},
     progress: progress => snapshots.push(progress),
@@ -48,7 +88,6 @@ it('publishes real progress and distinct outcomes without retrying failed or blo
     cleanup: {
       list: async ({ cursor }) => ({ items: cursor ? [item('deleted'), item('failed'), item('pending')] : [{ ...item('blocked'), canDelete: false }], nextCursor: cursor ? null : 'next' }),
       delete: async ({ conversationId }) => {
-        calls.push(conversationId)
         if (conversationId === 'failed')
           throw new Error('EXTENSION_TASK_CLEANUP_SOURCE_CHANGED')
         return { status: conversationId === 'pending' ? 'pending' : 'deleted' }
@@ -58,8 +97,7 @@ it('publishes real progress and distinct outcomes without retrying failed or blo
   expect(snapshots.filter(item => item.phase === 'scanning').every(item => item.total === null && item.processed === 0)).toBe(true)
   expect(snapshots.filter(item => item.phase === 'running').map(item => item.processed)).toEqual([0, 1, 2, 3])
   expect(snapshots.at(-1)).toEqual({ phase: 'failed', total: 3, processed: 3, deleted: 1, pending: 1, failed: 1, skipped: 1, errorCode: 'EXTENSION_TASK_CLEANUP_SOURCE_CHANGED' })
-  expect(calls).toEqual(['deleted', 'failed', 'pending'])
-  expect(result.results.map(item => item.status)).toEqual(['deleted', 'failed', 'pending'])
+  expect(result.results).toHaveLength(3)
 })
 
 it('keeps an incomplete scan unknown and never confirms a partial target set', async () => {

@@ -71,7 +71,7 @@ describe('runEventLog', () => {
     expect((await fixture.log.read('run-1')).map(event => event.type)).toEqual(['message.completed'])
   })
 
-  it('publishes committed facts after projection and retains observers after failure', async () => {
+  it('publishes immutable committed facts after projection and retains observers after failure', async () => {
     const fixture = await createFixture()
     const delivered: number[] = []
     fixture.log.onDidCommit(() => {
@@ -82,6 +82,8 @@ describe('runEventLog', () => {
     })
     fixture.log.onDidCommit((event) => {
       expect(fixture.database.prepare('SELECT sequence FROM run_events WHERE run_id = ? AND sequence = ?').get(event.runId, event.sequence)).toBeDefined()
+      expect(Object.isFrozen(event)).toBe(true)
+      expect(Object.isFrozen(event.payload)).toBe(true)
       delivered.push(event.sequence)
     })
     await fixture.log.appendBatch([
@@ -102,8 +104,8 @@ describe('runEventLog', () => {
     let recordOperation: ((input: unknown) => unknown) | undefined
     const dispose = registerContextPanelRpc({
       rpc: { onRequest: (method, handler) => {
-        if (method === contextPanelRpc.recordOperation)
-          recordOperation = handler
+        expect(method).toBe(contextPanelRpc.recordOperation)
+        recordOperation = handler
         return () => {}
       } },
       runs: createRunRepository(fixture.database),
@@ -349,7 +351,7 @@ describe('runEventLog', () => {
         throw new Error('Compaction did not reach file replacement')
       })])
       createConversationDeletionRepository(fixture.database).commit('conversation-1', new Date().toISOString())
-      const service = new ConversationPurgeService({ database: fixture.database, home: fixture.root, storageAuthority: 'legacy_jsonl' })
+      const service = new ConversationPurgeService({ database: fixture.database, home: fixture.root })
       const purging = fixture.log.withConversationPurge('conversation-1', () => service.purge('conversation-1'))
       await expect(fixture.log.append({ runId: 'run-1', type: 'audit.late', payload: {} })).rejects.toMatchObject({ code: 'CONVERSATION_BUSY' })
       expect(await readFile(fixture.eventFile, 'utf8')).toContain('transient')

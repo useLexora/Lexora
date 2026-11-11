@@ -65,9 +65,11 @@ describe('task marks and reading state', () => {
     expect(f.marks.getState('a')).toMatchObject({ markId: null, unread: true, resultRunId: 'next-result' })
   })
 
-  it('clears manual unread without a custom mark and ignores a repeated clear', () => {
+  it.each(['automatic', 'manual'] as const)('clears %s unread without a custom mark', (kind) => {
     const f = fixture()
-    f.marks.setRead({ ...f.marks.getState('a'), read: false })
+    if (kind === 'automatic')
+      f.run('result')
+    else f.marks.setRead({ ...f.marks.getState('a'), read: false })
     const before = f.marks.getState('a')
     expect(before).toMatchObject({ markId: null, unread: true })
     const cleared = f.marks.clear(before)

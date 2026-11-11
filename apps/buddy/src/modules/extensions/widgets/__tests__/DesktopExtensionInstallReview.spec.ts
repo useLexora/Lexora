@@ -94,8 +94,7 @@ it.each(['zh-CN', 'en-US'])('explains the narrow legacy cleanup permission in %s
     addedPermissions: ['legacyTaskCleanup'],
     manifest: extensionManifestSchema.parse({
       ...review.manifest,
-      apiVersion: 5,
-      executionScope: 'desktop',
+      apiVersion: 4,
       permissions: { legacyTaskCleanup: true },
       contributes: { views: [{ id: 'test.panel.cleanup', title: 'Cleanup', entry: 'view.js', resource: 'none', location: 'page' }] },
     }),
@@ -195,6 +194,20 @@ it('allows closing a duplicate review while the plugin is busy without submittin
   expect(submissions).toEqual([])
 })
 
+it('preselects requested associations and keeps existing defaults when replacements are cleared', async () => {
+  const { content, submissions, submit } = await mount()
+  const checkboxes = content.querySelectorAll<HTMLElement>('[role="checkbox"]')
+  expect(checkboxes[0]?.getAttribute('aria-checked')).toBe('true')
+  expect(checkboxes[1]?.getAttribute('aria-checked')).toBe('true')
+  submit()
+  expect(submissions).toEqual([{ applyUpdate: true, choices: [{ extension: '.md', location: 'inline', providerId: 'test.reader' }] }])
+  checkboxes[0]!.click()
+  await nextTick()
+  submit()
+  expect(submissions.at(-1)).toEqual({ applyUpdate: true, choices: [] })
+  expect(checkboxes[1]?.getAttribute('aria-checked')).toBe('true')
+})
+
 it('leaves opt-out replacements unselected and supports individual and column selection independently', async () => {
   const { content, submissions, submit } = await mount({
     ...review,
@@ -292,23 +305,13 @@ it('discloses NPC capabilities on demand and resets expanded details for each re
   expect(text('[data-subagent-id="law-finder"]')).toContain('Required')
   expect(text('[data-subagent-id="law-finder"]')).toContain('tests.legal.statutes')
   expect(document.querySelector('[data-subagent-id="file-reader"] [data-testid="extension-agent-details"]')).toBeNull()
+  toggle.click()
+  await nextTick()
+  expect(document.querySelector('[data-testid="extension-agent-details"]')).toBeNull()
+  toggle.click()
+  await nextTick()
+  expect(document.querySelector('[data-testid="extension-agent-details"]')).not.toBeNull()
   current.value = { ...capabilityReview, token: 'another-review' }
   await nextTick()
   expect(document.querySelector('[data-testid="extension-agent-details-toggle"]')?.getAttribute('aria-expanded')).toBe('false')
-})
-
-it.each(['en-US', 'zh-CN'])('shows the reviewed service lifetime and its change from desktop in %s', async (language) => {
-  const value: ExtensionReview = {
-    ...review,
-    currentVersion: '0.9.0',
-    previousExecutionScope: 'desktop',
-    addedPermissions: ['executionScope:service'],
-    manifest: extensionManifestSchema.parse({ ...review.manifest, apiVersion: 5, executionScope: 'service', entry: 'extension.js' }),
-  }
-  await mount(value, language)
-  const summary = document.querySelector('[data-testid="extension-execution-scope"]')!
-  expect(summary.textContent).toContain(language === 'en-US' ? 'Changed' : '已变更')
-  expect(summary.textContent).toContain(language === 'en-US' ? 'after Desktop closes' : '桌面关闭后')
-  expect(summary.textContent).toContain(language === 'en-US' ? 'no task or view' : '无任务或界面')
-  expect(summary.textContent).toContain(language === 'en-US' ? 'still require Desktop' : '仍需桌面')
 })

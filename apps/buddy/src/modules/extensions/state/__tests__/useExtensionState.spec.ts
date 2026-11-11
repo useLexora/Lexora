@@ -59,6 +59,27 @@ it('publishes installed contributions while installation jobs are pending or fai
   finally { scope.stop() }
 })
 
+it('coalesces overlapping refreshes and rejects stale and disposed results', async () => {
+  const delayed = deferred<ExtensionStatus[]>()
+  let requests = 0
+  const { state, scope } = setup({ list: () => ++requests === 1 ? delayed.promise : Promise.resolve([extension]) })
+  try {
+    const previous = state.refresh()
+    await expect.poll(() => requests).toBe(1)
+    const refreshes = Array.from({ length: 20 }, () => state.refresh())
+    expect(requests).toBe(1)
+    delayed.resolve([])
+    await Promise.all([previous, ...refreshes])
+    expect(state.installed.value).toEqual([extension])
+    expect(requests).toBe(2)
+    scope.stop()
+    await state.refresh()
+    expect(state.installed.value).toEqual([extension])
+    expect(requests).toBe(2)
+  }
+  finally { scope.stop() }
+})
+
 it('publishes serial snapshots during a change burst and ignores reads after disposal', async () => {
   const first = deferred<ExtensionStatus[]>()
   const second = deferred<ExtensionStatus[]>()
@@ -105,15 +126,24 @@ it('deduplicates only the running menu action while allowing other plugin intera
   }
 })
 
-it('updates installation progress while keeping installed contributions available', async () => {
+it('updates progress without replacing installed contributions or requesting their data', async () => {
+  let listRequests = 0
   let jobs = [job]
-  const { state, scope, progressChanged } = setup({ installations: async () => jobs })
+  const { state, scope, progressChanged } = setup({
+    list: async () => {
+      listRequests++
+      return [extension]
+    },
+    installations: async () => jobs,
+  })
   try {
     await state.refresh()
+    const original = state.installed.value
     jobs = [{ ...job, stage: 'install' }]
     progressChanged()
     await expect.poll(() => state.installations.value[0]?.stage).toBe('install')
-    expect(state.installed.value).toEqual([extension])
+    expect(state.installed.value).toBe(original)
+    expect(listRequests).toBe(1)
   }
   finally { scope.stop() }
 })
