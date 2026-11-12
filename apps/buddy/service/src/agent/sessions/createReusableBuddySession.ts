@@ -33,7 +33,7 @@ import { getModelImageLimits, getModelRequestBytesLimit, getModelRequestOverhead
 import { BuddyAgentRunError } from '../../runs/runError'
 import { SkillError } from '../../skills/skillFiles'
 import { createBuddyInputReferenceMessage, readBuddyInputReference } from '../context/BuddyInputReference'
-import { createContextUsageBreakdown } from '../context/contextUsageBreakdown'
+import { createContextUsageBreakdown, createEstimatedContextUsage } from '../context/contextUsageBreakdown'
 import { prepareBuddyInputHistory } from '../context/prepareBuddyInputHistory'
 import { projectBuddyInput, projectMessageImages } from '../context/projectBuddyInput'
 import { readExecutionMailboxEntries, renderMailboxMessage } from '../execution/executionMailboxEntries'
@@ -338,6 +338,7 @@ export function createReusableBuddySession(
     return converted
   }
   session.agent.streamFunction = (model, context, streamOptions) => {
+    latestContext = null
     const request = requestInputs.get(context.messages)
     if (request?.failed)
       return createInputMaterializationFailure(model, request.failureCode)
@@ -430,6 +431,7 @@ export function createReusableBuddySession(
       options.assertCodemodeReady?.()
       input.signal.throwIfAborted()
       finishingTurn = undefined
+      latestContext = null
       preparedModelRun = null
       completedTurn = undefined
       generation = input.generation
@@ -496,6 +498,7 @@ export function createReusableBuddySession(
       },
     ),
     getToolLabel: name => session.getToolDefinition(name)?.label,
+    getContextUsageEstimate: () => latestContext ? createEstimatedContextUsage(latestContext) : null,
     getContextUsageBreakdown: totalTokens => latestContext
       ? createContextUsageBreakdown(latestContext, totalTokens)
       : null,
