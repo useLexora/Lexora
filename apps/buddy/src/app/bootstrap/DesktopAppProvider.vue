@@ -335,6 +335,8 @@ const featureDiscovery = useFeatureDiscovery({
       'codemode-concurrency': desktopRouteLocations.settings('runtime'),
       'speech-settings': desktopRouteLocations.settings('speech'),
       'image-settings': desktopRouteLocations.settings('models'),
+      'task-archive': desktopRouteLocations.settings('task-archive'),
+      'chinese-input-triggers': desktopRouteLocations.settings('general'),
     }[id]
     await navigation.navigate(location)
     if (router.currentRoute.value.path !== router.resolve(location).path)

@@ -3,6 +3,13 @@ import type { FeatureGuideId } from '@buddy-shared/onboarding/featureDiscovery'
 const inlineBeacon = { side: 'right', align: 'center', offsetX: 12 } as const
 
 const targets = {
+  'task-archive': [
+    { id: 'task-archive', selector: '.desktop-settings-page:has([data-testid="task-archive-manager"]) .desktop-settings-page__title', title: 'discovery.task-archive.title', description: 'discovery.task-archive.hint', beacon: inlineBeacon, side: 'bottom', align: 'start' },
+    { id: 'task-archive-cleanup', selector: '#archive-cleanup-policy', title: 'discovery.task-archive-cleanup.title', description: 'discovery.task-archive-cleanup.hint', beacon: { side: 'left', align: 'center', offsetX: -12 }, side: 'bottom', align: 'end' },
+  ],
+  'chinese-input-triggers': [
+    { id: 'chinese-input-triggers', selector: '[data-testid="chinese-input-triggers-setting"] [role="switch"]', title: 'discovery.chinese-input-triggers.title', description: 'discovery.chinese-input-triggers.hint', beacon: { side: 'left', align: 'center', offsetX: -12 }, side: 'left', align: 'center' },
+  ],
   'codemode-concurrency': [
     { id: 'codemode-concurrency', selector: '[data-testid="codemode-concurrency-setting"] .desktop-segmented-control', title: 'discovery.codemode-concurrency.title', description: 'discovery.codemode-concurrency.hint', beacon: inlineBeacon, side: 'bottom', align: 'start' },
   ],
