@@ -3,9 +3,11 @@ import type { LocalCustomProviderModel } from '@buddy-shared/providers/providerA
 import type { ProviderModelType } from '@buddy-shared/providers/providerModelType'
 
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { NButton, NCheckbox, NCollapse, NCollapseItem, NInput, NInputNumber, NSelect } from 'naive-ui'
+import { NButton, NCheckbox, NInput, NSelect } from 'naive-ui'
 import { computed, reactive } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import { DEFAULT_CONTEXT_WINDOW, outputTokensForContext } from './contextWindowPreset'
+import DesktopContextWindowPresetField from './DesktopContextWindowPresetField.vue'
 
 const props = defineProps<{
   allowChat?: boolean
@@ -19,20 +21,16 @@ const { t } = useBuddyI18n(() => props.language)
 const typeOptions = computed(() => (props.allowChat === false ? ['transcription', 'speech'] as const : ['chat', 'transcription', 'speech', 'image-generation'] as const).map(value => ({ value, label: t(`desktop.providers.modelTypes.${value}`) })))
 const form = reactive({
   type: (props.allowChat === false ? 'transcription' : 'chat') as ProviderModelType,
-  contextWindow: null as number | null,
+  contextWindow: DEFAULT_CONTEXT_WINDOW,
   id: '',
   image: false,
-  maxTokens: null as number | null,
   name: '',
   reasoning: false,
 })
+const maxTokens = computed(() => outputTokensForContext(form.contextWindow))
 const valid = computed(() => Boolean(
   form.id.trim()
-  && (form.type !== 'chat' || (
-    (form.contextWindow === null || form.contextWindow > 0)
-    && (form.maxTokens === null || form.maxTokens > 0)
-    && (form.contextWindow === null || form.maxTokens === null || form.maxTokens <= form.contextWindow)
-  )),
+  && (form.type !== 'chat' || (form.contextWindow > 0 && maxTokens.value <= form.contextWindow)),
 ))
 
 function save() {
@@ -44,9 +42,12 @@ function save() {
     input: form.type === 'chat' && form.image ? ['text', 'image'] : ['text'],
     reasoning: form.type === 'chat' && form.reasoning,
     ...(form.name.trim() ? { name: form.name.trim() } : {}),
-    ...(form.type !== 'chat' || form.contextWindow === null ? {} : { contextWindow: form.contextWindow }),
-    ...(form.type !== 'chat' || form.maxTokens === null ? {} : { maxTokens: form.maxTokens }),
+    ...(form.type !== 'chat' ? {} : { contextWindow: form.contextWindow, maxTokens: maxTokens.value }),
   })
+}
+
+function formatTokens(value: number): string {
+  return new Intl.NumberFormat(props.language).format(value)
 }
 </script>
 
@@ -79,28 +80,16 @@ function save() {
       </NCheckbox>
     </div>
 
-    <NCollapse v-if="form.type === 'chat'" arrow-placement="right">
-      <NCollapseItem :title="t('desktop.providers.advancedModelSettings')" name="advanced">
-        <div class="desktop-manual-model-form__grid grid grid-cols-[repeat(2,_minmax(0,_1fr))] gap-[0.8rem]">
-          <label class="desktop-manual-model-form__field grid gap-[0.35rem]">
-            <span>{{ t('desktop.providers.contextWindow') }}</span>
-            <NInputNumber
-              v-model:value="form.contextWindow"
-              :min="1"
-              :placeholder="t('desktop.providers.contextWindowDefault')"
-            />
-          </label>
-          <label class="desktop-manual-model-form__field grid gap-[0.35rem]">
-            <span>{{ t('desktop.providers.maxTokens') }}</span>
-            <NInputNumber
-              v-model:value="form.maxTokens"
-              :min="1"
-              :placeholder="t('desktop.providers.maxTokensDefault')"
-            />
-          </label>
-        </div>
-      </NCollapseItem>
-    </NCollapse>
+    <div v-if="form.type === 'chat'" class="grid gap-[0.85rem]">
+      <label class="desktop-manual-model-form__field grid gap-[0.35rem]">
+        <span>{{ t('desktop.providers.contextWindow') }}</span>
+        <DesktopContextWindowPresetField v-model="form.contextWindow" :language="language" :disabled="saving" />
+      </label>
+      <div class="desktop-manual-model-form__field grid gap-[0.35rem]">
+        <span>{{ t('desktop.providers.maxTokens') }}</span>
+        <strong>{{ formatTokens(maxTokens) }}</strong>
+      </div>
+    </div>
 
     <div class="desktop-manual-model-form__actions justify-end">
       <NButton type="primary" :disabled="!valid" :loading="saving" @click="save">
@@ -116,13 +105,15 @@ function save() {
   font-size: 0.7rem;
 }
 
-.desktop-manual-model-form__field :deep(.n-input),
-.desktop-manual-model-form__field :deep(.n-input-number) {
-  width: 100%;
+.desktop-manual-model-form__field > strong {
+  color: var(--buddy-text-strong);
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 620;
 }
 
-.desktop-manual-model-form :deep(.n-collapse-item) {
-  margin-left: 0;
+.desktop-manual-model-form__field :deep(.n-input) {
+  width: 100%;
 }
 
 .desktop-manual-model-form__capabilities :deep(.n-checkbox-box) {
