@@ -41,7 +41,6 @@ import { createExtensionSpeechBackend } from './createExtensionSpeechBackend'
 import { createExtensionClipboard } from './ExtensionClipboard'
 import { processExtensionPackageInBackground } from './ExtensionPackageWorker'
 import { ExtensionProtocol } from './ExtensionProtocol'
-import { assertTaskCleanupConfirmationSender, createExtensionTaskCleanupConfirmation } from './ExtensionTaskCleanup'
 import { createInferenceHardwareProvider } from './inferenceHardware'
 import { SandboxedExtensionHost } from './SandboxedExtensionHost'
 
@@ -108,7 +107,7 @@ export function registerExtensionIpc(options: {
   const service = new ExtensionService(store, {
     documents: options.documents,
     clipboard: createExtensionClipboard(options.getWindow),
-    taskCleanup: options.conversationCleanup ? { ...createExtensionTaskCleanup(options.conversationCleanup), confirmDelete: createExtensionTaskCleanupConfirmation(options.getWindow) } : undefined,
+    taskCleanup: options.conversationCleanup ? createExtensionTaskCleanup(options.conversationCleanup) : undefined,
     shellsChanged: options.shellsChanged,
     skillsChanged: options.skillsChanged,
     capabilitiesChanged: options.capabilitiesChanged,
@@ -244,7 +243,7 @@ export function registerExtensionIpc(options: {
       const current = window()
       if (current && !current.isDestroyed())
         current.webContents.send(change.kind === 'installation-progress' ? EXTENSION_IPC.installationsChanged : EXTENSION_IPC.changed)
-      if (change.kind !== 'installation-progress' && change.kind !== 'task-cleanup') {
+      if (change.kind !== 'installation-progress') {
         for (const listener of speechListeners) listener()
       }
     }),
@@ -317,11 +316,6 @@ export function registerExtensionIpc(options: {
         case 'taskActions': return await options.taskActions()
         case 'invokeTaskAction': return await options.invokeTaskAction(input.input)
         case 'list': return await service.list()
-        case 'taskCleanupConfirmations': return service.taskCleanupConfirmations()
-        case 'confirmTaskCleanup': {
-          assertTaskCleanupConfirmationSender(event, window())
-          return await service.confirmTaskCleanup(input.id, input.operationId, input.confirmed)
-        }
         case 'fileOpeners': return await service.fileOpeners()
         case 'setFileOpener': return await service.setFileOpener(input.choice)
         case 'prepareFileOpening': return await service.prepareFileOpening(input.input)

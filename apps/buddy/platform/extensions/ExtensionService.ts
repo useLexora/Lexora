@@ -14,7 +14,7 @@ import type { ExtensionFileSource, ExtensionResourceSelection } from '../../shar
 import type { ExtensionConfiguration, ExtensionConfigurationSnapshot } from '../../shared/extensions/extensionSettings'
 import type { ExtensionShellDescriptor } from '../../shared/extensions/extensionShell'
 import type { ExtensionSkillDescriptor } from '../../shared/extensions/extensionSkills'
-import type { ExtensionTaskCleanup, ExtensionTaskCleanupConfirmation, ExtensionTaskCleanupDelete } from '../../shared/extensions/extensionTaskCleanup'
+import type { ExtensionTaskCleanup } from '../../shared/extensions/extensionTaskCleanup'
 import type { FileOpeningChoice, FileOpeningSnapshot } from '../../shared/files/fileOpening'
 import type { TaskFileTarget } from '../../shared/files/taskFileApi'
 import type { ShellCandidate, ShellCandidateId } from '../../shared/shell/shellProgram'
@@ -61,7 +61,6 @@ import { extensionConfigurationAppliedSchema, resolveExtensionConfiguration, val
 import { extensionSettingsHeaderActionsSchema } from '../../shared/extensions/extensionSettingsHeaderActions'
 import { extensionSkillRoots } from '../../shared/extensions/extensionSkills'
 import { EXTENSION_UNO_STYLESHEET } from '../../shared/extensions/extensionStyles'
-import { extensionTaskCleanupDeleteSchema, extensionTaskCleanupListSchema, extensionTaskCleanupPageSchema, extensionTaskCleanupResultSchema } from '../../shared/extensions/extensionTaskCleanup'
 import { windowStyleIdSchema, windowStyleSchema } from '../../shared/extensions/extensionWindowStyles'
 import { resolveInferenceEnvironment } from '../../shared/extensions/inferencePlatform'
 import { fileOpeningExtension } from '../../shared/files/fileOpening'
@@ -95,10 +94,7 @@ export interface ExtensionServicePorts {
     read: (session: ExtensionViewSession, assertCurrent: () => void) => Promise<ExtensionClipboardData>
     write: (session: ExtensionViewSession, data: ExtensionClipboardData, assertCurrent: () => void) => Promise<void>
   }
-  taskCleanup?: ExtensionTaskCleanup & {
-    confirmDelete: (session: ExtensionViewSession, input: ExtensionTaskCleanupDelete, assertCurrent: () => void) => Promise<boolean>
-    confirmBatch?: (count: number, assertCurrent: () => void) => Promise<boolean>
-  }
+  taskCleanup?: ExtensionTaskCleanup
   inference?: ExtensionInferencePorts
   themes?: ThemeService
   createHost: (pkg: ExtensionPackage, broker: (method: string, params: unknown) => Promise<JsonValue>, failed: (failure?: ExtensionHostFailure) => void) => ExtensionHost
@@ -169,7 +165,7 @@ export class ExtensionService {
   readonly #ports: ExtensionServicePorts
   readonly #running = new Map<string, RunningExtension>()
   #taskCleanupVisibilityGeneration = 0
-  readonly #taskCleanup = new ExtensionTaskCleanupController(extensionId => this.#publish({ kind: 'task-cleanup', extensionId }))
+  readonly #taskCleanup = new ExtensionTaskCleanupController()
   readonly #cleanupInvocations = new Map<string, { running: RunningExtension, menuId: string, abort: AbortController, used: boolean, result?: ExtensionTaskCleanupBatchResult }>()
   readonly #pendingStops = new Map<string, RunningExtension>()
   readonly #viewOpenings = new Map<string, symbol>()
@@ -1380,21 +1376,17 @@ export class ExtensionService {
 
   cancelUnconfirmedTaskCleanup(): void {
     this.#taskCleanupVisibilityGeneration++
-    this.#taskCleanup.cancelUnconfirmed()
+    this.#cancelUnconfirmedTaskCleanup()
+  }
+
+  #cancelUnconfirmedTaskCleanup(running?: RunningExtension): void {
+    this.#taskCleanup.cancelUnconfirmed(running?.package.manifest.id)
     for (const [token, invocation] of this.#cleanupInvocations) {
-      if (!invocation.used) {
+      if (!invocation.used && (!running || invocation.running === running)) {
         this.#cleanupInvocations.delete(token)
         invocation.abort.abort()
       }
     }
-  }
-
-  taskCleanupConfirmations(): ExtensionTaskCleanupConfirmation[] {
-    return this.#taskCleanup.confirmations()
-  }
-
-  async confirmTaskCleanup(id: string, operationId: string, confirmed: boolean): Promise<void> {
-    this.#taskCleanup.confirm(id, operationId, confirmed)
   }
 
   async #executeCommand(running: RunningExtension, command: string, target: SpaceFileTarget | null, invocation: JsonValue = null, argumentsValue: JsonValue = null, cleanupToken: string | null = null): Promise<JsonValue> {
@@ -1519,29 +1511,6 @@ export class ExtensionService {
     let result: JsonValue
     if (method === 'bootstrap') {
       result = { apiVersion: view.running.package.manifest.apiVersion, instanceId: view.input.instanceId ?? null, interactionId: view.input.interactionId ?? null, interactionMode: placement?.kind === 'view' ? placement.interaction ?? null : null, entry: contribution.entry, styles: view.running.package.manifest.styles?.uno ? [EXTENSION_UNO_STYLESHEET] : [], location: placement?.kind === 'view' ? 'mount' : contribution.location, presentation: placement?.kind ?? (contribution.location === 'window-overlay' ? 'decoration' : 'view'), resource: view.input.resource, state: view.input.state, stateVersion: view.input.stateVersion, expectedStateVersion: contribution.stateVersion }
-    }
-    else if (method === 'taskCleanup.list' || method === 'taskCleanup.delete') {
-      if (!view.running.package.manifest.permissions.legacyTaskCleanup || contribution.location === 'window-overlay' || (placement && placement.kind !== 'view'))
-        throw new Error('EXTENSION_METHOD_DENIED')
-      const cleanup = this.#ports.taskCleanup
-      if (!cleanup)
-        throw new Error('EXTENSION_TASK_CLEANUP_UNAVAILABLE')
-      const assertCurrent = () => {
-        this.#assertCurrent(view.running)
-        if (view.abort.signal.aborted || this.#views.get(id) !== view)
-          throw new Error('EXTENSION_VIEW_EXPIRED')
-      }
-      if (method === 'taskCleanup.list') {
-        result = extensionTaskCleanupPageSchema.parse(await cleanup.list(extensionTaskCleanupListSchema.parse(params)))
-      }
-      else {
-        const input = extensionTaskCleanupDeleteSchema.parse(params)
-        const confirmed = await cleanup.confirmDelete(view.session, input, assertCurrent)
-        assertCurrent()
-        if (!confirmed)
-          throw new Error('EXTENSION_TASK_CLEANUP_CANCELLED')
-        result = extensionTaskCleanupResultSchema.parse(await cleanup.delete(input))
-      }
     }
     else if (method === 'clipboard.read' || method === 'clipboard.write') {
       const permission = method === 'clipboard.read' ? 'clipboardRead' : 'clipboardWrite'
@@ -2099,10 +2068,25 @@ export class ExtensionService {
         let progressUnavailable = false
         const cleanupResult = await this.#taskCleanup.run({
           extensionId: id,
-          menuId: invocation.menuId,
           signal: AbortSignal.any([running.abort.signal, invocation.abort.signal]),
           cleanup,
-          confirm: cleanup.confirmBatch,
+          confirm: async (preview, signal) => {
+            const cancel = () => {
+              void running.host.call('taskCleanup.cancel', { token: input.token }, AbortSignal.timeout(5000)).catch(() => {})
+            }
+            signal.addEventListener('abort', cancel, { once: true })
+            try {
+              if (signal.aborted)
+                throw new Error('EXTENSION_TASK_CLEANUP_EXPIRED')
+              const confirmed = await running.host.call('taskCleanup.confirm', { token: input.token, preview: { ...preview } }, signal)
+              if (typeof confirmed !== 'boolean')
+                throw new Error('EXTENSION_INVALID_ARGUMENT')
+              return confirmed
+            }
+            finally {
+              signal.removeEventListener('abort', cancel)
+            }
+          },
           progress: async (progress) => {
             if (progressUnavailable || running.abort.signal.aborted || invocation.abort.signal.aborted || this.#cleanupInvocations.get(input.token) !== invocation)
               return
@@ -2773,6 +2757,7 @@ export class ExtensionService {
     if (resourceId && resourceId !== retainResource && ![...this.#views.values()].some(current => current.input.resource?.id === resourceId))
       this.#fileSnapshots.delete(resourceId)
     this.#ports.themes?.releaseOwner(`${view.running.package.manifest.id}:${view.running.generation}:${view.input.viewId}`)
+    this.#cancelUnconfirmedTaskCleanup(view.running)
     view.abort.abort()
     const cleanups: Promise<void>[] = [this.#cancelUploads(view.running, view.session.id)]
     if (this.#documents)

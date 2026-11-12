@@ -1,4 +1,4 @@
-import type { ExtensionTaskCleanup, ExtensionTaskCleanupDelete, ExtensionTaskCleanupProgress, ExtensionTaskCleanupResult } from '../../shared/extensions/extensionTaskCleanup'
+import type { ExtensionTaskCleanup, ExtensionTaskCleanupDelete, ExtensionTaskCleanupPreview, ExtensionTaskCleanupProgress, ExtensionTaskCleanupResult } from '../../shared/extensions/extensionTaskCleanup'
 import { extensionError } from '../../shared/extensions/extensionApi'
 import { extensionTaskCleanupPageSchema, extensionTaskCleanupResultSchema } from '../../shared/extensions/extensionTaskCleanup'
 
@@ -12,7 +12,7 @@ export type { ExtensionTaskCleanupProgress } from '../../shared/extensions/exten
 
 export async function runExtensionTaskCleanupBatch(options: {
   cleanup: ExtensionTaskCleanup
-  confirm: (count: number, assertCurrent: () => void) => Promise<boolean>
+  confirm: (preview: ExtensionTaskCleanupPreview) => Promise<boolean>
   assertCurrent: () => void
   progress?: (progress: ExtensionTaskCleanupProgress) => unknown
 }): Promise<ExtensionTaskCleanupBatchResult> {
@@ -56,9 +56,11 @@ export async function runExtensionTaskCleanupBatch(options: {
       progress.phase = 'confirming'
       await publish()
       options.assertCurrent()
-      const confirmed = await options.confirm(targets.length, options.assertCurrent)
+      const confirmed = await options.confirm(Object.freeze({ total: targets.length, skipped: progress.skipped }))
       options.assertCurrent()
-      if (!confirmed) {
+      if (typeof confirmed !== 'boolean')
+        throw new Error('EXTENSION_INVALID_ARGUMENT')
+      if (confirmed !== true) {
         progress.phase = 'cancelled'
         await publish()
         return { status: 'cancelled', results, summary: { ...progress } }
