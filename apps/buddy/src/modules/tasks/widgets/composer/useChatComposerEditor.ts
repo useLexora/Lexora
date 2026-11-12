@@ -312,6 +312,8 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
     return false
   }
 
+  watch(options.chineseInputTriggers, refreshActiveTrigger)
+
   function refreshActiveTrigger() {
     const currentEditor = editor.value
     if (
@@ -328,6 +330,7 @@ export function useChatComposerEditor(options: ChatComposerEditorOptions) {
     const { from } = currentEditor.state.selection
     options.onTrigger(findChatComposerTrigger(
       currentEditor.state.doc.textBetween(0, from, '\n', '\n'),
+      options.chineseInputTriggers.value,
     ))
   }
 

@@ -99,6 +99,7 @@ export const lexoraConfigPatchSchema: z.ZodType<LexoraConfigPatch> = z.object({
       outlinePosition: z.enum(DESKTOP_CHAT_OUTLINE_POSITIONS).optional(),
       readingWidth: z.enum(DESKTOP_CHAT_READING_WIDTHS).optional(),
       pasteTextAsAttachment: z.boolean().optional(),
+      chineseInputTriggers: z.boolean().optional(),
       permissionMode: z.enum(BUDDY_PERMISSION_MODES).optional(),
       welcome: z.string().trim().min(1).max(64).optional(),
       welcomeItems: desktopChatWelcomeItemsSchema.optional(),

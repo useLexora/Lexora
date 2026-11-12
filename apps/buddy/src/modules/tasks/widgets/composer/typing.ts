@@ -13,6 +13,7 @@ import type { ChatComposerContextOptions, ChatComposerSessionScope, ChatComposer
 
 export interface UseChatComposerOptions {
   pasteTextAsAttachment: Readonly<Ref<boolean>>
+  chineseInputTriggers: Readonly<Ref<boolean>>
   canSend: Readonly<Ref<boolean>>
   composerContent: Readonly<Ref<JSONContent>>
   draft: Readonly<Ref<string>>
@@ -39,6 +40,7 @@ export interface UseChatComposerOptions {
 
 export interface ChatComposerEditorOptions {
   pasteTextAsAttachment: Readonly<Ref<boolean>>
+  chineseInputTriggers: Readonly<Ref<boolean>>
   composerContent: Readonly<Ref<JSONContent>>
   draft: Readonly<Ref<string>>
   draftId: Readonly<Ref<string>>
@@ -70,6 +72,7 @@ export interface DesktopChatComposerProps {
   isLoadingModel?: boolean
   isUpdatingModel?: boolean
   pasteTextAsAttachment: boolean
+  chineseInputTriggers: boolean
   manageSkills?: () => void
   hasQueuedMessages?: boolean
   inlineMaterials?: boolean

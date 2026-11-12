@@ -51,6 +51,7 @@ async function mountComposer(options: {
   model?: LocalRuntimeModelOption
   commands?: WorkbenchCommandPort
 } = {}) {
+  const chineseInputTriggers = shallowRef(false)
   const canSend = shallowRef(true)
   const content = shallowRef(createChatComposerContentFromText(''))
   const draft = shallowRef('')
@@ -69,6 +70,7 @@ async function mountComposer(options: {
     setup() {
       composer = useChatComposer({
         pasteTextAsAttachment: shallowRef(true),
+        chineseInputTriggers,
         canSend,
         composerContent: content,
         draft,
@@ -126,7 +128,7 @@ async function mountComposer(options: {
     editor.view.dom.dispatchEvent(event)
     return event
   }
-  return { canSend, composer, content, draft, draftId, editorKey, isSending, editor, keydown, paste, resources, selectedEffort, selectedServiceTier, sent, sentPayloads }
+  return { chineseInputTriggers, canSend, composer, content, draft, draftId, editorKey, isSending, editor, keydown, paste, resources, selectedEffort, selectedServiceTier, sent, sentPayloads }
 }
 
 describe('chat composer editing', () => {
@@ -381,6 +383,45 @@ describe('chat composer editing', () => {
     flow.composer.submit()
     const directives = flow.sentPayloads[0]?.userContent?.body.flatMap(paragraph => paragraph.content.filter(node => node.type === 'prompt_directive'))
     expect(directives).toEqual(skills.map(option => ({ type: 'prompt_directive', directive: 'skill', value: 'tables:review', skill: option.skill })))
+  })
+
+  it('opens slash command suggestions with the Chinese ideographic comma and replaces the trigger on selection', async () => {
+    const flow = await mountComposer()
+    flow.editor.view.dom.focus()
+    flow.editor.commands.insertContent('、rev')
+    expect(flow.composer.activeTrigger.value).toBeNull()
+    flow.chineseInputTriggers.value = true
+
+    await expect.poll(() => flow.composer.activeTrigger.value).toEqual({ kind: 'slash', query: 'rev' })
+    const review = flow.composer.suggestions.value.find(({ option }) => option.value === '/review')?.option
+    expect(review).toBeDefined()
+    flow.composer.selectSuggestion(review)
+
+    const content = chatComposerDocumentToUserContent(flow.editor.getJSON())
+    expect(content.body[0]?.content[0]).toMatchObject({ type: 'prompt_directive', directive: 'slash_command', commandMode: 'prompt', value: '/review' })
+    expect(JSON.stringify(content)).not.toContain('、')
+  })
+
+  it('opens skill suggestions with the fullwidth yuan sign and replaces the trigger on selection', async () => {
+    const skill = skillOption('writer', 'writes prose')
+    const flow = await mountComposer({ loadContextOptions: async () => ({ files: [], skills: [skill] }) })
+    flow.editor.view.dom.focus()
+    flow.editor.commands.insertContent('￥wri')
+    flow.chineseInputTriggers.value = true
+    await expect.poll(() => flow.composer.activeTrigger.value).toEqual({ kind: 'skill', query: 'wri' })
+    flow.chineseInputTriggers.value = false
+    await expect.poll(() => flow.composer.activeTrigger.value).toBeNull()
+    expect(flow.editor.getText()).toBe('￥wri')
+    flow.chineseInputTriggers.value = true
+
+    await expect.poll(() => flow.composer.activeTrigger.value).toEqual({ kind: 'skill', query: 'wri' })
+    const writer = flow.composer.suggestions.value.find(({ option }) => option.value === 'writer')?.option
+    expect(writer).toBeDefined()
+    flow.composer.selectSuggestion(writer)
+
+    const content = chatComposerDocumentToUserContent(flow.editor.getJSON())
+    expect(content.body[0]?.content[0]).toMatchObject({ type: 'prompt_directive', directive: 'skill', value: 'writer' })
+    expect(JSON.stringify(content)).not.toContain('￥')
   })
 
   it('selects same-name actors by keyboard and sends stable inline references without attachments', async () => {

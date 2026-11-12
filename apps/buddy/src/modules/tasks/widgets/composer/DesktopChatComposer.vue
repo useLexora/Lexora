@@ -94,6 +94,7 @@ const {
   suggestions,
 } = useChatComposer({
   pasteTextAsAttachment: toRef(props, 'pasteTextAsAttachment'),
+  chineseInputTriggers: toRef(props, 'chineseInputTriggers'),
   canSend: computed(() => props.canSend && !speech.busy.value),
   composerContent: toRef(props, 'composerContent'),
   draft: toRef(props, 'draft'),

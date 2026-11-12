@@ -24,6 +24,19 @@ async function createConfigStore(content?: string) {
 }
 
 describe('lexoraConfigStore', () => {
+  it('keeps Chinese input triggers opt-in and persists the choice across unrelated updates and restarts', async () => {
+    const content = '[desktop.chat]\npaste_text_as_attachment=false\nfuture=true\n'
+    const { store, configPath } = await createConfigStore(content)
+    expect((await store.read()).desktop.chat.chineseInputTriggers).toBe(false)
+    expect(await readFile(configPath, 'utf8')).toBe(content)
+    await store.update({ desktop: { chat: { chineseInputTriggers: true } } })
+    await store.update({ desktop: { language: 'en-US' } })
+    expect((await new LexoraConfigStore({ configPath }).read()).desktop.chat.chineseInputTriggers).toBe(true)
+    expect(parse(await readFile(configPath, 'utf8'))).toMatchObject({
+      desktop: { chat: { chinese_input_triggers: true, paste_text_as_attachment: false, future: true } },
+    })
+  })
+
   it.each(['', '[desktop]\nlanguage="en-US"\n', '[desktop.chat]\noutline_position="bottom-left"\n'])('defaults missing reading width without rewriting existing configuration: %s', async (content) => {
     const { store, configPath } = await createConfigStore(content)
     expect((await store.read()).desktop.chat.readingWidth).toBe('standard')

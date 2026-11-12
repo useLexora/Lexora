@@ -4,6 +4,36 @@ import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { expect, test, useSyntheticCredentialStorage } from '../fixtures/electron.mjs'
 
+test('Chinese input triggers are opt-in and persist across restart', async ({ buddy }, testInfo) => {
+  const instance = await buddy.createInstance('chinese-input-triggers')
+  let desktop = await instance.launch()
+  const toggle = () => desktop.page.getByTestId('chinese-input-triggers-setting').getByRole('switch')
+  await openSettings(desktop.page)
+  await expect(toggle()).not.toBeChecked()
+  await toggle().click()
+  await expect(toggle()).toBeChecked()
+  await expect.poll(() => fs.readFile(path.join(instance.home, 'config.toml'), 'utf8')).toContain('chinese_input_triggers = true')
+  await desktop.page.screenshot({ path: testInfo.outputPath('chinese-input-triggers.png') })
+  await instance.stop()
+  desktop = await instance.launch()
+  await openSettings(desktop.page)
+  await expect(toggle()).toBeChecked()
+  await desktop.page.locator('.desktop-app-sidebar').getByRole('button', { name: '任务', exact: true }).click()
+  const editor = desktop.page.locator('.desktop-chat-composer__prosemirror:visible')
+  await editor.fill('、rev')
+  await desktop.page.getByRole('option').filter({ hasText: '/review' }).click()
+  await expect(editor).toContainText('/review')
+  await expect(editor).not.toContainText('、')
+  await openSettings(desktop.page)
+  await toggle().click()
+  await expect(toggle()).not.toBeChecked()
+  await desktop.page.locator('.desktop-app-sidebar').getByRole('button', { name: '任务', exact: true }).click()
+  await editor.fill('、rev')
+  await expect(desktop.page.locator('.chat-composer-source-picker')).toBeHidden()
+  await expect(editor).toHaveText('、rev')
+  expect(desktop.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
+})
+
 test('prompt previews copy the current source without changing configuration or tasks', async ({ buddy }) => {
   const instance = await buddy.createInstance('settings-prompts')
   const { page, app, diagnostics } = await instance.launch()

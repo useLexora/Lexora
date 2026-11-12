@@ -114,6 +114,7 @@ async function mountFlow() {
         draftId,
         editorKey: draftId,
         pasteTextAsAttachment,
+        chineseInputTriggers: shallowRef(false),
         resources: resources.resources,
         selectedModel: shallowRef(null),
         selectedEffort: shallowRef(null),
