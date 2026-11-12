@@ -3,7 +3,7 @@ import type { LocalProvider } from '@buddy-shared/providers/providerApi'
 
 import type { ModelProvidersStore } from '@/modules/models/state/typing'
 import { Add20Regular, Info20Regular } from '@vicons/fluent'
-import { NAlert, NButton, NEmpty, NPopconfirm, NSwitch, NTooltip } from 'naive-ui'
+import { NButton, NEmpty, NPopconfirm, NSwitch, NTooltip } from 'naive-ui'
 import { computed, shallowRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopModelSnapshotStatus from '@/modules/models/widgets/providers/DesktopModelSnapshotStatus.vue'
@@ -42,12 +42,6 @@ function providerAuthenticationLabel(type: NonNullable<LocalProvider['storedCred
 
 <template>
   <div class="desktop-models-settings gap-[1.8rem]">
-    <NAlert v-if="providerSettings.modelProviderError.value" type="error" :show-icon="false">
-      {{ providerSettings.modelProviderError.value }}
-      <NButton text @click="providerSettings.loadModelCatalog(true)">
-        {{ t('desktop.loading.retry') }}
-      </NButton>
-    </NAlert>
     <section class="desktop-models-settings__section">
       <div class="desktop-models-settings__heading flex items-start justify-between gap-4">
         <div>

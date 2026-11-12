@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { BackupOptions } from '@buddy-shared/storage/backupScope'
 import type { SyncConnectionInput, SyncState } from '@buddy-shared/sync/syncApi'
+import type { MessageReactive } from 'naive-ui'
 import { NButton, NSwitch, useMessage } from 'naive-ui'
 import { computed, onMounted, onUnmounted, shallowRef, useId, watch } from 'vue'
 import CloudBackupIcon from '@/shared/ui/icon/CloudBackupIcon.vue'
@@ -66,6 +67,12 @@ const status = computed(() => {
 })
 const api = () => window.lexoraDesktop!.sync
 let unsubscribe: (() => void) | undefined
+let loadFailure: MessageReactive | undefined
+let mounted = true
+function clearLoadFailure() {
+  loadFailure?.destroy()
+  loadFailure = undefined
+}
 async function perform(action: () => Promise<unknown>) {
   if (running.value)
     return
@@ -75,11 +82,24 @@ async function perform(action: () => Promise<unknown>) {
     await action()
   }
   catch (failure) {
+    if (!mounted)
+      return
     const description = cloudBackupError(failure, english.value)
-    if (showSelection.value)
+    if (showSelection.value) {
       error.value = description
-    else
+    }
+    else if (!loaded.value) {
+      if (loadFailure) {
+        loadFailure.type = 'error'
+        loadFailure.content = description
+      }
+      else {
+        loadFailure = message.error(description, { duration: 0, onClose: () => loadFailure = undefined })
+      }
+    }
+    else {
       message.error(description)
+    }
   }
   finally { busy.value = false }
 }
@@ -107,19 +127,31 @@ async function backupNow(options: BackupOptions) {
   })
 }
 async function loadState() {
+  if (running.value)
+    return
+  if (loadFailure) {
+    loadFailure.type = 'loading'
+    loadFailure.content = text('正在读取云备份状态…', 'Loading cloud backup status…')
+  }
   await perform(async () => {
     state.value = await api().state()
     loaded.value = true
+    clearLoadFailure()
   })
 }
 onMounted(() => {
   unsubscribe = api().onChanged((next) => {
     state.value = next
     loaded.value = true
+    clearLoadFailure()
   })
   void loadState()
 })
-onUnmounted(() => unsubscribe?.())
+onUnmounted(() => {
+  mounted = false
+  unsubscribe?.()
+  clearLoadFailure()
+})
 </script>
 
 <template>
