@@ -7,7 +7,7 @@ import type { ToolExecutionPhaseChange } from '../../../../shared/runs/toolExecu
 import type { SkillReference } from '../../../../shared/skills/skillApi'
 import type { BuddyExecutionIdentity } from '../../buddies/BuddyExecutionDefinition'
 import type { BuddyInputReferenceV1 } from '../context/BuddyInputReference'
-import type { BuddyContextUsageBreakdown } from '../context/contextUsageBreakdown'
+import type { BuddyContextUsageBreakdown, BuddyEstimatedContextUsage } from '../context/contextUsageBreakdown'
 
 export interface BuddySessionModelSelection {
   provider: string
@@ -22,6 +22,7 @@ export type BuddySessionShutdownReason = 'evict' | 'invalidate' | 'quit' | 'reso
 
 export interface BuddySessionEventSource {
   getToolLabel?: (name: string) => string | undefined
+  getContextUsageEstimate?: () => BuddyEstimatedContextUsage | null
   getContextUsageBreakdown?: (
     totalTokens: number,
   ) => BuddyContextUsageBreakdown | null | Promise<BuddyContextUsageBreakdown | null>

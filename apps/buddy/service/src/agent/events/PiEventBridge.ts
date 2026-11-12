@@ -239,7 +239,24 @@ class ActivePiEventChannel implements PiCompactionEventChannel, PiTurnEventChann
 
   #enqueueEvent(event: AgentSessionEvent): void {
     const observedAt = Date.now()
-    this.#eventTail = this.#eventTail.then(() => this.#handleEvent(event, observedAt))
+    const message = this.#recordEventUsage && event.type === 'message_start' && event.message.role === 'assistant'
+      ? event.message
+      : null
+    const estimate = message ? this.#session.getContextUsageEstimate?.() : null
+    const contextUsage = estimate && estimate.totalTokens > 0 && message
+      ? { ...estimate, model: message.model, provider: message.provider }
+      : null
+    this.#eventTail = this.#eventTail.then(async () => {
+      await this.#handleEvent(event, observedAt)
+      if (contextUsage) {
+        await this.#eventWriter.drain()
+        await this.#eventLog.append({
+          runId: this.#runId,
+          type: 'context.usage.updated',
+          payload: contextUsage,
+        })
+      }
+    })
   }
 
   #flushPendingTerminalToolUpdates(): void {

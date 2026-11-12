@@ -208,7 +208,7 @@ describe('piEventBridge', () => {
       .toEqual(['first', 'second'])
   })
 
-  it('reports actual input context instead of billing total tokens', async () => {
+  it('publishes context while thinking, then replaces the estimate with actual input rather than billing tokens', async () => {
     const appended: AppendBuddyRunEventInput[] = []
     let sequence = 0
     let listener: ((event: AgentSessionEvent) => void) | undefined
@@ -266,6 +266,7 @@ describe('piEventBridge', () => {
       provider: 'openai-codex',
       runId: 'run-1',
       session: {
+        getContextUsageEstimate: () => ({ ...getContextUsageBreakdown(250_000), totalTokens: 250_000 }),
         getContextUsageBreakdown,
         subscribe(nextListener) {
           listener = nextListener
@@ -293,15 +294,25 @@ describe('piEventBridge', () => {
         totalTokens: 292_900,
       },
     }
-    listener?.({ message, type: 'message_start' })
-    listener?.({ message, type: 'message_end' })
-
+    listener?.({ message: { ...message, content: [{ type: 'thinking', thinking: '' }], usage: usage() }, type: 'message_start' })
     await channel.flush()
+    expect(appended.filter(event => event.type === 'context.usage.updated')).toEqual([{
+      runId: 'run-1',
+      type: 'context.usage.updated',
+      payload: {
+        ...getContextUsageBreakdown(250_000),
+        totalTokens: 250_000,
+        model: message.model,
+        provider: message.provider,
+      },
+    }])
 
-    expect(appended.find(event => event.type === 'context.usage.updated')?.payload).toMatchObject({
-      messageTokens: 271_000,
-      totalTokens: 271_000,
-    })
+    listener?.({ message, type: 'message_end' })
+    await channel.flush()
+    expect(appended.filter(event => event.type === 'context.usage.updated').map(event => event.payload)).toEqual([
+      { ...getContextUsageBreakdown(250_000), totalTokens: 250_000, model: message.model, provider: message.provider },
+      { ...getContextUsageBreakdown(271_000), totalTokens: 271_000, model: message.model, provider: message.provider },
+    ])
   })
 
   it('propagates a failure to record the usage degradation fact', async () => {
