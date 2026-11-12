@@ -10,8 +10,11 @@ const lifetime = new AbortController()
 const workers = createExtensionWorkers(new URL('/__package/', location.href), lifetime.signal, Worker)
 addEventListener('pagehide', () => lifetime.abort(), { once: true })
 const commands = new Map()
-const cleanupProgressListeners = new Map()
-lifetime.signal.addEventListener('abort', () => cleanupProgressListeners.clear(), { once: true })
+const cleanupCallbacks = new Map()
+lifetime.signal.addEventListener('abort', () => {
+  for (const callbacks of cleanupCallbacks.values()) callbacks.controller.abort()
+  cleanupCallbacks.clear()
+}, { once: true })
 const agentTools = new Map()
 const agentActions = new Map()
 const conditions = new Map()
@@ -29,24 +32,62 @@ let activated = false
 const interactions = new Map()
 const code = (error, method) => /^EXTENSION_[A-Z_]+$/.test(error?.message) ? error.message : method === 'activate' ? 'EXTENSION_ACTIVATION_FAILED' : 'EXTENSION_OPERATION_FAILED'
 const request = (method, params = null) => bridge.request(method, params)
-function cleanupCommand(token) {
+function cleanupCommand(token, signal) {
   let used = false
-  return Object.freeze({ run: async (options = {}) => {
-    if (used)
+  return Object.freeze({ run: async (options) => {
+    if (used || signal.aborted || lifetime.signal.aborted)
       throw new Error('EXTENSION_METHOD_DENIED')
+    if (typeof options?.confirm !== 'function')
+      throw new Error('EXTENSION_TASK_CLEANUP_CONFIRMATION_REQUIRED')
     if (options.onProgress !== undefined && typeof options.onProgress !== 'function')
       throw new Error('EXTENSION_INVALID_ARGUMENT')
     used = true
-    if (options.onProgress)
-      cleanupProgressListeners.set(token, options.onProgress)
+    const callbacks = { confirm: options.confirm, onProgress: options.onProgress, controller: new AbortController(), used: false }
+    const cancel = () => {
+      cleanupCallbacks.delete(token)
+      callbacks.controller.abort()
+    }
+    cleanupCallbacks.set(token, callbacks)
+    signal.addEventListener('abort', cancel, { once: true })
     try {
       return await request('taskCleanup.run', { token })
     }
     finally {
-      cleanupProgressListeners.delete(token)
+      signal.removeEventListener('abort', cancel)
+      cancel()
     }
   } })
 }
+
+async function confirmCleanup(token, preview) {
+  const callbacks = cleanupCallbacks.get(token)
+  if (!callbacks || callbacks.used || callbacks.controller.signal.aborted)
+    throw new Error('EXTENSION_TASK_CLEANUP_EXPIRED')
+  callbacks.used = true
+  const { signal } = callbacks.controller
+  let cancel
+  try {
+    const confirmed = await Promise.race([
+      Promise.resolve().then(() => {
+        signal.throwIfAborted()
+        return callbacks.confirm(Object.freeze({ total: preview.total, skipped: preview.skipped }), signal)
+      }),
+      new Promise((resolve, reject) => {
+        cancel = () => reject(new Error('EXTENSION_TASK_CLEANUP_EXPIRED'))
+        signal.addEventListener('abort', cancel, { once: true })
+      }),
+    ])
+    if (signal.aborted || cleanupCallbacks.get(token) !== callbacks)
+      throw new Error('EXTENSION_TASK_CLEANUP_EXPIRED')
+    if (typeof confirmed !== 'boolean')
+      throw new Error('EXTENSION_INVALID_ARGUMENT')
+    return confirmed
+  }
+  finally {
+    signal.removeEventListener('abort', cancel)
+  }
+}
+
 function disposable(cleanup) {
   let disposed = false
   const value = { dispose() {
@@ -258,10 +299,22 @@ bridge.subscribe(async ({ id, method, params }) => {
     else if (method === 'command') {
       if (!activated || !commands.has(params.command))
         throw new Error('EXTENSION_COMMAND_UNAVAILABLE')
-      result = await commands.get(params.command)(Object.freeze({ resource: params.resource, arguments: params.arguments ?? null, invocation: params.invocation ?? null, taskCleanup: params.cleanupToken ? cleanupCommand(params.cleanupToken) : undefined })) ?? null
+      const controller = new AbortController()
+      try {
+        result = await commands.get(params.command)(Object.freeze({ resource: params.resource, arguments: params.arguments ?? null, invocation: params.invocation ?? null, taskCleanup: params.cleanupToken ? cleanupCommand(params.cleanupToken, controller.signal) : undefined })) ?? null
+      }
+      finally { controller.abort() }
+    }
+    else if (method === 'taskCleanup.confirm') {
+      result = await confirmCleanup(params.token, params.preview)
+    }
+    else if (method === 'taskCleanup.cancel') {
+      const callbacks = cleanupCallbacks.get(params.token)
+      cleanupCallbacks.delete(params.token)
+      callbacks?.controller.abort()
     }
     else if (method === 'taskCleanup.progress') {
-      const listener = cleanupProgressListeners.get(params.token)
+      const listener = cleanupCallbacks.get(params.token)?.onProgress
       if (listener) {
         try {
           void Promise.resolve(listener(Object.freeze({ ...params.progress }))).catch(() => {})

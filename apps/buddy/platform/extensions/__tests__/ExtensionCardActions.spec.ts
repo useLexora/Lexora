@@ -1,8 +1,9 @@
+import type { ExtensionTaskCleanupPreview } from '../../../shared/extensions/extensionTaskCleanup'
 import type { JsonValue } from '../../../shared/workbench/workbenchState'
-import type { ExtensionServicePorts } from '../ExtensionService'
+import { randomUUID } from 'node:crypto'
 import { rm } from 'node:fs/promises'
 import { deferred } from '@buddy-tests/deferred'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { EXTENSION_API_VERSION } from '../../../shared/extensions/extensionManifest'
 import { ExtensionService } from '../ExtensionService'
 import { createStore, manifest, reviewPackage } from './fixtures'
@@ -12,21 +13,26 @@ afterEach(async () => {
   for (const dispose of disposers.splice(0).reverse()) await dispose()
 })
 
-async function fixture(confirmBatch: NonNullable<NonNullable<ExtensionServicePorts['taskCleanup']>['confirmBatch']> | null = async () => true) {
+async function fixture(confirm: (preview: ExtensionTaskCleanupPreview, signal: AbortSignal) => Promise<JsonValue> = async () => true) {
   const { root, store } = await createStore()
   disposers.push(() => rm(root, { recursive: true, force: true }))
   const definition = manifest({ apiVersion: EXTENSION_API_VERSION, permissions: { legacyTaskCleanup: true }, contributes: {
     commands: [{ id: 'tests.reader.cleanup', title: 'Cleanup' }],
+    views: [{ id: 'tests.reader.page', title: 'Cleanup', entry: 'view.js', location: 'page', resource: 'none' }],
     menus: [{ id: 'tests.reader.action', command: 'tests.reader.cleanup', target: 'extension.actions' }],
   } })
   await store.install((await reviewPackage(root, store, definition)).token)
-  await store.install((await reviewPackage(root, store, manifest({ id: 'tests.peer', contributes: { commands: [{ id: 'tests.peer.noop', title: 'Peer' }] } }))).token)
+  await store.install((await reviewPackage(root, store, manifest({ id: 'tests.peer', contributes: {
+    commands: [{ id: 'tests.peer.noop', title: 'Peer' }],
+    views: [{ id: 'tests.peer.page', title: 'Peer', entry: 'view.js', location: 'page', resource: 'none' }],
+  } }))).token)
   let broker!: (method: string, params: unknown) => Promise<JsonValue>
   const deleted: { conversationId: string, expectedRevision: number }[] = []
   let genericChanges = 0
   let hostGeneration = 0
   const progressMessages: { extensionId: string, generation: number, params: Record<string, JsonValue> }[] = []
-  let onProgress = async (_params: Record<string, JsonValue>) => {}
+  const cancelledTokens: JsonValue[] = []
+  let onProgress = async (_params: Record<string, JsonValue>, _signal: AbortSignal) => {}
   let capturedToken: string | null = null
   let onCommand = async (params: Record<string, JsonValue>): Promise<JsonValue> => {
     capturedToken = typeof params.cleanupToken === 'string' ? params.cleanupToken : null
@@ -39,21 +45,25 @@ async function fixture(confirmBatch: NonNullable<NonNullable<ExtensionServicePor
       const generation = ++hostGeneration
       if (pkg.manifest.id === definition.id)
         broker = call
-      return { call: async (method, params) => {
+      return { call: async (method, params, signal) => {
         if (method === 'activate')
           return { commands: pkg.manifest.contributes.commands.map(item => item.id) }
         if (method === 'command')
           return pkg.manifest.id === definition.id ? onCommand(params as Record<string, JsonValue>) : null
+        if (method === 'taskCleanup.confirm')
+          return confirm((params as unknown as { preview: ExtensionTaskCleanupPreview }).preview, signal!)
+        if (method === 'taskCleanup.cancel')
+          cancelledTokens.push((params as Record<string, JsonValue>).token!)
         if (method === 'taskCleanup.progress') {
           const input = params as Record<string, JsonValue>
           progressMessages.push({ extensionId: pkg.manifest.id, generation, params: input })
-          await onProgress(input)
+          await onProgress(input, signal!)
         }
         return null
       }, dispose: async () => {}, devtools: () => {} }
     },
     changed: () => { genericChanges++ },
-    createView: () => { throw new Error('NO_VIEW') },
+    createView: () => ({ token: randomUUID(), url: 'lexora-extension://fixture/__view.html', dispose: () => {} }),
     workbench: async () => null,
     readText: async () => '',
     get: async () => new Response(''),
@@ -63,14 +73,12 @@ async function fixture(confirmBatch: NonNullable<NonNullable<ExtensionServicePor
         deleted.push(input)
         return { status: 'deleted' }
       },
-      confirmDelete: async () => { throw new Error('NO_VIEW') },
-      ...(confirmBatch ? { confirmBatch } : {}),
     },
   })
   disposers.push(() => service.dispose())
   await service.restart(definition.id)
   await service.execute(definition.id, 'tests.reader.cleanup', null)
-  return { service, deleted, progressMessages, onProgress: (handler: typeof onProgress) => {
+  return { service, deleted, progressMessages, cancelledTokens, onProgress: (handler: typeof onProgress) => {
     onProgress = handler
   }, genericChanges: () => genericChanges, broker: (method: string, params: unknown) => broker(method, params), token: () => capturedToken, onCommand: (handler: typeof onCommand) => {
     onCommand = handler
@@ -78,14 +86,14 @@ async function fixture(confirmBatch: NonNullable<NonNullable<ExtensionServicePor
 }
 
 it('accepts a main-only command, confirms once and returns host-owned per-item results', async () => {
-  const counts: number[] = []
-  const f = await fixture(async (count) => {
-    counts.push(count)
+  const previews: ExtensionTaskCleanupPreview[] = []
+  const f = await fixture(async (preview) => {
+    previews.push(preview)
     return true
   })
   expect((await f.service.list())[0]?.registeredCommands).toEqual(['tests.reader.cleanup'])
   expect(await f.run()).toMatchObject({ taskCleanup: { status: 'completed', results: [{ conversationId: 'legacy', expectedRevision: 8, status: 'deleted' }], summary: { phase: 'completed', total: 1, processed: 1, deleted: 1, pending: 0 } } })
-  expect(counts).toEqual([1])
+  expect(previews).toEqual([{ total: 1, skipped: 0 }])
   expect(f.deleted).toEqual([{ conversationId: 'legacy', expectedRevision: 8 }])
   await expect(f.broker('taskCleanup.run', { token: f.token() })).rejects.toThrow('EXTENSION_METHOD_DENIED')
 })
@@ -148,114 +156,114 @@ it('revokes confirmation when the plugin is disabled and hides disposed commands
   await expect(second.run()).rejects.toThrow('EXTENSION_COMMAND_UNAVAILABLE')
 })
 
-it('publishes host confirmation and durable summaries independently of plugin return values', async () => {
-  const f = await fixture(null)
-  const started = deferred<void>()
-  const subscription = f.service.onDidChange((change) => {
-    if (change.kind === 'task-cleanup')
-      started.resolve()
-  })
-  const initialChanges = f.genericChanges()
-  const result = f.run()
-  await started.promise
-  const operation = f.service.taskCleanupConfirmations()[0]!
-  expect(operation).toEqual({ id: expect.any(String), total: 1, skipped: 0, extensionId: 'tests.reader' })
-  expect((await f.service.list())[0]).not.toHaveProperty('taskCleanup')
-  expect(f.deleted).toEqual([])
-  await expect(f.service.confirmTaskCleanup('tests.reader', 'old-operation', true)).rejects.toThrow('EXTENSION_TASK_CLEANUP_EXPIRED')
-  await f.service.confirmTaskCleanup('tests.reader', operation.id, true)
-  expect(await result).toMatchObject({ taskCleanup: { summary: { phase: 'completed', processed: 1, total: 1, deleted: 1, pending: 0 } } })
-  expect(f.service.taskCleanupConfirmations()).toEqual([])
-  expect(f.genericChanges()).toBe(initialChanges + 2)
-  subscription.dispose()
-})
-
-it.each(['disable', 'dispose', 'reset'] as const)('releases deferred host confirmation on %s with no late approval', async (action) => {
-  const f = await fixture(null)
-  const started = deferred<void>()
-  const subscription = f.service.onDidChange((change) => {
-    if (change.kind === 'task-cleanup')
-      started.resolve()
+it.each(['disable', 'dispose', 'reset'] as const)('releases plugin confirmation on %s with no late approval', async (action) => {
+  const answer = deferred<boolean>()
+  const started = deferred<AbortSignal>()
+  const f = await fixture(async (_preview, signal) => {
+    started.resolve(signal)
+    return answer.promise
   })
   const run = f.run()
   const rejected = expect(run).rejects.toThrow('EXTENSION_HOST_STOPPED')
-  await started.promise
-  const operation = f.service.taskCleanupConfirmations()[0]!
+  const signal = await started.promise
   if (action === 'disable')
     await f.service.enable('tests.reader', false)
   else if (action === 'dispose')
     await f.service.dispose()
   else await f.service.resetHosts()
   await rejected
+  expect(signal.aborted).toBe(true)
+  expect(f.cancelledTokens).toEqual([f.token()])
+  answer.resolve(true)
+  await Promise.resolve()
   expect(f.deleted).toEqual([])
-  await expect(f.service.confirmTaskCleanup('tests.reader', operation.id, true)).rejects.toThrow('EXTENSION_TASK_CLEANUP_EXPIRED')
-  expect(f.service.taskCleanupConfirmations()).toEqual([])
-  subscription.dispose()
+})
+
+it.each([false, 'true', 1, null] as const)('fails closed for confirmation response %s', async (response) => {
+  const f = await fixture(async () => response)
+  expect(await f.run()).toMatchObject({ taskCleanup: { results: [], summary: { phase: response === false ? 'cancelled' : 'failed', processed: 0 } } })
+  expect(f.deleted).toEqual([])
+})
+
+it('fails closed when confirmation throws', async () => {
+  const f = await fixture(async () => {
+    throw new Error('EXTENSION_OPERATION_FAILED')
+  })
+  expect(await f.run()).toMatchObject({ taskCleanup: { results: [], summary: { phase: 'failed', processed: 0 } } })
+  expect(f.deleted).toEqual([])
 })
 
 it('does not mint a cleanup token when the window hides during command activation', async () => {
-  const f = await fixture(null)
+  const f = await fixture()
   const run = f.run()
   f.service.cancelUnconfirmedTaskCleanup()
   expect(await run).toBeNull()
   expect(f.token()).toBeNull()
   expect(f.deleted).toEqual([])
-  expect(f.service.taskCleanupConfirmations()).toEqual([])
 })
 
-it('revokes an unused token on hide before a delayed plugin starts cleanup', async () => {
-  const f = await fixture(null)
+it.each(['hide', 'close-view', 'close-other-view'] as const)('scopes unused token revocation on %s before a delayed plugin starts cleanup', async (action) => {
+  const f = await fixture()
+  const extensionId = action === 'close-other-view' ? 'tests.peer' : 'tests.reader'
+  const view = await f.service.openView({ viewId: randomUUID(), extensionId, viewType: `${extensionId}.page`, resource: null, state: null, stateVersion: 1 })
   const entered = deferred<void>()
   const resume = deferred<void>()
   f.onCommand(async (params) => {
     expect(typeof params.cleanupToken).toBe('string')
     entered.resolve()
     await resume.promise
-    await expect(f.broker('taskCleanup.run', { token: params.cleanupToken })).rejects.toThrow('EXTENSION_METHOD_DENIED')
+    const cleanup = f.broker('taskCleanup.run', { token: params.cleanupToken })
+    if (action === 'close-other-view')
+      await expect(cleanup).resolves.toMatchObject({ summary: { phase: 'completed', deleted: 1 } })
+    else await expect(cleanup).rejects.toThrow('EXTENSION_METHOD_DENIED')
     return null
   })
   const run = f.run()
   await entered.promise
-  f.service.cancelUnconfirmedTaskCleanup()
+  if (action === 'hide')
+    f.service.cancelUnconfirmedTaskCleanup()
+  else f.service.closeView(view.id, view.generation, view.token)
   resume.resolve()
-  expect(await run).toBeNull()
-  expect(f.deleted).toEqual([])
-  expect(f.service.taskCleanupConfirmations()).toEqual([])
+  if (action === 'close-other-view')
+    expect(await run).toMatchObject({ taskCleanup: { summary: { phase: 'completed', deleted: 1 } } })
+  else expect(await run).toBeNull()
+  expect(f.deleted).toEqual(action === 'close-other-view' ? [{ conversationId: 'legacy', expectedRevision: 8 }] : [])
 })
 
-it('returns a cancelled host result on hide and accepts a fresh explicitly confirmed invocation', async () => {
-  const f = await fixture(null)
-  let started = deferred<void>()
-  const subscription = f.service.onDidChange((change) => {
-    if (change.kind === 'task-cleanup')
-      started.resolve()
+it.each(['hide', 'close-view'] as const)('cancels on %s and accepts a fresh invocation without reviving late confirmation', async (action) => {
+  const started = deferred<AbortSignal>()
+  const answer = deferred<boolean>()
+  let calls = 0
+  const f = await fixture(async (_preview, signal) => {
+    if (++calls > 1)
+      return true
+    started.resolve(signal)
+    return answer.promise
   })
+  const view = await f.service.openView({ viewId: randomUUID(), extensionId: 'tests.reader', viewType: 'tests.reader.page', resource: null, state: null, stateVersion: 1 })
   const first = f.run()
-  await started.promise
-  const previous = f.service.taskCleanupConfirmations()[0]!
-  expect(previous.total).toBe(1)
-  f.service.cancelUnconfirmedTaskCleanup()
+  const signal = await started.promise
+  const previous = f.token()
+  if (action === 'hide')
+    f.service.cancelUnconfirmedTaskCleanup()
+  else f.service.closeView(view.id, view.generation, view.token)
   expect(await first).toMatchObject({ taskCleanup: { status: 'cancelled', results: [], summary: { phase: 'cancelled', processed: 0 } } })
-  expect(f.service.taskCleanupConfirmations()).toEqual([])
+  expect(signal.aborted).toBe(true)
+  expect(f.cancelledTokens).toEqual([previous])
   expect(f.deleted).toEqual([])
-  started = deferred<void>()
-  const second = f.run()
-  await started.promise
-  const current = f.service.taskCleanupConfirmations()[0]!
-  expect(current.id).not.toBe(previous.id)
-  await expect(f.service.confirmTaskCleanup('tests.reader', previous.id, true)).rejects.toThrow('EXTENSION_TASK_CLEANUP_EXPIRED')
-  await f.service.confirmTaskCleanup('tests.reader', current.id, true)
-  await second
+  answer.resolve(true)
+  await expect(f.broker('taskCleanup.run', { token: previous })).rejects.toThrow('EXTENSION_METHOD_DENIED')
+  await f.run()
+  expect(f.token()).not.toBe(previous)
   expect(f.deleted).toEqual([{ conversationId: 'legacy', expectedRevision: 8 }])
-  subscription.dispose()
 })
 
 it('invalidates a confirmation if the plugin stops awaiting its invocation', async () => {
-  const f = await fixture(null)
-  const started = deferred<void>()
-  const subscription = f.service.onDidChange((change) => {
-    if (change.kind === 'task-cleanup')
-      started.resolve()
+  const started = deferred<AbortSignal>()
+  const answer = deferred<boolean>()
+  const f = await fixture(async (_preview, signal) => {
+    started.resolve(signal)
+    return answer.promise
   })
   let cleanupResult: Promise<JsonValue> | undefined
   f.onCommand(async (params) => {
@@ -266,12 +274,12 @@ it('invalidates a confirmation if the plugin stops awaiting its invocation', asy
   })
   await f.run()
   await expect(cleanupResult).resolves.toMatchObject({ summary: { phase: 'failed', errorCode: 'EXTENSION_TASK_CLEANUP_EXPIRED', processed: 0, deleted: 0 } })
-  expect(f.service.taskCleanupConfirmations()).toEqual([])
+  expect((await started.promise).aborted).toBe(true)
+  answer.resolve(true)
   expect(f.deleted).toEqual([])
-  subscription.dispose()
 })
 
-it('pushes ordered bounded progress only to the initiating token and generation, without catalog progress refreshes', async () => {
+it('pushes bounded progress only to the initiating token and generation', async () => {
   const f = await fixture()
   await f.service.execute('tests.peer', 'tests.peer.noop', null)
   const before = f.genericChanges()
@@ -287,11 +295,10 @@ it('pushes ordered bounded progress only to the initiating token and generation,
   await entered.promise
   expect(f.progressMessages).toHaveLength(1)
   expect(f.deleted).toEqual([])
-  expect(f.genericChanges()).toBe(before)
   release.resolve()
   const result = await run as { taskCleanup: { summary: JsonValue } }
   expect(f.progressMessages.at(-1)!.params.progress).toEqual(result.taskCleanup.summary)
-  expect(f.genericChanges()).toBe(before + 2)
+  expect(f.genericChanges()).toBe(before)
   expect(new Set(f.progressMessages.map(item => item.generation)).size).toBe(1)
   const previous = f.progressMessages[0]!
   for (const message of f.progressMessages) {
@@ -318,5 +325,61 @@ it('does not submit deletion after progress delivery becomes unavailable', async
   expect(await f.run()).toMatchObject({ taskCleanup: { results: [], summary: { phase: 'failed', total: null, processed: 0, errorCode: 'EXTENSION_TASK_CLEANUP_UNAVAILABLE' } } })
   expect(f.progressMessages).toHaveLength(1)
   expect(f.deleted).toEqual([])
-  expect(f.service.taskCleanupConfirmations()).toEqual([])
+})
+
+it('does not impose the progress ACK timeout on confirmation', async () => {
+  const started = deferred<AbortSignal>()
+  const answer = deferred<boolean>()
+  const f = await fixture(async (_preview, signal) => {
+    started.resolve(signal)
+    return answer.promise
+  })
+  vi.useFakeTimers()
+  const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+    const abort = new AbortController()
+    setTimeout(() => abort.abort(), ms)
+    return abort.signal
+  })
+  try {
+    const run = f.run()
+    const signal = await started.promise
+    await vi.advanceTimersByTimeAsync(6000)
+    expect(signal.aborted).toBe(false)
+    expect(f.deleted).toEqual([])
+    answer.resolve(true)
+    expect(await run).toMatchObject({ taskCleanup: { summary: { phase: 'completed', deleted: 1 } } })
+  }
+  finally {
+    timeout.mockRestore()
+    vi.useRealTimers()
+  }
+})
+
+it('stops before deletion when a progress ACK exceeds five seconds', async () => {
+  const entered = deferred<void>()
+  const f = await fixture()
+  f.onProgress(async (_params, signal) => {
+    entered.resolve()
+    return new Promise<void>((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new Error('EXTENSION_REQUEST_TIMEOUT')), { once: true })
+    })
+  })
+  vi.useFakeTimers()
+  const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+    const abort = new AbortController()
+    setTimeout(() => abort.abort(), ms)
+    return abort.signal
+  })
+  try {
+    const run = f.run()
+    await entered.promise
+    expect(timeout).toHaveBeenCalledWith(5000)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(await run).toMatchObject({ taskCleanup: { results: [], summary: { phase: 'failed', errorCode: 'EXTENSION_TASK_CLEANUP_UNAVAILABLE' } } })
+    expect(f.deleted).toEqual([])
+  }
+  finally {
+    timeout.mockRestore()
+    vi.useRealTimers()
+  }
 })

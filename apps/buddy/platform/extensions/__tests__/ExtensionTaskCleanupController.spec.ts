@@ -1,23 +1,19 @@
-import type { ExtensionTaskCleanupOperation } from '../../../shared/extensions/extensionTaskCleanup'
+import type { ExtensionTaskCleanupPreview } from '../../../shared/extensions/extensionTaskCleanup'
 import { deferred } from '@buddy-tests/deferred'
-import { expect, it, vi } from 'vitest'
+import { expect, it } from 'vitest'
 import { ExtensionTaskCleanupController } from '../ExtensionTaskCleanupController'
 
 const item = { conversationId: 'legacy', expectedRevision: 1, title: null, removedAt: '2026-01-01', estimatedBytes: null, canDelete: true, blockedReason: null }
 
 function fixture() {
-  const snapshots: ExtensionTaskCleanupOperation[] = []
-  const confirming = deferred<void>()
-  const changes: number[] = []
-  const controller = new ExtensionTaskCleanupController(() => {
-    changes.push(controller.confirmations().length)
-    if (controller.confirmations().length)
-      confirming.resolve()
-  })
+  const confirming = deferred<{ preview: ExtensionTaskCleanupPreview, signal: AbortSignal }>()
+  const answer = deferred<boolean>()
+  const controller = new ExtensionTaskCleanupController()
   const abort = new AbortController()
   const deleted: string[] = []
-  const options = { extensionId: 'test.cleanup', menuId: 'test.cleanup.menu', signal: abort.signal, assertCurrent: () => {}, progress: () => {
-    snapshots.push(controller.snapshot('test.cleanup')!)
+  const options = { extensionId: 'test.cleanup', signal: abort.signal, assertCurrent: () => {}, confirm: async (preview: ExtensionTaskCleanupPreview, signal: AbortSignal) => {
+    confirming.resolve({ preview, signal })
+    return answer.promise
   }, cleanup: {
     list: async () => ({ items: [item], nextCursor: null }),
     delete: async ({ conversationId }: { conversationId: string }) => {
@@ -25,65 +21,47 @@ function fixture() {
       return { status: 'pending' as const }
     },
   } }
-  return { controller, snapshots, changes, confirming, abort, deleted, options }
+  return { controller, confirming, answer, abort, deleted, options }
 }
 
-it('requires the exact current operation and rejects duplicate batches across extensions', async () => {
+it('allows only one batch and returns real pending receipts after plugin confirmation', async () => {
   const f = fixture()
   const run = f.controller.run(f.options)
-  await f.confirming.promise
-  const operation = f.controller.snapshot('test.cleanup')!
-  expect(operation).toMatchObject({ phase: 'confirming', total: 1, processed: 0, menuId: 'test.cleanup.menu' })
+  expect((await f.confirming.promise).preview).toEqual({ total: 1, skipped: 0 })
   await expect(f.controller.run(f.options)).rejects.toThrow('EXTENSION_TASK_CLEANUP_BUSY')
-  await expect(f.controller.run({ ...f.options, extensionId: 'other.cleanup' })).rejects.toThrow('EXTENSION_TASK_CLEANUP_BUSY')
-  expect(() => f.controller.confirm('other.cleanup', operation.id, true)).toThrow('EXTENSION_TASK_CLEANUP_EXPIRED')
-  expect(() => f.controller.confirm('test.cleanup', 'old-operation', true)).toThrow('EXTENSION_TASK_CLEANUP_EXPIRED')
-  f.controller.confirm('test.cleanup', operation.id, true)
-  expect(() => f.controller.confirm('test.cleanup', operation.id, true)).toThrow('EXTENSION_TASK_CLEANUP_EXPIRED')
-  await run
-  expect(f.controller.snapshot('test.cleanup')).toMatchObject({ phase: 'completed', total: 1, processed: 1, pending: 1, deleted: 0 })
-  expect(f.snapshots.filter(item => item.phase === 'running').map(item => item.processed)).toEqual([0, 1])
+  f.controller.cancelUnconfirmed('other.plugin')
+  expect((await f.confirming.promise).signal.aborted).toBe(false)
+  f.answer.resolve(true)
+  expect(await run).toMatchObject({ summary: { phase: 'completed', total: 1, processed: 1, pending: 1, deleted: 0 } })
   expect(f.deleted).toEqual(['legacy'])
-  expect(f.changes).toEqual([1, 0])
-  expect(f.controller.confirmations()).toEqual([])
-  expect(() => f.controller.confirm('test.cleanup', operation.id, true)).toThrow('EXTENSION_TASK_CLEANUP_EXPIRED')
-  const next = f.controller.run(f.options)
-  await vi.waitFor(() => expect(f.controller.confirmations()).toHaveLength(1))
-  const latest = f.controller.snapshot('test.cleanup')!
-  expect(latest.id).not.toBe(operation.id)
-  expect(() => f.controller.confirm('test.cleanup', operation.id, true)).toThrow('EXTENSION_TASK_CLEANUP_EXPIRED')
-  f.controller.confirm('test.cleanup', latest.id, false)
+  expect(await f.controller.run({ ...f.options, confirm: async () => false })).toMatchObject({ status: 'cancelled', results: [] })
+})
+
+it.each(['hide', 'abort'] as const)('releases unanswered confirmation on %s and ignores late true', async (action) => {
+  const f = fixture()
+  const run = f.controller.run(f.options)
+  const { signal } = await f.confirming.promise
+  if (action === 'hide')
+    f.controller.cancelUnconfirmed()
+  else f.abort.abort()
+  expect(signal.aborted).toBe(true)
+  expect(await run).toMatchObject({ results: [], summary: { phase: action === 'hide' ? 'cancelled' : 'failed', processed: 0 } })
+  const nextAnswer = deferred<boolean>()
+  const nextStarted = deferred<void>()
+  const next = f.controller.run({ ...f.options, signal: new AbortController().signal, confirm: async () => {
+    nextStarted.resolve()
+    return nextAnswer.promise
+  } })
+  await nextStarted.promise
+  f.answer.resolve(true)
+  await Promise.resolve()
+  await expect(f.controller.run(f.options)).rejects.toThrow('EXTENSION_TASK_CLEANUP_BUSY')
+  nextAnswer.resolve(false)
   await next
-  expect(f.controller.snapshot('test.cleanup')).toMatchObject({ phase: 'cancelled', processed: 0, pending: 0, deleted: 0 })
-  expect(f.deleted).toEqual(['legacy'])
-})
-
-it('cancels with zero submissions and snapshots cannot mutate host state', async () => {
-  const f = fixture()
-  const run = f.controller.run(f.options)
-  await f.confirming.promise
-  const snapshot = f.controller.snapshot('test.cleanup')!
-  snapshot.total = 2000
-  f.controller.confirm('test.cleanup', snapshot.id, false)
-  expect(await run).toMatchObject({ status: 'cancelled', results: [], summary: { phase: 'cancelled', total: 1, processed: 0 } })
-  expect(f.controller.snapshot('test.cleanup')).toMatchObject({ phase: 'cancelled', total: 1, processed: 0 })
   expect(f.deleted).toEqual([])
 })
 
-it('releases unanswered confirmation on invalidation without submitting anything', async () => {
-  const f = fixture()
-  const run = f.controller.run(f.options)
-  const rejected = expect(run).resolves.toMatchObject({ summary: { phase: 'failed', errorCode: 'EXTENSION_TASK_CLEANUP_EXPIRED' } })
-  await f.confirming.promise
-  const operation = f.controller.snapshot('test.cleanup')!
-  f.abort.abort()
-  await rejected
-  expect(f.controller.snapshot('test.cleanup')).toMatchObject({ phase: 'failed', total: 1, processed: 0, errorCode: 'EXTENSION_TASK_CLEANUP_EXPIRED' })
-  expect(() => f.controller.confirm('test.cleanup', operation.id, true)).toThrow('EXTENSION_TASK_CLEANUP_EXPIRED')
-  expect(f.deleted).toEqual([])
-})
-
-it('retains accepted job receipts after invalidation without submitting the remaining targets', async () => {
+it('retains accepted receipts on invalidation without submitting remaining targets', async () => {
   const f = fixture()
   const accepted = deferred<void>()
   const receipt = deferred<{ status: 'pending' }>()
@@ -95,62 +73,98 @@ it('retains accepted job receipts after invalidation without submitting the rema
       return receipt.promise
     },
   } })
-  const rejected = expect(run).resolves.toMatchObject({ summary: { phase: 'failed', total: 2, processed: 1, pending: 1, deleted: 0, errorCode: 'EXTENSION_TASK_CLEANUP_EXPIRED' }, results: [{ conversationId: 'legacy', status: 'pending' }] })
   await f.confirming.promise
-  f.controller.confirm('test.cleanup', f.controller.snapshot('test.cleanup')!.id, true)
+  f.answer.resolve(true)
   await accepted.promise
+  f.controller.cancelUnconfirmed()
   f.abort.abort()
   await expect(f.controller.run({ ...f.options, signal: new AbortController().signal })).rejects.toThrow('EXTENSION_TASK_CLEANUP_BUSY')
   receipt.resolve({ status: 'pending' })
-  await rejected
+  expect(await run).toMatchObject({ summary: { phase: 'failed', total: 2, processed: 1, pending: 1, deleted: 0, errorCode: 'EXTENSION_TASK_CLEANUP_EXPIRED' }, results: [{ conversationId: 'legacy', status: 'pending' }] })
   expect(f.deleted).toEqual(['legacy'])
-  expect(f.controller.snapshot('test.cleanup')).toMatchObject({ phase: 'failed', total: 2, processed: 1, pending: 1, deleted: 0, failed: 0, skipped: 0 })
 })
 
-it('cancels a hidden scan immediately and late reads cannot replace the next operation or release its lock', async () => {
+it.each(['hide', 'abort'] as const)('releases a pending scan on %s and late reads cannot release the next operation lock', async (action) => {
   const f = fixture()
+  const phases: string[] = []
+  const entered = deferred<void>()
   const page = deferred<{ items: typeof item[], nextCursor: null }>()
-  const run = f.controller.run({ ...f.options, cleanup: { ...f.options.cleanup, list: () => page.promise } })
-  const previous = f.controller.snapshot('test.cleanup')!
-  expect(previous.phase).toBe('scanning')
-  f.controller.cancelUnconfirmed()
-  expect(f.controller.snapshot('test.cleanup')).toMatchObject({ id: previous.id, phase: 'cancelled', total: null, processed: 0 })
-  const next = f.controller.run(f.options)
-  expect(await run).toMatchObject({ status: 'cancelled', results: [], summary: { phase: 'cancelled' } })
+  const run = f.controller.run({ ...f.options, progress: value => phases.push(value.phase), cleanup: { ...f.options.cleanup, list: () => {
+    entered.resolve()
+    return page.promise
+  } } })
+  await entered.promise
+  if (action === 'hide')
+    f.controller.cancelUnconfirmed()
+  else f.abort.abort()
+  const next = f.controller.run({ ...f.options, signal: new AbortController().signal })
+  expect(await run).toMatchObject({ status: action === 'hide' ? 'cancelled' : 'completed', results: [], summary: { phase: action === 'hide' ? 'cancelled' : 'failed', total: null, processed: 0, errorCode: action === 'hide' ? null : 'EXTENSION_TASK_CLEANUP_EXPIRED' } })
   await f.confirming.promise
-  const current = f.controller.snapshot('test.cleanup')!
-  expect(current.id).not.toBe(previous.id)
+  const previousPhases = [...phases]
   page.resolve({ items: [item], nextCursor: null })
   await Promise.resolve()
   await Promise.resolve()
-  expect(f.controller.snapshot('test.cleanup')).toEqual(current)
   await expect(f.controller.run(f.options)).rejects.toThrow('EXTENSION_TASK_CLEANUP_BUSY')
-  expect(() => f.controller.confirm('test.cleanup', previous.id, true)).toThrow('EXTENSION_TASK_CLEANUP_EXPIRED')
-  f.controller.confirm('test.cleanup', current.id, false)
+  f.answer.resolve(false)
   await next
+  expect(phases).toEqual(previousPhases)
   expect(f.deleted).toEqual([])
 })
 
-it('cancels hidden confirmation with zero submissions and permits another batch', async () => {
+it.each([false, true])('releases an invalidated scan with pending progress, already hidden: %s', async (hidden) => {
   const f = fixture()
-  const run = f.controller.run(f.options)
-  await f.confirming.promise
-  const previous = f.controller.snapshot('test.cleanup')!
-  f.controller.cancelUnconfirmed()
-  const next = f.controller.run({ ...f.options, confirm: async () => false })
-  expect(await run).toMatchObject({ status: 'cancelled', results: [], summary: { phase: 'cancelled' } })
-  expect(() => f.controller.confirm('test.cleanup', previous.id, true)).toThrow('EXTENSION_TASK_CLEANUP_EXPIRED')
-  expect(await next).toMatchObject({ status: 'cancelled', results: [], summary: { phase: 'cancelled' } })
-  expect(f.controller.snapshot('test.cleanup')!.id).not.toBe(previous.id)
+  const entered = deferred<void>()
+  const delivery = deferred<void>()
+  const phases: string[] = []
+  const run = f.controller.run({ ...f.options, progress: async (value) => {
+    phases.push(value.phase)
+    entered.resolve()
+    return delivery.promise
+  }, cleanup: { ...f.options.cleanup, list: async () => {
+    throw new Error('MUST_NOT_SCAN')
+  } } })
+  await entered.promise
+  if (hidden) {
+    f.controller.cancelUnconfirmed()
+    await Promise.resolve()
+    await Promise.resolve()
+  }
+  f.abort.abort()
+  const next = f.controller.run({ ...f.options, signal: new AbortController().signal, confirm: async () => false })
+  expect(await run).toMatchObject({ results: [], summary: { phase: hidden ? 'cancelled' : 'failed', processed: 0, errorCode: hidden ? null : 'EXTENSION_TASK_CLEANUP_EXPIRED' } })
+  expect(await next).toMatchObject({ status: 'cancelled' })
+  delivery.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
+  expect(phases).toEqual(['scanning'])
   expect(f.deleted).toEqual([])
 })
 
-it.each(['immediately-after-confirmation', 'running'] as const)('continues only the frozen confirmed batch when hidden %s', async (when) => {
+it('does not scan or confirm when the original invocation is already aborted', async () => {
+  const f = fixture()
+  f.abort.abort()
+  const calls: string[] = []
+  expect(await f.controller.run({ ...f.options, confirm: async () => {
+    calls.push('confirm')
+    return true
+  }, cleanup: { ...f.options.cleanup, list: async () => {
+    calls.push('list')
+    return { items: [item], nextCursor: null }
+  } } })).toMatchObject({ results: [], summary: { phase: 'failed', total: null, processed: 0, errorCode: 'EXTENSION_TASK_CLEANUP_EXPIRED' } })
+  expect(calls).toEqual([])
+  expect(f.deleted).toEqual([])
+  expect(await f.controller.run({ ...f.options, signal: new AbortController().signal, confirm: async () => false })).toMatchObject({ status: 'cancelled' })
+})
+
+it.each(['before-first-delete', 'running'] as const)('continues only frozen confirmed targets when hidden %s', async (when) => {
   const f = fixture()
   const accepted = deferred<void>()
   const receipt = deferred<{ status: 'pending' }>()
   const records = [item, { ...item, conversationId: 'frozen' }]
-  const run = f.controller.run({ ...f.options, cleanup: {
+  const run = f.controller.run({ ...f.options, progress: (progress) => {
+    if (when === 'before-first-delete' && progress.phase === 'running')
+      f.controller.cancelUnconfirmed()
+  }, cleanup: {
     list: async () => ({ items: records, nextCursor: null }),
     delete: async ({ conversationId }) => {
       f.deleted.push(conversationId)
@@ -162,43 +176,17 @@ it.each(['immediately-after-confirmation', 'running'] as const)('continues only 
     },
   } })
   await f.confirming.promise
-  f.controller.confirm('test.cleanup', f.controller.snapshot('test.cleanup')!.id, true)
-  if (when === 'running')
-    await accepted.promise
+  f.answer.resolve(true)
+  await accepted.promise
   f.controller.cancelUnconfirmed()
   records.push({ ...item, conversationId: 'late-unapproved' })
   await expect(f.controller.run(f.options)).rejects.toThrow('EXTENSION_TASK_CLEANUP_BUSY')
   receipt.resolve({ status: 'pending' })
-  await run
+  expect(await run).toMatchObject({ summary: { phase: 'completed', total: 2, processed: 2, pending: 1, deleted: 1 } })
   expect(f.deleted).toEqual(['legacy', 'frozen'])
-  expect(f.controller.snapshot('test.cleanup')).toMatchObject({ phase: 'completed', total: 2, processed: 2, pending: 1, deleted: 1 })
 })
 
-it('still stops subsequent targets on actual invalidation after hiding an accepted batch', async () => {
-  const f = fixture()
-  const accepted = deferred<void>()
-  const receipt = deferred<{ status: 'pending' }>()
-  const run = f.controller.run({ ...f.options, cleanup: {
-    list: async () => ({ items: [item, { ...item, conversationId: 'remaining' }], nextCursor: null }),
-    delete: async ({ conversationId }) => {
-      f.deleted.push(conversationId)
-      accepted.resolve()
-      return receipt.promise
-    },
-  } })
-  const rejected = expect(run).resolves.toMatchObject({ summary: { phase: 'failed', total: 2, processed: 1, pending: 1, deleted: 0, errorCode: 'EXTENSION_TASK_CLEANUP_EXPIRED' } })
-  await f.confirming.promise
-  f.controller.confirm('test.cleanup', f.controller.snapshot('test.cleanup')!.id, true)
-  await accepted.promise
-  f.controller.cancelUnconfirmed()
-  f.abort.abort()
-  receipt.resolve({ status: 'pending' })
-  await rejected
-  expect(f.deleted).toEqual(['legacy'])
-  expect(f.controller.snapshot('test.cleanup')).toMatchObject({ phase: 'failed', total: 2, processed: 1, pending: 1, deleted: 0 })
-})
-
-it('finishes hidden progress in order without publishing late scan state over the next operation', async () => {
+it('finishes hidden progress in order without late scan notifications', async () => {
   const f = fixture()
   const entered = deferred<void>()
   const release = deferred<void>()
@@ -212,12 +200,9 @@ it('finishes hidden progress in order without publishing late scan state over th
   } })
   await entered.promise
   f.controller.cancelUnconfirmed()
-  const next = await f.controller.run({ ...f.options, confirm: async () => false })
-  const current = f.controller.snapshot('test.cleanup')!
-  expect(next.summary.phase).toBe('cancelled')
+  expect((await f.controller.run({ ...f.options, confirm: async () => false })).summary.phase).toBe('cancelled')
   release.resolve()
   expect(await run).toMatchObject({ status: 'cancelled', results: [], summary: { phase: 'cancelled', total: null, processed: 0 } })
   expect(phases).toEqual(['scanning', 'cancelled'])
-  expect(f.controller.snapshot('test.cleanup')).toEqual(current)
   expect(f.deleted).toEqual([])
 })

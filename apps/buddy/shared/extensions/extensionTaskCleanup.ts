@@ -35,17 +35,9 @@ export type ExtensionTaskCleanupDelete = z.infer<typeof extensionTaskCleanupDele
 export type ExtensionTaskCleanupItem = z.infer<typeof extensionTaskCleanupItemSchema>
 export type ExtensionTaskCleanupPage = z.infer<typeof extensionTaskCleanupPageSchema>
 export type ExtensionTaskCleanupResult = z.infer<typeof extensionTaskCleanupResultSchema>
-export interface ExtensionTaskCleanupConfirmation {
-  id: string
-  extensionId: string
+export interface ExtensionTaskCleanupPreview {
   total: number
   skipped: number
-}
-
-export interface ExtensionTaskCleanupOperation extends ExtensionTaskCleanupProgress {
-  id: string
-  extensionId: string
-  menuId: string
 }
 
 export interface ExtensionTaskCleanupProgress {

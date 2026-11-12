@@ -9,7 +9,6 @@ import { extensionLabels, extensionVerificationError } from '../extensionLabels'
 import { extensionErrorCode } from '../state/useExtensionState'
 import DesktopExtensionIncompatibleReview from './DesktopExtensionIncompatibleReview.vue'
 import DesktopExtensionInstallReview from './DesktopExtensionInstallReview.vue'
-import DesktopExtensionTaskCleanupHost from './DesktopExtensionTaskCleanupHost.vue'
 
 const { state, language } = useExtensionContext()
 const message = useMessage()
@@ -44,7 +43,6 @@ async function install(applyUpdate: boolean, choices: FileOpeningChoice[], accep
 </script>
 
 <template>
-  <DesktopExtensionTaskCleanupHost />
   <DesktopExtensionInstallReview v-if="review" :key="review.token" :review="review" :language="language" :busy="state.busyIds.has(review.manifest.id)" @cancel="cancel" @install="install" />
   <DesktopExtensionIncompatibleReview v-if="incompatibleReview" :review="incompatibleReview" :language="language" @close="incompatibleReview = null" />
 </template>

@@ -1,69 +1,35 @@
-import type { ExtensionTaskCleanupConfirmation, ExtensionTaskCleanupOperation, ExtensionTaskCleanupProgress } from '../../shared/extensions/extensionTaskCleanup'
+import type { ExtensionTaskCleanupPreview, ExtensionTaskCleanupProgress } from '../../shared/extensions/extensionTaskCleanup'
 import type { ExtensionTaskCleanupBatchResult } from './ExtensionTaskCleanupBatch'
-import { randomUUID } from 'node:crypto'
 import { runExtensionTaskCleanupBatch } from './ExtensionTaskCleanupBatch'
 
 interface ActiveCleanup {
-  operation: ExtensionTaskCleanupOperation
-  assertCurrent: () => void
+  extensionId: string
   confirmed: boolean
-  cancel: () => void
-  decide?: (confirmed: boolean) => void
+  cancel: (expired?: boolean) => void
 }
 
 export class ExtensionTaskCleanupController {
-  readonly #operations = new Map<string, ExtensionTaskCleanupOperation>()
   #active?: ActiveCleanup
 
-  private readonly changed: (extensionId: string) => void
-
-  constructor(changed: (extensionId: string) => void) {
-    this.changed = changed
-  }
-
-  snapshot(extensionId: string): ExtensionTaskCleanupOperation | undefined {
-    const operation = this.#operations.get(extensionId)
-    return operation ? { ...operation } : undefined
-  }
-
-  confirmations(): ExtensionTaskCleanupConfirmation[] {
-    const active = this.#active
-    if (!active?.decide || active.operation.phase !== 'confirming' || active.operation.total === null)
-      return []
-    const { id, extensionId, total, skipped } = active.operation
-    return [{ id, extensionId, total, skipped }]
-  }
-
-  confirm(extensionId: string, operationId: string, confirmed: boolean): void {
-    const active = this.#active
-    if (!active || active.operation.extensionId !== extensionId || active.operation.id !== operationId || active.operation.phase !== 'confirming' || !active.decide)
-      throw new Error('EXTENSION_TASK_CLEANUP_EXPIRED')
-    active.assertCurrent()
-    active.decide(confirmed)
-  }
-
-  cancelUnconfirmed(): void {
-    const active = this.#active
-    if (active && !active.confirmed && (active.operation.phase === 'scanning' || active.operation.phase === 'confirming'))
-      active.cancel()
+  cancelUnconfirmed(extensionId?: string): void {
+    if (this.#active && !this.#active.confirmed && (!extensionId || this.#active.extensionId === extensionId))
+      this.#active.cancel()
   }
 
   async run(options: Omit<Parameters<typeof runExtensionTaskCleanupBatch>[0], 'confirm'> & {
     extensionId: string
-    menuId: string
     signal: AbortSignal
-    confirm?: Parameters<typeof runExtensionTaskCleanupBatch>[0]['confirm']
+    confirm: (preview: ExtensionTaskCleanupPreview, signal: AbortSignal) => Promise<boolean>
   }): Promise<ExtensionTaskCleanupBatchResult> {
     if (this.#active)
       throw new Error('EXTENSION_TASK_CLEANUP_BUSY')
     options.assertCurrent()
-    const operation: ExtensionTaskCleanupOperation = { id: randomUUID(), extensionId: options.extensionId, menuId: options.menuId, phase: 'scanning', total: null, processed: 0, deleted: 0, pending: 0, failed: 0, skipped: 0, errorCode: null }
-    this.#operations.set(options.extensionId, { ...operation })
     const hidden = new AbortController()
     const signal = AbortSignal.any([options.signal, hidden.signal])
+    let progress: ExtensionTaskCleanupProgress = { phase: 'scanning', total: null, processed: 0, deleted: 0, pending: 0, failed: 0, skipped: 0, errorCode: null }
     let delivery = Promise.resolve()
-    const publish = (progress: ExtensionTaskCleanupProgress) => {
-      delivery = Promise.resolve().then(() => options.progress?.(progress)).then(() => {}, () => {})
+    const publish = (value: ExtensionTaskCleanupProgress) => {
+      delivery = Promise.resolve().then(() => options.progress?.(value)).then(() => {}, () => {})
       return delivery
     }
     let finishHidden!: (result: ExtensionTaskCleanupBatchResult) => void
@@ -76,75 +42,82 @@ export class ExtensionTaskCleanupController {
         throw new Error('EXTENSION_TASK_CLEANUP_EXPIRED')
     }
     const active: ActiveCleanup = {
-      operation,
-      assertCurrent,
+      extensionId: options.extensionId,
       confirmed: false,
-      cancel: () => {
-        operation.phase = 'cancelled'
-        operation.errorCode = null
-        this.#operations.set(options.extensionId, { ...operation })
-        this.#active = undefined
+      cancel: (expired = false) => {
+        if (active.confirmed || hidden.signal.aborted)
+          return
+        progress = { ...progress, phase: expired ? 'failed' : 'cancelled', errorCode: expired ? 'EXTENSION_TASK_CLEANUP_EXPIRED' : null }
+        if (this.#active === active)
+          this.#active = undefined
         hidden.abort()
-        const { id: _id, extensionId: _extensionId, menuId: _menuId, ...summary } = operation
-        finishHidden({ status: 'cancelled', results: [], summary })
+        finishHidden({ status: expired ? 'completed' : 'cancelled', results: [], summary: { ...progress } })
       },
     }
     this.#active = active
+    let finishExpired!: () => void
+    const expired = new Promise<void>((resolve) => {
+      finishExpired = resolve
+    })
+    const expire = () => {
+      active.cancel(true)
+      finishExpired()
+    }
+    options.signal.addEventListener('abort', expire, { once: true })
+    if (options.signal.aborted)
+      expire()
     try {
       const result = await Promise.race([hiddenResult, runExtensionTaskCleanupBatch({
         cleanup: options.cleanup,
         assertCurrent,
-        progress: (progress) => {
+        progress: (value) => {
           if (hidden.signal.aborted)
             return
-          Object.assign(operation, progress)
-          this.#operations.set(options.extensionId, { ...operation })
-          return publish(progress)
+          progress = { ...value }
+          return publish(value)
         },
-        confirm: (count, check) => new Promise<boolean>((resolve, reject) => {
-          const notify = () => this.changed(options.extensionId)
-          const abort = () => {
-            try {
-              assertCurrent()
-            }
-            catch (error) {
-              finish(false, error)
-            }
-          }
+        confirm: preview => new Promise<boolean>((resolve, reject) => {
           let settled = false
-          let announced = false
+          const abort = () => finish(false, new Error('EXTENSION_TASK_CLEANUP_EXPIRED'))
           function finish(confirmed: boolean, error?: unknown) {
             if (settled)
               return
             settled = true
-            active.decide = undefined
             signal.removeEventListener('abort', abort)
-            active.confirmed = !error && confirmed
-            if (announced)
-              notify()
-            if (error)
+            if (error) {
               reject(error)
-            else resolve(confirmed)
+              return
+            }
+            try {
+              assertCurrent()
+              if (typeof confirmed !== 'boolean')
+                throw new Error('EXTENSION_INVALID_ARGUMENT')
+              active.confirmed = confirmed === true
+              resolve(confirmed)
+            }
+            catch (error) { reject(error) }
           }
-          active.decide = confirmed => finish(confirmed)
           signal.addEventListener('abort', abort, { once: true })
           if (signal.aborted) {
             abort()
             return
           }
-          announced = true
-          this.changed(options.extensionId)
-          if (options.confirm)
-            void options.confirm(count, check).then(value => finish(value), error => finish(false, error))
+          Promise.resolve().then(() => {
+            assertCurrent()
+            return options.confirm(preview, signal)
+          }).then(value => finish(value), error => finish(false, error))
         }),
       })])
-      if (hidden.signal.aborted) {
-        await delivery
-        await publish(result.summary)
+      if (hidden.signal.aborted && !options.signal.aborted) {
+        await Promise.race([expired, delivery.then(() => {
+          if (!options.signal.aborted)
+            return publish(result.summary)
+        })])
       }
       return result
     }
     finally {
+      options.signal.removeEventListener('abort', expire)
       if (this.#active === active)
         this.#active = undefined
     }

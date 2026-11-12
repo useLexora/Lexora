@@ -429,14 +429,9 @@ export interface SettingsHeaderAction {
   readonly disabled?: boolean
   readonly progress?: number | null
 }
-export interface LegacyTaskCleanupItem {
-  readonly conversationId: string
-  readonly title: string | null
-  readonly removedAt: string
-  readonly expectedRevision: number
-  readonly estimatedBytes: number | null
-  readonly canDelete: boolean
-  readonly blockedReason: string | null
+export interface LegacyTaskCleanupPreview {
+  readonly total: number
+  readonly skipped: number
 }
 export interface LegacyTaskCleanupProgress {
   readonly phase: 'scanning' | 'confirming' | 'running' | 'completed' | 'cancelled' | 'failed'
@@ -451,7 +446,10 @@ export interface LegacyTaskCleanupProgress {
   readonly errorCode: string | null
 }
 export interface LegacyTaskCleanupCommandApi {
-  run: (options?: { onProgress?: (progress: LegacyTaskCleanupProgress) => void }) => Promise<{
+  run: (options: {
+    confirm: (preview: LegacyTaskCleanupPreview, signal: AbortSignal) => boolean | Promise<boolean>
+    onProgress?: (progress: LegacyTaskCleanupProgress) => void
+  }) => Promise<{
     /** @description completed 表示调用结束；成功与否以 summary.phase 为准。进入批次前的授权或不可用错误仍 reject。 */
     status: 'cancelled' | 'completed'
     results: { conversationId: string, expectedRevision: number, status: 'deleted' | 'pending' | 'failed', errorCode?: string }[]
@@ -459,12 +457,7 @@ export interface LegacyTaskCleanupCommandApi {
     summary: LegacyTaskCleanupProgress
   }>
 }
-export interface LegacyTaskCleanupApi {
-  list: (input?: { cursor?: string, limit?: number }) => Promise<{ items: LegacyTaskCleanupItem[], nextCursor: string | null }>
-  delete: (input: { conversationId: string, expectedRevision: number }) => Promise<{ status: 'deleted' | 'pending' | 'failed', errorCode?: string }>
-}
 export interface ViewContext {
-  readonly taskCleanup: LegacyTaskCleanupApi
   readonly documents: DocumentApi
   readonly clipboard: {
     read: () => Promise<{ text?: string, html?: string }>

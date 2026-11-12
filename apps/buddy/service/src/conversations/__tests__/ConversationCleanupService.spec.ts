@@ -64,11 +64,11 @@ it('cancellation creates no jobs and confirmation uses frozen CAS against a real
   f.seed('archived', 'archived')
   const external = join(f.home, 'external.txt')
   writeFileSync(external, 'external fixture')
-  const run = (confirm: (count: number) => Promise<boolean>) => runExtensionTaskCleanupBatch({ cleanup: { list: async input => f.cleanup.list(input), delete: input => f.cleanup.delete(input) }, assertCurrent: () => {}, confirm })
-  expect(await run(async count => count !== 1)).toEqual({ status: 'cancelled', results: [], summary: { phase: 'cancelled', total: 1, processed: 0, deleted: 0, pending: 0, failed: 0, skipped: 0, errorCode: null } })
+  const run = (confirm: Parameters<typeof runExtensionTaskCleanupBatch>[0]['confirm']) => runExtensionTaskCleanupBatch({ cleanup: { list: async input => f.cleanup.list(input), delete: input => f.cleanup.delete(input) }, assertCurrent: () => {}, confirm })
+  expect(await run(async ({ total }) => total !== 1)).toEqual({ status: 'cancelled', results: [], summary: { phase: 'cancelled', total: 1, processed: 0, deleted: 0, pending: 0, failed: 0, skipped: 0, errorCode: null } })
   expect(f.database.prepare('SELECT * FROM conversation_deletion_jobs').all()).toEqual([])
-  const changed = await run(async (count) => {
-    expect(count).toBe(1)
+  const changed = await run(async (preview) => {
+    expect(preview).toEqual({ total: 1, skipped: 0 })
     f.database.prepare('UPDATE conversations SET metadata_revision = metadata_revision + 1 WHERE id = ?').run(target.conversationId)
     return true
   })
