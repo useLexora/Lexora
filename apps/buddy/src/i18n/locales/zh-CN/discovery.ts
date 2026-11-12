@@ -1,4 +1,12 @@
 export default {
+  'discovery.task-archive.title': '任务归档',
+  'discovery.task-archive.description': '将暂时不需要的任务归档，让任务列表更清爽。在“设置 → 个人 → 任务归档”中查找、恢复或永久删除归档任务。',
+  'discovery.task-archive.hint': '从任务菜单选择“归档”，之后可在这里按标题搜索、按空间筛选并恢复任务。手动删除归档任务时会要求确认，删除后不可恢复。',
+  'discovery.task-archive-cleanup.title': '自动清理归档任务',
+  'discovery.task-archive-cleanup.hint': '默认不自动清理，也可选择归档后保留 3、7 或 30 天。超过保留期的归档任务会被永久删除；启用或缩短保留期前需要确认。',
+  'discovery.chinese-input-triggers.title': '中文输入法触发符',
+  'discovery.chinese-input-triggers.description': '无需切换英文输入：在输入框中使用“、”触发斜杠命令，使用“￥”触发技能。原有“/”和“$”仍可使用。',
+  'discovery.chinese-input-triggers.hint': '打开此开关后，可在任务输入框中使用“、”触发斜杠命令、使用“￥”触发技能建议。未选择建议时保留原文；关闭后仍可使用“/”和“$”。',
   'discovery.codemode-concurrency.title': '按需调整工具编排并发',
   'discovery.codemode-concurrency.description': '在运行时设置中调整所有任务共享的脚本并发数量，默认 8 个，也可选择不限制。容量满时可排队等待或返回繁忙。',
   'discovery.codemode-concurrency.hint': '提高并发数可让更多脚本同时工作。选择不限制前会提醒资源占用风险；排队中的脚本会在空位释放后继续。',

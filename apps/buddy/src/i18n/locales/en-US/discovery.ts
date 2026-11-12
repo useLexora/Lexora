@@ -1,4 +1,12 @@
 export default {
+  'discovery.task-archive.title': 'Task archive',
+  'discovery.task-archive.description': 'Archive tasks you do not currently need to keep your task list tidy. Find, restore, or permanently delete archived tasks in Settings → Personal → Task archive.',
+  'discovery.task-archive.hint': 'Choose “Archive” from a task menu, then search by title, filter by Space, or restore tasks here. Manual deletion asks for confirmation and cannot be undone.',
+  'discovery.task-archive-cleanup.title': 'Automatic archive cleanup',
+  'discovery.task-archive-cleanup.hint': 'Automatic cleanup is off by default. You can keep tasks for 3, 7, or 30 days after archiving. Expired archived tasks are permanently deleted; enabling cleanup or shortening retention requires confirmation.',
+  'discovery.chinese-input-triggers.title': 'Chinese input method triggers',
+  'discovery.chinese-input-triggers.description': 'Use “、” for slash commands and “￥” for skills without switching to English input. The original “/” and “$” triggers still work.',
+  'discovery.chinese-input-triggers.hint': 'Turn this switch on to use “、” for slash commands and “￥” for skill suggestions in task inputs. Text stays unchanged unless you select a suggestion. The “/” and “$” triggers still work when this is off.',
   'discovery.codemode-concurrency.title': 'Choose tool orchestration concurrency',
   'discovery.codemode-concurrency.description': 'Set script concurrency for all tasks in Runtime settings: 8 by default, a custom count, or unlimited. Choose to wait or return busy when capacity is full.',
   'discovery.codemode-concurrency.hint': 'Raise concurrency to run more scripts at once. Unlimited asks you to acknowledge resource usage. Waiting scripts resume as capacity becomes available.',

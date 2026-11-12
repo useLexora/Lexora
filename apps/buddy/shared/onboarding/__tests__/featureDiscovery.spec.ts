@@ -8,6 +8,17 @@ const features = [
 ]
 
 describe('feature discovery across releases', () => {
+  it('introduces archive and Chinese input triggers only in 0.22.0 while preserving previous progress', () => {
+    const ids = ['task-archive', 'chinese-input-triggers']
+    expect(availableFeatureGuides('0.21.0').filter(feature => ids.includes(feature.id))).toEqual([])
+    expect(availableFeatureGuides('0.22.0').filter(feature => feature.version === '0.22.0').map(feature => feature.id)).toEqual(ids)
+    expect(advanceFeatureDiscovery({ version: '0.21.0', pending: ['npc-team'], notified: ['npc-team'] }, '0.22.0', false)).toEqual({
+      version: '0.22.0',
+      pending: ['npc-team', ...ids],
+      notified: ['npc-team'],
+    })
+  })
+
   it('introduces the new runtime and model settings when upgrading to 0.18.0', () => {
     const ids = ['follow-up-behavior', 'speech-settings', 'image-settings', 'codemode-concurrency']
     expect(availableFeatureGuides('0.17.0').filter(feature => ids.includes(feature.id))).toEqual([])
