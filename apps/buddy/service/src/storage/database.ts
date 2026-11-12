@@ -1,12 +1,14 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { BuddySchemaMigration } from './schema'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 import { DatabaseSync as NodeDatabaseSync } from 'node:sqlite'
+import { isAsyncFunction } from 'node:util/types'
 import { BUDDY_V15_CAPABILITY_OVERRIDES_SCHEMA_SQL, BUDDY_V15_CATALOG_MODEL_ID_SCHEMA_SQL, BUDDY_V15_CATALOG_SELECTION_SCHEMA_SQL, BUDDY_V15_PROVIDER_INSTANCES_SCHEMA_SQL, BUDDY_V15_REQUEST_HEADERS_SCHEMA_SQL } from './migrations/v15ModelServices'
 import { BUDDY_RUN_EVENT_CHECKPOINT_TRIGGER_NAMES } from './migrations/v24RunEventCheckpoints'
 import { BUDDY_PROVIDER_RESOLUTION_TRIGGER_NAMES } from './migrations/v39ProviderResolution'
 import { BUDDY_EVENT_MAINTENANCE_TRIGGER_NAMES } from './migrations/v40EventMaintenance'
+import { BUDDY_ARCHIVE_TRIGGER_NAMES, BUDDY_SCHEMA_LINEAGE } from './migrations/v42ConversationArchive'
 
 import {
   BUDDY_SCHEMA_MIGRATIONS,
@@ -51,8 +53,10 @@ const BUDDY_CURRENT_SCHEMA_COLUMNS = {
   run_event_maintenance: ['run_id', 'recovery_pending', 'compaction_pending', 'projection_version', 'compaction_version', 'revision'],
   provider_resolution_checkpoints: ['provider_id', 'input_fingerprint'],
   extension_invocations: ['id', 'extension_id', 'action_id', 'conversation_id', 'trigger', 'status', 'branch_id', 'source_message_id', 'extension_name', 'action_title', 'result_message'],
-  usage_records: ['run_id', 'invocation_id'],
-  conversations: ['buddy_id', 'title_source', 'title_revision'],
+  usage_records: ['run_id', 'invocation_id', 'detached'],
+  conversations: ['buddy_id', 'title_source', 'title_revision', 'archived_at', 'metadata_revision'],
+  conversation_archive_policy: ['id', 'days'],
+  conversation_deletion_jobs: ['conversation_id', 'status', 'origin', 'error_code', 'manifest_json', 'created_at', 'updated_at'],
   connector_tool_catalogs: ['connector_id', 'tools_json', 'updated_at'],
   provider_states: ['provider_id', 'request_headers_json'],
   builtin_provider_configs: ['id', 'builtin_provider_id', 'display_name'],
@@ -113,33 +117,47 @@ export function openBuddyDatabase(options: OpenBuddyDatabaseOptions): DatabaseSy
   const { databasePath } = options
   if (typeof databasePath !== 'string' || (databasePath !== ':memory:' && !isAbsolute(databasePath)))
     throw new TypeError('Buddy database requires an explicit absolute path or :memory:')
+  if (databasePath !== ':memory:' && existsSync(databasePath)) {
+    const existing = new NodeDatabaseSync(databasePath, { readOnly: true })
+    try {
+      validateDatabaseVersion(existing)
+    }
+    finally { existing.close() }
+  }
   if (databasePath !== ':memory:')
     mkdirSync(dirname(databasePath), { mode: 0o700, recursive: true })
 
   const database = new NodeDatabaseSync(databasePath)
   try {
+    const currentVersion = validateDatabaseVersion(database)
     database.exec(`
       PRAGMA foreign_keys = ON;
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = NORMAL;
       PRAGMA busy_timeout = 5000;
     `)
-    migrateBuddyDatabase(database)
+    migrateBuddyDatabase(database, currentVersion)
     return database
   }
   catch (error) {
-    database.close()
+    if (database.isOpen)
+      database.close()
     throw error
   }
 }
 
-function migrateBuddyDatabase(database: DatabaseSync): void {
+function validateDatabaseVersion(database: DatabaseSync): number {
   const currentVersion = readSchemaVersion(database)
   if (currentVersion > BUDDY_SCHEMA_VERSION)
     throw new BuddyDatabaseVersionError('newer schema version')
   if (currentVersion === 0 && hasApplicationTables(database))
     throw new BuddyDatabaseVersionError('unversioned schema')
+  if (currentVersion === 42)
+    assertCurrentSchema(database)
+  return currentVersion
+}
 
+function migrateBuddyDatabase(database: DatabaseSync, currentVersion: number): void {
   if (currentVersion === 15)
     completeModelServicesMigration(database)
   for (const migration of BUDDY_SCHEMA_MIGRATIONS) {
@@ -175,6 +193,12 @@ function completeModelServicesMigration(database: DatabaseSync): void {
 }
 
 function assertCurrentSchema(database: DatabaseSync): void {
+  const lineageColumns = database.prepare('PRAGMA table_info(buddy_schema_lineage)').all()
+  if (!['id', 'lineage'].every(name => lineageColumns.some(column => column.name === name)))
+    throw new BuddyDatabaseVersionError('incompatible schema lineage')
+  const lineage = database.prepare('SELECT id, lineage FROM buddy_schema_lineage').all()
+  if (lineage.length !== 1 || lineage[0]!.id !== 1 || lineage[0]!.lineage !== BUDDY_SCHEMA_LINEAGE)
+    throw new BuddyDatabaseVersionError('incompatible schema lineage')
   for (const [table, requiredColumns] of Object.entries(BUDDY_CURRENT_SCHEMA_COLUMNS)) {
     const columns = new Set((database.prepare(`PRAGMA table_info(${table})`).all() as Array<{
       name: string
@@ -183,7 +207,7 @@ function assertCurrentSchema(database: DatabaseSync): void {
       throw new BuddyDatabaseVersionError('incomplete schema version')
   }
   const triggers = new Set((database.prepare('SELECT name FROM sqlite_master WHERE type = \'trigger\'').all() as Array<{ name: string }>).map(row => row.name))
-  if ([...BUDDY_RUN_EVENT_CHECKPOINT_TRIGGER_NAMES, ...BUDDY_PROVIDER_RESOLUTION_TRIGGER_NAMES, ...BUDDY_EVENT_MAINTENANCE_TRIGGER_NAMES].some(name => !triggers.has(name)))
+  if ([...BUDDY_RUN_EVENT_CHECKPOINT_TRIGGER_NAMES, ...BUDDY_PROVIDER_RESOLUTION_TRIGGER_NAMES, ...BUDDY_EVENT_MAINTENANCE_TRIGGER_NAMES, ...BUDDY_ARCHIVE_TRIGGER_NAMES].some(name => !triggers.has(name)))
     throw new BuddyDatabaseVersionError('incomplete checkpoint invalidation schema')
 }
 
@@ -226,21 +250,114 @@ function hasApplicationTables(database: DatabaseSync): boolean {
 }
 
 export class BuddyDatabaseVersionError extends Error {
+  readonly reason: string
+
   constructor(reason: string) {
     super(`Lexora Buddy database uses an ${reason}`)
     this.name = 'BuddyDatabaseVersionError'
+    this.reason = reason
+  }
+}
+
+interface TransactionContext {
+  failure: { error: unknown } | null
+  asynchronousResult: boolean
+}
+
+const transactions = new WeakMap<DatabaseSync, TransactionContext>()
+const blockedConnections = new WeakMap<DatabaseSync, Error>()
+
+export class BuddyTransactionUncertainError extends Error {
+  readonly code = 'STORAGE_TRANSACTION_UNCERTAIN'
+
+  constructor(cause: unknown) {
+    super('Storage transaction outcome requires verification on a new connection', { cause })
+    this.name = 'BuddyTransactionUncertainError'
   }
 }
 
 export function withTransaction<T>(database: DatabaseSync, operation: () => T): T {
-  database.exec('BEGIN IMMEDIATE')
+  const blocked = blockedConnections.get(database)
+  if (blocked)
+    throw blocked
+  const active = transactions.get(database)
+  if (active)
+    return participateInTransaction(database, active, operation)
+  if (database.isTransaction)
+    throw new Error('Storage transaction must be owned by withTransaction')
+
+  const context: TransactionContext = { failure: null, asynchronousResult: false }
+  let phase: 'begin' | 'operation' | 'commit' = 'begin'
   try {
-    const result = operation()
+    database.exec('BEGIN IMMEDIATE')
+    transactions.set(database, context)
+    phase = 'operation'
+    const result = participateInTransaction(database, context, operation)
+    if (context.failure)
+      throw context.failure.error
+    phase = 'commit'
     database.exec('COMMIT')
+    if (database.isTransaction)
+      throw new Error('Storage transaction remains active after commit')
     return result
   }
   catch (error) {
-    database.exec('ROLLBACK')
+    const blocked = blockedConnections.get(database)
+    if (blocked)
+      throw blocked
+    const original = context.failure ? context.failure.error : error
+    try {
+      if (database.isTransaction) {
+        database.exec('ROLLBACK')
+        if (database.isTransaction)
+          throw new Error('Storage transaction remains active after rollback')
+      }
+      else if (phase !== 'begin') {
+        throw original
+      }
+    }
+    catch (cleanupError) {
+      throw blockConnection(database, new BuddyTransactionUncertainError(new AggregateError([original, cleanupError], 'Storage transaction could not be rolled back reliably')))
+    }
+    if (context.asynchronousResult)
+      blockConnection(database, new TypeError('Storage transactions cannot return a promise'))
+    throw original
+  }
+  finally {
+    transactions.delete(database)
+  }
+}
+
+function participateInTransaction<T>(database: DatabaseSync, context: TransactionContext, operation: () => T): T {
+  if (context.failure)
+    throw context.failure.error
+  try {
+    if (isAsyncFunction(operation))
+      throw new TypeError('Storage transactions require synchronous operations')
+    const result = operation()
+    if (result !== null && (typeof result === 'object' || typeof result === 'function') && 'then' in result && typeof result.then === 'function') {
+      context.asynchronousResult = true
+      void Promise.resolve(result).catch(() => {})
+      throw new TypeError('Storage transactions cannot return a promise')
+    }
+    if (!database.isTransaction)
+      throw new Error('Storage transaction ended outside withTransaction')
+    return result
+  }
+  catch (error) {
+    context.failure ??= { error }
+    if (!database.isOpen || !database.isTransaction)
+      throw blockConnection(database, new BuddyTransactionUncertainError(error))
     throw error
   }
+}
+
+function blockConnection(database: DatabaseSync, error: Error): Error {
+  blockedConnections.set(database, error)
+  try {
+    if (database.isOpen)
+      database.close()
+  }
+  catch {}
+  return error
 }

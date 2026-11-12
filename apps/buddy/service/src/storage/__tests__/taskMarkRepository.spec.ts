@@ -191,7 +191,7 @@ describe('task marks and reading state', () => {
       legacy.prepare('INSERT INTO messages (id, branch_id, conversation_id, role, content_json, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(`question-${id}`, `branch-${id}`, id, 'user', '{}', now)
     }
     legacy.prepare('INSERT INTO runs (id, branch_id, conversation_id, triggering_message_id, provider, model, purpose, status, started_at, completed_at, approval_policy, execution_profile) VALUES (\'historical\', \'branch-a\', \'a\', \'question-a\', \'fixture\', \'fixture\', \'chat\', \'completed\', ?, ?, \'policy\', \'workspace_write\')').run(now, now)
-    const history = legacy.prepare('SELECT * FROM conversations').all().map(conversation => ({ ...conversation, buddy_id: 'default', title_source: 'manual', title_revision: 0 }))
+    const history = legacy.prepare('SELECT * FROM conversations').all().map(conversation => ({ ...conversation, buddy_id: 'default', title_source: 'manual', title_revision: 0, archived_at: null, metadata_revision: 0 }))
     legacy.close()
     const migrated = openBuddyDatabase({ databasePath })
     const marks = createTaskMarkRepository(migrated)

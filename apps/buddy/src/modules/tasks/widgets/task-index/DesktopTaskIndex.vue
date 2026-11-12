@@ -16,11 +16,13 @@ import DesktopTaskSearchDialog from '@/modules/tasks/widgets/task-index/DesktopT
 import { useTaskIndexController } from '@/modules/tasks/widgets/task-index/useTaskIndexController'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopWorkspaceSidebarIdentity from '@/shared/ui/workspace-sidebar/DesktopWorkspaceSidebarIdentity.vue'
+import DesktopTaskArchiveAction from './DesktopTaskArchiveAction.vue'
 import DesktopTaskHistoryList from './DesktopTaskHistoryList.vue'
 import DesktopTaskMarkManager from './DesktopTaskMarkManager.vue'
 import DesktopTaskMoveToSpaceDialog from './DesktopTaskMoveToSpaceDialog.vue'
 
 const props = defineProps<{
+  archive: TaskIndex['archive']
   activities: TaskIndex['activities']['value']
   activeConversationId: string | null
   pendingConversationIds?: readonly string[]
@@ -39,7 +41,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   deleteSpace: [spaceId: string]
-  deleteTask: [conversationId: string]
+  deleteTask: [conversationId: string, expectedRevision: number]
   newTask: [spaceId: string | null]
   openSpaceDirectory: [spaceId: string]
   openTask: [conversationId: string]
@@ -50,6 +52,7 @@ const emit = defineEmits<{
 const { t } = useBuddyI18n(() => props.language)
 const marksOpen = shallowRef(false)
 const searchOpen = shallowRef(false)
+const archiveTarget = shallowRef<LocalConversationSummary | null>(null)
 const message = useMessage()
 const taskMoveTargetId = shallowRef<string | null>(null)
 const taskMoveTarget = computed(() => props.tasks.find(task => task.id === taskMoveTargetId.value) ?? null)
@@ -74,7 +77,7 @@ const controller = useTaskIndexController({
   getUntitledLabel: () => t('desktop.tasks.untitled'),
   markStates: () => props.marks.states.value,
   onCreateSpace: input => props.createSpace(input),
-  onDeleteTask: conversationId => emit('deleteTask', conversationId),
+  onDeleteTask: (conversationId, expectedRevision) => emit('deleteTask', conversationId, expectedRevision),
   onDeleteSpace: spaceId => emit('deleteSpace', spaceId),
   onNewTask: spaceId => emit('newTask', spaceId),
   onOpenSpaceDirectory: spaceId => emit('openSpaceDirectory', spaceId),
@@ -171,8 +174,11 @@ function openSearchSpace(spaceId: string) {
         @open-task="emit('openTask', $event)"
         @manage-marks="marksOpen = true"
         @move-task="taskMoveTargetId = $event"
+        @archive-task="archiveTarget = $event"
       />
     </nav>
+
+    <DesktopTaskArchiveAction v-model:target="archiveTarget" :actions="archive" :language="language" />
 
     <DesktopTaskSearchDialog
       v-model:show="searchOpen"
@@ -281,7 +287,7 @@ function openSearchSpace(spaceId: string) {
         <NButton @click="taskDeleteTarget = null">
           {{ t('common.cancel') }}
         </NButton>
-        <NButton type="error" @click="confirmTaskDelete">
+        <NButton type="error" :disabled="!archive.ready.value || taskDeleteTarget?.metadataRevision === undefined" @click="confirmTaskDelete">
           {{ t('common.delete') }}
         </NButton>
       </template>

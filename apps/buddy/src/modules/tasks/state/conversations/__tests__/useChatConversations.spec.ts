@@ -22,15 +22,18 @@ function conversation(id: string): LocalConversation {
     updatedAt: '2026-09-08T00:00:00.000Z',
   }
 }
-function fixture() {
+function fixture(initialConversation?: LocalConversation) {
   const scope = effectScope()
   scopes.push(scope)
   const session = useChatSession()
+  if (initialConversation)
+    session.activateConversation(initialConversation)
   const lookup = deferred<LocalConversation>()
   const errors: unknown[] = []
   const persisted: (string | null)[] = []
   const conversations = shallowRef([{ ...conversation('indexed'), activity: 'idle' as const, automationOccurrence: null }])
   const owner = scope.run(() => useChatConversations({
+    initialConversation,
     api: { conversations: { get: () => lookup.promise, listBranches: async () => [], listMessages: async () => ({ items: [], nextCursor: null }) } },
     session,
     taskIndexData: { conversations, applyConversation() {}, refreshIndex: async () => {} },
@@ -48,6 +51,15 @@ function fixture() {
 }
 
 describe('task selection ownership', () => {
+  it('retains an explicitly opened archived task without adding it to ordinary history', () => {
+    const archived = { ...conversation('archived'), archivedAt: '2026-11-01T00:00:00.000Z' }
+    const f = fixture(archived)
+    expect(f.owner.activeConversation.value).toEqual(archived)
+    expect(f.conversations.value.map(item => item.id)).toEqual(['indexed'])
+    f.owner.applyConversation({ ...archived, archivedAt: null })
+    expect(f.owner.activeConversation.value?.archivedAt).toBeNull()
+  })
+
   it.each(['resolve', 'reject'])('ignores a stale lookup %s after selecting an indexed task', async (outcome) => {
     const f = fixture()
     const old = f.owner.openConversation('old')

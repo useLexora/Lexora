@@ -8,6 +8,7 @@ import { useDebounceFn } from '@vueuse/core'
 import { onScopeDispose, readonly, shallowRef, watch } from 'vue'
 import { resolveLocalChatErrorMessage } from '@/shared/lib/localChatError'
 import { migrateLegacyTaskDrafts } from '../drafts/migrateLegacyTaskDrafts'
+import { createTaskArchiveActions } from './createTaskArchiveActions'
 import { useTaskActivities } from './useTaskActivities'
 import { useTaskIndexData } from './useTaskIndexData'
 import { useTaskMarks } from './useTaskMarks'
@@ -69,6 +70,13 @@ export function useTaskIndex(options: TaskIndexOptions) {
     }
   }
   const index: TaskIndex = {
+    archive: createTaskArchiveActions({
+      api: api.conversations,
+      ready: options.ready,
+      beforeClose: options.beforeTaskDelete,
+      onClosed: id => !disposed && options.onTaskDeleted?.(id),
+      refresh: refreshAfterMutation,
+    }),
     activities: activity.activities,
     history: data.history,
     marks,
@@ -109,11 +117,14 @@ export function useTaskIndex(options: TaskIndexOptions) {
         return false
       }
     },
-    async deleteTask(id) {
+    async deleteTask(id, expectedRevision) {
+      if (!options.ready.value || expectedRevision === undefined)
+        return
       try {
         if (options.beforeTaskDelete && !await options.beforeTaskDelete(id))
           return
-        await api.conversations.delete(id)
+        if (!options.ready.value || !await api.conversations.deletePermanently(id, expectedRevision))
+          return
         if (!disposed)
           options.onTaskDeleted?.(id)
         await Promise.all([data.refreshConversations(), marks.refresh()]).catch(setError)

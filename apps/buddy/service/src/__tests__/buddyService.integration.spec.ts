@@ -246,7 +246,7 @@ describe('buddy runtime cross-subsystem contract', () => {
       })
       await seedLog.append({ runId: `run-${id}`, type: 'audit.before', payload: { preserved: true } })
       if (maintenance === 'pending deletion') {
-        createConversationDeletionRepository(database).commit(id, '2026-10-12T00:00:01.000Z')
+        createConversationDeletionRepository(database).commitSoftDelete(id, '2026-10-12T00:00:01.000Z')
       }
       else {
         const artifactsDirectory = join(conversationsDirectory, id, 'artifacts')

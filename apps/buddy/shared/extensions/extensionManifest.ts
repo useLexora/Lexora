@@ -89,6 +89,7 @@ export const extensionPermissionsSchema = z.object({
   models: z.boolean().default(false),
   tasks: z.enum(['none', 'read', 'title']).default('none'),
   taskMessages: z.boolean().default(false),
+  legacyTaskCleanup: z.boolean().default(false),
   data: z.array(extensionDataSourceSchema).max(extensionDataSourceSchema.options.length).refine(sources => new Set(sources).size === sources.length).default([]),
   windowEffects: z.boolean().default(false),
   controls: z.array(workbenchControlSchema).max(workbenchControlSchema.options.length).default([]),
@@ -204,6 +205,8 @@ export const extensionManifestSchema = extensionMetadataSchema.extend({
     issue('Theme contributions and management require API 3')
   if (manifest.apiVersion < 3 && (manifest.contributes.conditions.length || agent || settings.modules.length || settings.groups.length || settings.items.length || manifest.permissions.agent || manifest.permissions.models || manifest.permissions.taskMessages || manifest.permissions.tasks !== 'none'))
     issue('Agent capabilities and settings require API 3')
+  if (manifest.permissions.legacyTaskCleanup && (manifest.apiVersion < 4 || (!manifest.contributes.views.length && !manifest.contributes.menus.some(menu => menu.target === 'extension.actions'))))
+    context.addIssue({ code: 'custom', message: 'Legacy task cleanup requires API 4 and a desktop view or plugin action' })
   if (manifest.apiVersion < 4 && (manifest.permissions.references || manifest.permissions.fileEditing))
     issue('References and file editing require API 4')
   if (manifest.apiVersion < 4 && (manifest.contributes.fileHandlers.length || manifest.contributes.launchers.length || manifest.contributes.views.some(view => view.resource === 'optional-file')))
@@ -312,6 +315,8 @@ export const extensionManifestSchema = extensionMetadataSchema.extend({
     slashNames.add(command.slash.name)
   }
   for (const menu of manifest.contributes.menus) {
+    if (menu.target === 'extension.actions' && manifest.apiVersion < 4)
+      issue('Plugin actions require API 4')
     if (!manifest.contributes.commands.some(command => command.id === menu.command))
       context.addIssue({ code: 'custom', message: 'Menus must reference an owned command' })
   }
@@ -353,6 +358,7 @@ export function addedExtensionPermissions(previous: ExtensionPermissions | undef
     ...next.inferenceNetwork.filter(origin => !previous?.inferenceNetwork?.includes(origin)).map(origin => `inferenceNetwork:${origin}`),
     ...(next.themeManagement && !previous?.themeManagement ? ['themeManagement'] : []),
     ...(next.taskMessages && !previous?.taskMessages ? ['taskMessages'] : []),
+    ...(next.legacyTaskCleanup && !previous?.legacyTaskCleanup ? ['legacyTaskCleanup'] : []),
     ...next.data.filter(source => !previous?.data?.includes(source)).map(source => `data:${source}`),
     ...(next.agent && !previous?.agent ? ['agent'] : []),
     ...(next.models && !previous?.models ? ['models'] : []),

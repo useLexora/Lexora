@@ -80,6 +80,52 @@ it('coalesces overlapping refreshes and rejects stale and disposed results', asy
   finally { scope.stop() }
 })
 
+it('publishes serial snapshots during a change burst and ignores reads after disposal', async () => {
+  const first = deferred<ExtensionStatus[]>()
+  const second = deferred<ExtensionStatus[]>()
+  const third = deferred<ExtensionStatus[]>()
+  const reads = [first, second, third]
+  let requests = 0
+  const { state, scope, statusChanged } = setup({ list: () => reads[requests++]!.promise })
+  try {
+    const pending = state.refresh()
+    await expect.poll(() => requests).toBe(1)
+    statusChanged()
+    first.resolve([{ ...extension, revision: 'progress-1' }])
+    await expect.poll(() => requests).toBe(2)
+    expect(state.installed.value[0]?.revision).toBe('progress-1')
+    statusChanged()
+    second.resolve([{ ...extension, revision: 'progress-2' }])
+    await expect.poll(() => requests).toBe(3)
+    expect(state.installed.value[0]?.revision).toBe('progress-2')
+    scope.stop()
+    third.resolve([{ ...extension, revision: 'disposed' }])
+    await pending
+    expect(state.installed.value[0]?.revision).toBe('progress-2')
+  }
+  finally { scope.stop() }
+})
+
+it('deduplicates only the running menu action while allowing other plugin interactions', async () => {
+  const pending = deferred<null>()
+  const { state, scope } = setup({ executeMenu: async (_id, menu) => menu === 'work' ? pending.promise : null })
+  try {
+    const work = state.executeAction('test.panel', 'work')
+    expect(state.pendingActions.get('test.panel')).toEqual(['work'])
+    expect(await state.executeAction('test.panel', 'work')).toBe(false)
+    expect(await state.executeAction('test.panel', 'show-result')).toBe(true)
+    expect(state.pendingActions.get('test.panel')).toEqual(['work'])
+    expect(state.busyIds.has('test.panel')).toBe(false)
+    pending.resolve(null)
+    expect(await work).toBe(true)
+    expect(state.pendingActions.size).toBe(0)
+  }
+  finally {
+    pending.resolve(null)
+    scope.stop()
+  }
+})
+
 it('updates progress without replacing installed contributions or requesting their data', async () => {
   let listRequests = 0
   let jobs = [job]

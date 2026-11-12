@@ -47,6 +47,8 @@ export const conversationSchema = z.object({
   approvalPolicy: approvalPolicySchema,
   createdAt: timestampSchema,
   deletedAt: nullableTimestampSchema,
+  archivedAt: nullableTimestampSchema.optional(),
+  metadataRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
   executionProfile: executionProfileSchema,
   id: idSchema,
   modelSelection: modelSelectionSchema.nullable(),

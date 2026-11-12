@@ -26,7 +26,7 @@ import DesktopExtensionInstallReview from './DesktopExtensionInstallReview.vue'
 import DesktopExtensionUnavailableCard from './DesktopExtensionUnavailableCard.vue'
 import DesktopExtensionUninstallDialog from './DesktopExtensionUninstallDialog.vue'
 
-const { state, language, startCreation, authoring, settingsLocation } = useExtensionContext()
+const { state, language, startCreation, authoring, settingsLocation, workbench } = useExtensionContext()
 const { installed, unavailable } = state
 const { snapshot: catalog, loading: catalogLoading, error: catalogError, refresh: refreshCatalog } = useExtensionCatalog(state.api)
 const catalogUpdates = computed(() => {
@@ -79,6 +79,14 @@ async function run(action: () => Promise<unknown>, id?: string) {
     else
       showError(extensionErrorCode(reason))
     return false
+  }
+}
+async function executeAction(item: ExtensionStatus, menu: string) {
+  try {
+    await state.executeAction(item.manifest.id, menu)
+  }
+  catch {
+    message.error(labels.value.actionFailed)
   }
 }
 async function select(development = false) {
@@ -215,10 +223,12 @@ onScopeDispose(() => {
         v-for="item in installed"
         :key="item.manifest.id"
         :item="item"
+        :context-values="workbench.values"
         :unavailable-pending="unavailablePending.get(item.manifest.id)"
         :catalog-update="catalogUpdates.get(item.manifest.id)"
         :language="language"
         :busy="state.busyIds.has(item.manifest.id)"
+        :pending-actions="state.pendingActions.get(item.manifest.id)"
         :installation="state.pendingInstalls.get(item.manifest.id)"
         :job="jobs.get(state.pendingInstalls.get(item.manifest.id)?.installationId ?? '')"
         :can-open="!!openLocation(item)"
@@ -228,6 +238,7 @@ onScopeDispose(() => {
         @restart="run(() => state.api.restart(item.manifest.id), item.manifest.id)"
         @apply-update="applyUpdate(item.manifest.id)"
         @review-update="reviewUpdate"
+        @execute-action="executeAction(item, $event)"
         @diagnostics="diagnostics = item.manifest.id"
         @remove="askRemove(item)"
         @open="open(item)"

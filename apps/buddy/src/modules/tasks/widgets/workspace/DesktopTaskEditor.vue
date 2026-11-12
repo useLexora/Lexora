@@ -25,6 +25,7 @@ import { requireDesktopApi } from '@/platform/desktop/desktopApi'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
+import DesktopTaskArchiveNotice from '../task-index/DesktopTaskArchiveNotice.vue'
 import DesktopTaskPartners from './DesktopTaskPartners.vue'
 
 const props = withDefaults(defineProps<{ readingPositions?: ChatReadingPositions, active?: boolean }>(), { active: true })
@@ -150,6 +151,7 @@ useProvideChatContent({
         <slot name="actions" :options="taskActions" :select="selectTaskAction" :label="t('desktop.tasks.moreActions')" />
       </template>
     </DesktopChatWorkspaceHeader>
+    <DesktopTaskArchiveNotice v-if="tasks.session.activeTask.value?.archivedAt" :task="tasks.session.activeTask.value" :actions="tasks.index.archive" :language="language" />
     <DesktopChatWorkspace
       :active="active"
       :reading-positions="readingPositions"

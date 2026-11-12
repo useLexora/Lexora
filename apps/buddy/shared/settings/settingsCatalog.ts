@@ -5,6 +5,7 @@ export const builtinSettingsCatalog = {
   'speech': { section: 'personal', requiresRuntime: false },
   'pet': { section: 'personal', requiresRuntime: true },
   'shortcuts': { section: 'personal', requiresRuntime: false },
+  'task-archive': { section: 'personal', requiresRuntime: true },
   'models': { section: 'ai', requiresRuntime: true },
   'runtime': { section: 'ai', requiresRuntime: false },
   'prompts': { section: 'ai', requiresRuntime: true },

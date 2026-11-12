@@ -81,6 +81,7 @@ export default {
   'desktop.settings.runtime.cacheWarmingOff': 'Off',
   'desktop.settings.runtime.cacheWarmingStreaming': 'During task execution',
 
+  'desktop.settings.category.task-archive': 'Task archive',
   'desktop.settings.category.shortcuts': 'Keyboard shortcuts',
   'desktop.settings.categoryDescription.shortcuts': 'View and customize keyboard shortcuts. Changes apply immediately.',
   'desktop.shortcuts.resetAll': 'Restore defaults',

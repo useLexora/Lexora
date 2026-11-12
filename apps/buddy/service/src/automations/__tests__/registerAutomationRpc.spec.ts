@@ -42,7 +42,7 @@ describe('registerAutomationRpc', () => {
     })
     const lifecycle = new AutomationOccurrenceLifecycleService({
       automations: service,
-      conversationLifecycle: { delete: async () => false },
+      conversationLifecycle: { delete: async () => false, recover: async () => false },
       notifications: { removeAutomationRun: () => false },
     })
     const harness = createRpcHarness()

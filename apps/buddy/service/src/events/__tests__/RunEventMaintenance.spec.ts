@@ -284,7 +284,7 @@ describe('durable event maintenance', () => {
   ])('preserves legacy %s facts when both the event index and log are missing or empty', async (table, sql) => {
     const f = await fixture({}, true)
     f.database.exec(`UPDATE runs SET status = 'completed' WHERE id = 'run-1'; ${sql};`)
-    const before = f.database.prepare(`SELECT * FROM ${table}`).all()
+    const before = f.database.prepare(`SELECT * FROM ${table}`).all().map(row => table === 'usage_records' ? { ...row, detached: 0 } : row)
     await f.reopen()
     expect(maintenance(f.database)).toMatchObject({ recovery_pending: 1 })
     await expect(f.log.verifyRun('run-1')).rejects.toMatchObject({ code: 'EVENT_LOG_CORRUPTED' })

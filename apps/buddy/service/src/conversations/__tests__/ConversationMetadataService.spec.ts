@@ -19,6 +19,46 @@ afterEach(() => {
 })
 
 describe('conversation metadata ownership', () => {
+  it('keeps archived members and model snapshots readable without permitting metadata changes', async () => {
+    const f = fixture()
+    const actor = f.buddies.create({ name: 'Historical actor' })
+    f.service.addMember({ id: 'task-1', buddyId: actor.id })
+    f.service.setBuddy({ id: 'task-1', buddyId: actor.id })
+    f.buddies.update({ buddyId: actor.id, expectedRevision: actor.revision, enabled: false })
+    f.database.prepare('UPDATE conversations SET archived_at = ? WHERE id = ?').run('2026-11-15T00:00:00.000Z', 'task-1')
+    const before = f.repository.findById('task-1')
+    expect(f.service.listMembers('task-1').map(member => member.actorId)).toContain(actor.id)
+    expect(f.service.getModelControls('task-1').next).toMatchObject({ actorId: actor.id, isMember: true })
+    expect(() => f.service.rename({ id: 'task-1', title: 'Changed' })).toThrow()
+    expect(() => f.service.setBuddy({ id: 'task-1', buddyId: 'default' })).toThrow()
+    expect(() => f.service.addMember({ id: 'task-1', buddyId: actor.id })).toThrow()
+    expect(() => f.service.removeMember({ id: 'task-1', buddyId: actor.id })).toThrow()
+    expect(() => f.service.activateBranch({ conversationId: 'task-1', branchId: 'branch-1' })).toThrow()
+    expect(f.service.renameGenerated({ id: 'task-1', title: 'Late title', expectedRevision: f.repository.getTitleState('task-1')!.revision })).toBeNull()
+    await expect(f.service.setModelSelection({ id: 'task-1', modelSelection: null })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+    await expect(f.service.setPermissionSettings({ id: 'task-1', approvalPolicy: 'manual', executionProfile: 'workspace_write' })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+    await expect(f.service.moveToSpace({ id: 'task-1', spaceId: 'space-1' })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+    expect(f.repository.findById('task-1')).toEqual(before)
+  })
+
+  it('blocks metadata writes while archive preparation holds the gate and rechecks asynchronous model preparation', async () => {
+    const f = fixture()
+    const selection = { providerId: 'fixture', modelId: 'model', reasoning: null, serviceTier: null }
+    const resolved = Promise.withResolvers<typeof selection>()
+    f.resolveModel.mockImplementationOnce(() => resolved.promise)
+    const pending = f.service.setModelSelection({ id: 'task-1', modelSelection: selection })
+    await f.mutations.run('task-1', async () => {
+      expect(f.service.listMembers('task-1')).toHaveLength(1)
+      expect(() => f.service.rename({ id: 'task-1', title: 'Changed' })).toThrow(expect.objectContaining({ code: 'CONVERSATION_BUSY' }))
+      await expect(f.service.setPermissionSettings({ id: 'task-1', approvalPolicy: 'manual', executionProfile: 'workspace_write' })).rejects.toMatchObject({ code: 'CONVERSATION_BUSY' })
+      await expect(f.service.moveToSpace({ id: 'task-1', spaceId: 'space-1' })).rejects.toMatchObject({ code: 'CONVERSATION_BUSY' })
+      resolved.resolve(selection)
+      await expect(pending).rejects.toMatchObject({ code: 'CONVERSATION_BUSY' })
+    })
+    expect(f.repository.findById('task-1')).toMatchObject({ title: 'Original', spaceId: null, modelSelection: null })
+    await expect(f.service.moveToSpace({ id: 'task-1', spaceId: 'space-1' })).resolves.toMatchObject({ spaceId: 'space-1' })
+  })
+
   it('previews a directly mentioned actor model without joining them or changing the leader', () => {
     const f = fixture()
     const actor = f.buddies.create({ name: 'Reviewer' })
@@ -280,6 +320,6 @@ function fixture() {
   seedSpace.run('revoked', 'Revoked', '2026-09-07T00:00:00.000Z')
   const mutations = new ConversationMutationGuard()
   const hasActiveExecution = vi.fn(() => false)
-  const service = new ConversationMetadataService({ buddies, runs, repository, spaces: createSpaceRepository(database), spaceMoves: { mutations, hasPendingMessages: id => createChatQueueRepository(database).hasPending(id), hasActiveExecution, validateTarget: async () => {} }, resolveModelSelection: resolveModel, sessions: { invalidateConversation: invalidate } })
+  const service = new ConversationMetadataService({ buddies, runs, repository, assertWritable: id => mutations.assertWritable(id), spaces: createSpaceRepository(database), spaceMoves: { mutations, hasPendingMessages: id => createChatQueueRepository(database).hasPending(id), hasActiveExecution, validateTarget: async () => {} }, resolveModelSelection: resolveModel, sessions: { invalidateConversation: invalidate } })
   return { database, runs, service, repository, invalidate, mutations, hasActiveExecution, resolveModel, buddies, members: createConversationMemberRepository(database) }
 }

@@ -83,7 +83,7 @@ export default {
   'desktop.automations.history.today': '今天',
   'desktop.automations.history.yesterday': '昨天',
   'desktop.automations.history.deleteTitle': '删除运行记录？',
-  'desktop.automations.history.deleteMessage': '“{name}”的这次运行、对应任务和消息通知都会被删除。',
+  'desktop.automations.history.deleteMessage': '将永久删除“{name}”的这次运行、对应任务和消息通知，清理任务独占的 workspace 和附件副本，且不可恢复。外部目录及其中的文件不受影响。',
   'desktop.automations.blocked.space': '空间或其目录上下文已不可用，请修复后恢复计划。',
   'desktop.automations.blocked.model': '固定模型已不可用，请修复模型后恢复计划。',
   'desktop.automations.editor.modelUnavailable': '已固定的模型当前不可用，请重新选择模型或使用默认模型。',

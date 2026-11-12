@@ -30,6 +30,13 @@ export function createConversationApi(): Pick<LocalChatApi, 'context' | 'workspa
         { conversationId },
       ),
       getModelControls: (conversationId, actorId) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsGetModelControls, { conversationId, ...(actorId ? { actorId } : {}) }),
+      deletePermanently: (conversationId, expectedRevision) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsDeletePermanently, { conversationId, expectedRevision }),
+      archive: (conversationId, expectedRevision) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsArchive, { conversationId, expectedRevision }),
+      restoreArchive: (conversationId, expectedRevision) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsRestoreArchive, { conversationId, expectedRevision }),
+      deleteArchived: (conversationId, expectedRevision) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsDeleteArchived, { conversationId, expectedRevision }),
+      listArchived: query => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsListArchived, query),
+      getArchivePolicy: () => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsGetArchivePolicy, {}),
+      setArchivePolicy: days => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsSetArchivePolicy, { days }),
       delete: conversationId =>
         ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsDelete, { conversationId }),
       activateBranch: input =>

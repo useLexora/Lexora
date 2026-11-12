@@ -69,6 +69,7 @@ export class TaskWorkspacePool {
     const task = scope.run(() => useTaskCapability({
       ...this.#options,
       questionInteraction: this.#questionInteraction,
+      initialConversation: conversation,
       initialTarget: {
         draftKey: resource.scheme === 'draft' ? resource.id : undefined,
         conversationId: conversation?.id ?? null,

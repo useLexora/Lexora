@@ -20,6 +20,8 @@ export interface ConversationRecord {
   executionProfile: BuddyExecutionProfile
   modelSelection: ConversationModelSelection | null
   origin: 'automation' | 'interactive'
+  archivedAt: string | null
+  metadataRevision: number
   deletedAt: string | null
   updatedAt: string
 }
@@ -35,6 +37,8 @@ export interface ConversationRow {
   execution_profile: BuddyExecutionProfile
   actor_model_selection_json?: string | null
   origin: ConversationRecord['origin']
+  archived_at: string | null
+  metadata_revision: number
   deleted_at: string | null
   updated_at: string
 }
@@ -62,6 +66,8 @@ export function toConversationRecord(row: ConversationRow): ConversationRecord {
       ? JSON.parse(row.actor_model_selection_json) as ConversationModelSelection
       : null,
     origin: row.origin,
+    archivedAt: row.archived_at,
+    metadataRevision: row.metadata_revision,
     deletedAt: row.deleted_at,
     updatedAt: row.updated_at,
   }

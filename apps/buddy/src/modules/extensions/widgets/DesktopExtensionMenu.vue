@@ -22,7 +22,7 @@ const menus = computed(() => {
   const values = { ...workbench.value.values, ...props.values }
   return state.installed.value.filter(plugin => plugin.enabled && plugin.compatible).flatMap(plugin => plugin.manifest.contributes.menus.flatMap((menu) => {
     const command = plugin.manifest.contributes.commands.find(command => command.id === menu.command)
-    return menu.target === props.target && command && matchesWorkbenchContext(menu.when, values) && matchesWorkbenchContext(command.when, values) ? [{ key: menu.id, label: command.title, plugin, menu }] : []
+    return menu.target !== 'extension.actions' && menu.target === props.target && command && matchesWorkbenchContext(menu.when, values) && matchesWorkbenchContext(command.when, values) ? [{ key: menu.id, label: command.title, plugin, menu }] : []
   })).sort((left, right) => left.menu.order - right.menu.order || left.key.localeCompare(right.key))
 })
 const actions = computed(() => props.target === 'task.actions' && props.taskId ? state.taskActions.value : [])

@@ -24,6 +24,7 @@ describe('automationOccurrenceLifecycleService', () => {
     const failed = new AutomationOccurrenceLifecycleService({
       automations: f.automations,
       conversationLifecycle: {
+        recover: async () => false,
         delete: async () => {
           throw new Error('must follow notification removal')
         },
@@ -41,8 +42,11 @@ describe('automationOccurrenceLifecycleService', () => {
     expect(f.automations.listPendingDeletions().map(item => item.id)).toEqual([f.occurrence.id])
     expect(commits).toEqual(['occurrence.deleted'])
     expect(cleanup).toEqual(['started', 'failed'])
+    await expect(failed.recoverPendingDeletions()).resolves.toBeUndefined()
+    expect(cleanup).toEqual(['started', 'failed', 'failed'])
+    expect(f.automations.listPendingDeletions().map(item => item.id)).toEqual([f.occurrence.id])
     await failed.dispose()
-    const recovered = new AutomationOccurrenceLifecycleService({ automations: f.automations, conversationLifecycle: { delete: async id => f.conversations.markDeleted(id, '2026-08-24T00:00:30.000Z') }, notifications: { removeAutomationRun: () => true } })
+    const recovered = new AutomationOccurrenceLifecycleService({ automations: f.automations, conversationLifecycle: { delete: async id => f.conversations.markDeleted(id, '2026-08-24T00:00:30.000Z'), recover: async id => f.conversations.markDeleted(id, '2026-08-24T00:00:30.000Z') }, notifications: { removeAutomationRun: () => true } })
     await recovered.recoverPendingDeletions()
     expect(f.automations.listPendingDeletions()).toEqual([])
     expect(f.conversations.isDeleted('conversation-recovery')).toBe(true)
@@ -54,7 +58,7 @@ describe('automationOccurrenceLifecycleService', () => {
   it('shares deletion cleanup between history and conversation entry points and drains accepted work', async () => {
     const f = createBoundFixture()
     const gate = Promise.withResolvers<boolean>()
-    const lifecycle = new AutomationOccurrenceLifecycleService({ automations: f.automations, conversationLifecycle: { delete: async () => gate.promise }, notifications: { removeAutomationRun: () => true } })
+    const lifecycle = new AutomationOccurrenceLifecycleService({ automations: f.automations, conversationLifecycle: { delete: async () => gate.promise, recover: async () => false }, notifications: { removeAutomationRun: () => true } })
     const states: string[] = []
     lifecycle.onDidCleanup(event => states.push(event.status))
     const first = lifecycle.deleteOccurrence(f.occurrence.id)
@@ -125,7 +129,7 @@ describe('automationOccurrenceLifecycleService', () => {
     const removeAutomationRun = vi.fn()
     const lifecycle = new AutomationOccurrenceLifecycleService({
       automations,
-      conversationLifecycle: { delete: deleteConversation },
+      conversationLifecycle: { delete: deleteConversation, recover: async () => false },
       notifications: { removeAutomationRun },
     })
 
@@ -191,7 +195,7 @@ describe('automationOccurrenceLifecycleService', () => {
     })
     const lifecycle = new AutomationOccurrenceLifecycleService({
       automations,
-      conversationLifecycle: { delete: vi.fn(async () => true) },
+      conversationLifecycle: { delete: vi.fn(async () => true), recover: async () => false },
       notifications: { removeAutomationRun: vi.fn() },
     })
 

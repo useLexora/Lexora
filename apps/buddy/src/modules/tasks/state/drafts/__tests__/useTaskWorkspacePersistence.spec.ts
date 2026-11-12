@@ -7,13 +7,31 @@ import { buddyUserContentToText, createBuddyUserContent } from '@buddy-shared/co
 import { buddyComposerDraftModelSelectionSchema } from '@buddy-shared/conversation/composerDraft'
 import { deferred } from '@buddy-tests/deferred'
 import { describe, expect, it, vi } from 'vitest'
-import { computed } from 'vue'
+import { computed, shallowReactive } from 'vue'
 import { chatComposerDocumentToUserContent, createChatComposerContentFromText } from '@/modules/prompt-input'
 import { useChatSession } from '@/modules/tasks/state/conversations/useChatSession'
 import { useChatDrafts } from '@/modules/tasks/state/drafts/useChatDrafts'
 import { useTaskWorkspacePersistence } from '../useTaskWorkspacePersistence'
 
 describe('workspace Draft persistence', () => {
+  it('opens archived history without creating or saving a draft and restores editing only after unarchive', async () => {
+    const archived = { ...createConversation('workspace_write'), archivedAt: '2026-11-01T00:00:00.000Z' }
+    const scope = { kind: 'conversation_branch' as const, conversationId: archived.id, branchId: 'branch-1' }
+    const fixture = await createFixture({ initialConversation: archived, confirmedContent: 'preserved unsent draft', confirmedScope: scope })
+    expect(fixture.persistence.restorationState.value).toBe('ready')
+    expect(await fixture.persistence.flushPending()).toBe(true)
+    expect(fixture.opens).toEqual([])
+    expect(fixture.saves).toEqual([])
+    expect(buddyUserContentToText(fixture.runtimeDraft(scopeKey(scope))!.content)).toBe('preserved unsent draft')
+
+    fixture.conversations.set(archived.id, { ...archived, archivedAt: null })
+    await vi.waitFor(() => expect(fixture.drafts.draft.value).toBe('preserved unsent draft'))
+    expect(fixture.persistence.restorationState.value).toBe('ready')
+    expect(fixture.opens.map(input => input.scope)).toEqual([scope])
+    expect(fixture.saves).toEqual([])
+    fixture.persistence.dispose()
+  })
+
   it.each(['ready', 'open'] as const)('retries a failed initial %s without writing an empty Draft or confirming exit', async (operation) => {
     let failing = true
     const failInitially = async () => {
@@ -380,6 +398,7 @@ describe('workspace Draft persistence', () => {
 })
 
 async function createFixture(options: {
+  initialConversation?: LocalConversation
   afterSave?: () => void
   beforeGet?: () => Promise<void>
   beforeOpen?: (input: LocalComposerDraftOpen) => Promise<void>
@@ -391,13 +410,17 @@ async function createFixture(options: {
   confirmedScope?: BuddyComposerDraftScope
 } = {}) {
   const draftsByScope = new Map<string, LocalComposerDraft>()
-  const conversations = new Map<string, LocalConversation>()
+  const conversations = shallowReactive(new Map<string, LocalConversation>())
   const draftsById = new Map<string, LocalComposerDraft>()
   const saves: LocalComposerDraftSave[] = []
   const opens: LocalComposerDraftOpen[] = []
   const errors: unknown[] = []
   let scheduleSave = () => {}
   const session = useChatSession()
+  if (options.initialConversation) {
+    conversations.set(options.initialConversation.id, options.initialConversation)
+    session.activateConversation(options.initialConversation)
+  }
   const drafts = useChatDrafts({
     onChange: () => scheduleSave(),
     targetKey: computed(() => session.activeConversationId.value && session.activeBranchId.value

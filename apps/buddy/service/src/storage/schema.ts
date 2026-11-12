@@ -42,6 +42,7 @@ import { BUDDY_V38_IMAGE_MODELS_SCHEMA_SQL } from './migrations/v38ImageModels'
 import { BUDDY_V39_PROVIDER_RESOLUTION_SCHEMA_SQL } from './migrations/v39ProviderResolution'
 import { BUDDY_V40_EVENT_MAINTENANCE_SCHEMA_SQL } from './migrations/v40EventMaintenance'
 import { BUDDY_V41_USER_QUESTIONS_SCHEMA_SQL } from './migrations/v41UserQuestions'
+import { BUDDY_V42_CONVERSATION_ARCHIVE_SCHEMA_SQL } from './migrations/v42ConversationArchive'
 
 export interface BuddySchemaMigration {
   foreignKeys?: 'off'
@@ -49,7 +50,7 @@ export interface BuddySchemaMigration {
   version: number
 }
 
-export const BUDDY_SCHEMA_VERSION = 41 as const
+export const BUDDY_SCHEMA_VERSION = 42 as const
 
 export const BUDDY_SCHEMA_MIGRATIONS: readonly BuddySchemaMigration[] = [
   { sql: BUDDY_V1_INITIAL_SCHEMA_SQL, version: 1 },
@@ -93,4 +94,5 @@ export const BUDDY_SCHEMA_MIGRATIONS: readonly BuddySchemaMigration[] = [
   { sql: BUDDY_V39_PROVIDER_RESOLUTION_SCHEMA_SQL, version: 39 },
   { sql: BUDDY_V40_EVENT_MAINTENANCE_SCHEMA_SQL, version: 40 },
   { sql: BUDDY_V41_USER_QUESTIONS_SCHEMA_SQL, version: 41 },
+  { sql: BUDDY_V42_CONVERSATION_ARCHIVE_SCHEMA_SQL, version: 42 },
 ]

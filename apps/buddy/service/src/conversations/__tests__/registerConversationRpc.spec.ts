@@ -7,11 +7,13 @@ import { conversationResponseSchemas } from '../../../../shared/conversation/con
 import { RunEventCorruptionError } from '../../events/RunEventFailure'
 import { RunEventProjector } from '../../events/RunEventProjector'
 import { createBuddyRepository } from '../../storage/buddyRepository'
+import { createConversationArchiveRepository } from '../../storage/conversationArchiveRepository'
 import { createConversationRepository } from '../../storage/conversationRepository'
 import { openBuddyDatabase } from '../../storage/database'
 import { createRunRepository } from '../../storage/runRepository'
 import { ConversationMetadataService } from '../ConversationMetadataService'
 import { registerConversationRpc } from '../registerConversationRpc'
+import { registerConversationTreeRpc } from '../registerConversationTreeRpc'
 
 const databases: DatabaseSync[] = []
 
@@ -247,6 +249,43 @@ describe('registerConversationRpc', () => {
     database.prepare('UPDATE runs SET root_run_id = id WHERE id = ?').run(child.id)
     await expect(harness.invoke('conversations.listTimeline', { conversationId: 'conversation-1', limit: 2 })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
   })
+})
+
+it('reads archived details, models, members and usage without permitting writes or exposing deleted history', async () => {
+  const database = openBuddyDatabase({ databasePath: ':memory:' })
+  databases.push(database)
+  const now = '2026-11-07T00:00:00.000Z'
+  const conversations = createConversationRepository(database)
+  const runs = createRunRepository(database)
+  conversations.create({ id: 'archived', branchId: 'archived-branch', createdAt: now, approvalPolicy: 'policy', executionProfile: 'workspace_write', spaceId: null, title: 'Archived detail' })
+  conversations.createMessage({ id: 'input', conversationId: 'archived', branchId: 'archived-branch', role: 'user', runId: null, createdAt: now, content: { text: 'Original question' } })
+  runs.create({ id: 'historical-run', conversationId: 'archived', branchId: 'archived-branch', triggeringMessageId: 'input', provider: 'fixture', model: 'model', purpose: 'chat', status: 'completed', startedAt: now, completedAt: now, approvalPolicy: 'policy', executionProfile: 'workspace_write', piSessionFile: null })
+  conversations.createMessage({ id: 'answer', conversationId: 'archived', branchId: 'archived-branch', role: 'assistant', runId: 'historical-run', createdAt: now, content: { text: 'Archived answer' } })
+  database.prepare(`INSERT INTO usage_records (id, run_id, source_entry_id, provider, model, purpose, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, input_cost, output_cost, cache_read_cost, cache_write_cost, total_cost, created_at)
+    VALUES ('usage', 'historical-run', 'answer', 'fixture', 'model', 'chat', 10, 20, 0, 0, 30, 0, 0, 0, 0, 0, ?)`).run(now)
+  createConversationArchiveRepository(database).archive('archived', now)
+  const harness = createRpcHarness()
+  const dependencies = emptyConversationDependencies(conversations)
+  registerConversationRpc({ ...dependencies, rpc: harness.rpc })
+  registerConversationTreeRpc({ ...dependencies, rpc: harness.rpc, database, conversations, runs })
+  const scope = { conversationId: 'archived' }
+  await expect(harness.invoke('conversations.list', {})).resolves.toEqual([])
+  await expect(harness.invoke('conversations.list', { filter: { query: 'Archived' } })).resolves.toEqual([])
+  await expect(harness.invoke('conversations.get', scope)).resolves.toMatchObject({ id: 'archived', archivedAt: now })
+  await expect(harness.invoke('conversations.listBranches', scope)).resolves.toMatchObject([{ id: 'archived-branch' }])
+  await expect(harness.invoke('conversations.listMessages', scope)).resolves.toMatchObject({ items: expect.arrayContaining([expect.objectContaining({ id: 'answer' })]) })
+  await expect(harness.invoke('conversations.listTimeline', scope)).resolves.toMatchObject({ items: expect.arrayContaining([expect.objectContaining({ id: 'answer' })]) })
+  await expect(harness.invoke('conversations.listMembers', scope)).resolves.toMatchObject([{ actorId: 'default' }])
+  await expect(harness.invoke('conversations.getModelControls', scope)).resolves.toMatchObject({ next: { actorId: 'default', isMember: true } })
+  await expect(harness.invoke('conversations.getTree', scope)).resolves.toMatchObject({ nodes: expect.arrayContaining([expect.objectContaining({ runId: 'historical-run', metadata: expect.objectContaining({ usage: { inputTokens: 10, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0 } }) })]) })
+  await expect(harness.invoke('conversations.getNodeDetail', { ...scope, kind: 'answer', runId: 'historical-run' })).resolves.toMatchObject({ items: [{ id: 'answer' }] })
+  await expect(harness.invoke('conversations.rename', { ...scope, title: 'Must not change' })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+  await expect(harness.invoke('conversations.setModelSelection', { ...scope, modelSelection: null })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+  expect(conversations.findById('archived')?.title).toBe('Archived detail')
+  conversations.markDeleted('archived', now)
+  for (const method of ['get', 'listBranches', 'listMessages', 'listTimeline', 'listMembers', 'getModelControls', 'getTree'])
+    await expect(harness.invoke(`conversations.${method}`, scope)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+  await expect(harness.invoke('conversations.getNodeDetail', { ...scope, kind: 'answer', runId: 'historical-run' })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
 })
 
 it('checks newly exposed history when repairing a stale projection changes the current page', async () => {

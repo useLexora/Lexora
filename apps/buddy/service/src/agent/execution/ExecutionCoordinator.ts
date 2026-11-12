@@ -24,6 +24,7 @@ interface Preparation {
 
 export interface ExecutionCoordinatorOptions {
   availability?: Pick<RunEventAvailability, 'assertRunExecutable'>
+  assertRunAdmission?: (runId: string) => void
   executions: ExecutionRepository
   mailbox: MailboxRepository
   events: RunEventWriter & RunEventObservation
@@ -75,6 +76,7 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
 
   prepare(runId: string, signal?: AbortSignal): { signal: AbortSignal, release: () => void } {
     signal?.throwIfAborted()
+    this.#options.assertRunAdmission?.(runId)
     const current = this.#require(runId)
     if (this.#stopped || current.cancelRequestedAt || this.#preparations.has(runId))
       throw new ExecutionAdmissionError('stale')
@@ -111,6 +113,7 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
         }
       },
       acceptInput: (deliver) => {
+        this.#options.assertRunAdmission?.(runId)
         const current = this.#require(runId)
         if (this.#stopped || signal.aborted || current.cancelRequestedAt || current.run.generation !== accepted.run.generation
           || !['working', 'waiting'].includes(current.phase)) {
@@ -155,6 +158,7 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
   }
 
   assertShellExecutionAllowed(runId: string): void {
+    this.#options.assertRunAdmission?.(runId)
     this.#options.availability?.assertRunExecutable(runId)
     if (this.#options.hostShellSupervision !== false)
       return
@@ -176,6 +180,7 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
       const currentEffects = this.#options.mutations.getRunState(input.callerId)
       if (currentEffects.active || currentEffects.pending)
         throw new ExecutionAdmissionError('busy')
+      this.#options.assertRunAdmission?.(input.callerId)
       this.#options.availability?.assertRunExecutable(input.callerId)
       const accepted = this.#options.executions.admitChild(input)
       if (accepted.created) {
@@ -213,6 +218,8 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
         }
         return
       }
+      this.#options.assertRunAdmission?.(sourceRunId)
+      this.#options.assertRunAdmission?.(message.targetRunId)
       this.#options.executions.assertCurrent(this.#fence(current))
       this.#options.executions.assertCurrent(this.#fence(target))
       if (current.run.rootRunId !== target.run.rootRunId || current.phase === 'closed' || current.phase === 'closing' || current.cancelRequestedAt
@@ -265,6 +272,8 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
         return { ...metadata, status: 'closed' as const, replayed: false, phase: receiver.phase, targetStatus: receiver.run.status }
       }
       this.#options.executions.assertCurrent(this.#fence(receiver))
+      this.#options.assertRunAdmission?.(callerRunId)
+      this.#options.assertRunAdmission?.(targetRunId)
       this.#options.availability?.assertRunExecutable(callerRunId)
       this.#options.availability?.assertRunExecutable(targetRunId)
       await this.#options.events.append({ runId: targetRunId, type: 'execution.mailbox.sent', payload: {
@@ -298,6 +307,7 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
       }
       if (!current.open)
         throw new ExecutionAdmissionError('stale')
+      this.#options.assertRunAdmission?.(target.run.id)
       const receiver = this.#require(target.run.id)
       this.#options.executions.assertCurrent(this.#fence(receiver))
       await this.#options.events.append({ runId: sourceRunId ?? receiver.run.id, type: 'execution.mailbox.sent', payload: {
@@ -599,6 +609,7 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
   async #claimWorking(runId: string, signal: AbortSignal): Promise<void> {
     for (;;) {
       signal.throwIfAborted()
+      this.#options.assertRunAdmission?.(runId)
       const record = this.#require(runId)
       const revision = this.#revision(record.run.rootRunId)
       if (record.phase === 'working') {

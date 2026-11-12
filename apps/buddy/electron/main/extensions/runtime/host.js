@@ -10,6 +10,8 @@ const lifetime = new AbortController()
 const workers = createExtensionWorkers(new URL('/__package/', location.href), lifetime.signal, Worker)
 addEventListener('pagehide', () => lifetime.abort(), { once: true })
 const commands = new Map()
+const cleanupProgressListeners = new Map()
+lifetime.signal.addEventListener('abort', () => cleanupProgressListeners.clear(), { once: true })
 const agentTools = new Map()
 const agentActions = new Map()
 const conditions = new Map()
@@ -27,6 +29,24 @@ let activated = false
 const interactions = new Map()
 const code = (error, method) => /^EXTENSION_[A-Z_]+$/.test(error?.message) ? error.message : method === 'activate' ? 'EXTENSION_ACTIVATION_FAILED' : 'EXTENSION_OPERATION_FAILED'
 const request = (method, params = null) => bridge.request(method, params)
+function cleanupCommand(token) {
+  let used = false
+  return Object.freeze({ run: async (options = {}) => {
+    if (used)
+      throw new Error('EXTENSION_METHOD_DENIED')
+    if (options.onProgress !== undefined && typeof options.onProgress !== 'function')
+      throw new Error('EXTENSION_INVALID_ARGUMENT')
+    used = true
+    if (options.onProgress)
+      cleanupProgressListeners.set(token, options.onProgress)
+    try {
+      return await request('taskCleanup.run', { token })
+    }
+    finally {
+      cleanupProgressListeners.delete(token)
+    }
+  } })
+}
 function disposable(cleanup) {
   let disposed = false
   const value = { dispose() {
@@ -70,7 +90,11 @@ bridge.subscribe(async ({ id, method, params }) => {
             throw registrationError
           }
           commands.set(id, callback)
-          return disposable(() => commands.delete(id))
+          return disposable(() => {
+            commands.delete(id)
+            if (activated)
+              void request('commands.changed', { commands: [...commands.keys()] }).catch(() => {})
+          })
         } },
         window: { styles: Object.freeze({
           set: (id, css) => request('window.styles.set', { id, css }),
@@ -163,6 +187,7 @@ bridge.subscribe(async ({ id, method, params }) => {
       if (manifest.contributes.conditions?.some(condition => !conditions.has(condition.id)))
         throw new Error('EXTENSION_CONDITION_MISSING')
       activated = true
+      result = { commands: [...commands.keys()] }
     }
     else if (method === 'themes.changed') {
       for (const listener of themeListeners) listener()
@@ -233,7 +258,16 @@ bridge.subscribe(async ({ id, method, params }) => {
     else if (method === 'command') {
       if (!activated || !commands.has(params.command))
         throw new Error('EXTENSION_COMMAND_UNAVAILABLE')
-      result = await commands.get(params.command)(Object.freeze({ resource: params.resource, arguments: params.arguments ?? null, invocation: params.invocation ?? null })) ?? null
+      result = await commands.get(params.command)(Object.freeze({ resource: params.resource, arguments: params.arguments ?? null, invocation: params.invocation ?? null, taskCleanup: params.cleanupToken ? cleanupCommand(params.cleanupToken) : undefined })) ?? null
+    }
+    else if (method === 'taskCleanup.progress') {
+      const listener = cleanupProgressListeners.get(params.token)
+      if (listener) {
+        try {
+          void Promise.resolve(listener(Object.freeze({ ...params.progress }))).catch(() => {})
+        }
+        catch {}
+      }
     }
     else if (method === 'panes') {
       source.updatePanes(params.panes)

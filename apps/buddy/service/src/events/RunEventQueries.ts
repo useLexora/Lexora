@@ -194,10 +194,10 @@ export class RunEventQueries {
     `).get(runId, checkpoint.fileFingerprint, checkpoint.projectionVersion, checkpoint.lastSequence) !== undefined
   }
 
-  listRunIds(): string[] {
+  listRunIds(conversationId?: string): string[] {
     const rows = this.#database.prepare(`
-      SELECT id FROM runs ORDER BY started_at, id
-    `).all() as unknown as Array<{ id: string }>
+      SELECT id FROM runs ${conversationId === undefined ? '' : 'WHERE conversation_id = ?'} ORDER BY started_at, id
+    `).all(...(conversationId === undefined ? [] : [conversationId])) as unknown as Array<{ id: string }>
     return rows.map(row => row.id)
   }
 

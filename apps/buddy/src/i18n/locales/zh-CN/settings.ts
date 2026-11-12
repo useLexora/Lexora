@@ -79,6 +79,7 @@ export default {
   'desktop.settings.runtime.cacheWarmingOff': '关闭',
   'desktop.settings.runtime.cacheWarmingStreaming': '任务执行期间',
 
+  'desktop.settings.category.task-archive': '任务归档',
   'desktop.settings.category.shortcuts': '快捷键',
   'desktop.settings.categoryDescription.shortcuts': '查看和修改快捷键，设置立即生效。',
   'desktop.shortcuts.resetAll': '恢复默认',

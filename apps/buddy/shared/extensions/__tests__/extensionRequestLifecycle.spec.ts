@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
 import { waitsForExtensionIo } from '../extensionRequestLifecycle'
 
-it.each(['resources.readBytes', 'resources.scanDirectory'])('does not impose a short view RPC deadline on %s', (method) => {
+it.each(['resources.readBytes', 'resources.scanDirectory', 'taskCleanup.delete'])('does not impose a short view RPC deadline on %s', (method) => {
   expect(waitsForExtensionIo(method)).toBe(true)
 })
 

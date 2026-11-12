@@ -52,6 +52,23 @@ function fixture() {
 const ids = (f: ReturnType<typeof fixture>) => f.conversations.value.map(task => task.id)
 
 describe('progressive task history', () => {
+  it('hides archived tasks from normal, pinned, active and search projections and restores them explicitly', async () => {
+    const f = fixture()
+    await f.setPinnedIds(['task-39'])
+    await f.history.setActiveTask('task-39')
+    await f.refreshConversations()
+    const archived = { ...item(39), conversation: { ...item(39).conversation, archivedAt: '2026-09-02T00:00:00Z' } }
+    f.replace(archived)
+    await f.applyConversation(archived.conversation)
+    expect(ids(f)).not.toContain('task-39')
+    expect((await f.history.search('task-39')).items).toEqual([])
+    await f.refreshConversations()
+    expect(ids(f)).not.toContain('task-39')
+    f.replace(item(39))
+    await f.applyConversation({ ...item(39).conversation, archivedAt: null })
+    expect(ids(f)).toContain('task-39')
+  })
+
   it('counts attention within each scope quota while retaining independent old pins', async () => {
     const f = fixture()
     const marked = { ...item(0), markState: { ...item(0).markState, markId: 'keep' } }

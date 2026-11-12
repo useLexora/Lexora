@@ -36,8 +36,13 @@ async function fixture(stopExecution: (runId: string) => Promise<boolean> = asyn
   const childDone = Promise.withResolvers<RunRecord>()
   const unavailable = new Map<string, RunEventLogUnavailableError>()
   const recovered: string[] = []
+  const blockedAdmissions = new Set<string>()
   const coordinator = new ExecutionCoordinator({
     hostShellSupervision,
+    assertRunAdmission: (id) => {
+      if (blockedAdmissions.has(id))
+        throw new Error('CONVERSATION_BUSY')
+    },
     availability: { assertRunExecutable: (id) => {
       const error = unavailable.get(id)
       if (error)
@@ -73,7 +78,7 @@ async function fixture(stopExecution: (runId: string) => Promise<boolean> = asyn
     storage.database.close()
     await rm(directory, { recursive: true, force: true })
   })
-  return { ...storage, events, mailbox, lifecycle, mutations, coordinator, childDone, unavailable, recovered }
+  return { ...storage, events, mailbox, lifecycle, mutations, coordinator, childDone, unavailable, recovered, blockedAdmissions }
 }
 
 function delegationService(f: Awaited<ReturnType<typeof fixture>>) {
@@ -85,6 +90,15 @@ function delegationService(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe('execution coordination', () => {
+  it('rejects new work while allowing cancellation to settle a task behind its mutation gate', async () => {
+    const f = await fixture()
+    f.blockedAdmissions.add('root')
+    expect(() => f.coordinator.prepare('root')).toThrow('CONVERSATION_BUSY')
+    expect(() => f.coordinator.assertShellExecutionAllowed('root')).toThrow('CONVERSATION_BUSY')
+    await expect(f.coordinator.cancel('root', 'RUN_CANCELLED', async () => false)).resolves.toBe(true)
+    expect(f.executions.find('root')).toMatchObject({ phase: 'closed', run: { status: 'cancelled', errorCode: 'RUN_CANCELLED' } })
+  })
+
   it.each(['steering', 'mailbox'])('ends a user-question wait for new %s without resolving the question', async (input) => {
     const f = await fixture()
     const signal = new AbortController().signal

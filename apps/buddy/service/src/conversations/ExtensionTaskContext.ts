@@ -17,22 +17,31 @@ export class ExtensionTaskContext {
   readonly history: ExtensionTaskContextRepository
   readonly runs: Pick<RunRepository, 'findById'>
   readonly inputs: Pick<RunInputRepository, 'findByMessageId'>
+  readonly assertWritable?: (conversationId: string) => void
 
   constructor(
     tasks: Pick<ConversationRepository, 'findById'>,
     history: ExtensionTaskContextRepository,
     runs: Pick<RunRepository, 'findById'>,
     inputs: Pick<RunInputRepository, 'findByMessageId'>,
+    assertWritable?: (conversationId: string) => void,
   ) {
     this.tasks = tasks
     this.history = history
     this.runs = runs
     this.inputs = inputs
+    this.assertWritable = assertWritable
   }
 
   valid(conversationId: string, cause: ExtensionActionCause): boolean {
+    try {
+      this.assertWritable?.(conversationId)
+    }
+    catch {
+      return false
+    }
     const task = this.tasks.findById(conversationId)
-    if (!task || task.deletedAt !== null || !task.activeBranchId)
+    if (!task || task.deletedAt !== null || task.archivedAt || !task.activeBranchId)
       return false
     if (cause.type === 'user')
       return true
@@ -48,7 +57,7 @@ export class ExtensionTaskContext {
     scope.signal.throwIfAborted()
     const conversationId = scope.conversationId
     const task = this.tasks.findById(conversationId)
-    if (!task || task.deletedAt !== null || !task.activeBranchId || (scope.action && !this.valid(conversationId, scope.action.cause)))
+    if (!task || task.deletedAt !== null || task.archivedAt || !task.activeBranchId || (scope.action && !this.valid(conversationId, scope.action.cause)))
       throw new Error('EXTENSION_TASK_UNAVAILABLE')
     const branchId = task.activeBranchId
     const inputMessageId = this.history.latestInput(conversationId, branchId)
@@ -61,7 +70,7 @@ export class ExtensionTaskContext {
     const assertCurrent = () => {
       scope.signal.throwIfAborted()
       const current = this.tasks.findById(conversationId)
-      if (!current || current.deletedAt !== null || current.activeBranchId !== branchId || this.history.latestInput(conversationId, branchId) !== inputMessageId || (!scope.action && this.runs.findById(scope.runId!)?.status !== 'running'))
+      if (!current || current.deletedAt !== null || current.archivedAt || current.activeBranchId !== branchId || this.history.latestInput(conversationId, branchId) !== inputMessageId || (!scope.action && this.runs.findById(scope.runId!)?.status !== 'running'))
         throw new Error('EXTENSION_TASK_UNAVAILABLE')
     }
     return { conversationId, branchId, model: model ? { providerId: model.providerId, modelId: model.modelId } : null, assertCurrent }

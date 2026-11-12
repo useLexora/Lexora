@@ -131,6 +131,11 @@ export class ExtensionActionService {
     }
   }
 
+  async cancelAndWait(conversationId: string): Promise<void> {
+    this.cancel(conversationId)
+    await Promise.allSettled([...this.#pending].filter(([, pending]) => pending.conversationId === conversationId).map(([promise]) => promise))
+  }
+
   async dispose(): Promise<void> {
     this.#stop.abort()
     this.#inputs.clear()

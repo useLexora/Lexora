@@ -18,9 +18,11 @@ function fixture(databasePath = ':memory:') {
   let sequence = 0
   const instant = '2026-01-01T00:00:00.000Z'
   function run(id: string, deleted = false) {
-    database.prepare('INSERT INTO conversations (id, title, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?)').run(id, `Task ${id}`, instant, instant, deleted ? instant : null)
+    database.prepare('INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)').run(id, `Task ${id}`, instant, instant)
     database.prepare('INSERT INTO conversation_branches (id, conversation_id, created_at) VALUES (?, ?, ?)').run(id, id, instant)
     database.prepare(`INSERT INTO runs (id, conversation_id, branch_id, triggering_message_id, provider, model, purpose, status, started_at) VALUES (?, ?, ?, 'message', 'provider', 'model', 'chat', 'completed', ?)`).run(id, id, id, instant)
+    if (deleted)
+      database.prepare('UPDATE conversations SET deleted_at = ? WHERE id = ?').run(instant, id)
   }
   function usage(runId: string, createdAt = instant, provider = 'provider', model = 'model', tokens = 22, purpose = 'turn') {
     const id = `usage-${++sequence}`
@@ -131,7 +133,7 @@ describe('usage analytics', () => {
       legacy.close()
       const upgraded = openBuddyDatabase({ databasePath: path })
       try {
-        expect(upgraded.prepare('SELECT * FROM usage_records').all()).toEqual(records.map(record => ({ ...record, invocation_id: null })))
+        expect(upgraded.prepare('SELECT * FROM usage_records').all()).toEqual(records.map(record => ({ ...record, invocation_id: null, detached: 0 })))
         expect(createUsageAnalyticsRepository(upgraded).analytics(period).days).toMatchObject([{ recordCount: 1, totalTokens: 22 }])
         expect(upgraded.prepare('PRAGMA foreign_key_check').all()).toEqual([])
       }

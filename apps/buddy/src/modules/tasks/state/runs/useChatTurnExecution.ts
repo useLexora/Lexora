@@ -38,6 +38,7 @@ export interface UseChatTurnExecutionOptions {
   approvalPolicy: ValueRef<BuddyApprovalPolicy>
   api: { chat: Pick<LocalChatApi['chat'], 'cancel' | 'executeCommand' | 'startTurn' | 'enqueue' | 'listQueue' | 'cancelQueued' | 'steerQueued'>, executions?: Pick<LocalChatApi['executions'], 'sendDraft'> }
   canSendDraft: ValueRef<boolean>
+  archived?: ValueRef<boolean>
   taskIndexData: Pick<TaskIndexData, 'refreshIndex'>
   session: Pick<ChatSession, | 'acceptTurn'
   | 'activeBranchId'
@@ -97,6 +98,7 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
   const canSend = computed(() =>
     options.runtimeSupervisor.runtimeState.value.status === 'ready'
     && options.canSendDraft.value
+    && !options.archived?.value
     && options.modelSelection.selectedModel.value !== null
     && (!options.activeRun.value || options.composerTarget.current.value.kind === 'conversation_branch')
     && !isSending.value
@@ -173,7 +175,7 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
       }
       if (isSourceViewCurrent())
         options.setErrorMessage(null)
-      if (!await options.persistWorkspaceState())
+      if (!await options.persistWorkspaceState() || options.archived?.value)
         return false
       const confirmedDraft = options.drafts.snapshot(sourceScopeKey)
       if (!options.drafts.isPersisted(confirmedDraft) || draftSubmissionConfiguration(confirmedDraft) !== submittedConfiguration) {
@@ -308,7 +310,7 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
     isSending.value = true
     options.setErrorMessage(null)
     try {
-      if (!await options.persistWorkspaceState())
+      if (!await options.persistWorkspaceState() || options.archived?.value)
         return false
       const confirmedDraft = options.drafts.snapshot(sourceScopeKey)
       if (!options.drafts.isPersisted(confirmedDraft)) {
