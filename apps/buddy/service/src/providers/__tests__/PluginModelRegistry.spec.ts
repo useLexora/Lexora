@@ -134,6 +134,56 @@ function catalogData(supported: boolean | undefined, reasoning?: boolean) {
 }
 
 describe('plugin model registry', () => {
+  it('merges plugin metadata by field without requiring HF identity and caps capabilities to the loaded backend', async () => {
+    const data = { vendor: catalogData(true, true).huggingface }
+    const f = await fixture(new ProviderModelSnapshotService({ builtin: { version: 1, updatedAt: '2026-01-01T00:00:00.000Z', data } }))
+    const reference = { providerId: 'vendor', modelId: qwen.modelId }
+    const cases: Array<{ model: ExtensionModel, tools: boolean, reasoning: boolean, contextWindow: number, maxTokens: number }> = [
+      { model: { ...descriptor, id: 'local', reasoning: false, metadata: { toolCall: true, reasoningOptions: ['off', 'medium', 'high', 'future'], input: ['text'], contextWindow: 262144, maxTokens: 8192 } }, tools: true, reasoning: true, contextWindow: 8192, maxTokens: 512 },
+      { model: { ...descriptor, id: 'explicit-false', tools: true, reasoning: true, catalogModels: [reference], metadata: { toolCall: false, reasoningOptions: [], input: ['text'] } }, tools: false, reasoning: false, contextWindow: 8192, maxTokens: 512 },
+      { model: { ...descriptor, id: 'sparse', tools: 'auto', reasoning: 'auto', catalogModels: [reference], metadata: { input: ['text'] } }, tools: true, reasoning: true, contextWindow: 8192, maxTokens: 512 },
+      { model: { ...descriptor, id: 'unsupported-effort', metadata: { input: ['text'], reasoningOptions: ['high'] } }, tools: false, reasoning: false, contextWindow: 8192, maxTokens: 512 },
+      { model: { ...descriptor, id: 'smaller-budget', metadata: { input: ['text'], contextWindow: 4096, maxTokens: 128 } }, tools: false, reasoning: false, contextWindow: 4096, maxTokens: 128 },
+      { model: { ...descriptor, id: 'unsupported-inputs', metadata: { input: ['text', 'pdf', 'audio', 'video'] } }, tools: false, reasoning: false, contextWindow: 8192, maxTokens: 512 },
+    ]
+    f.setModels(cases.map(item => item.model))
+    await f.registry.refresh()
+    const listed = await f.service.listModels(providerId)
+    for (const { model, tools, reasoning, contextWindow, maxTokens } of cases) {
+      const effective = await f.service.executionModels.resolveAvailable({ ...selection, modelId: model.id })
+      expect(effective).toMatchObject({ id: model.id, provider: providerId, toolCall: tools, reasoning, input: ['text'], contextWindow, maxTokens })
+      expect(listed.find(item => item.id === model.id)).toMatchObject({ toolCalling: tools, capabilities: reasoning ? ['text', 'reasoning'] : ['text'], reasoningOptions: reasoning ? ['off', 'medium'] : [], contextWindow, maxTokens, sourceCapabilities: { toolCall: tools, image: false, pdf: false, audio: false, video: false } })
+    }
+    expect(await f.inference.models()).toEqual(cases.map(item => item.model))
+    await expect(f.service.executionModels.resolveAvailable({ ...selection, modelId: 'local', contextWindow: 262144, maxTokens: 8192 })).rejects.toMatchObject({ code: 'PROVIDER_UNAVAILABLE' })
+  })
+
+  it('preserves metadata bindings, sparse overrides and an off selection across rebinding, failure and restart', async () => {
+    const f = await fixture()
+    const bound: ExtensionModel = { ...descriptor, metadata: { toolCall: true, reasoningOptions: ['off', 'medium'], input: ['text'] } }
+    f.setModels([bound])
+    await f.registry.refresh()
+    const off = { ...selected, reasoning: 'off' as const }
+    await f.service.setDefaultModel(off)
+    const overrides = { toolCall: false, reasoningOptions: ['off', 'medium', 'high'] as ('off' | 'medium' | 'high')[] }
+    await f.service.setModelCapabilities(providerId, descriptor.id, overrides)
+    const updated: ExtensionModel = { ...bound, bindingRevision: 'c'.repeat(64), metadata: { toolCall: false, reasoningOptions: [], input: ['text', 'image'] } }
+    f.setModels([updated])
+    await f.registry.refresh()
+    const restarted = await f.restart()
+    await restarted.registry.refresh()
+    expect(await restarted.service.listModels(providerId)).toMatchObject([{ capabilityOverrides: overrides, toolCalling: false, capabilities: ['text', 'image', 'reasoning'], reasoningOptions: ['off', 'medium'], sourceCapabilities: { toolCall: false, reasoningOptions: ['off'] } }])
+    expect(await restarted.service.executionModels.resolveAvailable(selection)).toMatchObject({ toolCall: false, reasoning: true, thinkingLevelMap: { low: null, high: null }, contextWindow: descriptor.contextWindow, maxTokens: descriptor.maxTokens })
+    expect(await restarted.service.getDefaultModel()).toEqual(off)
+    expect(await f.inference.models()).toEqual([updated])
+    f.failListing()
+    await expect(restarted.registry.refresh()).rejects.toThrow()
+    expect(await restarted.service.listModels(providerId)).toMatchObject([{ capabilityOverrides: overrides, reasoningOptions: ['off', 'medium'] }])
+    await restarted.service.setModelCapabilities(providerId, descriptor.id, { toolCall: true })
+    expect(await restarted.service.executionModels.resolveAvailable(selection)).toMatchObject({ toolCall: true, reasoning: false })
+    expect(await restarted.service.getDefaultModel()).toEqual(off)
+  })
+
   it('uses exact bundled Qwen sources without interpreting GGUF names or overriding boolean declarations', async () => {
     const f = await fixture(new ProviderModelSnapshotService())
     const cases = [
@@ -141,8 +191,8 @@ describe('plugin model registry', () => {
       { id: 'base', tools: 'auto', catalogModels: [base], expected: false },
       { id: 'qwen3.5-9b-gguf', tools: 'auto', expected: false },
       { id: 'unknown', tools: 'auto', catalogModels: [{ ...qwen, modelId: 'Qwen/Qwen3.5-9B-GGUF' }], expected: false },
-      { id: 'mixed', tools: 'auto', catalogModels: [qwen, base], expected: false },
-      { id: 'unknown-mixed', tools: 'auto', catalogModels: [qwen, { ...qwen, modelId: 'unknown' }], expected: false },
+      { id: 'mixed', tools: 'auto', catalogModels: [qwen, base], expected: true },
+      { id: 'unknown-mixed', tools: 'auto', catalogModels: [qwen, { ...qwen, modelId: 'unknown' }], expected: true },
       { id: 'explicit-off', tools: false, catalogModels: [qwen], expected: false },
       { id: 'legacy-on', tools: true, expected: true },
       { id: 'legacy-off', tools: false, expected: false },
@@ -152,12 +202,12 @@ describe('plugin model registry', () => {
     await f.registry.refresh()
     const models = await f.service.listModels(providerId)
     for (const model of cases) {
-      expect(models.find(candidate => candidate.id === model.id)).toMatchObject({ toolCalling: model.expected, capabilities: ['text', 'image'], contextWindow: descriptor.contextWindow, maxTokens: descriptor.maxTokens })
+      expect(models.find(candidate => candidate.id === model.id), model.id).toMatchObject({ toolCalling: model.expected, capabilities: ['text', 'image'], contextWindow: descriptor.contextWindow, maxTokens: descriptor.maxTokens })
       expect(await f.service.executionModels.resolveAvailable({ ...selection, modelId: model.id })).toMatchObject({ id: model.id, provider: providerId, toolCall: model.expected })
     }
   })
 
-  it('resolves reasoning from explicit declarations or unanimous exact catalog references without opting legacy models in', async () => {
+  it('resolves reasoning from explicit declarations or consistent known catalog references without opting legacy models in', async () => {
     const data = catalogData(true, true)
     const alias = { ...qwen, modelId: 'Qwen/Qwen3.5-9B-Alias' }
     data.huggingface.models[alias.modelId] = { ...data.huggingface.models[qwen.modelId]! }
@@ -171,7 +221,7 @@ describe('plugin model registry', () => {
       { id: 'unanimous', reasoning: 'auto', catalogModels: [qwen, alias], expected: true },
       { id: 'conflict', reasoning: 'auto', catalogModels: [qwen, base], expected: false },
       { id: 'unknown', reasoning: 'auto', catalogModels: [{ ...qwen, modelId: 'unknown' }], expected: false },
-      { id: 'unknown-mixed', reasoning: 'auto', catalogModels: [qwen, { ...qwen, modelId: 'unknown' }], expected: false },
+      { id: 'unknown-mixed', reasoning: 'auto', catalogModels: [qwen, { ...qwen, modelId: 'unknown' }], expected: true },
       { id: 'wrong-provider', reasoning: 'auto', catalogModels: [{ ...qwen, providerId: 'unknown' }], expected: false },
       { id: 'qwen3.5-9b-gguf', reasoning: 'auto', expected: false },
       { id: 'legacy', expected: false },
@@ -189,7 +239,7 @@ describe('plugin model registry', () => {
         expect(runtime.thinkingLevelMap).toMatchObject({ minimal: null, low: null, high: null, xhigh: null, max: null })
       expect(f.repository.models.find(providerId, id)).toMatchObject({ reasoning: expected, thinkingLevelMap: runtime.thinkingLevelMap ?? null })
     }
-    expect(f.service.resolvePluginModelReasoning({ reasoning: 'auto', catalogModels: [] })).toBe(false)
+    expect(f.service.resolvePluginModel({ ...descriptor, reasoning: 'auto', catalogModels: [] }).reasoning).toBe(false)
   })
 
   it('re-registers reasoning-only catalog changes and persists source maps without losing overrides or active selections', async () => {

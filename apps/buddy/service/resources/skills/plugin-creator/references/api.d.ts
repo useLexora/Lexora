@@ -645,6 +645,8 @@ export interface InferenceHardware {
 export interface InferenceTiming { tokens: number, ms: number, tokensPerSecond?: number }
 export interface InferenceObservation {
   observedAt: number
+  modelId?: string
+  modelMetadata?: DiscoveredModelMetadata
   engine?: { name: 'llama.cpp', version?: string }
   backend?: { requested: 'cpu' | 'vulkan' | 'cuda' | 'metal' | 'unknown', observed: ('cpu' | 'vulkan' | 'cuda' | 'metal')[] }
   device?: { backend: 'cpu' | 'vulkan' | 'cuda' | 'metal', index: number }[]
@@ -695,7 +697,16 @@ export interface InferenceResourceProgress {
 export interface InferenceResourceEvents {
   'inference:resources:progress': { readonly id: string, readonly progress: InferenceResourceProgress }
 }
-export interface InferenceModel { id: string, title: string, capability: string, contextWindow: number, maxTokens: number, tools: boolean | 'auto', reasoning?: boolean | 'auto', catalogModels?: { providerId: string, modelId: string }[], input?: ('text' | 'image')[] }
+export interface DiscoveredModelMetadata {
+  type?: 'chat' | 'transcription' | 'speech' | 'image-generation'
+  name?: string
+  input?: ('text' | 'image' | 'pdf' | 'audio' | 'video')[]
+  toolCall?: boolean
+  reasoningOptions?: string[]
+  contextWindow?: number
+  maxTokens?: number
+}
+export interface InferenceModel { id: string, title: string, capability: string, contextWindow: number, maxTokens: number, tools: boolean | 'auto', reasoning?: boolean | 'auto', metadata?: DiscoveredModelMetadata, catalogModels?: { providerId: string, modelId: string }[], input?: ('text' | 'image')[] }
 export interface InferenceImageModel {
   id: string
   title: string
@@ -719,7 +730,7 @@ export interface InferenceBinding {
   configuration?: Record<string, Json>
 }
 export interface InferenceApi {
-  readonly capabilities: { readonly nativeRuntime: true, readonly runtimeIsolation: true, readonly chatImageInput: true, readonly chatToolMatching: true, readonly chatReasoning: true, readonly resumableDownloads: true }
+  readonly capabilities: { readonly nativeRuntime: true, readonly runtimeIsolation: true, readonly chatImageInput: true, readonly chatToolMatching: true, readonly chatReasoning: true, readonly chatModelMetadata: true, readonly resumableDownloads: true }
   environment: () => Promise<InferenceEnvironment>
   status: () => Promise<{ runtime: string, configured: boolean, platforms: string[], instances: { id: string | null, state: 'loading' | 'ready' | 'stopping' | 'stopped', active: number, pending: number, cancelling: number, observation?: InferenceObservation }[] }[]>
   stop: (input?: { runtime: string }) => Promise<void>

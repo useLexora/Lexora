@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { discoveredModelMetadataSchema } from '../providers/providerDiscovery.ts'
 
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const contextCount = z.number().int().positive().max(2147483647)
@@ -8,6 +9,8 @@ const timing = z.object({ tokens: count, ms: duration, tokensPerSecond: duration
 export const inferenceDiagnosticCodeSchema = z.string().regex(/^EXTENSION_INFERENCE_[A-Z_]{1,80}$/)
 
 export const inferenceDiagnosticSchema = z.object({
+  modelId: z.string().min(1).max(80).regex(/^[a-z][a-z0-9.-]*$/).optional(),
+  modelMetadata: discoveredModelMetadataSchema.optional(),
   engine: z.object({ name: z.literal('llama.cpp'), version: z.string().regex(/^b\d{1,12}$/).optional() }).strip().optional(),
   backend: z.object({ requested: z.enum(['cpu', 'vulkan', 'cuda', 'metal', 'unknown']), observed: z.array(backend).max(4) }).strip().optional(),
   device: z.array(z.object({ backend, index: count }).strip()).max(16).optional(),

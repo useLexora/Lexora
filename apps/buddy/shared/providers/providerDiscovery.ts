@@ -1,10 +1,11 @@
 import { z } from 'zod'
-import { providerModelTypeSchema } from './providerModelType'
+import { providerModelTypeSchema } from './providerModelType.ts'
 
 export const discoveredModelMetadataSchema = z.object({
   type: providerModelTypeSchema.optional(),
   name: z.string().trim().min(1).max(200).optional(),
   input: z.array(z.enum(['text', 'image', 'pdf', 'audio', 'video'])).min(1).optional(),
+  toolCall: z.boolean().optional(),
   reasoningOptions: z.array(z.string().min(1).max(32).regex(/^[a-z0-9_-]+$/u)).optional(),
   contextWindow: z.number().int().positive().optional(),
   maxTokens: z.number().int().positive().optional(),

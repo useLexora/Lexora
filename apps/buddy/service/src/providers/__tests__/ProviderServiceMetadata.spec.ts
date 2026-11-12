@@ -143,21 +143,22 @@ describe('service model metadata', () => {
     const f = await fixture()
     const id = 'gemini-3.8-flash-high'
     const catalog = { source: { providerId: 'google', modelId: 'gemini-3.8-flash' } }
-    f.setBody({ data: [{ id, input_modalities: ['text'], supported_reasoning_levels: [], context_window: 64_000, max_tokens: 8_000 }] })
-    const expected = { id, catalogMatch: 'matched', capabilities: ['text'], reasoningOptions: [], contextWindow: 64_000, maxTokens: 8_000, catalog }
+    f.setBody({ data: [{ id, input_modalities: ['text'], tool_call: false, supported_reasoning_levels: [], context_window: 64_000, max_tokens: 8_000 }] })
+    const expected = { id, catalogMatch: 'matched', toolCalling: false, sourceCapabilities: { toolCall: false }, capabilities: ['text'], reasoningOptions: [], contextWindow: 64_000, maxTokens: 8_000, catalog }
     expect((await f.service.syncModels(connection.id))[0]).toMatchObject(expected)
     await f.service.refreshModelSnapshot()
     await f.service.dispose()
     const { service } = await f.setup()
     expect((await service.listModels(connection.id))[0]).toMatchObject(expected)
-    await service.setModelCapabilities(connection.id, id, { image: true, reasoningOptions: ['high'] })
+    await service.setModelCapabilities(connection.id, id, { image: true, toolCall: true, reasoningOptions: ['high'] })
     await service.refreshModelSnapshot()
-    expect((await service.listModels(connection.id))[0]).toMatchObject({ capabilities: ['text', 'image', 'reasoning'], contextWindow: 64_000, maxTokens: 8_000, catalog })
+    expect((await service.listModels(connection.id))[0]).toMatchObject({ toolCalling: true, sourceCapabilities: { toolCall: false }, capabilities: ['text', 'image', 'reasoning'], contextWindow: 64_000, maxTokens: 8_000, catalog })
+    expect(service.executionModels.resolve({ providerId: connection.id, modelId: id, contextWindow: null, maxTokens: null })).toMatchObject({ toolCall: true })
     await service.setModelCapabilities(connection.id, id, null)
-    expect((await service.listModels(connection.id))[0]?.capabilities).toEqual(['text'])
+    expect((await service.listModels(connection.id))[0]).toMatchObject({ toolCalling: false, capabilities: ['text'] })
     f.setBody({ data: [{ id }] })
     await service.syncModels(connection.id)
-    expect((await service.listModels(connection.id))[0]).toMatchObject({ contextWindow: 1_048_576, maxTokens: 65_536, catalog })
+    expect((await service.listModels(connection.id))[0]).toMatchObject({ toolCalling: true, contextWindow: 1_048_576, maxTokens: 65_536, catalog })
   })
 
   it('preserves omitted states, overrides, manual models and defaults through partial pages, restart and recovery', async () => {

@@ -1,13 +1,37 @@
 import type { AssistantMessage, ImageContent, ProviderStreams, TextContent } from '@earendil-works/pi-ai'
 import type { ExtensionChatCapabilities, ExtensionChatEvent, ExtensionChatRequest, ExtensionModel } from '../../../shared/extensions/extensionChat'
 import type { InputModel } from './modelCapabilities'
+import type { CatalogModelDefaults } from './ProviderCatalogMatcher'
 import { Buffer } from 'node:buffer'
 import { createAssistantMessageEventStream, createProvider, getCurrentTools, getSystemMessageText, normalizeContext, resolveTranscript } from '@earendil-works/pi-ai'
 import { extensionChatMaxBytes, extensionChatRequestSchema, pluginChatApi, pluginProviderId } from '../../../shared/extensions/extensionChat'
 
 const cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
-export function createPluginProvider(models: ExtensionModel[], invoke: (target: ExtensionModel, input: ExtensionChatRequest, signal: AbortSignal, emit: (event: ExtensionChatEvent) => void, capabilities: ExtensionChatCapabilities) => Promise<void>, resolveTools = (model: ExtensionModel) => model.tools === true, resolveReasoning = (model: ExtensionModel) => model.reasoning === true) {
-  const toolCalling = new Map(models.map(model => [model.id, resolveTools(model)]))
+export function createPluginModel(model: ExtensionModel, defaults: CatalogModelDefaults = {}): InputModel {
+  const declared = model.metadata
+  const reasoning = declared?.reasoningOptions !== undefined
+    ? declared.reasoningOptions.includes('medium')
+    : typeof model.reasoning === 'boolean' ? model.reasoning : model.reasoning === 'auto' && defaults.reasoning === true
+  const contextWindow = Math.min(model.contextWindow, declared?.contextWindow ?? model.contextWindow)
+  const input = (declared?.input ?? model.input ?? defaults.input ?? ['text'])
+    .filter((value): value is 'text' | 'image' => value === 'text' || value === 'image')
+  return {
+    id: model.id,
+    name: declared?.name ?? model.title,
+    provider: pluginProviderId(model.extensionId),
+    api: pluginChatApi,
+    baseUrl: '',
+    input: [...new Set(['text' as const, ...input])],
+    reasoning,
+    thinkingLevelMap: { off: 'none', minimal: null, low: null, high: null, xhigh: null, max: null },
+    contextWindow,
+    maxTokens: Math.min(model.maxTokens, declared?.maxTokens ?? model.maxTokens, contextWindow),
+    toolCall: declared?.toolCall ?? (typeof model.tools === 'boolean' ? model.tools : defaults.toolCall) ?? false,
+    cost,
+  }
+}
+
+export function createPluginProvider(models: ExtensionModel[], invoke: (target: ExtensionModel, input: ExtensionChatRequest, signal: AbortSignal, emit: (event: ExtensionChatEvent) => void, capabilities: ExtensionChatCapabilities) => Promise<void>, resolveModel = createPluginModel) {
   const first = models[0]!
   const providerId = pluginProviderId(first.extensionId)
   const stream: ProviderStreams['streamSimple'] = (model, context, options) => {
@@ -55,7 +79,7 @@ export function createPluginProvider(models: ExtensionModel[], invoke: (target: 
           return { role: 'tool', ...inputContent(entry.content), toolCallId: entry.toolCallId, name: entry.toolName, isError: entry.isError }
         }),
         tools: tools.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
-        maxTokens: Math.min(options?.maxTokens ?? model.maxTokens, target.maxTokens),
+        maxTokens: Math.min(options?.maxTokens ?? model.maxTokens, model.maxTokens, target.maxTokens),
         ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
         reasoning: options?.reasoning ?? 'off',
       })
@@ -147,7 +171,7 @@ export function createPluginProvider(models: ExtensionModel[], invoke: (target: 
     id: providerId,
     name: first.providerName ?? first.extensionName,
     auth: { apiKey: { name: first.providerName ?? first.extensionName, resolve: async () => ({ auth: {}, source: 'plugin runtime' }) } },
-    models: models.map(model => ({ id: model.id, name: model.title, provider: providerId, api: pluginChatApi, baseUrl: '', input: model.input ?? ['text'], reasoning: resolveReasoning(model), thinkingLevelMap: { minimal: null, low: null, high: null, xhigh: null, max: null }, contextWindow: model.contextWindow, maxTokens: model.maxTokens, toolCall: toolCalling.get(model.id) === true, cost })),
+    models: models.map(model => resolveModel(model)),
     api: { stream, streamSimple: stream },
   })
 }

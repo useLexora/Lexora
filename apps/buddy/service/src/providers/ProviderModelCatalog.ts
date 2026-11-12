@@ -27,6 +27,7 @@ import { modelCapabilityOverridesSchema } from '../../../shared/providers/provid
 import { modelDiscoveryBaseUrl, serviceModelMetadataSchema } from '../../../shared/providers/providerDiscovery'
 import { providerModelInputSchema, storedCustomProviderModelSchema } from '../../../shared/providers/providerInput'
 import { providerModelTypeSchema } from '../../../shared/providers/providerModelType'
+import { createPluginModel } from './createPluginProvider'
 import { applyModelCapabilities, getModelFileInputMimeTypes, readModelCapabilities, supportsModelAudioInput, supportsModelPdfInput, supportsModelVideoInput } from './modelCapabilities'
 import { serializeModelMetadata } from './modelMetadata'
 import { MODEL_RESOLUTION_VERSION, modelResolutionFingerprint } from './modelResolution'
@@ -203,18 +204,10 @@ export class ProviderModelCatalog {
     }
   }
 
-  resolvePluginModelTools(model: Pick<ExtensionModel, 'tools' | 'catalogModels'>): boolean {
-    if (typeof model.tools === 'boolean')
-      return model.tools
-    return model.catalogModels?.length ? model.catalogModels.every(reference => this.#catalogMatcher.find(reference)?.toolCall === true) : false
-  }
-
-  resolvePluginModelReasoning(model: Pick<ExtensionModel, 'reasoning' | 'catalogModels'>): boolean {
-    if (typeof model.reasoning === 'boolean')
-      return model.reasoning
-    if (model.reasoning !== 'auto' || !model.catalogModels?.length)
-      return false
-    return model.catalogModels.every(reference => this.#catalogMatcher.find(reference)?.reasoning === true)
+  resolvePluginModel(model: ExtensionModel): InputModel {
+    const match = this.#catalogMatcher.matchReferences(model.catalogModels ?? [])
+    const defaults = match.status === 'matched' ? match.model : match.status === 'ambiguous' ? match.defaults : undefined
+    return createPluginModel(model, defaults)
   }
 
   reconcilePluginModels(providerId: string, models: readonly Model<Api>[]): void {
@@ -707,12 +700,22 @@ export class ProviderModelCatalog {
       pdfInput: supportsPdfInputApi(api) && (serviceInput ? serviceInput.includes('pdf') : metadata?.pdfInput === true && (sameEndpoint || codexPdf)),
       audioInput: serviceInput ? serviceInput.includes('audio') : metadata?.audioInput === true && sameEndpoint,
       videoInput: serviceInput ? serviceInput.includes('video') : metadata?.videoInput === true && sameEndpoint,
-      toolCall: metadata?.toolCall,
+      toolCall: serviceMetadata?.metadata.toolCall ?? metadata?.toolCall,
     }
   }
 
   #effectiveModel(model: ProviderModelStateRecord, sourceModel: InputModel): InputModel {
-    return applyModelCapabilities({ ...sourceModel, ...effectiveParameters(model) }, model.capabilityOverrides)
+    const effective = applyModelCapabilities({ ...sourceModel, ...effectiveParameters(model) }, model.capabilityOverrides)
+    if (effective.api !== pluginChatApi)
+      return effective
+    const contextWindow = Math.min(effective.contextWindow, sourceModel.contextWindow)
+    return {
+      ...effective,
+      contextWindow,
+      maxTokens: Math.min(effective.maxTokens, sourceModel.maxTokens, contextWindow),
+      reasoning: effective.reasoning && getSupportedThinkingLevels(effective).includes('medium'),
+      thinkingLevelMap: { ...effective.thinkingLevelMap, off: 'none', minimal: null, low: null, high: null, xhigh: null, max: null },
+    }
   }
 
   #available(model: ProviderModelStateRecord): boolean {

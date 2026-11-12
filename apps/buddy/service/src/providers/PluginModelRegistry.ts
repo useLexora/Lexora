@@ -63,12 +63,11 @@ export class PluginModelRegistry {
         }
         for (const id of new Set([...this.providers.pluginProviderIds(), ...groups.keys()])) {
           const models = groups.get(id)
-          const toolCalling = new Map(models?.map(model => [model.id, this.providers.resolvePluginModelTools(model)]))
-          const reasoning = new Map(models?.map(model => [model.id, this.providers.resolvePluginModelReasoning(model)]))
-          const revision = JSON.stringify([models ?? [], [...toolCalling], [...reasoning]])
+          const resolved = new Map(models?.map(model => [model.id, this.providers.resolvePluginModel(model)]))
+          const revision = JSON.stringify([models ?? [], [...resolved]])
           if (revision === this.#revisions.get(id))
             continue
-          const provider = models?.length ? createPluginProvider(models, (...args) => this.#invoke(...args), model => toolCalling.get(model.id) === true, model => reasoning.get(model.id) === true) : undefined
+          const provider = models?.length ? createPluginProvider(models, (...args) => this.#invoke(...args), model => resolved.get(model.id)!) : undefined
           await this.providers.applyPluginProvider(id, provider, models)
           this.#revisions.set(id, revision)
         }

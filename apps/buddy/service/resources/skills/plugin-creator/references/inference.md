@@ -82,7 +82,9 @@ models: [{
 
 对话会话的 `input` 为 `{ model, contentType: "application/json" }`。随后 `write(bytes)` 接收 UTF-8 JSON 分块，累计最多 32 MiB；`finish()` 时才解析完整的 `InferenceChatRequest`，类型见 [api.d.ts](api.d.ts)。请求包含完整消息、当前工具、最大输出、可选温度和可选 `reasoning`（`off / minimal / low / medium / high / xhigh / max`）。省略 `reasoning` 时保持后端默认；本地模板后端应把显式 `off` 映射到关闭思考的原生参数，不用提示词模拟。消息保留 system/user/assistant/tool 角色、工具调用 ID 与工具错误标志；适配后端时保留这些语义，包括 JSON Schema 的可选参数含义。纯文本 user/tool 消息继续使用 `text`；图文消息改用有序 `content`，与 `text` 二选一，包含 `{ type: 'text', text }` 和 `{ type: 'image', mimeType, data }`。图片只接受 PNG/JPEG/WebP/GIF 的 Base64 字节，不接受路径或远端 URL。工具结果图片同样保留其原始顺序、工具身份和错误状态。图片计入整个请求的 32 MiB 上限；文本模型收到图片必须明确拒绝，不隐式转录或换模型。
 
-`reasoning: true` 声明后端支持思考开关，`false` 或省略保持不支持；也可声明 `reasoning: 'auto'`，复用 `catalogModels` 精确匹配，只有全部来源明确支持时开启。使用前检查 `context.inference.capabilities.chatReasoning === true`，旧宿主不发送新增字段。当前声明是开关，宿主默认提供 `off / medium`，不把目录的云端思考强度直接套给本地后端。用户的能力覆盖和本次请求的思考选项分别保留；标题等短文本请求的 `off` 不改变模型的能力声明。开启思考时通过独立的 `{ type: 'thinking', text }` 事件输出，不能拼进正文；关闭或未请求思考时不发送该事件。
+`context.inference.capabilities.chatModelMetadata === true` 时，可在模型绑定中提供 `metadata`，复用统一的 `DiscoveredModelMetadata`：`toolCall`、`reasoningOptions`、`input`、`contextWindow`、`maxTokens` 等字段均可省略。只提交可核对的来源声明；缺字段表示未知，`false` 和空思考列表表示明确不支持。无需在线仓库身份或公共目录收录。`metadata` 按字段优先于旧 `tools` / `reasoning` / `input` 声明，缺字段才回退；声明的训练窗口不能扩大绑定的实际加载窗口和输出预算，媒体能力不能超出宿主协议。该声明表示模型与适配器能力，不是推理质量保证。
+
+`reasoning: true` 声明后端支持思考开关，`false` 或省略保持旧版的不支持默认；也可声明 `reasoning: 'auto'`，复用 `catalogModels` 候选的一致能力。使用前检查 `context.inference.capabilities.chatReasoning === true`，旧宿主不发送新增字段。当前声明是开关，宿主默认提供 `off / medium`，不把目录的云端思考强度直接套给本地后端。用户的能力覆盖和本次请求的思考选项分别保留；标题等短文本请求的 `off` 不改变模型的能力声明。开启思考时通过独立的 `{ type: 'thinking', text }` 事件输出，不能拼进正文；关闭或未请求思考时不发送该事件。
 
 输出不携带二进制，按顺序发送：
 
@@ -94,9 +96,11 @@ call.emit({ type: 'done', reason: 'toolUse', usage: { input: 120, output: 18 } }
 
 普通结束使用 `stop`，输出上限使用 `length`，产生工具调用使用 `toolUse`。每次必须且只能发送一个 `done`，随后结束会话；缺少终态不会认作成功。`usage` 使用后端实际 token 数，缓存读取/写入可用 `cacheRead`/`cacheWrite` 单列，`input` 不重复计入缓存。累计输出最多 16 MiB、最多 64 个工具调用；只能返回本次请求提供的工具名，ID 不得重复。
 
-`tools: false` 声明来源默认关闭工具调用，不影响已声明的图片输入；`tools: true` 声明来源默认开启，必须由后端结构化工具输出和实际任务往返验证。布尔声明保持原义，不被目录覆盖。后端能传递工具协议时，也可使用 `tools: 'auto'`，同时提供 `catalogModels: [{ providerId: 'huggingface', modelId: 'Qwen/Qwen3.5-9B' }]`。来源最多 8 条、不得重复，必须是可核对的显式来源 ID，不从显示名称或 GGUF 文件名推断。宿主使用已有模型目录精确查询，只有所有来源均明确支持工具时才启用；来源缺失、未知、未声明能力或相互冲突均关闭，不任选第一个。目录更新会重算来源默认能力，不改变插件模型 ID、绑定修订、资源、参数或用户启用状态。用户可在宿主「模型服务」中覆盖图片输入和工具能力，覆盖值独立保存并优先于插件声明与自动匹配；刷新、重启或插件更新不清空覆盖，恢复默认后重新跟随来源。插件不另存同一能力开关，也不把原始 `tools`/`input` 声明当作拒绝宿主请求的终态。后端实际不支持所请求协议时应明确报错，不丢弃图片或伪造工具调用。
+`tools: false` 声明来源默认关闭工具调用，不影响已声明的图片输入；`tools: true` 声明来源默认开启，必须由后端结构化工具输出和实际任务往返验证。布尔声明保持原义，不被目录覆盖。后端能传递工具协议时，也可使用 `tools: 'auto'`，同时提供 `catalogModels: [{ providerId: 'huggingface', modelId: 'Qwen/Qwen3.5-9B' }]`。来源最多 8 条、不得重复，必须是可核对的显式来源 ID，不从显示名称或 GGUF 文件名推断。宿主复用已有模型目录匹配和同级候选合并；未匹配的引用不构成反对证据，同级已知声明冲突的字段保持未决，不按第一个、数量或最大窗口选源。没有来源信息时才使用默认值；仓库名、标签和基座关系本身不是能力声明，不能无条件继承微调前的能力。目录更新会重算来源默认能力，不改变插件模型 ID、绑定修订、资源、参数或用户启用状态。用户可在宿主「模型服务」中覆盖图片输入和工具能力，覆盖值独立保存并优先于插件声明与自动匹配；刷新、重启或插件更新不清空覆盖，恢复默认后重新跟随来源。插件不另存同一能力开关，也不把原始 `tools`/`input` 声明当作拒绝宿主请求的终态。后端实际不支持所请求协议时应明确报错，不丢弃图片或伪造工具调用。
 
-使用自动模式前检查 `context.inference.capabilities.chatToolMatching === true`；旧宿主应提示升级，不把字符串当作布尔启用。`tools: 'auto'` 只解析工具能力，不因目录声明自动开启图片、PDF、音频或视频输入；图片来源默认来自绑定 `input`，用户可显式覆盖，后端仍须实际支持；其他媒体不能超出宿主传输协议。能力覆盖不增加工具执行权限。工具交由宿主执行；插件不能自己执行任务工具或另建一份对话历史。宿主继续管理审批、用量、任务模型选择和取消。来自插件动作的模型调用复用外层调用的准入，不再次占用相同的插件队列名额。
+使用自动模式前检查 `context.inference.capabilities.chatToolMatching === true`；旧宿主应提示升级，不把字符串当作布尔启用。`tools: 'auto'` 不代表开启所有能力；输入声明优先使用 `metadata.input`，其次绑定 `input`，用户可显式覆盖，后端仍须实际支持；其他媒体不能超出宿主传输协议。能力覆盖不增加工具执行权限。工具交由宿主执行；插件不能自己执行任务工具或另建一份对话历史。宿主继续管理审批、用量、任务模型选择和取消。来自插件动作的模型调用复用外层调用的准入，不再次占用相同的插件队列名额。
+
+原生 llama.cpp 适配器可以在正常加载后的 `chat.gpu.ready` 诊断中报告 `modelMetadata` 和 `modelId`，由当前绑定接收增量部署声明，不需要重新绑定或重新加载。多模型绑定必须提供精确 `modelId`；单模型可省略。宿主保留同一绑定最后成功的字段，缺字段、读取失败和实例退出不制造否定声明；更换资源、模板或加载配置后旧部署声明失效。部署声明优先于绑定中的工件声明，用户显式覆盖仍优先，最终受协议和绑定预算限制。查询模型目录和状态本身不加载权重，也不发起模型问答。
 
 ## 资源
 

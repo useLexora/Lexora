@@ -1,4 +1,5 @@
 import type { InferenceBinding, InferenceCapability, InferenceHardware, InferenceObservation, InferenceRuntimeReference } from '../../shared/extensions/extensionInference'
+import type { DiscoveredModelMetadata } from '../../shared/providers/providerDiscovery'
 import type { ExtensionInferenceCredentials } from './ExtensionInferenceCredentials'
 import type { InferenceResourceLease, InferenceResourceSource } from './ExtensionInferenceResources'
 import type { ExtensionPackage, ExtensionPackageStore } from './ExtensionPackageStore'
@@ -38,6 +39,8 @@ interface RuntimeLifetime {
 }
 export class ExtensionInference {
   readonly #bindings = new Map<string, InferenceBinding>()
+  readonly #modelMetadata = new WeakMap<InferenceBinding, Map<string, DiscoveredModelMetadata>>()
+  readonly #modelsChanged: () => void
   readonly #instances = new Map<string, Instance>()
   readonly #calls = new Set<Promise<void>>()
   readonly #rebinding = new Set<string>()
@@ -52,12 +55,13 @@ export class ExtensionInference {
   readonly ports: ExtensionInferencePorts
   readonly source: InferenceResourceSource
   readonly assertCurrent: () => void
-  constructor(store: ExtensionPackageStore, pkg: ExtensionPackage, ports: ExtensionInferencePorts, source: InferenceResourceSource, assertCurrent: () => void) {
+  constructor(store: ExtensionPackageStore, pkg: ExtensionPackage, ports: ExtensionInferencePorts, source: InferenceResourceSource, assertCurrent: () => void, modelsChanged: () => void = () => {}) {
     this.store = store
     this.pkg = pkg
     this.ports = ports
     this.source = source
     this.assertCurrent = assertCurrent
+    this.#modelsChanged = modelsChanged
   }
 
   async prepareResources(...[files, options, signal, event]: Parameters<NonNullable<InferenceResourceSource['prepare']>>): Promise<void> {
@@ -155,7 +159,34 @@ export class ExtensionInference {
   }
 
   async models() {
-    return (await this.#availableBindings()).flatMap(binding => binding.models.map(model => ({ ...model, bindingRevision: createHash('sha256').update(JSON.stringify(binding)).digest('hex') })))
+    return (await this.#availableBindings()).flatMap(binding => binding.models.map((model) => {
+      const declared = this.#modelMetadata.get(binding)?.get(model.id)
+      const metadata = model.metadata || declared ? { ...model.metadata, ...declared } : undefined
+      if (metadata?.contextWindow !== undefined && metadata.maxTokens !== undefined)
+        metadata.maxTokens = Math.min(metadata.maxTokens, metadata.contextWindow)
+      return { ...model, ...(metadata ? { metadata: structuredClone(metadata) } : {}), bindingRevision: createHash('sha256').update(JSON.stringify(binding)).digest('hex') }
+    }))
+  }
+
+  #acceptModelMetadata(binding: InferenceBinding, observation: InferenceObservation): void {
+    const model = observation.modelId === undefined
+      ? binding.models.length === 1 ? binding.models[0] : undefined
+      : binding.models.find(model => model.id === observation.modelId)
+    if (!model || !observation.modelMetadata)
+      return
+    this.assertCurrent()
+    const models = this.#modelMetadata.get(binding) ?? new Map<string, DiscoveredModelMetadata>()
+    const previous = models.get(model.id)
+    const metadata = { ...previous }
+    for (const [key, value] of Object.entries(observation.modelMetadata)) {
+      if (value !== undefined)
+        Object.assign(metadata, { [key]: value })
+    }
+    if (!Object.keys(metadata).length || JSON.stringify(previous) === JSON.stringify(metadata))
+      return
+    models.set(model.id, metadata)
+    this.#modelMetadata.set(binding, models)
+    this.#modelsChanged()
   }
 
   async imageModels() {
@@ -281,13 +312,13 @@ export class ExtensionInference {
         const leases: InferenceResourceLease[] = []
         const observation: Instance['observation'] = {}
         const loading = AbortSignal.any([abort.signal, this.#stop.signal, AbortSignal.timeout(inferenceLimits.startTimeoutMs)])
-        const ready = (async () => {
+        const ready = Promise.resolve().then(async () => {
           for (const resource of binding.resources)
             leases.push(await this.store.inference.acquire(this.pkg.manifest.id, resource, this.source, loading))
           this.assertCurrent()
           return NativeInferenceProcess.start({ ...this.ports, record: (event) => {
             safeDiagnosticReporter(this.ports.record)(event)
-            if (abort.signal.aborted || event.component !== 'models.inference' || event.extensionId !== this.pkg.manifest.id || !inferenceStderrDiagnosticSchema.shape.event.safeParse(event.event).success)
+            if (abort.signal.aborted || this.#bindings.get(binding.runtime) !== binding || this.#instances.get(key)?.abort !== abort || event.component !== 'models.inference' || event.extensionId !== this.pkg.manifest.id || !inferenceStderrDiagnosticSchema.shape.event.safeParse(event.event).success)
               return
             const error = inferenceDiagnosticCodeSchema.safeParse(event.errorCode)
             if (event.event === 'chat.gpu.exit') {
@@ -301,6 +332,8 @@ export class ExtensionInference {
             const parsed = inferenceObservationSchema.safeParse({ ...event.inference, ...(error.success ? { error: error.data } : {}), observedAt: Date.now() })
             if (!parsed.success || Object.keys(parsed.data).length === 1)
               return
+            if (event.event === 'chat.gpu.ready')
+              this.#acceptModelMetadata(binding, parsed.data)
             const previous = observation.current
             observation.current = {
               ...previous,
@@ -326,7 +359,7 @@ export class ExtensionInference {
             this.assertCurrent()
             return this.ports.request(endpoint.url, { method: 'POST', headers, body, signal })
           } }, this.store, this.pkg, runtime, binding, leases, loading)
-        })()
+        })
         const created: Instance = { abort, runtime: runtime.id, ready, observation, capacity: new ExtensionInvocationQueue({ concurrent: runtime.capacity, concurrentPerExtension: runtime.capacity, queued: 1024 }), waiters: 0, active: 0, leases }
         instance = created
         this.#instances.set(key, created)
