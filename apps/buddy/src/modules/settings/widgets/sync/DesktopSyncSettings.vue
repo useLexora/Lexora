@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import type { BackupOptions } from '@buddy-shared/storage/backupScope'
 import type { SyncConnectionInput, SyncState } from '@buddy-shared/sync/syncApi'
-import { NSwitch, useMessage } from 'naive-ui'
+import type { MessageReactive } from 'naive-ui'
+import { NButton, NSwitch, useMessage } from 'naive-ui'
 import { computed, onMounted, onUnmounted, shallowRef, useId, watch } from 'vue'
 import CloudBackupIcon from '@/shared/ui/icon/CloudBackupIcon.vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
@@ -39,6 +40,8 @@ watch(showSelection, (visible) => {
     pendingConnection.value = undefined
 })
 const status = computed(() => {
+  if (!loaded.value && !running.value)
+    return text('云备份状态暂时无法读取，请重试。', 'Cloud backup status is unavailable. Please retry.')
   if (!state.value.enabled)
     return text('未开启', 'Not enabled')
   if (!active.value)
@@ -64,6 +67,12 @@ const status = computed(() => {
 })
 const api = () => window.lexoraDesktop!.sync
 let unsubscribe: (() => void) | undefined
+let loadFailure: MessageReactive | undefined
+let mounted = true
+function clearLoadFailure() {
+  loadFailure?.destroy()
+  loadFailure = undefined
+}
 async function perform(action: () => Promise<unknown>) {
   if (running.value)
     return
@@ -73,11 +82,24 @@ async function perform(action: () => Promise<unknown>) {
     await action()
   }
   catch (failure) {
+    if (!mounted)
+      return
     const description = cloudBackupError(failure, english.value)
-    if (showSelection.value)
+    if (showSelection.value) {
       error.value = description
-    else
+    }
+    else if (!loaded.value) {
+      if (loadFailure) {
+        loadFailure.type = 'error'
+        loadFailure.content = description
+      }
+      else {
+        loadFailure = message.error(description, { duration: 0, onClose: () => loadFailure = undefined })
+      }
+    }
+    else {
       message.error(description)
+    }
   }
   finally { busy.value = false }
 }
@@ -104,16 +126,32 @@ async function backupNow(options: BackupOptions) {
     showSelection.value = false
   })
 }
+async function loadState() {
+  if (running.value)
+    return
+  if (loadFailure) {
+    loadFailure.type = 'loading'
+    loadFailure.content = text('正在读取云备份状态…', 'Loading cloud backup status…')
+  }
+  await perform(async () => {
+    state.value = await api().state()
+    loaded.value = true
+    clearLoadFailure()
+  })
+}
 onMounted(() => {
   unsubscribe = api().onChanged((next) => {
     state.value = next
-  })
-  void perform(async () => {
-    state.value = await api().state()
     loaded.value = true
+    clearLoadFailure()
   })
+  void loadState()
 })
-onUnmounted(() => unsubscribe?.())
+onUnmounted(() => {
+  mounted = false
+  unsubscribe?.()
+  clearLoadFailure()
+})
 </script>
 
 <template>
@@ -124,7 +162,10 @@ onUnmounted(() => unsubscribe?.())
           <DesktopIcon :component="CloudBackupIcon" :size="16" class="text-muted" />
         </template>
         <template #default="{ controlAttrs }">
-          <NSwitch v-bind="controlAttrs" :round="false" :value="state.enabled" :disabled="running || !loaded" :aria-disabled="running || !loaded" @update:value="perform(async () => { state = await api().setEnabled($event) })" />
+          <NButton v-if="!loaded && !running" size="small" @click="loadState">
+            {{ text('重试', 'Retry') }}
+          </NButton>
+          <NSwitch v-else v-bind="controlAttrs" :round="false" :value="state.enabled" :disabled="running || !loaded" :aria-disabled="running || !loaded" @update:value="perform(async () => { state = await api().setEnabled($event) })" />
         </template>
       </DesktopSettingRow>
       <template v-if="loaded && state.enabled">
