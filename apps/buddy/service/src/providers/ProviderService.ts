@@ -241,12 +241,8 @@ export class ProviderService {
     })
   }
 
-  resolvePluginModelTools(model: Pick<ExtensionModel, 'tools' | 'catalogModels'>): boolean {
-    return this.#modelCatalog.resolvePluginModelTools(model)
-  }
-
-  resolvePluginModelReasoning(model: Pick<ExtensionModel, 'reasoning' | 'catalogModels'>): boolean {
-    return this.#modelCatalog.resolvePluginModelReasoning(model)
+  resolvePluginModel(model: ExtensionModel) {
+    return this.#modelCatalog.resolvePluginModel(model)
   }
 
   pluginProviderIds(): string[] {

@@ -177,6 +177,7 @@ const serviceModelMetadataSchema = z.object({
   context_window: z.number().int().positive().optional(),
   max_tokens: z.number().int().positive().optional(),
   input_modalities: discoveredModelMetadataSchema.shape.input,
+  tool_call: discoveredModelMetadataSchema.shape.toolCall,
   supported_reasoning_levels: z.array(z.object({
     effort: z.string().min(1).max(32).regex(/^[a-z0-9_-]+$/u),
   })).optional(),
@@ -206,6 +207,7 @@ function parseServiceMetadata(value: Record<string, unknown>): DiscoveredModelMe
     ...(model.supported_reasoning_levels
       ? { reasoningOptions: [...new Set(model.supported_reasoning_levels.map(level => level.effort === 'none' ? 'off' : level.effort))] }
       : {}),
+    ...(model.tool_call !== undefined ? { toolCall: model.tool_call } : {}),
     ...(model.context_window !== undefined ? { contextWindow: model.context_window } : {}),
     ...(model.max_tokens !== undefined ? { maxTokens: model.max_tokens } : {}),
   })

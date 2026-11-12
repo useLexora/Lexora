@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { inferenceDiagnosticSchema } from '../diagnostics/inferenceDiagnostic.ts'
 import { imageReadingSupportSchema, imageSupportSchema } from '../images/imagePreferences.ts'
 import { modelCatalogReferenceSchema } from '../providers/providerCatalog.ts'
+import { discoveredModelMetadataSchema } from '../providers/providerDiscovery.ts'
 import { extensionPathSchema } from './extensionPath.ts'
 
 export const inferencePlatformSchema = z.enum(['linux-x64', 'windows-x64', 'macos-arm64'])
@@ -27,6 +28,8 @@ export const inferenceHardwareSchema = z.object({
 }).strip()
 export type InferenceHardware = z.infer<typeof inferenceHardwareSchema>
 export const inferenceObservationSchema = inferenceDiagnosticSchema.pick({
+  modelId: true,
+  modelMetadata: true,
   engine: true,
   backend: true,
   device: true,
@@ -156,6 +159,7 @@ export const inferenceModelSchema = z.object({
   contextWindow: z.number().int().min(256).max(2_000_000),
   maxTokens: z.number().int().positive(),
   tools: z.union([z.boolean(), z.literal('auto')]),
+  metadata: discoveredModelMetadataSchema.optional(),
   reasoning: z.union([z.boolean(), z.literal('auto')]).optional(),
   catalogModels: z.array(modelCatalogReferenceSchema).max(8).refine(value => new Set(value.map(model => JSON.stringify([model.providerId, model.modelId]))).size === value.length, 'Duplicate catalog model').optional(),
   input: z.array(z.enum(['text', 'image'])).min(1).max(2).refine(value => value.includes('text') && new Set(value).size === value.length, 'Expected unique inputs including text').optional(),

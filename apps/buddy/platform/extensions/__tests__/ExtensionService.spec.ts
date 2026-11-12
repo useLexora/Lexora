@@ -911,6 +911,42 @@ it.each(['ready', 'checksum'] as const)('delivers resource progress before %s se
   expect(progress).toHaveLength(count)
 })
 
+it('publishes deployment metadata without replacing the active model binding or rejecting its original invocation identity', async () => {
+  const f = await fixture({ inference: { bootstrap: '', executable: '', admit: async () => async () => {} } }, manifest({
+    id: 'fixture.inference',
+    apiVersion: 3,
+    permissions: { inference: true },
+    contributes: { inference: { runtimes: [{ id: 'local', entry: 'native/fixture.mjs', platforms: ['linux-x64'], idleTimeoutMs: 60000 }], capabilities: [{ id: 'chat', title: 'Chat', runtime: 'local', kind: 'chat.completion' }] } },
+  }), { 'native/fixture.mjs': 'export function initialize() {}' })
+  await f.service.inferenceModels()
+  const host = f.hosts[0]!
+  const client = createExtensionInferenceClient(host.broker)
+  expect(client.capabilities.chatModelMetadata).toBe(true)
+  await client.bind({ runtime: 'local', resources: [], libraryPaths: [], endpoints: [], configuration: {}, imageModels: [], imageReaders: [], models: [{ id: 'model', title: 'Model', capability: 'chat', tools: 'auto', contextWindow: 8192, maxTokens: 512, metadata: { toolCall: true, reasoningOptions: ['off', 'medium'] } }] })
+  const before = (await f.service.inferenceModels())[0]!
+  const native: ReturnType<typeof memoryInference>[] = []
+  vi.spyOn(NativeInferenceProcess, 'start').mockImplementation(async (options) => {
+    const current = memoryInference({ record: options.record })
+    native.push(current)
+    return current.worker
+  })
+  cleanup.push(async () => {
+    for (const current of native) current.close()
+    await Promise.all(native.map(current => current.reading))
+  })
+  const invoke = () => f.service.invokeInference(before.extensionId, before.revision, invocation({ id: randomUUID(), capability: before.capability, generation: before.generation, bindingRevision: before.bindingRevision, input: { model: before.id } }))
+  await invoke()
+  const updates: unknown[] = []
+  const subscription = f.service.onDidChange(change => updates.push(change))
+  cleanup.push(async () => subscription.dispose())
+  native[0]!.stderr.write(`${JSON.stringify({ event: 'chat.gpu.ready', modelId: 'model', modelMetadata: { toolCall: false } })}\n`)
+  expect(updates).toContainEqual(expect.objectContaining({ kind: 'inference-models', extensionId: before.extensionId }))
+  expect(await f.service.inferenceModels()).toEqual([{ ...before, metadata: { ...before.metadata, toolCall: false } }])
+  await invoke()
+  expect(native).toHaveLength(1)
+  expect(host.disposed).toBe(false)
+})
+
 it.each(['host', 'view'] as const)('keeps downloads, inference and original grants alive across concurrent private releases from %s', async (owner) => {
   const downloadStarted = deferred<void>()
   const finishDownload = deferred<void>()

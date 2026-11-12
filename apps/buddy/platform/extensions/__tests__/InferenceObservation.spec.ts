@@ -23,7 +23,10 @@ async function fixture(record?: ApplicationDiagnosticReporter) {
   ]))).token)
   const pkg = store.installed[owner]!.current
   const native: ReturnType<typeof memoryInference>[] = []
+  const reports: ApplicationDiagnosticReporter[] = []
+  const changes: unknown[] = []
   vi.spyOn(NativeInferenceProcess, 'start').mockImplementation(async (options) => {
+    reports.push(options.record!)
     const current = memoryInference({ record: options.record })
     native.push(current)
     return current.worker
@@ -31,7 +34,7 @@ async function fixture(record?: ApplicationDiagnosticReporter) {
   const runtime = new ExtensionInference(store, pkg, { bootstrap: '', executable: '', admit: async () => async () => {}, record }, {
     response: async () => { throw new Error('Unexpected download') },
     openReference: async () => { throw new Error('Unexpected resource') },
-  }, () => {})
+  }, () => {}, () => changes.push('models-changed'))
   onTestFinished(async () => {
     await runtime.dispose()
     await Promise.all(native.map(item => item.reading))
@@ -42,8 +45,80 @@ async function fixture(record?: ApplicationDiagnosticReporter) {
   const invoke = (id = 'first') => runtime.invoke(pkg.manifest.contributes.inference!.capabilities.find(item => item.id === id)!, invocation({ capability: id }))
   const observation = () => runtime.status()[0]!.instances[0]?.observation
   const emit = (data: unknown, index = 0) => native[index]!.stderr.write(`${JSON.stringify(data)}\n`)
-  return { runtime, native, invoke, observation, emit }
+  return { runtime, native, invoke, observation, emit, reports, changes }
 }
+
+it('projects successful deployment declarations without changing bindings, and retains sparse fields until the binding changes', async () => {
+  const f = await fixture()
+  const binding = inferenceBindingSchema.parse({ runtime: 'first', resources: [], models: [{
+    id: 'local',
+    title: 'Local',
+    capability: 'first',
+    tools: 'auto',
+    reasoning: 'auto',
+    contextWindow: 8192,
+    maxTokens: 512,
+    metadata: { toolCall: true, reasoningOptions: ['off', 'medium'], input: ['text', 'image'], contextWindow: 32768, maxTokens: 1024 },
+  }] })
+  await f.runtime.bind(binding)
+  const before = (await f.runtime.models())[0]!
+  await f.invoke()
+  f.emit({ event: 'chat.gpu.ready', context: { actual: 16384 }, modelMetadata: { toolCall: false, contextWindow: 4096 } })
+  const expected = { ...before, metadata: { ...before.metadata, toolCall: false, contextWindow: 4096 } }
+  expect(await f.runtime.models()).toEqual([expected])
+  expect(f.changes).toEqual(['models-changed'])
+  f.emit({ event: 'chat.gpu.ready', modelMetadata: { reasoningOptions: [] } })
+  expected.metadata.reasoningOptions = []
+  expect(await f.runtime.models()).toEqual([expected])
+  expect(f.changes).toHaveLength(2)
+  f.emit({ event: 'chat.gpu.ready', modelMetadata: { reasoningOptions: [] } })
+  f.emit({ event: 'chat.gpu.error', code: 'EXTENSION_INFERENCE_PROCESS_FAILED', modelMetadata: { toolCall: true } })
+  f.emit({ event: 'chat.gpu.ready', modelMetadata: { toolCall: 'unknown' } })
+  f.emit({ event: 'chat.gpu.ready', context: { actual: 65536, train: 262144 } })
+  expect(await f.runtime.models()).toEqual([expected])
+  expect(f.changes).toHaveLength(2)
+  expect(f.native).toHaveLength(1)
+  expect(binding.models[0]!.metadata?.toolCall).toBe(true)
+  expect((await f.runtime.models())[0]!.bindingRevision).toBe(before.bindingRevision)
+  await f.runtime.bind(binding)
+  await f.invoke()
+  expect(await f.runtime.models()).toEqual([expected])
+  expect(f.native).toHaveLength(1)
+  await f.runtime.stop({ runtime: 'first' })
+  expect(await f.runtime.models()).toEqual([expected])
+  await f.invoke()
+  f.reports[0]!({ component: 'models.inference', extensionId: 'fixture.inference', event: 'chat.gpu.ready', level: 'info', inference: { modelMetadata: { toolCall: true } } })
+  expect(await f.runtime.models()).toEqual([expected])
+  f.emit({ event: 'chat.gpu.ready', modelId: 'local', modelMetadata: { input: ['text'] } }, 1)
+  expected.metadata.input = ['text']
+  expect(await f.runtime.models()).toEqual([expected])
+  await f.runtime.bind({ ...binding, configuration: { engine: 'replacement' } })
+  const replaced = (await f.runtime.models())[0]!
+  expect(replaced.metadata).toEqual(before.metadata)
+  expect(replaced.bindingRevision).not.toBe(before.bindingRevision)
+  f.reports[1]!({ component: 'models.inference', extensionId: 'fixture.inference', event: 'chat.gpu.ready', level: 'info', inference: { modelId: 'local', modelMetadata: { toolCall: false } } })
+  expect((await f.runtime.models())[0]).toEqual(replaced)
+  await f.invoke()
+  f.emit({ event: 'chat.gpu.ready', context: { actual: 4096 } }, 2)
+  expect((await f.runtime.models())[0]).toEqual(replaced)
+})
+
+it('requires an exact model ID for multi-model deployment declarations and never changes sibling capabilities', async () => {
+  const f = await fixture()
+  const binding = inferenceBindingSchema.parse({ runtime: 'first', resources: [], models: ['one', 'two'].map(id => ({ id, title: id, capability: 'first', contextWindow: 8192, maxTokens: 512, tools: false })) })
+  await f.runtime.bind(binding)
+  const before = await f.runtime.models()
+  await f.invoke()
+  f.emit({ event: 'chat.gpu.ready', modelMetadata: { toolCall: true } })
+  f.emit({ event: 'chat.gpu.ready', modelId: 'unknown', modelMetadata: { toolCall: true } })
+  expect(await f.runtime.models()).toEqual(before)
+  expect(f.changes).toEqual([])
+  f.emit({ event: 'chat.gpu.ready', modelId: 'two', modelMetadata: { toolCall: true } })
+  expect(await f.runtime.models()).toEqual([before[0], { ...before[1], metadata: { toolCall: true } }])
+  await f.runtime.unbind({ runtime: 'first' })
+  await f.runtime.bind(binding)
+  expect(await f.runtime.models()).toEqual(before)
+})
 
 it('projects validated incremental diagnostics per instance and forwards the original report', async () => {
   const records: unknown[] = []

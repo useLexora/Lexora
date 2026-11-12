@@ -4,6 +4,24 @@ import { ModelsDevCatalog } from '../ModelsDevCatalog'
 import { ProviderCatalogMatcher } from '../ProviderCatalogMatcher'
 
 describe('providerCatalogMatcher', () => {
+  it('merges exact reference candidates by field while distinguishing unknown support from explicit conflicts', () => {
+    const first = { ...model('vendor', 'instruct', 'https://vendor.test'), toolCall: true }
+    const unknown = { ...first, id: 'unknown', toolCall: undefined }
+    const conflicting = { ...first, id: 'base', toolCall: false }
+    const matcher = new ProviderCatalogMatcher(catalogRuntime([first, unknown, conflicting]))
+    const references = (ids: string[]) => ids.map(modelId => ({ providerId: 'vendor', modelId }))
+    expect(matcher.matchReferences(references(['missing']))).toEqual({ status: 'unmatched', candidates: [] })
+    expect(matcher.matchReferences(references(['missing', 'instruct']))).toMatchObject({ status: 'matched', model: { toolCall: true } })
+    for (const ids of [['unknown', 'instruct'], ['instruct', 'unknown']])
+      expect(matcher.matchReferences(references(ids))).toMatchObject({ status: 'ambiguous', defaults: { toolCall: true, contextWindow: first.contextWindow } })
+    const conflict = matcher.matchReferences(references(['instruct', 'base']))
+    expect(conflict).toMatchObject({ status: 'ambiguous', defaults: { contextWindow: first.contextWindow } })
+    if (conflict.status === 'ambiguous')
+      expect(conflict.defaults.toolCall).toBeUndefined()
+    expect(matcher.matchReferences(references(['unknown']))).toMatchObject({ status: 'matched', model: { toolCall: undefined } })
+    expect(matcher.matchReferences(references(['base']))).toMatchObject({ status: 'matched', model: { toolCall: false } })
+  })
+
   it('reuses content-identical catalogs and replaces indexed candidates when metadata changes', () => {
     const raw = (context: number) => ({ vendor: { name: 'Vendor', api: 'https://vendor.example.test', models: {
       shared: { name: 'Shared', modalities: { input: ['text'], output: ['text'] }, limit: { context, output: 4096 } },

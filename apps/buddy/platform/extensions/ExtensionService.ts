@@ -1961,7 +1961,7 @@ export class ExtensionService {
         running = { package: pkg, generation, abort, host, ready: Promise.resolve(), active: false, inFlight: 0, inferencePreparations: new Set(), drained: new Set() }
         if (pkg.manifest.contributes.inference && this.#ports.inference) {
           const owner = running
-          running.inference = new ExtensionInference(this.store, pkg, this.#ports.inference, this.#inferenceSource(owner), () => this.#assertCurrent(owner))
+          running.inference = new ExtensionInference(this.store, pkg, this.#ports.inference, this.#inferenceSource(owner), () => this.#assertCurrent(owner), () => this.#publish({ kind: 'inference-models', extensionId: pkg.manifest.id }))
         }
         this.#running.set(dependency, running)
         const start = performance.now()

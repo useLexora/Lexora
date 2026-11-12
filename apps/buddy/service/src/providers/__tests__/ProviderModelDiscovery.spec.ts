@@ -57,6 +57,7 @@ describe('providerModelDiscovery', () => {
       context_window: 200_000 + index,
       max_tokens: 32_000 + index,
       input_modalities: ['text', 'image'],
+      tool_call: index === 0,
       supported_reasoning_levels: [{ effort: 'low' }, { effort: 'high' }],
     }))
     const discovery = new OpenAiCompatibleModelDiscovery({
@@ -68,7 +69,7 @@ describe('providerModelDiscovery', () => {
       models: models.map(model => ({
         id: model.slug,
         name: model.display_name,
-        metadata: { name: model.display_name, contextWindow: model.context_window, maxTokens: model.max_tokens, input: model.input_modalities, reasoningOptions: ['low', 'high'] },
+        metadata: { name: model.display_name, contextWindow: model.context_window, maxTokens: model.max_tokens, input: model.input_modalities, toolCall: model.tool_call, reasoningOptions: ['low', 'high'] },
       })),
     })
   })
@@ -81,6 +82,7 @@ describe('providerModelDiscovery', () => {
         input_modalities: ['text', 'image', 'image'],
         context_window: 128_000,
         max_tokens: 8_000,
+        tool_call: false,
         supported_reasoning_levels: [{ effort: 'none' }, { effort: 'high' }, { effort: 'ultra' }],
         base_instructions: 'untrusted',
         headers: { authorization: 'untrusted' },
@@ -90,7 +92,7 @@ describe('providerModelDiscovery', () => {
       complete: true,
       models: [{
         id: 'gemini-3.8-flash-high',
-        metadata: { input: ['text', 'image'], contextWindow: 128_000, maxTokens: 8_000, reasoningOptions: ['off', 'high', 'ultra'] },
+        metadata: { input: ['text', 'image'], contextWindow: 128_000, maxTokens: 8_000, toolCall: false, reasoningOptions: ['off', 'high', 'ultra'] },
       }],
     })
   })

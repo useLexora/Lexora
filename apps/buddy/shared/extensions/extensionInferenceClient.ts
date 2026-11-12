@@ -5,7 +5,7 @@ import type { InferenceBinding, InferenceCredential, InferenceCredentialReferenc
 
 export function createExtensionInferenceClient(request: (method: string, params?: JsonValue) => Promise<unknown>, events?: EventSubscriber<ExtensionHostEvents>) {
   return Object.freeze({
-    capabilities: Object.freeze({ nativeRuntime: true as const, runtimeIsolation: true as const, chatImageInput: true as const, chatToolMatching: true as const, chatReasoning: true as const, resumableDownloads: true as const }),
+    capabilities: Object.freeze({ nativeRuntime: true as const, runtimeIsolation: true as const, chatImageInput: true as const, chatToolMatching: true as const, chatReasoning: true as const, chatModelMetadata: true as const, resumableDownloads: true as const }),
     environment: async (): Promise<InferenceEnvironment> => await request('inference.environment') as InferenceEnvironment,
     status: () => request('inference.status'),
     stop: async (input?: InferenceRuntimeReference): Promise<void> => { await request('inference.stop', input) },

@@ -44,6 +44,26 @@ async function fixture(invoke: Parameters<typeof createPluginProvider>[1], model
 }
 
 describe('plugin model provider', () => {
+  it('keeps local metadata identity, the loaded output budget and Pi disabled thinking at the plugin boundary', async () => {
+    let request: ExtensionChatRequest | undefined
+    let target: ExtensionModel | undefined
+    const bound: ExtensionModel = { ...descriptor, tools: false, metadata: { toolCall: true, reasoningOptions: ['off', 'medium'], contextWindow: 262144, maxTokens: 128 } }
+    const f = await fixture(async (current, input, _signal, emit) => {
+      target = current
+      request = input
+      emit({ type: 'text', text: 'Answer' })
+      emit(done)
+    }, bound)
+    const response = await f.runtime.completeSimple(f.model, { messages: [
+      { role: 'system', content: 'Use tools if needed.', toolsAdded: [{ name: 'read_note', description: 'Read a note', parameters: { type: 'object', properties: {} } }], timestamp: 0 },
+      { role: 'user', content: 'Hello', timestamp: 1 },
+    ] }, { maxTokens: 4096 })
+    expect(response.stopReason).toBe('stop')
+    expect(f.model).toMatchObject({ id: bound.id, contextWindow: bound.contextWindow, maxTokens: 128, reasoning: true })
+    expect(request).toMatchObject({ model: bound.id, maxTokens: 128, reasoning: 'off', tools: [{ name: 'read_note' }] })
+    expect(target).toEqual(bound)
+  })
+
   it('preserves resolved instructions, current tools, streamed text and actual usage', async () => {
     let request: ExtensionChatRequest | undefined
     const f = await fixture(async (_target, input, _signal, emit) => {

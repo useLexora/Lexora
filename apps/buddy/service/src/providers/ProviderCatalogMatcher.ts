@@ -1,7 +1,7 @@
 import type { ModelCatalogReference } from '../../../shared/providers/providerCatalog'
 import type { CatalogModel, ModelMetadataCatalog } from './ModelsDevCatalog'
 import { serializeModelMetadata } from './modelMetadata'
-import { modelCatalogFingerprint } from './modelResolution'
+import { modelCatalogFingerprint, modelResolutionFingerprint } from './modelResolution'
 
 export type CatalogModelDefaults = Partial<Pick<CatalogModel, 'input' | 'reasoning' | 'thinkingLevelMap' | 'contextWindow' | 'maxTokens' | 'pdfInput' | 'audioInput' | 'videoInput' | 'toolCall' | 'baseUrl'>>
 
@@ -57,7 +57,7 @@ export class ProviderCatalogMatcher {
   }
 
   getFingerprint(): string {
-    return this.#runtime.getFingerprint?.() ?? modelCatalogFingerprint(this.#runtime)
+    return modelResolutionFingerprint({ version: 2, catalog: this.#runtime.getFingerprint?.() ?? modelCatalogFingerprint(this.#runtime) })
   }
 
   #index(): void {
@@ -144,17 +144,30 @@ export class ProviderCatalogMatcher {
     const ranks = new Map(matches.map(match => [match.model, match.rank]))
     const highestRank = Math.max(...preferred.map(model => ranks.get(model)!))
     preferred = preferred.filter(model => ranks.get(model) === highestRank)
-    const first = preferred[0]!
-    const fingerprint = catalogCapabilityFingerprint(first)
-    if (preferred.every(model => catalogCapabilityFingerprint(model) === fingerprint))
-      return { candidates, model: first, status: 'matched' }
-    return { candidates, defaults: commonMetadata(preferred), status: 'ambiguous' }
+    return resolveCandidates(candidates, preferred)
+  }
+
+  matchReferences(references: readonly ModelCatalogReference[]): ProviderCatalogMatch {
+    this.#index()
+    const candidates = [...new Set(references.flatMap(reference => this.find(reference) ?? []))]
+      .sort((left, right) => left.provider.localeCompare(right.provider) || left.id.localeCompare(right.id))
+    return resolveCandidates(candidates)
   }
 
   find(reference: ModelCatalogReference): CatalogModel | undefined {
     this.#index()
     return this.#models.get(JSON.stringify([reference.providerId, reference.modelId]))
   }
+}
+
+function resolveCandidates(candidates: readonly CatalogModel[], preferred = candidates): ProviderCatalogMatch {
+  const first = preferred[0]
+  if (!first)
+    return { candidates, status: 'unmatched' }
+  const fingerprint = catalogCapabilityFingerprint(first)
+  if (preferred.every(model => catalogCapabilityFingerprint(model) === fingerprint))
+    return { candidates, model: first, status: 'matched' }
+  return { candidates, defaults: commonMetadata(preferred), status: 'ambiguous' }
 }
 
 function catalogModelKey(value: string): string {
@@ -188,8 +201,9 @@ function commonMetadata(models: readonly CatalogModel[]): CatalogModelDefaults {
   const common = <Key extends keyof CatalogModelDefaults>(key: Key, value = first[key]) => models.every(model => serializeModelMetadata(model[key]) === serializeModelMetadata(value))
   const defaults: CatalogModelDefaults = {}
   for (const key of ['contextWindow', 'maxTokens', 'pdfInput', 'audioInput', 'videoInput', 'toolCall'] as const) {
-    if (common(key))
-      Object.assign(defaults, { [key]: first[key] })
+    const values = models.map(model => model[key]).filter(value => value !== undefined)
+    if (values.length && values.every(value => value === values[0]))
+      Object.assign(defaults, { [key]: values[0] })
   }
   if (models.every(model => serializeModelMetadata([...new Set(model.input)].sort()) === serializeModelMetadata([...new Set(first.input)].sort())))
     defaults.input = [...first.input]
@@ -212,7 +226,7 @@ function catalogCapabilityFingerprint(model: CatalogModel): string {
     pdfInput: model.pdfInput ?? false,
     audioInput: model.audioInput ?? false,
     videoInput: model.videoInput ?? false,
-    toolCall: model.toolCall !== false,
+    toolCall: model.toolCall,
   })
 }
 
