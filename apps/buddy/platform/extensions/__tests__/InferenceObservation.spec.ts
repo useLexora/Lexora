@@ -4,12 +4,14 @@ import { rm } from 'node:fs/promises'
 import { expect, it, onTestFinished, vi } from 'vitest'
 import { inferenceDiagnosticSchema } from '../../../shared/diagnostics/inferenceDiagnostic'
 import { inferenceBindingSchema } from '../../../shared/extensions/extensionInference'
+import * as inferencePlatform from '../../../shared/extensions/inferencePlatform'
 import { ExtensionInference } from '../ExtensionInference'
 import { NativeInferenceProcess } from '../NativeInferenceProcess'
 import { createStore, manifest } from './fixtures'
 import { invocation, memoryInference } from './inferenceFixtures'
 
 async function fixture(record?: ApplicationDiagnosticReporter) {
+  vi.spyOn(inferencePlatform, 'supportsInferenceRuntime').mockReturnValue(true)
   const { root, store } = await createStore()
   const owner = 'fixture.inference'
   const contribution = manifest({ id: owner, apiVersion: 3, permissions: { inference: true }, contributes: { inference: {
