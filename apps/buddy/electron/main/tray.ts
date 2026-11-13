@@ -1,10 +1,13 @@
+import type { BuddyRuntimeProfile } from '../../shared/runtime/profile'
 import type { LexoraConfig } from '../shared/desktopApi'
-import { Menu, nativeImage, Tray } from 'electron'
+import { Menu, Tray } from 'electron'
 import { translateDesktopNative } from './desktopNativeI18n'
+import { createDesktopTrayImage } from './trayIcon'
 
 export interface CreateDesktopTrayOptions {
   appName: string
   iconPath: string
+  profile: BuddyRuntimeProfile
   language: LexoraConfig['desktop']['language']
   onOpenDesktop: () => void
   onQuit: () => void
@@ -17,7 +20,7 @@ export interface DesktopTrayController {
 }
 
 export function createDesktopTray(options: CreateDesktopTrayOptions): DesktopTrayController {
-  const tray = new Tray(nativeImage.createFromPath(options.iconPath))
+  const tray = new Tray(createDesktopTrayImage(options.iconPath, options.profile))
   let language = options.language
 
   const rebuildMenu = () => {
