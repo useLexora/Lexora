@@ -52,7 +52,7 @@ module.exports = withDesktopNativeVersion({
   files: [
     '.output/build/electron/**/*',
     'package.json',
-    'resources/icons/*.png',
+    'resources/icons/**/*.png',
     '!**/__tests__/**',
     '!node_modules/**/*.map',
     ...excludedDependencyFiles(target),

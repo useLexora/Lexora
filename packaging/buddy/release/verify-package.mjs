@@ -80,8 +80,8 @@ export function verifyDesktopDirectory(directory, targetId, cwd = repoRoot) {
     if (!entries.includes(`.output/build/electron/${entry}`))
       throw new Error(`Desktop archive is missing ${entry}`)
   }
-  for (const name of readdirSync(join(cwd, 'apps/buddy/resources/icons')).filter(name => name.endsWith('.png'))) {
-    const entry = `resources/icons/${name}`
+  for (const name of readdirSync(join(cwd, 'apps/buddy/resources/icons'), { recursive: true }).filter(name => name.endsWith('.png'))) {
+    const entry = `resources/icons/${name.replaceAll('\\', '/')}`
     if (!entries.includes(entry))
       throw new Error(`Desktop archive is missing ${entry}`)
     if (!asar.extractFile(archive, normalize(entry)).equals(readFileSync(join(cwd, 'apps/buddy', entry))))
