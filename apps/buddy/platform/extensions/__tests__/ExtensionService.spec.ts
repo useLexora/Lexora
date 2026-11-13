@@ -22,6 +22,7 @@ import { createExtensionInferenceClient } from '../../../shared/extensions/exten
 import { EXTENSION_NETWORK_LINK_BYTES_LIMIT } from '../../../shared/extensions/extensionNetwork'
 import { createExtensionNetworkClient, createExtensionResourceClient } from '../../../shared/extensions/extensionResourceClient'
 import { EXTENSION_CREATED_FILES_LIMIT } from '../../../shared/extensions/extensionResources'
+import * as inferencePlatform from '../../../shared/extensions/inferencePlatform'
 import { DEFAULT_THEME_PREFERENCE } from '../../../shared/theme/themePreferences'
 import { ThemeService } from '../../themes/ThemeService'
 import { ExtensionService } from '../ExtensionService'
@@ -912,6 +913,7 @@ it.each(['ready', 'checksum'] as const)('delivers resource progress before %s se
 })
 
 it('publishes deployment metadata without replacing the active model binding or rejecting its original invocation identity', async () => {
+  vi.spyOn(inferencePlatform, 'supportsInferenceRuntime').mockReturnValue(true)
   const f = await fixture({ inference: { bootstrap: '', executable: '', admit: async () => async () => {} } }, manifest({
     id: 'fixture.inference',
     apiVersion: 3,
