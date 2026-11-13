@@ -286,6 +286,7 @@ export class DesktopIntegrations {
     this.#tray = createDesktopTray({
       appName: paths.appName,
       iconPath: trayIconPath,
+      profile: paths.profile,
       language: runtime.language,
       onOpenDesktop: () => windows.show(),
       onQuit: this.#requestQuit,
