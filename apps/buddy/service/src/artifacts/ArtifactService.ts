@@ -7,7 +7,8 @@ import type {
   ArtifactRepository,
 } from '../storage/artifactRepository'
 import { randomUUID } from 'node:crypto'
-import { stat } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { access, stat } from 'node:fs/promises'
 import {
   basename,
   dirname,
@@ -472,8 +473,8 @@ export class ArtifactService {
 export class ArtifactError extends Error {
   readonly code: string
 
-  constructor(code: string) {
-    super('Lexora Buddy artifact operation failed')
+  constructor(code: string, options?: ErrorOptions) {
+    super('Lexora Buddy artifact operation failed', options)
     this.name = 'ArtifactError'
     this.code = code
   }
@@ -486,7 +487,7 @@ export class ArtifactPublicationError extends ArtifactError {
     const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' && /^[A-Z][A-Z0-9_]{0,79}$/.test(error.code)
       ? error.code
       : 'ARTIFACT_PUBLICATION_FAILED'
-    super(code)
+    super(code, { cause: error })
     this.name = 'ArtifactPublicationError'
     this.receipt = copyEventSnapshot(receipt)
   }
@@ -516,6 +517,42 @@ async function resolveArtifactLocation(
     canonicalPath: resolution.canonicalPath,
     grant,
     relativePath: child ? child.split(sep).join('/') : '.',
+  }
+}
+
+export async function preflightGeneratedImageOutput(input: Pick<GeneratedImagesInput, 'cwd' | 'grants' | 'outputPath'>, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted()
+  if (!input.outputPath.trim())
+    throw new ArtifactError('VALIDATION_FAILED')
+  const basePath = isAbsolute(input.outputPath) ? input.outputPath : resolve(input.cwd, input.outputPath)
+  const location = await resolveArtifactLocation(input.grants, generatedImagePath(basePath, 0, 'image/png'), 'create')
+  signal?.throwIfAborted()
+  const target = await stat(location.canonicalPath).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT')
+      throw error
+    return null
+  })
+  if (target) {
+    if (!target.isFile())
+      throw new ArtifactError('VALIDATION_FAILED')
+    await access(location.canonicalPath, constants.R_OK | constants.W_OK)
+  }
+  let parent = dirname(location.canonicalPath)
+  while (true) {
+    signal?.throwIfAborted()
+    const metadata = await stat(parent).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT' || dirname(parent) === parent)
+        throw error
+      return null
+    })
+    if (metadata) {
+      if (!metadata.isDirectory())
+        throw new ArtifactError('VALIDATION_FAILED')
+      await access(parent, constants.W_OK | constants.X_OK)
+      signal?.throwIfAborted()
+      return
+    }
+    parent = dirname(parent)
   }
 }
 

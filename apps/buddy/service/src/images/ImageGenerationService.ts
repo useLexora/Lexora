@@ -1,16 +1,22 @@
 import type { Api, ImageContent, Model } from '@earendil-works/pi-ai'
+import type { ImageGenerationRetainedOutput } from '../../../shared/images/imageGeneration'
 import type { ImageOutputOptions, ImagePreferencesSnapshot } from '../../../shared/images/imagePreferences'
 import type { CapturedFileWriter } from '../changes/CapturedFileWriter'
 import type { DirectoryGrant } from '../directories/resolveGrantedPath'
 import type { ImageGenerationGateway } from './ImageGenerationGateway'
+import type { ImageGenerationMaterialWriter } from './ImageGenerationMaterialStore'
+import type { ImageReferenceAccess } from './ImageReferenceAccess'
 import type { ImageRequestStore } from './ImageRequestStore'
+import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
 import { extname, resolve } from 'node:path'
 import { diagnosticTransportCode } from '../../../shared/diagnostics/providerRequestDiagnostic'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
+import { readImageFileErrorCode } from '../../../shared/images/imageGeneration'
 import { imageOutputOptionsSchema } from '../../../shared/images/imagePreferences'
-import { ArtifactPublicationError } from '../artifacts/ArtifactService'
+import { ArtifactPublicationError, preflightGeneratedImageOutput } from '../artifacts/ArtifactService'
 import { ImageGenerationError, readImageGenerationError } from './ImageGenerationGateway'
+import { ImageGenerationMaterialError } from './ImageGenerationMaterialStore'
 import { ImageOperationLifecycle } from './ImageOperationLifecycle'
 import { validateGeneratedImages } from './imageResponseBody'
 
@@ -18,7 +24,7 @@ export interface GenerateConversationImageInput {
   output?: Partial<ImageOutputOptions>
   outputPath: string
   prompt: string
-  reference?: { mode: 'latest' } | { mode: 'resources', resourceIds: readonly string[] }
+  referenceIds?: readonly string[]
 }
 
 interface ConversationImageSource {
@@ -30,9 +36,9 @@ interface ConversationImageSource {
 }
 
 export interface ImageGenerationServiceOptions {
+  writeGeneratedImageMaterial?: ImageGenerationMaterialWriter
   requests?: Pick<ImageRequestStore, 'begin' | 'completed'>
   artifactService: ConversationImageSource & {
-    listConversationArtifacts: (conversationId: string) => Array<{ id: string, kind: string, mimeType: string, createdAt: string, updatedAt: string }>
     registerGeneratedImages: (input: {
       conversationId: string
       cwd: string
@@ -42,9 +48,8 @@ export interface ImageGenerationServiceOptions {
       sourceArtifactId: string | null
     }, writeFiles?: CapturedFileWriter) => Promise<Array<{ id: string, currentPath: string, mimeType: string }>>
   }
-  attachmentService: ConversationImageSource & {
-    listForConversation: (conversationId: string) => Array<{ id: string, mimeType: string, createdAt: string }>
-  }
+  attachmentService: ConversationImageSource
+  referenceAccess: Pick<ImageReferenceAccess, 'authorize'>
   conversationId: string
   cwd: string
   grants: readonly DirectoryGrant[]
@@ -60,8 +65,10 @@ export class ImageGenerationService {
   constructor(options: ImageGenerationServiceOptions) {
     this.#options = {
       requests: options.requests,
+      writeGeneratedImageMaterial: options.writeGeneratedImageMaterial,
       artifactService: options.artifactService,
       attachmentService: options.attachmentService,
+      referenceAccess: options.referenceAccess,
       conversationId: options.conversationId,
       cwd: options.cwd,
       get grants() { return options.grants },
@@ -91,16 +98,18 @@ export class ImageGenerationService {
         throw new ImageGenerationError('IMAGE_GENERATION_UNSUPPORTED', { outcome: 'failed' })
       let references: { artifactIds: string[], images: ImageContent[] } = { artifactIds: [], images: [] }
       try {
-        if (request.reference)
-          references = await this.#materializeReferences(request.reference, directories, signal)
+        if (request.referenceIds) {
+          if (!request.referenceIds.length || new Set(request.referenceIds).size !== request.referenceIds.length)
+            throw new Error('INVALID_IMAGE_REFERENCES')
+          await this.#options.referenceAccess.authorize(request.referenceIds, signal)
+          references = await this.#materializeReferences(request.referenceIds, directories, signal)
+        }
       }
       catch (cause) {
         signal.throwIfAborted()
         throw new ImageGenerationError('IMAGE_GENERATION_REFERENCE_UNAVAILABLE', { cause, outcome: 'failed' })
       }
       signal.throwIfAborted()
-      if (request.reference && !references.images.length)
-        throw new ImageGenerationError('IMAGE_GENERATION_REFERENCE_UNAVAILABLE', { outcome: 'failed' })
       const output = imageOutputOptionsSchema.parse(request.output ?? {})
       const destination = resolve(this.#options.cwd, request.outputPath.trim())
       const hash = (value: string) => createHash('sha256').update(value).digest('hex')
@@ -108,7 +117,11 @@ export class ImageGenerationService {
         ? await this.#options.requests.begin(this.#options.conversationId, invocation.runId, invocation.toolCallId, {
             fingerprint: hash(JSON.stringify({ prompt: request.prompt.trim(), output, references: references.images.map(image => ({ mimeType: image.mimeType, digest: hash(image.data) })) })),
             destination: hash(extname(destination) ? destination : `${destination}.png`),
-          })
+          }, references.images.map((image, index) => ({
+            referenceId: request.referenceIds![index]!,
+            mimeType: image.mimeType,
+            sha256: createHash('sha256').update(Buffer.from(image.data, 'base64')).digest('hex'),
+          })))
         : undefined
       if (begun?.kind === 'completed')
         return { value: { ...begun.result, request: begun.request }, artifactIds: begun.result.artifactIds }
@@ -116,8 +129,20 @@ export class ImageGenerationService {
       let submitted = false
       let responseId: string | null = null
       let artifactIds: string[] = []
+      const retainedOutputs: ImageGenerationRetainedOutput[] = []
       let stage: 'preparing' | 'submitting' | 'receiving' | 'publishing' = 'preparing'
       try {
+        try {
+          await preflightGeneratedImageOutput({ cwd: this.#options.cwd, grants: directories, outputPath: request.outputPath.trim() }, signal)
+        }
+        catch (cause) {
+          signal.throwIfAborted()
+          throw new ImageGenerationError('IMAGE_GENERATION_OUTPUT_UNAVAILABLE', { cause, outcome: 'failed', diagnostic: { fileErrorCode: readImageFileErrorCode(cause) ?? 'ARTIFACT_PUBLICATION_FAILED' } })
+        }
+        signal.throwIfAborted()
+        const writeMaterial = this.#options.writeGeneratedImageMaterial
+        if (!writeMaterial || !writeFiles)
+          throw new ImageGenerationError('IMAGE_GENERATION_FAILED', { outcome: 'failed', diagnostic: { fileErrorCode: 'IMAGE_MATERIAL_UNAVAILABLE' } })
         progress('processing')
         const generated = await this.#options.imageGenerationGateway.generate({
           requestId: receipt?.request.requestId ?? randomUUID(),
@@ -140,6 +165,18 @@ export class ImageGenerationService {
         progress('result-received')
         signal.throwIfAborted()
         stage = 'publishing'
+        for (const image of generated.images) {
+          signal.throwIfAborted()
+          try {
+            retainedOutputs.push(await writeMaterial(image, directories, writeFiles, signal))
+          }
+          catch (error) {
+            if (error instanceof ImageGenerationMaterialError)
+              retainedOutputs.push(error.retainedOutput)
+            throw error
+          }
+          await receipt?.retain(retainedOutputs)
+        }
         progress('publishing')
         signal?.throwIfAborted()
         const artifacts = await this.#options.artifactService.registerGeneratedImages({
@@ -158,13 +195,15 @@ export class ImageGenerationService {
       }
       catch (error) {
         const publication = error instanceof ArtifactPublicationError ? error.receipt : undefined
+        const fileErrorCode = readImageFileErrorCode(error) ?? (stage === 'publishing' ? 'ARTIFACT_PUBLICATION_FAILED' : undefined)
         const failure = error instanceof ImageGenerationError
           ? readImageGenerationError(error)
-          : { code: 'IMAGE_GENERATION_FAILED' as const, outcome: stage === 'publishing' ? 'partial' as const : submitted || stage !== 'preparing' ? 'unknown' as const : 'failed' as const, diagnostic: { transportCode: diagnosticTransportCode(error) } }
-        const diagnostic = { stage, ...(responseId ? { responseId } : {}), ...(receipt ? { localRequestId: receipt.request.requestId } : {}), ...failure.diagnostic }
-        const normalized = new ImageGenerationError(failure.code, { cause: error, outcome: failure.outcome, diagnostic, request: receipt?.request, artifactIds: publication?.artifactIds ?? artifactIds })
-        await receipt?.fail({ code: normalized.code, outcome: normalized.outcome, diagnostic: normalized.diagnostic }, normalized.artifactIds)
-        signal.throwIfAborted()
+          : { code: 'IMAGE_GENERATION_FAILED' as const, outcome: stage === 'publishing' ? 'partial' as const : submitted || stage !== 'preparing' ? 'unknown' as const : 'failed' as const, diagnostic: fileErrorCode ? { fileErrorCode } : { transportCode: diagnosticTransportCode(error) } }
+        const diagnostic = { stage, ...(fileErrorCode ? { fileErrorCode } : {}), ...(responseId ? { responseId } : {}), ...(receipt ? { localRequestId: receipt.request.requestId } : {}), ...failure.diagnostic }
+        const normalized = new ImageGenerationError(failure.code, { cause: error, outcome: stage === 'publishing' ? 'partial' : failure.outcome, diagnostic, request: receipt?.request, artifactIds: publication?.artifactIds ?? artifactIds, ...(retainedOutputs.length ? { retainedOutputs } : {}) })
+        await receipt?.fail({ code: normalized.code, outcome: normalized.outcome, diagnostic: normalized.diagnostic, ...(normalized.retainedOutputs ? { retainedOutputs: normalized.retainedOutputs } : {}) }, normalized.artifactIds).catch(() => {})
+        if (!retainedOutputs.length)
+          signal.throwIfAborted()
         throw normalized
       }
     })
@@ -175,41 +214,28 @@ export class ImageGenerationService {
   }
 
   async #materializeReferences(
-    reference: NonNullable<GenerateConversationImageInput['reference']>,
+    referenceIds: readonly string[],
     grants: readonly DirectoryGrant[],
     signal: AbortSignal,
   ): Promise<{ artifactIds: string[], images: ImageContent[] }> {
     const { artifactService, attachmentService, conversationId } = this.#options
-    let resourceIds: readonly string[]
-    if (reference.mode === 'latest') {
-      const candidates = [
-        ...artifactService.listConversationArtifacts(conversationId)
-          .filter(record => record.kind === 'file' && record.mimeType.startsWith('image/'))
-          .map(record => ({ id: record.id, timestamp: Date.parse(record.updatedAt || record.createdAt) || 0 })),
-        ...attachmentService.listForConversation(conversationId)
-          .filter(record => record.mimeType.startsWith('image/'))
-          .map(record => ({ id: record.id, timestamp: Date.parse(record.createdAt) || 0 })),
-      ]
-      const latest = candidates.reduce<(typeof candidates)[number] | undefined>((selected, candidate) => !selected || candidate.timestamp >= selected.timestamp ? candidate : selected, undefined)
-      resourceIds = latest ? [latest.id] : []
-    }
-    else {
-      resourceIds = reference.resourceIds
-    }
     const artifactIds: string[] = []
     const images: ImageContent[] = []
-    for (const resourceId of resourceIds) {
+    for (const referenceId of referenceIds) {
+      signal.throwIfAborted()
+      let materialized: Awaited<ReturnType<ConversationImageSource['materializeConversationImages']>>
       try {
-        const artifacts = await artifactService.materializeConversationImages(conversationId, [resourceId], { cwd: this.#options.cwd, grants, signal })
-        artifactIds.push(resourceId)
-        images.push(...artifacts.images)
+        materialized = await artifactService.materializeConversationImages(conversationId, [referenceId], { cwd: this.#options.cwd, grants, signal })
+        artifactIds.push(referenceId)
       }
       catch (error) {
         if ((error as { code?: unknown }).code !== 'ARTIFACT_NOT_FOUND')
           throw error
-        const attachments = await attachmentService.materializeConversationImages(conversationId, [resourceId])
-        images.push(...attachments.images)
+        materialized = await attachmentService.materializeConversationImages(conversationId, [referenceId])
       }
+      if (materialized.images.length !== 1 || materialized.records.length !== 1 || materialized.records[0]!.id !== referenceId)
+        throw new Error('IMAGE_REFERENCE_MISMATCH')
+      images.push(materialized.images[0]!)
     }
     return { artifactIds, images }
   }

@@ -1,11 +1,11 @@
 import type { ToolCallEvent } from '@earendil-works/pi-coding-agent'
-import type { ImageGenerationErrorDiagnostic, ImageGenerationOutcome, ImageRequestRef } from '../../../shared/images/imageGeneration'
+import type { ImageGenerationErrorDiagnostic, ImageGenerationOutcome, ImageGenerationRetainedOutput, ImageRequestRef } from '../../../shared/images/imageGeneration'
 import type { BuddyToolPresentation } from '../../../shared/runs/runEventPresentation'
 import type { BuddyRunOutputPayload } from '../../../shared/runs/runOutput'
 import type { BuddyToolClassification } from '../approvals/toolClassification'
 import type { CreateBuddyToolPresentationInput } from '../events/toolPresentationSupport'
 import { BUDDY_ATTACHMENT_COUNT_LIMIT } from '../../../shared/conversation/attachmentPolicy'
-import { imageGenerationFailureSchema, imageRequestRefSchema, readImageDiagnostic } from '../../../shared/images/imageGeneration'
+import { imageGenerationFailureSchema, imageGenerationRetainedOutputSchema, imageRequestRefSchema, readImageDiagnostic } from '../../../shared/images/imageGeneration'
 import { imageSourceSchema } from '../../../shared/images/imagePreferences'
 import {
   readOptionalString,
@@ -20,6 +20,7 @@ export interface ImageGenerationToolDetails {
   code?: string
   diagnostic?: ImageGenerationErrorDiagnostic
   outputs?: Array<{ artifactId: string, path: string, mimeType: string }>
+  retainedOutputs?: ImageGenerationRetainedOutput[]
   outcome?: ImageGenerationOutcome
   request?: ImageRequestRef
   responseId: string | null
@@ -97,6 +98,7 @@ export function readImageGenerationToolDetails(value: unknown): ImageGenerationT
   const diagnostic = readImageDiagnostic(details.diagnostic)
   const request = imageRequestRefSchema.safeParse(details.request)
   const source = imageSourceSchema.safeParse(details.source)
+  const retainedOutputs = imageGenerationRetainedOutputSchema.array().safeParse(details.retainedOutputs)
   return {
     artifactIds,
     ...(['failed', 'unknown', 'partial'].includes(details.outcome as string) ? { outcome: details.outcome as ImageGenerationOutcome } : {}),
@@ -104,6 +106,7 @@ export function readImageGenerationToolDetails(value: unknown): ImageGenerationT
     ...(typeof details.code === 'string' && details.code ? { code: details.code } : {}),
     ...(diagnostic ? { diagnostic } : {}),
     ...(source.success ? { source: source.data } : {}),
+    ...(retainedOutputs.success ? { retainedOutputs: retainedOutputs.data } : {}),
     responseId: typeof details.responseId === 'string' && details.responseId
       ? details.responseId
       : null,
@@ -113,15 +116,9 @@ export function readImageGenerationToolDetails(value: unknown): ImageGenerationT
 function readImageReference(
   arguments_: Record<string, unknown> | null,
 ): Extract<BuddyToolPresentation, { card: 'image' }>['reference'] {
-  const reference = readRecord(arguments_?.reference)
-  if (reference?.mode === 'latest') {
-    return {
-      mode: 'latest',
-    }
-  }
-  if (reference?.mode !== 'resources' || !Array.isArray(reference.resourceIds))
+  if (!Array.isArray(arguments_?.referenceIds))
     return null
-  const resourceIds = [...new Set(reference.resourceIds.filter(
+  const resourceIds = [...new Set(arguments_.referenceIds.filter(
     (value): value is string => typeof value === 'string' && Boolean(value),
   ))].slice(0, 4)
   return resourceIds.length > 0

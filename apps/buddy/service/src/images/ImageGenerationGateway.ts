@@ -1,7 +1,7 @@
 import type { Api, ImageContent, Model } from '@earendil-works/pi-ai'
-import type { ImageGenerationErrorCode, ImageGenerationErrorDiagnostic, ImageGenerationOutcome, ImageRequestRef } from '../../../shared/images/imageGeneration'
+import type { ImageGenerationErrorCode, ImageGenerationErrorDiagnostic, ImageGenerationOutcome, ImageGenerationRetainedOutput, ImageRequestRef } from '../../../shared/images/imageGeneration'
 import type { ImageOutputOptions, ImagePreferencesSnapshot, ImageSource, ImageSupport, ImageTarget } from '../../../shared/images/imagePreferences'
-import { readImageDiagnostic } from '../../../shared/images/imageGeneration'
+import { imageGenerationRetainedOutputSchema, readImageDiagnostic } from '../../../shared/images/imageGeneration'
 
 export { IMAGE_GENERATION_ERROR_CODES } from '../../../shared/images/imageGeneration'
 export type { ImageGenerationErrorCode, ImageGenerationErrorDiagnostic } from '../../../shared/images/imageGeneration'
@@ -51,10 +51,11 @@ export class ImageGenerationError extends Error {
   readonly diagnostic: ImageGenerationErrorDiagnostic | null
   readonly request?: ImageRequestRef
   readonly artifactIds: string[]
+  readonly retainedOutputs?: ImageGenerationRetainedOutput[]
 
   constructor(
     code: ImageGenerationErrorCode,
-    options?: ErrorOptions & { diagnostic?: ImageGenerationErrorDiagnostic, retryable?: boolean, outcome?: ImageGenerationOutcome, request?: ImageRequestRef, artifactIds?: readonly string[] },
+    options?: ErrorOptions & { diagnostic?: ImageGenerationErrorDiagnostic, retryable?: boolean, outcome?: ImageGenerationOutcome, request?: ImageRequestRef, artifactIds?: readonly string[], retainedOutputs?: readonly ImageGenerationRetainedOutput[] },
   ) {
     super('Lexora Buddy image generation failed', { cause: options?.cause })
     this.name = 'ImageGenerationError'
@@ -64,6 +65,8 @@ export class ImageGenerationError extends Error {
     this.diagnostic = readImageDiagnostic(options?.diagnostic)
     this.request = options?.request
     this.artifactIds = [...options?.artifactIds ?? []]
+    if (options?.retainedOutputs)
+      this.retainedOutputs = options.retainedOutputs.map(output => imageGenerationRetainedOutputSchema.parse(output))
   }
 }
 
@@ -73,8 +76,9 @@ export function readImageGenerationError(error: unknown): {
   outcome: ImageGenerationOutcome
   request?: ImageRequestRef
   artifactIds?: string[]
+  retainedOutputs?: ImageGenerationRetainedOutput[]
 } {
   return error instanceof ImageGenerationError
-    ? { code: error.code, diagnostic: error.diagnostic, outcome: error.outcome, artifactIds: error.artifactIds, ...(error.request ? { request: error.request } : {}) }
+    ? { code: error.code, diagnostic: error.diagnostic, outcome: error.outcome, artifactIds: error.artifactIds, ...(error.retainedOutputs ? { retainedOutputs: error.retainedOutputs } : {}), ...(error.request ? { request: error.request } : {}) }
     : { code: 'IMAGE_GENERATION_FAILED', diagnostic: null, outcome: 'unknown' }
 }

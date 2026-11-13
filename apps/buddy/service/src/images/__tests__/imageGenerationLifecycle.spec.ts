@@ -14,13 +14,16 @@ import { describe, expect, it, vi } from 'vitest'
 import { createPiEventProjectionState, projectPiEvent } from '../../agent/events/projectPiEvent'
 import { createIsolatedBuddySession } from '../../agent/sessions/__tests__/isolatedBuddySession'
 import { createImageGenerationExtension } from '../imageGenerationExtension'
+import { ImageGenerationMaterialStore } from '../ImageGenerationMaterialStore'
 import { ImageGenerationService } from '../ImageGenerationService'
 import { IMAGE_GENERATION_TOOL_NAME } from '../imageGenerationToolContract'
 import { OpenAiImageGenerationService } from '../OpenAiImageGenerationService'
+import { createImagePublicationFixture } from './imagePublicationFixture'
 
 describe('image generation through the Pi session', () => {
   it.each(['incomplete', 'cancel', 'json-disconnect'] as const)('settles a mixed image batch and releases its HTTP requests on %s', async (ending) => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'buddy-image-session-')))
+    const publication = createImagePublicationFixture(root)
     const codex = ending !== 'json-disconnect'
     const requests: string[] = []
     const closed: string[] = []
@@ -82,31 +85,25 @@ describe('image generation through the Pi session', () => {
       vi.spyOn(runtime, 'streamSimple').mockImplementation(target => assistantResponse(target, turns++ === 0))
       const source = { listConversationArtifacts: () => [], listForConversation: () => [], materializeConversationImages: async () => ({ images: [], records: [] }) }
       const published: string[] = []
-      service = new ImageGenerationService({
-        conversationId: 'conversation-1',
-        cwd: root,
-        grants: [],
-        attachmentService: source,
-        artifactService: {
-          ...source,
-          async registerGeneratedImages(input) {
-            expect(input.images).toEqual([{ bytes: new Uint8Array(png), mimeType: 'image/png' }])
-            published.push(input.outputPath)
-            return [{ id: 'artifact-1', currentPath: join(root, 'success.png'), mimeType: 'image/png' }]
-          },
+      const materials = new ImageGenerationMaterialStore(root, 'conversation-1')
+      service = new ImageGenerationService({ writeGeneratedImageMaterial: (image, grants, writeFiles, signal) => materials.write(image, grants, writeFiles, signal), referenceAccess: { authorize: () => {} }, conversationId: 'conversation-1', cwd: root, grants: [{ grantId: 'workspace', kind: 'workspace', root, canonicalRoot: root }], attachmentService: source, artifactService: {
+        ...source,
+        async registerGeneratedImages(input) {
+          expect(input.images).toEqual([{ bytes: new Uint8Array(png), mimeType: 'image/png' }])
+          published.push(input.outputPath)
+          return [{ id: 'artifact-1', currentPath: join(root, 'success.png'), mimeType: 'image/png' }]
         },
-        imageGenerationGateway: new OpenAiImageGenerationService({
-          modelRuntime: runtime,
-          resolveCredentialMetadata: id => id === model.provider ? { type: codex ? 'oauth' : 'api_key', revision: 1 } : null,
-          fetch: async (url, init) => {
-            expect(url).toBe(`${model.baseUrl}${codex ? '/codex' : ''}/responses`)
-            const response = await fetch(url, init)
-            if (ending === 'json-disconnect' && JSON.parse(String(init?.body)).input[0].content[0].text === 'pending')
-              pendingResponse!.destroy()
-            return response
-          },
-        }),
-      })
+      }, imageGenerationGateway: new OpenAiImageGenerationService({
+        modelRuntime: runtime,
+        resolveCredentialMetadata: id => id === model.provider ? { type: codex ? 'oauth' : 'api_key', revision: 1 } : null,
+        fetch: async (url, init) => {
+          expect(url).toBe(`${model.baseUrl}${codex ? '/codex' : ''}/responses`)
+          const response = await fetch(url, init)
+          if (ending === 'json-disconnect' && JSON.parse(String(init?.body)).input[0].content[0].text === 'pending')
+            pendingResponse!.destroy()
+          return response
+        },
+      }) })
       const operations: ImageOperationEvent[] = []
       service.onDidChange(event => operations.push(event))
       created = await createIsolatedBuddySession({
@@ -122,7 +119,7 @@ describe('image generation through the Pi session', () => {
         modelRuntime: runtime,
         thinkingLevel: 'off',
         resources: { skillReadRoots: [], skillReferences: [], approvedSkills: [], context: { agentsFiles: [], diagnostics: [] }, directoryContext: '', revision: 'empty' },
-        inProcessExtensions: [createImageGenerationExtension({ getRunId: () => 'run-1', service })],
+        inProcessExtensions: [createImageGenerationExtension({ createFileWriter: () => publication.writeFiles, getRunId: () => 'run-1', service })],
       })
       created.session.setActiveToolsByName([IMAGE_GENERATION_TOOL_NAME])
       const state = createPiEventProjectionState({ canonicalRoot: root })
@@ -167,6 +164,7 @@ describe('image generation through the Pi session', () => {
       await service?.dispose()
       await created?.shutdown('quit')
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+      await publication.dispose()
       await rm(root, { recursive: true, force: true })
     }
   })

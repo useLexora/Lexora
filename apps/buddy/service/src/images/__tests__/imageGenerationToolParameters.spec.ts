@@ -21,17 +21,28 @@ describe('image generation parameter contracts', () => {
   it('does not advertise omittable output when generation has no default candidate but editing does', () => {
     const schema = createImageGenerationParameters({ generate: [generator], edit: [editor] })
     expect(Check(schema, input)).toBe(false)
-    expect(Check(schema, { ...input, output: {}, reference: { mode: 'latest' } })).toBe(true)
+    expect(Check(schema, { ...input, output: {}, referenceIds: ['reference-1'] })).toBe(true)
     expect(Check(schema, { ...input, output: { size: '1024x1024', quality: 'high', background: 'opaque' } })).toBe(true)
+  })
+
+  it.each([
+    { referenceIds: [] },
+    { referenceIds: ['one', 'one'] },
+    { referenceIds: ['one', 'two', 'three'] },
+    { referenceIds: [' '] },
+    { reference: { mode: 'latest' } },
+    { reference: { mode: 'resources', resourceIds: ['one'] } },
+  ])('rejects ambiguous or legacy selections: %j', (selection) => {
+    expect(Check(createImageGenerationParameters({ generate: [], edit: [editor] }), { ...input, ...selection })).toBe(false)
   })
 
   it('requires references for edit-only routes and excludes them for generation-only routes', () => {
     const editOnly = createImageGenerationParameters({ generate: [], edit: [editor] })
     expect(Check(editOnly, input)).toBe(false)
-    expect(Check(editOnly, { ...input, reference: { mode: 'latest' } })).toBe(true)
+    expect(Check(editOnly, { ...input, referenceIds: ['reference-1'] })).toBe(true)
     const generateOnly = createImageGenerationParameters({ generate: [generator], edit: [] })
-    expect(generateOnly.properties).not.toHaveProperty('reference')
-    expect(Check(generateOnly, { ...input, output: { size: '1024x1024', quality: 'high', background: 'opaque' }, reference: { mode: 'latest' } })).toBe(false)
+    expect(generateOnly.properties).not.toHaveProperty('referenceIds')
+    expect(Check(generateOnly, { ...input, output: { size: '1024x1024', quality: 'high', background: 'opaque' }, referenceIds: ['reference-1'] })).toBe(false)
   })
 })
 
