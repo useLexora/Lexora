@@ -2,29 +2,39 @@ import type { Model } from '@earendil-works/pi-ai'
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import type { ImageGenerationServiceOptions } from '../ImageGenerationService'
 import { Buffer } from 'node:buffer'
-
-import { describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import { createImageGenerationExtension } from '../imageGenerationExtension'
 import { ImageGenerationError } from '../ImageGenerationGateway'
+import { ImageGenerationMaterialStore } from '../ImageGenerationMaterialStore'
 import { ImageGenerationService } from '../ImageGenerationService'
 import {
   classifyImageGenerationTool,
   IMAGE_GENERATION_TOOL_NAME,
 } from '../imageGenerationToolContract'
+import { createImagePublicationFixture } from './imagePublicationFixture'
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAFElEQVR4AQEJAPb/AAD/AP//AAD/EPgD/UE7EkoAAAAASUVORK5CYII=', 'base64')
+const workspace = realpathSync(mkdtempSync(join(tmpdir(), 'lexora-image-tool-')))
+const publication = createImagePublicationFixture(workspace)
+afterAll(async () => {
+  await publication.dispose()
+  rmSync(workspace, { recursive: true, force: true })
+})
 const workspaceContext = {
-  cwd: '/workspace',
+  cwd: workspace,
   grants: [{
-    canonicalRoot: '/workspace',
+    canonicalRoot: workspace,
     grantId: 'workspace-1',
     kind: 'workspace' as const,
-    root: '/workspace',
+    root: workspace,
   }],
 }
 
 describe('imageGenerationExtension', () => {
-  it('generates from the latest conversation image and returns immutable artifact handles', async () => {
+  it('generates from explicit references and returns artifact handles', async () => {
     const materializeConversationImages = vi.fn(async () => ({
       images: [{
         data: png.toString('base64'),
@@ -35,7 +45,7 @@ describe('imageGenerationExtension', () => {
     }))
     const registerGeneratedImages = vi.fn(async () => [{
       id: 'generated-1',
-      currentPath: '/workspace/images/像素风角色.png',
+      currentPath: join(workspace, 'images/像素风角色.png'),
       mimeType: 'image/png',
     }])
     const generate = vi.fn(async () => ({
@@ -46,12 +56,10 @@ describe('imageGenerationExtension', () => {
     const extension = createTestImageExtension({
       ...workspaceContext,
       artifactService: {
-        listConversationArtifacts: () => [{ id: 'reference-1', kind: 'file', mimeType: 'image/png', createdAt: '2026-10-31T00:00:00Z', updatedAt: '2026-10-31T00:00:00Z' }],
         materializeConversationImages,
         registerGeneratedImages,
       },
       attachmentService: {
-        listForConversation: () => [],
         materializeConversationImages: vi.fn(),
       },
       conversationId: 'conversation-1',
@@ -79,7 +87,7 @@ describe('imageGenerationExtension', () => {
     await expect(execute('tool-call-1', {
       outputPath: 'images/像素风角色.png',
       prompt: 'Turn the reference into Q-style pixel art',
-      reference: { mode: 'latest' },
+      referenceIds: ['reference-1'],
     }, new AbortController().signal, undefined, { model: openAiModel() })).resolves.toMatchObject({
       content: [{ type: 'text' }],
       details: {
@@ -94,12 +102,32 @@ describe('imageGenerationExtension', () => {
     }))
     expect(registerGeneratedImages).toHaveBeenCalledWith(expect.objectContaining({
       conversationId: 'conversation-1',
-      cwd: '/workspace',
+      cwd: workspace,
       grants: workspaceContext.grants,
       images: [expect.objectContaining({ mimeType: 'image/png' })],
       outputPath: 'images/像素风角色.png',
       sourceArtifactId: 'reference-1',
-    }), undefined)
+    }), publication.writeFiles)
+  })
+
+  it.each([
+    { reference: { mode: 'latest' } },
+    { reference: { mode: 'resources', resourceIds: ['reference-1'] } },
+    { referenceIds: [] },
+    { referenceIds: ['reference-1', 'reference-1'] },
+  ])('rejects invalid reference selection before submitting: %j', async (selection) => {
+    let tool: ToolDefinition | undefined
+    let submitted = 0
+    createImageGenerationExtension({
+      getRunId: () => 'run-1',
+      service: { supports: () => true, generate: async () => {
+        submitted++
+        return { artifactIds: [], outputs: [], responseId: null }
+      } },
+    }).factory({ on: () => {}, registerTool: (registered: ToolDefinition) => tool = registered } as never)
+    const result = await tool!.execute!('legacy-call', { outputPath: 'result.png', prompt: 'Edit the image', ...selection }, undefined, undefined, { model: openAiModel() } as never)
+    expect(result.details).toMatchObject({ code: 'VALIDATION_FAILED', outcome: 'failed', artifactIds: [] })
+    expect(submitted).toBe(0)
   })
 
   it('declares image generation as a first-party artifact write', () => {
@@ -137,9 +165,10 @@ describe('imageGenerationExtension', () => {
 
   it.each([
     ['IMAGE_GENERATION_REFERENCE_UNAVAILABLE', 'failed', 'No image request was submitted'],
+    ['IMAGE_GENERATION_OUTPUT_UNAVAILABLE', 'failed', 'preserve the intended referenceIds'],
     ['IMAGE_GENERATION_INVALID_RESPONSE', 'unknown', 'do not automatically repeat'],
-    ['IMAGE_GENERATION_BLOCKED', 'unknown', 'Inspect any existing artifacts before choosing another approach'],
-  ] as const)('distinguishes reference preparation failure from an unknown provider result: %s', async (code, outcome, recovery) => {
+    ['IMAGE_GENERATION_BLOCKED', 'unknown', 'No new image request was submitted'],
+  ] as const)('distinguishes preparation failure from an unknown provider result: %s', async (code, outcome, recovery) => {
     let tool: ToolDefinition | undefined
     createImageGenerationExtension({
       getRunId: () => 'run-1',
@@ -151,13 +180,60 @@ describe('imageGenerationExtension', () => {
     expect(JSON.stringify(result)).not.toContain('private body')
   })
 
+  it.each(['IMAGE_GENERATION_FAILED', 'IMAGE_GENERATION_BLOCKED'] as const)('provides copy-only recovery of retained results without disguising publication failure: %s', async (code) => {
+    const retainedOutputs = [{ path: join(workspace, '.image-generation', 'result.png'), mimeType: 'image/png' as const, sizeBytes: png.length, sha256: 'a'.repeat(64) }]
+    let tool: ToolDefinition | undefined
+    createImageGenerationExtension({
+      getRunId: () => 'run-1',
+      service: { supports: () => true, generate: async () => {
+        throw new ImageGenerationError(code, { outcome: 'partial', diagnostic: { stage: 'publishing', fileErrorCode: 'EACCES' }, retainedOutputs, cause: new Error('private filesystem error') })
+      } },
+    }).factory({ on: () => {}, registerTool: (registered: ToolDefinition) => tool = registered } as never)
+    const result = await tool!.execute!('publication-call', { outputPath: 'output/image.png', prompt: 'Preserve image 1' }, undefined, undefined, { model: openAiModel() } as never)
+    expect(result.details).toMatchObject({ code, outcome: 'partial', artifactIds: [], retainedOutputs, diagnostic: { fileErrorCode: 'EACCES' } })
+    const content = result.content[0]!
+    expect(content.type).toBe('text')
+    expect(JSON.parse(content.type === 'text' ? content.text : '')).toMatchObject({
+      outputPath: 'output/image.png',
+      retainedOutputs,
+      message: expect.stringContaining('Recover by copying those files'),
+    })
+    expect(JSON.stringify(result)).toContain('do not call lexora_image_generate again')
+    expect(JSON.stringify(result)).not.toContain('private filesystem error')
+  })
+
+  it.each([
+    { code: 'IMAGE_GENERATION_REFERENCE_UNAVAILABLE' as const, diagnostic: undefined, referenceIds: [`image:${'a'.repeat(64)}`], message: 'inspection-only handles for lexora_image_read' },
+    { code: 'IMAGE_GENERATION_FAILED' as const, diagnostic: { stage: 'preparing' as const, fileErrorCode: 'IMAGE_MATERIAL_UNAVAILABLE' as const }, referenceIds: undefined, message: 'the host cannot retain generated image results' },
+  ])('identifies the actual preparation problem instead of suggesting image reinterpretation: $code', async ({ code, diagnostic, referenceIds, message }) => {
+    let tool: ToolDefinition | undefined
+    createImageGenerationExtension({
+      getRunId: () => 'run-1',
+      service: { supports: () => true, generate: async () => { throw new ImageGenerationError(code, { outcome: 'failed', diagnostic }) } },
+    }).factory({ on: () => {}, registerTool: (registered: ToolDefinition) => tool = registered } as never)
+    const result = await tool!.execute!('preparation-call', { outputPath: 'image.png', prompt: 'Preserve the reference', ...(referenceIds ? { referenceIds } : {}) }, undefined, undefined, { model: openAiModel() } as never)
+    expect(result.details).toMatchObject({ code, outcome: 'failed' })
+    expect(JSON.stringify(result.content)).toContain(message)
+    expect(JSON.stringify(result.content)).toContain('No image request was submitted')
+  })
+
+  it('does not imply that an unpublished legacy result has an available retained file', async () => {
+    let tool: ToolDefinition | undefined
+    createImageGenerationExtension({
+      getRunId: () => 'run-1',
+      service: { supports: () => true, generate: async () => { throw new ImageGenerationError('IMAGE_GENERATION_FAILED', { outcome: 'partial' }) } },
+    }).factory({ on: () => {}, registerTool: (registered: ToolDefinition) => tool = registered } as never)
+    const result = await tool!.execute!('legacy-call', { outputPath: 'image.png', prompt: 'Create' }, undefined, undefined, { model: openAiModel() } as never)
+    expect(JSON.stringify(result.content)).toContain('No published artifact or retained output is available in this receipt')
+    expect(result.details).not.toHaveProperty('retainedOutputs')
+  })
+
   it('returns safe provider diagnostics to the model', async () => {
     let tool: ToolDefinition | undefined
     createTestImageExtension({
       ...workspaceContext,
       artifactService: emptyArtifactService(),
       attachmentService: {
-        listForConversation: () => [],
         materializeConversationImages: vi.fn(),
       },
       conversationId: 'conversation-1',
@@ -210,7 +286,6 @@ describe('imageGenerationExtension', () => {
 
 function emptyArtifactService() {
   return {
-    listConversationArtifacts: () => [],
     materializeConversationImages: vi.fn(async () => ({ images: [], records: [] })),
     registerGeneratedImages: vi.fn(async () => []),
   }
@@ -231,6 +306,7 @@ function openAiModel(): Model<'openai-responses'> {
   }
 }
 
-function createTestImageExtension(options: ImageGenerationServiceOptions & { getRunId: () => string | undefined }) {
-  return createImageGenerationExtension({ getRunId: options.getRunId, service: new ImageGenerationService(options) })
+function createTestImageExtension(options: Omit<ImageGenerationServiceOptions, 'referenceAccess'> & { getRunId: () => string | undefined }) {
+  const materials = new ImageGenerationMaterialStore(options.cwd, options.conversationId)
+  return createImageGenerationExtension({ createFileWriter: () => publication.writeFiles, getRunId: options.getRunId, service: new ImageGenerationService({ ...options, writeGeneratedImageMaterial: (image, grants, writeFiles, signal) => materials.write(image, grants, writeFiles, signal), referenceAccess: { authorize: () => {} } }) })
 }

@@ -22,7 +22,7 @@ export function createToolMediaExtension(store: ImageBlobStore): BuddyInProcessE
           content.push({ ...block, data: '' })
         }
         if (images.length) {
-          content.push({ type: 'text' as const, text: `Saved image references (in order): ${images.map(image => `image:${image.sha256}`).join(', ')}. Use lexora_image_read with these references for focused inspection or comparison when needed.` })
+          content.push({ type: 'text' as const, text: `Inspection-only image handles (in order): ${images.map(image => `image:${image.sha256}`).join(', ')}. These handles work only with lexora_image_read, not with lexora_image_generate.referenceIds. For generation, keep the original attachmentId/artifactId values or use lexora_image_list; reading an image does not create a generation reference ID.` })
           return { message: { ...message, content, buddyToolMedia: { version: 1, images } } satisfies ToolMediaReferenceMessage }
         }
       })

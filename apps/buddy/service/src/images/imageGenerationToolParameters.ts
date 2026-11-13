@@ -9,13 +9,13 @@ export function createImageGenerationParameters(description?: ImageGenerationDes
   const editSupports = description ? description.edit.map(route => route.support) : [nativeImageSupport]
   const properties: Record<string, TSchema> = {
     outputPath: Type.String({
-      description: 'Output PNG file path in the current workspace. The extension is optional.',
+      description: 'Output PNG path, relative to the current workspace, for example output/edited.png. A leading / means the filesystem root, not the workspace. Use an absolute path only when it is the actual intended, writable destination. The extension is optional.',
       maxLength: 4096,
       minLength: 1,
       pattern: '\\S',
     }),
     prompt: Type.String({
-      description: 'Describe the desired result. For ordered references, specify the role of each image, changes to make and elements to preserve.',
+      description: 'For reference-based edits, write a short edit instruction using numbered image roles, for example: keep image 1 unchanged except apply the pose from image 2. Let the actual images supply unchanged appearance and rendering style; do not rewrite an appearance inventory or guess anatomy, colors, logos or lettering. For generation without references, describe the desired result.',
       maxLength: 32 * 1024,
       minLength: 1,
       pattern: '\\S',
@@ -46,20 +46,19 @@ export function createImageGenerationParameters(description?: ImageGenerationDes
   }
   const maxReferences = Math.min(4, Math.max(0, ...editSupports.map(support => support.maxReferenceImages)))
   if (maxReferences > 0) {
-    const reference = Type.Union([
-      Type.Object({ mode: Type.Literal('latest') }, { additionalProperties: false }),
-      Type.Object({
-        resourceIds: Type.Array(Type.String({ maxLength: 256, minLength: 1 }), { maxItems: maxReferences, minItems: 1, uniqueItems: true }),
-        mode: Type.Literal('resources'),
-      }, { additionalProperties: false }),
-    ])
-    properties.reference = description?.generate.length === 0 ? reference : Type.Optional(reference)
+    const referenceIds = Type.Array(Type.String({ maxLength: 256, minLength: 1, pattern: '\\S' }), {
+      description: 'Required when the task uses reference images or edits an existing image, including references from earlier turns. List ALL intended images in order: a character image plus a pose image requires BOTH IDs. Copy attachmentId or artifactId from attachments, outputs or lexora_image_list; not composer resourceIds, paths or image: hashes. Omit only for a new image that uses no references.',
+      maxItems: maxReferences,
+      minItems: 1,
+      uniqueItems: true,
+    })
+    properties.referenceIds = description?.generate.length === 0 ? referenceIds : Type.Optional(referenceIds)
   }
   return Type.Object(properties, { additionalProperties: false })
 }
 
 export function describeImageGeneration(description?: ImageGenerationDescription): string {
-  const base = 'Generate images through the configured image policy independently of the chat model. Valid returned images are saved and shown in the conversation even when the backend ignores requested size, background or quality. These parameters are requests, not guarantees. Inspect the saved outputs before claiming exact dimensions, transparency or other requested properties; use post-processing when needed.'
+  const base = 'Generate or edit images. The image backend receives only this prompt and the images explicitly listed in referenceIds: it cannot see chat attachments, conversation history or lexora_image_read results. For reference-based tasks, pass every intended reference image, not a text description in its place. Without referenceIds this is text-to-image generation, not an edit of the user\'s images. Size, background and quality are requests, not guarantees; inspect actual outputs before claiming those properties. A local publication failure may return retainedOutputs: copy and present those saved files without another generation request.'
   if (!description)
     return `${base} Backend capabilities have not been declared; accepted adapter parameters do not guarantee backend support for generation, editing or transparency.`
   const routes = (operation: 'generate' | 'edit') => description[operation].length

@@ -18,6 +18,7 @@ import type { MutationCoordinator } from '../../changes/MutationCoordinator'
 import type { DirectoryGrantService } from '../../directories/DirectoryGrantService'
 import type { DirectoryGrant } from '../../directories/resolveGrantedPath'
 import type { FileResourceCoordinator } from '../../files/FileResourceCoordinator'
+import type { ImageGenerationMaterialWriter } from '../../images/ImageGenerationMaterialStore'
 import type { ImageReadingMaterialWriter } from '../../images/ImageReadingMaterialStore'
 import type { ImageReadingService } from '../../images/ImageReadingService'
 import type { NetworkPermissionsStore } from '../../permissions/NetworkPermissionsClient'
@@ -84,6 +85,7 @@ export interface BuddySessionExtensionServices {
 export interface CreateBuddySessionExtensionsOptions {
   imageStore?: ImageBlobStore
   writeImageMaterial?: ImageReadingMaterialWriter
+  writeGeneratedImageMaterial?: ImageGenerationMaterialWriter
   actorKind?: 'actor' | 'npc'
   approvalPolicy: BuddyApprovalPolicy
   canonicalRoot: string
@@ -199,6 +201,7 @@ export async function createBuddySessionExtensions(
         : { id: options.conversationId, kind: 'conversation' },
     })
     capabilities.push(codemode, ...await services.createCapabilities({
+      writeGeneratedImageMaterial: options.writeGeneratedImageMaterial,
       createFileWriter: (event) => {
         const run = runContext.current
         if (!run)

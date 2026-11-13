@@ -12,6 +12,7 @@ import type { McpConnectorService } from './connectors/mcp/McpConnectorService'
 import type { SessionReferenceServices } from './conversations/SessionReferenceService'
 import type { ImageGenerationGateway } from './images/ImageGenerationGateway'
 import type { ImageGenerationServiceOptions } from './images/ImageGenerationService'
+import type { ImageReferenceAccessOptions } from './images/ImageReferenceAccess'
 import type { ImageRequestStore } from './images/ImageRequestStore'
 import type { ImageTransformService } from './images/ImageTransformService'
 import type { PetActionService } from './pet/PetActionService'
@@ -31,6 +32,8 @@ import { createSessionReferenceCapability } from './conversations/sessionReferen
 import { createImageGenerationCapability } from './images/imageGenerationExtension'
 import { ImageGenerationService } from './images/ImageGenerationService'
 import { observeImageDiagnostics } from './images/ImageOperationLifecycle'
+import { ImageReferenceAccess } from './images/ImageReferenceAccess'
+import { createImageReferenceCapability } from './images/imageReferenceExtension'
 import { createImageTransformCapability } from './images/imageTransformExtension'
 import { createPetCapability } from './pet/petExtension'
 import { createPluginAuthoringCapability } from './plugins/pluginAuthoringCapability'
@@ -58,7 +61,10 @@ export interface BuddyCapabilityServices {
   imageTransformService: Pick<ImageTransformService, 'removeChroma'>
   webService: Pick<WebCapabilityService, 'search' | 'fetch'>
   conversations: SessionReferenceServices['conversations']
-  publications: SessionReferenceServices['publications']
+  publications: SessionReferenceServices['publications'] & ImageReferenceAccessOptions['publications']
+  executions: ImageReferenceAccessOptions['executions']
+  runInputs: ImageReferenceAccessOptions['inputs']
+  runEvents: ImageReferenceAccessOptions['events']
   references: SessionReferenceRepository
   referenceSnapshots: ExtensionReferenceRepository
 }
@@ -89,6 +95,16 @@ export function createBuddyCapabilityFactory(
       ? Promise.reject(new Error('EXECUTION_PROFILE_READ_ONLY'))
       : writeMcpResult(bytes, mimeType, signal))
     context.signal.throwIfAborted()
+    const imageReferences = new ImageReferenceAccess({
+      ...context,
+      conversations: services.conversations,
+      publications: services.publications,
+      executions: services.executions,
+      inputs: services.runInputs,
+      events: services.runEvents,
+      attachments: services.attachmentService,
+      artifacts: services.artifactService,
+    })
     const capabilities = [
       createMcpCapability(mcp, context.isCodemodeEnabled ?? (() => false)),
       createBrowserCapability({
@@ -114,7 +130,8 @@ export function createBuddyCapabilityFactory(
           : undefined,
       }),
       createWebCapability({ authorizeNetwork: context.authorizeNetwork, service: services.webService, conversationId: context.conversationId }),
-      createImageCapability(context, services),
+      createImageCapability(context, services, imageReferences),
+      createImageReferenceCapability(imageReferences),
       createImageTransformCapability({ ...context, service: services.imageTransformService }),
       createOutputPresentationCapability({ ...context, artifactService: services.artifactService }),
       createSessionReferenceCapability({ conversationId: context.conversationId, getRunId: context.getRunId, conversations: services.conversations, attachments: services.attachmentService, artifacts: services.artifactService, publications: services.publications, references: services.references }),
@@ -147,10 +164,12 @@ export function createBuddyCapabilityFactory(
   }
 }
 
-function createImageCapability(context: BuddyCapabilityContext, services: BuddyCapabilityServices): BuddyCapability {
+function createImageCapability(context: BuddyCapabilityContext, services: BuddyCapabilityServices, referenceAccess: ImageReferenceAccess): BuddyCapability {
   const service = new ImageGenerationService({
+    writeGeneratedImageMaterial: context.writeGeneratedImageMaterial,
     artifactService: services.artifactService,
     attachmentService: services.attachmentService,
+    referenceAccess,
     conversationId: context.conversationId,
     cwd: context.cwd,
     get grants() { return context.grants },

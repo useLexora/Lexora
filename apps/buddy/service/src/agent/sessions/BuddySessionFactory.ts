@@ -14,6 +14,7 @@ import { isExecutionProfileWithin } from '../../../../shared/permissions/executi
 import { AttachmentToolWorkspace } from '../../attachments/AttachmentToolWorkspace'
 import { conversationImageDirectory, ImageBlobStore } from '../../attachments/ImageBlobStore'
 import { canReadReferenceSnapshots } from '../../conversations/referenceSnapshotToolContract'
+import { ImageGenerationMaterialStore } from '../../images/ImageGenerationMaterialStore'
 import { ImageReadingMaterialStore } from '../../images/ImageReadingMaterialStore'
 import { supportsModelToolCalls } from '../../providers/modelCapabilities'
 import { BuddyAgentRunError } from '../../runs/runError'
@@ -102,12 +103,14 @@ export class BuddySessionFactory {
       providerId: effectiveModel?.providerId ?? run.provider,
     })
     const imageMaterials = new ImageReadingMaterialStore(blueprint.scratchRoot, blueprint.conversationId)
+    const generatedMaterials = new ImageGenerationMaterialStore(blueprint.scratchRoot, blueprint.conversationId)
     const imageStore = new ImageBlobStore(conversationImageDirectory(join(resolve(this.#options.conversationsDirectory), blueprint.conversationId)))
     const extensions = await events.operation('session.resources', async () => {
       if (run.purpose !== 'conversation.compaction')
         await this.#options.services.prepareForRun?.(input.signal)
       return createBuddySessionExtensions({
         imageStore,
+        writeGeneratedImageMaterial: (image, grants, writeFiles, signal) => generatedMaterials.write(image, grants, writeFiles, signal),
         writeImageMaterial: (text, signal) => imageMaterials.write(text, signal),
         actorKind: blueprint.actor?.kind,
         toolScope: run.purpose === 'conversation.compaction' ? { mode: 'none' } : blueprint.actor?.settings.tools,

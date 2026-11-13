@@ -6,6 +6,7 @@ import type { BuddySessionMode } from '../../../../shared/permissions/sessionMod
 import type { BuddyToolClassification, BuddyToolClassificationResult } from '../../approvals/toolClassification'
 import type { CapturedFileWriterFactory } from '../../changes/CapturedFileWriter'
 import type { DirectoryGrant } from '../../directories/resolveGrantedPath'
+import type { ImageGenerationMaterialWriter } from '../../images/ImageGenerationMaterialStore'
 import type { BuddyInProcessExtension } from './BuddyInProcessExtension'
 import type { BuddyMutationEffect } from './changeCaptureExtension'
 import type { BuddyToolDisclosurePolicy } from './discovery/toolDiscoveryContract'
@@ -28,6 +29,7 @@ export interface BuddyCapability {
 }
 
 export interface BuddyCapabilityContext {
+  writeGeneratedImageMaterial?: ImageGenerationMaterialWriter
   createFileWriter?: CapturedFileWriterFactory
   authorizeNetwork?: (input: { toolCallId: string, toolName: string, url: string, operation?: NetworkOperation, signal?: AbortSignal }) => Promise<void>
   conversationId: string

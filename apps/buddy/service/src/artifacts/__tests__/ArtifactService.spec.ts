@@ -1,3 +1,4 @@
+import type { Model } from '@earendil-works/pi-ai'
 import type { DatabaseSync } from 'node:sqlite'
 import type { CapturedFileWriter } from '../../changes/CapturedFileWriter'
 import type { DirectoryGrant } from '../../directories/resolveGrantedPath'
@@ -12,6 +13,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { MutationCoordinator } from '../../changes/MutationCoordinator'
 import { FileResourceCoordinator } from '../../files/FileResourceCoordinator'
 import { NativeFileEngine } from '../../files/NativeFileEngine'
+import { ImageGenerationMaterialStore } from '../../images/ImageGenerationMaterialStore'
+import { ImageGenerationService } from '../../images/ImageGenerationService'
 import { createArtifactRepository } from '../../storage/artifactRepository'
 import { createConversationDirectoryGrantRepository } from '../../storage/conversationDirectoryGrantRepository'
 import { createConversationRepository } from '../../storage/conversationRepository'
@@ -31,6 +34,41 @@ afterEach(async () => {
 })
 
 describe('artifactService', () => {
+  it('generates into missing parents without creating them before submission and preserves numbered PNG outputs', async () => {
+    const f = await createFixture()
+    const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAFElEQVR4AQEJAPb/AAD/AP//AAD/EPgD/UE7EkoAAAAASUVORK5CYII=', 'base64')
+    let submissions = 0
+    const materials = new ImageGenerationMaterialStore(f.workspace, 'conversation-1')
+    const service = new ImageGenerationService({
+      writeGeneratedImageMaterial: (image, grants, writeFiles, signal) => materials.write(image, grants, writeFiles, signal),
+      conversationId: 'conversation-1',
+      cwd: f.workspace,
+      grants: f.grants,
+      artifactService: f.service,
+      attachmentService: { materializeConversationImages: async () => ({ images: [], records: [] }) },
+      referenceAccess: { authorize: () => {} },
+      imageGenerationGateway: { supports: () => true, generate: async (input) => {
+        await expect(readFile(join(f.workspace, 'output'))).rejects.toMatchObject({ code: 'ENOENT' })
+        await input.onSubmitting?.()
+        submissions++
+        return { images: [{ bytes, mimeType: 'image/png' }, { bytes, mimeType: 'image/png' }], responseId: 'response-1' }
+      } },
+    })
+    try {
+      const result = await service.generate({ outputPath: 'output/nested/heart', prompt: 'Create' }, { provider: 'fixture', id: 'fixture' } as Model<'openai-responses'>, new AbortController().signal, f.grants, f.writeFiles)
+      const paths = ['heart.png', 'heart-2.png'].map(name => join(f.workspace, 'output', 'nested', name))
+      expect(submissions).toBe(1)
+      expect(result.outputs.map(output => output.path)).toEqual(paths)
+      expect(result.artifactIds).toHaveLength(2)
+      expect(f.repository.listForConversation('conversation-1').map(record => record.currentPath).sort()).toEqual([...paths].sort())
+      for (const path of paths)
+        expect(await readFile(path)).toEqual(bytes)
+    }
+    finally {
+      await service.dispose()
+    }
+  })
+
   it('keeps delivered files and extensionless image MIME readable after grant revocation and service recreation without granting new outputs', async () => {
     const f = await createFixture()
     const conversationGrants = createConversationDirectoryGrantRepository(f.database)
