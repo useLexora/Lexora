@@ -1,7 +1,10 @@
-import type { Event } from 'electron'
+import type { BrowserWindow, Event } from 'electron'
+import type { z } from 'zod'
+import type { desktopOpenIntentSchema } from '../../../shared/service/localServiceProtocol'
 import type { DesktopEnvironment } from './typing'
 import process from 'node:process'
-import { app, nativeTheme } from 'electron'
+import { app, nativeTheme, powerMonitor } from 'electron'
+import { z as schema } from 'zod'
 import { currentPlatform } from '../../../platform/currentPlatform'
 import { localTransports } from '../../../platform/ipc/localTransport'
 import { DEFAULT_BROWSER_PREFERENCES } from '../../../shared/browser/browserPreferences'
@@ -11,6 +14,8 @@ import { ServiceLifecycleSource } from '../../../shared/lifecycle/ServiceLifecyc
 import { observeLifecycleDiagnostics } from '../../../shared/observability/lifecycleDiagnostics'
 import { runsRpc } from '../../../shared/runs/runApi'
 import { BrowserIntegration } from '../browser/BrowserIntegration'
+import { connectPlatformHost } from '../runtime/platformHostBootstrap'
+import { RemoteServiceClient } from '../runtime/RemoteServiceClient'
 import { INSTALLER_EXIT_ARGUMENT, isInstallerExitRequest, resolveDesktopLaunchIntent } from '../startupIntent'
 import { showStorageMigration } from '../storage/StorageMigrationWindow'
 import { showStorageUnavailable, StorageUnavailableError } from '../storage/storageUnavailable'
@@ -26,7 +31,8 @@ import { DesktopRuntimeHost } from './DesktopRuntimeHost'
 import { checkDesktopSmokeBridge } from './desktopSmokeCheck'
 import { checkDesktopDirectories, DesktopInstanceLockUnavailable } from './desktopStorage'
 import { DesktopWindowHost } from './DesktopWindowHost'
-import { initializeDesktopEnvironment, prepareDesktopEnvironment, prepareDesktopReady } from './environment'
+import { initializeDesktopEnvironment, prepareDesktopEnvironment, prepareDesktopReady, registerDesktopSchemes } from './environment'
+import { requestDesktopTarget } from './requestDesktopTarget'
 
 class DesktopApplication {
   readonly #environment: DesktopEnvironment
@@ -39,6 +45,9 @@ class DesktopApplication {
   readonly #quit: ReturnType<typeof createDesktopQuitLifecycle>
   #disposePromise: Promise<void> | null = null
   #rendererRecoveryPrompt: Promise<void> | null = null
+  #openingDesktop: Promise<BrowserWindow> | undefined
+  #closingDesktop: Promise<void> | undefined
+  #locked = false
 
   constructor(environment: DesktopEnvironment) {
     this.#environment = environment
@@ -52,13 +61,25 @@ class DesktopApplication {
       report: event => environment.events.publish(event),
       isTaskLinked: () => this.#runtime.config?.desktop.contextPanelMode === 'task',
       onActivityError: () => environment.events.publish({ level: 'warn', event: 'browser.activity.failed', errorCode: 'BROWSER_ACTIVITY_FAILED' }),
-      endpoint: localTransports[currentPlatform.transport](environment.paths.browserAdapterSocket),
+      endpoint: localTransports[currentPlatform.transport](environment.paths.browserAdapterSocket, { ownsProfileLease: () => true }),
       getPreferences: () => this.#runtime.config?.browser ?? DEFAULT_BROWSER_PREFERENCES,
       testBrokerSocketPath: environment.paths.profile === 'test' ? process.env.LEXORA_BUDDY_BROWSER_ADAPTER_TEST_BROKER_SOCKET : undefined,
     })
     this.#runtime = new DesktopRuntimeHost(environment, this.#windows, this.#browser)
+    this.#runtime.openDesktop = (intent, signal) => this.#openDesktopTarget(intent, signal)
     this.#quit = createDesktopQuitLifecycle({
       events: environment.events,
+      ...(environment.platformHost
+        ? {
+            getExitBehavior: () => this.#runtime.config?.desktop.exitBehavior ?? 'stop_service',
+            closeDesktop: () => this.#closeDesktop(),
+            restartDesktop: async () => {
+              if (!(this.#runtime.service instanceof RemoteServiceClient))
+                throw new Error('SERVICE_NOT_READY')
+              await this.#runtime.service.restartDesktop()
+            },
+          }
+        : {}),
       confirm: options => confirmDesktopQuit({
         getWindow: () => this.#windows.window,
         getLanguage: () => this.#runtime.language,
@@ -70,9 +91,13 @@ class DesktopApplication {
       }, options),
       dispose: async () => {
         try {
+          if (this.#runtime.service instanceof RemoteServiceClient)
+            await this.#runtime.service.stop()
           await this.#dispose()
         }
-        finally { await closeDesktopDiagnostics(environment.diagnostics) }
+        finally {
+          await closeDesktopDiagnostics(environment.diagnostics)
+        }
       },
       quit: (restart) => {
         if (restart)
@@ -126,8 +151,30 @@ class DesktopApplication {
       if (resolveDesktopLaunchIntent(argv) === 'foreground')
         this.#windows.show()
     })
-    app.on('activate', () => this.#windows.show())
+    app.on('activate', () => {
+      void this.#openDesktop().catch(() => {})
+    })
     app.on('window-all-closed', () => {})
+    void app.whenReady().then(() => {
+      powerMonitor.on('lock-screen', () => {
+        this.#locked = true
+      })
+      powerMonitor.on('unlock-screen', () => {
+        this.#locked = false
+      })
+    })
+    const platformHost = this.#environment.platformHost
+    if (platformHost) {
+      platformHost.peer.onRequest('host.stop', async (raw) => {
+        schema.object({}).strict().parse(raw)
+        await this.#dispose()
+        setImmediate(() => app.exit(0))
+        return { stopped: true }
+      })
+      platformHost.peer.onDidClose(() => {
+        void this.#dispose().finally(() => app.exit(1))
+      })
+    }
   }
 
   async start(): Promise<void> {
@@ -150,27 +197,103 @@ class DesktopApplication {
         defer(() => this.#integrations.stopSubscriptions())
         await this.#integrations.start()
       }, ['desktop.runtime'])
+      await this.#runtime.publishHostReady()
+      if (this.#environment.platformHost)
+        return null
       return host.start('desktop.window', ({ defer }) => {
         defer(() => this.#windows.close())
         defer(() => this.#browser.closeWindow())
-        return this.#windows.initialize({
-          onWindowCreated: window => this.#browser.bindWindow(window),
-          isQuitting: () => this.#quit.quitting,
-          onHidden: () => { void showBackgroundCloseNotice(this.#runtime.configStore) },
-          onRecoveryExhausted: () => this.#presentRendererRecovery(),
-        })
+        return this.#openDesktop()
       }, ['desktop.integrations'])
     })
-    if (this.#runtime.windowsPowerShell?.endsWith('\\powershell.exe') && !this.#environment.isSmokeTest)
+    if (window && this.#runtime.windowsPowerShell?.endsWith('\\powershell.exe') && !this.#environment.isSmokeTest)
       showLegacyPowerShellNotice(window, () => this.#runtime.language, this.#environment)
-    if (this.#environment.isSmokeTest) {
+    if (this.#environment.isSmokeTest && window) {
       await checkDesktopSmokeBridge(window)
       await this.#runtime.verifyInstallation()
       await this.#quit.request()
     }
   }
 
+  async #openDesktopTarget(intent: z.infer<typeof desktopOpenIntentSchema>, signal?: AbortSignal) {
+    const available = () => !signal?.aborted && !this.#locked && powerMonitor.getSystemIdleState(1) !== 'locked' && !this.#quit.quitting && !this.#disposePromise && !this.#closingDesktop
+    const unavailable = { accepted: false, uiReady: false, targetVisible: false, visible: false, focused: false }
+    if (!available())
+      return unavailable
+    try {
+      const window = await this.#openDesktop(intent)
+      const targetVisible = await requestDesktopTarget(window, this.#environment.startup, intent, undefined, { signal, available })
+      if (!available() || window.isDestroyed())
+        return unavailable
+      return { accepted: true, uiReady: this.#environment.startup.state.status === 'ready', targetVisible, visible: window.isVisible(), focused: window.isFocused() }
+    }
+    catch {
+      return unavailable
+    }
+  }
+
+  async #openDesktop(intent?: z.infer<typeof desktopOpenIntentSchema>): Promise<BrowserWindow> {
+    if (this.#quit.quitting || this.#disposePromise || this.#closingDesktop || this.#locked)
+      throw new Error('DESKTOP_OPEN_UNAVAILABLE')
+    if (intent?.kind === 'tasks' && intent.conversationId) {
+      const task = await this.#runtime.service.request('conversations.get', { conversationId: intent.conversationId })
+      if (!task)
+        throw new Error('CONVERSATION_NOT_FOUND')
+    }
+    const window = await (this.#openingDesktop ??= (async () => {
+      await this.#runtime.setDesktopAvailable(true)
+      this.#integrations.attachDesktop()
+      if (this.#windows.window) {
+        this.#windows.show()
+        return this.#windows.window
+      }
+      const opened = await this.#windows.initialize({
+        onWindowCreated: (window) => {
+          this.#browser.bindWindow(window)
+          window.on('query-session-end', () => {
+            void this.#quit.request({ reason: 'session_end', discardDraftsOnFailure: true })
+          })
+        },
+        onWindowReleasing: () => {
+          this.#environment.startup.detachRenderer()
+          this.#browser.closeWindow()
+        },
+        isQuitting: () => this.#quit.quitting,
+        onHidden: () => {
+          void showBackgroundCloseNotice(this.#runtime.configStore)
+        },
+        onRecoveryExhausted: () => this.#presentRendererRecovery(),
+      })
+      if (this.#environment.platformHost)
+        this.#windows.show()
+      return opened
+    })().finally(() => {
+      this.#openingDesktop = undefined
+    }))
+    if (this.#quit.quitting || this.#closingDesktop || window.isDestroyed())
+      throw new Error('DESKTOP_OPEN_CANCELLED')
+    return window
+  }
+
+  #closeDesktop(): Promise<void> {
+    return this.#closingDesktop ??= (async () => {
+      await this.#openingDesktop
+      await this.#integrations.detachDesktop()
+      this.#browser.closeWindow()
+      this.#windows.close()
+    })().finally(() => {
+      this.#closingDesktop = undefined
+    })
+  }
+
   async handleStartupFailure(error: unknown): Promise<void> {
+    if (this.#environment.platformHost) {
+      this.#environment.startup.failed(error)
+      await this.#dispose().catch(() => {})
+      await closeDesktopDiagnostics(this.#environment.diagnostics)
+      app.exit(1)
+      return
+    }
     if (this.#environment.isSmokeTest)
       process.stderr.write(`Desktop installation verification failed: ${error instanceof Error ? error.stack : String(error)}\n`)
     this.#environment.startup.failed(error)
@@ -187,7 +310,9 @@ class DesktopApplication {
         try {
           await closeDesktopDiagnostics(this.#environment.diagnostics)
         }
-        finally { app.exit(1) }
+        finally {
+          app.exit(1)
+        }
       }
     }
   }
@@ -231,6 +356,8 @@ class DesktopApplication {
     this.#disposePromise ??= (async () => {
       this.#environment.startup.stopping()
       const failures: unknown[] = []
+      this.#browser.closeWindow()
+      this.#windows.close()
       try {
         await this.#host.stop()
       }
@@ -252,13 +379,21 @@ export async function startDesktopApplication(): Promise<void> {
   let environment: DesktopEnvironment | undefined
   let recoveryRecorded = false
   try {
+    registerDesktopSchemes()
     if (isDesktopInstallationActive()) {
       app.quit()
       return
     }
-    environment = prepareDesktopEnvironment()
+    const platformHost = process.argv.includes('--lexora-platform-host') ? await connectPlatformHost() : undefined
+    process.env.LEXORA_BUDDY_STORAGE_AUTHORITY ??= 'sqlite'
+    environment = await prepareDesktopEnvironment(platformHost)
     if (environment.storage.state.pending) {
       await showStorageMigration(environment.storage, environment.diagnostics)
+      return
+    }
+    if (process.argv.includes('--lexora-storage-maintenance')) {
+      await closeDesktopDiagnostics(environment.diagnostics)
+      app.exit(0)
       return
     }
     initializeDesktopEnvironment(environment)
@@ -278,6 +413,13 @@ export async function startDesktopApplication(): Promise<void> {
     void application.start().catch(error => application.handleStartupFailure(error))
   }
   catch (cause) {
+    if (process.argv.includes('--lexora-platform-host')) {
+      environment?.startup.failed(cause)
+      if (environment)
+        await closeDesktopDiagnostics(environment.diagnostics)
+      app.exit(1)
+      return
+    }
     let error = cause
     if (error instanceof StorageUnavailableError) {
       await showStorageUnavailable(error)

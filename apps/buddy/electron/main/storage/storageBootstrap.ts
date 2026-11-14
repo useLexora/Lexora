@@ -1,7 +1,7 @@
 import type { StorageLocation } from '../../../platform/storage/StorageLocationStore'
 import type { LegacyStorageSource } from '../../../service/src/storage/StorageMigration'
 import type { BuddyRuntimePaths } from '../paths'
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { existsSync, lstatSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -9,7 +9,7 @@ import { ensurePrivateDirectoriesSync } from '../../../platform/filesystem/priva
 import { profileStorageProtection } from '../../../platform/storage/ProfileLocations'
 import { legacyStorageExcluded } from '../../../platform/storage/storageCopyPolicy'
 import { readStorageJsonSync, storageError, writeStorageJsonSync } from '../../../platform/storage/storageFiles'
-import { STORAGE_IDENTITY_FILE, storageLocationSchema, StorageLocationStore } from '../../../platform/storage/StorageLocationStore'
+import { STORAGE_IDENTITY_FILE, storageBootstrapRoot, storageLocationSchema, StorageLocationStore } from '../../../platform/storage/StorageLocationStore'
 import { storageIdentitySchema } from '../../../shared/storage/storageApi'
 import { StorageUnavailableError } from './storageUnavailable'
 
@@ -22,9 +22,7 @@ export interface DesktopStorage {
   protection: ReturnType<typeof profileStorageProtection>
   privateDirectoriesExecutable?: string
 }
-export function storageBootstrapRoot(root: string): string {
-  return join(dirname(root), '.lexora-locations', createHash('sha256').update(root).digest('hex').slice(0, 24))
-}
+export { storageBootstrapRoot } from '../../../platform/storage/StorageLocationStore'
 export function readStorageBootstrap(defaultRoot: string) {
   const bootstrapRoot = storageBootstrapRoot(defaultRoot)
   const store = new StorageLocationStore(join(bootstrapRoot, 'location.json'), defaultRoot)
@@ -35,7 +33,7 @@ export function readStorageBootstrap(defaultRoot: string) {
   const descriptor = readStorageJsonSync(join(state.activeRoot, STORAGE_IDENTITY_FILE))
   if (state.identity) {
     const identity = storageIdentitySchema.safeParse(descriptor)
-    const finishingRestore = state.pending?.kind === 'restore' && state.pending.phase === 'ready' && state.pending.target === state.activeRoot
+    const finishingRestore = (state.pending?.kind === 'restore' || state.pending?.kind === 'upgrade') && state.pending.phase === 'ready' && state.pending.target === state.activeRoot
     if (!identity.success || identity.data.dataId !== state.identity.dataId || (identity.data.generation !== state.identity.generation && !(finishingRestore && identity.data.generation === state.pending?.id)))
       throw new StorageUnavailableError(state.activeRoot)
   }

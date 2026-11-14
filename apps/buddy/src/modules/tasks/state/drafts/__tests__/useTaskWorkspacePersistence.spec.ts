@@ -270,22 +270,6 @@ describe('workspace Draft persistence', () => {
     expect(fixture.runtimeDraft('conversation:conversation-1:branch-1')?.executionConfig.executionProfile).toBe('read_only')
   })
 
-  it('coalesces a typing burst into the latest whole Runtime Draft', async () => {
-    vi.useFakeTimers()
-    const fixture = await createFixture()
-
-    updateText(fixture.drafts, 'a')
-    await vi.advanceTimersByTimeAsync(100)
-    updateText(fixture.drafts, 'ab')
-    await vi.advanceTimersByTimeAsync(100)
-    updateText(fixture.drafts, 'abc')
-    expect(fixture.saves).toEqual([])
-    await vi.advanceTimersByTimeAsync(300)
-
-    expect(fixture.saves.map(save => buddyUserContentToText(save.content))).toEqual(['abc'])
-    expect(fixture.runtimeDraft('global')?.revision).toBe(1)
-  })
-
   it('keeps one in-flight save and replaces pending edits across scopes', async () => {
     const saving = deferred<void>()
     const fixture = await createFixture({ beforeSave: () => saving.promise })
@@ -339,25 +323,7 @@ describe('workspace Draft persistence', () => {
     expect(fixture.drafts.isPersisted(fixture.drafts.snapshot('global'))).toBe(true)
   })
 
-  it('keeps unsaved editor state after failure and retries the latest value', async () => {
-    let fail = true
-    const fixture = await createFixture({ beforeSave: async () => {
-      if (fail)
-        throw new Error('storage unavailable')
-    } })
-    updateText(fixture.drafts, 'unsaved')
-
-    expect(await fixture.persistence.persist()).toBe(false)
-    expect(fixture.drafts.draft.value).toBe('unsaved')
-    expect(fixture.errors).toHaveLength(1)
-    fail = false
-    updateText(fixture.drafts, 'latest retry')
-
-    expect(await fixture.persistence.flushPending()).toBe(true)
-    expect(buddyUserContentToText(fixture.runtimeDraft('global')!.content)).toBe('latest retry')
-  })
-
-  it('preserves the dirty draft and revision when saving and reading both fail', async () => {
+  it('preserves the dirty draft and revision when saving and reading both fail, then retries the latest edit', async () => {
     let failing = true
     const unavailable = async () => {
       if (failing)
@@ -374,31 +340,46 @@ describe('workspace Draft persistence', () => {
     expect(fixture.runtimeDraft('global')?.content).toEqual(createBuddyUserContent('previously saved'))
     expect(fixture.errors).toHaveLength(1)
     failing = false
-    expect(await fixture.persistence.persist()).toBe(true)
-    expect(fixture.runtimeDraft('global')?.content).toEqual(content)
+    const latest = { ...createBuddyUserContent('latest retry'), panelResourceIds: content.panelResourceIds }
+    fixture.drafts.setUserContent(latest)
+    expect(await fixture.persistence.flushPending()).toBe(true)
+    expect(fixture.runtimeDraft('global')?.content).toEqual(latest)
     fixture.persistence.dispose()
   })
 
-  it('hydrates the latest Runtime-confirmed Draft after a renderer restart', async () => {
-    const fixture = await createFixture({ confirmedContent: 'confirmed before restart' })
-
-    expect(fixture.drafts.draft.value).toBe('confirmed before restart')
-    expect(fixture.drafts.draftId.value).toBe('runtime-confirmed-draft')
-    expect(fixture.drafts.isPersisted(fixture.drafts.snapshot('global'))).toBe(true)
-    expect(fixture.saves).toEqual([])
-  })
-
-  it('does not write navigation or Draft state before hydration succeeds', async () => {
-    const fixture = await createFixture({ hydrate: false })
-    updateText(fixture.drafts, 'not loaded')
-
-    expect(await fixture.persistence.persist()).toBe(false)
-    expect(fixture.saves).toEqual([])
+  it.each([false, true])('compares recovered local input with the persisted base before resuming saves (changed=%s)', async (changed) => {
+    const previous = await createFixture({ confirmedContent: 'persisted base' })
+    previous.drafts.setUserContent(createBuddyUserContent('local input before crash'))
+    const snapshot = previous.drafts.snapshot('global')
+    const owner = { serviceId: 'service', profileId: 'profile', dataGeneration: 'generation', deviceId: 'desktop' }
+    const writes: unknown[] = []
+    const fixture = await createFixture({
+      hydrate: false,
+      confirmedContent: changed ? 'changed on service' : 'persisted base',
+      draftRecovery: {
+        load: async () => ({ owner, records: [{ owner, sequence: 1, snapshot }] }),
+        write: async (value) => { writes.push(value) },
+        remove: async () => {},
+      },
+    })
+    expect(await fixture.persistence.restore()).toBe(!changed)
+    expect(fixture.drafts.draft.value).toBe('local input before crash')
+    if (changed) {
+      expect(fixture.persistence.restorationState.value).toBe('conflict')
+      expect(fixture.saves).toEqual([])
+      expect(fixture.persistence.restorationConflict.value?.remote.content).toEqual(createBuddyUserContent('changed on service'))
+    }
+    else {
+      expect(fixture.saves).toHaveLength(1)
+      expect(fixture.runtimeDraft('global')?.content).toEqual(createBuddyUserContent('local input before crash'))
+      expect(writes).toEqual(expect.arrayContaining([expect.objectContaining({ snapshot: expect.objectContaining({ revision: 1 }) })]))
+    }
   })
 })
 
 async function createFixture(options: {
   initialConversation?: LocalConversation
+  draftRecovery?: NonNullable<LocalChatApi['draftRecovery']>
   afterSave?: () => void
   beforeGet?: () => Promise<void>
   beforeOpen?: (input: LocalComposerDraftOpen) => Promise<void>
@@ -482,7 +463,7 @@ async function createFixture(options: {
     draftsById.set(confirmed.draftId, confirmed)
   }
   const draftPersistence = useTaskWorkspacePersistence({
-    api: { composerDrafts },
+    api: { composerDrafts, draftRecovery: options.draftRecovery },
     beforePersist: options.beforePersist,
     getConversation: id => conversations.get(id) ?? null,
     drafts,

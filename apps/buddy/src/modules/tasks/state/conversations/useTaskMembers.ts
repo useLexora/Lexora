@@ -18,6 +18,7 @@ export function useTaskMembers(options: {
   const busy = shallowRef(false)
   const error = shallowRef('')
   let revision = 0
+  let metadataRevision: number | undefined
   let disposed = false
   const memberIds = computed(() => options.conversationId.value
     ? stored.value
@@ -34,6 +35,7 @@ export function useTaskMembers(options: {
       const members = await options.api.listMembers(id)
       if (!disposed && request === revision && id === options.conversationId.value) {
         stored.value = members.map(member => member.actorId)
+        metadataRevision = members[0]?.metadataRevision
         error.value = ''
       }
     }
@@ -47,6 +49,7 @@ export function useTaskMembers(options: {
     if (busy.value || !options.ready.value || (action === 'remove' && id === options.leaderId.value))
       return false
     const conversationId = options.conversationId.value
+    const expectedRevision = metadataRevision
     const draftId = options.drafts.draftId.value
     const isCurrent = () => !disposed && conversationId === options.conversationId.value && draftId === options.drafts.draftId.value
     busy.value = true
@@ -60,9 +63,11 @@ export function useTaskMembers(options: {
         options.drafts.setParticipants({ leaderId, actorIds: action === 'add' ? [...new Set([...memberIds.value, id])] : memberIds.value.filter(member => member !== id) })
         return await options.persist()
       }
-      const members = await options.api[action === 'add' ? 'addMember' : 'removeMember'](conversationId, id)
-      if (isCurrent())
+      const members = await options.api[action === 'add' ? 'addMember' : 'removeMember'](conversationId, id, ...expectedRevision !== undefined ? [expectedRevision] as const : [])
+      if (isCurrent()) {
         stored.value = members.map(member => member.actorId)
+        metadataRevision = members[0]?.metadataRevision
+      }
       return isCurrent()
     }
     catch (reason) {
@@ -81,6 +86,7 @@ export function useTaskMembers(options: {
   })
   watch([options.conversationId, options.ready], () => {
     stored.value = []
+    metadataRevision = undefined
     error.value = ''
     void refresh()
   }, { immediate: true })

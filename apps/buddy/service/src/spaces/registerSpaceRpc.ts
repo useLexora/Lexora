@@ -19,6 +19,12 @@ export function registerSpaceRpc(options: RegisterSpaceRpcOptions): () => void {
     await options.service.delete(input.spaceId)
     return ok()
   }))
+
+  return () => disposers.splice(0).forEach(dispose => dispose())
+}
+
+export function registerSpaceQueries(options: RegisterSpaceRpcOptions): () => void {
+  const disposers: Array<() => void> = []
   disposers.push(registerRuntimeRequest(options.rpc, spacesRpc.list, (input) => {
     return options.service.list().slice(0, input.limit ?? 100)
   }))

@@ -1,12 +1,12 @@
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
-import type { LocalConversation } from '@buddy-shared/conversation/conversationApi'
+import type { ConversationModelMutationTarget, LocalConversation } from '@buddy-shared/conversation/conversationApi'
 import type { Ref } from 'vue'
 import type { TaskModelSelection } from './typing'
 import type { useChatDrafts } from './useChatDrafts'
 import { computed, shallowReactive } from 'vue'
 
 interface TaskModelPersistenceOptions {
-  target?: () => { actorId?: string }
+  target?: () => ConversationModelMutationTarget
   canUpdate?: () => boolean
   persistTarget?: () => boolean
   onPersisted?: () => Promise<void>

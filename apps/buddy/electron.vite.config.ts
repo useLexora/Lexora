@@ -39,11 +39,11 @@ export default defineConfig({
       externalizeDeps: { exclude: ['typescript'] },
       outDir: join(electronOutputRoot, 'main'),
       rollupOptions: {
-        external: ['electron', '@silvia-odwyer/photon-node', 'fflate/node', /^@earendil-works\/pi-/],
+        external: ['electron', 'original-fs', '@silvia-odwyer/photon-node', 'fflate/node', /^@earendil-works\/pi-/],
         input: {
           'index': fileURLToPath(new URL('./electron/main/index.ts', import.meta.url)),
           'storage-worker': fileURLToPath(new URL('./service/src/storage/storageWorker.ts', import.meta.url)),
-          'buddy-service': fileURLToPath(new URL('./service/src/index.ts', import.meta.url)),
+          'buddy-service': fileURLToPath(new URL('./electron/main/runtime/serviceProcess.ts', import.meta.url)),
           'extension-package-worker': fileURLToPath(new URL('./electron/main/extensions/packageWorker.ts', import.meta.url)),
         },
         output: {

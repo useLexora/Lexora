@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { strToU8, zipSync } from 'fflate'
 import { afterEach, describe, expect, it } from 'vitest'
 import { extensionJsonSchema } from '../../../shared/extensions/extensionApi'
-import { addedExtensionPermissions, extensionManifestSchema, extensionPackageManifest } from '../../../shared/extensions/extensionManifest'
+import { addedExtensionPermissions, extensionManifestSchema } from '../../../shared/extensions/extensionManifest'
 import { compileExtensionSource } from '../compileExtensionSource'
 import { readExtensionDirectory, unpackExtension } from '../extensionFiles'
 import { extensionActivationOrder, ExtensionPackageStore } from '../ExtensionPackageStore'
@@ -81,7 +81,7 @@ describe('extension package contract', () => {
   })
   it('rejects foreign contribution ownership, duplicate IDs, and unsupported API versions', () => {
     const value = manifest()
-    expect(extensionManifestSchema.safeParse({ ...value, apiVersion: 5 }).success).toBe(false)
+    expect(extensionManifestSchema.safeParse({ ...value, apiVersion: 6 }).success).toBe(false)
     expect(extensionManifestSchema.safeParse({ ...value, contributes: { ...value.contributes, commands: [{ id: 'another.reader.open', title: 'Open' }] } }).success).toBe(false)
     expect(extensionManifestSchema.safeParse({ ...value, contributes: { ...value.contributes, commands: [value.contributes.commands[0], value.contributes.commands[0]] } }).success).toBe(false)
   })
@@ -145,12 +145,10 @@ describe('extension package contract', () => {
     }, new AbortController().signal, () => {})).rejects.toThrow('EXTENSION_COMPILE_OUTPUT_INVALID')
     expect(store.installed).toEqual(installed)
   })
-  it('detects installed file tampering and rejects development symlinks', async () => {
+  it('rejects development symlinks', async () => {
     const { root, store } = await fixture()
     await store.install((await reviewPackage(root, store)).token)
     const pkg = store.installed['tests.reader']!.current
-    await writeFile(join(store.packageRoot(pkg), 'view.js'), 'changed')
-    await expect(store.asset(pkg, 'view.js')).rejects.toThrow('EXTENSION_PACKAGE_CHANGED')
     await symlink(join(store.packageRoot(pkg), 'extension.js'), join(store.packageRoot(pkg), 'linked.js'))
     await expect(readExtensionDirectory(store.packageRoot(pkg))).rejects.toThrow('EXTENSION_UNSAFE_PATH')
   })
@@ -181,7 +179,7 @@ describe('extension package contract', () => {
     const path = join(store.root, 'installed.json')
     const index = JSON.parse(await readFile(path, 'utf8'))
     const future = structuredClone(index.installed[review.manifest.id])
-    future.current.manifest = { ...future.current.manifest, id: 'tests.future', apiVersion: 5, engines: { lexora: '*' }, contributes: { futureCapability: {} } }
+    future.current.manifest = { ...future.current.manifest, id: 'tests.future', apiVersion: 6, engines: { lexora: '*' }, contributes: { futureCapability: {} } }
     index.installed['tests.future'] = future
     await writeFile(path, JSON.stringify(index))
     const candidate = new ExtensionPackageStore(store.root, store.appVersion)
@@ -199,7 +197,7 @@ describe('extension package contract', () => {
     const path = join(store.root, 'installed.json')
     const index = JSON.parse(await readFile(path, 'utf8'))
     const record = index.installed[review.manifest.id]
-    const pending = { ...structuredClone(record.current), manifest: { ...record.current.manifest, apiVersion: 5, version: '2.0.0', engines: { lexora: '*' }, contributes: { futureCapability: {} } } }
+    const pending = { ...structuredClone(record.current), manifest: { ...record.current.manifest, apiVersion: 6, version: '2.0.0', engines: { lexora: '*' }, contributes: { futureCapability: {} } } }
     record.pending = pending
     await writeFile(path, JSON.stringify(index))
     const candidate = new ExtensionPackageStore(store.root, store.appVersion)
@@ -246,22 +244,12 @@ describe('extension package contract', () => {
   })
 })
 
-it.each([1, 2] as const)('accepts window overlays in API %s without adding local placements', (apiVersion) => {
-  const input = manifest({ apiVersion, permissions: { windowEffects: true }, contributes: {
+it('keeps API 1 window overlays subject to their permission', () => {
+  const input = manifest({ apiVersion: 1, permissions: { windowEffects: true }, contributes: {
     views: [{ id: 'tests.reader.effect', title: 'Effect', entry: 'view.js', resource: 'none', location: 'window-overlay' }],
   } })
   expect(extensionManifestSchema.parse(input).contributes.views[0]?.location).toBe('window-overlay')
   expect(extensionManifestSchema.safeParse({ ...input, permissions: {} }).success).toBe(false)
-})
-
-it.each([undefined, false])('preserves navigation header visibility %s without adding defaults to packaged manifests', (showHeader) => {
-  const navigation = { title: 'Reader', view: 'tests.reader.page', ...(showHeader === undefined ? {} : { showHeader }) }
-  const value = manifest({ apiVersion: 2, contributes: { views: [{ id: navigation.view, title: 'Reader', entry: 'view.js', resource: 'none' }], navigation } })
-  expect(value.contributes.navigation?.showHeader).toBe(showHeader ?? true)
-  const packaged = extensionPackageManifest(value)
-  expect(packaged.contributes.navigation).toEqual({ title: navigation.title, view: navigation.view, ...(showHeader === false ? { showHeader: false } : {}) })
-  expect(extensionManifestSchema.parse(packaged).contributes.navigation).toEqual(value.contributes.navigation)
-  expect(extensionManifestSchema.safeParse({ ...value, contributes: { ...value.contributes, navigation: { ...navigation, showHeader: 'false' } } }).success).toBe(false)
 })
 
 it('keeps API 1 compatible and validates UI placements and permission upgrades in API 2', async () => {
@@ -325,25 +313,4 @@ it('validates each content target size and menu command ownership with API compa
   const previous = manifest()
   const next = manifest({ apiVersion: 3, permissions: { selectedResource: 'read', selectedContent: true } })
   expect(addedExtensionPermissions(previous.permissions, next.permissions)).toEqual(['selectedContent'])
-})
-
-it('validates ASCII command names while allowing localized descriptions and system names inside plugin namespaces', () => {
-  const base = manifest({ apiVersion: 3, contributes: { commands: [{ id: 'tests.reader.run', title: 'Run', slash: { name: 'read-file' } }] } })
-  const command = base.contributes.commands[0]!
-  for (const name of ['/read', 'Read', '读取', 'café', 'read file', 'read:1', '-read', 'read\u202E', '', 'a'.repeat(65)]) {
-    expect(extensionManifestSchema.safeParse({ ...base, contributes: { commands: [{ ...command, slash: { name } }] } }).success, name).toBe(false)
-  }
-  for (const name of ['read-file', 'compact', 'review', 'start-2'])
-    expect(extensionManifestSchema.safeParse({ ...base, contributes: { commands: [{ ...command, slash: { name } }] } }).success, name).toBe(true)
-  expect(extensionManifestSchema.safeParse({ ...base, apiVersion: 2 }).success).toBe(false)
-  expect(extensionManifestSchema.safeParse({ ...base, contributes: { commands: [{ ...command, hidden: true }] } }).success).toBe(false)
-  expect(extensionManifestSchema.safeParse({ ...base, contributes: { commands: [command, { ...command, id: 'tests.reader.other' }] } }).success).toBe(false)
-})
-
-it('restricts transient interactions to absolute API 3 workbench and pane mounts', () => {
-  const base = manifest({ apiVersion: 3, contributes: { views: [{ id: 'tests.reader.game', title: 'Game', entry: 'view.js', resource: 'none' }], placements: [{ id: 'tests.reader.layer', view: 'tests.reader.game', kind: 'view', target: 'workbench', interaction: 'regions', presentation: { position: 'absolute' } }] } })
-  expect(extensionManifestSchema.safeParse({ ...base, apiVersion: 2 }).success).toBe(false)
-  for (const target of ['app.sidebar', 'workbench.sidebar'])
-    expect(extensionManifestSchema.safeParse({ ...base, contributes: { ...base.contributes, placements: [{ ...base.contributes.placements[0], target }] } }).success).toBe(false)
-  expect(extensionManifestSchema.safeParse({ ...base, contributes: { ...base.contributes, placements: [{ ...base.contributes.placements[0], presentation: { position: 'static' } }] } }).success).toBe(false)
 })

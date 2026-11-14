@@ -134,6 +134,7 @@ export interface ExtensionReview {
   sha256: string
   development: boolean
   currentVersion: string | null
+  previousExecutionScope?: 'desktop' | 'service' | null
   addedPermissions: string[]
 }
 export type ExtensionReviewResult = ExtensionReview | ExtensionIncompatibleReview

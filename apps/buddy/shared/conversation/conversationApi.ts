@@ -23,9 +23,26 @@ export const modelSelectionSchema = z.object({
   serviceTier: z.enum(BUDDY_SERVICE_TIERS).nullable(),
 }).strict()
 
+export const conversationActiveRunModelSchema = z.object({
+  runId: idSchema,
+  generation: z.number().int().nonnegative(),
+  modelSelection: modelSelectionSchema,
+}).strict()
+
+export interface ConversationModelMutationTarget {
+  actorId?: string
+  runId?: string
+  expectedRevision?: number
+  expectedRunGeneration?: number
+  expectedRunModelSelection?: z.infer<typeof modelSelectionSchema> | null
+  expectedActiveRun?: z.infer<typeof conversationActiveRunModelSchema> | null
+}
+
 export const conversationModelControlsSchema = z.object({
+  metadataRevision: z.number().int().nonnegative().optional(),
   current: z.object({
     runId: idSchema,
+    generation: z.number().int().nonnegative().optional(),
     actorId: idSchema,
     modelSelection: modelSelectionSchema,
   }).strict().nullable(),
@@ -38,17 +55,18 @@ export const conversationModelControlsSchema = z.object({
 
 export type ConversationModelControls = DeepReadonly<z.infer<typeof conversationModelControlsSchema>>
 
-export const conversationMemberSchema = z.object({ actorId: idSchema, joinedAt: timestampSchema }).strict()
+export const conversationMemberSchema = z.object({ actorId: idSchema, joinedAt: timestampSchema, metadataRevision: z.number().int().nonnegative().optional() }).strict()
 export type LocalConversationMember = DeepReadonly<z.infer<typeof conversationMemberSchema>>
 
 export const conversationSchema = z.object({
+  metadataRevision: z.number().int().nonnegative().optional(),
+  titleRevision: z.number().int().nonnegative().optional(),
   buddyId: idSchema,
   activeBranchId: z.string().nullable(),
   approvalPolicy: approvalPolicySchema,
   createdAt: timestampSchema,
   deletedAt: nullableTimestampSchema,
   archivedAt: nullableTimestampSchema.optional(),
-  metadataRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
   executionProfile: executionProfileSchema,
   id: idSchema,
   modelSelection: modelSelectionSchema.nullable(),
@@ -128,7 +146,9 @@ export type ConversationListFilter = z.infer<typeof conversationListFilterSchema
 
 export const conversationRequestSchemas = {
   list: validationRequestSchemas.limit.extend({ filter: conversationListFilterSchema.optional() }),
+  conversationMutation: z.object({ conversationId: idSchema, expectedRevision: z.number().int().nonnegative().optional() }).strict(),
   conversationBranchActivation: z.object({
+    expectedRevision: z.number().int().nonnegative().optional(),
     branchId: idSchema,
     conversationId: idSchema,
   }).strict(),
@@ -141,17 +161,23 @@ export const conversationRequestSchemas = {
     limit: optionalLimitSchema,
   }).strict(),
   conversationRename: z.object({
+    expectedTitleRevision: z.number().int().nonnegative().optional(),
     conversationId: idSchema,
     title: z.string().trim().min(1).max(80),
   }).strict(),
   conversationPermissionSettings: z.object({
+    expectedRevision: z.number().int().nonnegative().optional(),
     approvalPolicy: approvalPolicySchema,
     conversationId: idSchema,
     executionProfile: executionProfileSchema,
   }).strict(),
-  conversationBuddy: z.object({ conversationId: idSchema, buddyId: idSchema }).strict(),
-  conversationMoveToSpace: z.object({ conversationId: idSchema, spaceId: idSchema }).strict(),
+  conversationBuddy: z.object({ conversationId: idSchema, buddyId: idSchema, expectedRevision: z.number().int().nonnegative().optional() }).strict(),
+  conversationMoveToSpace: z.object({ conversationId: idSchema, spaceId: idSchema, expectedRevision: z.number().int().nonnegative().optional() }).strict(),
   conversationModelSelection: z.object({
+    expectedActiveRun: conversationActiveRunModelSchema.nullable().optional(),
+    expectedRevision: z.number().int().nonnegative().optional(),
+    expectedRunGeneration: z.number().int().nonnegative().optional(),
+    expectedRunModelSelection: modelSelectionSchema.nullable().optional(),
     conversationId: idSchema,
     actorId: idSchema.optional(),
     targetRunId: idSchema.optional(),
@@ -190,7 +216,7 @@ export const conversationsRpc = {
   list: { method: 'conversations.list', input: conversationRequestSchemas.list, response: conversationResponseSchemas.conversations },
   get: { method: 'conversations.get', input: conversationRequestSchemas.conversationId, response: conversationResponseSchemas.conversation },
   getModelControls: { method: 'conversations.getModelControls', input: conversationRequestSchemas.modelControls, response: conversationModelControlsSchema },
-  delete: { method: 'conversations.delete', input: conversationRequestSchemas.conversationId, response: validationResponseSchemas.deleted },
+  delete: { method: 'conversations.delete', input: conversationRequestSchemas.conversationMutation, response: validationResponseSchemas.deleted },
   activateBranch: { method: 'conversations.activateBranch', input: conversationRequestSchemas.conversationBranchActivation, response: conversationResponseSchemas.conversation },
   listBranches: { method: 'conversations.listBranches', input: conversationRequestSchemas.conversationId, response: conversationResponseSchemas.conversationBranches },
   listMessages: { method: 'conversations.listMessages', input: conversationRequestSchemas.conversationMessages, response: conversationResponseSchemas.messagePage },

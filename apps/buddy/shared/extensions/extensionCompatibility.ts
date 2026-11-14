@@ -26,6 +26,8 @@ export function extensionCompatibilityIssue(manifest: ExtensionMetadata, version
     return issue('format-unsupported')
   if (manifest.apiVersion > EXTENSION_API_VERSION)
     return issue('api-unsupported')
+  if (manifest.executionScope === 'service' && manifest.apiVersion < 5)
+    return issue('manifest-invalid')
   return satisfies(version, range, options) ? null : issue('app-version-unsupported')
 }
 

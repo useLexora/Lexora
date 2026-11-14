@@ -1,12 +1,16 @@
 import type { BackupScope } from '../../shared/storage/backupScope'
 import type { StorageHistory, StorageIdentity, StorageOperation } from '../../shared/storage/storageApi'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { lstat, readdir } from 'node:fs/promises'
 import { dirname, join, parse } from 'node:path'
 import { z } from 'zod'
 import { storageHistorySchema, storageIdentitySchema, storageOperationSchema } from '../../shared/storage/storageApi'
 import { canonicalStoragePath, containsStoragePath, isMissing, readStorageJson, storageError, writeStorageJson } from './storageFiles'
 import { discardStorageOperation } from './storageOperationFiles'
+
+export function storageBootstrapRoot(root: string): string {
+  return join(dirname(root), '.lexora-locations', createHash('sha256').update(root).digest('hex').slice(0, 24))
+}
 
 export const STORAGE_IDENTITY_FILE = 'storage.json'
 export const storageLocationSchema = z.object({
@@ -41,8 +45,8 @@ export class StorageLocationStore {
     if (state.pending)
       throw storageError('STORAGE_OPERATION_PENDING')
     await assertStorageIdentity(state)
-    const restoringHere = kind === 'restore' && await canonicalStoragePath(target) === await canonicalStoragePath(state.activeRoot)
-    if (kind === 'restore' && !restoringHere)
+    const restoringHere = (kind === 'restore' || kind === 'upgrade') && await canonicalStoragePath(target) === await canonicalStoragePath(state.activeRoot)
+    if ((kind === 'restore' || kind === 'upgrade') && !restoringHere)
       throw storageError('STORAGE_RESTORE_ROOT_MISMATCH')
     const canonical = restoringHere ? state.activeRoot : await validateStorageTarget(state.activeRoot, target, [dirname(this.path), ...protectedRoots], state.identity?.dataId)
     const pending: StorageOperation = { id: operationId, kind, ...(kind === 'restore' ? { credentials } : {}), ...(scopes ? { scopes } : {}), ...(snapshotId ? { snapshotId } : {}), source: state.activeRoot, target: canonical, phase: 'pending', error: null, createdAt: new Date().toISOString() }

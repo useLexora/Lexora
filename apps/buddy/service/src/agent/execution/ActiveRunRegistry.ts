@@ -56,7 +56,7 @@ interface StartActiveRunInput {
 
 export class ActiveRunRegistry {
   readonly #executions = new Map<string, ActiveRunExecution>()
-  readonly #degradedCleanup = new Map<string, string>()
+  readonly #degradedCleanup = new Map<string, { conversationId: string, branchId: string }>()
   readonly #settled: Emitter<ExecutionSettled>
   readonly onDidSettle: Emitter<ExecutionSettled>['event']
 
@@ -67,8 +67,8 @@ export class ActiveRunRegistry {
     this.onDidSettle = this.#settled.event
   }
 
-  hasActiveExecution(conversationId: string, actorId?: string): boolean {
-    return [...this.#executions.values()].some(execution => execution.state.identity.conversationId === conversationId && (!actorId || execution.state.identity.actorId === actorId))
+  hasActiveExecution(conversationId: string, actorId?: string, branchId?: string): boolean {
+    return [...this.#executions.values()].some(execution => execution.state.identity.conversationId === conversationId && (!actorId || execution.state.identity.actorId === actorId) && (!branchId || execution.state.identity.branchId === branchId))
   }
 
   activeRunIds(canonicalRoot: string): string[] {
@@ -87,8 +87,8 @@ export class ActiveRunRegistry {
     this.#disposed = true
   }
 
-  hasDegradedCleanup(conversationId: string): boolean {
-    return [...this.#degradedCleanup.values()].includes(conversationId)
+  hasDegradedCleanup(conversationId: string, branchId?: string): boolean {
+    return [...this.#degradedCleanup.values()].some(identity => identity.conversationId === conversationId && (!branchId || identity.branchId === branchId))
   }
 
   start(input: StartActiveRunInput): BuddyTurnHandle {
@@ -127,7 +127,7 @@ export class ActiveRunRegistry {
         if (execution?.state === state)
           this.#executions.delete(state.runId)
         if (cleanup === 'degraded')
-          this.#degradedCleanup.set(state.runId, state.identity.conversationId)
+          this.#degradedCleanup.set(state.runId, { conversationId: state.identity.conversationId, branchId: state.identity.branchId })
         else
           this.#degradedCleanup.delete(state.runId)
         this.#settled.fire(copyEventSnapshot({

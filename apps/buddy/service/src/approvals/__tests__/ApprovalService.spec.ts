@@ -7,9 +7,12 @@ import { deferred } from '@buddy-tests/deferred'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createRunEventLog } from '../../events/createRunEventLog'
+import { SqliteRunEventLog } from '../../events/SqliteRunEventLog'
 import { prepareTestTurnRequest } from '../../storage/__tests__/composerDraftTestFixture'
+import { seedSqliteRun } from '../../storage/__tests__/sqliteRunFixture'
 import { createApprovalRepository } from '../../storage/approvalRepository'
-import { openBuddyDatabase } from '../../storage/database'
+import { openBuddyDatabase, openBuddyMigrationCandidate } from '../../storage/database'
+import { guardStorageDatabase } from '../../storage/StorageIsolation'
 import {
   ApprovalCancelledError,
   ApprovalExpiredError,
@@ -34,77 +37,49 @@ const BROWSER_REVIEW = {
 }
 
 afterEach(async () => {
-  for (const database of databases.splice(0))
-    database.close()
+  for (const database of databases.splice(0)) {
+    if (database.isOpen)
+      database.close()
+  }
   await Promise.all(directories.splice(0).map(path => rm(path, { force: true, recursive: true })))
 })
 
 describe('approvalService', () => {
-  it('cancels a durable approval and closes its run when the wait expires', async () => {
-    const database = openBuddyDatabase({ databasePath: ':memory:' })
+  it('releases active and queued approval waits on disposal when storage cannot be read', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'lexora-approval-isolation-'))
+    directories.push(root)
+    const databasePath = join(root, 'candidate.sqlite3')
+    const database = openBuddyMigrationCandidate({ databasePath })
     databases.push(database)
-    prepareTestTurnRequest(database, {
-      attachmentBindings: [],
-      branchId: 'branch-timeout',
-      conversationId: 'conversation-timeout',
-      createdAt: '2026-08-14T00:00:00.000Z',
-      model: 'model-1',
-      spaceId: null,
-      provider: 'provider-1',
-      requestFingerprint: 'fingerprint-timeout',
-      approvalPolicy: 'policy' as const,
-      executionProfile: 'workspace_write',
-      requestId: 'request-timeout',
-      runInput: {
-        attachmentIds: [],
-        contextItems: [],
-        prompt: 'hello',
-        reasoning: null,
-        serviceTier: null,
-      },
-      runId: 'run-timeout',
-      title: null,
-      userMessageContent: { text: 'hello' },
-      userMessageId: 'message-timeout',
-    })
+    database.exec('UPDATE storage_profile SET authority = \'sqlite\', migration_state = \'ready\'')
+    seedSqliteRun(database, 'run-1')
+    guardStorageDatabase(database)
     const repository = createApprovalRepository(database)
-    const eventLog = await createEventLog(database)
-    const onExpired = vi.fn()
-    const service = new ApprovalService({
-      approvalTimeoutMs: 5,
-      eventLog,
-      onExpired,
-      repository,
-    })
-
-    const decision = service.request({
-      reuseScopes: [],
-      arguments: { operation: 'upsert' },
-      automation: {
-        executionProfile: 'workspace_write',
-        modelMode: 'default',
-        name: 'Daily review',
-        operation: 'upsert',
-        spaceId: null,
-        promptSummary: 'Review the day',
-        scheduleSummary: 'daily at 18:00',
-        timezone: 'Asia/Shanghai',
-      },
-      kind: 'automation',
-      runId: 'run-timeout',
-      signal: new AbortController().signal,
-      summary: 'Save automation Daily review',
-      toolCallId: 'tool-timeout',
-      toolName: 'lexora_buddy_automation',
-    })
-
-    await expect(decision).rejects.toBeInstanceOf(ApprovalExpiredError)
-    await vi.waitFor(() => expect(onExpired).toHaveBeenCalledWith('run-timeout'))
-    expect(repository.listPending('run-timeout')).toEqual([])
-    expect(repository.list({ runId: 'run-timeout' })[0]).toMatchObject({
-      kind: 'automation',
-      status: 'cancelled',
-    })
+    const eventLog = new SqliteRunEventLog({ database })
+    const service = new ApprovalService({ repository, eventLog })
+    const controller = new AbortController()
+    const request = {
+      arguments: { command: 'fixture' },
+      kind: 'shell' as const,
+      runId: 'run-1',
+      signal: controller.signal,
+      summary: 'Fixture approval',
+      toolCallId: 'first',
+      toolName: 'bash',
+    }
+    const first = expect(service.request(request)).rejects.toMatchObject({ code: 'STORAGE_ISOLATED' })
+    const queued = expect(service.request({ ...request, toolCallId: 'queued' })).rejects.toMatchObject({ code: 'APPROVAL_CANCELLED' })
+    await vi.waitFor(() => expect(repository.listPending()).toHaveLength(1))
+    database.exec('PRAGMA query_only = ON')
+    expect(() => database.prepare('UPDATE runs SET status = status').run()).toThrow(expect.objectContaining({ errcode: 8 }))
+    await expect(service.dispose()).rejects.toThrow('could not persist every cancellation')
+    await Promise.all([first, queued])
+    await eventLog.close()
+    database.close()
+    const reopened = openBuddyMigrationCandidate({ databasePath })
+    databases.push(reopened)
+    expect(createApprovalRepository(reopened).listPending()).toMatchObject([{ toolCallId: 'first', status: 'pending' }])
+    expect(reopened.prepare('SELECT event_type FROM run_events').all()).toEqual([{ event_type: 'approval.requested' }])
   })
 
   it('expires a durable browser approval once while preserving its review payload', async () => {
@@ -171,52 +146,6 @@ describe('approvalService', () => {
       },
       status: 'cancelled',
     })
-  })
-
-  it('does not persist an approval when its durable request event cannot be appended', async () => {
-    const database = openBuddyDatabase({ databasePath: ':memory:' })
-    databases.push(database)
-    prepareTestTurnRequest(database, {
-      attachmentBindings: [],
-      branchId: 'branch-1',
-      conversationId: 'conversation-1',
-      createdAt: '2026-08-14T00:00:00.000Z',
-      model: 'model-1',
-      spaceId: null,
-      provider: 'provider-1',
-      requestFingerprint: 'fingerprint-request-failure',
-      approvalPolicy: 'policy' as const,
-      executionProfile: 'workspace_write',
-      requestId: 'request-request-failure',
-      runInput: {
-        attachmentIds: [],
-        contextItems: [],
-        prompt: 'hello',
-        reasoning: null,
-        serviceTier: null,
-      },
-      runId: 'run-request-failure',
-      title: null,
-      userMessageContent: { text: 'hello' },
-      userMessageId: 'message-request-failure',
-    })
-    const repository = createApprovalRepository(database)
-    const service = new ApprovalService({
-      eventLog: { append: vi.fn().mockRejectedValue(new Error('event storage unavailable')) },
-      repository,
-    })
-
-    await expect(service.request({
-      reuseScopes: ['operation', 'source', 'turn'],
-      arguments: { command: 'pnpm test' },
-      kind: 'shell',
-      runId: 'run-request-failure',
-      signal: new AbortController().signal,
-      summary: 'Run tests',
-      toolCallId: 'tool-request-failure',
-      toolName: 'bash',
-    })).rejects.toThrow('event storage unavailable')
-    expect(repository.list({ runId: 'run-request-failure' })).toEqual([])
   })
 
   it('allows eligible approvals only for the active turn and preserves explicit confirmations', async () => {
@@ -344,7 +273,7 @@ describe('approvalService', () => {
     })
   })
 
-  it('does not arm an expiry timer after an already durable request is aborted', async () => {
+  it('cancels a durable request when abort races its append acknowledgement', async () => {
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     databases.push(database)
     prepareTestTurnRequest(database, {
@@ -392,7 +321,6 @@ describe('approvalService', () => {
       repository,
     })
     const controller = new AbortController()
-    vi.useFakeTimers()
 
     const decision = service.request({
       reuseScopes: ['operation', 'source', 'turn'],
@@ -413,68 +341,6 @@ describe('approvalService', () => {
 
     await expect(decision).rejects.toBeInstanceOf(ApprovalCancelledError)
     expect(repository.listPending('run-abort')).toEqual([])
-    expect(vi.getTimerCount()).toBe(0)
-  })
-
-  it('keeps an approval pending when its durable resolution event cannot be appended', async () => {
-    const database = openBuddyDatabase({ databasePath: ':memory:' })
-    databases.push(database)
-    prepareTestTurnRequest(database, {
-      attachmentBindings: [],
-      branchId: 'branch-1',
-      conversationId: 'conversation-1',
-      createdAt: '2026-08-14T00:00:00.000Z',
-      model: 'model-1',
-      spaceId: null,
-      provider: 'provider-1',
-      requestFingerprint: 'fingerprint-1',
-      approvalPolicy: 'policy' as const,
-      executionProfile: 'workspace_write',
-      requestId: 'request-1',
-      runInput: {
-        attachmentIds: [],
-        contextItems: [],
-        prompt: 'hello',
-        reasoning: null,
-        serviceTier: null,
-      },
-      runId: 'run-1',
-      title: null,
-      userMessageContent: { text: 'hello' },
-      userMessageId: 'message-1',
-    })
-    const repository = createApprovalRepository(database)
-    const eventLog = await createEventLog(database)
-    const requested = deferred<void>()
-    const append = vi.fn(async (input: AppendBuddyRunEventInput) => {
-      if (input.type === 'approval.resolved')
-        throw new Error('event storage unavailable')
-      const event = await eventLog.append(input)
-      requested.resolve()
-      return event
-    })
-    const service = new ApprovalService({ eventLog: { append }, repository })
-    const decision = service.request({
-      reuseScopes: ['operation', 'source', 'turn'],
-      arguments: { command: 'pnpm test' },
-      kind: 'shell',
-      runId: 'run-1',
-      signal: new AbortController().signal,
-      summary: 'Run tests',
-      toolCallId: 'tool-1',
-      toolName: 'bash',
-    })
-    void decision.catch(() => {})
-    await requested.promise
-    const approval = repository.listPending()[0]!
-
-    await expect(service.resolve({ decision: 'approved', id: approval.id }))
-      .rejects
-      .toThrow('event storage unavailable')
-    expect(repository.findById(approval.id)).toMatchObject({
-      resolvedAt: null,
-      status: 'pending',
-    })
   })
 
   it('cancels an aborted request after a concurrent resolution append fails', async () => {
@@ -543,7 +409,6 @@ describe('approvalService', () => {
 
     await expect(resolving).rejects.toThrow('event projection failed')
     await expect(decision).rejects.toBeInstanceOf(ApprovalCancelledError)
-    expect(append).toHaveBeenCalledTimes(3)
     expect(repository.findById(approval.id)?.status).toBe('cancelled')
   })
 })

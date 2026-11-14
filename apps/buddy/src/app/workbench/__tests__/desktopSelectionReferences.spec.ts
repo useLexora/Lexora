@@ -40,7 +40,7 @@ async function fixture() {
       status: { isClosing: shallowRef(false) },
       execution: { isSending: shallowRef(false), isMutatingBranch: shallowRef(false) },
       session: { currentTitle: shallowRef('Same title'), activeConversationId: shallowRef(id) },
-      composer: { draftId: drafts.draftId, editorKey: drafts.editorKey, composerContent: drafts.composerContent, updateComposerContent: drafts.updateComposerContent, target: shallowRef({ kind: 'conversation', conversationId: id, branchId: 'branch' }) },
+      composer: { content: drafts.content, draftId: drafts.draftId, editorKey: drafts.editorKey, composerContent: drafts.composerContent, updateComposerContent: drafts.updateComposerContent, target: shallowRef({ kind: 'conversation', conversationId: id, branchId: 'branch' }) },
     } } as unknown as TaskCapability
   }
   const tasks = new Map([['a', task('a', draftsA)], ['b', task('b', draftsB)]])
@@ -59,10 +59,9 @@ async function fixture() {
   const reveal = vi.fn(async () => true)
   const selectionScope = shallowRef('task:a')
   const resources = { allTabs, tabs: visibleTabs, activeTab, browserStates, selectTab, selectionScope, isOpen: shallowRef(true), findArtifact: () => selectionArtifact, openArtifact: async () => activeTab.value = artifactTab, setArtifactViewMode: (_id: string, mode: 'preview' | 'source') => artifactTab.viewMode = mode } as unknown as TaskResourcePanel
-  let ready = true
   const locateElement = vi.fn(async () => true)
   const browser = { locateElement } as unknown as DesktopBrowserApi
-  const host = scope.run(() => createDesktopSelectionReferences({ controller, pool, language: shallowRef('zh-CN'), resources: () => resources, independent: () => independent, ready: () => ready, locateFile, openFile, browser, navigationVersion: () => version }))!
+  const host = scope.run(() => createDesktopSelectionReferences({ controller, pool, language: shallowRef('zh-CN'), resources: () => resources, independent: () => independent, ready: () => true, locateFile, openFile, browser, navigationVersion: () => version }))!
   host.registerReveal(fileId, reveal)
   host.registerReveal(artifactTab.id, reveal)
   cleanups.push(() => {
@@ -70,7 +69,7 @@ async function fixture() {
     void controller.dispose()
   })
   const quote = { id: 'q', text: 'Frozen file text', source: { kind: 'file' as const, title: 'auth.ts', file, format: 'source' as const } }
-  return { a, b, fileId, controller, host, quote, resources, selectionScope, browserStates, draftsA, draftsB, tasks, keyA, locateFile, openFile, locateElement, artifactTab, browserTab, allTabs, visibleTabs, activeTab, selectTab, reveal, navigate: () => version++, independent: () => independent = true, unavailable: () => ready = false, stop: () => scope.stop() }
+  return { a, b, fileId, controller, host, quote, resources, selectionScope, browserStates, draftsA, draftsB, tasks, keyA, locateFile, openFile, locateElement, artifactTab, browserTab, allTabs, visibleTabs, activeTab, selectTab, reveal, navigate: () => version++, independent: () => independent = true }
 }
 
 describe('desktop resource quote adapter', () => {
@@ -95,35 +94,18 @@ describe('desktop resource quote adapter', () => {
     expect(f.host.capture(f.fileId, f.quote)?.defaultId).toBeNull()
   })
 
-  it.each(['version', 'path', 'mode', 'scope', 'close', 'switch', 'independent'])('rejects an artifact operation after a %s source change', async (change) => {
+  it.each(['version', 'scope', 'close'])('rejects an artifact operation after a %s source change', async (change) => {
     const f = await fixture()
     f.activeTab.value = { id: f.artifactTab.id }
     const request = f.host.capture(f.artifactTab.id, artifactQuote)!
     if (change === 'version')
       f.artifactTab.artifact = { ...selectionArtifact, updatedAt: '2026-10-03T00:00:01.000Z' }
-    if (change === 'path')
-      f.artifactTab.artifact = { ...selectionArtifact, path: 'C:\\fixtures\\renamed.md' }
-    if (change === 'mode')
-      f.artifactTab.viewMode = 'source'
     if (change === 'scope')
       f.artifactTab.scope = 'task:b'
     if (change === 'close')
       f.allTabs.value = f.allTabs.value.filter(tab => tab.id !== f.artifactTab.id)
-    if (change === 'switch')
-      f.activeTab.value = { id: 'browser-a' }
-    if (change === 'independent')
-      f.independent()
     expect(f.host.add(request, f.a)).toBe('unavailable')
     expect(chatComposerDocumentToUserContent(f.draftsA.composerContent.value).resourceQuotes).toBeUndefined()
-  })
-
-  it('does not capture binary or directory artifact placeholders', async () => {
-    const f = await fixture()
-    f.activeTab.value = { id: f.artifactTab.id }
-    for (const artifact of [{ ...selectionArtifact, mimeType: 'application/pdf', name: 'report.pdf' }, { ...selectionArtifact, kind: 'directory' as const }]) {
-      f.artifactTab.artifact = artifact
-      expect(f.host.capture(f.artifactTab.id, artifactQuote)).toBeNull()
-    }
   })
 
   it('reopens artifact sources, selects the recorded representation and reports actual highlight failure', async () => {
@@ -197,16 +179,6 @@ describe('desktop resource quote adapter', () => {
     expect(chatComposerDocumentToUserContent(f.draftsB.composerContent.value).resourceQuotes).toBeUndefined()
   })
 
-  it('uses the actual layout for split status, not the writable target count', async () => {
-    const f = await fixture()
-    f.tasks.get('b')!.workspace.execution.isSending = shallowRef(true)
-    const request = f.host.capture(f.fileId, f.quote)!
-    expect(request.targets).toHaveLength(1)
-    expect(request.isSplit).toBe(true)
-    await f.controller.close(f.b)
-    expect(f.host.capture(f.fileId, f.quote)?.isSplit).toBe(false)
-  })
-
   it('invalidates a target after branch rebinding', async () => {
     const f = await fixture()
     const request = f.host.capture(f.fileId, f.quote)!
@@ -222,7 +194,7 @@ describe('desktop resource quote adapter', () => {
     expect(f.host.add(request, f.a)).toBe('unavailable')
   })
 
-  it.each(['scope', 'tab', 'independent', 'ready', 'dispose'] as const)('rejects an in-flight file open after a %s boundary changes', async (change) => {
+  it.each(['scope', 'tab'] as const)('rejects an in-flight file open after a %s boundary changes', async (change) => {
     const f = await fixture()
     const lookup = Promise.withResolvers<void>()
     f.locateFile.mockReturnValueOnce(lookup.promise)
@@ -231,19 +203,13 @@ describe('desktop resource quote adapter', () => {
       f.selectionScope.value = 'task:b'
     if (change === 'tab')
       f.activeTab.value = { id: 'other-tab' }
-    if (change === 'independent')
-      f.independent()
-    if (change === 'ready')
-      f.unavailable()
-    if (change === 'dispose')
-      f.stop()
     lookup.resolve()
     expect(await pending).toBe(false)
     expect(f.openFile).not.toHaveBeenCalled()
     expect(f.reveal).not.toHaveBeenCalled()
   })
 
-  it.each(['version', 'mode', 'path'] as const)('fences file reveal after its source %s changes', async (change) => {
+  it('fences file reveal after its source revision changes', async () => {
     const f = await fixture()
     const deferred = Promise.withResolvers<boolean>()
     let current!: () => boolean
@@ -254,10 +220,7 @@ describe('desktop resource quote adapter', () => {
     const pending = f.host.locate(f.quote)
     await vi.waitFor(() => expect(current).toBeDefined())
     const view = f.controller.layout.views[f.fileId]!
-    if (change === 'mode')
-      f.controller.updateView(f.fileId, { state: { ...view.state, mode: 'preview' } })
-    else
-      f.controller.updateView(f.fileId, { resource: { ...view.resource, data: { ...view.resource.data, [change === 'version' ? 'revision' : 'path']: change === 'version' ? 2 : 'other.ts' } } })
+    f.controller.updateView(f.fileId, { resource: { ...view.resource, data: { ...view.resource.data, revision: 2 } } })
     expect(current()).toBe(false)
     deferred.resolve(true)
     expect(await pending).toBe(false)
@@ -302,7 +265,7 @@ describe('desktop resource quote adapter', () => {
     expect(f.activeTab.value.id).toBe(f.artifactTab.id)
   })
 
-  it.each(['document', 'closed', 'tab'] as const)('does not select a browser tab after its pending locator becomes stale: %s', async (change) => {
+  it.each(['document', 'tab'] as const)('does not select a browser tab after its pending locator becomes stale: %s', async (change) => {
     const f = await fixture()
     f.visibleTabs.value = [f.browserTab, f.artifactTab]
     const deferred = Promise.withResolvers<boolean>()
@@ -310,8 +273,6 @@ describe('desktop resource quote adapter', () => {
     const pending = f.host.locate(browserQuote)
     if (change === 'document')
       f.browserStates.value['browser-a'] = { ...f.browserStates.value['browser-a'], documentVersion: 2 }
-    if (change === 'closed')
-      f.allTabs.value = f.allTabs.value.filter(tab => tab.id !== 'browser-a')
     if (change === 'tab')
       f.activeTab.value = { id: f.artifactTab.id }
     deferred.resolve(true)

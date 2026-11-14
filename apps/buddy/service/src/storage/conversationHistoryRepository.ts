@@ -192,11 +192,6 @@ export function createConversationHistoryStore(database: DatabaseSync): Conversa
     WHERE conversation_id = ?
     ORDER BY created_at, id
   `)
-  const findIncompleteRun = database.prepare(`
-    SELECT 1 FROM runs
-    WHERE conversation_id = ? AND execution_kind IN ('root', 'maintenance') AND status IN ('queued', 'running')
-    LIMIT 1
-  `)
   const collectBranchMessages = (
     conversationId: string,
     branchId: string,
@@ -281,8 +276,6 @@ export function createConversationHistoryStore(database: DatabaseSync): Conversa
       }
       if (conversation.active_branch_id === input.branchId)
         return
-      if (findIncompleteRun.get(input.conversationId))
-        throw new ConversationHistoryError('branch is not activatable')
       activateBranch.run(input.branchId, input.updatedAt, input.conversationId)
     },
     insertRootBranch(input) {

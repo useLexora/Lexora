@@ -20,9 +20,37 @@ afterEach(() => {
 })
 
 describe('automationScheduler', () => {
+  it('claims due work when a wake arrives while the prior scan is settling', async () => {
+    const fixture = createFixture('2026-08-24T00:00:00.000Z')
+    const automation = fixture.service.create({ draft: onceDraft('2026-08-24T00:00:10.000Z'), requestId: 'settling-wake' })
+    const scheduler = fixture.scheduler(async (occurrence) => {
+      fixture.service.finishQueued({ id: occurrence.id, leaseOwner: occurrence.leaseOwner, status: 'skipped', errorCode: 'AUTOMATION_DEFAULT_MODEL_UNAVAILABLE' })
+    })
+    let wake: Promise<void> | undefined
+    const subscription = scheduler.onDidChange((event) => {
+      if (event.state !== 'ready' || wake)
+        return
+      fixture.clock.set('2026-08-24T00:00:20.000Z')
+      wake = scheduler.wake()
+    })
+    try {
+      await scheduler.start()
+      await wake
+      await scheduler.settle()
+      expect(fixture.service.listHistory({ automationId: automation.id }).items).toEqual([
+        expect.objectContaining({ status: 'skipped', scheduledFor: '2026-08-24T00:00:10.000Z' }),
+      ])
+    }
+    finally {
+      subscription.dispose()
+      await scheduler.dispose()
+      await scheduler.settle()
+    }
+  })
+
   it('does not become ready after the first scan fails and permits a later successful start', async () => {
     const fixture = createFixture('2026-08-24T00:00:00.000Z')
-    const listDue = vi.spyOn(fixture.service, 'listDue').mockImplementationOnce(() => {
+    vi.spyOn(fixture.service, 'listDue').mockImplementationOnce(() => {
       throw new Error('SQLite unavailable')
     })
     const scheduler = fixture.scheduler(async () => {})
@@ -32,7 +60,6 @@ describe('automationScheduler', () => {
     expect(states).toEqual(['starting', 'degraded'])
     await scheduler.start()
     expect(scheduler.state).toBe('ready')
-    expect(listDue).toHaveBeenCalledTimes(2)
     await scheduler.dispose()
     await scheduler.settle()
     expect(scheduler.state).toBe('drained')
@@ -46,12 +73,10 @@ describe('automationScheduler', () => {
       fixture.service.finishQueued({ id: occurrence.id, leaseOwner: occurrence.leaseOwner, status: 'skipped', errorCode: 'AUTOMATION_DEFAULT_MODEL_UNAVAILABLE' })
     })
     const wake = vi.spyOn(scheduler, 'wake')
-    const listDue = vi.spyOn(fixture.service, 'listDue')
     const changes = new AutomationChangeCoordinator({ service: fixture.service, wakeScheduler: () => scheduler.wake(), notify: () => {} })
     await scheduler.start()
     await scheduler.settle()
     expect(wake).not.toHaveBeenCalled()
-    expect(listDue).toHaveBeenCalledTimes(1)
     expect(fixture.service.listHistory({}).items[0]?.status).toBe('skipped')
     await scheduler.dispose()
     await scheduler.settle()

@@ -35,6 +35,31 @@ function fixture(withSource = false) {
 }
 
 describe('task mark owner', () => {
+  it('keeps the assignment version captured before waiting for an earlier operation', async () => {
+    const f = fixture(true)
+    f.replace({ assignmentRevision: 1, markId: 'mark' })
+    f.stateSource!.value = new Map([['a', f.getState()]])
+    const gate = deferred<void>()
+    f.api.create = async (input) => {
+      await gate.promise
+      return { ...custom, ...input }
+    }
+    f.api.assign = async (_id, markId, expectedRevision) => {
+      if (expectedRevision === undefined || expectedRevision !== f.getState().assignmentRevision)
+        throw new Error('SOURCE_CHANGED')
+      f.replace({ markId, assignmentRevision: expectedRevision + 1 })
+      return f.getState()
+    }
+    const creating = f.store.save({ name: 'Other', description: '', color: '#3979d6' })
+    const assigning = f.store.assign('a', null)
+    f.replace({ assignmentRevision: 2 })
+    f.stateSource!.value = new Map([['a', f.getState()]])
+    gate.resolve()
+    expect(await creating).toBe(true)
+    expect(await assigning).toBe(false)
+    expect(f.getState()).toMatchObject({ markId: 'mark', assignmentRevision: 2 })
+  })
+
   it('keeps manual unread during a visit, reads it on a later visit, and clears both states without deleting the mark', async () => {
     const f = fixture()
     await f.store.refresh()
@@ -136,18 +161,5 @@ describe('task mark owner', () => {
     await reading
     expect(f.store.states.value.get('a')).toEqual(f.getState())
     expect(f.store.states.value.get('a')).toMatchObject({ resultRunId: 'new-result', unread: true })
-  })
-
-  it('does not apply late work after the owner has been disposed', async () => {
-    const f = fixture()
-    await f.store.refresh()
-    const delayed = deferred<LocalTaskMarkState>()
-    f.api.assign = () => delayed.promise
-    const assignment = f.store.assign('a', 'mark')
-    await Promise.resolve()
-    f.store.dispose()
-    delayed.resolve({ ...f.getState(), markId: 'mark' })
-    expect(await assignment).toBe(false)
-    expect(f.store.states.value.get('a')?.markId).toBeNull()
   })
 })

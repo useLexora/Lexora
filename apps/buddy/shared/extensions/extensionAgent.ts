@@ -12,6 +12,7 @@ export const extensionAgentRpc = {
   request: 'extensions.agent.request',
   changed: 'extensions.agent.changed',
   resource: 'extensions.agent.resource',
+  releaseRun: 'extensions.agent.releaseRun',
 } as const
 export const extensionAgentInvocationLimits = {
   concurrent: 32,

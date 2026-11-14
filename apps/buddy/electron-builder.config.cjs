@@ -10,7 +10,11 @@ const { resolveInferenceEnvironment } = require('./shared/extensions/inferencePl
 const { OPERATING_SYSTEM } = require('./shared/platform/identifiers.ts')
 
 const target = resolveBuildTarget()
-const resources = platformResources(target)
+const resources = [
+  ...platformResources(target),
+  { from: '.output/build/service', to: 'lexora-service' },
+  { from: `.output/resources/node-runtime/${target.id}`, to: 'lexora-runtime' },
+]
 const packageFormat = process.env.LEXORA_BUDDY_PACKAGE_FORMAT ?? target.packageFormats[0]
 const { version, sourceDateEpoch } = require('./buddy.version.json')
 const { desktopName, productName: displayName } = require('./package.json')
@@ -29,6 +33,11 @@ const signedMacos = macosSigningMode() === 'developer-id'
 
 module.exports = withDesktopNativeVersion({
   appId: desktopName,
+  afterPack: async context => (await import('../../packaging/buddy/release/product-release-set.mjs')).writePackagedReleaseSet(context),
+  afterSign: async (context) => {
+    if (target.platform === OPERATING_SYSTEM.Windows)
+      await (await import('../../packaging/buddy/release/product-release-set.mjs')).writePackagedReleaseSet(context)
+  },
   extraMetadata: {
     desktopDistribution: { schemaVersion: 1, format: packageFormat === 'macos-zip' ? 'dmg' : packageFormat, architecture: target.architecture, signing: target.platform === OPERATING_SYSTEM.MacOS ? (signedMacos ? 'developer-id' : 'ad-hoc') : 'none' },
   },
@@ -58,6 +67,7 @@ module.exports = withDesktopNativeVersion({
     ...excludedDependencyFiles(target),
   ],
   mac: {
+    sign: async (options, packager) => (await import('../../packaging/buddy/release/product-release-set.mjs')).signMacosReleaseSet(options, packager),
     extraResources: (target.platform === OPERATING_SYSTEM.MacOS ? resources : []),
     target: [{ target: 'dmg', arch: ['arm64'] }, { target: 'zip', arch: ['arm64'] }],
     artifactName: target.platform === OPERATING_SYSTEM.MacOS ? desktopArtifactName(target, 'dmg', macro('version')).replace(/\.dmg$/, `.${macro('ext')}`) : undefined,
@@ -73,7 +83,7 @@ module.exports = withDesktopNativeVersion({
     binaries: (target.platform === OPERATING_SYSTEM.MacOS ? resources : [])
       .filter(resource => resource.to.startsWith('native-'))
       .map(resource => `Contents/Resources/${resource.to}`)
-      .concat(['Contents/Resources/search-tools/fd', 'Contents/Resources/search-tools/rg']),
+      .concat(['Contents/Resources/search-tools/fd', 'Contents/Resources/search-tools/rg', 'Contents/Resources/lexora-runtime/node']),
   },
   dmg: {
     sign: signedMacos,

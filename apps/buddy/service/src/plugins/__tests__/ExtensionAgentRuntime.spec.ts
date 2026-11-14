@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest'
 import { extensionAgentRpc } from '../../../../shared/extensions/extensionAgent'
 import { createBuddyRunOutputs } from '../../agent/events/toolPresentation'
 import { ToolDisclosure } from '../../agent/extensions/discovery/ToolDisclosure'
+import { createRpcRuntimePlatform } from '../../platform/createRpcRuntimePlatform'
 import { ExtensionAgentRuntime } from '../ExtensionAgentRuntime'
 
 const descriptor: ExtensionAgentDescriptor = { id: 'tests.reader', name: 'Fixture', revision: 'package-revision', configurationRevision: 'config-revision', agent: { actions: [], instructions: 'fixture-private-instructions', tools: [{ id: 'tests.reader.read', title: 'Read', description: 'fixture-private-description', parameters: { type: 'object', properties: {}, required: [], additionalProperties: false } }] } }
@@ -48,7 +49,7 @@ function fixture() {
       return invoke(input, signal)
     },
   }
-  const runtime = new ExtensionAgentRuntime({ rpc, createHandlers: () => handlers })
+  const runtime = new ExtensionAgentRuntime({ host: createRpcRuntimePlatform(rpc).plugins, createHandlers: () => handlers })
   const facts: ExtensionAgentChange[] = []
   runtime.onDidChange(event => facts.push(event))
   runtime.bind()
@@ -277,6 +278,11 @@ describe('extension agent capability and invocation lifetimes', () => {
 
   it('retains invocation ownership until accepted child handlers actually finish and fences new requests after return', async () => {
     const f = fixture()
+    const returned = deferred<void>()
+    f.runtime.onDidChange((event) => {
+      if (event.kind === 'invocation' && event.stage === 'returned')
+        returned.resolve()
+    })
     const childStarted = deferred<void>()
     const childCommitted = deferred<void>()
     let child!: Promise<unknown>
@@ -295,9 +301,7 @@ describe('extension agent capability and invocation lifetimes', () => {
     const execute = await f.tool()
     const executing = execute()
     await childStarted.promise
-    await Promise.resolve()
-    await Promise.resolve()
-    await Promise.resolve()
+    await returned.promise
     expect(f.facts).toContainEqual(expect.objectContaining({ kind: 'invocation', stage: 'returned', outcome: 'completed' }))
     expect(f.facts.some(fact => fact.kind === 'invocation' && fact.stage === 'settled')).toBe(false)
     expect(f.runtime.snapshot.activeInvocations).toMatchObject([{ invocationId, accepting: false, pendingRequests: 1 }])

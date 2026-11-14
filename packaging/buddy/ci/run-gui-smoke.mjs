@@ -71,6 +71,7 @@ export async function runDesktopSmoke(executablePath, env, timeoutMs = 30_000, a
     const child = spawnGui(executablePath, {
       ...env,
       LEXORA_DESKTOP_SMOKE_TEST: '1',
+      LEXORA_BUDDY_SERVICE_MODE: 'utility',
     }, [...args, ...(env.LEXORA_GUI_SMOKE_NO_SANDBOX === '1' ? ['--no-sandbox'] : [])])
     let stdout = ''
     let stderr = ''

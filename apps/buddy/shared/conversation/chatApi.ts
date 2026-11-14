@@ -70,5 +70,5 @@ export const chatRpc = {
   editUserMessage: { method: 'chat.editUserMessage', input: chatRequestSchemas.editUserMessage, response: chatResponseSchemas.turnStart },
   executeCommand: { method: 'chat.executeCommand', input: chatRequestSchemas.chatCommand, response: chatResponseSchemas.turnStart },
   regenerateAssistant: { method: 'chat.regenerateAssistant', input: chatRequestSchemas.regenerateAssistant, response: chatResponseSchemas.turnStart },
-  cancel: { method: 'chat.cancel', input: runsRequestSchemas.runId, response: runsResponseSchemas.run },
+  cancel: { method: 'chat.cancel', input: runsRequestSchemas.cancel, response: runsResponseSchemas.run },
 } as const satisfies Record<string, RuntimeRequestContract>

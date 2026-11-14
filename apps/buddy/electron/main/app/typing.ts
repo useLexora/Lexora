@@ -3,11 +3,13 @@ import type { ApplicationEvents } from '../../../shared/observability/Applicatio
 import type { LexoraConfig } from '../../shared/desktopApi'
 import type { DesktopDiagnosticLogger } from '../desktopDiagnostics'
 import type { BuddyRuntimePaths } from '../paths'
+import type { PlatformHostConnection } from '../runtime/platformHostBootstrap'
 import type { DesktopLaunchIntent } from '../startupIntent'
 import type { DesktopStorage } from '../storage/storageBootstrap'
 import type { DesktopStartup } from './DesktopStartup'
 
 export interface DesktopEnvironment {
+  platformHost?: PlatformHostConnection
   events: ApplicationEvents
   startup: DesktopStartup
   diagnostics: DesktopDiagnosticLogger
@@ -22,7 +24,7 @@ export interface DesktopEnvironment {
 }
 
 export interface DesktopQuitOptions {
-  reason?: 'installation'
+  reason?: 'installation' | 'session_end' | 'service_stop'
   discardDraftsOnFailure?: boolean
   restart?: boolean
 }

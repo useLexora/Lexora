@@ -118,12 +118,10 @@ export function useTaskIndex(options: TaskIndexOptions) {
       }
     },
     async deleteTask(id, expectedRevision) {
-      if (!options.ready.value || expectedRevision === undefined)
-        return
       try {
         if (options.beforeTaskDelete && !await options.beforeTaskDelete(id))
           return
-        if (!options.ready.value || !await api.conversations.deletePermanently(id, expectedRevision))
+        if (!options.ready.value || !await api.conversations.delete(id, ...expectedRevision !== undefined ? [expectedRevision] as const : []))
           return
         if (!disposed)
           options.onTaskDeleted?.(id)
@@ -133,9 +131,9 @@ export function useTaskIndex(options: TaskIndexOptions) {
         setError(error)
       }
     },
-    async renameTask(id, title) {
+    async renameTask(id, title, expectedTitleRevision) {
       try {
-        const conversation = await api.conversations.rename(id, title)
+        const conversation = await api.conversations.rename(id, title, ...expectedTitleRevision !== undefined ? [expectedTitleRevision] as const : [])
         if (!disposed)
           data.applyConversation(conversation)
         return true
@@ -145,10 +143,10 @@ export function useTaskIndex(options: TaskIndexOptions) {
         return false
       }
     },
-    async moveTaskToSpace(id, spaceId) {
+    async moveTaskToSpace(id, spaceId, expectedRevision) {
       if (options.beforeTaskMove && !await options.beforeTaskMove(id))
         return false
-      const conversation = await api.conversations.moveToSpace(id, spaceId)
+      const conversation = await api.conversations.moveToSpace(id, spaceId, ...expectedRevision !== undefined ? [expectedRevision] as const : [])
       if (!disposed)
         data.applyConversation(conversation)
       return true

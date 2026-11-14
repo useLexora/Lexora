@@ -1,0 +1,91 @@
+name: Android package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-package-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Signed Android APK
+    runs-on: ubuntu-24.04
+    environment: android-signing
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+
+      - name: Setup Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install workspace dependencies
+        uses: ./.github/actions/install-workspace-dependencies
+        with:
+          packages: '@uselexora/lexora @uselexora/lexora-buddy...'
+
+      - name: Prepare Android SDK
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+
+      - name: Verify Android client
+        working-directory: apps/mobile
+        run: ./gradlew --no-daemon :android:testDebugUnitTest :android:lintRelease
+
+      - name: Build signed APK
+        working-directory: apps/mobile
+        env:
+          LEXORA_ANDROID_KEYSTORE_BASE64: ${{ secrets.LEXORA_ANDROID_KEYSTORE_BASE64 }}
+          LEXORA_ANDROID_STORE_PASSWORD: ${{ secrets.LEXORA_ANDROID_STORE_PASSWORD }}
+          LEXORA_ANDROID_KEY_ALIAS: ${{ secrets.LEXORA_ANDROID_KEY_ALIAS }}
+          LEXORA_ANDROID_KEY_PASSWORD: ${{ secrets.LEXORA_ANDROID_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${LEXORA_ANDROID_KEYSTORE_BASE64:?Missing signing keystore}"
+          : "${LEXORA_ANDROID_STORE_PASSWORD:?Missing keystore password}"
+          : "${LEXORA_ANDROID_KEY_ALIAS:?Missing signing alias}"
+          : "${LEXORA_ANDROID_KEY_PASSWORD:?Missing key password}"
+          umask 077
+          export LEXORA_ANDROID_KEYSTORE="$RUNNER_TEMP/lexora-android-release.p12"
+          trap 'rm -f "$LEXORA_ANDROID_KEYSTORE"' EXIT
+          printf '%s' "$LEXORA_ANDROID_KEYSTORE_BASE64" | base64 --decode > "$LEXORA_ANDROID_KEYSTORE"
+          unset LEXORA_ANDROID_KEYSTORE_BASE64
+          ./gradlew --no-daemon :android:assembleRelease
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs android/build/outputs/apk/release/android-release.apk | tee android/build/outputs/apk/release/signature.txt
+          expected="$(cat android/release-certificate.sha256)"
+          grep -Fx "Signer #1 certificate SHA-256 digest: $expected" android/build/outputs/apk/release/signature.txt
+          cd android/build/outputs/apk/release
+          sha256sum android-release.apk > android-release.apk.sha256
+
+      - name: Remove signing material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/lexora-android-release.p12"
+
+      - name: Upload signed package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lexora-android-apk
+          path: |
+            apps/mobile/android/build/outputs/apk/release/android-release.apk
+            apps/mobile/android/build/outputs/apk/release/android-release.apk.sha256
+            apps/mobile/android/build/outputs/apk/release/output-metadata.json
+            apps/mobile/android/build/outputs/apk/release/signature.txt
+          if-no-files-found: error
+          retention-days: 14

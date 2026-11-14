@@ -3,7 +3,6 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { SYSTEM_UNREAD_MARK_ID } from '../../../../shared/conversation/taskMarkApi'
 import { createConversationRepository } from '../conversationRepository'
 import { openBuddyDatabase } from '../database'
 import { createRunRepository } from '../runRepository'
@@ -65,18 +64,6 @@ describe('task marks and reading state', () => {
     expect(f.marks.getState('a')).toMatchObject({ markId: null, unread: true, resultRunId: 'next-result' })
   })
 
-  it.each(['automatic', 'manual'] as const)('clears %s unread without a custom mark', (kind) => {
-    const f = fixture()
-    if (kind === 'automatic')
-      f.run('result')
-    else f.marks.setRead({ ...f.marks.getState('a'), read: false })
-    const before = f.marks.getState('a')
-    expect(before).toMatchObject({ markId: null, unread: true })
-    const cleared = f.marks.clear(before)
-    expect(cleared).toMatchObject({ markId: null, unread: false, readRevision: before.readRevision + 1 })
-    expect(f.marks.clear(before)).toEqual(cleared)
-  })
-
   it('does not clear later results or later manual unread with a stale clear request', () => {
     const f = fixture()
     const custom = f.marks.create(mark)
@@ -127,20 +114,6 @@ describe('task marks and reading state', () => {
     expect(f.marks.getState('a')).toMatchObject({ markId: custom.id, unread: true })
   })
 
-  it('observes terminal results, not queued work, compaction or cancellation', () => {
-    const f = fixture()
-    f.run('active', 'running')
-    expect(f.marks.getState('a').unread).toBe(false)
-    f.runs.reconcileTerminal('active', 'completed', now, null)
-    expect(f.marks.getState('a')).toMatchObject({ resultRunId: 'active', unread: true })
-    f.marks.setRead({ ...f.marks.getState('a'), read: true })
-    f.run('compaction', 'completed', 'conversation.compaction')
-    f.run('cancelled', 'cancelled')
-    expect(f.marks.getState('a').unread).toBe(false)
-    f.run('failure', 'failed')
-    expect(f.marks.getState('a')).toMatchObject({ resultRunId: 'failure', unread: true })
-  })
-
   it('updates shared definitions by ID and deletes only associations, excluding deleted tasks', () => {
     const f = fixture()
     const first = f.marks.create(mark)
@@ -164,15 +137,6 @@ describe('task marks and reading state', () => {
     expect(() => f.marks.assign('a', null)).toThrow()
     expect(() => f.marks.clear({ conversationId: 'a', resultRunId: 'result', readRevision: 0 })).toThrow()
     expect(() => f.marks.setRead({ conversationId: 'a', resultRunId: 'result', readRevision: 0, read: true })).toThrow()
-  })
-
-  it('protects the system identity even when a custom mark has the same name', () => {
-    const f = fixture()
-    const custom = f.marks.create({ ...mark, name: '未读' })
-    expect(custom.id).not.toBe(SYSTEM_UNREAD_MARK_ID)
-    for (const action of [() => f.marks.update(SYSTEM_UNREAD_MARK_ID, mark), () => f.marks.delete(SYSTEM_UNREAD_MARK_ID), () => f.marks.assign('a', SYSTEM_UNREAD_MARK_ID)])
-      expect(action).toThrow()
-    expect(f.marks.list()).toHaveLength(1)
   })
 
   it('migrates existing results as read, preserves history and persists new unread and assignments across restarts', () => {

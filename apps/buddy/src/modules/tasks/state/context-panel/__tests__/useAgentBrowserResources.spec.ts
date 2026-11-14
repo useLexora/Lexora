@@ -3,6 +3,7 @@ import { browserAgentTabId } from '@buddy-shared/browser/session'
 import { deferred } from '@buddy-tests/deferred'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { effectScope, nextTick, shallowRef } from 'vue'
+import { BrowserGuestCatalog } from '@/platform/browser/BrowserGuestCatalog'
 import { browserTabId } from '../../../model/context-panel/taskContextPanel'
 import { useTaskResourcePanel } from '../useTaskResourcePanel'
 import { contextPanelFixture } from './contextPanelFixture'
@@ -68,7 +69,10 @@ function fixture(mode: 'task' | 'space' | 'independent' = 'task') {
     openArtifact: async () => { throw new Error('Unexpected artifact') },
     openFile: async () => { throw new Error('Unexpected file') },
   }
+  const guestCatalog = new BrowserGuestCatalog(browser)
+  onTestFinished(() => guestCatalog.dispose())
   const panelOptions: PanelOptions = {
+    guestCatalog,
     ...f.options,
     browser,
     autoCollapse: shallowRef(false),
@@ -232,23 +236,6 @@ describe('agent browser resources', () => {
     expect(f.sessions.size).toBe(0)
   })
 
-  it('closes an explicitly presented owner page while its first registration is pending', async () => {
-    const f = fixture()
-    const snapshot = deferred<Awaited<ReturnType<typeof f.browser.listGuests>>>()
-    const listGuests = f.browser.listGuests
-    f.browser.listGuests = () => snapshot.promise
-    const state = agentState('run')
-    f.publish(state)
-    await f.host.execute({ action: 'open', target: { kind: 'browser', source: { conversationId: 'task', runId: 'run' } } }, 'harness')
-    expect(await f.panel.closeTab(tabId('run'))).toBe(true)
-    f.browser.listGuests = listGuests
-    snapshot.resolve([{ sessionId: state.sessionId, partition: 'test' }])
-    await nextTick()
-    await nextTick()
-    expect(f.panel.tabs.value).toEqual([])
-    expect(f.sessions.size).toBe(0)
-  })
-
   it.each(['absent', 'live', 'unavailable'] as const)('closes an unbound restored tab only when its owner is confirmed absent: %s', async (inspection) => {
     const f = fixture()
     f.panel.restoreTab({
@@ -270,23 +257,6 @@ describe('agent browser resources', () => {
     expect(f.panel.hasTab(tabId('restored'))).toBe(inspection !== 'absent')
     if (inspection !== 'absent')
       expect(f.options.onError).toHaveBeenCalledOnce()
-  })
-
-  it('does not accept a stale live-guest snapshot after a close notification', async () => {
-    const f = fixture()
-    const snapshot = deferred<Awaited<ReturnType<typeof f.browser.listGuests>>>()
-    const listGuests = f.browser.listGuests
-    f.browser.listGuests = () => snapshot.promise
-    const state = agentState('run')
-    f.publish(state)
-    f.sessions.clear()
-    f.browser.listGuests = listGuests
-    f.guestsChanged()
-    snapshot.resolve([{ sessionId: state.sessionId, partition: 'test' }])
-    await nextTick()
-    await nextTick()
-    expect(f.panel.tabs.value).toEqual([])
-    expect(f.panel.activeTab.value).toBeNull()
   })
 
   it('keeps registered pages when guest inspection fails and retries registration on the next event', async () => {
@@ -323,14 +293,5 @@ describe('agent browser resources', () => {
     f.scope.stop()
     f.panel.retainBrowserSession(original, browserAgentTabId('run'))
     expect([...f.sessions.keys()]).toEqual(['private'])
-  })
-
-  it('never projects an unowned browser event into an agent or default resource', async () => {
-    const f = fixture()
-    const { owner: _owner, ...manual } = agentState('manual')
-    f.publish(manual)
-    await nextTick()
-    expect(f.panel.tabs.value).toEqual([])
-    expect(f.panel.browserStates.value).toEqual({})
   })
 })

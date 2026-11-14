@@ -7,7 +7,7 @@ export class ActiveTaskProjection {
   readonly #taskId = shallowRef<string | null>(null)
   readonly taskId = computed(() => this.#taskId.value)
   readonly #active = shallowRef<TaskCapability | null>(null)
-  readonly current = computed(() => this.#active.value)
+  readonly current = computed(() => this.#active.value?.workspace.restoration.state.value === 'ready' ? this.#active.value : null)
   readonly #subscriptions: (() => void)[]
 
   constructor(readonly controller: WorkbenchController, readonly pool: TaskWorkspacePool) {
@@ -27,7 +27,7 @@ export class ActiveTaskProjection {
     const view = pane?.view ? this.controller.layout.views[pane.view] : null
     this.#taskId.value = view?.resource.scheme === 'task' ? view.resource.id : null
     const task = view ? this.pool.peek(view.resource) : undefined
-    this.#active.value = task?.workspace.restoration.state.value === 'ready' ? task : null
+    this.#active.value = task ?? null
   }
 
   dispose(): void { for (const stop of this.#subscriptions) stop() }

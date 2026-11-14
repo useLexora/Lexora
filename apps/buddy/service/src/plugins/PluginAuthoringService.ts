@@ -1,6 +1,6 @@
 import type { ListenerErrorHandler } from '../../../shared/events/Emitter'
-import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
 import type { BuddyCapabilityContext } from '../agent/extensions/BuddyCapability'
+import type { PluginAuthoringHost } from './PluginHost'
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { link, mkdtemp, open, rm } from 'node:fs/promises'
@@ -10,7 +10,7 @@ import { readExtensionDirectory, sha256 } from '../../../platform/extensions/ext
 import { containsCanonicalPath } from '../../../platform/filesystem/filePaths'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
-import { EXTENSION_PACKAGE_TRANSFER_RPC, EXTENSION_REVIEW_REQUEST, extensionTransferChunkSchema, extensionTransferOffsetSchema, extensionTransferredBuildResultSchema, extensionTransferSessionSchema } from '../../../shared/extensions/extensionAuthoring'
+import { extensionTransferChunkSchema, extensionTransferOffsetSchema, extensionTransferredBuildResultSchema, extensionTransferSessionSchema } from '../../../shared/extensions/extensionAuthoring'
 import { EXTENSION_PACKAGE_CHUNK_BYTES, validateExtensionArchiveSize } from '../../../shared/extensions/extensionPackageBudget'
 import { resolveGrantedPath } from '../directories/resolveGrantedPath'
 
@@ -25,14 +25,14 @@ export interface PluginAuthoringChange {
 }
 
 export class PluginAuthoringService {
-  readonly #peer: Pick<RuntimeRpcPeerContract, 'request' | 'notify'>
+  readonly #peer: Pick<PluginAuthoringHost, 'transfer' | 'review'>
   readonly #changes: Emitter<PluginAuthoringChange>
   readonly onDidChange
   readonly #pending = new Set<Promise<Record<string, unknown> & { ok: boolean }>>()
   readonly #stop = new AbortController()
   #disposing: Promise<void> | undefined
 
-  constructor(peer: Pick<RuntimeRpcPeerContract, 'request' | 'notify'>, onObserverError: ListenerErrorHandler = () => console.error('PLUGIN_AUTHORING_OBSERVER_FAILED')) {
+  constructor(peer: Pick<PluginAuthoringHost, 'transfer' | 'review'>, onObserverError: ListenerErrorHandler = () => console.error('PLUGIN_AUTHORING_OBSERVER_FAILED')) {
     this.#peer = peer
     this.#changes = new Emitter(onObserverError)
     this.onDidChange = this.#changes.event
@@ -74,15 +74,15 @@ export class PluginAuthoringService {
       const archive = zipSync(Object.fromEntries(files), { level: 6 })
       files.clear()
       validateExtensionArchiveSize(archive.byteLength)
-      transferId = extensionTransferSessionSchema.parse(await this.#peer.request(EXTENSION_PACKAGE_TRANSFER_RPC, { action: 'begin', size: archive.byteLength, sha256: sha256(archive) }, 10000, abort)).transferId
+      transferId = extensionTransferSessionSchema.parse(await this.#peer.transfer({ action: 'begin', size: archive.byteLength, sha256: sha256(archive) }, abort)).transferId
       for (let offset = 0; offset < archive.byteLength; offset += EXTENSION_PACKAGE_CHUNK_BYTES) {
         abort.throwIfAborted()
         const chunk = archive.subarray(offset, offset + EXTENSION_PACKAGE_CHUNK_BYTES)
-        const uploaded = extensionTransferOffsetSchema.parse(await this.#peer.request(EXTENSION_PACKAGE_TRANSFER_RPC, { action: 'upload', transferId, offset, data: Buffer.from(chunk).toString('base64') }, 10000, abort))
+        const uploaded = extensionTransferOffsetSchema.parse(await this.#peer.transfer({ action: 'upload', transferId, offset, data: Buffer.from(chunk).toString('base64') }, abort))
         if (uploaded.offset !== offset + chunk.byteLength)
           throw new Error('EXTENSION_TRANSFER_ORDER')
       }
-      const result = extensionTransferredBuildResultSchema.parse(await this.#peer.request(EXTENSION_PACKAGE_TRANSFER_RPC, { action: 'build', transferId }, 45000, abort))
+      const result = extensionTransferredBuildResultSchema.parse(await this.#peer.transfer({ action: 'build', transferId }, abort))
       diagnostics.push(...result.diagnostics)
       if (!result.ok)
         return { ok: false, code: result.code, diagnostics }
@@ -99,7 +99,7 @@ export class PluginAuthoringService {
           let offset = 0
           while (offset < result.package.size) {
             abort.throwIfAborted()
-            const chunk = extensionTransferChunkSchema.parse(await this.#peer.request(EXTENSION_PACKAGE_TRANSFER_RPC, { action: 'read', transferId, offset }, 10000, abort))
+            const chunk = extensionTransferChunkSchema.parse(await this.#peer.transfer({ action: 'read', transferId, offset }, abort))
             const bytes = Buffer.from(chunk.data, 'base64')
             if (!bytes.length || bytes.length > EXTENSION_PACKAGE_CHUNK_BYTES || bytes.toString('base64') !== chunk.data || chunk.offset !== offset + bytes.length || chunk.offset > result.package.size)
               throw new Error('EXTENSION_TRANSFER_ORDER')
@@ -126,7 +126,7 @@ export class PluginAuthoringService {
       if (input.review) {
         try {
           abort.throwIfAborted()
-          this.#peer.notify(EXTENSION_REVIEW_REQUEST, { path: output.canonicalPath })
+          this.#peer.review(output.canonicalPath)
           reviewRequested = true
           this.#changes.fire(copyEventSnapshot({ kind: 'review-requested', ...identity }))
         }
@@ -143,7 +143,7 @@ export class PluginAuthoringService {
     }
     finally {
       if (transferId)
-        await this.#peer.request(EXTENSION_PACKAGE_TRANSFER_RPC, { action: 'dispose', transferId }, 10000).catch(() => {})
+        await this.#peer.transfer({ action: 'dispose', transferId }).catch(() => {})
     }
   }
 }

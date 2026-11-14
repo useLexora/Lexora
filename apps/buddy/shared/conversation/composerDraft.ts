@@ -51,6 +51,7 @@ export const buddyDraftParticipantsSchema = z.object({
 }).strict().refine(value => value.actorIds.includes(value.leaderId) && new Set(value.actorIds).size === value.actorIds.length).readonly()
 
 export const buddyComposerDraftSchema = z.object({
+  slotRevision: z.number().int().nonnegative().optional(),
   content: buddyUserContentV1Schema,
   participants: buddyDraftParticipantsSchema.nullable().optional(),
   draftId: draftIdentitySchema,

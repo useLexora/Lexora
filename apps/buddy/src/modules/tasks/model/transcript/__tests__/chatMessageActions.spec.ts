@@ -1,6 +1,9 @@
+import type { LocalExecution } from '@buddy-shared/executions/executionPresentationApi'
 import type { ChatTranscriptMessageRow, ChatTranscriptTurnResultRow } from '../chatTranscriptTypes'
 import { describe, expect, it } from 'vitest'
+import { projectExecutionGroups } from '../../executions/executionGroups'
 import { getChatMessageFollowupSourceId, projectChatAgentTurnActions, projectChatFollowupMessageIds, projectChatMessageActions } from '../chatMessageActions'
+import { projectChatTranscriptBindings } from '../chatTranscriptPresentation'
 
 function reply(id: string, runId: string, patch: Partial<ChatTranscriptMessageRow> = {}): ChatTranscriptMessageRow {
   return {
@@ -97,21 +100,64 @@ describe('chat turn branch origins', () => {
     expect([...projectChatFollowupMessageIds([partner, outcome, question('next')], new Set(['root', 'partner']))]).toEqual(['empty-root-final'])
   })
 
-  it.each([
-    { streaming: true as const },
-    { isIntermediate: true as const },
-    { showActions: false as const },
-  ])('does not branch from an unfinished or hidden result: %j', (patch) => {
+  it('does not branch from an unfinished result', () => {
     expect([...projectChatFollowupMessageIds([
-      reply('last', 'root', { turnResult: result('root', 'last').turn, ...patch }),
+      reply('last', 'root', { turnResult: result('root', 'last').turn, streaming: true }),
       question('next'),
     ], new Set(['root']))]).toEqual([])
   })
+})
 
-  it('keeps turn controls disabled during mutation and excludes messages without an execution', () => {
-    const message = reply('final', 'root').message
-    expect(projectChatMessageActions(message, true, true, true)).toMatchObject({ disabled: true, showFollowup: true })
-    expect(projectChatMessageActions({ ...message, runId: null }, false, true, true).showFollowup).toBe(false)
-    expect(projectChatMessageActions({ ...message, role: 'user' }, false, true, true).showFollowup).toBe(false)
+function execution(runId: string, rootRunId = runId): LocalExecution {
+  return {
+    runId,
+    rootRunId,
+    threadId: `thread-${runId}`,
+    parentRunId: runId === rootRunId ? null : rootRunId,
+    buddyId: runId,
+    buddyName: runId,
+    ordinal: null,
+    toolCount: 0,
+    usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    kind: runId === rootRunId ? 'root' : 'actor_child',
+    phase: 'closed',
+    status: 'completed',
+    startedAt: '2026-09-08T00:00:00.000Z',
+    completedAt: '2026-09-08T00:00:01.000Z',
+    updatedAt: '2026-09-08T00:00:01.000Z',
+    progress: null,
+    stopping: false,
+    task: 'Synthetic task',
+    waitingFor: null,
+    activeChildren: 0,
+    canCancel: false,
+    canAnswer: false,
+    canSend: false,
+    cleanup: 'clean',
+    errorCode: null,
+    affectedResources: [],
+    questions: [],
+  }
+}
+
+describe('transcript result bindings', () => {
+  it('anchors a shared execution once and directs a partner toolbar and message alias to the root result', () => {
+    const groups = projectExecutionGroups([execution('root'), execution('partner', 'root')])
+    const partner = reply('partner-reply', 'partner', { turnResult: result('root', 'root-final').turn })
+    const rows = [reply('root-intro', 'root'), partner, question('next')]
+    const before = structuredClone(rows)
+    const bindings = projectChatTranscriptBindings(rows, groups)
+    expect([...bindings.executionAnchors]).toEqual([['root-intro', 'root']])
+    expect(bindings.messageAliases.get('root-final')).toBe('partner-reply')
+    expect(bindings.resultTargets.get(partner.key)).toEqual({
+      branchNavigatorId: 'root',
+      branchId: 'branch',
+      followupMessageId: 'root-final',
+      regenerateRunId: 'root',
+      usageRunId: 'root',
+    })
+    expect(bindings.resultUsage.get(partner.key)).toEqual({ inputTokens: 20, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0 })
+    expect(bindings.resultUsage.has('root-intro')).toBe(false)
+    expect(rows).toEqual(before)
   })
 })

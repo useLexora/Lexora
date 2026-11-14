@@ -12,9 +12,10 @@ import { acquireStorageRootLease } from '../../../platform/storage/StorageRootLe
 import { copyStorageTree, planStorageCopy, syncStorageDirectories } from '../../../platform/storage/storageTree'
 import { storageIdentitySchema } from '../../../shared/storage/storageApi'
 import { commitBackupRestore, prepareRestoreCommit, restoreRetained, restoreStage } from './commitBackupRestore'
-import { openBuddyDatabase } from './database'
+import { activatePersistenceCandidate } from './persistenceMigration/activatePersistenceCandidate'
 import { relocateDatabaseReferences, relocateProfileJournals, relocateStructuredPaths, verifyProfileReferences } from './relocateProfileReferences'
 import { prepareBackupRestore } from './restoreBackup'
+import { rewriteIsolatedSnapshotDatabase } from './snapshotDatabase'
 
 export interface LegacyStorageSource {
   source: string
@@ -36,18 +37,20 @@ export async function runStorageMigration(input: StorageMigrationInput, signal: 
   const resumingCommit = operation.phase === 'ready'
   const activeSignal = resumingCommit ? new AbortController().signal : signal
   const checkpoint = (phase: StorageOperation['phase']) => resumingCommit && phase !== 'ready' ? Promise.resolve() : store.checkpoint(operation, phase)
-  let releaseTarget = () => {}
+  let releaseSource: (() => void) | undefined
+  let releaseTarget: (() => void) | undefined
   let progress: StorageProgress = { phase: 'preparing', completedBytes: 0, totalBytes: null, files: 0, error: null }
   const publish = (next: Partial<StorageProgress>) => {
     progress = { ...progress, ...next }
     report(progress)
   }
   try {
+    releaseSource = acquireStorageRootLease(operation.source, input.leaseDirectory, input.privateDirectoriesExecutable)
     if (operation.source !== operation.target)
       releaseTarget = acquireStorageRootLease(operation.target, input.leaseDirectory, input.privateDirectoriesExecutable)
     await checkpoint('copying')
     activeSignal.throwIfAborted()
-    const retainedPath = operation.kind === 'restore' && operation.source === operation.target ? restoreRetained(operation) : join(dirname(operation.target), `.${basename(operation.target)}.retained-${operation.id}`)
+    const retainedPath = (operation.kind === 'restore' || operation.kind === 'upgrade') && operation.source === operation.target ? restoreRetained(operation) : join(dirname(operation.target), `.${basename(operation.target)}.retained-${operation.id}`)
     const retained = async () => await lstat(retainedPath).catch((error) => {
       if (!isMissing(error))
         throw error
@@ -60,7 +63,7 @@ export async function runStorageMigration(input: StorageMigrationInput, signal: 
       if (operation.source !== operation.target)
         await writeStorageJson(join(operation.source, '.storage-retired.json'), { operationId: operation.id, target: operation.target })
       await store.activate(operation, identity, await retained())
-      if (operation.kind === 'restore' && operation.source === operation.target) {
+      if ((operation.kind === 'restore' || operation.kind === 'upgrade') && operation.source === operation.target) {
         await rm(restoreStage(operation), { recursive: true, force: true })
         await rm(restoreCredentialStage(input.locationPath, operation.id), { recursive: true, force: true })
       }
@@ -72,10 +75,13 @@ export async function runStorageMigration(input: StorageMigrationInput, signal: 
       return
     }
     await assertStorageIdentity(state)
-    if (operation.kind === 'restore' && operation.source === operation.target) {
+    if ((operation.kind === 'restore' || operation.kind === 'upgrade') && operation.source === operation.target) {
       if (!resumingCommit) {
         const stage = await prepareStorageStage(operation, input.privateDirectoriesExecutable)
-        await prepareBackupRestore(operation, stage, input.locationPath, activeSignal, publish, input.privateDirectoriesExecutable)
+        if (operation.kind === 'upgrade')
+          await preparePersistenceUpgrade(operation, stage, input, releaseSource, activeSignal, publish, checkpoint)
+        else
+          await prepareBackupRestore(operation, stage, input.locationPath, activeSignal, publish, input.privateDirectoriesExecutable)
         activeSignal.throwIfAborted()
         await prepareRestoreCommit(operation)
         await checkpoint('ready')
@@ -117,7 +123,8 @@ export async function runStorageMigration(input: StorageMigrationInput, signal: 
     throw Object.assign(storageError(code), { cause: error })
   }
   finally {
-    releaseTarget()
+    releaseTarget?.()
+    releaseSource?.()
   }
 }
 async function consolidateStorage(operation: StorageOperation, sources: LegacyStorageSource[], signal: AbortSignal, report: StorageReporter, privateDirectoriesExecutable?: string): Promise<void> {
@@ -188,8 +195,7 @@ async function relocateStorage(operation: StorageOperation, identity: StorageIde
   if (exists) {
     if (!exists.isFile() || exists.isSymbolicLink())
       throw storageError('STORAGE_DATABASE_INVALID')
-    const database = openBuddyDatabase({ databasePath })
-    try {
+    await rewriteIsolatedSnapshotDatabase(databasePath, async (database) => {
       relocateDatabaseReferences(database, operation.source, operation.target)
       await relocateProfileJournals(candidate, operation.source, operation.target, signal)
       await checkpoint('verifying')
@@ -198,10 +204,7 @@ async function relocateStorage(operation: StorageOperation, identity: StorageIde
         throw storageError('STORAGE_DATABASE_INVALID')
       await verifyProfileReferences(database, candidate, operation.target)
       database.exec('PRAGMA wal_checkpoint(TRUNCATE)')
-    }
-    finally {
-      database.close()
-    }
+    })
     await syncStorageFile(databasePath)
   }
   const config = join(candidate, 'config.toml')
@@ -241,4 +244,38 @@ async function relocateStorage(operation: StorageOperation, identity: StorageIde
   await rename(candidate, operation.target)
   await syncStorageDirectory(dirname(operation.target))
   await rm(stage, { recursive: true })
+}
+
+async function preparePersistenceUpgrade(operation: StorageOperation, stage: string, input: StorageMigrationInput, sourceLease: () => void, signal: AbortSignal, report: StorageReporter, checkpoint: (phase: StorageOperation['phase']) => Promise<void>): Promise<void> {
+  report({ phase: 'preparing', completedBytes: 0, totalBytes: null, files: 0, error: null })
+  const candidate = await activatePersistenceCandidate({
+    scope: 'upgrade',
+    report,
+    sourceRoot: operation.source,
+    sourceLease,
+    candidateRoot: join(stage, 'candidate'),
+    signal,
+    leaseDirectory: input.leaseDirectory,
+    privateDirectoriesExecutable: input.privateDirectoriesExecutable,
+    checkpoint: async (phase) => {
+      if (phase === 'copied') {
+        await checkpoint('converting')
+        report({ phase: 'converting', completedBytes: 0, totalBytes: null, files: 0, error: null })
+      }
+      else if (phase === 'files') {
+        await checkpoint('verifying')
+        report({ phase: 'verifying', completedBytes: 0, totalBytes: null, files: 0, error: null })
+      }
+    },
+  })
+  const databasePath = join(candidate.profileRoot, 'buddy', 'buddy.sqlite3')
+  await rewriteIsolatedSnapshotDatabase(databasePath, async (database) => {
+    relocateDatabaseReferences(database, candidate.profileRoot, operation.target)
+    await relocateProfileJournals(candidate.profileRoot, candidate.profileRoot, operation.target, signal)
+    await verifyProfileReferences(database, candidate.profileRoot, operation.target)
+  })
+  signal.throwIfAborted()
+  await ensurePrivateDirectories([join(stage, 'profile')], input.privateDirectoriesExecutable)
+  await rename(join(candidate.profileRoot, 'buddy'), join(stage, 'profile', 'buddy'))
+  await syncStorageDirectories(join(stage, 'profile'))
 }

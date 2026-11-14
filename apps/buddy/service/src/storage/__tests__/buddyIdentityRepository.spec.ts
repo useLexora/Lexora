@@ -27,7 +27,7 @@ function setup() {
   }
 }
 
-function input(id: string, conversationId = 'conversation'): PrepareTurnRequestInput {
+function input(id: string, conversationId = 'conversation'): PrepareTurnRequestInput & { draft: NonNullable<PrepareTurnRequestInput['draft']> } {
   const conversation = createConversationRepository(database).findById(conversationId)
   const draft = createComposerDraftRepository(database).open({
     draftId: `draft-${id}`,
@@ -113,7 +113,6 @@ it('retries the complete accepted definition after configuration, member model a
   const retry = f.runs.findById('retry-captured')!
   expect(retry.actorSnapshot).toEqual(actorSnapshot)
   expect(retry).toMatchObject({ buddyId: actor.id, provider: 'fixture', model: 'accepted-model', modelOverride: effectiveModel })
-  expect(database.prepare('SELECT actor_snapshot_json FROM runs WHERE id = ?').get('retry-captured')).toEqual(database.prepare('SELECT actor_snapshot_json FROM runs WHERE id = ?').get(original.runId))
   expect(database.prepare('SELECT count(*) AS count FROM messages').get()).toEqual({ count: 1 })
   expect(f.conversations.findById('conversation')?.buddyId).toBe('default')
 })

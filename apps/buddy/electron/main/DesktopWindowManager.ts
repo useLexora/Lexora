@@ -3,6 +3,7 @@ import type { DesktopWindowHandle } from './window'
 
 export interface DesktopWindowManagerOptions {
   createWindow: () => DesktopWindowHandle
+  onBeforeDestroy?: (window: BrowserWindow) => void
   onRecoveryExhausted?: () => void
   onRecoveryRebuilding?: () => void
   onRecoveryStarted?: () => void
@@ -15,6 +16,7 @@ interface ManagedDesktopWindow {
 }
 
 export class DesktopWindowManager {
+  readonly #onBeforeDestroy?: (window: BrowserWindow) => void
   readonly #createWindow: () => DesktopWindowHandle
   readonly #onRecoveryExhausted?: () => void
   readonly #onRecoveryRebuilding?: () => void
@@ -26,6 +28,7 @@ export class DesktopWindowManager {
   #disposed = false
 
   constructor(options: DesktopWindowManagerOptions) {
+    this.#onBeforeDestroy = options.onBeforeDestroy
     this.#createWindow = options.createWindow
     this.#onRecoveryExhausted = options.onRecoveryExhausted
     this.#onRecoveryRebuilding = options.onRecoveryRebuilding
@@ -61,7 +64,7 @@ export class DesktopWindowManager {
         if (this.#managedWindow === managedWindow) {
           this.#managedWindow = null
           if (!managedWindow.handle.window.isDestroyed())
-            managedWindow.handle.window.destroy()
+            this.#destroy(managedWindow.handle.window)
         }
         throw error
       })
@@ -96,14 +99,19 @@ export class DesktopWindowManager {
     const managedWindow = this.#managedWindow
     this.#managedWindow = null
     if (managedWindow && !managedWindow.handle.window.isDestroyed())
-      managedWindow.handle.window.destroy()
+      this.#destroy(managedWindow.handle.window)
+  }
+
+  #destroy(window: BrowserWindow): void {
+    this.#onBeforeDestroy?.(window)
+    window.destroy()
   }
 
   #replaceWindow(): ManagedDesktopWindow {
     const previousWindow = this.#managedWindow
     this.#managedWindow = null
     if (previousWindow && !previousWindow.handle.window.isDestroyed())
-      previousWindow.handle.window.destroy()
+      this.#destroy(previousWindow.handle.window)
 
     const handle = this.#createWindow()
     const managedWindow: ManagedDesktopWindow = {
@@ -188,7 +196,7 @@ export class DesktopWindowManager {
     const managedWindow = this.#managedWindow
     this.#managedWindow = null
     if (managedWindow && !managedWindow.handle.window.isDestroyed())
-      managedWindow.handle.window.destroy()
+      this.#destroy(managedWindow.handle.window)
     this.#onRecoveryExhausted?.()
   }
 }

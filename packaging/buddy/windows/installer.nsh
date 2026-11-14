@@ -36,6 +36,18 @@ Var /GLOBAL BuddyInstallMutex
       FileWrite $2 "$INSTDIR\${APP_EXECUTABLE_FILENAME}: $0 $1$\r$\n"
       FileClose $2
     buddy_probe_logged:
+      StrCmp $0 "0" buddy_check_core
+      StrCmp $0 "32" buddy_running
+      StrCmp $0 "timeout" buddy_probe_timeout
+
+      Goto buddy_probe_failed
+
+    buddy_check_core:
+      IfFileExists "$INSTDIR\resources\lexora-runtime\node.exe" 0 buddy_ready
+      nsExec::ExecToStack /TIMEOUT=30000 '"$PLUGINSDIR\buddy-process-control.exe" --check-running "$INSTDIR\resources\lexora-runtime\node.exe"'
+      Pop $0
+      Pop $1
+      DetailPrint "Core process check: $0 $1"
       StrCmp $0 "0" buddy_ready
       StrCmp $0 "32" buddy_running
       StrCmp $0 "timeout" buddy_probe_timeout

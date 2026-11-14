@@ -21,4 +21,5 @@
 - `apps/buddy/resources/brand/lexora-avatar.png` 是 Buddy 启动页使用的品牌头像副本；发布校验保证它与 `brand/lexora-avatar.png` 字节一致。
 - `apps/buddy/resources/icons/app-icon.png` 是窗口、界面及安装包使用的应用图标副本，与 `brand/app-icon.png` 字节一致。
 - `apps/buddy/resources/icons/tray-icon.png` 是独立的托盘图标副本，与 `brand/tray-icon.png` 字节一致。
+- `apps/mobile` 构建时直接消费 `brand/app-icon.png` 作为 Android 应用图标。
 - 本地候选图、私有源、临时 sheet 和生成脚本不是最终资产，不放在这个包的公开结构里。

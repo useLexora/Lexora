@@ -7,6 +7,7 @@ import { afterEach, expect, it } from 'vitest'
 import { compileExtensionSource } from '../../../../platform/extensions/compileExtensionSource'
 import { unpackExtension } from '../../../../platform/extensions/extensionFiles'
 import { ExtensionPackageTransfer } from '../../../../platform/extensions/ExtensionPackageTransfer'
+import { createRpcRuntimePlatform } from '../../platform/createRpcRuntimePlatform'
 import { createPluginAuthoringCapability } from '../pluginAuthoringCapability'
 import { PluginAuthoringService } from '../PluginAuthoringService'
 
@@ -52,10 +53,11 @@ async function fixture() {
       notifications.push(input)
     },
   }
-  const builder = new PluginAuthoringService(peer)
+  const host = createRpcRuntimePlatform({ ...peer, onRequest: () => () => {}, onNotification: () => () => {}, close() {} }).authoring
+  const builder = new PluginAuthoringService(host)
   const facts: unknown[] = []
   builder.onDidChange(event => facts.push(event))
-  const capability = createPluginAuthoringCapability({ conversationId: 'task', cwd: root, executionProfile: 'workspace_write', getRunId: () => 'run', grants: [{ kind: 'workspace', canonicalRoot: root, root, grantId: 'workspace' }], sessionMode: 'interactive', signal: new AbortController().signal }, peer, builder)
+  const capability = createPluginAuthoringCapability({ conversationId: 'task', cwd: root, executionProfile: 'workspace_write', getRunId: () => 'run', grants: [{ kind: 'workspace', canonicalRoot: root, root, grantId: 'workspace' }], sessionMode: 'interactive', signal: new AbortController().signal }, host, builder)
   await capability.extension.factory({ registerTool(value: ToolDefinition) {
     if (value.name === 'lexora_plugin_build')
       tool = value

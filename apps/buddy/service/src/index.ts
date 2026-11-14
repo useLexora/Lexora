@@ -1,220 +1,174 @@
-import type { BuddyServiceFailureCode } from '../../shared/runtime/runtimeProtocol'
-import { isAbsolute, join } from 'node:path'
+import type { BuddyServiceParentPort } from './rpc/BuddyServiceRpcServer'
+import type { ServiceClientRole } from './rpc/ServiceClientConnections'
+import { EventEmitter } from 'node:events'
 import process from 'node:process'
 import { z } from 'zod'
-import { establishWindowsRuntimeGuard } from '../../platform/windows/runtimeGuard'
-import { APPLICATION_DIAGNOSTIC_METHOD, readDiagnosticErrorCode } from '../../shared/diagnostics/applicationDiagnostic'
-import { ServiceHost } from '../../shared/lifecycle/ServiceHost'
-import { SERVICE_LIFECYCLE_METHOD } from '../../shared/lifecycle/serviceLifecycle'
-import { ServiceLifecycleSource } from '../../shared/lifecycle/ServiceLifecycleSource'
 import { ApplicationEvents } from '../../shared/observability/ApplicationEvents'
-import { observeLifecycleDiagnostics } from '../../shared/observability/lifecycleDiagnostics'
-import { OPERATING_SYSTEM } from '../../shared/platform/identifiers'
-import { toPublicRunEvent } from '../../shared/runs/publicRunEvent'
-import { runNotifications } from '../../shared/runs/runApi'
-import { buddyServiceFailureCodeSchema } from '../../shared/runtime/runtimeProtocol'
-import { startBuddyService } from './BuddyService'
-import { DiagnosticForwarder } from './diagnostics/DiagnosticForwarder'
-import { createRunEventLog } from './events/createRunEventLog'
-import { RunEventLogFatalError } from './events/RunEventFailure'
-import { startRuntimeNetwork } from './network/runtimeNetwork'
-import {
-  createBuddyService,
-  notifyBuddyServiceFailure,
-  notifyBuddyServiceReady,
-} from './rpc/BuddyServiceRpcServer'
-import { openBuddyDatabase, resolveBuddyDatabasePath } from './storage/database'
+import { BUDDY_SERVICE_PROTOCOL_VERSION } from '../../shared/runtime/runtimeProtocol'
+import { startLocalServiceSupervisor } from './LocalServiceSupervisor'
+import { createRpcRuntimePlatform } from './platform/createRpcRuntimePlatform'
+import { nodeServiceConfigSchema, prepareNodeService } from './platform/nodeServiceConfig'
+import { BuddyServiceRpcServer, notifyBuddyServiceReady } from './rpc/BuddyServiceRpcServer'
+import { registerServiceManagementRpc } from './rpc/registerServiceManagementRpc'
+import { readBuddyServiceFailureCode, startServiceRuntime } from './startServiceRuntime'
 
-const parentPort = process.parentPort
+const channelId = z.string().min(1).max(128).refine(value => value !== 'host')
+const incomingSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('start'), protocolVersion: z.literal(BUDDY_SERVICE_PROTOCOL_VERSION), config: nodeServiceConfigSchema }).strict(),
+  z.object({ type: z.literal('connect'), channel: channelId, role: z.enum(['product', 'management']) }).strict(),
+  z.object({ type: z.literal('disconnect'), channel: channelId }).strict(),
+  z.object({ type: z.literal('rpc'), channel: z.string().min(1).max(128), message: z.unknown() }).strict(),
+])
 
-if (!parentPort) {
-  process.stderr.write('Buddy Local Service requires an Electron utility process parent\n')
+if (process.argv[2] === '--config' && process.argv.length === 4) {
+  const supervisor = startLocalServiceSupervisor(process.argv[3]!)
+  const stop = () => {
+    void supervisor.stop().catch(() => {
+      process.stderr.write('SERVICE_STOP_FAILED\n')
+    })
+  }
+  process.once('SIGINT', stop)
+  process.once('SIGTERM', stop)
+  void supervisor.ready.catch(() => {
+    process.stderr.write('SERVICE_START_FAILED\n')
+    process.exitCode = 1
+  })
+}
+else if (!process.send) {
+  process.stderr.write('Lexora Server requires an inherited local IPC channel\n')
   process.exitCode = 1
 }
 else {
-  process.once('SIGINT', () => {})
-
-  void runBuddyService().catch((error: unknown) => {
-    const failureCode = readBuddyServiceFailureCode(error)
-    process.stderr.write(
-      `Buddy Local Service failed to start: ${failureCode} (${readErrorName(error)})\n`,
-    )
-    process.exit(1)
-  })
-}
-
-async function runBuddyService(): Promise<void> {
-  if (!parentPort)
-    return
-
-  const buddyHome = z.string().refine(isAbsolute).parse(process.env.LEXORA_BUDDY_HOME)
-  let database: ReturnType<typeof openBuddyDatabase> | null = null
-  let serviceServer: ReturnType<typeof createBuddyService> | null = null
   const events = new ApplicationEvents()
-  const diagnostics = new DiagnosticForwarder(event => serviceServer?.notify(APPLICATION_DIAGNOSTIC_METHOD, event))
-  events.subscribe(event => diagnostics.record(event))
-  const record = events.publish
-  const lifecycle = new ServiceLifecycleSource(() => record({ event: 'observer.failed', component: 'runtime.lifecycle', level: 'warn' }))
-  const host = new ServiceHost(lifecycle)
-  const stopLifecycleDiagnostics = observeLifecycleDiagnostics(host.lifecycle, events)
-  const lifecycleDelivery = host.lifecycle.onDidChange(change => serviceServer?.notify(SERVICE_LIFECYCLE_METHOD, change))
-  let serviceFailureNotified = false
-  let isDatabaseClosed = false
-  const closeDatabase = () => {
-    if (isDatabaseClosed || !database)
-      return
-    isDatabaseClosed = true
-    database.close()
-  }
-  let serviceHandle: Awaited<ReturnType<typeof startBuddyService>> | null = null
-  let eventLog: ReturnType<typeof createRunEventLog> | null = null
-  let isShuttingDown = false
-  const notifyFailure = (code: BuddyServiceFailureCode) => {
-    if (!serviceServer || serviceFailureNotified)
-      return
-    serviceFailureNotified = true
+  const channelIds = new Set<string>()
+  const channels = new Map<string, { port: EventEmitter & BuddyServiceParentPort, peer: BuddyServiceRpcServer }>()
+  let started: ReturnType<typeof start> | undefined
+  let runtime: Awaited<ReturnType<typeof startServiceRuntime>> | undefined
+  let stopping: Promise<void> | undefined
+  const host = createChannel('host')
+  const timeout = setTimeout(() => {
+    host.close(new Error('SERVICE_START_TIMEOUT'))
+    void shutdown(1)
+  }, 30000)
+  process.once('disconnect', () => {
+    host.close(new Error('SERVICE_OWNER_DISCONNECTED'))
+    void shutdown(1)
+  })
+  process.once('SIGTERM', () => {
+    void shutdown(0)
+  })
+  process.once('SIGINT', () => {
+    void shutdown(0)
+  })
+  process.on('message', (raw) => {
     try {
-      notifyBuddyServiceFailure(serviceServer, code)
+      const input = incomingSchema.parse(raw)
+      if (input.type === 'rpc') {
+        channels.get(input.channel)?.port.emit('message', { data: input.message })
+      }
+      else if (input.type === 'start') {
+        if (started || stopping)
+          throw new Error('SERVICE_ALREADY_STARTED')
+        started = start(input.config)
+        void started.catch(fail)
+      }
+      else if (input.type === 'connect') {
+        connect(input.channel, input.role)
+      }
+      else {
+        channels.get(input.channel)?.peer.close(new Error('SERVICE_CLIENT_DISCONNECTED'))
+      }
     }
-    catch {}
+    catch (error) {
+      fail(error)
+    }
+  })
+
+  function send(message: unknown) {
+    if (process.connected) {
+      process.send!(message as object, (error) => {
+        if (error)
+          void shutdown(1)
+      })
+    }
   }
-  const shutdown = async (exitCode: number) => {
-    if (isShuttingDown)
+
+  function createChannel(id: string) {
+    const port = Object.assign(new EventEmitter(), { postMessage: (message: unknown) => send({ type: 'rpc', channel: id, message }) })
+    const peer = new BuddyServiceRpcServer({ recordDiagnostic: events.publish, port, onFatalError: () => {
+      if (id === 'host')
+        void shutdown(1)
+    } })
+    channelIds.add(id)
+    channels.set(id, { port, peer })
+    peer.onDidClose(() => {
+      channels.delete(id)
+    })
+    return peer
+  }
+
+  async function start(config: z.infer<typeof nodeServiceConfigSchema>) {
+    const builtinSkillsDirectories = await prepareNodeService(config)
+    const preferences = structuredClone(config.preferences)
+    const service = await startServiceRuntime({
+      events,
+      buddyHome: config.buddyHome,
+      builtinSkillsDirectories,
+      proxy: config.proxy,
+      storageAuthority: config.storageAuthority,
+      platform: createRpcRuntimePlatform(host, { display: config.display, preferences: { get: async () => structuredClone(preferences), subscribe: () => () => {} } }),
+      notify: (method, params) => host.notify(method, params),
+      onFatalFailure: fail,
+    })
+    runtime = service
+    clearTimeout(timeout)
+    if (!stopping)
+      send({ type: 'ready', protocolVersion: BUDDY_SERVICE_PROTOCOL_VERSION })
+    service.startMaintenance()
+    return service
+  }
+
+  function connect(channel: string, role: ServiceClientRole) {
+    if (!runtime || stopping || channelIds.has(channel)) {
+      send({ type: 'rejected', channel, code: !runtime || stopping ? 'SERVICE_NOT_READY' : 'SERVICE_CHANNEL_EXISTS' })
       return
-    isShuttingDown = true
-    record({ event: 'service.stopping', level: 'info', component: 'local_service' })
-    let failed = false
+    }
+    const peer = createChannel(channel)
     try {
-      await host.stop()
+      runtime.connectClient(role, peer)
+      if (role === 'management') {
+        registerServiceManagementRpc(peer, () => {
+          void shutdown(0)
+        }, runtime.prepareIdleShutdown)
+      }
+      notifyBuddyServiceReady(peer)
     }
     catch {
-      failed = true
+      peer.close(new Error('SERVICE_CLIENT_FAILED'))
+      send({ type: 'rejected', channel, code: 'SERVICE_CLIENT_FAILED' })
     }
-    record({ event: failed ? 'service.stop_failed' : 'service.stopped', level: failed ? 'error' : 'info', component: 'runtime.service' })
-    lifecycleDelivery.dispose()
-    stopLifecycleDiagnostics()
-    diagnostics.dispose()
-    serviceServer?.close(new Error('Buddy Local Service is shutting down'))
-    process.exit(failed ? 1 : exitCode)
   }
-  serviceServer = createBuddyService({
-    recordDiagnostic: record,
-    announceReady: false,
-    port: parentPort,
-    prepareIdleShutdown: () => serviceHandle?.prepareIdleShutdown() ?? false,
-    scheduleShutdown() {
-      void shutdown(0)
-    },
-    onFatalError(error) {
-      process.stderr.write(`Buddy Local Service protocol failure: ${error.name}\n`)
-      void shutdown(1)
-    },
-  })
-  process.once('exit', closeDatabase)
-  try {
-    const builtinSkillsDirectories = await host.step('runtime.guard', async () => {
-      if (process.platform === OPERATING_SYSTEM.Windows)
-        await establishWindowsRuntimeGuard()
-      return z.array(z.string().min(1)).parse(JSON.parse(process.env.LEXORA_BUDDY_SKILLS_DIRS ?? '[]'))
-    })
-    await host.start('runtime.network', ({ defer }) => {
-      defer(startRuntimeNetwork())
-    })
-    const openedDatabase = await host.start('runtime.database', ({ defer }) => {
-      database = openBuddyDatabase({ databasePath: resolveBuddyDatabasePath(buddyHome) })
-      defer(closeDatabase)
-      return database
-    })
-    eventLog = await host.start('runtime.event_log', ({ defer }) => {
-      const log = createRunEventLog({
-        conversationsDirectory: join(buddyHome, 'conversations'),
-        database: openedDatabase,
-        onObserverError: error => record({ event: 'run.observer_failed', level: 'warn', errorCode: readDiagnosticErrorCode(error) }),
-        onMaintenance: (summary) => {
-          if (!summary.checked && !summary.failed)
-            return
-          record({ event: 'run.maintenance.checked', level: 'info', durationMs: summary.durationMs, count: summary.checked })
-          record({ event: 'run.maintenance.removed', level: 'info', count: summary.removed })
-          if (summary.failed)
-            record({ event: 'run.maintenance.failed', level: 'warn', count: summary.failed })
-        },
-        onRecovery: (summary) => {
-          record({ event: 'run.recovery.enumerated', level: 'info', durationMs: summary.enumerationMs, count: summary.scanned })
-          record({ event: 'run.recovery.inspected', level: 'info', durationMs: summary.inspectionMs, count: summary.scanned })
-          record({ event: 'run.recovery.read', level: 'info', durationMs: summary.readMs, count: summary.events })
-          record({ event: 'run.recovery.projected', level: 'info', durationMs: summary.projectionMs, count: summary.rebuilt })
-          record({ event: 'run.recovery.skipped', level: 'info', count: summary.skipped })
-          record({ event: 'run.recovery.finished', level: summary.failed ? 'error' : 'info', durationMs: summary.durationMs, count: summary.failed })
-        },
-        onRunQuarantined: failure => record({ event: 'run.recovery.quarantined', level: 'error', runId: failure.runId, ...(failure.conversationId ? { conversationId: failure.conversationId } : {}), errorCode: failure.code }),
-        onFatalFailure: (error) => {
-          record({ event: 'run.storage_failed', level: 'error', runId: error.runId, errorCode: error.code })
-          notifyFailure(readBuddyServiceFailureCode(error))
-          const operation = 'operation' in error ? ` ${error.operation}` : ''
-          const stage = 'stage' in error ? ` ${error.stage}` : ''
-          const range = error.firstSequence === null || error.lastSequence === null
-            ? error.runId
-            : `${error.runId}#${error.firstSequence}-${error.lastSequence}`
-          process.stderr.write(
-            `Lexora Buddy event log fatal failure: ${error.code} ${error.commitState}${operation}${stage} ${range}\n`,
-          )
-          void shutdown(1)
-        },
-      })
-      const delivery = log.onDidCommit((event) => {
-        try {
-          serviceServer?.notify(runNotifications.event.method, toPublicRunEvent(event))
-        }
-        catch (error) {
-          record({ event: 'run.notification_failed', level: 'warn', runId: event.runId, errorCode: readDiagnosticErrorCode(error) })
-        }
-      })
-      defer(async () => {
-        await log.close()
-        delivery.dispose()
-      })
-      return log
-    }, ['runtime.database'])
-    await host.step('runtime.event_replay', ({ reportProgress }) => eventLog!.recoverAll({
-      force: process.env.LEXORA_BUDDY_EVENT_RECOVERY === 'full',
-      onProgress: reportProgress,
-    }))
-    await host.start('runtime.services', async ({ defer }) => {
-      serviceHandle = await startBuddyService({
-        buddyHome,
-        builtinSkillsDirectories,
-        database: openedDatabase,
-        eventLog: eventLog!,
-        rpc: serviceServer,
-        events,
-        lifecycle,
-      })
-      defer(() => serviceHandle!.dispose())
-    })
-    notifyBuddyServiceReady(serviceServer)
-    serviceHandle!.startMaintenance()
-  }
-  catch (error) {
-    notifyFailure(readBuddyServiceFailureCode(error))
-    await host.stop().catch(() => {})
-    lifecycleDelivery.dispose()
-    stopLifecycleDiagnostics()
-    diagnostics.dispose()
-    serviceServer.close(new Error('Buddy Local Service startup failed'))
-    closeDatabase()
-    throw error
-  }
-}
 
-function readBuddyServiceFailureCode(error: unknown): BuddyServiceFailureCode {
-  if (error instanceof RunEventLogFatalError) {
-    const parsed = buddyServiceFailureCodeSchema.safeParse(error.code)
-    if (parsed.success)
-      return parsed.data
+  function fail(error: unknown) {
+    const code = readBuddyServiceFailureCode(error)
+    send({ type: 'failed', code })
+    process.stderr.write(`Lexora Server failed: ${code} (${error instanceof Error ? error.name : 'unknown'})\n`)
+    void shutdown(1)
   }
-  return 'RUNTIME_START_FAILED'
-}
 
-function readErrorName(error: unknown): string {
-  return error instanceof Error && error.name ? error.name : 'unknown error'
+  function shutdown(code: number): Promise<void> {
+    return stopping ??= (async () => {
+      clearTimeout(timeout)
+      const service = await started?.catch(() => undefined)
+      try {
+        await service?.dispose()
+      }
+      catch {
+        code = 1
+      }
+      for (const { peer } of channels.values())
+        peer.close(new Error('SERVICE_STOPPED'))
+      process.exit(code)
+    })()
+  }
 }

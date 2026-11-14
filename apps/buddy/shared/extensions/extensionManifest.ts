@@ -18,7 +18,9 @@ import { extensionShellContributionSchema } from './extensionShell.ts'
 import { extensionSkillContributionSchema, extensionSkillRoots } from './extensionSkills.ts'
 import { extensionSubagentContributionSchema, subagentConnectorReferences } from './extensionSubagents.ts'
 
-export const EXTENSION_API_VERSION = 4
+export const EXTENSION_API_VERSION = 5
+export const extensionExecutionScopeSchema = z.enum(['desktop', 'service'])
+export type ExtensionExecutionScope = z.infer<typeof extensionExecutionScopeSchema>
 export const EXTENSION_PROTOCOL = 'lexora-extension'
 export const EXTENSION_ICON_LIMIT = 64 * 1024
 export const extensionIconUrlSchema = z.string().max(Math.ceil(EXTENSION_ICON_LIMIT / 3) * 4 + 40).regex(/^data:image\/(?:svg\+xml|png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/)
@@ -122,6 +124,7 @@ export const extensionMetadataSchema = z.object({
   tags: z.array(z.string().min(1).max(40)).max(16).default([]),
   version: extensionVersionSchema,
   apiVersion: z.number().int().positive(),
+  executionScope: extensionExecutionScopeSchema.optional(),
   engines: z.object({ lexora: z.string().max(100).refine(value => validRange(value) !== null) }).strict(),
 })
 export type ExtensionMetadata = z.infer<typeof extensionMetadataSchema>
@@ -129,7 +132,8 @@ export type ExtensionMetadata = z.infer<typeof extensionMetadataSchema>
 export const extensionManifestSchema = extensionMetadataSchema.extend({
   schemaVersion: z.literal(1),
   format: z.enum(['compiled', 'source']).default('compiled'),
-  apiVersion: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(EXTENSION_API_VERSION)]),
+  apiVersion: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(EXTENSION_API_VERSION)]),
+  executionScope: extensionExecutionScopeSchema.default('desktop'),
   entry: extensionPathSchema.optional(),
   styles: z.object({
     uno: z.literal(true),
@@ -137,7 +141,7 @@ export const extensionManifestSchema = extensionMetadataSchema.extend({
   }).strict().optional(),
   dataVersion: z.number().int().min(1).max(10000).default(1),
   dependencies: z.record(extensionIdSchema, z.string().max(100).refine(value => validRange(value) !== null)).default({}),
-  permissions: extensionPermissionsSchema.prefault({}),
+  permissions: extensionPermissionsSchema.catchall(z.unknown()).prefault({}),
   contributes: z.object({
     skills: z.array(extensionSkillContributionSchema).max(32).default([]),
     mcpConnectors: z.array(extensionMcpConnectorContributionSchema).max(16).default([]),
@@ -168,6 +172,10 @@ export const extensionManifestSchema = extensionMetadataSchema.extend({
     }))],
   })).refine(contributes => contributes.fileHandlers.length <= 32, 'Too many file handlers'),
 }).superRefine((manifest, context) => {
+  if (manifest.apiVersion >= 5 && Object.keys(manifest.permissions).some(key => !Object.hasOwn(extensionPermissionsSchema.shape, key)))
+    context.addIssue({ code: 'custom', message: 'Unknown API 5 permission' })
+  if (manifest.executionScope === 'service' && (manifest.apiVersion < 5 || !manifest.entry || manifest.permissions.schedules))
+    context.addIssue({ code: 'custom', message: 'Service execution requires API 5, an entry and no schedules permission' })
   const ids = new Set<string>()
   const settings = manifest.contributes.settings
   const agent = manifest.contributes.agent
@@ -205,8 +213,8 @@ export const extensionManifestSchema = extensionMetadataSchema.extend({
     issue('Theme contributions and management require API 3')
   if (manifest.apiVersion < 3 && (manifest.contributes.conditions.length || agent || settings.modules.length || settings.groups.length || settings.items.length || manifest.permissions.agent || manifest.permissions.models || manifest.permissions.taskMessages || manifest.permissions.tasks !== 'none'))
     issue('Agent capabilities and settings require API 3')
-  if (manifest.permissions.legacyTaskCleanup && (manifest.apiVersion < 4 || (!manifest.contributes.views.length && !manifest.contributes.menus.some(menu => menu.target === 'extension.actions'))))
-    context.addIssue({ code: 'custom', message: 'Legacy task cleanup requires API 4 and a desktop view or plugin action' })
+  if (manifest.permissions.legacyTaskCleanup && (manifest.apiVersion < 5 || manifest.executionScope !== 'desktop' || (!manifest.contributes.views.length && !manifest.contributes.menus.some(menu => menu.target === 'extension.actions'))))
+    context.addIssue({ code: 'custom', message: 'Legacy task cleanup requires API 5 and a desktop view or plugin action' })
   if (manifest.apiVersion < 4 && (manifest.permissions.references || manifest.permissions.fileEditing))
     issue('References and file editing require API 4')
   if (manifest.apiVersion < 4 && (manifest.contributes.fileHandlers.length || manifest.contributes.launchers.length || manifest.contributes.views.some(view => view.resource === 'optional-file')))
@@ -333,7 +341,7 @@ export const extensionManifestSchema = extensionMetadataSchema.extend({
   }
   if (manifest.permissions.schedules && !manifest.entry)
     context.addIssue({ code: 'custom', message: 'Schedules require an extension entry' })
-})
+}).transform(manifest => ({ ...manifest, permissions: extensionPermissionsSchema.parse(manifest.permissions) }))
 export type ExtensionManifest = z.infer<typeof extensionManifestSchema>
 export type ExtensionPermissions = z.infer<typeof extensionPermissionsSchema>
 

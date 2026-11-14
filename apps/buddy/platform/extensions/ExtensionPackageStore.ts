@@ -34,7 +34,7 @@ const grantSchema = z.union([
   z.object({ resource: extensionResourceSchema, source: extensionFileOpeningSourceSchema }).strict(),
 ])
 export type { ExtensionPackage, InstalledExtension } from './extensionState'
-export interface ExtensionCandidate { token: string, package: ExtensionPackage, files: Map<string, Uint8Array>, development: boolean, expires: number, fileAssociations: ReviewedFileOpening[] }
+export interface ExtensionCandidate { token: string, package: ExtensionPackage, files: Map<string, Uint8Array>, development: boolean, expires: number, fileAssociations: ReviewedFileOpening[], currentRevision: string | null, dependencyRevisions: Record<string, string> }
 
 export class ExtensionPackageStore {
   readonly root: string
@@ -159,6 +159,7 @@ export class ExtensionPackageStore {
       throw unavailable.error
     if (current && !development && !gt(manifest.version, current.current.manifest.version))
       throw new Error('EXTENSION_VERSION_NOT_NEWER')
+    const dependencyRevisions = serviceDependencyRevisions(this.installed, { manifest, hashes, revision, source })
     const token = randomUUID()
     const snapshot = this.fileOpeners()
     const fileAssociations: FileOpeningReviewChoice[] = manifest.contributes.fileHandlers.flatMap(provider => provider.extensions.flatMap(extension => extensionFileHandlerBindings(provider).map(({ location, requestDefault }) => {
@@ -166,12 +167,14 @@ export class ExtensionPackageStore {
       const currentProviderId = resolved.preferredId ?? resolved.provider?.id ?? null
       return { extension, location, providerId: provider.id, title: provider.title, currentProviderId, requestDefault }
     })))
-    this.#candidates.set(token, { token, files: new Map(files), development, expires: Date.now() + 600000, package: { manifest, hashes, revision, source }, fileAssociations: fileAssociations.map(({ extension, location, providerId }) => ({ choice: { extension, location, providerId }, revision: this.#index.fileOpeningRevisions[extension]?.[location] ?? 0 })) })
+    this.#candidates.set(token, { token, currentRevision: current?.current.revision ?? null, dependencyRevisions, files: new Map(files), development, expires: Date.now() + 600000, package: { manifest, hashes, revision, source }, fileAssociations: fileAssociations.map(({ extension, location, providerId }) => ({ choice: { extension, location, providerId }, revision: this.#index.fileOpeningRevisions[extension]?.[location] ?? 0 })) })
     const addedPermissions = addedExtensionPermissions(current?.current.manifest.permissions, manifest.permissions)
+    if (manifest.executionScope === 'service' && current?.current.manifest.executionScope !== 'service')
+      addedPermissions.push('executionScope:service')
     const previousSupervisedPlatforms = supervisedInferencePlatforms(current?.current.manifest.contributes.inference)
     if (supervisedInferencePlatforms(manifest.contributes.inference).some(platform => !previousSupervisedPlatforms.includes(platform)) && !addedPermissions.includes('inference'))
       addedPermissions.push('inference')
-    return { token, manifest, iconUrl, sha256: revision, development, currentVersion: current?.current.manifest.version ?? null, addedPermissions, fileAssociations }
+    return { token, manifest, iconUrl, sha256: revision, development, currentVersion: current?.current.manifest.version ?? null, previousExecutionScope: current?.current.manifest.executionScope ?? null, addedPermissions, fileAssociations }
   }
 
   #checkReviewBytes(files: ReadonlyMap<string, Uint8Array>, replaced?: string): void {
@@ -240,6 +243,7 @@ export class ExtensionPackageStore {
     const current = this.installed[pkg.manifest.id]
     if (current && !candidate.development && !gt(pkg.manifest.version, current.current.manifest.version))
       throw new Error('EXTENSION_VERSION_NOT_NEWER')
+    this.#assertReviewedDependencies(candidate, this.installed)
     const parent = join(this.root, 'packages', pkg.manifest.id)
     const target = this.packageRoot(pkg)
     const temporary = join(parent, `.install-${randomUUID()}`)
@@ -262,6 +266,7 @@ export class ExtensionPackageStore {
       }
       await this.#update((index) => {
         signal?.throwIfAborted()
+        this.#assertReviewedDependencies(candidate, index.installed)
         const old = index.installed[pkg.manifest.id]
         if (old && !candidate.development && !gt(pkg.manifest.version, old.current.manifest.version))
           throw new Error('EXTENSION_VERSION_NOT_NEWER')
@@ -278,6 +283,13 @@ export class ExtensionPackageStore {
       await rm(temporary, { recursive: true, force: true })
       if (created && !committed)
         await rm(target, { recursive: true, force: true })
+    }
+  }
+
+  #assertReviewedDependencies(candidate: ExtensionCandidate, installed: Readonly<Record<string, InstalledExtension>>): void {
+    if ((installed[candidate.package.manifest.id]?.current.revision ?? null) !== candidate.currentRevision
+      || !isDeepStrictEqual(serviceDependencyRevisions(installed, candidate.package), candidate.dependencyRevisions)) {
+      throw new Error('EXTENSION_REVIEW_CHANGED')
     }
   }
 
@@ -332,6 +344,8 @@ export class ExtensionPackageStore {
       if (!record)
         throw new Error('EXTENSION_NOT_INSTALLED')
       record.enabled = enabled
+      if (enabled && record.current.manifest.executionScope === 'service')
+        extensionActivationOrder(index.installed, id)
     })
   }
 
@@ -347,6 +361,7 @@ export class ExtensionPackageStore {
         const issue = extensionCompatibilityIssue(record.pending.manifest, this.appVersion)
         if (issue)
           throw new ExtensionCompatibilityError(record.pending.manifest, issue)
+        serviceDependencyRevisions(index.installed, record.pending)
         record.current = record.pending
         record.pending = null
         this.#applyFileOpeners(index, record.pendingFileOpeners)
@@ -548,6 +563,8 @@ export function extensionActivationOrder(installed: Readonly<Record<string, Inst
     for (const [dependency, range] of Object.entries(record.current.manifest.dependencies)) {
       if (!installed[dependency] || !satisfies(installed[dependency]!.current.manifest.version, range))
         throw new Error('EXTENSION_DEPENDENCY_VERSION')
+      if (record.current.manifest.executionScope === 'service' && installed[dependency]!.current.manifest.executionScope !== 'service')
+        throw new Error('EXTENSION_DEPENDENCY_EXECUTION_SCOPE')
       visit(dependency)
     }
     visiting.delete(next)
@@ -556,4 +573,31 @@ export function extensionActivationOrder(installed: Readonly<Record<string, Inst
   }
   visit(id)
   return order
+}
+
+function serviceDependencyRevisions(installed: Readonly<Record<string, InstalledExtension>>, candidate: ExtensionPackage): Record<string, string> {
+  const id = candidate.manifest.id
+  const next = { ...installed, [id]: { current: candidate, pending: null, pendingFileOpeners: [], enabled: true, development: false } }
+  const dependencies = new Map<string, string>()
+  for (const [rootId, record] of Object.entries(next)) {
+    if (!record.enabled || record.current.manifest.executionScope !== 'service')
+      continue
+    if (rootId !== id && !dependsOn(next, rootId, id))
+      continue
+    const closure = extensionActivationOrder(next, rootId)
+    for (const dependency of closure) {
+      if (dependency !== id)
+        dependencies.set(dependency, next[dependency]!.current.revision)
+    }
+  }
+  return Object.fromEntries([...dependencies].sort(([left], [right]) => left.localeCompare(right)))
+}
+
+function dependsOn(installed: Readonly<Record<string, InstalledExtension>>, root: string, target: string, seen = new Set<string>()): boolean {
+  if (root === target)
+    return true
+  if (seen.has(root))
+    return false
+  seen.add(root)
+  return Object.keys(installed[root]?.current.manifest.dependencies ?? {}).some(dependency => dependsOn(installed, dependency, target, seen))
 }

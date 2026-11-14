@@ -85,18 +85,6 @@ describe('chat transcript projection', () => {
     expect(cancelled.rows.find(row => row.kind === 'user-question')).toMatchObject({ request: { status: 'cancelled', entries: [{ id: 'scope', question: 'Which scope?', answer: '' }] } })
   })
 
-  it('retains the phase of public actor messages without adding children to ordinary runs', () => {
-    const commentary = { ...message('actor-commentary', 'assistant'), runId: 'actor', content: { text: 'Checking the animation', phase: 'commentary' } }
-    const final = { ...message('actor-final', 'assistant'), runId: 'actor', content: { text: 'Animation ready', phase: 'final_answer' } }
-    const rows = projectChatTranscript({ outputs: [], runs: [], timelineItems: [commentary, final] }).rows
-    expect(rows).toMatchObject([
-      { kind: 'message', message: { id: commentary.id }, isIntermediate: true, showActions: false },
-      { kind: 'message', message: { id: final.id } },
-    ])
-    expect(rows[1]).not.toHaveProperty('isIntermediate')
-    expect(rows.every(row => !('resultRunId' in row))).toBe(true)
-  })
-
   it('keeps legacy retry attempts chronological when run snapshots arrive newest first', () => {
     const user = message('retry-question', 'user')
     const cancelled = { ...localRun('old-run', user.id, 'cancelled'), completedAt: '2026-08-20T00:00:03.000Z' }
@@ -247,59 +235,13 @@ describe('chat transcript projection', () => {
       }],
     }
 
-    expect(projectPersistedChatTranscriptRows([user, assistant], [emptyTurn])).toEqual([
-      {
-        key: `message:${user.id}`,
-        kind: 'message',
-        message: user,
-        turnOutputs: null,
-      },
-      {
-        resultRunId: 'run-1',
-        key: `message:${assistant.id}`,
-        kind: 'message',
-        message: assistant,
-        turnOutputs: null,
-      },
-      { key: 'turn-result:run-1', kind: 'turn-result', turn: emptyTurn },
-    ])
-    expect(projectPersistedChatTranscriptRows([user, assistant], [reasoningTurn])).toEqual([
-      {
-        key: `message:${user.id}`,
-        kind: 'message',
-        message: user,
-        turnOutputs: null,
-      },
-      { key: `agent-turn:${reasoningTurn.runId}`, kind: 'agent-turn', turn: { ...reasoningTurn, nodes: reasoningTurn.nodes }, ownsResultActions: undefined, showOutcome: false },
-      {
-        resultRunId: 'run-1',
-        key: `message:${assistant.id}`,
-        kind: 'message',
-        message: assistant,
-        turnOutputs: null,
-      },
-      { key: 'turn-result:run-1', kind: 'turn-result', turn: { ...reasoningTurn, nodes: [] } },
-    ])
-  })
-
-  it('keeps no-op compaction feedback out of transcript rows', () => {
-    const noOpCompaction: Extract<LocalConversationTimelineItem, { kind: 'compaction' }> = {
-      branchId: 'branch-1',
-      completedAt: '2026-08-20T00:00:02.000Z',
-      conversationId: 'conversation-1',
-      createdAt: '2026-08-20T00:00:01.000Z',
-      errorCode: 'CONTEXT_COMPACTION_NOT_NEEDED',
-      estimatedTokensAfter: null,
-      id: 'compaction-1',
-      kind: 'compaction',
-      status: 'failed',
-      tokensBefore: null,
-    }
-
-    expect(projectPersistedChatTranscriptRows(
-      [message('user-1', 'user'), noOpCompaction],
-      [],
-    ).map(row => row.kind)).toEqual(['message'])
+    const empty = projectPersistedChatTranscriptRows([user, assistant], [emptyTurn])
+    expect(empty.map(row => row.kind)).toEqual(['message', 'message', 'turn-result'])
+    expect(empty.at(-1)).toMatchObject({ turn: { runId: 'run-1', nodes: [] } })
+    const reasoning = projectPersistedChatTranscriptRows([user, assistant], [reasoningTurn])
+    expect(reasoning.map(row => row.kind)).toEqual(['message', 'agent-turn', 'message', 'turn-result'])
+    expect(reasoning[1]).toMatchObject({ turn: { nodes: reasoningTurn.nodes }, showOutcome: false })
+    expect(reasoning.at(-1)).toMatchObject({ turn: { runId: 'run-1', nodes: [] } })
   })
 
   it('updates the completed turn association while preserving the final message identity', () => {

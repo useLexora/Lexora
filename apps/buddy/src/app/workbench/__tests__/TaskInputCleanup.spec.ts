@@ -107,7 +107,17 @@ describe('task input cleanup', () => {
     await restoreTaskInputViews(restoredLayout, { find: async id => id === 'sent' ? record : null })
     workbench.restoreLayout(restoredLayout)
     expect(workbench.layout.views[discarded]).toBeUndefined()
-    expect(workbench.layout.views[sent]?.resource).toEqual({ scheme: 'task', id: 'task', data: {} })
+    expect(workbench.layout.views[sent]?.resource).toEqual({ scheme: 'task', id: 'task', data: { branchId: 'branch' } })
     expect(workbench.layout.root).toMatchObject({ kind: 'pane', view: sent })
+  })
+
+  it('keeps legacy global and space drafts available for the subsequent migration', async () => {
+    const workbench = controller()
+    const global = (await workbench.open({ scheme: 'draft', id: 'global', data: {} }, 'Global'))!
+    const space = (await workbench.open({ scheme: 'draft', id: 'space', data: { spaceId: 'space' } }, 'Space', { direction: 'right' }))!
+    const restoredLayout = restoreWorkbenchLayout(workbench.layout)
+    await restoreTaskInputViews(restoredLayout, { find: async () => null })
+    expect(restoredLayout.views[global]?.resource).toEqual({ scheme: 'draft', id: 'global', data: {} })
+    expect(restoredLayout.views[space]?.resource).toEqual({ scheme: 'draft', id: 'space', data: { spaceId: 'space' } })
   })
 })

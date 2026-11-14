@@ -73,7 +73,7 @@ it('reopens an active root with a completed child and interrupts unknown work wi
   }
 })
 
-it.each(['branch', 'delete'] as const)('retains a late child result as undelivered after %s without publishing or injecting it', async (boundary) => {
+it.each(['branch', 'delete'] as const)('preserves late child result ownership after %s without public leakage', async (boundary) => {
   const directory = await mkdtemp(join(tmpdir(), 'lexora-late-execution-'))
   const f = createExecutionStorageFixture()
   const events = createRunEventLog({ database: f.database, conversationsDirectory: directory })
@@ -91,14 +91,24 @@ it.each(['branch', 'delete'] as const)('retains a late child result as undeliver
       { runId: 'late-child', type: 'execution.mailbox.sent', payload: { messageId: 'late-result', kind: 'result', targetRunId: 'root', targetGeneration: 0, text: 'PRIVATE_LATE_RESULT' } },
       { runId: 'late-child', type: 'run.completed', payload: {} },
     ])
-    expect(mailbox.find('late-result')).toMatchObject({ state: 'undelivered', receipt: null })
-    expect(mailbox.listUnconsumed('root')).toEqual([])
     const message = mailbox.find('late-result')!.message
-    await expect(events.append({ runId: 'root', type: 'execution.mailbox.accepted', payload: { messageId: message.messageId, sourceRunId: message.sourceRunId, payloadHash: message.payloadHash, contextEntryId: 'wrong-new-context' } })).rejects.toThrow('cannot accept')
+    if (boundary === 'branch') {
+      const original = f.runs.findById('root')!
+      f.runs.create({ ...original, id: 'other-root', rootRunId: 'other-root', branchId: 'new-branch' })
+      expect(mailbox.find('late-result')).toMatchObject({ state: 'pending', receipt: null, message: { targetRunId: 'root' } })
+      expect(mailbox.listUnconsumed('other-root')).toEqual([])
+      await expect(events.append({ runId: 'other-root', type: 'execution.mailbox.accepted', payload: { messageId: message.messageId, sourceRunId: message.sourceRunId, payloadHash: message.payloadHash, contextEntryId: 'wrong-new-context' } })).rejects.toThrow()
+      await events.append({ runId: 'root', type: 'execution.mailbox.accepted', payload: { messageId: message.messageId, sourceRunId: message.sourceRunId, payloadHash: message.payloadHash, contextEntryId: 'original-context' } })
+    }
+    else {
+      expect(mailbox.find('late-result')).toMatchObject({ state: 'undelivered', receipt: null })
+      expect(mailbox.listUnconsumed('root')).toEqual([])
+      await expect(events.append({ runId: 'root', type: 'execution.mailbox.accepted', payload: { messageId: message.messageId, sourceRunId: message.sourceRunId, payloadHash: message.payloadHash, contextEntryId: 'wrong-new-context' } })).rejects.toThrow('cannot accept')
+    }
     await events.replay('late-child')
-    expect(mailbox.find('late-result')?.state).toBe('undelivered')
+    expect(mailbox.find('late-result')?.state).toBe(boundary === 'branch' ? 'accepted' : 'undelivered')
     expect(f.database.prepare('SELECT count(*) AS count FROM messages').get()).toEqual({ count: 0 })
-    expect(f.database.prepare('SELECT count(*) AS count FROM execution_mailbox_receipts').get()).toEqual({ count: 0 })
+    expect(f.database.prepare('SELECT count(*) AS count FROM execution_mailbox_receipts').get()).toEqual({ count: boundary === 'branch' ? 1 : 0 })
     expect(f.runs.findById('root')).toMatchObject({ branchId: 'branch', status: 'running' })
     expect(f.runs.listTree('root')).toHaveLength(2)
   }

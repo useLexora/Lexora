@@ -105,11 +105,30 @@ export function useTaskLifecycle(options: TaskLifecycleOptions) {
   async function refreshConversationContent(navigation: number) {
     if (isDisposed || !options.session.isCurrent(navigation) || !options.session.activeConversationId.value)
       return
-    options.session.setActiveBranch(options.activeConversation.value?.activeBranchId ?? null)
-    await Promise.all([
-      options.refreshBranches(),
-      options.runSync.refreshActiveConversation(),
-    ])
+    const selected = options.session.activeBranchId.value
+    const conversationId = options.session.activeConversationId.value
+    const verifySelection = async () => {
+      await options.refreshBranches()
+      if (isDisposed || !options.session.isCurrent(navigation, conversationId) || options.session.activeBranchId.value !== selected)
+        return
+      const branches = options.session.branches.value
+      if (selected && !branches.some(branch => branch.id === selected && branch.conversationId === conversationId))
+        throw new Error('TASK_BRANCH_UNAVAILABLE')
+      if (!selected) {
+        const initial = options.activeConversation.value?.activeBranchId
+        if (!initial || !branches.some(branch => branch.id === initial))
+          throw new Error('TASK_BRANCH_UNAVAILABLE')
+        options.session.setActiveBranch(initial)
+      }
+    }
+    if (selected) {
+      await Promise.all([verifySelection(), options.runSync.refreshActiveConversation()])
+    }
+    else {
+      await verifySelection()
+      if (!isDisposed && options.session.isCurrent(navigation, conversationId))
+        await options.runSync.refreshActiveConversation()
+    }
   }
 
   const sourceRevisions = new Map<string, number>()

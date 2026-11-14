@@ -1010,7 +1010,7 @@ export function formatBuddySkillPrompt(skill: BuddyMaterializedSkill): string {
   return [`<skill name="${escape(skill.name)}" location="${escape(skill.filePath)}">`, `References are relative to ${skill.baseDirectory}.`, '', skill.body, '</skill>'].join('\n')
 }
 
-export function registerSkillServiceRpc(rpc: RuntimeRequestRegistrar, service: SkillService): () => void {
+export function registerSkillCatalogRpc(rpc: RuntimeRequestRegistrar, service: SkillService): () => void {
   const stops = [
     registerRuntimeRequest(rpc, skillsRpc.list, input => service.list(input.spaceId, input.metadataOnly, input.forceReload)),
     registerRuntimeRequest(rpc, skillsRpc.get, input => service.get(input.spaceId, input.id)),
@@ -1018,6 +1018,12 @@ export function registerSkillServiceRpc(rpc: RuntimeRequestRegistrar, service: S
     registerRuntimeRequest(rpc, skillsRpc.readFile, input => service.readFile(input)),
     registerRuntimeRequest(rpc, skillsRpc.resolveImage, input => service.resolveImage(input)),
     registerRuntimeRequest(rpc, skillsRpc.locateFile, input => service.locateFile(input)),
+  ]
+  return () => stops.forEach(stop => stop())
+}
+
+export function registerSkillServiceRpc(rpc: RuntimeRequestRegistrar, service: SkillService): () => void {
+  const stops = [
     registerRuntimeRequest(rpc, skillsRpc.preview, input => service.preview(input)),
     registerRuntimeRequest(rpc, skillsRpc.install, input => service.install(input)),
     registerRuntimeRequest(rpc, skillsRpc.discard, async (input) => {

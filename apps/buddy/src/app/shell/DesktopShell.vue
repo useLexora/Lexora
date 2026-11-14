@@ -17,6 +17,7 @@ import WorkbenchHost from '@/workbench/browser/WorkbenchHost.vue'
 import DesktopTaskHistory from '../workbench/DesktopTaskHistory.vue'
 import DesktopWorkbenchArea from '../workbench/DesktopWorkbenchArea.vue'
 import DesktopWorkbenchView from '../workbench/DesktopWorkbenchView.vue'
+import DesktopCommandRecovery from './DesktopCommandRecovery.vue'
 
 const { bindings } = defineProps<{ bindings: DesktopShellBindings }>()
 const route = useRoute()
@@ -81,6 +82,7 @@ function showTasks() {
       @toggle-context="bindings.resources.toggle"
       @toggle-sidebar="togglePrimarySidebar"
     />
+    <DesktopCommandRecovery v-if="hasBeenReady" :language="language" @open-task="bindings.workbench.openTask" @open-draft="bindings.workbench.openDraft" />
     <div class="desktop-shell__body relative">
       <WorkbenchHost :keybindings="bindings.shortcuts.bindings.value" :platform="bindings.shortcuts.platform.value" :active="hasBeenReady && !onboardingPending && activeView === 'lexora.tasks'" :controller="bindings.workbench.controller" :copies="bindings.workbench.copies" :language="language" :backup-error="bindings.workbench.backupError.value" @drop-resource="bindings.workbench.dropResource" @retry-backup="bindings.workbench.persistence.flush()">
         <div class="desktop-shell__content" :class="{ 'is-starting': blocked }" :inert="blocked" :aria-hidden="blocked">

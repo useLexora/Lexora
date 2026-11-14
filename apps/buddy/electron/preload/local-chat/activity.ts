@@ -52,10 +52,10 @@ export function createActivityApi(): Pick<LocalChatApi, 'artifacts' | 'notificat
     }),
     approvals: Object.freeze({
       list: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.approvalsList, input ?? {}),
-      approve: (approvalId, scope) =>
-        ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.approvalsApprove, { approvalId, scope }),
-      deny: approvalId =>
-        ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.approvalsDeny, { approvalId }),
+      approve: (approvalId, scope, conditions) =>
+        ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.approvalsApprove, { approvalId, scope, ...(conditions ? { conditions } : {}) }),
+      deny: (approvalId, conditions) =>
+        ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.approvalsDeny, { approvalId, ...(conditions ? { conditions } : {}) }),
     }),
     usage: Object.freeze({
       getSnapshot: () => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.usageSnapshot),

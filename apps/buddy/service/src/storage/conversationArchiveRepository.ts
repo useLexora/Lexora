@@ -1,6 +1,7 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 import { Buffer } from 'node:buffer'
 import { BuddyServiceError } from '../rpc/runtimeRequest'
+import { conversationExecutionResourcesReleased } from './ExecutionResourceQueries'
 
 export type ConversationArchiveDays = 0 | 3 | 7 | 30
 export interface ConversationArchiveQuery {
@@ -26,11 +27,7 @@ export type ConversationArchiveRepository = ReturnType<typeof createConversation
 const dueConditions = `p.days > 0 AND c.archived_at IS NOT NULL AND c.deleted_at IS NULL
   AND julianday(c.archived_at) + p.days <= julianday(?)
   AND NOT EXISTS (SELECT 1 FROM conversation_deletion_jobs j WHERE j.conversation_id = c.id)
-  AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.conversation_id = c.id AND r.status IN ('queued', 'running'))
-  AND NOT EXISTS (SELECT 1 FROM execution_state s JOIN runs r ON r.id = s.run_id
-    WHERE r.conversation_id = c.id AND (s.phase <> 'closed' OR s.cleanup_state <> 'clean'))
-  AND NOT EXISTS (SELECT 1 FROM run_mutation_leases l JOIN runs r ON r.id = l.run_id
-    WHERE r.conversation_id = c.id AND l.status <> 'released')
+  AND ${conversationExecutionResourcesReleased}
   AND NOT EXISTS (SELECT 1 FROM chat_queue q WHERE q.conversation_id = c.id AND q.state = 'waiting')
   AND NOT EXISTS (SELECT 1 FROM approvals a JOIN runs r ON r.id = a.run_id WHERE r.conversation_id = c.id AND a.status = 'pending')`
 

@@ -24,7 +24,7 @@ export class UserQuestionDelivery {
   constructor(options: Options) { this.#options = options }
 
   deliver(request: UserQuestionRequest): Promise<string | null> {
-    const key = request.conversationId
+    const key = JSON.stringify([request.conversationId, request.branchId])
     const pending = (this.#operations.get(key) ?? Promise.resolve()).catch(() => {}).then(() => this.#deliver(request))
     this.#operations.set(key, pending)
     void pending.finally(() => {
@@ -80,8 +80,8 @@ export class UserQuestionDelivery {
     }
     if (owner.run.status !== 'completed' || this.#options.runner.isStopping)
       throw new Error('QUESTION_STALE')
-    if (this.#options.runner.hasActiveExecution(owner.run.conversationId, owner.run.buddyId)
-      || this.#options.database.prepare(`SELECT 1 FROM runs WHERE conversation_id = ? AND buddy_id = ? AND status IN ('queued', 'running') LIMIT 1`).get(owner.run.conversationId, owner.run.buddyId)
+    if (this.#options.runner.hasActiveExecution(owner.run.conversationId, owner.run.buddyId, owner.run.branchId)
+      || this.#options.database.prepare(`SELECT 1 FROM runs WHERE conversation_id = ? AND branch_id = ? AND buddy_id = ? AND status IN ('queued', 'running') LIMIT 1`).get(owner.run.conversationId, owner.run.branchId, owner.run.buddyId)
       || this.#options.database.prepare(`SELECT 1 FROM chat_queue WHERE conversation_id = ? AND branch_id = ? AND state IN ('waiting', 'paused') LIMIT 1`).get(request.conversationId, request.branchId)) {
       return null
     }

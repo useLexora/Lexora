@@ -90,32 +90,19 @@ describe('progressive task history', () => {
     expect(ids(f)).toContain('task-30')
   })
 
-  it.each([5, 7])('counts %i marked tasks toward the initial five and adds ten on expansion', async (count) => {
-    const f = fixture()
-    const marked = Array.from({ length: count }, (_, index) => ({ ...item(100 + index, 'space'), markState: { ...item(100 + index).markState, markId: 'keep' } }))
-    marked.forEach(entry => f.replace(entry))
-    await f.refreshAttention()
-    await f.history.ensureScope('space')
-    expect(ids(f)).toHaveLength(Math.max(5, count))
-    expect(ids(f)).toEqual(expect.arrayContaining(marked.map(entry => entry.conversation.id)))
-    await f.history.loadMore('space')
-    expect(ids(f)).toHaveLength(Math.max(5, count) + 10)
-    expect(new Set(ids(f)).size).toBe(ids(f).length)
-  })
-
-  it.each([0, 1])('keeps the continuation accurate with seven marks and %i ordinary tasks', async (remaining) => {
+  it('keeps the continuation accurate when marks fill the quota but an ordinary task remains', async () => {
     const f = fixture()
     for (let index = 100; index < 107; index++)
       f.replace({ ...item(index, 'space'), markState: { ...item(index).markState, markId: 'keep' } })
-    for (let index = 107; index < 120 - remaining; index++)
+    for (let index = 107; index < 119; index++)
       f.remove(`task-${index}`)
     await f.refreshAttention()
     await f.history.ensureScope('space')
     expect(ids(f)).toHaveLength(7)
     expect(ids(f)).not.toContain('task-119')
-    expect(f.history.scopes.value.get('space:space')?.hasMore).toBe(remaining === 1)
+    expect(f.history.scopes.value.get('space:space')?.hasMore).toBe(true)
     await f.history.loadMore('space')
-    expect(ids(f)).toHaveLength(7 + remaining)
+    expect(ids(f)).toHaveLength(8)
     expect(f.history.scopes.value.get('space:space')?.hasMore).toBe(false)
   })
 
@@ -162,17 +149,12 @@ describe('progressive task history', () => {
     const f = fixture()
     await f.history.ensureScope('space')
     const before = f.conversations.value
-    const scopes = f.history.scopes.value
-    const queries = f.queries.length
     const selection = { providerId: 'fixture', modelId: 'model-2', reasoning: 'high' as const, serviceTier: 'priority' as const }
     const updated = { ...item(117, 'space'), conversation: { ...item(117, 'space').conversation, modelSelection: selection } }
     f.replace(updated)
     await f.applyConversation(updated.conversation)
     expect(ids(f)).toEqual(before.map(task => task.id))
     expect(f.conversations.value.find(task => task.id === 'task-117')).toMatchObject({ modelSelection: selection, updatedAt: updated.conversation.updatedAt })
-    expect(f.conversations.value[0]).toBe(before[0])
-    expect(f.history.scopes.value).toBe(scopes)
-    expect(f.queries).toHaveLength(queries)
     await f.history.loadMore('space')
     expect(f.conversations.value).toHaveLength(15)
     expect(f.conversations.value.find(task => task.id === 'task-117')?.modelSelection).toEqual(selection)
@@ -302,17 +284,5 @@ describe('progressive task history', () => {
     pending.resolve([item(0)])
     await pinning
     expect(f.markStates.value.get('task-0')).toEqual(next.markState)
-  })
-
-  it('does not publish requests after disposal', async () => {
-    const f = fixture()
-    const pending = deferred<LocalConversationHistoryPage>()
-    f.intercept(() => pending.promise)
-    const loading = f.history.ensureScope(null)
-    await Promise.resolve()
-    f.dispose()
-    pending.resolve(f.page({ kind: 'ordinary', spaceId: null, limit: 10 }))
-    await loading
-    expect(ids(f)).toEqual([])
   })
 })

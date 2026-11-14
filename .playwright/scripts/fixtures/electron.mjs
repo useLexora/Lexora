@@ -62,7 +62,7 @@ export const test = base.extend({
           for (const file of await fs.readdir(record.artifactDirectory)) {
             await testInfo.attach(`${path.basename(record.home)}-${file}`, {
               path: path.join(record.artifactDirectory, file),
-              contentType: file.endsWith('.png') ? 'image/png' : 'application/zip',
+              contentType: file.endsWith('.png') ? 'image/png' : file.endsWith('.zip') ? 'application/zip' : file.endsWith('.json') ? 'application/json' : 'text/plain',
             })
           }
         }
@@ -74,7 +74,8 @@ export const test = base.extend({
 export { expect } from '@playwright/test'
 
 export async function useSyntheticCredentialStorage({ app, page }) {
-  await base.expect.poll(async () => (await page.evaluate(() => window.lexoraDesktop.localChat.runtime.getStatus())).status, { timeout: 45000 }).toBe('ready')
+  await base.expect.poll(() => page.evaluate(async () => (await window.lexoraDesktop.app.startup.getState()).status), { timeout: 45000 }).toBe('ready')
+  const generation = await page.evaluate(async () => (await window.lexoraDesktop.app.startup.getState()).generation)
   await app.evaluate(({ app, safeStorage }) => {
     if (app.getName() !== 'Lexora Buddy Test')
       throw new Error('Synthetic credentials require an isolated test instance')
@@ -95,5 +96,8 @@ export async function useSyntheticCredentialStorage({ app, page }) {
     })
   })
   await page.evaluate(() => window.lexoraDesktop.localChat.runtime.restart())
-  await base.expect.poll(async () => (await page.evaluate(() => window.lexoraDesktop.localChat.runtime.getStatus())).status, { timeout: 45000 }).toBe('ready')
+  await base.expect.poll(async () => {
+    const state = await page.evaluate(() => window.lexoraDesktop.app.startup.getState())
+    return { ready: state.status === 'ready', restarted: state.generation !== generation }
+  }, { timeout: 45000 }).toEqual({ ready: true, restarted: true })
 }

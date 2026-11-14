@@ -14,7 +14,7 @@ export function storageMigrationIssueBody(input: {
   appVersion: string
   platform: string
 }): string {
-  const kind = { consolidate: '首次升级整理', relocate: '更改数据目录', restore: '恢复备份' }[input.kind]
+  const kind = { consolidate: '首次升级整理', relocate: '更改数据目录', restore: '恢复备份', upgrade: '本地数据升级' }[input.kind]
   return [
     '## 问题描述',
     `Lexora 在${kind}时未能完成。`,

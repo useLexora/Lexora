@@ -1,10 +1,10 @@
-import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
 import type { BuddyCapability, BuddyCapabilityContext } from '../agent/extensions/BuddyCapability'
 import type { PluginAuthoringService } from './PluginAuthoringService'
+import type { PluginAuthoringHost } from './PluginHost'
 import { defineTool } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 import { Check } from 'typebox/value'
-import { EXTENSION_CAPABILITIES_RPC, EXTENSION_IDENTITY_RPC, EXTENSION_INSPECT_RPC, extensionCapabilitiesSchema, extensionIdentityRequestSchema, extensionIdentitySchema, extensionInspectionSchema } from '../../../shared/extensions/extensionAuthoring'
+import { extensionIdentityRequestSchema } from '../../../shared/extensions/extensionAuthoring'
 import { workbenchCapabilityKinds } from '../../../shared/workbench/workbenchContributionCatalog'
 import { toPiToolGroup } from '../agent/extensions/piToolGroup'
 
@@ -29,7 +29,7 @@ const parameters = Type.Object({
   review: Type.Optional(Type.Boolean({ description: 'Show the user an installation review after building. Never installs automatically.' })),
 }, { additionalProperties: false })
 
-export function createPluginAuthoringCapability(context: BuddyCapabilityContext, peer: Pick<RuntimeRpcPeerContract, 'request' | 'notify'>, builder: PluginAuthoringService): BuddyCapability {
+export function createPluginAuthoringCapability(context: BuddyCapabilityContext, host: PluginAuthoringHost, builder: PluginAuthoringService): BuddyCapability {
   return {
     classify(event) {
       if (event.toolName === identityName)
@@ -59,7 +59,7 @@ export function createPluginAuthoringCapability(context: BuddyCapabilityContext,
               return response({ ok: false, code: 'EXTENSION_IDENTITY_INVALID', diagnostics: parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`), nextAction: 'Explain the invalid fields and ask the user to choose suitable names before retrying. Do not silently replace or truncate them.' })
             try {
               const abort = signal ? AbortSignal.any([signal, context.signal]) : context.signal
-              const identity = extensionIdentitySchema.parse(await peer.request(EXTENSION_IDENTITY_RPC, parsed.data, 10000, abort))
+              const identity = await host.identity(parsed.data, abort)
               return response({ ok: true, ...identity })
             }
             catch { return response({ ok: false, code: 'EXTENSION_IDENTITY_FAILED' }) }
@@ -73,7 +73,7 @@ export function createPluginAuthoringCapability(context: BuddyCapabilityContext,
           async execute(_toolCallId, input, signal) {
             try {
               const abort = signal ? AbortSignal.any([signal, context.signal]) : context.signal
-              const capabilities = extensionCapabilitiesSchema.parse(await peer.request(EXTENSION_CAPABILITIES_RPC, input, 10000, abort))
+              const capabilities = await host.capabilities(input, abort)
               return response({ ok: true, ...capabilities })
             }
             catch { return response({ ok: false, code: 'EXTENSION_CAPABILITIES_FAILED' }) }
@@ -87,7 +87,7 @@ export function createPluginAuthoringCapability(context: BuddyCapabilityContext,
           async execute(_toolCallId, input, signal) {
             try {
               const abort = signal ? AbortSignal.any([signal, context.signal]) : context.signal
-              const status = extensionInspectionSchema.parse(await peer.request(EXTENSION_INSPECT_RPC, input, 10000, abort))
+              const status = await host.inspect(input.id, abort)
               return response({ ok: true, ...status })
             }
             catch { return response({ ok: false, code: 'EXTENSION_INSPECTION_FAILED' }) }

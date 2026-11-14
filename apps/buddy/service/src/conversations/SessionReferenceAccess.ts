@@ -107,7 +107,7 @@ export class SessionReferenceAccessResolver {
     if (!root)
       return result
     const current = this.#conversations.findById(root.conversationId)
-    if (!current || current.deletedAt || current.activeBranchId !== root.branchId)
+    if (!current || current.deletedAt)
       return result
     const blocked = new Map<string, Set<string>>()
     const excludes = (id: string, branchId: string, target: string) => {

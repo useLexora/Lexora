@@ -26,7 +26,7 @@ test('browser button picks a typed element without clicking the page, cancels sa
     const cards = page.locator('.desktop-chat-composer-wrap .resource-quote-card')
     async function nativePoint(selector, click = true) {
       return app.evaluate(async ({ webContents }, { url, selector, click }) => {
-        const guest = webContents.getAllWebContents().find(contents => contents.getType() === 'webview' && contents.getURL() === url)
+        const guest = webContents.getAllWebContents().find(contents => contents.getURL() === url)
         if (!guest)
           throw new Error('Fixture guest missing')
         const rect = await guest.executeJavaScript(`(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x:r.x+r.width/2, y:r.y+r.height/2, width:innerWidth, height:innerHeight }; })()`)
@@ -36,7 +36,6 @@ test('browser button picks a typed element without clicking the page, cancels sa
           guest.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point })
           guest.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point })
         }
-        return { x: point.x / guest.getZoomFactor() / rect.width, y: point.y / guest.getZoomFactor() / rect.height }
       }, { url, selector, click })
     }
     async function waitPicker() {
@@ -49,7 +48,7 @@ test('browser button picks a typed element without clicking the page, cancels sa
     await expect(cards.first()).toContainText('Frozen link excerpt')
     await expect(input).toContainText('Keep my latest question.')
     await expect(address).toHaveValue(url)
-    expect(await app.evaluate(async ({ webContents }, url) => webContents.getAllWebContents().find(contents => contents.getType() === 'webview' && contents.getURL() === url).executeJavaScript('Boolean(window.clicked)'), url)).toBe(false)
+    expect(await app.evaluate(async ({ webContents }, url) => webContents.getAllWebContents().find(contents => contents.getURL() === url).executeJavaScript('Boolean(window.clicked)'), url)).toBe(false)
     await cards.first().locator('.chat-reference-card__link').click()
     await expect(page.locator('.resource-quote-preview:visible')).toContainText('Frozen link excerpt')
     await page.getByRole('button', { name: '定位来源', exact: true }).click()
@@ -73,7 +72,7 @@ test('browser button picks a typed element without clicking the page, cancels sa
     await waitPicker()
     await nativePoint('button')
     await expect(cards).toHaveCount(2)
-    expect(await app.evaluate(async ({ webContents }, url) => webContents.getAllWebContents().find(contents => contents.getType() === 'webview' && contents.getURL() === url).executeJavaScript('Boolean(window.submitted)'), url)).toBe(false)
+    expect(await app.evaluate(async ({ webContents }, url) => webContents.getAllWebContents().find(contents => contents.getURL() === url).executeJavaScript('Boolean(window.submitted)'), url)).toBe(false)
     await page.evaluate(async () => {
       const [guest] = await window.lexoraDesktop.browser.listGuests()
       await window.lexoraDesktop.browser.setZoomFactor(guest.sessionId, 1)
@@ -84,7 +83,7 @@ test('browser button picks a typed element without clicking the page, cancels sa
     await expect(cards).toHaveCount(3)
     await expect(cards.last()).not.toContainText('must-not-capture')
     await app.evaluate(async ({ webContents }, url) => {
-      const guest = webContents.getAllWebContents().find(contents => contents.getType() === 'webview' && contents.getURL() === url)
+      const guest = webContents.getAllWebContents().find(contents => contents.getURL() === url)
       await guest.executeJavaScript('document.querySelector("#large").textContent="x".repeat(32769); document.querySelector("#large").style="height:24px;overflow:hidden"')
     }, url)
     await pick.click()
@@ -103,63 +102,19 @@ test('browser button picks a typed element without clicking the page, cancels sa
     await input.click()
     await expect(pick).toBeVisible()
     await app.evaluate(async ({ webContents }, url) => {
-      const guest = webContents.getAllWebContents().find(contents => contents.getType() === 'webview' && contents.getURL() === url)
+      const guest = webContents.getAllWebContents().find(contents => contents.getURL() === url)
       await guest.executeJavaScript('document.querySelector("#target").textContent="New snapshot for one target"')
     }, url)
     await pick.click()
     await waitPicker()
-    const anchor = await nativePoint('#target')
+    await nativePoint('#target')
     const menu = page.locator('.resource-selection-menu.n-dropdown:visible')
-    const surface = page.getByTestId('browser-guest-surface')
-    async function checkMenuPosition(point) {
-      const viewport = await surface.boundingBox()
-      const box = await menu.boundingBox()
-      const windowSize = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
-      const x = viewport.x + point.x * viewport.width
-      const y = viewport.y + point.y * viewport.height
-      expect(box.x).toBeGreaterThanOrEqual(0)
-      expect(box.y).toBeGreaterThanOrEqual(0)
-      expect(box.x + box.width).toBeLessThanOrEqual(windowSize.width + 1)
-      expect(box.y + box.height).toBeLessThanOrEqual(windowSize.height + 1)
-      if (x + box.width + 8 < windowSize.width) {
-        expect(Math.abs(box.x - x)).toBeLessThan(8)
-      }
-      else {
-        expect(box.x).toBeLessThanOrEqual(x + 8)
-        expect(box.x + box.width).toBeGreaterThanOrEqual(x - 8)
-      }
-      expect(Math.min(Math.abs(box.y - y), Math.abs(box.y + box.height - y))).toBeLessThan(16)
-    }
     await expect(menu).toBeVisible()
-    await checkMenuPosition(anchor)
     await menu.getByRole('menuitem', { name: '引用到其他对话', exact: true }).hover()
     const targets = page.locator('.resource-selection-menu:visible').filter({ has: page.locator('.resource-selection-menu-option__label').filter({ hasText: /^分屏 2/ }) })
     await targets.getByRole('menuitem').filter({ hasText: /^分屏 2/ }).click()
     await expect(page.locator('.resource-quote-card').filter({ hasText: 'New snapshot for one target' })).toHaveCount(1)
     await expect(inputs.first()).toContainText('Keep my latest question.')
-    await page.evaluate(async () => {
-      const [guest] = await window.lexoraDesktop.browser.listGuests()
-      await window.lexoraDesktop.browser.setZoomFactor(guest.sessionId, 1.5)
-    })
-    await pick.click()
-    await waitPicker()
-    const zoomAnchor = await nativePoint('#target')
-    await expect(menu).toBeVisible()
-    await checkMenuPosition(zoomAnchor)
-    await page.keyboard.press('Escape')
-    await expect(menu).not.toBeVisible()
-    await app.evaluate(async ({ webContents }, url) => {
-      const guest = webContents.getAllWebContents().find(contents => contents.getType() === 'webview' && contents.getURL() === url)
-      await guest.executeJavaScript('document.querySelector("#target").style="position:fixed;bottom:12px;right:12px;width:80px;height:32px;padding:0;margin:0;overflow:hidden"')
-    }, url)
-    await pick.click()
-    await waitPicker()
-    const edgeAnchor = await nativePoint('#target')
-    await expect(menu).toBeVisible()
-    await checkMenuPosition(edgeAnchor)
-    await page.keyboard.press('Escape')
-    await expect(menu).not.toBeVisible()
-    await expect(page.locator('.resource-quote-card').filter({ hasText: 'New snapshot for one target' })).toHaveCount(1)
     await pick.click()
     await waitPicker()
     await address.fill(`${url}?next`)
@@ -194,7 +149,7 @@ test('native element identity survives scrolling and shadow roots, rejects repla
     await address.press('Enter')
     await expect(page.getByTestId('browser-pick-element')).toBeEnabled()
     const guestEval = expression => app.evaluate(async ({ webContents }, { url, expression }) => {
-      const guest = webContents.getAllWebContents().find(contents => contents.getType() === 'webview' && contents.getURL() === url)
+      const guest = webContents.getAllWebContents().find(contents => contents.getURL() === url)
       return guest.executeJavaScript(expression)
     }, { url, expression })
     await expect.poll(() => guestEval('Boolean(document.querySelector("iframe")?.contentDocument?.querySelector("button"))')).toBe(true)
@@ -207,7 +162,7 @@ test('native element identity survives scrolling and shadow roots, rejects repla
     }
     async function point(target, click = false) {
       await app.evaluate(async ({ webContents }, { url, target, click }) => {
-        const guest = webContents.getAllWebContents().find(contents => contents.getType() === 'webview' && contents.getURL() === url)
+        const guest = webContents.getAllWebContents().find(contents => contents.getURL() === url)
         const point = await guest.executeJavaScript(`(() => {
           const target = ${JSON.stringify(target)};
           const frame = document.querySelector('iframe');

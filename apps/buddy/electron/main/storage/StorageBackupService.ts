@@ -77,11 +77,13 @@ export class StorageBackupService {
       throw new Error('STORAGE_OPERATION_PENDING')
     if (runsRpc.isBusy.response.parse(await this.runtime.service.request(runsRpc.isBusy.method, {}, { timeoutMs: 5000 })))
       throw new Error('SNAPSHOT_RUNTIME_BUSY')
-    const encrypted = options.credentials ? await encryptBackupCredentials(await exportBackupCredentials(this.environment.paths.buddyHome, options.scopes), options.password!) : undefined
     try {
-      const manifest = await this.runtime.withStoppedStorage(() => runSnapshotWorker(this.environment.paths.lexoraHome, this.environment.storage.state.identity!.dataId, (progress) => {
-        this.getWindow()?.webContents.send(STORAGE_CHANGED, progress)
-      }, this.controller.signal, this.environment.storage.privateDirectoriesExecutable, { scopes: options.scopes, credentials: options.credentials, ...(automatic ? { automatic } : {}) }, encrypted))
+      const manifest = await this.runtime.withStoppedStorage(async () => {
+        const encrypted = options.credentials ? await encryptBackupCredentials(await exportBackupCredentials(this.environment.paths.buddyHome, options.scopes), options.password!) : undefined
+        return runSnapshotWorker(this.environment.paths.lexoraHome, this.environment.storage.state.identity!.dataId, (progress) => {
+          this.getWindow()?.webContents.send(STORAGE_CHANGED, progress)
+        }, this.controller.signal, this.environment.storage.privateDirectoriesExecutable, { scopes: options.scopes, credentials: options.credentials, ...(automatic ? { automatic } : {}) }, encrypted)
+      })
       await this.prune(manifest.id).catch(() => {})
       return snapshotSummary(manifest)
     }

@@ -83,7 +83,7 @@ export class ChatInputValidationService {
     if (point.kind === 'empty')
       return { messages: [] }
     const cwd = this.#options.paths.conversationWorkspace(input.conversationId)
-    const threadId = input.threadId ?? actorThreadId(input.conversationId, input.actorId)
+    const threadId = input.threadId ?? actorThreadId(input.conversationId, input.actorId, input.branchId)
     if (point.kind === 'branch_head') {
       const active = this.#options.sessions.getReady(input.conversationId, input.branchId, input.actorId, input.threadId)?.getInputContext?.()
       const manager = await this.#options.tree.preview(input.conversationId, input.branchId, cwd, threadId)

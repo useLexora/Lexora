@@ -51,6 +51,14 @@
 声明文件路径使用包内相对路径，`.ts` 文件名直接指向源码，编译工具负责产出运行文件。
 
 
+## 执行范围
+
+`executionScope` 省略时为 `desktop`，随桌面运行。旧 API 1–4 不会因声明 Agent 工具而获得后台寿命。
+
+需要在桌面关闭后继续服务任务的插件，声明 `apiVersion: 5`、`executionScope: "service"` 和 `entry`。全部运行依赖也必须为 service 包。API 5 拒绝未知权限，service 包不能申请 `schedules`。升级为 service 会在安装审核中显示；仍使用隔离的浏览器模块入口，不提供 Node 或任意系统访问。
+
+service 的 `activate` 只注册能力、读取配置并初始化私有数据。模型、任务、网络等操作放在本次有效的工具或用户交互调用中，遵守其 signal；调用结束后，缓存的闭包和计时器不能继续使用权限。UI 贡献可选，窗口、选择器和选区操作在没有桌面时返回 `EXTENSION_DESKTOP_REQUIRED`。后端按使用关系启动，无任务或界面使用时停止，打开视图不会再次 activate。
+
 ## 包格式与版本
 
 - `format: "source"`：自包含 TS/JS 与包内相对导入，由宿主固定编译器处理；原始 HTML、Vue 单文件组件和 npm 裸导入不属于该编译协议。

@@ -31,7 +31,7 @@ interface PendingCommand {
 }
 
 export class ShellSandboxClient {
-  readonly #peer: RuntimeRpcPeerContract
+  readonly #peer: Omit<RuntimeRpcPeerContract, 'close'>
   readonly #pending = new Map<string, PendingCommand>()
   readonly #dispose: () => void
   readonly #changes = new Emitter<SandboxClientEvent>(() => console.error('SANDBOX_CLIENT_OBSERVER_FAILED'))
@@ -39,7 +39,7 @@ export class ShellSandboxClient {
   #revision = 0
   #disposed = false
 
-  constructor(peer: RuntimeRpcPeerContract) {
+  constructor(peer: Omit<RuntimeRpcPeerContract, 'close'>) {
     this.#peer = peer
     const network = peer.onRequest('sandbox.network', async (params) => {
       const { requestId, ...target } = sandboxNetworkRequestSchema.parse(params)

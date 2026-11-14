@@ -1,7 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { ConversationArchivePolicy, ConversationArchiveQuery, ConversationArchiveTarget } from '../../../shared/conversation/conversationArchiveApi'
 import type { ConversationArchiveRepository } from '../storage/conversationArchiveRepository'
-import type { ConversationDeletionCommit } from '../storage/conversationDeletionRepository'
 import type { ConversationRepository } from '../storage/conversationRepository'
 import type { ConversationLifecycleService } from './ConversationLifecycleService'
 import type { ConversationMutationGuard } from './ConversationMutationGuard'
@@ -26,6 +25,7 @@ interface Options {
   mutations: ConversationMutationGuard
   lifecycle: ConversationLifecycleService
   onError: (error: unknown) => void
+  afterCommit?: (publish: () => void) => void
   now?: () => Date
 }
 
@@ -59,67 +59,97 @@ export class ConversationArchiveService {
     return this.getPolicy()
   }
 
+  withMutationScope<T>(conversationId: string, operation: () => Promise<T>): Promise<T> {
+    this.#assertAvailable()
+    return this.#options.mutations.run(conversationId, operation)
+  }
+
   archive({ conversationId, expectedRevision }: ConversationArchiveTarget): Promise<boolean> {
-    this.#requireActive(conversationId, expectedRevision)
-    return this.#options.mutations.run(conversationId, async () => {
-      await this.#options.lifecycle.suspendConversation(conversationId)
-      const changed = withTransaction(this.#options.database, () => {
-        this.#requireActive(conversationId, expectedRevision)
-        return this.#options.repository.archive(conversationId, this.#now())
-      })
-      if (changed)
-        this.#changes.fire(conversationId)
-      return changed
+    this.#assertRevision(expectedRevision)
+    return this.withMutationScope(conversationId, async () => {
+      await this.prepareArchive(conversationId, expectedRevision)
+      return this.commitArchive(conversationId, expectedRevision)
     })
   }
 
   restore({ conversationId, expectedRevision }: ConversationArchiveTarget): boolean {
-    this.#options.mutations.assertWritable(conversationId)
-    const changed = withTransaction(this.#options.database, () => {
-      this.#requireActive(conversationId, expectedRevision)
-      return this.#options.repository.restore(conversationId, this.#now())
-    })
-    if (changed)
-      this.#changes.fire(conversationId)
-    return changed
+    this.#assertRevision(expectedRevision)
+    return this.commitRestore(conversationId, expectedRevision)
   }
 
-  deleteArchived(input: ConversationArchiveTarget): Promise<boolean> {
-    return this.#delete(input, true)
-  }
-
-  deletePermanently(input: ConversationArchiveTarget): Promise<boolean> {
-    return this.#delete(input, false)
-  }
-
-  async #delete({ conversationId, expectedRevision }: ConversationArchiveTarget, archivedOnly: boolean): Promise<boolean> {
+  async deleteArchived({ conversationId, expectedRevision }: ConversationArchiveTarget): Promise<boolean> {
+    this.#assertRevision(expectedRevision)
     this.#options.mutations.assertWritable(conversationId)
     const committed = withTransaction(this.#options.database, () => {
       const conversation = this.#requireConversation(conversationId, expectedRevision)
       const job = this.#options.database.prepare('SELECT origin FROM conversation_deletion_jobs WHERE conversation_id = ?').get(conversationId)
-      if ((archivedOnly && !conversation.archivedAt && job?.origin !== 'conversation') || (conversation.deletedAt && job?.origin !== 'conversation'))
+      if (!conversation.archivedAt && job?.origin !== 'conversation')
         throw new ConversationArchiveConflictError('SOURCE_CHANGED')
-      return this.#options.lifecycle.commitDelete(conversationId)
+      return this.commitDelete(conversationId, expectedRevision)
     })
-    void this.#finishDeletion(committed).catch(this.#options.onError)
+    this.#finishLegacyDeletion(committed)
     return true
   }
 
   async deleteLegacyRemoved({ conversationId, expectedRevision }: ConversationArchiveTarget): Promise<boolean> {
+    this.#assertRevision(expectedRevision)
     this.#options.mutations.assertWritable(conversationId)
-    const committed = withTransaction(this.#options.database, () => {
-      const conversation = this.#requireConversation(conversationId, expectedRevision)
-      if (!conversation.deletedAt || conversation.archivedAt)
-        throw new ConversationArchiveConflictError('SOURCE_CHANGED')
-      return this.#options.lifecycle.commitLegacyRemoved(conversationId)
-    })
-    void this.#finishDeletion(committed).catch(this.#options.onError)
+    const committed = withTransaction(this.#options.database, () => this.commitDeleteLegacyRemoved(conversationId, expectedRevision))
+    this.#finishLegacyDeletion(committed)
     return true
   }
 
-  #finishDeletion(committed: ConversationDeletionCommit): Promise<boolean> {
-    const pending = this.#options.lifecycle.finishDeletion(committed)
-    return this.#options.mutations.run(committed.conversationId, () => pending)
+  #finishLegacyDeletion(committed: Parameters<ConversationLifecycleService['finishDeletion']>[0]): void {
+    const pending = this.finishDeletion(committed)
+    void this.withMutationScope(committed.conversationId, () => pending).catch(this.#options.onError)
+  }
+
+  async prepareArchive(conversationId: string, expectedRevision?: number): Promise<void> {
+    const conversation = this.#requireConversation(conversationId, expectedRevision)
+    if (conversation.deletedAt)
+      throw new ConversationArchiveConflictError('OBJECT_DELETED')
+    await this.#options.lifecycle.suspendConversation(conversationId)
+  }
+
+  commitArchive(conversationId: string, expectedRevision?: number): boolean {
+    const changed = withTransaction(this.#options.database, () => {
+      const conversation = this.#requireConversation(conversationId, expectedRevision)
+      if (conversation.deletedAt)
+        throw new ConversationArchiveConflictError('OBJECT_DELETED')
+      return this.#options.repository.archive(conversationId, this.#now())
+    })
+    if (changed)
+      this.#publish(conversationId)
+    return changed
+  }
+
+  commitRestore(conversationId: string, expectedRevision?: number): boolean {
+    this.#options.mutations.assertWritable(conversationId)
+    const changed = withTransaction(this.#options.database, () => {
+      const conversation = this.#requireConversation(conversationId, expectedRevision)
+      if (conversation.deletedAt)
+        throw new ConversationArchiveConflictError('OBJECT_DELETED')
+      return this.#options.repository.restore(conversationId, this.#now())
+    })
+    if (changed)
+      this.#publish(conversationId)
+    return changed
+  }
+
+  commitDelete(conversationId: string, expectedRevision?: number) {
+    this.#requireConversation(conversationId, expectedRevision)
+    return this.#options.lifecycle.commitDelete(conversationId)
+  }
+
+  commitDeleteLegacyRemoved(conversationId: string, expectedRevision?: number) {
+    const conversation = this.#requireConversation(conversationId, expectedRevision)
+    if (!conversation.deletedAt || conversation.archivedAt)
+      throw new ConversationArchiveConflictError('SOURCE_CHANGED')
+    return this.#options.lifecycle.commitLegacyRemoved(conversationId)
+  }
+
+  finishDeletion(committed: Parameters<ConversationLifecycleService['finishDeletion']>[0]) {
+    return this.#options.lifecycle.finishDeletion(committed)
   }
 
   start(): void {
@@ -156,14 +186,13 @@ export class ConversationArchiveService {
       if (this.#stopping)
         break
       try {
-        this.#options.mutations.assertWritable(conversationId)
         const committed = withTransaction(this.#options.database, () => {
           if (!this.#options.repository.isDue(conversationId, this.#now()))
             return null
           return this.#options.lifecycle.commitDelete(conversationId)
         })
         if (committed)
-          await this.#finishDeletion(committed)
+          await this.finishDeletion(committed)
       }
       catch (error) {
         this.#options.onError(error)
@@ -176,26 +205,30 @@ export class ConversationArchiveService {
       throw new BuddyServiceError('CONVERSATION_BUSY')
   }
 
-  #requireConversation(conversationId: string, expectedRevision: number) {
-    this.#assertAvailable()
+  #assertRevision(expectedRevision: number): void {
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0)
       throw new BuddyServiceError('VALIDATION_FAILED')
+  }
+
+  #requireConversation(conversationId: string, expectedRevision?: number) {
+    this.#assertAvailable()
     const conversation = this.#options.conversations.findById(conversationId)
     if (!conversation)
       throw new ConversationArchiveConflictError('OBJECT_DELETED')
-    if (conversation.metadataRevision !== expectedRevision)
+    if (expectedRevision !== undefined && conversation.metadataRevision !== expectedRevision)
       throw new ConversationArchiveConflictError('SOURCE_CHANGED')
-    return conversation
-  }
-
-  #requireActive(conversationId: string, expectedRevision: number) {
-    const conversation = this.#requireConversation(conversationId, expectedRevision)
-    if (conversation.deletedAt)
-      throw new ConversationArchiveConflictError('OBJECT_DELETED')
     return conversation
   }
 
   #now(): string {
     return (this.#options.now?.() ?? new Date()).toISOString()
+  }
+
+  #publish(conversationId: string): void {
+    const publish = () => this.#changes.fire(conversationId)
+    if (this.#options.afterCommit)
+      this.#options.afterCommit(publish)
+    else
+      publish()
   }
 }

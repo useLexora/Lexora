@@ -22,6 +22,7 @@ export interface BuddyAgentRunnerOptions {
   lifecycle: Pick<RunLifecycleService, 'find' | 'start'>
   releaseRunResources?: (runId: string) => void | Promise<void>
   onObserverError?: (error: unknown) => void
+  assertStorageAvailable?: () => void
   sessions: Pick<BuddySessionRegistry<DisposableBuddySession>, 'withConversationRun' | 'dispose'>
 }
 
@@ -31,6 +32,7 @@ export class BuddyAgentRunner {
   readonly #executor: BuddyAgentRunnerOptions['executor']
   readonly #executions: ExecutionLifecyclePort
   readonly #lifecycle: BuddyAgentRunnerOptions['lifecycle']
+  readonly #assertStorageAvailable: () => void
   readonly #releaseRunResources: NonNullable<BuddyAgentRunnerOptions['releaseRunResources']>
   readonly #sessions: Pick<BuddySessionRegistry<DisposableBuddySession>, 'withConversationRun' | 'dispose'>
   #lastTimestamp = 0
@@ -41,11 +43,13 @@ export class BuddyAgentRunner {
     this.#activeRuns = new ActiveRunRegistry(options.onObserverError)
     this.onDidSettle = this.#activeRuns.onDidSettle
     this.#lifecycle = options.lifecycle
+    this.#assertStorageAvailable = options.assertStorageAvailable ?? (() => {})
     this.#releaseRunResources = options.releaseRunResources ?? (() => {})
     this.#sessions = options.sessions
   }
 
   startTurn(input: StartBuddyTurnInput): BuddyTurnHandle {
+    this.#assertStorageAvailable()
     if (!input.userInput.prompt.trim())
       throw new BuddyAgentRunError('VALIDATION_FAILED')
 
@@ -76,6 +80,7 @@ export class BuddyAgentRunner {
   }
 
   startCompaction(input: StartBuddyCompactionInput): BuddyTurnHandle {
+    this.#assertStorageAvailable()
     const run = this.#lifecycle.find(input.runId)
     const session = input.session
     if (
@@ -101,11 +106,12 @@ export class BuddyAgentRunner {
   }
 
   steer(runId: string, prepare: () => BuddyInputReferenceV1, skills?: readonly SkillReference[]): boolean {
+    this.#assertStorageAvailable()
     return this.#activeRuns.steer(runId, prepare, skills)
   }
 
-  hasActiveExecution(conversationId: string, actorId?: string): boolean {
-    return this.#activeRuns.hasActiveExecution(conversationId, actorId)
+  hasActiveExecution(conversationId: string, actorId?: string, branchId?: string): boolean {
+    return this.#activeRuns.hasActiveExecution(conversationId, actorId, branchId)
   }
 
   get hasActiveExecutions(): boolean {
@@ -116,11 +122,12 @@ export class BuddyAgentRunner {
     return this.#activeRuns.isStopping
   }
 
-  hasDegradedCleanup(conversationId: string): boolean {
-    return this.#activeRuns.hasDegradedCleanup(conversationId)
+  hasDegradedCleanup(conversationId: string, branchId?: string): boolean {
+    return this.#activeRuns.hasDegradedCleanup(conversationId, branchId)
   }
 
   followUp(runId: string, prepare: () => BuddyInputReferenceV1, skills?: readonly SkillReference[]): boolean {
+    this.#assertStorageAvailable()
     return this.#activeRuns.followUp(runId, prepare, skills)
   }
 
@@ -201,6 +208,7 @@ export class BuddyAgentRunner {
         throw new BuddyAgentRunError('RUN_NOT_FOUND')
       return run
     }
+    this.#assertStorageAvailable()
     const result: RunExecutionOutcome = outcome ?? { status: 'failed', errorCode: 'AGENT_RUN_FAILED' }
     try {
       return await this.#executions.finalize({ runId: execution.runId, outcome: withCancellationCode(result, execution.getCancellationCode()), cleanup: execution.getCleanupState() })
@@ -220,6 +228,7 @@ export class BuddyAgentRunner {
     execution: ActiveRunContext,
   ): Promise<RunExecutionOutcome> {
     const { identity, runId, signal } = execution
+    this.#assertStorageAvailable()
     signal.throwIfAborted()
     const continuation = await this.#executions.begin(runId, signal)
     signal.throwIfAborted()
@@ -229,6 +238,8 @@ export class BuddyAgentRunner {
       runId,
       startedAt: this.#timestamp(),
     })
+    this.#assertStorageAvailable()
+    signal.throwIfAborted()
     const outcome = await this.#executor.executeTurn({
       continuation,
       identity,
@@ -247,6 +258,7 @@ export class BuddyAgentRunner {
     run: RunRecord,
     execution: ActiveRunContext,
   ): Promise<RunExecutionOutcome> {
+    this.#assertStorageAvailable()
     execution.signal.throwIfAborted()
     const startedRun = await this.#lifecycle.start({
       expectedPurposes: ['conversation.compaction'],
@@ -254,6 +266,8 @@ export class BuddyAgentRunner {
       runId: run.id,
       startedAt: this.#timestamp(),
     })
+    this.#assertStorageAvailable()
+    execution.signal.throwIfAborted()
     const outcome = await this.#executor.executeCompaction({
       identity: execution.identity,
       input,
@@ -269,6 +283,7 @@ export class BuddyAgentRunner {
     execution: ActiveRunContext,
     error: unknown,
   ): Promise<RunExecutionOutcome> {
+    this.#assertStorageAvailable()
     await this.#executor.invalidateSessionContinuityAfterFailure({
       error,
       identity: execution.identity,

@@ -1,0 +1,6 @@
+<resources>
+    <declare-styleable name="LocalFilePalette">
+        <attr name="android:textColorPrimary" />
+        <attr name="android:textColorSecondary" />
+    </declare-styleable>
+</resources>

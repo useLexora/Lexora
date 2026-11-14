@@ -1,21 +1,18 @@
 import type { ApplicationDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { RuntimeRequestHandler, RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
 import type { BuddyServiceFailureCode } from '../../../shared/runtime/runtimeProtocol'
-import process from 'node:process'
-import { captureNodeCpuProfile } from '../../../platform/diagnostics/cpuProfile'
 import { RuntimeRpcPeer } from '../../../platform/ipc/runtimeRpcPeer'
 import { readDiagnosticErrorCode, safeDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
-import { cpuProfileRequestSchema } from '../../../shared/diagnostics/performanceDiagnostic'
 import { isRoutineRpc } from '../../../shared/diagnostics/rpcDiagnosticPolicy'
+import { Emitter } from '../../../shared/events/Emitter'
 import {
   BUDDY_SERVICE_PROTOCOL_VERSION,
   buddyServiceFailureNotificationSchema,
-  runtimeShutdownRequestSchema,
 } from '../../../shared/runtime/runtimeProtocol'
 import { diagnosticContext } from '../diagnostics/diagnosticContext'
-import { BuddyServiceError } from './runtimeRequest'
 
-const SERVICE_NAME = 'lexora-buddy-service'
+import { registerServiceManagementRpc, SERVICE_NAME } from './registerServiceManagementRpc'
+import { BuddyServiceError } from './runtimeRequest'
 
 export interface BuddyServiceParentPort {
   postMessage: (message: unknown) => void
@@ -27,7 +24,7 @@ export interface CreateBuddyServiceOptions {
   recordDiagnostic?: ApplicationDiagnosticReporter
   announceReady?: boolean
   port: BuddyServiceParentPort
-  scheduleShutdown?: () => void
+  scheduleShutdown: () => void
   prepareIdleShutdown?: () => boolean
   onFatalError?: (error: Error) => void
 }
@@ -35,6 +32,9 @@ export interface CreateBuddyServiceOptions {
 export class BuddyServiceRpcServer implements RuntimeRpcPeerContract {
   readonly #record: ApplicationDiagnosticReporter
   readonly #peer: RuntimeRpcPeer
+  readonly #closed = new Emitter<void>(() => this.#record({ event: 'observer.failed', component: 'runtime.rpc', level: 'warn' }))
+  readonly onDidClose = this.#closed.event
+  #isClosed = false
   #ready = false
   #stopping = false
 
@@ -42,7 +42,10 @@ export class BuddyServiceRpcServer implements RuntimeRpcPeerContract {
     this.#record = safeDiagnosticReporter(options.recordDiagnostic)
     const { port } = options
     this.#peer = new RuntimeRpcPeer({
-      onFatalError: options.onFatalError,
+      onFatalError: (error) => {
+        this.close(error)
+        options.onFatalError?.(error)
+      },
       transport: {
         postMessage: message => port.postMessage(message),
         subscribe(listener) {
@@ -60,6 +63,10 @@ export class BuddyServiceRpcServer implements RuntimeRpcPeerContract {
 
   get ready(): boolean {
     return this.#ready
+  }
+
+  get closed(): boolean {
+    return this.#isClosed
   }
 
   markReady(): boolean {
@@ -105,7 +112,12 @@ export class BuddyServiceRpcServer implements RuntimeRpcPeerContract {
   }
 
   close(reason: Error): void {
+    if (this.#isClosed)
+      return
+    this.#isClosed = true
     this.#peer.close(reason)
+    this.#closed.fire()
+    this.#closed.dispose()
   }
 }
 
@@ -115,35 +127,7 @@ export function createBuddyService(options: CreateBuddyServiceOptions): BuddySer
     port: options.port,
     onFatalError: options.onFatalError,
   })
-  let profiling = false
-  server.onRequest('diagnostics.profile', async (input, signal) => {
-    const request = cpuProfileRequestSchema.parse(input)
-    if (request.target !== 'runtime' || request.pid !== process.pid)
-      throw new Error('CPU_PROFILE_PROCESS_CHANGED')
-    if (profiling)
-      throw new Error('CPU_PROFILE_BUSY')
-    profiling = true
-    try {
-      return await captureNodeCpuProfile('runtime', signal)
-    }
-    finally { profiling = false }
-  })
-  server.onRequest('runtime.status', () => ({
-    name: SERVICE_NAME,
-    protocolVersion: BUDDY_SERVICE_PROTOCOL_VERSION,
-    ready: server.ready,
-  }))
-  server.onRequest('runtime.localState', () => ({
-    status: server.ready ? 'ready' : 'starting',
-  }))
-  server.onRequest('runtime.shutdown', (params) => {
-    const { onlyIfIdle } = runtimeShutdownRequestSchema.parse(params)
-    if (onlyIfIdle && (!server.ready || !options.prepareIdleShutdown?.()))
-      return { accepted: false }
-    server.stopAcceptingRequests()
-    setImmediate(options.scheduleShutdown ?? (() => process.exit(0)))
-    return { accepted: true }
-  })
+  registerServiceManagementRpc(server, options.scheduleShutdown, options.prepareIdleShutdown)
   if (options.announceReady !== false)
     notifyBuddyServiceReady(server)
   return server

@@ -80,7 +80,7 @@ test('first send with a browser reference preserves the open resource panel and 
     await pick.click()
     await expect(pick).toHaveAttribute('aria-pressed', 'true')
     await app.evaluate(async ({ webContents }, url) => {
-      const guest = webContents.getAllWebContents().find(contents => contents.getType() === 'webview' && contents.getURL() === url)
+      const guest = webContents.getAllWebContents().find(contents => contents.getURL() === url)
       const point = await guest.executeJavaScript('(() => { const r = document.querySelector("#picked").getBoundingClientRect(); return { x:r.x+r.width/2, y:r.y+r.height/2 }; })()')
       const x = Math.round(point.x * guest.getZoomFactor())
       const y = Math.round(point.y * guest.getZoomFactor())

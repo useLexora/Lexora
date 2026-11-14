@@ -36,7 +36,7 @@
     "test": "pnpm --filter @uselexora/lexora-buddy test",
     "test:watch": "pnpm --filter @uselexora/lexora-buddy test:watch",
     "test:e2e": "pnpm --filter @uselexora/lexora-buddy exec electron-vite build && playwright test --config .playwright/scripts/playwright.config.mjs",
-    "lint": "eslint eslint.config.js .github/scripts .playwright/scripts apps/buddy apps/website packages/assets packaging infrastructure/scripts",
+    "lint": "eslint eslint.config.js .github/scripts .playwright/scripts apps/buddy apps/mobile/tools apps/website packages/assets packaging infrastructure/scripts",
     "lint:fix": "pnpm lint --fix",
     "type-check": "pnpm --filter @uselexora/lexora-buddy --filter @uselexora/lexora-website type-check",
     "predev:web-stack": "pnpm dev:env",

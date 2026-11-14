@@ -10,13 +10,17 @@ interface RunEventRow {
   event_type: string
   payload_json: string
   created_at: string
+  format_version?: number
 }
 
 export class RunEventQueries {
   readonly #database: DatabaseSync
 
-  constructor(database: DatabaseSync) {
+  readonly #order: 'event_time' | 'run_sequence'
+
+  constructor(database: DatabaseSync, order: 'event_time' | 'run_sequence' = 'event_time') {
     this.#database = database
+    this.#order = order
   }
 
   findLatest(runId: string, eventTypes: readonly string[]): BuddyRunEvent | null {
@@ -62,19 +66,15 @@ export class RunEventQueries {
     const rows = this.#database.prepare(`
       SELECT * FROM (
         SELECT
-          events.run_id,
-          events.sequence,
-          events.event_type,
-          events.payload_json,
-          events.created_at
+          events.*, runs.started_at AS run_started_at
         FROM run_events AS events
         INNER JOIN runs ON runs.id = events.run_id
         WHERE runs.conversation_id = ? AND runs.execution_kind IN ('root', 'maintenance')
           ${excluded.length ? `AND runs.id NOT IN (${excluded.map(() => '?').join(', ')})` : ''}
-        ORDER BY events.created_at DESC, events.run_id DESC, events.sequence DESC
+        ORDER BY ${this.#order === 'run_sequence' ? 'runs.started_at' : 'events.created_at'} DESC, events.run_id DESC, events.sequence DESC
         LIMIT ?
       )
-      ORDER BY created_at, run_id, sequence
+      ORDER BY ${this.#order === 'run_sequence' ? 'run_started_at' : 'created_at'}, run_id, sequence
     `).all(conversationId, ...excluded, limit)
     return (rows as unknown as RunEventRow[]).map(toRunEvent)
   }
@@ -92,12 +92,13 @@ export class RunEventQueries {
             SELECT run_id, (SELECT MAX(sequence) FROM run_events WHERE run_events.run_id = requested.run_id AND event_type = 'run.progress') FROM requested
           )
           SELECT events.* FROM positions JOIN run_events events ON events.run_id = positions.run_id AND events.sequence = positions.sequence
-          ORDER BY events.created_at, events.run_id, events.sequence
+          JOIN runs ON runs.id = events.run_id
+          ORDER BY ${this.#order === 'run_sequence' ? 'runs.started_at' : 'events.created_at'}, events.run_id, events.sequence
         `).all(...ids)
       : this.#database.prepare(`
-          SELECT * FROM run_events
-          WHERE run_id IN (${placeholders})
-          ORDER BY created_at, run_id, sequence
+          SELECT events.* FROM run_events events JOIN runs ON runs.id = events.run_id
+          WHERE events.run_id IN (${placeholders})
+          ORDER BY ${this.#order === 'run_sequence' ? 'runs.started_at' : 'events.created_at'}, events.run_id, events.sequence
         `).all(...ids)
     return (rows as unknown as RunEventRow[]).map(toRunEvent)
   }
@@ -229,6 +230,8 @@ export class RunEventQueries {
 }
 
 function toRunEvent(row: RunEventRow): BuddyRunEvent {
+  if (row.format_version !== undefined && row.format_version !== 1)
+    throw new Error('Run event format is not supported')
   return buddyRunEventSchema.parse({
     createdAt: row.created_at,
     payload: JSON.parse(row.payload_json),

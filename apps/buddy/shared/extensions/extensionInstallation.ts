@@ -5,6 +5,7 @@ export const extensionInstallationSchema = z.object({
   name: z.string().max(120),
   extensionId: z.string().max(120).optional(),
   version: z.string().max(80).optional(),
+  executionScope: z.enum(['desktop', 'service']).optional(),
   startedAt: z.string(),
   status: z.enum(['running', 'review', 'completed', 'failed', 'cancelled']),
   stage: z.enum(['download', 'validate', 'review', 'compile', 'install', 'completed']),

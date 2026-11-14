@@ -54,6 +54,8 @@ export const DESKTOP_IPC_CHANNELS = {
   appOpenFeedbackIssue: 'lexora:app:open-feedback-issue',
   appOpenReleasePage: 'lexora:app:open-release-page',
   appOpenTarget: 'lexora:app:open-target',
+  appOpenTargetRequest: 'lexora:app:open-target-request',
+  appOpenTargetAck: 'lexora:app:open-target-ack',
   appHidden: 'lexora:app:hidden',
   appPrepareQuit: 'lexora:app:prepare-quit',
   appPrepareQuitAck: 'lexora:app:prepare-quit-ack',
@@ -79,6 +81,8 @@ export const DESKTOP_IPC_CHANNELS = {
   browserReload: 'lexora:browser:reload',
   browserSetProfileMode: 'lexora:browser:set-profile-mode',
   browserSetSurface: 'lexora:browser:set-surface',
+  browserAcquirePresentation: 'lexora:browser:acquire-presentation',
+  browserPresent: 'lexora:browser:present',
   browserShowFileInFolder: 'lexora:browser:show-file-in-folder',
   browserStateChanged: 'lexora:browser:state-changed',
   browserStop: 'lexora:browser:stop',
@@ -95,10 +99,7 @@ export const DESKTOP_IPC_CHANNELS = {
   windowToggleMaximize: 'lexora:window:toggle-maximize',
 } as const
 
-export interface DesktopOpenTarget {
-  conversationId: string
-  runId: string
-}
+export type DesktopOpenTarget = { conversationId: string, runId?: string } | { kind: 'settings' | 'tasks' }
 
 export interface DesktopWindowState {
   isMaximized: boolean
@@ -220,6 +221,7 @@ export interface LexoraConfig {
     taskSidebar: DesktopTaskSidebarPreferences
     developerToolsEnabled: boolean
     language: 'zh-CN' | 'en-US'
+    exitBehavior: import('../../shared/lifecycle/exitBehavior').DesktopExitBehavior
     launchAtLogin: boolean
     notificationsEnabled: boolean
     notificationSound: NotificationSoundPreferences
@@ -289,7 +291,7 @@ export interface LexoraDesktopApi {
     onBeforeQuit: (listener: (requestId: string) => Promise<boolean>) => () => void
     onQuitPreparationCancelled: (listener: (requestId: string) => void) => () => void
     onHidden: (listener: () => void) => () => void
-    onOpenTarget: (listener: (target: DesktopOpenTarget) => void) => () => void
+    onOpenTarget: (listener: (target: DesktopOpenTarget) => Promise<boolean>) => () => void
     openFeedbackIssue: (feedback: string) => Promise<void>
     openReleasePage: (url: string) => Promise<void>
   }

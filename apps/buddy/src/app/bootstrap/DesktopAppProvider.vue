@@ -20,6 +20,7 @@ import { DesktopSkillReviewHost } from '@/modules/skills/ui'
 import { provideExecutionEnvironment, sessionReferenceNavigationKey, useProvideTaskEnvironment, useTaskIndex, useTaskResourcePanel } from '@/modules/tasks'
 import { useProvideDesktopUpdates } from '@/modules/updates'
 import { DesktopUpdateHost } from '@/modules/updates/ui'
+import { BrowserGuestCatalog } from '@/platform/browser/BrowserGuestCatalog'
 import DesktopBrowserGuestHost from '@/platform/browser/DesktopBrowserGuestHost.vue'
 import { useBrowserGuestHost } from '@/platform/browser/useBrowserGuestHost'
 import { requireDesktopApi } from '@/platform/desktop/desktopApi'
@@ -62,6 +63,8 @@ const emit = defineEmits<{
 defineSlots<{ default: (props: { shell: DesktopShellBindings }) => unknown }>()
 const desktopTheme = useDesktopTheme()
 const api = requireDesktopApi()
+const guestCatalog = new BrowserGuestCatalog(api.browser)
+onScopeDispose(() => guestCatalog.dispose())
 const router = useRouter()
 const message = useMessage()
 const appState = useDesktopAppState({ api })
@@ -160,6 +163,7 @@ useProvideExtensionContext({ data: createWorkbenchDataPort({ api: api.localChat,
 onScopeDispose(workbench.controller.subscribe(() => void nextTick(extensionViews.layout)))
 const selectedTask = workbench.activeTask
 const resources = useTaskResourcePanel({
+  guestCatalog,
   scopeSpaceIds: useTaskResourceSpaces({ controller: workbench.controller, pool: workbench.pool, tasks: taskIndex.index.tasks }),
   activeConversationId: workbench.activeTaskId,
   activeDraftId: computed(() => selectedTask.value?.workspace.composer.draftId.value ?? null),
@@ -447,7 +451,7 @@ watch(() => stores.applicationSettings.config.value?.desktop.language, (language
 
 <template>
   <WorkbenchSurfaceHost v-slot="{ layout }">
-    <DesktopBrowserGuestHost ref="browserGuestHost" :api="api.browser" :layout="layout" />
+    <DesktopBrowserGuestHost ref="browserGuestHost" :api="api.browser" :catalog="guestCatalog" :layout="layout" />
     <DesktopExtensionFrameHost :layout="layout" />
   </WorkbenchSurfaceHost>
   <DesktopExtensionOverlays />

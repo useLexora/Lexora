@@ -11,20 +11,11 @@ export interface RegisterProviderRpcOptions {
   refreshCapabilities?: () => Promise<void>
 }
 
-export function registerProviderRpc(options: RegisterProviderRpcOptions): () => void {
+export function registerProviderCatalogRpc(options: RegisterProviderRpcOptions): () => void {
   const disposers: Array<() => void> = []
-
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.list, async () => {
     await options.refreshCapabilities?.()
     return options.service.listProviders()
-  }))
-  disposers.push(registerRuntimeRequest(options.rpc, providersRpc.listBuiltinPresets, () => options.service.listBuiltinPresets()))
-  disposers.push(registerRuntimeRequest(options.rpc, providersRpc.rename, async (input) => {
-    const provider = await options.service.renameProvider(input.providerId, input.displayName, input.requestHeaders)
-    return provider
-  }))
-  disposers.push(registerRuntimeRequest(options.rpc, providersRpc.add, async (input) => {
-    return options.service.addProvider(input.providerId)
   }))
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.listModels, async (input) => {
     await options.refreshCapabilities?.()
@@ -36,6 +27,20 @@ export function registerProviderRpc(options: RegisterProviderRpcOptions): () => 
   }))
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.getDefaultModel, () => {
     return options.service.getDefaultModel()
+  }))
+  return () => disposers.splice(0).forEach(dispose => dispose())
+}
+
+export function registerProviderRpc(options: RegisterProviderRpcOptions): () => void {
+  const disposers: Array<() => void> = []
+
+  disposers.push(registerRuntimeRequest(options.rpc, providersRpc.listBuiltinPresets, () => options.service.listBuiltinPresets()))
+  disposers.push(registerRuntimeRequest(options.rpc, providersRpc.rename, async (input) => {
+    const provider = await options.service.renameProvider(input.providerId, input.displayName, input.requestHeaders)
+    return provider
+  }))
+  disposers.push(registerRuntimeRequest(options.rpc, providersRpc.add, async (input) => {
+    return options.service.addProvider(input.providerId)
   }))
   disposers.push(registerRuntimeRequest(options.rpc, providersRpc.login, async (input) => {
     await options.service.login(input.providerId, input.authType)

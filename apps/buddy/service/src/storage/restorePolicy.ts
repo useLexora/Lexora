@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 
 export function sanitizeRestoredDatabase(database: DatabaseSync, preserveCredentials = false): void {
+  const persistence = Boolean(database.prepare('SELECT 1 FROM sqlite_master WHERE type = \'table\' AND name = \'storage_profile\'').get())
   database.exec('PRAGMA secure_delete = ON; BEGIN IMMEDIATE')
   try {
     database.exec(`
@@ -19,7 +20,7 @@ export function sanitizeRestoredDatabase(database: DatabaseSync, preserveCredent
       ${preserveCredentials ? '' : 'UPDATE mcp_servers SET credential_ref = NULL; UPDATE provider_configs SET credential_ref = NULL;'}
       UPDATE provider_states SET request_headers_json = '[]';
       UPDATE skill_installations SET enabled = 0;
-      DELETE FROM chat_queue;
+      ${persistence ? 'UPDATE chat_queue SET state = \'paused\' WHERE state = \'waiting\'; UPDATE file_preparations SET state = CASE WHEN EXISTS (SELECT 1 FROM file_references WHERE file_id = file_preparations.id) THEN \'settled\' ELSE \'aborted\' END, reserved_bytes = 0; DELETE FROM file_references WHERE kind = \'export\'; DELETE FROM service_admission_gates;' : 'DELETE FROM chat_queue;'}
       COMMIT;
     `)
   }

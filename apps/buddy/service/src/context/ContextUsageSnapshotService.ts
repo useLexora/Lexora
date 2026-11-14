@@ -160,7 +160,7 @@ export class ContextUsageSnapshotService implements ContextUsageSnapshotReader {
     }
     const actorId = input.actorId ?? conversation?.buddyId ?? this.#options.getDefaultActorId()
     const actor = (await this.#options.definitions.capture({ buddyId: actorId, kind: 'actor', conversationId: conversation?.id ?? null, requestedModel: input.modelSelection })).definition
-    const threadId = conversation ? actorThreadId(conversation.id, actorId) : undefined
+    const threadId = conversation ? actorThreadId(conversation.id, actorId, followup?.branchId ?? input.branchId ?? undefined) : undefined
     const approvalPolicy = conversation?.approvalPolicy ?? input.approvalPolicy
     const executionProfile = conversation?.executionProfile ?? input.executionProfile
     const branchId = followup?.branchId ?? input.branchId ?? 'context-preview'

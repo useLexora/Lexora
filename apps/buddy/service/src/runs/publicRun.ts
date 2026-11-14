@@ -10,6 +10,7 @@ export function toPublicRun(run: RunRecord, reasoningLevel: string | null) {
     errorCode: run.errorCode,
     executionProfile: run.executionProfile,
     id: run.id,
+    generation: run.generation,
     modelId: run.model,
     providerId: run.provider,
     purpose: run.purpose,

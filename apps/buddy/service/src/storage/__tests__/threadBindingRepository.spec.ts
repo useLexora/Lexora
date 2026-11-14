@@ -23,7 +23,7 @@ it('keeps stable member threads and separates journals and latest contexts by ac
   f.conversations.addMember({ id: 'conversation', buddyId: f.actor.id, updatedAt: executionNow })
   f.conversations.setBuddy({ id: 'conversation', buddyId: f.actor.id, updatedAt: executionNow })
   expect(f.threads.ensureActor('conversation', 'default', executionNow).id).toBe(original.id)
-  expect(f.threads.ensureActor('conversation', f.actor.id, executionNow).id).toBe(actor.threadId)
+  expect(f.threads.ensureActor('conversation', f.actor.id, executionNow, 'branch').id).toBe(actor.threadId)
   expect(f.runs.findLatestForThread(original.id, 'branch')?.id).toBe('root')
   expect(f.runs.findLatestForThread(actor.threadId, 'branch')?.id).toBe('actor-child')
   expect(f.threads.findBinding(actor.threadId)).toMatchObject({ sessionFile: '/fixture/b.jsonl', rootEntryId: 'root-b' })

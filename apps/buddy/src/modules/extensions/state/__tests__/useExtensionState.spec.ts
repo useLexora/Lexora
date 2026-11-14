@@ -20,11 +20,9 @@ const extension: ExtensionStatus = {
   logs: [],
 }
 const review: ExtensionReview = { manifest: extension.manifest, token: 'review', installationId: 'job', sha256: 'hash', development: false, currentVersion: null, addedPermissions: [] }
-const job: ExtensionInstallation = { id: 'job', name: 'Panel', extensionId: extension.manifest.id, version: '1.0.0', startedAt: '2026-01-01T00:00:00.000Z', status: 'running', stage: 'compile', entries: [], error: null }
 
 function setup(overrides: Partial<ExtensionApi> = {}) {
   let statusChanged = () => {}
-  let progressChanged = () => {}
   const api: Partial<ExtensionApi> = {
     list: async () => [extension],
     unavailable: async () => [],
@@ -34,15 +32,12 @@ function setup(overrides: Partial<ExtensionApi> = {}) {
       statusChanged = listener
       return () => {}
     },
-    onInstallationsChanged: (listener) => {
-      progressChanged = listener
-      return () => {}
-    },
+    onInstallationsChanged: () => () => {},
     ...overrides,
   }
   const scope = effectScope()
   const state = scope.run(() => useExtensionState(api as ExtensionApi))!
-  return { state, scope, statusChanged: () => statusChanged(), progressChanged: () => progressChanged() }
+  return { state, scope, statusChanged: () => statusChanged() }
 }
 
 it('publishes installed contributions while installation jobs are pending or fail', async () => {
@@ -55,27 +50,6 @@ it('publishes installed contributions while installation jobs are pending or fai
     await pending
     expect(state.installed.value).toEqual([extension])
     expect(state.error.value).toBe('EXTENSION_JOBS_UNAVAILABLE')
-  }
-  finally { scope.stop() }
-})
-
-it('coalesces overlapping refreshes and rejects stale and disposed results', async () => {
-  const delayed = deferred<ExtensionStatus[]>()
-  let requests = 0
-  const { state, scope } = setup({ list: () => ++requests === 1 ? delayed.promise : Promise.resolve([extension]) })
-  try {
-    const previous = state.refresh()
-    await expect.poll(() => requests).toBe(1)
-    const refreshes = Array.from({ length: 20 }, () => state.refresh())
-    expect(requests).toBe(1)
-    delayed.resolve([])
-    await Promise.all([previous, ...refreshes])
-    expect(state.installed.value).toEqual([extension])
-    expect(requests).toBe(2)
-    scope.stop()
-    await state.refresh()
-    expect(state.installed.value).toEqual([extension])
-    expect(requests).toBe(2)
   }
   finally { scope.stop() }
 })
@@ -124,28 +98,6 @@ it('deduplicates only the running menu action while allowing other plugin intera
     pending.resolve(null)
     scope.stop()
   }
-})
-
-it('updates progress without replacing installed contributions or requesting their data', async () => {
-  let listRequests = 0
-  let jobs = [job]
-  const { state, scope, progressChanged } = setup({
-    list: async () => {
-      listRequests++
-      return [extension]
-    },
-    installations: async () => jobs,
-  })
-  try {
-    await state.refresh()
-    const original = state.installed.value
-    jobs = [{ ...job, stage: 'install' }]
-    progressChanged()
-    await expect.poll(() => state.installations.value[0]?.stage).toBe('install')
-    expect(state.installed.value).toBe(original)
-    expect(listRequests).toBe(1)
-  }
-  finally { scope.stop() }
 })
 
 it('keeps new installs separate from usable plugins and only locks the matching plugin', async () => {

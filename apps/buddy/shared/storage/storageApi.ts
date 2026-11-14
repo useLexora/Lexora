@@ -8,7 +8,7 @@ export const STORAGE_CHANNEL = 'lexora:storage'
 export const STORAGE_CHANGED = 'lexora:storage:changed'
 export const storageOperationSchema = z.object({
   id: z.uuid(),
-  kind: z.enum(['consolidate', 'relocate', 'restore']),
+  kind: z.enum(['consolidate', 'relocate', 'restore', 'upgrade']),
   source: z.string().min(1),
   target: z.string().min(1),
   phase: z.enum(['pending', 'copying', 'converting', 'verifying', 'ready', 'failed']),

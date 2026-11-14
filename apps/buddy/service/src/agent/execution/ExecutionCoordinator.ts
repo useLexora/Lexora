@@ -101,6 +101,14 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
     return { signal: controller.signal, release }
   }
 
+  assertPrepared(runId: string): void {
+    this.#options.assertRunAdmission?.(runId)
+    const current = this.#require(runId)
+    if (this.#stopped || current.cancelRequestedAt || current.phase !== 'preparing')
+      throw new ExecutionAdmissionError('stale')
+    this.#options.executions.assertCurrent(this.#fence(current))
+  }
+
   async begin(runId: string, signal: AbortSignal): Promise<ExecutionContinuationPort> {
     const accepted = this.#require(runId)
     await this.#claimWorking(runId, signal)

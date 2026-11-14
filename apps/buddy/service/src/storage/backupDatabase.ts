@@ -1,7 +1,7 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 import type { BackupScope } from '../../../shared/storage/backupScope'
 import { storageError } from '../../../platform/storage/storageFiles'
-import { backupCapabilityOwners, backupIdentityTables, backupMergeColumns, backupTables, backupTableScopes, databaseRowScope } from './backupDatabasePolicy'
+import { backupCapabilityOwners, backupMergeColumns, backupTables, backupTableScopes, databaseRowScope, persistenceIdentityTables } from './backupDatabasePolicy'
 import { reconcileRestoredTaskState } from './restoreTaskState'
 
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`
@@ -9,6 +9,7 @@ function columns(database: DatabaseSync, table: string) {
   return database.prepare(`PRAGMA table_info(${quote(table)})`).all() as { name: string, pk: number }[]
 }
 export function selectBackupDatabase(database: DatabaseSync, scopes: readonly BackupScope[], paths: readonly string[] = []): void {
+  assertIsolatedPersistenceConstruction(database)
   const tables = database.prepare('SELECT name FROM sqlite_master WHERE type = \'table\' AND name NOT LIKE \'sqlite_%\'').all().map(row => String(row.name))
   database.exec('PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE')
   try {
@@ -22,7 +23,7 @@ export function selectBackupDatabase(database: DatabaseSync, scopes: readonly Ba
             insert.run(row.__id!)
         }
       }
-      else if (backupIdentityTables.has(table) || scopes.includes(backupTableScopes.get(table)!)) {
+      else if (persistenceIdentityTables.has(table) || scopes.includes(backupTableScopes.get(table)!)) {
         database.exec(`INSERT INTO temp.${quote(`keep_${table}`)} SELECT rowid FROM ${quote(table)}`)
       }
     }
@@ -105,13 +106,30 @@ function restoredCapabilityIds(target: DatabaseSync, source: DatabaseSync, scope
 export function mergeBackupDatabase(target: DatabaseSync, source: DatabaseSync, scopes: readonly BackupScope[]): { added: number, updated: number, dependencies: number } {
   const counts = { added: 0, updated: 0, dependencies: 0 }
   const restoredProviders = new Set<string>()
+  assertIsolatedPersistenceConstruction(target)
   target.exec('PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE')
   try {
     const capabilities = restoredCapabilityIds(target, source, scopes)
-    const triggers = target.prepare('SELECT name, sql FROM sqlite_master WHERE type = \'trigger\' AND (sql LIKE \'%AFTER %\' OR name IN (\'runs_require_active_conversation\', \'runs_retry_requires_active_conversation\'))').all()
+    const persistence = Boolean(target.prepare('SELECT 1 FROM sqlite_master WHERE name = \'storage_profile\'').get())
+    const newerRuns = new Set<string>()
+    if (persistence) {
+      mergePersistenceIdentity(target, source)
+      for (const run of source.prepare('SELECT id, next_event_sequence FROM runs').iterate()) {
+        const current = target.prepare('SELECT next_event_sequence FROM runs WHERE id = ?').get(run.id!)
+        if (current && Number(current.next_event_sequence) > Number(run.next_event_sequence))
+          newerRuns.add(String(run.id))
+      }
+    }
+    const triggers = target.prepare('SELECT name, sql FROM sqlite_master WHERE type = \'trigger\' AND sql LIKE \'%AFTER %\'').all()
     for (const trigger of triggers)
       target.exec(`DROP TRIGGER ${quote(String(trigger.name))}`)
+    const targetTables = new Set(target.prepare('SELECT name FROM sqlite_master WHERE type = \'table\'').all().map(row => String(row.name)))
+    const sourceTables = new Set(source.prepare('SELECT name FROM sqlite_master WHERE type = \'table\'').all().map(row => String(row.name)))
     for (const table of backupTables) {
+      if (persistence && ['persistence_migrations', 'persistence_migration_entries'].includes(table))
+        continue
+      if (!targetTables.has(table) || !sourceTables.has(table))
+        continue
       const merge = backupMergeColumns(table, columns(target, table))
       if (!merge)
         continue
@@ -131,6 +149,19 @@ export function mergeBackupDatabase(target: DatabaseSync, source: DatabaseSync, 
         const selected = scopes.includes(scope)
         const key = keys.map(name => row[name] as SQLInputValue)
         const existing = find.get(...key)
+        if (existing && persistence && ((table === 'runs' && newerRuns.has(String(row.id))) || (typeof row.run_id === 'string' && newerRuns.has(row.run_id) && ['messages', 'approvals', 'usage_records', 'execution_state'].includes(table))))
+          continue
+        if (existing && persistence && ['run_events', 'approval_reviews', 'product_content_references', 'approval_decisions', 'legacy_request_aliases', 'execution_mailbox_sources', 'execution_mailbox_receipts'].includes(table)) {
+          const current = target.prepare(`SELECT * FROM ${quote(table)} WHERE ${where}`).get(...key)!
+          if (names.some(name => current[name] !== row[name]))
+            throw storageError('SNAPSHOT_DEPENDENCY_CONFLICT')
+          continue
+        }
+        if (existing && persistence && table === 'managed_files') {
+          const current = target.prepare(`SELECT * FROM managed_files WHERE ${where}`).get(...key)!
+          if (['id', 'path', 'size_bytes', 'sha256'].some(name => current[name] !== row[name]))
+            throw storageError('SNAPSHOT_DEPENDENCY_CONFLICT')
+        }
         if (existing && !selected && table !== 'extension_capabilities')
           continue
         if (scope === 'providers') {
@@ -158,6 +189,9 @@ export function mergeBackupDatabase(target: DatabaseSync, source: DatabaseSync, 
     for (const providerId of restoredProviders)
       invalidateProvider.run(providerId)
     reconcileRestoredTaskState(target, source)
+    if (persistence) {
+      target.exec(`UPDATE runs SET next_event_sequence = MAX(COALESCE(next_event_sequence, 1), COALESCE((SELECT MAX(sequence) + 1 FROM run_events WHERE run_id = runs.id), 1))`)
+    }
     if (target.prepare('PRAGMA foreign_key_check').all().length)
       throw storageError('SNAPSHOT_DEPENDENCY_CONFLICT')
     target.exec('COMMIT')
@@ -168,4 +202,29 @@ export function mergeBackupDatabase(target: DatabaseSync, source: DatabaseSync, 
     throw error
   }
   finally { target.exec('PRAGMA foreign_keys = ON') }
+}
+
+function assertIsolatedPersistenceConstruction(database: DatabaseSync): void {
+  if (database.prepare('SELECT 1 FROM sqlite_master WHERE type = \'trigger\' AND name = \'command_receipts_no_delete\'').get())
+    throw storageError('SNAPSHOT_ISOLATED_CONSTRUCTION_REQUIRED')
+}
+
+function mergePersistenceIdentity(target: DatabaseSync, source: DatabaseSync): void {
+  for (const actor of source.prepare('SELECT * FROM storage_actors').iterate()) {
+    if (!target.prepare('SELECT 1 FROM storage_actors WHERE id = ?').get(actor.id!)) {
+      target.prepare('INSERT INTO storage_actors (id, kind, state, created_at) VALUES (?, \'device\', \'revoked\', ?)').run(actor.id!, actor.created_at!)
+    }
+  }
+  const names = columns(target, 'command_receipts').map(column => column.name)
+  const insert = target.prepare(`INSERT INTO command_receipts (${names.map(quote).join(',')}) VALUES (${names.map(() => '?').join(',')})`)
+  for (const row of source.prepare('SELECT * FROM command_receipts').iterate()) {
+    const existing = target.prepare('SELECT * FROM command_receipts WHERE data_generation = ? AND actor_id = ? AND command_id = ?').get(row.data_generation!, row.actor_id!, row.command_id!)
+    if (existing) {
+      if (names.some(name => existing[name] !== row[name]))
+        throw storageError('SNAPSHOT_DEPENDENCY_CONFLICT')
+    }
+    else {
+      insert.run(...names.map(name => row[name] as SQLInputValue))
+    }
+  }
 }

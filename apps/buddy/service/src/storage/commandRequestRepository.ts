@@ -4,6 +4,7 @@ import type { BuddyExecutionProfile } from '../../../shared/permissions/executio
 import type { ComposerDraftCommitReceipt } from './commitComposerDraft'
 import { createComposerDraftCommitter } from './commitComposerDraft'
 import { withTransaction } from './database'
+import { createThreadBindingRepository } from './threadBindingRepository'
 
 export type BuddyActionCommandName = 'compact'
 
@@ -17,7 +18,7 @@ export interface PrepareCommandRequestInput {
   draft: {
     draftId: string
     expectedRevision: number
-  }
+  } | null
   executionProfile: BuddyExecutionProfile
   requestFingerprint: string
   requestId: string
@@ -30,7 +31,7 @@ export interface CommandRequestRecord {
   command: BuddyActionCommandName
   conversationId: string
   created: boolean
-  draftReceipt: ComposerDraftCommitReceipt
+  draftReceipt: ComposerDraftCommitReceipt | null
   requestFingerprint: string
   requestId: string
   runId: string
@@ -139,7 +140,7 @@ export function createCommandRequestRepository(database: DatabaseSync): CommandR
         const conversation = findConversation.get(input.conversationId) as ConversationRow | undefined
         if (
           !conversation
-          || conversation.active_branch_id !== input.branchId
+          || !database.prepare('SELECT 1 FROM conversation_branches WHERE conversation_id = ? AND id = ?').get(input.conversationId, input.branchId)
           || conversation.approval_policy !== input.approvalPolicy
           || conversation.execution_profile !== input.executionProfile
           || conversation.deleted_at !== null
@@ -162,6 +163,8 @@ export function createCommandRequestRepository(database: DatabaseSync): CommandR
           input.approvalPolicy,
           input.executionProfile,
         )
+        const thread = createThreadBindingRepository(database).ensureActor(input.conversationId, source.buddy_id, input.createdAt, input.branchId)
+        database.prepare('UPDATE runs SET thread_id = ? WHERE id = ?').run(thread.id, input.runId)
         insertRequest.run(
           input.requestId,
           input.requestFingerprint,
@@ -171,20 +174,22 @@ export function createCommandRequestRepository(database: DatabaseSync): CommandR
           input.command,
           input.arguments,
           input.createdAt,
-          input.draft.draftId,
-          input.draft.expectedRevision,
-          input.draft.expectedRevision + 1,
+          input.draft?.draftId ?? null,
+          input.draft?.expectedRevision ?? null,
+          input.draft ? input.draft.expectedRevision + 1 : null,
         )
-        const draftReceipt = commitDraft({
-          approvalPolicy: input.approvalPolicy,
-          branchId: input.branchId,
-          conversationId: input.conversationId,
-          draftId: input.draft.draftId,
-          executionProfile: input.executionProfile,
-          expectedRevision: input.draft.expectedRevision,
-          spaceId: null,
-          updatedAt: input.createdAt,
-        })
+        const draftReceipt = input.draft
+          ? commitDraft({
+              approvalPolicy: input.approvalPolicy,
+              branchId: input.branchId,
+              conversationId: input.conversationId,
+              draftId: input.draft.draftId,
+              executionProfile: input.executionProfile,
+              expectedRevision: input.draft.expectedRevision,
+              spaceId: null,
+              updatedAt: input.createdAt,
+            })
+          : null
         return {
           ...input,
           created: true,
@@ -232,24 +237,19 @@ function insertCompactionRun(
 }
 
 function toRecord(row: CommandRequestRow, created: boolean): CommandRequestRecord {
-  if (
-    row.draft_id === null
-    || row.draft_revision === null
-    || row.committed_draft_revision === null
-  ) {
-    throw new CommandRequestConflictError()
-  }
   return {
     arguments: row.arguments,
     branchId: row.branch_id,
     command: row.command,
     conversationId: row.conversation_id,
     created,
-    draftReceipt: {
-      committedRevision: row.committed_draft_revision,
-      draftId: row.draft_id,
-      sourceRevision: row.draft_revision,
-    },
+    draftReceipt: row.draft_id !== null && row.draft_revision !== null && row.committed_draft_revision !== null
+      ? {
+          committedRevision: row.committed_draft_revision,
+          draftId: row.draft_id,
+          sourceRevision: row.draft_revision,
+        }
+      : null,
     requestFingerprint: row.request_fingerprint,
     requestId: row.request_id,
     runId: row.run_id,

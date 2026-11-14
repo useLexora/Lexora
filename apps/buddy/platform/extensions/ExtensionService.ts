@@ -7,7 +7,6 @@ import type { ExtensionClipboardData } from '../../shared/extensions/extensionCl
 import type { ExtensionConditionRuntime } from '../../shared/extensions/extensionConditionContext'
 import type { ExtensionConditionState } from '../../shared/extensions/extensionConditions'
 import type { ExtensionDiagnostic, ExtensionHostFailure } from '../../shared/extensions/extensionDiagnostic'
-import type { InferenceResourceProgress } from '../../shared/extensions/extensionInference'
 import type { ExtensionNetworkResponse } from '../../shared/extensions/extensionNetwork'
 import type { ExtensionReferenceInput, ExtensionReferenceMaterial, ExtensionReferenceOpening } from '../../shared/extensions/extensionReferences'
 import type { ExtensionFileSource, ExtensionResourceSelection } from '../../shared/extensions/extensionResources'
@@ -26,7 +25,6 @@ import type { ExtensionCompiler } from './compileExtensionSource'
 import type { ExtensionInferencePorts } from './ExtensionInference'
 import type { InferenceResourceSource } from './ExtensionInferenceResources'
 import type { ExtensionPackage, ExtensionPackageStore } from './ExtensionPackageStore'
-import type { ExtensionResourceUpload } from './ExtensionResourceUpload'
 import type { ExtensionConfigurationApplication, ExtensionServiceChange, ExtensionServiceFact, ExtensionServiceSnapshot } from './ExtensionServiceEvents'
 import type { ExtensionTaskCleanupBatchResult } from './ExtensionTaskCleanupBatch'
 import type { ExtensionDocumentPorts } from './ExtensionWorkingCopyStore'
@@ -34,7 +32,6 @@ import type { InferenceInvocation } from './NativeInferenceProcess'
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
-import process from 'node:process'
 import { z } from 'zod'
 import { BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT } from '../../shared/conversation/attachmentPolicy'
 import { buddyViewQuoteSchema } from '../../shared/conversation/buddyUserContent'
@@ -51,7 +48,6 @@ import { extensionConditionInvalidationSchema } from '../../shared/extensions/ex
 import { extensionDiagnostic, ExtensionRequestError } from '../../shared/extensions/extensionDiagnostic'
 import { extensionDocumentInfoSchema } from '../../shared/extensions/extensionDocumentInfo'
 import { extensionFileHandlerBindings } from '../../shared/extensions/extensionFileOpening'
-import { inferenceBindingSchema, inferenceCredentialReferenceSchema, inferenceCredentialSchema, inferenceHardwareSchema, inferenceHashSchema, inferenceIdSchema, inferencePrepareSchema, inferenceRuntimeReferenceSchema } from '../../shared/extensions/extensionInference'
 import { extensionCompatible, extensionPathSchema } from '../../shared/extensions/extensionManifest'
 import { projectExtensionNetworkHeaders } from '../../shared/extensions/extensionNetwork'
 import { extensionReferenceCaptureSchema, extensionReferenceCommitSchema, extensionReferenceInputSchema, extensionReferenceOpeningSchema, extensionReferenceTargetSchema } from '../../shared/extensions/extensionReferences'
@@ -62,25 +58,28 @@ import { extensionSettingsHeaderActionsSchema } from '../../shared/extensions/ex
 import { extensionSkillRoots } from '../../shared/extensions/extensionSkills'
 import { EXTENSION_UNO_STYLESHEET } from '../../shared/extensions/extensionStyles'
 import { windowStyleIdSchema, windowStyleSchema } from '../../shared/extensions/extensionWindowStyles'
-import { resolveInferenceEnvironment } from '../../shared/extensions/inferencePlatform'
 import { fileOpeningExtension } from '../../shared/files/fileOpening'
 import { themeRequestSchema, themeTransportSchema } from '../../shared/theme/themeApi'
 import { workbenchHitRegionsSchema } from '../../shared/workbench/workbenchInteraction'
 import { controlProposalSchema, extensionPresentationRequestSchema } from '../../shared/workbench/workbenchUi'
-import { fileRange } from '../filesystem/fileRange'
 import { publicWebUrl, readResponseBytes } from '../network/publicWebTransport'
 import { detectShellPrograms } from '../process/shellPrograms'
 import { ExtensionCatalogService } from './ExtensionCatalogService'
 import { ExtensionConditionInvalidatedError } from './ExtensionConditionEvaluator'
 import { ExtensionConditions } from './ExtensionConditions'
 import { ExtensionDocuments } from './ExtensionDocuments'
+import { ExtensionDownloads } from './ExtensionDownloads'
 import { sha256, verifiedExtensionAsset } from './extensionFiles'
 import { ExtensionInference } from './ExtensionInference'
+import { ExtensionInferenceRequests } from './ExtensionInferenceRequests'
 import { ExtensionInstallations } from './ExtensionInstallations'
+import { ExtensionInvocationScope } from './ExtensionInvocationScope'
 import { extensionActivationOrder } from './ExtensionPackageStore'
-import { ExtensionResourceWriter } from './ExtensionResourceWriter'
 import { ExtensionScheduler } from './ExtensionScheduler'
+import { ExtensionSelectedResources } from './ExtensionSelectedResources'
 import { ExtensionTaskCleanupController } from './ExtensionTaskCleanupController'
+import { ExtensionUploads } from './ExtensionUploads'
+import { ExtensionViewExports } from './ExtensionViewExports'
 import { hashResourceResponse } from './hashResourceResponse'
 
 export interface ExtensionHost {
@@ -89,6 +88,7 @@ export interface ExtensionHost {
   devtools: () => void
 }
 export interface ExtensionServicePorts {
+  desktopAvailable?: () => boolean
   documents?: ExtensionDocumentPorts
   clipboard?: {
     read: (session: ExtensionViewSession, assertCurrent: () => void) => Promise<ExtensionClipboardData>
@@ -132,6 +132,9 @@ interface RunningExtension {
   windowStyles?: Map<string, string>
   resourceEndpoint?: { url: string, dispose: () => void }
   inFlight: number
+  users: number
+  runUsers: Set<string>
+  idleTimer?: ReturnType<typeof setTimeout>
   inference?: ExtensionInference
   inferencePreparations: Set<Promise<unknown>>
   drained: Set<() => void>
@@ -146,7 +149,7 @@ interface RunningView {
   abort: AbortController
   ready: boolean
   error: string | null
-  writers: Map<string, ExtensionResourceWriter>
+  exports: ExtensionViewExports
 }
 
 export class ExtensionService {
@@ -160,7 +163,7 @@ export class ExtensionService {
   readonly installations: ExtensionInstallations
   readonly catalog: ExtensionCatalogService
   readonly #reviews = new Map<string, string>()
-  readonly #fileSnapshots = new Map<string, { running: RunningExtension, source: ExtensionFileOpeningSource, text: string, bytes: number, created: number }>()
+  readonly #selected: ExtensionSelectedResources
   readonly #documents?: ExtensionDocuments
   readonly #ports: ExtensionServicePorts
   readonly #running = new Map<string, RunningExtension>()
@@ -171,12 +174,13 @@ export class ExtensionService {
   readonly #viewOpenings = new Map<string, symbol>()
   readonly #views = new Map<string, RunningView>()
   readonly #diagnostics = new Map<string, Pick<ExtensionStatus, 'error' | 'activationMs' | 'logs'>>()
-  readonly #downloads = new Map<string, { running: RunningExtension, owner: string, abort: AbortController }>()
-  readonly #uploadCreations = new Set<{ running: RunningExtension, owner: string, promise: Promise<ExtensionResourceUpload> }>()
-  readonly #uploads = new Map<string, { running: RunningExtension, owner: string, upload: ExtensionResourceUpload }>()
+  readonly #downloads = new ExtensionDownloads()
+  readonly #inferenceRequests: ExtensionInferenceRequests
+  readonly #uploads = new ExtensionUploads()
   readonly #notificationTimes = new Map<string, number>()
   readonly #interactions = new Map<string, { running: RunningExtension, title: string, abort: AbortController }>()
-  readonly #agentInvocations = new Map<string, { running: RunningExtension, signal: AbortSignal, abort: AbortController, access?: 'read' | 'write' }>()
+  readonly #agentInvocations = new Map<string, ExtensionInvocationScope & { running: RunningExtension, access?: 'read' | 'write' }>()
+  readonly #commandInvocations = new Map<string, ExtensionInvocationScope & { running: RunningExtension }>()
   readonly #stopping = new Set<Promise<void>>()
   readonly #retired = new Set<RunningExtension>()
   readonly #viewRequests = new Set<Promise<JsonValue>>()
@@ -195,10 +199,15 @@ export class ExtensionService {
   #maintenance = false
   #disposal: Promise<void> | undefined
   #epoch = 0
+  #desktopAttached: boolean
+  #desktopAbort = new AbortController()
 
   constructor(store: ExtensionPackageStore, ports: ExtensionServicePorts) {
     this.store = store
+    this.#selected = new ExtensionSelectedResources(store, ports)
+    this.#desktopAttached = ports.desktopAvailable?.() ?? true
     this.#ports = ports
+    this.#inferenceRequests = new ExtensionInferenceRequests(store, ports.inference, this.#downloads)
     if (ports.documents)
       this.#documents = new ExtensionDocuments(store.root, { files: ports.documents, selectResources: ports.selectResources, selectSavePath: ports.selectSavePath })
     this.conditions = new ExtensionConditions({
@@ -736,8 +745,16 @@ export class ExtensionService {
       throw new Error('EXTENSION_INFERENCE_UNAVAILABLE')
     z.uuid().parse(input.id)
     extensionJsonSchema.parse(input.input)
-    await running.inference.invoke(capability, input)
-    this.#assertCurrent(running)
+    running.users++
+    this.#scheduleIdle()
+    try {
+      await running.inference.invoke(capability, input)
+      this.#assertCurrent(running)
+    }
+    finally {
+      running.users--
+      this.#scheduleIdle()
+    }
   }
 
   async resetInference(): Promise<void> {
@@ -745,173 +762,11 @@ export class ExtensionService {
   }
 
   #inferenceSource(running: RunningExtension): InferenceResourceSource {
-    const { id, permissions } = running.package.manifest
-    return {
-      prepare: running.package.manifest.contributes.inference?.preparation && running.inference
-        ? (...args) => running.inference!.prepareResources(...args)
-        : undefined,
-      assertDownload: (url) => {
-        this.#networkUrl(running, url)
-        this.#assertCurrent(running)
-      },
-      response: (source, signal, headers) => {
-        if ('directoryId' in source)
-          throw new Error('EXTENSION_INFERENCE_REFERENCE_REQUIRED')
-        return 'url' in source ? this.#networkResponse(running, source.url, signal, headers) : this.store.resources.response(id, source.resourceId, new Request('https://resource.invalid/'), signal, permissions.localResources)
-      },
-      directoryReferencePath: async (input) => {
-        this.#assertCurrent(running)
-        if (!permissions.localResources)
-          throw new Error('EXTENSION_PERMISSION_DENIED')
-        const path = await this.store.resources.directoryReferencePath(id, input)
-        this.#assertCurrent(running)
-        return path
-      },
-      referencePath: async (resourceId) => {
-        this.#assertCurrent(running)
-        if (!permissions.localResources)
-          throw new Error('EXTENSION_PERMISSION_DENIED')
-        const path = await this.store.resources.referencePath(id, resourceId)
-        this.#assertCurrent(running)
-        return path
-      },
-      openDirectoryReference: async (input) => {
-        this.#assertCurrent(running)
-        if (!permissions.localResources)
-          throw new Error('EXTENSION_PERMISSION_DENIED')
-        const handle = await this.store.resources.openDirectoryReference(id, input)
-        try {
-          this.#assertCurrent(running)
-          return handle
-        }
-        catch (error) {
-          await handle.close()
-          throw error
-        }
-      },
-      openReference: async (resourceId) => {
-        this.#assertCurrent(running)
-        if (!permissions.localResources)
-          throw new Error('EXTENSION_PERMISSION_DENIED')
-        return this.store.resources.openReference(id, resourceId)
-      },
-    }
-  }
-
-  async #inferenceRequest(running: RunningExtension, method: string, params: unknown, lifetime: AbortSignal, owner: string): Promise<JsonValue> {
-    const { id, permissions } = running.package.manifest
-    if (!permissions.inference)
-      throw new Error('EXTENSION_PERMISSION_DENIED')
-    if (method.startsWith('inference.credentials.')) {
-      const credentials = this.#ports.inference?.credentials
-      if (!credentials || !running.inference)
-        throw new Error('EXTENSION_INFERENCE_UNAVAILABLE')
-      const assertCurrent = () => this.#assertCurrent(running)
-      if (method === 'inference.credentials.remove') {
-        const input = z.object({ id: inferenceIdSchema }).strict().parse(params)
-        await running.inference.withStoppedCredential(input.id, () => credentials.remove(id, input.id, assertCurrent))
-        this.#publish({ kind: 'inference-models', extensionId: id })
-        return null
-      }
-      if (method === 'inference.credentials.has' || method === 'inference.credentials.set') {
-        const input = method === 'inference.credentials.set' ? inferenceCredentialSchema.parse(params) : inferenceCredentialReferenceSchema.parse(params)
-        if (!permissions.inferenceNetwork.includes(input.origin))
-          throw new Error('EXTENSION_PERMISSION_DENIED')
-        if ('token' in input) {
-          await running.inference.withStoppedCredential(input.id, () => credentials.set(id, inferenceCredentialSchema.parse(input), assertCurrent))
-          this.#publish({ kind: 'inference-models', extensionId: id })
-          return null
-        }
-        return credentials.has(id, input)
-      }
-      throw new Error('EXTENSION_METHOD_DENIED')
-    }
-    if (method === 'inference.environment') {
-      const hardware = inferenceHardwareSchema.safeParse(await this.#ports.inference?.hardware?.(permissions.inferenceGpu).catch(() => undefined))
-      this.#assertCurrent(running)
-      return {
-        ...resolveInferenceEnvironment(process.platform, process.arch),
-        ...(hardware.success ? { hardware: { ...hardware.data, gpus: permissions.inferenceGpu ? hardware.data.gpus : [] } } : {}),
-      }
-    }
-    if (method === 'inference.status')
-      return running.inference?.status() ?? []
-    if (method === 'inference.stop') {
-      const input = params === null ? undefined : inferenceRuntimeReferenceSchema.parse(params)
-      if (input && !running.inference)
-        throw new Error('EXTENSION_INFERENCE_RUNTIME_UNAVAILABLE')
-      await running.inference?.stop(input)
-      return null
-    }
-    if (method === 'inference.unbind') {
-      const input = inferenceRuntimeReferenceSchema.parse(params)
-      if (!running.inference)
-        throw new Error('EXTENSION_INFERENCE_RUNTIME_UNAVAILABLE')
-      await running.inference.unbind(input)
-      this.#publish({ kind: 'inference-models', extensionId: id })
-      return null
-    }
-    if (method === 'inference.resources.list') {
-      const [files, directories] = await Promise.all([this.store.resources.list(id, permissions.localResources), permissions.localResources ? this.store.resources.directories(id) : []])
-      return this.store.inference.inspect(id, new Set(files.map(file => file.id)), new Set(directories.map(directory => directory.id)))
-    }
-    if (method === 'inference.resources.remove') {
-      const resource = z.object({ id: inferenceIdSchema, revision: inferenceHashSchema }).strict().parse(params)
-      await this.store.inference.remove(id, resource, () => this.#assertCurrent(running))
-      running.inference?.forgetResource(resource.id, resource.revision)
-      this.#publish({ kind: 'inference-models', extensionId: id })
-      return null
-    }
-    if (method === 'inference.bind') {
-      if (!running.inference)
-        throw new Error('EXTENSION_INFERENCE_UNAVAILABLE')
-      await running.inference.bind(inferenceBindingSchema.parse(params))
-      this.#publish({ kind: 'inference-models', extensionId: id })
-      return null
-    }
-    if (method === 'inference.resources.prepare') {
-      const input = z.object({ id: z.uuid(), resource: inferencePrepareSchema }).strict().parse(params)
-      if (this.#downloads.has(input.id))
-        throw new Error('EXTENSION_RESOURCE_DOWNLOAD_EXISTS')
-      const abort = new AbortController()
-      this.#downloads.set(input.id, { running, owner, abort })
-      const signal = AbortSignal.any([abort.signal, lifetime, running.abort.signal])
-      const pendingProgress: InferenceResourceProgress[] = []
-      let publishing: Promise<void> | undefined
-      const publish = () => {
-        if (publishing || signal.aborted)
-          return
-        const next = pendingProgress.shift()
-        if (!next)
-          return
-        publishing = running.host.call('inference.progress', { id: input.id, progress: { ...next } }, signal).then(() => {}, () => {}).finally(() => {
-          publishing = undefined
-          publish()
-        })
-      }
-      const report = (progress: InferenceResourceProgress) => {
-        if (signal.aborted)
-          return
-        const last = pendingProgress.at(-1)
-        if (last && last.path === progress.path && last.phase === progress.phase && last.completedFiles === progress.completedFiles && last.bytes > 0 && progress.bytes > 0)
-          pendingProgress[pendingProgress.length - 1] = progress
-        else
-          pendingProgress.push(progress)
-        publish()
-      }
-      const preparing = this.store.inference.prepare(id, input.resource, this.#inferenceSource(running), signal, () => this.#assertCurrent(running), report)
-      running.inferencePreparations.add(preparing)
-      try {
-        return await preparing
-      }
-      finally {
-        for (let pending = publishing; pending; pending = publishing)
-          await pending
-        running.inferencePreparations.delete(preparing)
-        this.#downloads.delete(input.id)
-      }
-    }
-    throw new Error('EXTENSION_METHOD_DENIED')
+    return this.#inferenceRequests.source(running.package.manifest, running.inference, {
+      assertCurrent: () => this.#assertCurrent(running),
+      authorizeDownload: (url) => { this.#networkUrl(running, url) },
+      networkResponse: (url, signal, headers) => this.#networkResponse(running, url, signal, headers),
+    })
   }
 
   async invokeAgent(input: ExtensionAgentInvocation, signal: AbortSignal): Promise<JsonValue> {
@@ -955,12 +810,21 @@ export class ExtensionService {
     }
     if (references.length && (await this.agentContributions()).find(item => item.id === input.extensionId)?.configurationRevision !== input.configurationRevision)
       throw new Error('EXTENSION_AGENT_UNAVAILABLE')
-    const controller = new AbortController()
-    const abort = AbortSignal.any([signal, running.abort.signal, controller.signal])
+    const invocation = Object.assign(new ExtensionInvocationScope([signal, running.abort.signal]), { running, ...'tool' in input ? { access: current.agent.tools.find(tool => tool.id === input.tool)!.access ?? 'read' as const } : {} })
+    const abort = invocation.signal
     abort.throwIfAborted()
     if (this.#agentInvocations.has(input.invocationId) || [...this.#agentInvocations.values()].filter(item => item.running === running).length >= extensionAgentInvocationLimits.concurrentPerExtension)
       throw new Error('EXTENSION_REQUEST_LIMIT')
-    this.#agentInvocations.set(input.invocationId, { running, signal: abort, abort: controller, ...'tool' in input ? { access: current.agent.tools.find(tool => tool.id === input.tool)!.access ?? 'read' } : {} })
+    this.#agentInvocations.set(input.invocationId, invocation)
+    if ('tool' in input && input.context?.runId) {
+      for (const id of this.#order(input.extensionId)) {
+        const owner = this.#running.get(id)
+        if (owner) {
+          owner.runUsers.add(input.context.runId)
+          this.#scheduleIdle()
+        }
+      }
+    }
     const cancel = () => {
       void running.host.call('agent.cancel', { invocationId: input.invocationId }).catch(() => {})
     }
@@ -978,7 +842,9 @@ export class ExtensionService {
     }
     finally {
       abort.removeEventListener('abort', cancel)
+      await invocation.finish()
       this.#agentInvocations.delete(input.invocationId)
+      this.#scheduleIdle()
     }
   }
 
@@ -1008,7 +874,7 @@ export class ExtensionService {
     const job = this.installations.begin(basename(path), 'validate')
     try {
       const review = await this.store.review(path, development, job.signal)
-      this.installations.identify(job.id, review.manifest.id, review.manifest.version)
+      this.installations.identify(job.id, review.manifest.id, review.manifest.version, review.manifest.executionScope)
       job.signal.throwIfAborted()
       this.#reviews.set(review.token, job.id)
       this.installations.log(job.id, 'review', 'permissions')
@@ -1036,7 +902,7 @@ export class ExtensionService {
       this.installations.log(job.id, 'validate', 'checksum')
       job.signal.throwIfAborted()
       const review = await this.store.reviewArchive(bytes, source, entry.manifest, job.signal)
-      this.installations.identify(job.id, review.manifest.id, review.manifest.version)
+      this.installations.identify(job.id, review.manifest.id, review.manifest.version, review.manifest.executionScope)
       this.#reviews.set(review.token, job.id)
       this.installations.log(job.id, 'review', 'permissions')
       return { ...review, installationId: job.id, source }
@@ -1223,7 +1089,7 @@ export class ExtensionService {
     const binding = handler && extensionFileHandlerBindings(handler).find(target => target.location === input.location)
     if (!handler || !binding)
       throw new Error('EXTENSION_FILE_OPENER_UNAVAILABLE')
-    const { name, response } = await this.#sourceResponse(input.source, running.abort.signal)
+    const { name, response } = await this.#selected.sourceResponse(input.source, running.abort.signal)
     await response.body?.cancel()
     this.#assertCurrent(running)
     const extension = fileOpeningExtension(name, [provider])
@@ -1231,15 +1097,7 @@ export class ExtensionService {
       throw new Error('EXTENSION_FILE_ASSOCIATION_DENIED')
     let resource: ExtensionResource
     if (input.text !== undefined) {
-      const bytes = Buffer.byteLength(input.text)
-      for (const [id, entry] of this.#fileSnapshots) {
-        if (entry.running.abort.signal.aborted || (entry.created < Date.now() - 600000 && ![...this.#views.values()].some(view => view.input.resource?.id === id)))
-          this.#fileSnapshots.delete(id)
-      }
-      if (bytes > 2 * 1024 * 1024 || this.#fileSnapshots.size >= 64 || [...this.#fileSnapshots.values()].reduce((total, entry) => total + entry.bytes, bytes) > 16 * 1024 * 1024)
-        throw new Error('EXTENSION_RESOURCE_TEXT_LIMIT')
-      resource = { id: randomUUID(), name }
-      this.#fileSnapshots.set(resource.id, { running, source: structuredClone(input.source), text: input.text, bytes, created: Date.now() })
+      resource = this.#selected.snapshot(this.#selectedAccess(running), input.source, name, input.text, id => [...this.#views.values()].some(view => view.input.resource?.id === id))
     }
     else {
       resource = await this.store.grantFileOpening(provider.extensionId, input.source, name, () => this.#assertCurrent(running))
@@ -1268,11 +1126,11 @@ export class ExtensionService {
         throw new Error('EXTENSION_REFERENCE_UNAVAILABLE')
       const resource = current.input.resource
       if (input.source) {
-        const source = resource ? await this.#resource(running, resource.id) : null
+        const source = resource ? await this.#selected.resolve(this.#selectedAccess(running), resource.id) : null
         if (!sameReferenceJson(source, input.source))
           throw new Error('EXTENSION_RESOURCE_DENIED')
         if (resource) {
-          const response = await this.#selectedResponse(running, resource.id, current.abort.signal)
+          const response = await this.#selected.response(this.#selectedAccess(running), resource.id, current.abort.signal)
           await response.body?.cancel()
         }
       }
@@ -1285,7 +1143,7 @@ export class ExtensionService {
       return { extensionId: input.extensionId, viewType: view.id, resource: null }
     if (view.resource === 'none' || running.package.manifest.permissions.selectedResource !== 'read')
       throw new Error('EXTENSION_RESOURCE_DENIED')
-    const { name, response } = await this.#sourceResponse(input.source, running.abort.signal)
+    const { name, response } = await this.#selected.sourceResponse(input.source, running.abort.signal)
     await response.body?.cancel()
     this.#assertCurrent(running)
     const granted = await this.store.grantFileOpening(input.extensionId, input.source, name, () => this.#assertCurrent(running))
@@ -1390,6 +1248,7 @@ export class ExtensionService {
   }
 
   async #executeCommand(running: RunningExtension, command: string, target: SpaceFileTarget | null, invocation: JsonValue = null, argumentsValue: JsonValue = null, cleanupToken: string | null = null): Promise<JsonValue> {
+    this.#requireDesktop()
     if (!running.package.manifest.contributes.commands.some(item => item.id === command))
       throw new Error('EXTENSION_COMMAND_UNAVAILABLE')
     let resource: ExtensionResource | null = null
@@ -1415,14 +1274,29 @@ export class ExtensionService {
   }
 
   async #callCommand(running: RunningExtension, params: JsonValue): Promise<JsonValue> {
-    const result = await running.host.call('command', params)
-    const parsed = extensionJsonSchema.safeParse(result)
-    if (!parsed.success)
-      throw new ExtensionRequestError('EXTENSION_INVALID_RESULT', 'command', parsed.error, 'result')
-    return parsed.data
+    const invocationId = randomUUID()
+    const invocation = Object.assign(new ExtensionInvocationScope([running.abort.signal]), { running })
+    const signal = invocation.signal
+    this.#commandInvocations.set(invocationId, invocation)
+    try {
+      const result = await running.host.call('command', running.package.manifest.apiVersion >= 5 ? { ...params as Record<string, JsonValue>, scopeId: invocationId } : params, signal)
+      signal.throwIfAborted()
+      this.#requireDesktop()
+      const parsed = extensionJsonSchema.safeParse(result)
+      if (!parsed.success)
+        throw new ExtensionRequestError('EXTENSION_INVALID_RESULT', 'command', parsed.error, 'result')
+      return parsed.data
+    }
+    finally {
+      await invocation.finish()
+      this.#commandInvocations.delete(invocationId)
+      this.#scheduleIdle()
+    }
   }
 
   async openView(input: ExtensionViewInput): Promise<ExtensionViewSession> {
+    this.#requireDesktop()
+    const desktopSignal = this.#desktopAbort.signal
     const request = Symbol('view-open')
     this.#viewOpenings.set(input.viewId, request)
     try {
@@ -1446,12 +1320,14 @@ export class ExtensionService {
       if (input.resource) {
         if (view.resource === 'none')
           throw new Error('EXTENSION_RESOURCE_DENIED')
-        const response = await this.#selectedResponse(running, input.resource.id, running.abort.signal)
+        const response = await this.#selected.response(this.#selectedAccess(running), input.resource.id, running.abort.signal)
         await response.body?.cancel()
       }
       this.#assertCurrent(running)
       if (input.interactionId && !this.#interactions.has(input.interactionId))
         throw new Error('EXTENSION_INTERACTION_ENDED')
+      desktopSignal.throwIfAborted()
+      this.#requireDesktop()
       if (this.#viewOpenings.get(input.viewId) !== request)
         throw new Error('EXTENSION_VIEW_EXPIRED')
       const old = this.#views.get(input.viewId)
@@ -1461,12 +1337,12 @@ export class ExtensionService {
         const current = this.#views.get(input.viewId)
         if (current?.session.token !== endpoint.token || resourceId !== current.input.resource?.id)
           throw new Error('EXTENSION_RESOURCE_DENIED')
-        return this.#selectedResponse(running, resourceId, AbortSignal.any([signal, current.abort.signal]), request)
+        return this.#selected.response(this.#selectedAccess(running), resourceId, AbortSignal.any([signal, current.abort.signal]), request)
       })
       const abort = new AbortController()
-      const writers = new Map<string, ExtensionResourceWriter>()
+      const exports = new ExtensionViewExports()
       const session = { id: input.viewId, extensionId: input.extensionId, generation: running.generation, token: endpoint.token, url: endpoint.url }
-      this.#views.set(input.viewId, { input: structuredClone(input), session: structuredClone(session), running, abort, ready: false, error: null, writers, dispose: () => endpoint.dispose() })
+      this.#views.set(input.viewId, { input: structuredClone(input), session: structuredClone(session), running, abort, ready: false, error: null, exports, dispose: () => endpoint.dispose() })
       this.#publish({ kind: 'view', extensionId: input.extensionId, generation: running.generation, viewId: input.viewId, status: 'opened' })
       return structuredClone(session)
     }
@@ -1661,9 +1537,9 @@ export class ExtensionService {
         signal,
         current,
         source: async (resourceId) => {
-          if (resourceId !== view.input.resource?.id || this.#fileSnapshots.has(resourceId))
+          if (resourceId !== view.input.resource?.id || this.#selected.hasSnapshot(resourceId))
             throw new Error('EXTENSION_DOCUMENT_DENIED')
-          return this.#resource(view.running, resourceId)
+          return this.#selected.resolve(this.#selectedAccess(view.running), resourceId)
         },
       }, method, params)
     }
@@ -1678,50 +1554,12 @@ export class ExtensionService {
         if (view.abort.signal.aborted || this.#views.get(id) !== view)
           throw new Error('EXTENSION_VIEW_EXPIRED')
       }
-      if (method === 'resources.beginSave') {
-        if (!this.#ports.selectSavePath || view.writers.size >= 2)
-          throw new Error('EXTENSION_RESOURCE_SAVE_UNAVAILABLE')
-        const input = z.object({ name: z.string().min(1).max(255).regex(/^[^/\\\0]+$/), size: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER) }).strict().parse(params)
-        const signal = AbortSignal.any([view.abort.signal, view.running.abort.signal, AbortSignal.timeout(120000)])
-        const path = await this.#ports.selectSavePath(view.running.package.manifest.name, input.name, signal)
-        signal.throwIfAborted()
-        assertView()
-        if (path) {
-          const writer = await ExtensionResourceWriter.create(path, input.size, assertView)
-          try {
-            assertView()
-          }
-          catch (error) {
-            await writer.dispose()
-            throw error
-          }
-          view.writers.set(writer.id, writer)
-          result = writer.id
-        }
-        else { result = null }
-      }
-      else {
-        const input = z.object({ id: z.string().uuid(), offset: z.number().int().min(0).optional(), base64: z.string().max(128 * 1024).regex(/^(?:[A-Z0-9+/]{4})*(?:[A-Z0-9+/]{2}==|[A-Z0-9+/]{3}=)?$/i).optional() }).strict().parse(params)
-        const writer = view.writers.get(input.id)
-        if (!writer)
-          throw new Error('EXTENSION_RESOURCE_WRITE_EXPIRED')
-        if (method === 'resources.writeChunk') {
-          if (input.offset === undefined || input.base64 === undefined)
-            throw new Error('EXTENSION_RESOURCE_WRITE_RANGE')
-          await writer.append(input.offset, input.base64)
-        }
-        else {
-          try {
-            if (method === 'resources.commitSave')
-              await writer.commit()
-          }
-          finally {
-            view.writers.delete(input.id)
-            await writer.dispose()
-          }
-        }
-        result = null
-      }
+      result = await view.exports.request({
+        name: view.running.package.manifest.name,
+        signal: AbortSignal.any([view.abort.signal, view.running.abort.signal]),
+        assertCurrent: assertView,
+        selectSavePath: this.#ports.selectSavePath,
+      }, method, params)
     }
     else if (method === 'resources.hash') {
       result = await this.#broker(view.running, method, params, view.abort.signal, view.session.id)
@@ -1730,17 +1568,17 @@ export class ExtensionService {
       const resourceId = view.input.resource.id
       if (method === 'resources.getUrl') {
         z.object({ id: z.string().uuid() }).strict().parse(params)
-        const response = await this.#selectedResponse(view.running, resourceId, view.abort.signal)
+        const response = await this.#selected.response(this.#selectedAccess(view.running), resourceId, view.abort.signal)
         await response.body?.cancel()
         result = new URL(`/__selected/${resourceId}`, view.session.url).href
       }
       else if (method === 'resources.readBytes') {
         const input = z.object({ id: z.string().uuid(), offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), length: z.number().int().min(1).max(128 * 1024) }).strict().parse(params)
-        result = await this.#selectedBytes(view.running, input.id, input.offset, input.length, view.abort.signal)
+        result = await this.#selected.bytes(this.#selectedAccess(view.running), input.id, input.offset, input.length, view.abort.signal)
       }
       else {
         z.object({ id: z.string().uuid() }).strict().parse(params)
-        result = await this.#selectedText(view.running, resourceId, view.abort.signal)
+        result = await this.#selected.text(this.#selectedAccess(view.running), resourceId, view.abort.signal)
       }
     }
     else if (method.startsWith('resources.')) {
@@ -1894,6 +1732,95 @@ export class ExtensionService {
     return this.#disposal
   }
 
+  attachDesktop(): void {
+    if (this.#disposed || this.#desktopAttached)
+      return
+    this.#desktopAttached = true
+    this.#desktopAbort = new AbortController()
+    this.scheduler.refresh()
+    this.#refreshShellFingerprint()
+    void this.#refreshAgentContributions().catch(() => {})
+    this.#ports.capabilitiesChanged?.()
+    this.#ports.skillsChanged?.()
+  }
+
+  async detachDesktop(): Promise<void> {
+    this.#desktopAttached = false
+    this.#desktopAbort.abort(new Error('EXTENSION_DESKTOP_REQUIRED'))
+    this.#viewOpenings.clear()
+    this.updatePanes([])
+    for (const view of this.#views.values())
+      this.#closeView(view)
+    for (const invocation of this.#commandInvocations.values())
+      invocation.abort.abort(new Error('EXTENSION_DESKTOP_REQUIRED'))
+    for (const [id] of this.#interactions)
+      void this.endInteraction(id).catch(() => {})
+    this.scheduler.refresh()
+    this.#refreshShellFingerprint()
+    const stopping = [...this.#running.values()].filter(running => running.package.manifest.executionScope !== 'service').map(running => this.#stop(running.package.manifest.id))
+    const results = await Promise.allSettled([...stopping, ...this.#viewCleanups])
+    await this.#refreshAgentContributions()
+    this.#ports.capabilitiesChanged?.()
+    this.#ports.skillsChanged?.()
+    this.#scheduleIdle()
+    const failure = results.find(result => result.status === 'rejected')
+    if (failure?.status === 'rejected')
+      throw failure.reason
+    if (this.#viewCleanupError)
+      throw this.#viewCleanupError
+  }
+
+  releaseAllRuns(): void {
+    for (const running of this.#running.values()) {
+      running.runUsers.clear()
+      this.#scheduleIdle()
+    }
+  }
+
+  releaseRun(runId: string): void {
+    for (const running of this.#running.values()) {
+      running.runUsers.delete(runId)
+      this.#scheduleIdle()
+    }
+  }
+
+  #hasUsers(running: RunningExtension, visited = new Set<RunningExtension>()): boolean {
+    if (visited.has(running))
+      return false
+    visited.add(running)
+    return !!(running.users || running.inFlight || running.runUsers.size || running.inferencePreparations.size
+      || [...this.#views.values()].some(view => view.running === running)
+      || [...this.#agentInvocations.values()].some(invocation => invocation.running === running)
+      || [...this.#running.values()].some(dependent => running.package.manifest.id in dependent.package.manifest.dependencies && this.#hasUsers(dependent, visited)))
+  }
+
+  #scheduleIdle(): void {
+    for (const running of this.#running.values()) {
+      if (running.package.manifest.executionScope !== 'service' || !running.active || running.abort.signal.aborted || this.#hasUsers(running)) {
+        if (running.idleTimer)
+          clearTimeout(running.idleTimer)
+        running.idleTimer = undefined
+        continue
+      }
+      if (running.idleTimer)
+        continue
+      running.idleTimer = setTimeout(() => {
+        running.idleTimer = undefined
+        if (this.#hasUsers(running)) {
+          this.#scheduleIdle()
+          return
+        }
+        void this.#stop(running.package.manifest.id).catch(() => {})
+      }, 5_000)
+      running.idleTimer.unref()
+    }
+  }
+
+  #requireDesktop(): void {
+    if (!this.#desktopAttached)
+      throw new Error('EXTENSION_DESKTOP_REQUIRED')
+  }
+
   async resetHosts(): Promise<void> {
     this.#epoch++
     await Promise.all([...new Set([...this.#running.keys(), ...this.#pendingStops.keys()])].map(id => this.#stop(id)))
@@ -1958,12 +1885,25 @@ export class ExtensionService {
           this.#publish({ kind: 'host', extensionId: dependency, generation, status: 'failed', errorCode: extensionError(error) })
           throw error
         }
-        running = { package: pkg, generation, abort, host, ready: Promise.resolve(), active: false, inFlight: 0, inferencePreparations: new Set(), drained: new Set() }
+        running = { package: pkg, generation, abort, host, ready: Promise.resolve(), active: false, inFlight: 0, users: 0, runUsers: new Set(), inferencePreparations: new Set(), drained: new Set() }
         if (pkg.manifest.contributes.inference && this.#ports.inference) {
           const owner = running
           running.inference = new ExtensionInference(this.store, pkg, this.#ports.inference, this.#inferenceSource(owner), () => this.#assertCurrent(owner), () => this.#publish({ kind: 'inference-models', extensionId: pkg.manifest.id }))
         }
         this.#running.set(dependency, running)
+        const call = host.call.bind(host)
+        const owner = running
+        host.call = async (...args) => {
+          owner.users++
+          this.#scheduleIdle()
+          try {
+            return await call(...args)
+          }
+          finally {
+            owner.users--
+            this.#scheduleIdle()
+          }
+        }
         const start = performance.now()
         const instance = running
         this.#clearError(dependency)
@@ -1971,6 +1911,7 @@ export class ExtensionService {
           this.#assertCurrent(instance)
           instance.registeredCommands = result && typeof result === 'object' && !Array.isArray(result) && Array.isArray(result.commands) ? z.array(z.string()).parse(result.commands).filter(id => pkg.manifest.contributes.commands.some(command => command.id === id)) : []
           instance.active = true
+          this.#scheduleIdle()
           this.#publish({ kind: 'host', extensionId: dependency, generation, status: 'active', durationMs: Math.round(performance.now() - start) })
           this.#publishPanes(instance)
           this.#log(dependency, 'activated', undefined, Math.round(performance.now() - start))
@@ -1996,6 +1937,8 @@ export class ExtensionService {
       throw new Error('EXTENSION_DEPENDENCY_FAILED')
     for (const next of order) {
       const manifest = this.store.installed[next]!.current.manifest
+      if (manifest.executionScope !== 'service')
+        this.#requireDesktop()
       const issue = extensionCompatibilityIssue(manifest, this.store.appVersion)
       if (issue)
         throw new ExtensionCompatibilityError(manifest, issue)
@@ -2006,6 +1949,8 @@ export class ExtensionService {
   #assertCurrent(running: RunningExtension): void {
     const id = running.package.manifest.id
     const installed = this.store.installed[id]
+    if (running.package.manifest.executionScope !== 'service')
+      this.#requireDesktop()
     if (this.#disposed || this.#maintenance || running.abort.signal.aborted || this.#running.get(id) !== running || !installed?.enabled || installed.current.revision !== running.package.revision)
       throw new Error('EXTENSION_HOST_STOPPED')
   }
@@ -2031,6 +1976,14 @@ export class ExtensionService {
     if (!running || running.generation !== generation)
       throw new Error('EXTENSION_HOST_STOPPED')
     try {
+      if (method === 'invocation.request') {
+        const input = z.object({ invocationId: z.uuid(), method: z.string().min(1).max(100), params: extensionJsonSchema }).strict().parse(params)
+        const invocation = this.#agentInvocations.get(input.invocationId) ?? this.#commandInvocations.get(input.invocationId)
+        if (!invocation || invocation.running !== running || ['invocation.request', 'agent.request'].includes(input.method))
+          throw new Error('EXTENSION_INVOCATION_EXPIRED')
+        invocation.signal.throwIfAborted()
+        return await invocation.track(() => this.#broker(running, input.method, parseExtensionRequestParams(input.method, input.params), invocation.signal, input.invocationId))
+      }
       return await this.#broker(running, method, parseExtensionRequestParams(method, params))
     }
     catch (error) {
@@ -2040,9 +1993,28 @@ export class ExtensionService {
   }
 
   async #broker(running: RunningExtension, method: string, params: unknown, lifetime = running.abort.signal, owner = running.generation): Promise<JsonValue> {
-    this.#assertCurrent(running)
+    if (/^(?:window\.|views\.|placements\.|interactions\.|links\.)/.test(method)) {
+      this.#requireDesktop()
+      lifetime = AbortSignal.any([lifetime, this.#desktopAbort.signal])
+    }
+    const assertCurrent = () => {
+      this.#assertCurrent(running)
+      lifetime.throwIfAborted()
+      if (owner !== running.generation && ![...this.#views.values()].some(view => view.session.id === owner && view.running === running && !view.abort.signal.aborted)) {
+        const invocation = this.#agentInvocations.get(owner) ?? this.#commandInvocations.get(owner)
+        if (!invocation || invocation.running !== running || invocation.signal.aborted)
+          throw new Error('EXTENSION_INVOCATION_EXPIRED')
+      }
+    }
+    assertCurrent()
+    if (running.package.manifest.executionScope === 'service' && owner === running.generation) {
+      const initialization = !running.active && ['storage.read', 'storage.get', 'storage.set', 'configuration.get'].includes(method)
+      if (!initialization && !['configuration.get', 'conditions.invalidate', 'agent.request'].includes(method))
+        throw new Error('EXTENSION_INVOCATION_REQUIRED')
+    }
     if (++running.inFlight > 64) {
       running.inFlight--
+      this.#scheduleIdle()
       throw new Error('EXTENSION_REQUEST_LIMIT')
     }
     const { id, dataVersion } = running.package.manifest
@@ -2107,7 +2079,17 @@ export class ExtensionService {
         result = { ...cleanupResult, summary: { ...cleanupResult.summary } }
       }
       else if (method.startsWith('inference.')) {
-        result = await this.#inferenceRequest(running, method, params, lifetime, owner)
+        result = await this.#inferenceRequests.request({
+          identity: running,
+          manifest: running.package.manifest,
+          signal: running.abort.signal,
+          inference: running.inference,
+          preparations: running.inferencePreparations,
+          call: running.host.call.bind(running.host),
+          source: () => this.#inferenceSource(running),
+          assertCurrent: () => this.#assertCurrent(running),
+          changed: () => this.#publish({ kind: 'inference-models', extensionId: id }),
+        }, method, params, lifetime, owner)
       }
       else if (method === 'window.styles.set' || method === 'window.styles.remove') {
         if (running.package.manifest.apiVersion < 3 || !running.package.manifest.permissions.windowEffects)
@@ -2125,7 +2107,7 @@ export class ExtensionService {
         result = null
       }
       else if (method === 'themes.request') {
-        result = await this.#themeRequest(running, `${id}:${running.generation}`, params, () => this.#assertCurrent(running))
+        result = await this.#themeRequest(running, `${id}:${running.generation}`, params, assertCurrent, lifetime)
       }
       else if (method === 'shells.detect') {
         z.null().parse(params)
@@ -2164,7 +2146,7 @@ export class ExtensionService {
       }
       else if (method === 'storage.set') {
         const data = z.object({ value: extensionJsonSchema, version: z.literal(dataVersion) }).strict().parse(params)
-        await this.store.saveData(id, data.value, data.version, () => this.#assertCurrent(running))
+        await this.store.saveData(id, data.value, data.version, () => assertCurrent())
         result = null
       }
       else if (method === 'notifications.show') {
@@ -2183,7 +2165,7 @@ export class ExtensionService {
           const input = extensionScheduleInputSchema.parse(params)
           if (!running.package.manifest.contributes.commands.some(command => command.id === input.command))
             throw new Error('EXTENSION_COMMAND_UNAVAILABLE')
-          result = await this.scheduler.set(id, input, () => this.#assertCurrent(running))
+          result = await this.scheduler.set(id, input, () => assertCurrent())
         }
         else {
           const input = z.object({ id: extensionScheduleIdSchema }).strict().parse(params)
@@ -2191,7 +2173,7 @@ export class ExtensionService {
             result = this.scheduler.get(id, input.id)
           }
           else if (method === 'schedules.remove') {
-            await this.scheduler.remove(id, input.id, () => this.#assertCurrent(running))
+            await this.scheduler.remove(id, input.id, () => assertCurrent())
             result = null
           }
           else {
@@ -2202,53 +2184,24 @@ export class ExtensionService {
       else if (method === 'resources.beginCreate') {
         const input = extensionResourceCreateSchema.parse(params)
         const signal = AbortSignal.any([running.abort.signal, lifetime])
-        const creation = { running, owner, promise: this.store.resources.create(id, input, signal, () => this.#assertCurrent(running)) }
-        this.#uploadCreations.add(creation)
-        try {
-          const upload = await creation.promise
-          this.#uploads.set(upload.id, { running, owner, upload })
-          void upload.finished.finally(() => this.#uploads.delete(upload.id)).catch(() => {})
-          result = upload.id
-        }
-        finally { this.#uploadCreations.delete(creation) }
+        result = await this.#uploads.create(running, owner, () => this.store.resources.create(id, input, signal, assertCurrent))
       }
       else if (['resources.writeChunk', 'resources.commitSave', 'resources.cancelSave'].includes(method)) {
-        const input = z.object({ id: z.string().uuid(), offset: z.number().int().min(0).optional(), base64: z.string().max(128 * 1024).regex(/^(?:[A-Z0-9+/]{4})*(?:[A-Z0-9+/]{2}==|[A-Z0-9+/]{3}=)?$/i).optional() }).strict().parse(params)
-        const entry = this.#uploads.get(input.id)
-        if (!entry)
-          throw new Error('EXTENSION_RESOURCE_WRITE_EXPIRED')
-        if (entry.running !== running || entry.owner !== owner)
-          throw new Error('EXTENSION_RESOURCE_DENIED')
-        if (method === 'resources.writeChunk') {
-          if (input.offset === undefined || input.base64 === undefined)
-            throw new Error('EXTENSION_RESOURCE_WRITE_RANGE')
-          await entry.upload.append(input.offset, input.base64)
-          result = null
-        }
-        else if (method === 'resources.commitSave') {
-          try {
-            result = { ...await entry.upload.commit() }
-          }
-          finally { await entry.upload.dispose() }
-        }
-        else {
-          await entry.upload.dispose()
-          result = null
-        }
+        result = await this.#uploads.request(running, owner, method, params)
       }
       else if (method === 'resources.readText') {
         const { id: resource } = z.object({ id: z.string().uuid() }).strict().parse(params)
         const allowLocal = running.package.manifest.permissions.localResources
         result = (await this.store.resources.list(id, allowLocal)).some(item => item.id === resource)
           ? await this.store.resources.readText(id, resource, lifetime, allowLocal)
-          : await this.#selectedText(running, resource, lifetime)
+          : await this.#selected.text(this.#selectedAccess(running), resource, lifetime)
       }
       else if (method === 'resources.listFiles') {
         result = await this.store.resources.list(id, running.package.manifest.permissions.localResources)
       }
       else if (method === 'resources.getUrl') {
         const path = await this.#resourcePath(running, params)
-        this.#assertCurrent(running)
+        assertCurrent()
         running.resourceEndpoint ??= this.#ports.createView(running.package)
         result = new URL(path, running.resourceEndpoint.url).href
       }
@@ -2258,73 +2211,61 @@ export class ExtensionService {
       }
       else if (method === 'resources.release') {
         const input = z.object({ id: z.string().uuid() }).strict().parse(params)
-        await this.store.resources.release(id, input.id, () => this.#assertCurrent(running))
+        await this.store.resources.release(id, input.id, () => assertCurrent())
         result = null
       }
       else if (method === 'resources.hash') {
         const input = extensionResourceHashRequestSchema.parse(params)
-        if (this.#downloads.has(input.id))
-          throw new Error('EXTENSION_RESOURCE_DOWNLOAD_EXISTS')
-        const abort = new AbortController()
-        this.#downloads.set(input.id, { running, owner, abort })
-        const signal = AbortSignal.any([running.abort.signal, lifetime, abort.signal])
-        try {
+        result = await this.#downloads.run(input.id, running, owner, [running.abort.signal, lifetime], async (signal) => {
           const allowLocal = running.package.manifest.permissions.localResources
           if ((await this.store.resources.list(id, allowLocal)).some(resource => resource.id === input.resourceId)) {
-            result = await this.store.resources.hash(id, input.resourceId, signal, allowLocal)
+            const result = await this.store.resources.hash(id, input.resourceId, signal, allowLocal)
+            signal.throwIfAborted()
+            return result
           }
           else {
             if (owner !== running.generation && this.#views.get(owner)?.input.resource?.id !== input.resourceId)
               throw new Error('EXTENSION_RESOURCE_DENIED')
-            result = await hashResourceResponse(await this.#selectedResponse(running, input.resourceId, signal), signal)
+            const result = await hashResourceResponse(await this.#selected.response(this.#selectedAccess(running), input.resourceId, signal), signal)
+            signal.throwIfAborted()
+            return result
           }
-          signal.throwIfAborted()
-        }
-        finally { this.#downloads.delete(input.id) }
+        })
       }
       else if (method === 'resources.importFile' || method === 'network.download') {
         const input = z.object({ id: z.string().uuid(), url: z.string().url().max(8192).optional(), resourceId: z.string().uuid().optional(), name: z.string().min(1).max(255).regex(/^[^/\\\0]+$/).optional() }).strict().parse(params)
-        if (this.#downloads.has(input.id))
-          throw new Error('EXTENSION_RESOURCE_DOWNLOAD_EXISTS')
-        const abort = new AbortController()
-        this.#downloads.set(input.id, { running, owner, abort })
-        const signal = AbortSignal.any([running.abort.signal, lifetime, abort.signal])
-        const guard = () => {
-          signal.throwIfAborted()
-          this.#assertCurrent(running)
-        }
-        let response: Response | undefined
-        try {
-          if (method === 'network.download' && (!input.url || input.resourceId))
-            throw new Error('EXTENSION_INVALID_ARGUMENT')
-          if (method === 'resources.importFile' && (!input.resourceId || input.url))
-            throw new Error('EXTENSION_RESOURCE_UNAVAILABLE')
-          const copied = input.resourceId ? await this.store.resources.copy(id, input.resourceId, input.name, guard) : null
-          if (copied) {
-            result = copied
+        result = await this.#downloads.run(input.id, running, owner, [running.abort.signal, lifetime], async (signal) => {
+          const guard = () => {
+            signal.throwIfAborted()
+            assertCurrent()
           }
-          else {
-            response = input.url
-              ? await this.#networkResponse(running, input.url, signal)
-              : await this.#fileResponse(running, { resourceId: input.resourceId! }, guard, signal)
-            const name = input.name ?? (input.url ? decodeURIComponent(new URL(input.url).pathname.split('/').at(-1) || 'download') : 'resource')
-            const mimeType = response.headers.get('content-type')?.split(';')[0]?.trim() || 'application/octet-stream'
-            result = await this.store.resources.import(id, name.slice(0, 255), mimeType, response, signal, guard)
+          let response: Response | undefined
+          try {
+            if (method === 'network.download' && (!input.url || input.resourceId))
+              throw new Error('EXTENSION_INVALID_ARGUMENT')
+            if (method === 'resources.importFile' && (!input.resourceId || input.url))
+              throw new Error('EXTENSION_RESOURCE_UNAVAILABLE')
+            const copied = input.resourceId ? await this.store.resources.copy(id, input.resourceId, input.name, guard) : null
+            if (copied) {
+              return copied
+            }
+            else {
+              response = input.url
+                ? await this.#networkResponse(running, input.url, signal)
+                : await this.#fileResponse(running, { resourceId: input.resourceId! }, guard, signal)
+              const name = input.name ?? (input.url ? decodeURIComponent(new URL(input.url).pathname.split('/').at(-1) || 'download') : 'resource')
+              const mimeType = response.headers.get('content-type')?.split(';')[0]?.trim() || 'application/octet-stream'
+              return await this.store.resources.import(id, name.slice(0, 255), mimeType, response, signal, guard)
+            }
           }
-        }
-        finally {
-          this.#downloads.delete(input.id)
-          await response?.body?.cancel().catch(() => {})
-        }
+          finally {
+            await response?.body?.cancel().catch(() => {})
+          }
+        })
       }
       else if (method === 'network.cancel') {
         const input = z.object({ id: z.string().uuid() }).strict().parse(params)
-        const download = this.#downloads.get(input.id)
-        if (download) {
-          if (download.running !== running || download.owner !== owner)
-            throw new Error('EXTENSION_RESOURCE_DENIED')
-          download.abort.abort(new Error('EXTENSION_RESOURCE_DOWNLOAD_CANCELLED'))
-        }
+        this.#downloads.cancel(input.id, running, owner)
         result = null
       }
       else if (method === 'links.openExternal') {
@@ -2364,7 +2305,7 @@ export class ExtensionService {
       else if (method === 'views.broadcast') {
         if (running.package.manifest.apiVersion < 3)
           throw new Error('EXTENSION_METHOD_DENIED')
-        await this.#ports.workbench({ kind: 'message', requestId: randomUUID(), extensionId: id, generation: running.generation, message: extensionJsonSchema.parse(params) }, running.abort.signal)
+        await this.#ports.workbench({ kind: 'message', requestId: randomUUID(), extensionId: id, generation: running.generation, message: extensionJsonSchema.parse(params) }, lifetime)
         result = null
       }
       else if (method === 'placements.show' || method === 'placements.hide') {
@@ -2376,7 +2317,7 @@ export class ExtensionService {
         if (!!(placement.kind === 'view' && placement.interaction) !== !!input.interactionId || (input.interactionId && interaction?.running !== running))
           throw new Error('EXTENSION_INTERACTION_ENDED')
         const requestId = randomUUID()
-        result = await this.#ports.workbench({ kind: 'placement', requestId, extensionId: id, generation: running.generation, placementId: placement.id, visible: method === 'placements.show', ...(input.instanceId ? { instanceId: input.instanceId } : {}), ...(input.interactionId ? { interactionId: input.interactionId } : {}) }, interaction ? AbortSignal.any([running.abort.signal, interaction.abort.signal]) : running.abort.signal)
+        result = await this.#ports.workbench({ kind: 'placement', requestId, extensionId: id, generation: running.generation, placementId: placement.id, visible: method === 'placements.show', ...(input.instanceId ? { instanceId: input.instanceId } : {}), ...(input.interactionId ? { interactionId: input.interactionId } : {}) }, interaction ? AbortSignal.any([lifetime, interaction.abort.signal]) : lifetime)
         if (placement.kind !== 'view') {
           if (result !== requestId)
             throw new Error('EXTENSION_PLACEMENT_UNAVAILABLE')
@@ -2396,9 +2337,9 @@ export class ExtensionService {
         if (view.resource === 'selected-file' && !input.resource)
           throw new Error('EXTENSION_RESOURCE_REQUIRED')
         if (input.resource)
-          await this.#resource(running, input.resource.id)
-        this.#assertCurrent(running)
-        result = await this.#ports.workbench({ kind: 'open', requestId: randomUUID(), extensionId: id, generation: running.generation, viewType: view.id, resource: input.resource, state: input.state, stateVersion: view.stateVersion }, running.abort.signal)
+          await this.#selected.resolve(this.#selectedAccess(running), input.resource.id)
+        assertCurrent()
+        result = await this.#ports.workbench({ kind: 'open', requestId: randomUUID(), extensionId: id, generation: running.generation, viewType: view.id, resource: input.resource, state: input.state, stateVersion: view.stateVersion }, lifetime)
         if (!result)
           throw new Error('EXTENSION_VIEW_UNAVAILABLE')
       }
@@ -2409,11 +2350,12 @@ export class ExtensionService {
       else {
         throw new Error('EXTENSION_METHOD_DENIED')
       }
-      this.#assertCurrent(running)
+      assertCurrent()
       return result
     }
     finally {
       running.inFlight--
+      this.#scheduleIdle()
       if (!running.inFlight) {
         this.#retired.delete(running)
         for (const resolve of running.drained) resolve()
@@ -2432,9 +2374,9 @@ export class ExtensionService {
         throw new Error('EXTENSION_RESOURCE_REQUIRED')
       let source: ExtensionFileOpeningSource | null = null
       if (selected && input.source !== 'view') {
-        const response = await this.#selectedResponse(running, selected.id, signal)
+        const response = await this.#selected.response(this.#selectedAccess(running), selected.id, signal)
         await response.body?.cancel()
-        source = await this.#resource(running, selected.id)
+        source = await this.#selected.resolve(this.#selectedAccess(running), selected.id)
       }
       const target = extensionReferenceTargetSchema.parse({ extensionId, viewId: view.input.viewId, viewType: view.input.viewType, source })
       return {
@@ -2451,9 +2393,9 @@ export class ExtensionService {
     let name: string
     let response: Response
     if (selected?.id === resourceId) {
-      const source = await this.#resource(running, resourceId)
-      response = await this.#selectedResponse(running, resourceId, signal)
-      if (source.kind === 'space' && !this.#fileSnapshots.has(resourceId)) {
+      const source = await this.#selected.resolve(this.#selectedAccess(running), resourceId)
+      response = await this.#selected.response(this.#selectedAccess(running), resourceId, signal)
+      if (source.kind === 'space' && !this.#selected.hasSnapshot(resourceId)) {
         await response.body?.cancel()
         return { kind: 'source', source: { spaceId: source.target.spaceId, bindingId: source.target.directoryId, relativePath: source.target.path } }
       }
@@ -2472,77 +2414,8 @@ export class ExtensionService {
     return { kind: 'file', name, mimeType: response.headers.get('content-type') ?? 'application/octet-stream', base64: Buffer.from(bytes).toString('base64') }
   }
 
-  async #resource(running: RunningExtension, id: string): Promise<ExtensionFileOpeningSource> {
-    if (running.package.manifest.permissions.selectedResource !== 'read')
-      throw new Error('EXTENSION_RESOURCE_DENIED')
-    const snapshot = this.#fileSnapshots.get(id)
-    if (snapshot && snapshot.running !== running)
-      throw new Error('EXTENSION_RESOURCE_DENIED')
-    const source = snapshot?.source ?? await this.store.resolveFileOpeningGrant(running.package.manifest.id, id)
-    this.#assertCurrent(running)
-    return source
-  }
-
-  async #sourceResponse(source: ExtensionFileOpeningSource, signal: AbortSignal, request?: Request): Promise<{ name: string, response: Response }> {
-    if (source.kind === 'artifact') {
-      if (!this.#ports.readArtifactResource)
-        throw new Error('EXTENSION_RESOURCE_UNAVAILABLE')
-      return this.#ports.readArtifactResource(source.artifactId, signal, request)
-    }
-    if (source.kind === 'task') {
-      if (!this.#ports.readTaskFileResource)
-        throw new Error('EXTENSION_RESOURCE_UNAVAILABLE')
-      return this.#ports.readTaskFileResource(source.target, signal, request)
-    }
-    const response = this.#ports.readResource
-      ? await this.#ports.readResource(source.target, signal, request)
-      : new Response(await this.#ports.readText(source.target, signal))
-    return { name: source.target.path.split('/').at(-1) ?? source.target.path, response }
-  }
-
-  async #selectedResponse(running: RunningExtension, id: string, lifetime: AbortSignal, request?: Request): Promise<Response> {
-    const signal = AbortSignal.any([running.abort.signal, lifetime])
-    const source = await this.#resource(running, id)
-    const snapshot = this.#fileSnapshots.get(id)
-    const { response } = await this.#sourceResponse(source, signal, snapshot ? undefined : request)
-    try {
-      this.#assertCurrent(running)
-      signal.throwIfAborted()
-    }
-    catch (error) {
-      await response.body?.cancel().catch(() => {})
-      throw error
-    }
-    if (!snapshot)
-      return response
-    await response.body?.cancel()
-    if (this.#fileSnapshots.get(id) !== snapshot)
-      throw new Error('EXTENSION_RESOURCE_DENIED')
-    const bytes = Buffer.from(snapshot.text)
-    const range = fileRange(bytes.length, request?.headers.get('range') ?? null)
-    return new Response(request?.method === 'HEAD' || range.status === 416 ? null : bytes.subarray(range.start, range.end + 1), { status: range.status, headers: { ...range.headers, 'content-type': response.headers.get('content-type') ?? 'text/plain; charset=utf-8', 'content-security-policy': 'default-src \'none\'; sandbox', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'access-control-allow-origin': '*' } })
-  }
-
-  async #selectedText(running: RunningExtension, id: string, signal: AbortSignal): Promise<string> {
-    const source = await this.#resource(running, id)
-    if (source.kind === 'space' && !this.#fileSnapshots.has(id))
-      return this.#ports.readText(source.target, signal)
-    const response = await this.#selectedResponse(running, id, signal)
-    return new TextDecoder().decode(await readResponseBytes(response, 2 * 1024 * 1024))
-  }
-
-  async #selectedBytes(running: RunningExtension, id: string, offset: number, length: number, signal: AbortSignal): Promise<{ base64: string, size: number, eof: boolean }> {
-    const url = 'https://resource.invalid/'
-    const metadata = await this.#selectedResponse(running, id, signal, new Request(url, { method: 'HEAD' }))
-    const size = Number(metadata.headers.get('content-length'))
-    await metadata.body?.cancel()
-    if (!Number.isSafeInteger(size) || size < 0 || !metadata.headers.has('content-length'))
-      throw new Error('EXTENSION_RESOURCE_UNSUPPORTED')
-    if (offset >= size)
-      return { base64: '', size, eof: true }
-    const response = await this.#selectedResponse(running, id, signal, new Request(url, { headers: { range: `bytes=${offset}-${Math.min(offset + length, size) - 1}` } }))
-    const bytes = Buffer.from(await readResponseBytes(response, length))
-    return { base64: bytes.toString('base64'), size, eof: offset + bytes.length >= size }
+  #selectedAccess(running: RunningExtension) {
+    return { owner: running, manifest: running.package.manifest, signal: running.abort.signal, assertCurrent: () => this.#assertCurrent(running) }
   }
 
   async #resourcePath(running: RunningExtension, params: unknown): Promise<string> {
@@ -2575,7 +2448,7 @@ export class ExtensionService {
       return this.store.resources.response(id, source.resourceId, new Request('https://resource.invalid/'), AbortSignal.any([lifetime, running.abort.signal]), allowLocal)
     if (spaceResource !== undefined && source.resourceId !== spaceResource)
       throw new Error('EXTENSION_RESOURCE_DENIED')
-    return this.#selectedResponse(running, source.resourceId, lifetime)
+    return this.#selected.response(this.#selectedAccess(running), source.resourceId, lifetime)
   }
 
   #networkUrl(running: RunningExtension, raw: string): URL {
@@ -2645,17 +2518,18 @@ export class ExtensionService {
     if (!running)
       return
     this.#pendingStops.set(id, running)
+    if (running.idleTimer)
+      clearTimeout(running.idleTimer)
+    running.idleTimer = undefined
+    running.runUsers.clear()
     this.#running.delete(id)
     running.resourceEndpoint?.dispose()
     this.#ports.themes?.releaseOwner(`${id}:${running.generation}`)
     if (running.inFlight)
       this.#retired.add(running)
     running.abort.abort()
-    await this.#cancelUploads(running)
-    for (const [resourceId, snapshot] of this.#fileSnapshots) {
-      if (snapshot.running === running)
-        this.#fileSnapshots.delete(resourceId)
-    }
+    await this.#uploads.dispose(running)
+    this.#selected.releaseOwner(running)
     this.#publish({ kind: 'host', extensionId: id, generation: running.generation, status: 'stopping' })
     for (const [interactionId, interaction] of this.#interactions) {
       if (interaction.running === running)
@@ -2672,6 +2546,7 @@ export class ExtensionService {
       await Promise.allSettled([...running.inferencePreparations])
       await running.host.dispose()
       this.#pendingStops.delete(id)
+      this.#scheduleIdle()
       this.#publish({ kind: 'host', extensionId: id, generation: running.generation, status: 'stopped' })
     }
     catch (error) {
@@ -2741,33 +2616,24 @@ export class ExtensionService {
     return task
   }
 
-  async #cancelUploads(running: RunningExtension, owner?: string): Promise<void> {
-    const matches = (entry: { running: RunningExtension, owner: string }) => entry.running === running && (owner === undefined || entry.owner === owner)
-    await Promise.all([
-      ...[...this.#uploadCreations].filter(matches).map(entry => entry.promise.then(upload => upload.dispose(), () => {})),
-      ...[...this.#uploads.values()].filter(matches).map(entry => entry.upload.dispose()),
-    ])
-  }
-
   #closeView(view: RunningView, retainResource?: string): void {
     if (this.#views.get(view.input.viewId) !== view)
       return
     this.#views.delete(view.input.viewId)
     const resourceId = view.input.resource?.id
     if (resourceId && resourceId !== retainResource && ![...this.#views.values()].some(current => current.input.resource?.id === resourceId))
-      this.#fileSnapshots.delete(resourceId)
+      this.#selected.release(resourceId)
     this.#ports.themes?.releaseOwner(`${view.running.package.manifest.id}:${view.running.generation}:${view.input.viewId}`)
     this.#cancelUnconfirmedTaskCleanup(view.running)
     view.abort.abort()
-    const cleanups: Promise<void>[] = [this.#cancelUploads(view.running, view.session.id)]
+    const cleanups: Promise<void>[] = [this.#uploads.dispose(view.running, view.session.id)]
     if (this.#documents)
       cleanups.push(this.#documents.close(view.input.extensionId, view.input.viewId, view.session.token))
     try {
       view.dispose()
     }
     catch (error) { cleanups.push(Promise.reject(error)) }
-    for (const writer of view.writers.values()) cleanups.push(writer.dispose())
-    view.writers.clear()
+    cleanups.push(view.exports.dispose())
     this.#publish({ kind: 'view', extensionId: view.input.extensionId, generation: view.running.generation, viewId: view.input.viewId, status: 'closed' })
     const cleanup = Promise.allSettled(cleanups).then((results) => {
       const failure = results.find(result => result.status === 'rejected')
@@ -2776,7 +2642,10 @@ export class ExtensionService {
         this.#viewCleanupError ??= new Error(errorCode)
         this.#publish({ kind: 'view', extensionId: view.input.extensionId, generation: view.running.generation, viewId: view.input.viewId, status: 'cleanup-failed', errorCode })
       }
-    }).finally(() => this.#viewCleanups.delete(cleanup))
+    }).finally(() => {
+      this.#viewCleanups.delete(cleanup)
+      this.#scheduleIdle()
+    })
     this.#viewCleanups.add(cleanup)
   }
 

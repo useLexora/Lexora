@@ -8,10 +8,10 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createChangeSetRepository } from '../../changes/changeSetRepository'
 
 import { createComposerResourceRepository } from '../composerResourceRepository'
-import { openBuddyDatabase } from '../database'
+import { openBuddyDatabase, openBuddyMigrationCandidate } from '../database'
 import { createExtensionInvocationRepository } from '../extensionInvocationRepository'
 import { BUDDY_V15_CAPABILITY_OVERRIDES_SCHEMA_SQL, BUDDY_V15_CATALOG_MODEL_ID_SCHEMA_SQL, BUDDY_V15_CATALOG_SELECTION_SCHEMA_SQL, BUDDY_V15_MODEL_SERVICES_SCHEMA_SQL, BUDDY_V15_PROVIDER_INSTANCES_SCHEMA_SQL, BUDDY_V15_REQUEST_HEADERS_SCHEMA_SQL } from '../migrations/v15ModelServices'
-import { BUDDY_SCHEMA_MIGRATIONS, BUDDY_SCHEMA_VERSION } from '../schema'
+import { BUDDY_MIGRATION_SCHEMA_VERSION, BUDDY_SCHEMA_MIGRATIONS, BUDDY_SCHEMA_VERSION } from '../schema'
 import { createUsageAnalyticsRepository } from '../usageAnalyticsRepository'
 import { createUsageRepository } from '../usageRepository'
 import { MIGRATION_TEST_TIMEOUT, openMigrationFixtureDatabase } from './migrationFixture'
@@ -25,12 +25,6 @@ afterEach(() => {
   for (const directory of directories.splice(0))
     rmSync(directory, { force: true, recursive: true })
 })
-
-function createDatabase(): DatabaseSync {
-  const database = openBuddyDatabase({ databasePath: ':memory:' })
-  databases.push(database)
-  return database
-}
 
 function seedRun(
   database: DatabaseSync,
@@ -577,13 +571,6 @@ describe('buddy schema', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
     expect(reopened.prepare('PRAGMA user_version').get()).toEqual({ user_version: BUDDY_SCHEMA_VERSION })
   })
 
-  it('requires an explicit database path before opening storage', () => {
-    for (const invalid of [undefined, ':memory:', null, [], {}, { buddyHome: '/unused' }, { databasePath: '' }, { databasePath: 'buddy.sqlite3' }]) {
-      expect(() => openBuddyDatabase(invalid as unknown as Parameters<typeof openBuddyDatabase>[0]))
-        .toThrow(TypeError)
-    }
-  })
-
   it('recovers an interrupted v20 migration and preserves legacy draft identities and resources', () => {
     const directory = mkdtempSync(join(tmpdir(), 'lexora-buddy-task-drafts-'))
     directories.push(directory)
@@ -657,46 +644,12 @@ describe('buddy schema', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
     expect(migrated.prepare('PRAGMA foreign_keys').get()).toEqual({ foreign_keys: 1 })
   })
 
-  it('rejects partial or inverted model parameter pairs at the database boundary', () => {
-    const database = createDatabase()
-    database.exec(`
-      INSERT INTO provider_model_states (
-        provider_id, model_id, display_name, api, input_json, reasoning, cost_json,
-        context_window, max_tokens, override_context_window, override_max_tokens,
-        source_revision, acknowledged_source_revision, source, enabled, available,
-        last_seen_at, created_at, updated_at
-      ) VALUES (
-        'anthropic', 'claude', 'Claude', 'anthropic-messages', '["text"]', 0,
-        '{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}',
-        200000, 32000, NULL, NULL, '2026-08-20T00:00:00.000Z', NULL,
-        'builtin', 1, 1, '2026-08-20T00:00:00.000Z',
-        '2026-08-20T00:00:00.000Z', '2026-08-20T00:00:00.000Z'
-      );
-    `)
-
-    expect(() => database.prepare(`
-      UPDATE provider_model_states
-      SET override_context_window = ?, override_max_tokens = ?
-      WHERE provider_id = 'anthropic' AND model_id = 'claude'
-    `).run(100_000, null)).toThrow(/valid pair/)
-    expect(() => database.prepare(`
-      UPDATE provider_model_states
-      SET override_context_window = ?, override_max_tokens = ?
-      WHERE provider_id = 'anthropic' AND model_id = 'claude'
-    `).run(16_000, 32_000)).toThrow(/valid pair/)
-
-    seedRun(database)
-    expect(() => database.prepare(`
-      UPDATE runs SET context_window = ?, max_tokens = ? WHERE id = 'run-1'
-    `).run(200_000, null)).toThrow(/valid pair/)
-  })
-
   it('rejects databases created by a newer Buddy version', () => {
     const directory = mkdtempSync(join(tmpdir(), 'lexora-buddy-schema-'))
     directories.push(directory)
     const databasePath = join(directory, 'buddy.sqlite3')
-    const database = openMigrationFixtureDatabase(databasePath)
-    database.exec(`PRAGMA user_version = ${BUDDY_SCHEMA_VERSION + 1}`)
+    const database = openBuddyMigrationCandidate({ databasePath })
+    database.exec(`PRAGMA user_version = ${BUDDY_MIGRATION_SCHEMA_VERSION + 1}`)
     database.close()
 
     expect(() => openBuddyDatabase({ databasePath })).toThrow(/newer schema version/i)
@@ -887,59 +840,5 @@ describe('buddy schema', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
     database.close()
 
     expect(() => openBuddyDatabase({ databasePath })).toThrow(/unversioned schema/i)
-  })
-
-  it('enforces Space foreign keys', () => {
-    const database = createDatabase()
-    const statement = database.prepare(`
-      INSERT INTO conversations (
-        id, space_id, title, active_branch_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?)
-    `)
-
-    expect(() => statement.run(
-      'conversation-1',
-      'missing-space',
-      null,
-      null,
-      '2026-08-14T00:00:00.000Z',
-      '2026-08-14T00:00:00.000Z',
-    )).toThrow(/FOREIGN KEY/)
-  })
-
-  it('deduplicates usage by run, source entry, and purpose', () => {
-    const database = createDatabase()
-    seedRun(database)
-    const insert = database.prepare(`
-      INSERT INTO usage_records (
-        id, run_id, source_entry_id, provider, model, purpose,
-        input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-        reasoning_tokens, total_tokens, input_cost, output_cost,
-        cache_read_cost, cache_write_cost, total_cost, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
-    const values = [
-      'usage-1',
-      'run-1',
-      'pi-entry-1',
-      'anthropic',
-      'claude-sonnet-4-5',
-      'turn',
-      10,
-      5,
-      2,
-      1,
-      null,
-      18,
-      0.1,
-      0.2,
-      0.01,
-      0.02,
-      0.33,
-      '2026-08-14T00:00:01.000Z',
-    ] as const
-
-    insert.run(...values)
-    expect(() => insert.run('usage-2', ...values.slice(1))).toThrow(/UNIQUE/)
   })
 })

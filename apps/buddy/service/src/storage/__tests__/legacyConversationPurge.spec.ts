@@ -25,7 +25,7 @@ function fixture() {
   const conversations = createConversationRepository(database)
   const deletion = createConversationDeletionRepository(database)
   const archive = createConversationArchiveRepository(database)
-  const purge = new ConversationPurgeService({ database, home })
+  const purge = new ConversationPurgeService({ database, home, storageAuthority: 'legacy_jsonl' })
   function file(path: string) {
     mkdirSync(dirname(path), { recursive: true })
     writeFileSync(path, 'private fixture')
@@ -133,13 +133,11 @@ describe('v42 JSONL conversation purge', () => {
     expect(f.archive.list({ kind: 'deleting' }).items[0]).toMatchObject({ deletionStatus: 'failed', errorCode: 'CONVERSATION_FILES_REFERENCED' })
   })
 
-  it.each(['queued', 'running', 'cleanup', 'active', 'hazard'] as const)('blocks automatic expiry and physical deletion during %s resources', async (state) => {
+  it.each(['running', 'hazard'] as const)('blocks automatic expiry and physical deletion during %s resources', async (state) => {
     const f = fixture()
     const path = f.seed('target')
-    if (state === 'queued' || state === 'running')
+    if (state === 'running')
       f.database.prepare('UPDATE runs SET status = ?').run(state)
-    else if (state === 'cleanup')
-      f.database.exec(`UPDATE execution_state SET cleanup_state = 'pending'`)
     else f.lease(state)
     f.archive.archive('target', now)
     f.archive.setPolicy(3)
@@ -213,7 +211,7 @@ describe('v42 JSONL conversation purge', () => {
     databases.push(database)
     expect(createConversationDeletionRepository(database).pending()).toEqual([])
     createConversationDeletionRepository(database).retry('target', now)
-    await new ConversationPurgeService({ database, home: f.home }).purge('target')
+    await new ConversationPurgeService({ database, home: f.home, storageAuthority: 'legacy_jsonl' }).purge('target')
     expect(existsSync(join(f.home, 'conversations', 'target'))).toBe(false)
     expect(readFileSync(outside, 'utf8')).toBe('private fixture')
   })

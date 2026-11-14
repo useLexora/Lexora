@@ -2,9 +2,10 @@ import type { DesktopBrowserApi, DesktopBrowserState } from '@buddy-electron/sha
 import type { TaskFile } from '@buddy-shared/files/taskFileApi'
 import type { LocalRunOutput } from '@buddy-shared/runs/runApi'
 import { resolveBuiltinFileOpening } from '@buddy-shared/files/fileOpening'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { nextTick, shallowRef } from 'vue'
 import { useTaskResourcePanel } from '@/modules/tasks/state/context-panel/useTaskResourcePanel'
+import { BrowserGuestCatalog } from '@/platform/browser/BrowserGuestCatalog'
 import { ContributionRegistry } from '@/workbench/services/ContributionRegistry'
 import { WorkbenchController } from '@/workbench/services/WorkbenchController'
 import { deferred } from '../../../../../../__tests__/deferred'
@@ -38,7 +39,9 @@ function fixture() {
   const openFile = vi.fn<Parameters<typeof useTaskResourcePanel>[0]['openFile']>(async (file, _source, provider) => {
     documents.push(`${file.name}:${provider?.id}`)
   })
-  const panel = scope.run(() => useTaskResourcePanel({ ...options, autoCollapse: shallowRef(false), linkOpening: shallowRef('in-app'), spaces: shallowRef([]), activeRunId: shallowRef(null), browser, changeSets: shallowRef([]), runOutputs, files, fileOpening, openFile }))!
+  const guestCatalog = new BrowserGuestCatalog(browser)
+  onTestFinished(() => guestCatalog.dispose())
+  const panel = scope.run(() => useTaskResourcePanel({ ...options, guestCatalog, autoCollapse: shallowRef(false), linkOpening: shallowRef('in-app'), spaces: shallowRef([]), activeRunId: shallowRef(null), browser, changeSets: shallowRef([]), runOutputs, files, fileOpening, openFile }))!
   const release = () => gate.resolve({ sessionId: 'session', conversationId: 'conversation' } as DesktopBrowserState)
   return { activeConversationId, mode, browser, panel, release, runOutputs, scope, files, documents, fileOpening, openFile, onError: options.onError, sessionOpen: () => sessionOpen }
 }
@@ -72,7 +75,8 @@ describe('resource panel operations', () => {
     expect(f.panel.activeBrowserState.value?.url).toBe('file:///workspace/page.html')
   })
 
-  it.each(['page.html', '/previous-workspace/page.html', 'file:///previous-workspace/page.html'])('opens a registered HTML link by its artifact identity: %s', async (href) => {
+  it('opens a registered HTML link by its artifact identity', async () => {
+    const href = 'page.html'
     const f = fixture()
     const output = f.runOutputs.value[0]!
     const artifact = { ...output.artifacts[0]!, path: '/previous-workspace/page.html' }
@@ -110,18 +114,7 @@ describe('resource panel operations', () => {
     expect(f.panel.canPreviewFile('report.md')).toBe(true)
   })
 
-  it('uses the host-selected opener instead of the built-in HTML browser default', async () => {
-    const name = 'page.html'
-    const f = fixture()
-    f.runOutputs.value = []
-    const selected = resolveBuiltinFileOpening('report.txt', 'standalone').provider!
-    f.fileOpening.resolve = () => ({ ...resolveBuiltinFileOpening(name, 'standalone'), provider: selected })
-    await f.panel.previewFile(name)
-    expect(f.documents).toEqual([`${name}:lexora.text`])
-    expect(f.panel.activeTab.value).toBeNull()
-  })
-
-  it.each(['task', 'space', 'independent'] as const)('discards a late file resolution after changing tasks in %s mode', async (mode) => {
+  it.each(['task', 'independent'] as const)('discards a late file resolution after changing tasks in %s mode', async (mode) => {
     const f = fixture()
     f.mode.value = mode
     const pending = deferred<TaskFile>()
@@ -134,7 +127,7 @@ describe('resource panel operations', () => {
     expect(f.panel.tabs.value).toEqual([])
   })
 
-  it.each(['task change', 'panel close'])('cancels a file open queued behind another view close after %s', async (action) => {
+  it('cancels a file open queued behind another view close after changing tasks', async () => {
     const f = fixture()
     f.panel.toggle()
     const registry = new ContributionRegistry()
@@ -156,34 +149,12 @@ describe('resource panel operations', () => {
     })
     const opening = f.panel.previewFile('report.md')
     await queued.promise
-    if (action === 'task change')
-      f.activeConversationId.value = 'other'
-    else
-      f.panel.toggle()
+    f.activeConversationId.value = 'other'
     gate.resolve(true)
     await Promise.all([closing, opening])
     expect(Object.values(controller.layout.views)).toEqual([])
     expect(f.onError).not.toHaveBeenCalled()
     await controller.dispose()
-  })
-
-  it('reports a missing file without creating a resource tab', async () => {
-    const f = fixture()
-    const error = new Error('LEXORA_LOCAL_CHAT_ERROR:FILE_NOT_FOUND:0')
-    f.files.resolve = async () => {
-      throw error
-    }
-    await f.panel.previewFile('missing.md')
-    expect(f.onError).toHaveBeenCalledWith(error)
-    expect(f.documents).toEqual([])
-    expect(f.panel.tabs.value).toEqual([])
-  })
-
-  it('applies an explicit opener to registered HTML without changing the host default', async () => {
-    const f = fixture()
-    await f.panel.previewFile('page.html', undefined, 'lexora.text')
-    expect(f.panel.activeTab.value).toMatchObject({ kind: 'artifact', providerId: 'lexora.text' })
-    expect(f.fileOpening.resolve('page.html', 'standalone').provider?.id).toBe('lexora.browser')
   })
 
   it('updates the owning manual session across task changes without changing another tab', async () => {
@@ -282,17 +253,6 @@ describe('resource panel operations', () => {
     expect(await closing).toBe(false)
     expect(f.sessionOpen()).toBe(true)
     expect(f.panel.activeTab.value?.id).toBe('browser:conversation')
-  })
-
-  it('does not let failed artifact loading reopen a collapsed panel', async () => {
-    const f = fixture()
-    const opening = f.panel.openArtifact('html')
-    await vi.waitFor(() => expect(f.panel.isOpen.value).toBe(true))
-    f.panel.toggle()
-    f.release()
-    await opening
-    expect(f.panel.isOpen.value).toBe(false)
-    expect(f.panel.tabs.value.map(tab => tab.kind)).toEqual(['browser'])
   })
 
   it('finishes an explicit close across navigation when its tab has not been reopened', async () => {

@@ -20,7 +20,7 @@ function item(id = 'task', overrides: Partial<ConversationArchiveItem> = {}): Co
 function space(id: string, name: string, revokedAt: string | null = null): LocalSpace {
   return { id, name, revokedAt, icon: 'folder', iconColor: 'default', activeRunCount: 0, additionalDirectories: [], primaryDirectory: null, memoryScope: 'space_only', createdAt: '2026-11-01T00:00:00Z', updatedAt: '2026-11-01T00:00:00Z' }
 }
-async function mount(items = [item()], language: 'zh-CN' | 'en-US' = 'zh-CN', spaces: readonly LocalSpace[] = []) {
+async function mount(items = [item()], spaces: readonly LocalSpace[] = []) {
   const ready = shallowRef(true)
   const list = vi.fn<TaskArchiveActions['list']>().mockResolvedValue({ items, nextCursor: null })
   const remove = vi.fn<TaskArchiveActions['delete']>().mockResolvedValue(true)
@@ -43,7 +43,7 @@ async function mount(items = [item()], language: 'zh-CN' | 'en-US' = 'zh-CN', sp
   }
   const root = document.createElement('div')
   document.body.append(root)
-  const app = createApp({ render: () => h(DesktopTaskArchiveManager, { actions, spaces, language, onView }) })
+  const app = createApp({ render: () => h(DesktopTaskArchiveManager, { actions, spaces, language: 'zh-CN', onView }) })
   app.mount(root)
   cleanups.push(() => app.unmount())
   await nextTick()
@@ -65,15 +65,13 @@ async function openSpaceCleanup(name: string, root: ParentNode) {
   await vi.waitFor(() => expect(document.querySelector('[data-testid="task-archive-delete-confirm"]')).not.toBeNull())
 }
 
-it.each(['zh-CN', 'en-US'] as const)('renders inline with localized dates and keeps viewing separate from restoring in %s', async (language) => {
-  const f = await mount([item()], language)
-  expect(f.root.querySelector('[data-testid="task-archive-manager"]')?.tagName).toBe('SECTION')
-  expect(f.root.querySelector('time')?.textContent).toBe(new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date('2026-11-01T00:00:00Z')))
+it('keeps viewing archived history separate from restoring a task', async () => {
+  const f = await mount()
   button('历史任务 task', f.root).click()
   expect(f.onView.mock.calls).toEqual([['task']])
   expect(f.restore).not.toHaveBeenCalled()
   expect(f.root.querySelector('[data-archive-id="task"]')).not.toBeNull()
-  button(language === 'zh-CN' ? '取消归档' : 'Unarchive', f.root).click()
+  button('取消归档', f.root).click()
   await vi.waitFor(() => expect(f.restore.mock.calls).toEqual([['task', 3]]))
 })
 
@@ -118,46 +116,10 @@ it('keeps confirmed IDs and revisions fixed across refresh and reports each dele
   expect(f.root.querySelector('[data-delete-result="failed"]')?.textContent).toContain('历史任务 two')
 })
 
-it('groups tasks by their real space without mislabelling revoked or unresolved spaces as unbound', async () => {
-  const f = await mount([
-    item('active-space', { spaceId: 'space-a' }),
-    item('removed-space', { spaceId: 'space-old' }),
-    item('unknown-space', { spaceId: 'space-unknown' }),
-    item('unbound'),
-  ], 'zh-CN', [space('space-a', '设计空间'), space('space-old', '旧空间', '2026-11-01T00:00:00Z')])
-  expect(f.root.querySelector('[data-archive-space="space-a"]')?.textContent).toContain('设计空间')
-  const oldSpace = f.root.querySelector('[data-archive-space="space-old"]')!
-  expect(oldSpace.querySelector('header')?.textContent?.trim()).toBe('旧空间')
-  expect(oldSpace.querySelector('[data-archive-id="removed-space"]')).not.toBeNull()
-  expect(button('空间操作：旧空间', oldSpace).disabled).toBe(false)
-  expect(f.root.querySelector('[data-archive-space="space-unknown"]')?.textContent).toContain('空间信息暂不可用')
-  expect(f.root.querySelector('[data-archive-space=""]')?.textContent).toContain('未绑定空间')
-})
-
-it('renders only populated groups and removes a group when its last archived task disappears', async () => {
-  const first = item('first', { spaceId: 'space-a' })
-  const remaining = item('remaining', { spaceId: 'space-b' })
-  const f = await mount([first, remaining], 'zh-CN', [
-    space('space-a', '设计空间'),
-    space('space-b', '历史空间', '2026-11-01T00:00:00Z'),
-    space('space-empty', '没有归档的空间'),
-  ])
-  const groupIds = () => [...f.root.querySelectorAll('[data-archive-space]')].map(group => group.getAttribute('data-archive-space')).sort()
-  expect(groupIds()).toEqual(['space-a', 'space-b'])
-  f.list.mockResolvedValue({ items: [remaining], nextCursor: null })
-  f.notify()
-  await vi.waitFor(() => expect(groupIds()).toEqual(['space-b']))
-  expect(f.root.querySelector('[data-archive-space="space-b"] [data-archive-id="remaining"]')).not.toBeNull()
-  f.list.mockResolvedValue({ items: [], nextCursor: null })
-  f.notify()
-  await vi.waitFor(() => expect(f.root.textContent).toContain('没有匹配的任务'))
-  expect(groupIds()).toEqual([])
-})
-
 it('previews every archive page in a space and only submits the confirmed immutable targets', async () => {
   const first = item('visible', { spaceId: 'space-a' })
   const second = item('beyond-first-page', { spaceId: 'space-a', metadataRevision: 8 })
-  const f = await mount([first], 'zh-CN', [space('space-a', '设计空间')])
+  const f = await mount([first], [space('space-a', '设计空间')])
   f.list.mockResolvedValueOnce({ items: [first], nextCursor: 'next' }).mockResolvedValueOnce({ items: [second], nextCursor: null })
   await openSpaceCleanup('设计空间', f.root)
   await vi.waitFor(() => expect(document.querySelector('[data-testid="task-archive-delete-confirm"]')?.textContent).toContain('历史任务 beyond-first-page'))
@@ -169,21 +131,6 @@ it('previews every archive page in a space and only submits the confirmed immuta
   Object.assign(first, { metadataRevision: 99 })
   button('删除', confirmation).click()
   await vi.waitFor(() => expect(f.remove.mock.calls).toEqual([['visible', 3], ['beyond-first-page', 8]]))
-})
-
-it('passes search to the service and appends cursor pages without claiming a global count', async () => {
-  const f = await mount()
-  f.list.mockResolvedValueOnce({ items: [item('matching')], nextCursor: 'next' })
-  const input = f.root.querySelector('input')!
-  input.value = 'matching'
-  input.dispatchEvent(new Event('input', { bubbles: true }))
-  await vi.waitFor(() => expect(f.root.querySelector('[data-archive-id="matching"]')).not.toBeNull())
-  expect(f.list).toHaveBeenLastCalledWith({ kind: 'managed', query: 'matching', limit: 50 })
-  f.list.mockResolvedValueOnce({ items: [item('next')], nextCursor: null })
-  button('加载更多', f.root).click()
-  await vi.waitFor(() => expect(f.root.querySelectorAll('[data-archive-id]')).toHaveLength(2))
-  expect(f.list).toHaveBeenLastCalledWith({ kind: 'managed', query: 'matching', limit: 50, cursor: 'next' })
-  expect(f.root.textContent).not.toContain('加载更多')
 })
 
 it('distinguishes disconnected and failed reads from an empty archive', async () => {

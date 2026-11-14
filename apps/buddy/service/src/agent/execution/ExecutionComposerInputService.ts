@@ -53,7 +53,7 @@ export class ExecutionComposerInputService {
             || (actors.length === 0 && conversation?.buddyId === execution.run.buddyId
               && (questionId || (input.delivery?.mode === 'current' && execution.run.executionKind === 'actor_child'))))
             || execution.run.rootRunId !== input.rootRunId || execution.run.conversationId !== input.conversationId || execution.run.branchId !== input.branchId
-            || this.#options.conversations.findById(input.conversationId)?.activeBranchId !== input.branchId) {
+            || !conversation || conversation.deletedAt !== null) {
           throw new BuddyServiceError('VALIDATION_FAILED')
         }
         if (!isExecutionTextInput(draft.content))

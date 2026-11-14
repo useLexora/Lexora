@@ -26,6 +26,7 @@ import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import { useDesktopUi } from '@/shared/ui/desktopUiContext'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopTaskArchiveNotice from '../task-index/DesktopTaskArchiveNotice.vue'
+import DesktopConversationBranches from './DesktopConversationBranches.vue'
 import DesktopTaskPartners from './DesktopTaskPartners.vue'
 
 const props = withDefaults(defineProps<{ readingPositions?: ChatReadingPositions, active?: boolean }>(), { active: true })
@@ -114,6 +115,11 @@ useProvideChatContent({
         <slot name="title" />
       </template>
       <template #leadingActions>
+        <DesktopConversationBranches
+          v-if="activeTaskId" :branches="workspace.transcript.branches.value" :branch-id="chatSession.activeBranchId.value"
+          :language="language" :disabled="workspace.execution.isSending.value || workspace.execution.isMutatingBranch.value || workspace.execution.editingMessageId.value !== null"
+          :refresh="workspace.transcript.refreshBranches" @select="workspace.transcript.activateBranch"
+        />
         <DesktopTaskPartners :workspace="workspace" />
         <NPopover
           v-model:show="statusPanelOpen"

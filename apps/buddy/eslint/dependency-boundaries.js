@@ -14,6 +14,7 @@ const foundationLayers = new Set(['shared', 'platform', 'i18n', 'theme'])
 const modelForbiddenLayers = new Set(['state', 'widgets', 'pages', 'layouts', 'components', 'editor'])
 const stateForbiddenLayers = new Set(['widgets', 'pages', 'layouts', 'components', 'editor'])
 const publicEntry = /^(?:index|contracts|ui|routes)(?:\.[cm]?[jt]s)?$/
+const readerModules = new Set(['tasks', 'buddies'])
 
 function partsWithin(root, filename) {
   const relative = path.relative(root, filename)
@@ -55,11 +56,12 @@ export default {
     messages: {
       moduleToApp: '业务模块不能依赖 app；通过模块 Context、props 或 action 接收应用能力。',
       foundationToBusiness: '{{layer}} 不能反向依赖 app 或 modules；将业务逻辑归回所属模块。',
-      privateModule: '外部只能通过 {{module}} 的 index、contracts、ui 或 routes 公共入口使用模块。',
+      privateModule: '外部只能通过 {{module}} 的公共入口使用模块；reader 入口限独立阅读器。',
       modelToPresentation: 'model 不能依赖 {{layer}}；将纯类型和计算归入 model，将交互或状态逻辑移出 model。',
       modelRuntime: 'model 不能运行时依赖 {{dependency}}；Vue 和编辑器类型使用 import type。',
       stateToPresentation: 'state 不能依赖展示层 {{dependency}}；业务状态与公共类型归 state/model，DOM 和编辑器交互归 widget。',
       sharedHost: 'apps/buddy/shared 是无宿主依赖的领域契约，不能依赖 {{dependency}}。',
+      serviceToHost: 'apps/buddy/service 是独立 Node 运行时，不能依赖 {{dependency}}。',
       platformToHost: 'apps/buddy/platform 是进程共用的底层实现，不能反向依赖 {{dependency}}。',
       workbenchToBusiness: 'workbench 通过注册表接收业务贡献，不能依赖 app 或 modules。',
       workbenchCoreHost: 'workbench common/services 不依赖 UI 或宿主，通过接口注入能力。',
@@ -101,6 +103,13 @@ export default {
         || specifier.startsWith('electron/')
       )) {
         report('platformToHost', { dependency: specifier })
+        return
+      }
+      if (source[0] === 'service' && (
+        ['src', 'electron'].includes(target?.[0])
+        || /^(?:electron|electron-vite|vue|vue-router|naive-ui)(?:\/|$)/.test(specifier)
+      )) {
+        report('serviceToHost', { dependency: specifier })
         return
       }
       if (!renderer)
@@ -149,7 +158,8 @@ export default {
       }
       if (targetModule && module !== targetModule) {
         const entry = targetRenderer.slice(2)
-        if (entry.length > 1 || (entry.length === 1 && !publicEntry.test(entry[0]))) {
+        const readerEntry = renderer[0] === 'mobile-reader' && readerModules.has(targetModule) && /^reader(?:\.[cm]?[jt]s)?$/.test(entry[0])
+        if (entry.length > 1 || (entry.length === 1 && !publicEntry.test(entry[0]) && !readerEntry)) {
           report('privateModule', { module: targetModule })
           return
         }

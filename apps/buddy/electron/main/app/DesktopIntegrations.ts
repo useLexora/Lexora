@@ -7,7 +7,7 @@ import type { DesktopRuntimeHost } from './DesktopRuntimeHost'
 import type { DesktopWindowHost } from './DesktopWindowHost'
 import type { DesktopEnvironment } from './typing'
 import { homedir } from 'node:os'
-import { basename } from 'node:path'
+import { basename, join } from 'node:path'
 import process from 'node:process'
 import { app, nativeTheme, Notification, shell } from 'electron'
 import { z } from 'zod'
@@ -50,6 +50,8 @@ import { NotificationSoundLibrary } from '../notifications/NotificationSoundLibr
 import { NotificationSoundService } from '../notifications/NotificationSoundService'
 import { registerDesktopNotificationIpc } from '../notifications/registerDesktopNotificationIpc'
 import { registerNotificationSoundIpc } from '../notifications/registerNotificationSoundIpc'
+import { ProductDesktopGateway } from '../productProtocol/ProductDesktopGateway'
+import { registerDraftRecoveryIpc } from '../productProtocol/registerDraftRecoveryIpc'
 import { createProviderSpeechBackend } from '../speech/createProviderSpeechBackend'
 import { registerSpeechIpc } from '../speech/registerSpeechIpc'
 import { registerStorageIpc } from '../storage/registerStorageIpc'
@@ -81,6 +83,7 @@ export class DesktopIntegrations {
   readonly #requestInstall: (prepare: () => Promise<(() => void) | void>) => Promise<boolean>
   readonly #subscriptions: Array<() => void | Promise<void>> = []
   #tray: DesktopTrayController | null = null
+  #detachDesktop: (() => Promise<void>) | undefined
 
   constructor(environment: DesktopEnvironment, runtime: DesktopRuntimeHost, windows: DesktopWindowHost, browser: BrowserIntegration, requestQuit: () => void, requestRestart: () => void, requestInstall: (prepare: () => Promise<(() => void) | void>) => Promise<boolean>) {
     this.#environment = environment
@@ -107,8 +110,31 @@ export class DesktopIntegrations {
     await this.#browser.host?.updateActivity()
   }
 
+  attachDesktop(): void {
+    if (this.#tray)
+      return
+    const { paths, trayIconPath } = this.#environment
+    const runtime = this.#runtime
+    const windows = this.#windows
+    this.#tray = createDesktopTray({
+      appName: paths.appName,
+      iconPath: trayIconPath,
+      profile: paths.profile,
+      language: runtime.language,
+      onOpenDesktop: () => windows.show(),
+      onQuit: this.#requestQuit,
+      onRestart: this.#requestRestart,
+    })
+  }
+
+  async detachDesktop(): Promise<void> {
+    this.destroyTray()
+    await this.#detachDesktop?.()
+    await this.#runtime.setDesktopAvailable(false)
+  }
+
   async start(): Promise<void> {
-    const { paths, trayIconPath, diagnostics } = this.#environment
+    const { paths, diagnostics } = this.#environment
     const runtime = this.#runtime
     const windows = this.#windows
     const service = runtime.service
@@ -252,6 +278,7 @@ export class DesktopIntegrations {
     await extensions.themesReady.catch(() => {})
     this.#subscriptions.push(registerThemeIpc(themes, () => windows.window, (color, dark, system) => windows.setThemeAppearance(color, dark, system)))
     this.#subscriptions.push(service.onStateChange(() => extensions.conditions.invalidate({ inputs: ['runtime.models', 'runtime.task'] })))
+    this.#detachDesktop = extensions.detachDesktop
     runtime.inspectExtension = extensions.inspect
     runtime.extensionAgent = extensions.agent
     runtime.extensionStorage = extensions
@@ -283,15 +310,8 @@ export class DesktopIntegrations {
     this.#subscriptions.push(registerStartupIpc(this.#environment.startup, () => windows.window))
     this.#subscriptions.push(registerApplicationLogIpc(new ApplicationLogReader(paths.logs, diagnostics.launchId, homedir()), () => windows.window, event => diagnostics.record(event), () => diagnostics.flushWithin(1000)))
     this.#subscriptions.push(registerPerformanceIpc(runtime, () => windows.window, this.#environment.events.publish))
-    this.#tray = createDesktopTray({
-      appName: paths.appName,
-      iconPath: trayIconPath,
-      profile: paths.profile,
-      language: runtime.language,
-      onOpenDesktop: () => windows.show(),
-      onQuit: this.#requestQuit,
-      onRestart: this.#requestRestart,
-    })
+    if (!this.#environment.platformHost)
+      this.attachDesktop()
     const player = new NotificationAudioPlayer()
     const soundLibrary = new NotificationSoundLibrary({ home: paths.buddyHome, configStore: runtime.configStore, applyConfig: config => this.applyConfig(config) })
     const sounds = new NotificationSoundService({ player, library: soundLibrary, getPreferences: () => runtime.config!.desktop.notificationSound })
@@ -388,12 +408,23 @@ export class DesktopIntegrations {
     })
     this.#subscriptions.push(() => configNotifications.dispose())
     this.#subscriptions.push(registerBrowserDesktopIpc({
+      presentation: this.#browser,
       data: this.#browser.data,
       screenshots: this.#browser.screenshots,
       getHost: () => this.#browser.host,
       getWindow: () => windows.window,
       resolveArtifactEntry: async input => browserArtifactEntrySchema.parse(await service.request('artifacts.resolveBrowserEntry', input)),
       resolveFileEntry: async input => taskFilesRpc.resolveBrowser.response.parse(await service.request(taskFilesRpc.resolveBrowser.method, input)),
+    }))
+    const productGateway = process.env.LEXORA_BUDDY_STORAGE_AUTHORITY === 'sqlite'
+      ? new ProductDesktopGateway(service, join(paths.lexoraHome, 'device/product-outbox'), buddyVersion.version)
+      : null
+    if (productGateway)
+      this.#subscriptions.push(() => productGateway.dispose())
+    this.#subscriptions.push(registerDraftRecoveryIpc({
+      directory: join(paths.lexoraHome, 'device/renderer-drafts'),
+      getWindow: () => windows.window,
+      identity: async () => productGateway ? productGateway.getIdentity() : null,
     }))
     this.#subscriptions.push(registerLocalChatIpc({
       recordDiagnostic: this.#environment.events.scope({ component: 'desktop.gateway' }).publish,
@@ -417,7 +448,7 @@ export class DesktopIntegrations {
           throw error
         }
       },
-      runtime: service,
+      runtime: productGateway ?? service,
     }))
   }
 

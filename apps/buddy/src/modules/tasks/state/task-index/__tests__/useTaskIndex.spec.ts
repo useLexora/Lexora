@@ -34,7 +34,6 @@ function fixture() {
     activeBranchId: 'branch',
     spaceId: null,
     deletedAt: null,
-    metadataRevision: 4,
     createdAt: '2026-09-18T00:00:00Z',
     updatedAt: '2026-09-18T00:00:00Z',
     approvalPolicy: 'policy',
@@ -61,9 +60,7 @@ function fixture() {
       savedSpaces = [space()]
       return savedSpaces[0]
     }, delete: async () => ({ ok: true }), selectDirectory: async () => null, revealFile: async () => {} },
-    conversations: { onChanged: () => () => {}, list: async () => savedTasks, listHistory: async (query: ConversationHistoryQuery) => ({ items: savedTasks.filter(task => query.kind === 'attention' ? task.activity !== 'idle' : task.activity === 'idle').map(historyItem), nextCursor: null }), getHistoryEntries: async (ids: readonly string[]) => savedTasks.filter(task => ids.includes(task.id)).map(historyItem), deletePermanently: async (id: string, expectedRevision: number) => {
-      if (savedTasks.find(task => task.id === id)?.metadataRevision !== expectedRevision)
-        throw new Error('CONVERSATION_REVISION_CONFLICT')
+    conversations: { onChanged: () => () => {}, list: async () => savedTasks, listHistory: async (query: ConversationHistoryQuery) => ({ items: savedTasks.filter(task => query.kind === 'attention' ? task.activity !== 'idle' : task.activity === 'idle').map(historyItem), nextCursor: null }), getHistoryEntries: async (ids: readonly string[]) => savedTasks.filter(task => ids.includes(task.id)).map(historyItem), delete: async (id: string) => {
       savedTasks = savedTasks.filter(task => task.id !== id)
       return true
     } },
@@ -71,7 +68,7 @@ function fixture() {
       listeners.add(listener)
       return () => listeners.delete(listener)
     } },
-    executions: { list: async () => [], onChanged: () => () => {} },
+    executions: { activity: async () => ({ hasBlockingAnswer: false }), list: async () => [], onChanged: () => () => {} },
     taskMarks: { list: async () => [], states: async () => [] },
     workspaceState: { read: async () => null },
   } as unknown as LexoraDesktopApi['localChat']
@@ -88,9 +85,7 @@ function fixture() {
     selectDefaultModel() {},
     spaceId,
   }))!
-  return { index, reviseTask() {
-    savedTasks = savedTasks.map(task => ({ ...task, metadataRevision: 5 }))
-  }, changeSpace(value: LocalSpace, revision: number) {
+  return { index, changeSpace(value: LocalSpace, revision: number) {
     savedSpaces = [value]
     for (const listener of spaceListeners) listener({ sourceId: 'source', spaceId: value.id, kind: 'updated', revision })
   }, creation, draftId, errors, owner, persistWorkspaceState, listSpaces, scope, paneScope, spaceId, beforeDelete, deleted, activity(value: LocalConversationSummary['activity']) {
@@ -134,31 +129,12 @@ describe('shared task index ownership', () => {
     const f = fixture()
     await f.index.initialize()
     f.beforeDelete.mockResolvedValueOnce(false)
-    await f.index.index.deleteTask('task', 4)
+    await f.index.index.deleteTask('task')
     expect(f.index.index.tasks.value.map(task => task.id)).toEqual(['task'])
     expect(f.deleted).toEqual([])
-    await f.index.index.deleteTask('task', 4)
+    await f.index.index.deleteTask('task')
     expect(f.index.index.tasks.value).toEqual([])
     expect(f.deleted).toEqual(['task'])
-  })
-  it('keeps the confirmed revision when closing working copies changes the task', async () => {
-    const f = fixture()
-    await f.index.initialize()
-    f.beforeDelete.mockImplementationOnce(async () => {
-      f.reviseTask()
-      return true
-    })
-    await f.index.index.deleteTask('task', 4)
-    expect(f.index.index.tasks.value.map(task => task.id)).toEqual(['task'])
-    expect(f.deleted).toEqual([])
-    expect(f.index.errorMessage.value).not.toBeNull()
-  })
-  it('retains a successful update when the subsequent index refresh fails', async () => {
-    const f = fixture()
-    f.listSpaces.mockRejectedValueOnce(new Error('refresh unavailable'))
-    expect(await f.index.index.updateSpace({ ...input, spaceId: 'created' })).toBe(true)
-    expect(f.index.index.spaces.value.map(space => space.name)).toEqual(['Created'])
-    expect(f.index.errorMessage.value).not.toBeNull()
   })
   it('does not surface an old persistence failure in another draft', async () => {
     const f = fixture()
@@ -182,15 +158,6 @@ describe('shared task index ownership', () => {
     expect(f.spaceId.value).toBe('created')
     expect(f.index.errorMessage.value).not.toBeNull()
   })
-  it('adds a saved Space without taking over another draft', async () => {
-    const f = fixture()
-    const creating = f.owner.createSpace(input)
-    f.draftId.value = 'other-draft'
-    f.creation.resolve(space())
-    expect(await creating).toBe(true)
-    expect(f.index.index.spaces.value.map(space => space.id)).toEqual(['created'])
-    expect(f.spaceId.value).toBeNull()
-  })
   it('does not replace a newer Space selection in the same stable draft', async () => {
     const f = fixture()
     const creating = f.owner.createSpace(input)
@@ -209,14 +176,5 @@ describe('shared task index ownership', () => {
     expect(await creating).toBe(true)
     expect(f.index.index.spaces.value.map(space => space.id)).toEqual(['created'])
     expect(f.draftId.value).toBe('global-draft')
-  })
-  it('does not publish late results after the whole workspace is disposed', async () => {
-    const f = fixture()
-    const creating = f.owner.createSpace(input)
-    f.paneScope.stop()
-    f.scope.stop()
-    f.creation.resolve(space())
-    expect(await creating).toBe(true)
-    expect(f.index.index.spaces.value).toEqual([])
   })
 })

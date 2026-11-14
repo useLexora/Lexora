@@ -28,3 +28,5 @@ mod windows_security;
 
 #[cfg(windows)]
 pub mod installation_gate;
+
+pub mod service_launcher;

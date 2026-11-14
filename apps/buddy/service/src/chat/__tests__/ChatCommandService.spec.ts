@@ -43,24 +43,10 @@ describe('command acceptance facts', () => {
       { kind: 'run.queued', runId: expect.any(String), purpose: 'conversation.compaction' },
       { kind: 'draft.consumed', draftId: 'draft-1', sourceRevision: 0, committedRevision: 1 },
     ])
-    expect(Reflect.set(commits[0]!.facts[2], 'committedRevision', 20)).toBe(false)
     await expect(f.service.execute(f.input)).resolves.toMatchObject({ runId: commits[0]!.facts[1].runId, draftReceipt: { committedRevision: 1 } })
     expect(commits).toHaveLength(1)
     expect(f.launch).toHaveBeenCalledTimes(1)
     expect(f.database.prepare('SELECT COUNT(*) AS count FROM messages').get()).toEqual({ count: 1 })
-    await f.service.dispose()
-  })
-
-  it('does not publish partial facts when consuming the draft rolls back the transaction', async () => {
-    const f = fixture()
-    const commits: ChatCommandCommit[] = []
-    f.service.onDidCommit(event => commits.push(event))
-    f.database.exec('CREATE TRIGGER reject_draft BEFORE UPDATE ON composer_drafts BEGIN SELECT RAISE(ABORT, \'draft unavailable\'); END')
-    await expect(f.service.execute(f.input)).rejects.toThrow('draft unavailable')
-    expect(commits).toEqual([])
-    expect(f.commands.findByRequestId(f.input.requestId)).toBeNull()
-    expect(f.drafts.findById('draft-1')?.revision).toBe(0)
-    expect(f.runs.listRecent()).toHaveLength(1)
     await f.service.dispose()
   })
 

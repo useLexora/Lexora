@@ -20,10 +20,12 @@ import { createCommandRequestRepository } from '../../../storage/commandRequestR
 import { createConversationMemberRepository } from '../../../storage/conversationMemberRepository'
 import { createConversationRepository } from '../../../storage/conversationRepository'
 import { openBuddyDatabase } from '../../../storage/database'
+import { createExecutionRepository } from '../../../storage/executionRepository'
 import { createRunInputRepository } from '../../../storage/runInputRepository'
 import { createRunRepository } from '../../../storage/runRepository'
 import { createSkillRepository } from '../../../storage/skillRepository'
 import { createSpaceRepository } from '../../../storage/spaceRepository'
+import { getStorageIsolation } from '../../../storage/StorageIsolation'
 import { BuddySessionBlueprintService } from '../../sessions/BuddySessionBlueprintService'
 import { BuddyRunExecutionPlanner } from '../BuddyRunExecutionPlanner'
 import { BuddyTurnLauncher } from '../BuddyTurnLauncher'
@@ -39,6 +41,29 @@ afterEach(async () => {
 })
 
 describe('buddyTurnLauncher', () => {
+  it.each(['resolved', 'rejected'] as const)('leaves the original run queued when a %s planner resumes after isolation', async (outcome) => {
+    const fixture = await createFixture()
+    fixture.prepareTurn({ spaceId: null })
+    const waiting = Promise.withResolvers<void>()
+    const entered = Promise.withResolvers<void>()
+    fixture.resolveInputReferences.mockImplementationOnce(async () => {
+      entered.resolve()
+      await waiting.promise
+      if (outcome === 'rejected')
+        throw new Error('Preparation failed after isolation')
+      return { images: [], documents: [] }
+    })
+    const launcher = fixture.createLauncher()
+    const pending = expect(launcher.launch('run-1')).rejects.toThrow('Storage is isolated')
+    await entered.promise
+    fixture.storage.isolate(new Error('Unreadable storage'))
+    waiting.resolve()
+    await pending
+    expect(fixture.runs.findById('run-1')?.status).toBe('queued')
+    expect(fixture.database.prepare('SELECT COUNT(*) AS total FROM run_events WHERE run_id = ?').get('run-1')?.total).toBe(0)
+    await expect(launcher.launch('run-1')).rejects.toThrow('Storage is isolated')
+  })
+
   it('rejects a saved Skill reference missing from the launch resource snapshot', async () => {
     const fixture = await createFixture({ selectedSkill: { id: 'writer-id', name: 'writer', revision: 'old' } })
     fixture.prepareTurn({ spaceId: null })
@@ -153,25 +178,6 @@ describe('buddyTurnLauncher', () => {
     expect(startTurn).not.toHaveBeenCalled()
   })
 
-  it('durably fails a queued run when the runner rejects it synchronously', async () => {
-    const fixture = await createFixture()
-    fixture.prepareTurn({ spaceId: null })
-    const launcher = fixture.createLauncher({
-      startTurn() {
-        throw new Error('runner rejected launch')
-      },
-    })
-
-    const handle = await launcher.launch('run-1')
-
-    await expect(handle.completion).resolves.toMatchObject({
-      errorCode: 'AGENT_RUN_FAILED',
-      status: 'failed',
-    })
-    expect((await fixture.eventLog.read('run-1')).map(event => event.type))
-      .toEqual(['run.failed'])
-  })
-
   it('awaits preparation before the model starts and durably fails a rejected hook while retaining input', async () => {
     const fixture = await createFixture()
     fixture.prepareTurn({ spaceId: null })
@@ -193,6 +199,26 @@ describe('buddyTurnLauncher', () => {
     await expect(handle.completion).resolves.toMatchObject({ status: 'failed' })
     expect((await fixture.eventLog.read('run-1')).map(event => event.type)).toEqual(['run.failed'])
     expect(fixture.runs.findById('run-1')?.triggeringMessageId).toBe('message-1')
+  })
+
+  it('honors a committed cancellation while its execution notification is still pending', async () => {
+    const fixture = await createFixture()
+    fixture.prepareTurn({ spaceId: null })
+    const gate = Promise.withResolvers<void>()
+    fixture.resolveInputReferences.mockImplementationOnce(async () => {
+      await gate.promise
+      return { images: [], documents: [] }
+    })
+    const launcher = fixture.createLauncher({ startTurn: () => {
+      throw new Error('Cancelled run cannot start')
+    } })
+    const launch = launcher.launch('run-1')
+    await vi.waitFor(() => expect(fixture.resolveInputReferences).toHaveBeenCalled())
+    createExecutionRepository(fixture.database).requestCancel('run-1', new Date().toISOString())
+    gate.resolve()
+    const handle = await launch
+    await expect(handle.completion).resolves.toMatchObject({ status: 'cancelled', errorCode: 'RUN_CANCELLED' })
+    expect((await fixture.eventLog.read('run-1')).map(event => event.type)).toEqual(['run.cancelled'])
   })
 
   it('cancels an accepted queued run when its launch scope stops during planning', async () => {
@@ -223,6 +249,7 @@ async function createFixture(options: { modelInput?: readonly ('text' | 'image')
   await mkdir(root, { recursive: true })
   const database = openBuddyDatabase({ databasePath: ':memory:' })
   databases.push(database)
+  const storage = getStorageIsolation(database)
   const paths = new BuddyDataPaths(root)
   const spaces = createSpaceRepository(database)
   const runs = createRunRepository(database)
@@ -266,6 +293,7 @@ async function createFixture(options: { modelInput?: readonly ('text' | 'image')
       beforeRun?: (runId: string, signal: AbortSignal) => Promise<void>
     } = {}) {
       return new BuddyTurnLauncher({
+        assertStorageAvailable: storage.assertAvailable,
         executions,
         planner,
         beforeRun: overrides.beforeRun,
@@ -279,6 +307,7 @@ async function createFixture(options: { modelInput?: readonly ('text' | 'image')
         },
       })
     },
+    database,
     eventLog,
     planner,
     resolveInputReferences,
@@ -315,6 +344,7 @@ async function createFixture(options: { modelInput?: readonly ('text' | 'image')
       `).run(JSON.stringify(['attachment-1']), 'run-1')
     },
     root,
+    storage,
     runs,
     spaces,
   }

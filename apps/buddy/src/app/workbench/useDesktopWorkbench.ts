@@ -4,6 +4,7 @@ import type { BuddyUserContentV1 } from '@buddy-shared/conversation/buddyUserCon
 import type { ClosePreparation } from '@buddy-shared/lifecycle/closePreparation'
 import type { ApplicationEvents } from '@buddy-shared/observability/ApplicationEvents'
 import type { SpaceFileTarget } from '@buddy-shared/spaces/spaceFileApi'
+import type { ReadonlyJsonObject } from '@buddy-shared/workbench/workbenchState'
 import type { Ref } from 'vue'
 import type { Router } from 'vue-router'
 import type { DesktopStores } from '../bootstrap/useDesktopAppState'
@@ -14,14 +15,13 @@ import type { ChatReadingPositions } from '@/modules/tasks/ui'
 import type { SelectionReferenceNavigate } from '@/shared/ui/selection/workbenchSelectionReferences'
 import type { CommandContext, DropPosition, ResourceRef, SplitDirection, WorkbenchView } from '@/workbench/common/workbench'
 import type { ViewCloseDecision } from '@/workbench/services/WorkbenchController'
-import { buddyUserContentToText, getBuddyUserContentResourceIds, hasBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
+import { buddyUserContentToText, getBuddyUserContentResourceIds } from '@buddy-shared/conversation/buddyUserContent'
 import { resolveBuiltinFileOpening } from '@buddy-shared/files/fileOpening'
 import { isSkillAvailable } from '@buddy-shared/skills/skillApi'
 import { spaceFileTargetSchema } from '@buddy-shared/spaces/spaceFileApi'
-import { NButton, useDialog } from 'naive-ui'
-import { computed, h, onScopeDispose, shallowReactive, shallowRef } from 'vue'
+import { computed, onScopeDispose, shallowReactive, shallowRef, watch } from 'vue'
 import { fileOpeningHandler } from '@/modules/files'
-import { userContentToChatComposerDocument } from '@/modules/prompt-input'
+import { useTaskCapability } from '@/modules/tasks'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 import { TextModelPool } from '@/workbench/browser/TextModelPool'
 import { ViewRendererRegistry } from '@/workbench/browser/ViewRendererRegistry'
@@ -35,17 +35,21 @@ import { ActiveTaskProjection } from './ActiveTaskProjection'
 import { ContextTabProjection } from './ContextTabProjection'
 import { createDesktopSelectionReferences } from './createDesktopSelectionReferences'
 import { absolute, contains, FileOperationService } from './FileOperationService'
+import { createFileClosePreparation } from './prepareFileClose'
 import { registerDesktopContributions } from './registerDesktopContributions'
 import { restoreTaskInputViews } from './restoreTaskInputViews'
+import { draftResource, isLegacyDraftResource, parseTaskResource, taskResource } from './taskResource'
 import { TaskWorkspacePool } from './TaskWorkspacePool'
 import { useTaskInputLifecycle } from './useTaskInputLifecycle'
+import { useTaskNavigation } from './useTaskNavigation'
+import { useWorkbenchDialogs } from './useWorkbenchDialogs'
 import { WorkbenchDiagnostics } from './WorkbenchDiagnostics'
 import { WorkbenchResourceLifetime } from './WorkbenchResourceLifetime'
 
 export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: string, signal?: AbortSignal) => Promise<ClosePreparation | false>, fileOpening?: ReturnType<typeof useProvideFileOpening>, buddyCatalog?: Readonly<Ref<BuddyCatalog | null>>, api: LexoraDesktopApi, events: ApplicationEvents, stores: DesktopStores, taskIndex: TaskIndexController, router: Router, resources: () => TaskResourcePanel, onError: (error: unknown) => void }) {
   const { api, stores, router } = options
-  const dialog = useDialog()
   const language = stores.applicationSettings.language
+  const dialogs = useWorkbenchDialogs(language)
   const presentation = computed(() => workbenchLabels(language.value))
   const labels = () => presentation.value
   const readingPositions: ChatReadingPositions = new Map()
@@ -62,18 +66,33 @@ export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: s
   const renderers = new ViewRendererRegistry()
   registerDesktopContributions(controller, renderers, copies, () => language.value)
   const persistence = new WorkbenchPersistence(api.workbench, controller, copies, error => backupError.value = error !== null)
-  const pool = new TaskWorkspacePool({
-    buddyCatalog: options.buddyCatalog,
-    api,
-    index: options.taskIndex,
-    applicationSettings: stores.applicationSettings,
-    modelProviders: stores.modelProviders,
-    runtimeSupervisor: stores.runtimeSupervisor,
-    onDraftCommitted: (draftId, id) => options.resources().adoptDraft(draftId, id),
-  }, (previous, task, id) => {
+  const pool: TaskWorkspacePool = new TaskWorkspacePool({
+    conversations: api.localChat.conversations,
+    index: options.taskIndex.data,
+    createTask: initial => useTaskCapability({
+      ...initial,
+      buddyCatalog: options.buddyCatalog,
+      api,
+      index: options.taskIndex,
+      applicationSettings: stores.applicationSettings,
+      modelProviders: stores.modelProviders,
+      runtimeSupervisor: stores.runtimeSupervisor,
+      onDraftCommitted: (draftId, id) => options.resources().adoptDraft(draftId, id),
+      openBranch: async (id, branchId, target): Promise<boolean> => {
+        await openTask(id, { branchId, ...(target?.beside ? { direction: 'right' as const } : {}) })
+        const resource = taskResource(id, branchId)
+        const task = pool.peek(resource)
+        const viewId = controller.pane(controller.layout.activePane)?.view
+        const selected = viewId ? controller.layout.views[viewId]?.resource : undefined
+        if (!task || !selected || resourceKey(selected) !== resourceKey(resource))
+          return false
+        return target?.editMessageId ? task.workspace.execution.editUserMessage(target.editMessageId) : true
+      },
+    }),
+  }, (previous, task, resource) => {
     for (const view of Object.values(controller.layout.views)) {
       if (resourceKey(view.resource) === resourceKey(previous))
-        controller.updateView(view.id, { resource: { scheme: 'task', id, data: {} }, title: task.session.currentTitle.value })
+        controller.updateView(view.id, { resource, title: task.session.currentTitle.value })
     }
     void options.taskIndex.index.refresh()
   }, () => persistence.flush())
@@ -85,12 +104,19 @@ export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: s
     resources: options.resources,
     onError: options.onError,
   })
-  const confirmedDraftCloses = new Set<string>()
   const deletedTasks = new Set<string>()
   const initialized = shallowRef(false)
   const activity = new ActiveTaskProjection(controller, pool)
   const activeTask = activity.current
   const activeTaskId = activity.taskId
+  function localBranches(): ReadonlyJsonObject {
+    const value = controller.layout.auxiliary.taskBranches
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as ReadonlyJsonObject : {}
+  }
+  watch(() => [activeTask.value?.workspace.session.activeConversationId.value, activeTask.value?.workspace.session.activeBranchId.value] as const, ([id, branchId]) => {
+    if (id && branchId && localBranches()[id] !== branchId)
+      controller.setAuxiliary('taskBranches', { ...localBranches(), [id]: branchId })
+  }, { flush: 'sync' })
   const contextTabs = new ContextTabProjection(controller, options.resources, () => initialized.value)
   const resourceLifetime = new WorkbenchResourceLifetime(controller, pool, copies, () => initialized.value)
   const projections = { reconcile: () => {
@@ -104,17 +130,7 @@ export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: s
     copies,
     controller,
     flush: () => persistence.flush(),
-    confirmSave: paths => new Promise((resolve) => {
-      let settled = false
-      const finish = (value: boolean) => {
-        if (!settled) {
-          settled = true
-          resolve(value)
-        }
-      }
-      const chinese = language.value === 'zh-CN'
-      dialog.warning({ title: chinese ? '先保存打开的文件' : 'Save open files first', content: `${chinese ? '这些文件有未保存的修改：' : 'These files have unsaved changes:'}\n${[...new Set(paths)].join('\n')}`, positiveText: chinese ? '保存并继续' : 'Save and continue', negativeText: chinese ? '取消' : 'Cancel', onPositiveClick: () => finish(true), onNegativeClick: () => finish(false), onClose: () => finish(false), onMaskClick: () => finish(false), onEsc: () => finish(false) })
-    }),
+    confirmSave: dialogs.confirmSaveFiles,
     updateSelection: (source, destination) => {
       for (const tab of options.resources().allTabs.value) {
         if (tab.kind !== 'files')
@@ -146,29 +162,36 @@ export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: s
       }
     }, 200))
   })
-  let navigationVersion = 0
-  let routeVersion = 0
-  onScopeDispose(router.beforeEach((to) => {
-    if (to.path !== '/tasks') {
-      navigationVersion += 1
-      routeVersion += 1
-      controller.cancelNavigation()
-    }
-  }))
+  const navigation = useTaskNavigation({ api, controller, pool, router, center, chooseReplacement: dialogs.promptUnsentDraftAction, confirmDiscard: dialogs.promptUnsentDraftCloseAction, onError: options.onError })
+  const { activateTask } = navigation
+  const beforeFileClose = createFileClosePreparation({ controller, copies, persistence, confirm: dialogs.confirmFileClose, onError: options.onError })
 
   function center(): string {
     return controller.pane(controller.layout.activePane)?.id ?? panes(controller.layout.root)[0]!.id
   }
-  function openTask(id: string, destination: { signal?: AbortSignal, direction?: SplitDirection } = {}): Promise<void> {
-    return activateTask({ scheme: 'task', id, data: {} }, options.taskIndex.index.tasks.value.find(task => task.id === id)?.title ?? labels().tasks, destination)
+  function openTask(id: string, destination: { signal?: AbortSignal, direction?: SplitDirection, branchId?: string } = {}): Promise<void> {
+    const { branchId, ...placement } = destination
+    const selectedViewId = controller.pane(controller.layout.activePane)?.view
+    const selected = selectedViewId ? controller.layout.views[selectedViewId]?.resource : undefined
+    const selectedResource = selected ? parseTaskResource(selected) : null
+    const previous = selectedResource?.scheme === 'task' && selectedResource.id === id
+      ? selectedResource
+      : Object.values(controller.layout.views).map(view => parseTaskResource(view.resource)).find(resource => resource?.scheme === 'task' && resource.id === id)
+    const rememberedBranch = localBranches()[id]
+    const localResource = taskResource(id, typeof rememberedBranch === 'string' ? rememberedBranch : undefined)
+    const resource = branchId ? taskResource(id, branchId) : previous ?? localResource
+    return activateTask(resource, options.taskIndex.index.tasks.value.find(task => task.id === id)?.title ?? labels().tasks, placement)
+  }
+  function openDraft(id: string): Promise<void> {
+    return activateTask(draftResource(id), labels().newTask, { direction: 'right' })
   }
   function newTask(destination: { spaceId?: string | null, paneId?: string, direction?: SplitDirection } = {}): Promise<void> {
     const { spaceId = null, paneId = center(), direction } = destination
-    return activateTask({ scheme: 'draft', id: crypto.randomUUID(), data: { spaceId } }, labels().newTask, { paneId, direction })
+    return activateTask(draftResource(crypto.randomUUID(), spaceId), labels().newTask, { paneId, direction })
   }
   async function prepareNewTaskInput(sourceViewId: string, prepare: (viewId: string) => Promise<boolean>, signal: AbortSignal): Promise<boolean> {
     let accepted = false
-    const resource: ResourceRef = { scheme: 'draft', id: crypto.randomUUID(), data: { spaceId: null } }
+    const resource = draftResource(crypto.randomUUID())
     await activateTask(resource, labels().newTask, {
       signal,
       direction: controller.owner(sourceViewId) ? 'right' : undefined,
@@ -210,9 +233,9 @@ export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: s
     return task && pane ? { spaceId: task.session.spaceId.value, paneId: pane.id } : null
   }
   async function startTaskWithSkill(name: string, prompt: string, spaceId: string | null = null): Promise<void> {
-    const version = navigationVersion
+    const version = navigation.version
     const catalog = await api.localChat.skills.list(spaceId, true)
-    if (version !== navigationVersion)
+    if (version !== navigation.version)
       return
     const skill = catalog.skills.find(skill => skill.name === name && isSkillAvailable(skill))
     if (!skill)
@@ -221,203 +244,13 @@ export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: s
       { type: 'prompt_directive', directive: 'skill', value: skill.name, skill: { id: skill.id, name: skill.name, revision: skill.revision } },
       { type: 'text', text: ` ${prompt}` },
     ] }] }
-    await activateTask({ scheme: 'draft', id: crypto.randomUUID(), data: { spaceId } }, labels().newTask, { initialContent: content })
-  }
-  async function isDraftDirty(view: WorkbenchView): Promise<boolean> {
-    if (view.resource.scheme !== 'draft')
-      return false
-    const task = pool.peek(view.resource)
-    if (task) {
-      const text = task.workspace.composer.draft.value.trim()
-      const resources = task.workspace.composer.resources.value.length
-      const quotes = ((task.workspace.composer.composerContent.value?.attrs as { quotes?: unknown[] } | undefined)?.quotes?.length ?? 0) > 0
-      const sessionReferences = ((task.workspace.composer.composerContent.value?.attrs as { sessionReferences?: unknown[] } | undefined)?.sessionReferences?.length ?? 0) > 0
-      const resourceQuotes = (task.workspace.composer.composerContent.value?.attrs?.resourceQuotes?.length ?? 0) > 0
-      return Boolean(text || resources || quotes || resourceQuotes || sessionReferences)
-    }
-    try {
-      const draft = await api.localChat.composerDrafts.get(view.resource.id)
-      return hasBuddyUserContent(draft.content)
-    }
-    catch {
-      return false
-    }
-  }
-
-  function promptUnsentDraftAction(): Promise<'split' | 'discard' | 'cancel'> {
-    return new Promise((resolve) => {
-      let settled = false
-      const finish = (choice: 'split' | 'discard' | 'cancel') => {
-        if (!settled) {
-          settled = true
-          resolve(choice)
-        }
-      }
-      const modal = dialog.warning({
-        title: labels().unsentDraftPrompt,
-        content: labels().unsentDraftDetail,
-        closable: true,
-        onClose: () => finish('cancel'),
-        onMaskClick: () => finish('cancel'),
-        onEsc: () => finish('cancel'),
-        action: () => h('div', { style: 'display:flex;gap:8px;justify-content:flex-end;width:100%' }, [
-          h(NButton, {
-            size: 'small',
-            onClick: () => {
-              finish('cancel')
-              modal.destroy()
-            },
-          }, () => labels().cancel),
-          h(NButton, {
-            size: 'small',
-            type: 'error',
-            onClick: () => {
-              finish('discard')
-              modal.destroy()
-            },
-          }, () => labels().discardDraft),
-          h(NButton, {
-            size: 'small',
-            type: 'primary',
-            onClick: () => {
-              finish('split')
-              modal.destroy()
-            },
-          }, () => labels().splitOpen),
-        ]),
-      })
-    })
-  }
-
-  function promptUnsentDraftCloseAction(): Promise<boolean> {
-    return new Promise((resolve) => {
-      let settled = false
-      const finish = (confirmed: boolean) => {
-        if (!settled) {
-          settled = true
-          resolve(confirmed)
-        }
-      }
-      const modal = dialog.warning({
-        title: labels().unsentDraftPrompt,
-        content: labels().unsentDraftCloseDetail,
-        closable: true,
-        onClose: () => finish(false),
-        onMaskClick: () => finish(false),
-        onEsc: () => finish(false),
-        action: () => h('div', { style: 'display:flex;gap:8px;justify-content:flex-end;width:100%' }, [
-          h(NButton, {
-            size: 'small',
-            onClick: () => {
-              finish(false)
-              modal.destroy()
-            },
-          }, () => labels().cancel),
-          h(NButton, {
-            size: 'small',
-            type: 'error',
-            onClick: () => {
-              finish(true)
-              modal.destroy()
-            },
-          }, () => labels().discardDraft),
-        ]),
-      })
-    })
-  }
-
-  async function activateTask(resource: ResourceRef, title: string, destination: { paneId?: string, direction?: SplitDirection, move?: boolean, signal?: AbortSignal, initialContent?: BuddyUserContentV1, prepareInput?: (viewId: string) => Promise<boolean> } = {}) {
-    if (destination.signal?.aborted)
-      return
-    const targetPaneId = destination.paneId ?? center()
-    const targetPane = controller.pane(targetPaneId)
-    const currentViewId = targetPane?.view
-    const currentView = currentViewId ? controller.layout.views[currentViewId] : null
-
-    const isExistingTask = Object.values(controller.layout.views).some(view =>
-      resourceKey(view.resource) === resourceKey(resource)
-      && (view.location === 'main' || view.location === undefined),
-    )
-
-    if (!destination.direction && !isExistingTask && currentView && currentView.resource.scheme === 'draft') {
-      if (resource.scheme === 'draft' && !destination.initialContent && !destination.prepareInput) {
-        const currentSpaceId = (currentView.resource.data.spaceId as string | null) ?? null
-        const targetSpaceId = (resource.data.spaceId as string | null) ?? null
-        if (currentSpaceId === targetSpaceId) {
-          controller.focus(currentView.id)
-          await router.push('/tasks')
-          return
-        }
-      }
-      if (await isDraftDirty(currentView)) {
-        if (destination.initialContent || destination.prepareInput)
-          return activateTask(resource, title, { ...destination, direction: 'right' })
-        const action = await promptUnsentDraftAction()
-        if (action === 'cancel') {
-          controller.focus(currentView.id)
-          return
-        }
-        if (action === 'split') {
-          return activateTask(resource, title, { ...destination, direction: 'right' })
-        }
-        confirmedDraftCloses.add(currentView.id)
-      }
-    }
-
-    navigationVersion += 1
-    const version = routeVersion
-    let id: string | null = null
-    try {
-      if (!destination.prepareInput)
-        await router.push('/tasks')
-      if (destination.signal?.aborted || version !== routeVersion)
-        return
-      id = await controller.open(resource, title, { paneId: targetPaneId, ...destination })
-    }
-    finally {
-      if (currentView)
-        confirmedDraftCloses.delete(currentView.id)
-    }
-    if (!id || (!destination.prepareInput && (destination.signal?.aborted || version !== routeVersion)))
-      return
-    let prepared = !destination.prepareInput
-    try {
-      const opened = controller.layout.views[id]
-      if (!opened)
-        return
-      const task = await pool.open(opened.resource)
-      if (!destination.signal?.aborted && controller.layout.views[id] && version === routeVersion) {
-        if (destination.prepareInput) {
-          prepared = await destination.prepareInput(id)
-          if (!prepared)
-            return
-          await router.push('/tasks')
-        }
-        if (destination.initialContent) {
-          task.workspace.composer.updateComposerContent(buddyUserContentToText(destination.initialContent), userContentToChatComposerDocument(destination.initialContent))
-          await task.flushDrafts()
-        }
-      }
-    }
-    catch (error) {
-      if (controller.layout.views[id])
-        options.onError(error)
-    }
-    finally {
-      if (!prepared && !isExistingTask && controller.layout.views[id]) {
-        const view = controller.layout.views[id]!
-        if (view.resource.scheme !== 'draft' || !await isDraftDirty(view)) {
-          await controller.close(id)
-          if (version === routeVersion && currentView && controller.layout.views[currentView.id])
-            controller.focus(currentView.id)
-        }
-      }
-    }
+    await activateTask(draftResource(crypto.randomUUID(), spaceId), labels().newTask, { initialContent: content })
   }
   function dropResource(resource: ResourceRef, paneId: string, position: DropPosition) {
-    if (!['task', 'draft'].includes(resource.scheme))
+    const target = parseTaskResource(resource)
+    if (!target)
       return
-    return activateTask(resource, options.taskIndex.index.tasks.value.find(task => task.id === resource.id)?.title ?? labels().newTask, { paneId, direction: position === 'center' ? undefined : position, move: true })
+    return activateTask(target, options.taskIndex.index.tasks.value.find(task => task.id === resource.id)?.title ?? labels().newTask, { paneId, direction: position === 'center' ? undefined : position, move: true })
   }
   function fileView(target: SpaceFileTarget, tabId?: string) {
     return Object.values(controller.layout.views).find(view => ['file', 'file-preview'].includes(view.resource.scheme)
@@ -515,12 +348,15 @@ export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: s
     if (initialized.value)
       return
     const restored = await persistence.restore(layout => restoreTaskInputViews(layout, api.localChat.composerDrafts))
-    const legacyDraftViews = Object.values(controller.layout.views).filter(view => view.resource.scheme === 'draft' && (view.resource.id === 'global' || view.resource.id === view.resource.data.spaceId))
+    const legacyDraftViews = Object.values(controller.layout.views).flatMap((view) => {
+      const resource = parseTaskResource(view.resource)
+      return resource?.scheme === 'draft' && isLegacyDraftResource(resource) ? [{ view, resource }] : []
+    })
     if (legacyDraftViews.length) {
       const drafts = await api.localChat.composerDrafts.list()
-      for (const view of legacyDraftViews) {
+      for (const { view, resource } of legacyDraftViews) {
         const previous = drafts.find(draft => draft.scope.kind === 'task'
-          && draft.scope.spaceId === (view.resource.data.spaceId ?? null)
+          && draft.scope.spaceId === resource.data.spaceId
           && (buddyUserContentToText(draft.content).trim() || getBuddyUserContentResourceIds(draft.content).length))
         controller.updateView(view.id, { resource: { ...view.resource, id: previous?.draftId ?? crypto.randomUUID() } })
       }
@@ -549,6 +385,9 @@ export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: s
   }
 
   function discardTask(id: string) {
+    const remaining = { ...localBranches() }
+    delete remaining[id]
+    controller.setAuxiliary('taskBranches', remaining)
     deletedTasks.add(id)
     options.resources().discardConversation(id)
     for (const view of Object.values(controller.layout.views)) {
@@ -560,14 +399,8 @@ export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: s
   async function beforeClose(view: WorkbenchView, closing?: ReadonlySet<string>, signal?: AbortSignal): Promise<ViewCloseDecision> {
     if (view.resource.scheme === 'task' && deletedTasks.has(view.resource.id))
       return true
-    if (view.resource.scheme === 'draft' && !confirmedDraftCloses.has(view.id)) {
-      if (await isDraftDirty(view)) {
-        const confirmed = await promptUnsentDraftCloseAction()
-        if (!confirmed)
-          return false
-        confirmedDraftCloses.add(view.id)
-      }
-    }
+    if (!await navigation.prepareClose(view))
+      return false
     try {
       const extension = view.resource.scheme === 'extension' ? await options.beforeExtensionClose?.(view.id, signal) : undefined
       if (extension === false || signal?.aborted)
@@ -591,84 +424,8 @@ export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: s
       return false
     }
     finally {
-      confirmedDraftCloses.delete(view.id)
+      navigation.finishClose(view.id)
     }
-  }
-
-  async function beforeFileClose(view: WorkbenchView, closing: ReadonlySet<string> = new Set()): Promise<ViewCloseDecision> {
-    const first = [...closing].find(id => resourceKey(controller.layout.views[id]?.resource ?? { scheme: '', id: '', data: {} }) === resourceKey(view.resource))
-    if (first && first !== view.id)
-      return true
-    if (Object.values(controller.layout.views).some(other => other.id !== view.id && !closing.has(other.id) && resourceKey(other.resource) === resourceKey(view.resource)))
-      return true
-    const current = copies.get(view.resource)
-    if (!current)
-      return true
-    if (!current.dirty)
-      return { validate: () => copies.isCurrent(current) && !copies.dirty(view.resource) }
-    return new Promise<ViewCloseDecision>((resolve) => {
-      let settled = false
-      const finish = (value: ViewCloseDecision) => {
-        if (!settled) {
-          settled = true
-          resolve(value)
-        }
-      }
-      const modal = dialog.warning({
-        title: labels().savePrompt,
-        content: view.title,
-        onClose: () => finish(false),
-        onMaskClick: () => finish(false),
-        onEsc: () => finish(false),
-        action: () => h('div', { style: 'display:flex;gap:8px;justify-content:flex-end;width:100%' }, [
-          h(NButton, {
-            size: 'small',
-            onClick: () => {
-              finish(false)
-              modal.destroy()
-            },
-          }, () => labels().cancel),
-          h(NButton, {
-            size: 'small',
-            type: 'error',
-            onClick: () => {
-              const accepted = copies.get(view.resource)
-              finish(accepted
-                ? {
-                    validate: () => copies.isCurrent(accepted),
-                    complete: async ({ revision }) => {
-                      if (!copies.isCurrent(accepted))
-                        throw new Error('WORKING_COPY_CHANGED_DURING_CLOSE')
-                      copies.discard(view.resource)
-                      await persistence.flushThrough({ layoutRevision: revision, backupRevision: persistence.backups.revision })
-                    },
-                  }
-                : true)
-              modal.destroy()
-            },
-          }, () => labels().discard),
-          h(NButton, {
-            size: 'small',
-            type: 'primary',
-            onClick: async () => {
-              const result = await copies.save(view.resource)
-              if ((result.status === 'saved' || result.status === 'unchanged') && !result.dirtyAfter) {
-                const accepted = copies.get(view.resource)!
-                try {
-                  await persistence.flushThrough(persistence.capture())
-                  finish({ validate: () => copies.isCurrent(accepted) && !copies.dirty(view.resource) })
-                  modal.destroy()
-                }
-                catch {
-                  finish(false)
-                  modal.destroy()
-                }
-              }
-            },
-          }, () => labels().save),
-        ]),
-      })
-    })
   }
 
   onScopeDispose(controller.onDidSettleClose((result) => {
@@ -718,10 +475,10 @@ export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: s
     await inputs.flush().catch(options.onError)
     return saved
   }
-  const selectionReferences = createDesktopSelectionReferences({ controller, pool, language, openFile: (target, current) => createFile(target, undefined, current), browser: api.browser, resources: options.resources, ready: () => initialized.value, independent: () => stores.applicationSettings.config.value?.desktop.contextPanelMode === 'independent', locateFile: target => api.localChat.spaces.readFile(target), navigationVersion: () => navigationVersion })
-  return { selectionReferences, api, renderers, fileOperations, fileToolbarTargets, fileView, closeContextFiles, readingPositions, discardTask, prepareTaskDeletion, activeTask, activeTaskId, backupError, controller, copies, models, pool, persistence, initialize, flush, dispose, openTask, newTask, prepareNewTaskInput, showTaskInput, showReferencePage, startTaskWithSkill, openFile, dropResource, language, get initialized() {
+  const selectionReferences = createDesktopSelectionReferences({ controller, pool, language, openFile: (target, current) => createFile(target, undefined, current), browser: api.browser, resources: options.resources, ready: () => initialized.value, independent: () => stores.applicationSettings.config.value?.desktop.contextPanelMode === 'independent', locateFile: target => api.localChat.spaces.readFile(target), navigationVersion: () => navigation.version })
+  return { selectionReferences, api, renderers, fileOperations, fileToolbarTargets, fileView, closeContextFiles, readingPositions, discardTask, prepareTaskDeletion, activeTask, activeTaskId, backupError, controller, copies, models, pool, persistence, initialize, flush, dispose, openTask, openDraft, newTask, prepareNewTaskInput, showTaskInput, showReferencePage, startTaskWithSkill, openFile, dropResource, language, get initialized() {
     return initialized.value
   }, get navigationVersion() {
-    return navigationVersion
+    return navigation.version
   } }
 }

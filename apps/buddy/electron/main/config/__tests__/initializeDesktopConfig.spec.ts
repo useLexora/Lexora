@@ -1,8 +1,9 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
+import { parse } from 'smol-toml'
 import { expect, it } from 'vitest'
-import { initializeDesktopConfig, resolveSystemLanguage } from '../initializeDesktopConfig'
+import { initializeDesktopConfig } from '../initializeDesktopConfig'
 import { LexoraConfigStore } from '../LexoraConfigStore'
 
 async function fixture() {
@@ -20,18 +21,18 @@ it('initializes only fresh profiles and persists language, incomplete setup and 
   expect(await initializeDesktopConfig(new LexoraConfigStore(options), options)).toMatchObject({ desktop: { language: 'zh-CN', onboardingCompleted: true, navigationLayout: 'immersive' }, pet: { enabled: false } })
 })
 
-it('does not enroll or rewrite existing profiles, including empty configs and data without a config', async () => {
+it('persists the exit default without enrolling existing profiles or dropping unknown preferences', async () => {
   for (const content of ['', '[desktop]\nlanguage="zh-CN"\n[pet]\nenabled=false\n']) {
     const { options, store } = await fixture()
     await writeFile(options.configPath, content)
     expect((await initializeDesktopConfig(store, options)).desktop).toMatchObject({ language: 'zh-CN', onboardingCompleted: true })
-    expect(await readFile(options.configPath, 'utf8')).toBe(content)
+    expect(parse(await readFile(options.configPath, 'utf8'))).toMatchObject({ ...parse(content), desktop: { ...(parse(content).desktop as object ?? {}), exit_behavior: 'stop_service' } })
   }
   const { options, store } = await fixture()
   await mkdir(options.buddyHome)
   await writeFile(join(options.buddyHome, 'buddy.sqlite3'), 'existing data')
   expect((await initializeDesktopConfig(store, options)).desktop.onboardingCompleted).toBe(true)
-  await expect(readFile(options.configPath)).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(parse(await readFile(options.configPath, 'utf8'))).toEqual({ desktop: { exit_behavior: 'stop_service' } })
 })
 
 it('preserves corrupt configuration for recovery instead of resetting onboarding', async () => {
@@ -42,10 +43,13 @@ it('preserves corrupt configuration for recovery instead of resetting onboarding
   expect(await readFile(options.configPath, 'utf8')).toBe(content)
 })
 
-it.each([
-  [['ja-JP', 'zh-Hant-TW', 'en-US'], 'zh-CN'],
-  [['en_AU', 'zh-CN'], 'en-US'],
-  [['fr-FR'], 'en-US'],
-] as const)('matches supported system languages in priority order: %j', (languages, expected) => {
-  expect(resolveSystemLanguage(languages)).toBe(expected)
+it('preserves an explicit exit choice across repeated initialization and partial updates', async () => {
+  const { options, store } = await fixture()
+  await writeFile(options.configPath, '[desktop]\nexit_behavior="keep_service"\nfuture=true\n')
+  const before = await readFile(options.configPath, 'utf8')
+  expect((await initializeDesktopConfig(store, options)).desktop.exitBehavior).toBe('keep_service')
+  expect(await readFile(options.configPath, 'utf8')).toBe(before)
+  await Promise.all([store.initializeExitBehavior(), store.update({ desktop: { language: 'en-US' } })])
+  expect((await new LexoraConfigStore(options).initializeExitBehavior()).desktop.exitBehavior).toBe('keep_service')
+  expect(parse(await readFile(options.configPath, 'utf8'))).toMatchObject({ desktop: { exit_behavior: 'keep_service', future: true } })
 })

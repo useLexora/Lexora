@@ -41,7 +41,6 @@ export type ConversationArchiveQuery = DeepReadonly<z.infer<typeof conversationA
 export type ConversationArchivePolicy = DeepReadonly<z.infer<typeof conversationArchivePolicySchema>>
 
 export const conversationArchiveRpc = {
-  deletePermanently: { method: 'conversations.deletePermanently', input: conversationArchiveTargetSchema, response: z.boolean() },
   archive: { method: 'conversations.archive', input: conversationArchiveTargetSchema, response: z.boolean() },
   restoreArchive: { method: 'conversations.restoreArchive', input: conversationArchiveTargetSchema, response: z.boolean() },
   deleteArchived: { method: 'conversations.deleteArchived', input: conversationArchiveTargetSchema, response: z.boolean() },

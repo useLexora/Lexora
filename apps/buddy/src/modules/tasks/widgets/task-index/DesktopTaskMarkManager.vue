@@ -11,14 +11,14 @@ import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopTaskMarkEditor from './DesktopTaskMarkEditor.vue'
 import DesktopTaskMarkItem from './DesktopTaskMarkItem.vue'
 
-type MarkDefinition = Pick<LocalTaskMark, 'id' | 'name' | 'description' | 'color'>
+type MarkDefinition = Pick<LocalTaskMark, 'id' | 'name' | 'description' | 'color' | 'revision'>
 
 const props = defineProps<{ marks: TaskMarks, language: BuddyLocale }>()
 const show = defineModel<boolean>('show', { required: true })
 const { t } = useBuddyI18n(() => props.language)
 const editing = shallowRef(false)
 const initial = shallowRef<MarkDefinition | null>(null)
-const deleteId = shallowRef<string | null>(null)
+const deletion = shallowRef<MarkDefinition | null>(null)
 const session = shallowRef(0)
 const readOnly = computed(() => initial.value?.id === SYSTEM_UNREAD_MARK_ID)
 const definitions = computed<readonly MarkDefinition[]>(() => [{
@@ -27,7 +27,6 @@ const definitions = computed<readonly MarkDefinition[]>(() => [{
   description: t('desktop.marks.unreadDescription'),
   color: 'var(--buddy-accent-solid)',
 }, ...props.marks.items.value])
-const deletion = computed(() => props.marks.items.value.find(mark => mark.id === deleteId.value) ?? null)
 const heading = computed(() => {
   if (!editing.value)
     return t('desktop.marks.manage')
@@ -39,7 +38,7 @@ watch(show, (open) => {
   session.value += 1
   editing.value = false
   initial.value = null
-  deleteId.value = null
+  deletion.value = null
   if (open)
     void props.marks.refresh()
 })
@@ -48,7 +47,7 @@ function edit(mark: MarkDefinition | null) {
   session.value += 1
   initial.value = mark
   editing.value = true
-  deleteId.value = null
+  deletion.value = null
 }
 
 function backToList() {
@@ -63,14 +62,14 @@ async function save(input: TaskMarkInput) {
   if (readOnly.value)
     return
   const version = session.value
-  if (await props.marks.save(input, initial.value?.id) && session.value === version && show.value)
+  if (await props.marks.save(input, initial.value?.id, initial.value?.revision) && session.value === version && show.value)
     editing.value = false
 }
 
 async function remove() {
-  const id = deleteId.value
-  if (id && await props.marks.remove(id) && deleteId.value === id)
-    deleteId.value = null
+  const mark = deletion.value
+  if (mark && await props.marks.remove(mark.id, mark.revision) && deletion.value === mark)
+    deletion.value = null
 }
 </script>
 
@@ -120,14 +119,14 @@ async function remove() {
             :disabled="marks.busy.value"
             :language="language"
             @edit="edit(mark)"
-            @remove="deleteId = mark.id"
+            @remove="deletion = mark"
           />
         </div>
       </NSpin>
       <NAlert v-if="deletion" type="warning" :show-icon="false" class="desktop-task-mark-manager__deletion">
         <p>{{ t('desktop.marks.deleteMessage', { name: deletion.name }) }}</p>
         <div class="flex justify-end gap-[8px]">
-          <NButton size="small" :disabled="marks.busy.value" @click="deleteId = null">
+          <NButton size="small" :disabled="marks.busy.value" @click="deletion = null">
             {{ t('common.cancel') }}
           </NButton>
           <NButton size="small" type="error" :loading="marks.busy.value" :disabled="marks.busy.value" @click="remove">

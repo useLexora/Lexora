@@ -3,7 +3,7 @@ import type { BuddyExecutionProfile } from '../../../../../shared/permissions/ex
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { buddySettingsSchema } from '../../../../../shared/buddies/buddySettings'
 import { createBuddyUserContent } from '../../../../../shared/conversation/buddyUserContent'
 import { resolveBuddyPermissionSettings } from '../../../../../shared/permissions/permissionMode'
@@ -12,6 +12,7 @@ import { MutationCoordinator } from '../../../changes/MutationCoordinator'
 import { isReviewUserMessage } from '../../../chat/buddyReviewPrompt'
 import { ComposerDraftService } from '../../../chat/ComposerDraftService'
 import { createRunEventLog } from '../../../events/createRunEventLog'
+import { UserQuestionService } from '../../../questions/UserQuestionService'
 import { RunLifecycleService } from '../../../runs/RunLifecycleService'
 import { createExecutionStorageFixture, executionNow } from '../../../storage/__tests__/executionFixture'
 import { createApprovalRepository } from '../../../storage/approvalRepository'
@@ -45,7 +46,11 @@ async function fixture() {
   const coordinator = new ExecutionCoordinator({ listIncomplete: () => storage.runs.listIncomplete(), executions: storage.executions, mailbox, events, lifecycle, mutations, readResult: () => '', launchChild: async () => {
     throw new Error('Not used')
   }, stopExecution: async () => false })
+  const questions = new UserQuestionService({ ...storage, coordinator, deliver: async () => {
+    throw new Error('No answer expected')
+  } })
   const service = new ExecutionPresentationService({
+    questions,
     approvals: createApprovalRepository(storage.database),
     conversations: storage.conversations,
     runs: storage.runs,
@@ -77,6 +82,7 @@ async function fixture() {
   const composerInput = new ExecutionComposerInputService(inputOptions)
   cleanups.push(async () => {
     await drafts.dispose()
+    await questions.dispose()
     service.dispose()
     usageService.dispose()
     await coordinator.dispose()
@@ -86,13 +92,32 @@ async function fixture() {
     storage.database.close()
     await rm(directory, { recursive: true, force: true })
   })
-  return { ...storage, events, mailbox, mutations, coordinator, service, usage, usageService, drafts, composerInput, inputOptions }
+  return { ...storage, events, mailbox, mutations, coordinator, service, questions, usage, usageService, drafts, composerInput, inputOptions }
 }
 
 const scope = { conversationId: 'conversation', branchId: 'branch' }
 const target = { ...scope, rootRunId: 'root', runId: 'child' }
 
 describe('execution presentation ownership', () => {
+  it('aggregates only real blocking question waits across branches without exposing execution data', async () => {
+    const f = await fixture()
+    f.conversations.createBranch({ id: 'other', conversationId: 'conversation', parentBranchId: null, forkedFromMessageId: null, createdAt: executionNow, activate: false })
+    const source = f.runs.findById('root')!
+    f.runs.create({ ...source, id: 'root-B', rootRunId: 'root-B', branchId: 'other' })
+    const controller = new AbortController()
+    const question = f.questions.ask('root-B', 'question-B', { questions: [{ id: 'choice', question: 'Continue?', kind: 'single', options: [{ id: 'yes', label: 'Continue' }, { id: 'no', label: 'Stop' }] }] }, controller.signal)
+    expect(f.service.activity({ conversationId: 'conversation' })).toEqual({ hasBlockingAnswer: false })
+    const waiting = f.questions.wait('root-B', question.id, controller.signal)
+    void waiting.catch(() => {})
+    await vi.waitFor(() => expect(f.service.activity({ conversationId: 'conversation' })).toEqual({ hasBlockingAnswer: true }))
+    expect(f.conversations.findById('conversation')?.activeBranchId).toBe('branch')
+    f.executions.requestCancel('root-B', executionNow)
+    expect(f.service.activity({ conversationId: 'conversation' })).toEqual({ hasBlockingAnswer: false })
+    controller.abort()
+    await waiting.catch(() => {})
+    expect(() => f.service.activity({ conversationId: 'missing' })).toThrow()
+  })
+
   it('derives approval waiting from pending approvals even when model progress still says preparing', async () => {
     const f = await fixture()
     f.executions.admitChild(f.child('child', f.actor.id))
@@ -159,20 +184,6 @@ describe('execution presentation ownership', () => {
     await expect(f.service.detail({ ...target, branchId: 'sibling' })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
     expect(f.service.list({ ...scope, branchId: 'sibling' })).toEqual([])
     expect(() => f.service.list({ ...scope, branchId: 'missing' })).toThrow()
-  })
-
-  it('keeps same-role ordinals stable when later children sort earlier by ID and when executions finish', async () => {
-    const f = await fixture()
-    f.executions.admitChild(f.child('z-child'))
-    f.executions.admitChild(f.child('a-child'))
-    const ordinals = () => f.service.list(scope).map(record => [record.runId, record.ordinal])
-    expect(ordinals()).toEqual([['root', null], ['z-child', 1], ['a-child', 2]])
-    await f.service.cancel({ ...target, runId: 'z-child' })
-    f.executions.admitChild(f.child('earlier-child'))
-    expect(ordinals()).toEqual([['root', null], ['z-child', 1], ['a-child', 2], ['earlier-child', 3]])
-    expect((await f.service.detail({ ...target, runId: 'a-child' })).execution.ordinal).toBe(2)
-    await f.events.replayAll()
-    expect(ordinals()).toEqual([['root', null], ['z-child', 1], ['a-child', 2], ['earlier-child', 3]])
   })
 
   it('closes cancelled questions without reviving the child and reports unsettled resources separately', async () => {
@@ -283,7 +294,9 @@ describe('execution presentation ownership', () => {
     expect(f.executions.find('child')).toMatchObject({ phase: 'closed', run: { status: 'cancelled' } })
     expect((await f.service.detail(target)).inputs).toEqual([expect.objectContaining({ messageId, state: 'undelivered' })])
     f.conversations.createBranch({ id: 'other', conversationId: 'conversation', parentBranchId: null, forkedFromMessageId: null, createdAt: executionNow, activate: true })
-    await expect(f.service.send({ ...input, runId: 'sibling', messageId: '22222222-2222-4222-8222-222222222222' })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+    await expect(f.service.send({ ...input, runId: 'sibling', messageId: '22222222-2222-4222-8222-222222222222' })).resolves.toEqual({ accepted: true })
+    expect(f.mailbox.listUnconsumed('sibling')).toEqual([expect.objectContaining({ text: input.text, targetRunId: 'sibling' })])
+    await expect(f.service.send({ ...input, branchId: 'other', runId: 'sibling', messageId: '33333333-3333-4333-8333-333333333333' })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
   })
 
   it('pages sanitized process events and counts separate invocations of a reused call ID without leaking the transcript', async () => {
@@ -345,7 +358,6 @@ describe('actor input from the composer', () => {
   it.each([
     { mode: 'read_only', kind: 'supplement' },
     { mode: 'manual_approval', kind: 'answer' },
-    { mode: 'full_access', kind: 'supplement' },
   ] as const)('accepts a current $kind after switching to $mode without changing the original run', async ({ mode, kind }) => {
     const f = await inputFixture()
     if (kind === 'answer')

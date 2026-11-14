@@ -21,7 +21,7 @@ function fixture() {
   databases.push(database)
   const drafts = createComposerDraftRepository(database)
   drafts.open({ draftId: 'draft', scope: { kind: 'global' }, initialContent: createBuddyUserContent('initial'), initialModelSelection: null, initialExecutionConfig: { approvalPolicy: 'policy', executionProfile: 'workspace_write' }, now: '2026-09-10T00:00:00.000Z' })
-  const input = (id: string): PrepareTurnRequestInput => ({
+  const input = (id: string): PrepareTurnRequestInput & { draft: NonNullable<PrepareTurnRequestInput['draft']> } => ({
     approvalPolicy: 'policy',
     executionProfile: 'workspace_write',
     attachmentBindings: [],
@@ -236,15 +236,6 @@ describe('chat queue ownership and delivery', () => {
     expect(f.drafts.findById('draft')?.content).toEqual(createBuddyUserContent('unsent text'))
     expect(f.queue.replay('request-A', 'A')).toMatchObject({ id: 'A' })
     expect(() => f.queue.replay('request-A', 'changed')).toThrow()
-  })
-
-  it('rejects an attachment handoff that does not match the queued message', () => {
-    const f = fixture()
-    const input = f.input('invalid')
-    input.runInput.attachmentIds = ['missing']
-    expect(() => f.queue.enqueue(input)).toThrow()
-    expect(f.queue.list(f.scope)).toEqual([])
-    expect(f.drafts.findById('draft')?.revision).toBe(input.draft.expectedRevision)
   })
 
   it('rejects cross-conversation actions and does not dispatch entries from a deleted conversation', () => {

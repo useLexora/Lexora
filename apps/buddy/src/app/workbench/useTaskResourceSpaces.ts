@@ -3,6 +3,7 @@ import type { Ref } from 'vue'
 import type { TaskWorkspacePool } from './TaskWorkspacePool'
 import type { WorkbenchController } from '@/workbench/services/WorkbenchController'
 import { computed, onScopeDispose, shallowRef } from 'vue'
+import { parseTaskResource } from './taskResource'
 
 export function useTaskResourceSpaces(options: {
   controller: WorkbenchController
@@ -12,9 +13,10 @@ export function useTaskResourceSpaces(options: {
   const { controller, pool } = options
   const openTasks = shallowRef(collect())
   function collect() {
-    return Object.values(controller.layout.views)
-      .filter(view => view.resource.scheme === 'task' || view.resource.scheme === 'draft')
-      .map(({ resource }) => ({ resource, task: pool.peek(resource) }))
+    return Object.values(controller.layout.views).flatMap((view) => {
+      const resource = parseTaskResource(view.resource)
+      return resource ? [{ resource, task: pool.peek(resource) }] : []
+    })
   }
   function reconcile() {
     openTasks.value = collect()
@@ -33,7 +35,7 @@ export function useTaskResourceSpaces(options: {
       if (task)
         spaces.set(key, task.session.spaceId.value)
       else if (resource.scheme === 'draft')
-        spaces.set(key, typeof resource.data.spaceId === 'string' ? resource.data.spaceId : null)
+        spaces.set(key, resource.data.spaceId)
     }
     return spaces
   })

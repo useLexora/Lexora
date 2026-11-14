@@ -17,7 +17,7 @@ export function observeWebDiagnostics(service: WebCapabilityService, report: App
   }))
 }
 
-export function observeWebHostDiagnostics(client: WebHostClient, report: ApplicationDiagnosticReporter) {
+export function observeWebHostDiagnostics(client: Pick<WebHostClient, 'onDidChange'>, report: ApplicationDiagnosticReporter) {
   return client.onDidChange(change => report({
     event: `web.transport.${change.kind}.${change.phase.replaceAll('-', '_')}${change.outcome ? `_${change.outcome}` : ''}${change.cancelled ? '_after_cancel' : ''}`,
     component: 'runtime.web_host',

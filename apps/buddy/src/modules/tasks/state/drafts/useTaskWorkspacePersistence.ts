@@ -8,10 +8,11 @@ import type { useChatDrafts } from '@/modules/tasks/state/drafts/useChatDrafts'
 import { computed, readonly, shallowRef, watch } from 'vue'
 import { parseDraftScopeKey } from '../../model/drafts/draftScope'
 import { createDraftValueFingerprint } from '../../model/drafts/draftValueFingerprint'
+import { createDraftRecovery } from './createDraftRecovery'
 
 interface UseTaskWorkspacePersistenceOptions {
   beforePersist?: () => Promise<void>
-  api: { composerDrafts: Pick<LexoraDesktopApi['localChat']['composerDrafts'], 'get' | 'open' | 'save'> }
+  api: { draftRecovery?: LexoraDesktopApi['localChat']['draftRecovery'], composerDrafts: Pick<LexoraDesktopApi['localChat']['composerDrafts'], 'get' | 'open' | 'save'> }
   drafts: ReturnType<typeof useChatDrafts>
   getConversation: (conversationId: string) => LocalConversation | null
   onError: (error: unknown) => void
@@ -21,6 +22,8 @@ interface UseTaskWorkspacePersistenceOptions {
 }
 
 export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistenceOptions) {
+  const recovery = createDraftRecovery({ api: options.api.draftRecovery, drafts: options.drafts, onError: options.onError })
+  const stopRecoveryScope = watch(options.drafts.targetKey, targetKey => recovery.restoreScope(targetKey), { flush: 'sync' })
   const restorationState = shallowRef<DraftRestorationState>('pending')
   const conflict = shallowRef<{ targetKey: string, remote: LocalComposerDraft } | null>(null)
   const restorationConflict = computed<DraftRestorationConflict | null>(() => {
@@ -74,10 +77,13 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
 
   async function restoreWorkspace(navigationReady: Promise<unknown>): Promise<boolean> {
     try {
+      await recovery.initialize()
       await navigationReady
       if (disposed)
         return false
 
+      for (const targetKey of [...recovery.recoveredTargets].filter(target => !isReadOnlyTarget(target)))
+        await reconcileRecovered(targetKey)
       let unopened = options.drafts.listSnapshots().find(snapshot => snapshot.revision === null && !isReadOnlyTarget(snapshot.targetKey))
       while (unopened) {
         await ensureDraft(unopened.targetKey, true)
@@ -85,8 +91,9 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
           return false
         unopened = options.drafts.listSnapshots().find(snapshot => snapshot.revision === null && !isReadOnlyTarget(snapshot.targetKey))
       }
+      await recovery.flush()
       restorationState.value = 'ready'
-      if (requestedVersion > confirmedVersion)
+      if (requestedVersion > confirmedVersion || options.drafts.listSnapshots().some(snapshot => !options.drafts.isPersisted(snapshot)))
         return persist()
       return true
     }
@@ -111,6 +118,8 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
       if (!options.drafts.confirmOpen(current.local, remote))
         return false
       options.onDraftRestored?.(targetKey)
+      recovery.recoveredTargets.delete(targetKey)
+      await recovery.flush()
       initialDrafts.set(targetKey, options.drafts.snapshot(targetKey))
       conflict.value = null
       restorationState.value = 'pending'
@@ -149,10 +158,12 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
   async function drain(): Promise<boolean> {
     try {
       while (confirmedVersion < requestedVersion) {
+        await recovery.flush()
         await options.beforePersist?.()
         const version = requestedVersion
         for (const snapshot of options.drafts.listSnapshots())
           await persistSnapshot(snapshot)
+        await recovery.flush()
         confirmedVersion = version
       }
       return true
@@ -165,6 +176,26 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
     finally {
       cancelScheduledSave()
     }
+  }
+
+  async function reconcileRecovered(targetKey: string): Promise<void> {
+    const snapshot = options.drafts.snapshot(targetKey)
+    if (snapshot.revision === null) {
+      recovery.recoveredTargets.delete(targetKey)
+      return
+    }
+    const remote = await options.api.composerDrafts.get(snapshot.draftId)
+    if (disposed)
+      return
+    if (remote.revision >= snapshot.revision && (sameDraftValue(remote, snapshot) || (remote.revision === snapshot.revision && createDraftValueFingerprint(remote) === snapshot.confirmedSnapshot))) {
+      if (!options.drafts.confirmOpen(snapshot, remote, true))
+        return
+      recovery.recoveredTargets.delete(targetKey)
+      return
+    }
+    conflict.value = { targetKey, remote }
+    restorationState.value = 'conflict'
+    throw new DraftRestorationConflictError()
   }
 
   async function ensureDraft(targetKey: string, restoring = false): Promise<ChatDraftSnapshot> {
@@ -215,6 +246,10 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
   async function persistSnapshot(submitted: ChatDraftSnapshot): Promise<void> {
     if (isReadOnlyTarget(submitted.targetKey))
       return
+    if (recovery.recoveredTargets.has(submitted.targetKey)) {
+      await reconcileRecovered(submitted.targetKey)
+      submitted = options.drafts.snapshot(submitted.targetKey)
+    }
     let snapshot = submitted.revision === null
       ? await ensureDraft(submitted.targetKey)
       : submitted
@@ -268,6 +303,7 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
   }
 
   function persistIfHydrated() {
+    recovery.schedule()
     if (disposed)
       return
     requestedVersion += 1
@@ -283,13 +319,17 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
   return {
     dispose() {
       disposed = true
+      stopRecoveryScope()
       stopReadOnly()
+      recovery.schedule()
       cancelScheduledSave()
       if (restorationState.value === 'ready' && confirmedVersion < requestedVersion)
         void flush()
     },
     restore,
     resolveRemote,
+    localCopies: recovery.copies,
+    persistLocalChanges: recovery.schedule,
     restorationConflict: readonly(restorationConflict),
     restorationState: readonly(restorationState),
     flushPending,

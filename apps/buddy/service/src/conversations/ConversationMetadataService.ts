@@ -1,3 +1,4 @@
+import type { DatabaseSync } from 'node:sqlite'
 import type { EventSnapshot } from '../../../shared/events/eventTypes'
 import type { BuddiesService } from '../buddies/BuddiesService'
 import type { ConversationModelSelection, ConversationRecord } from '../storage/conversationRecord'
@@ -13,6 +14,7 @@ import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { BuddyServiceError } from '../rpc/runtimeRequest'
 import { requireActiveSpace } from '../spaces/requireActiveSpace'
 import { createSpaceExecutionContext, matchesSpaceExecutionContext } from '../spaces/spaceExecutionContext'
+import { afterTransactionCommit } from '../storage/transaction'
 
 export type ConversationMetadataCommit = EventSnapshot<{
   commitId: string
@@ -24,6 +26,7 @@ export type ConversationMetadataCommit = EventSnapshot<{
 }>
 
 export interface ConversationMetadataServiceOptions {
+  database?: DatabaseSync
   buddies?: Pick<BuddiesService, 'get'>
   runInputs?: Pick<RunInputRepository, 'findByRunId'>
   runs?: Pick<RunRepository, 'findById' | 'setModelSelection' | 'findActiveForConversation'>
@@ -41,7 +44,6 @@ export interface ConversationMetadataServiceOptions {
     applyPermissionSettings?: (conversation: ConversationRecord) => Promise<{ pending: number, degraded: number }>
     refreshModelSelection?: (runId: string) => void
   }
-  assertWritable?: (conversationId: string) => void
   onObserverError?: (error: unknown) => void
 }
 
@@ -49,6 +51,7 @@ export class ConversationMetadataService {
   readonly #options: ConversationMetadataServiceOptions
   readonly #committed: Emitter<ConversationMetadataCommit>
   readonly #pendingPermissions = new Map<string, symbol>()
+  readonly #spaceApplications = new Map<string, Promise<void>>()
   readonly #pending = new Set<Promise<unknown>>()
   readonly onDidCommit: Emitter<ConversationMetadataCommit>['event']
   #disposed = false
@@ -64,7 +67,7 @@ export class ConversationMetadataService {
   }
 
   rename(input: RenameConversationInput): ConversationRecord {
-    this.#requireWritable(input.id)
+    this.#requireActive(input.id)
     const conversation = this.#options.repository.rename(input)
     this.#publish('title', conversation)
     return conversation
@@ -73,10 +76,6 @@ export class ConversationMetadataService {
   renameGenerated(input: RenameConversationInput & { expectedRevision: number, userInitiated?: boolean }): ConversationRecord | null {
     if (this.#disposed)
       throw new BuddyServiceError('VALIDATION_FAILED')
-    const current = this.#options.repository.findById(input.id)
-    if (!current || current.deletedAt || current.archivedAt)
-      return null
-    this.#options.assertWritable?.(input.id)
     const conversation = this.#options.repository.renameGenerated(input)
     if (conversation)
       this.#publish('title', conversation)
@@ -88,42 +87,49 @@ export class ConversationMetadataService {
   }
 
   async #setPermissionSettings(input: Omit<SetConversationPermissionSettingsInput, 'updatedAt'>): Promise<ConversationRecord> {
+    const conversation = this.commitPermissionSettings(input, false)
+    await this.#applyPermissions(input.id)
+    return conversation
+  }
+
+  commitPermissionSettings(input: Omit<SetConversationPermissionSettingsInput, 'updatedAt'>, deferApplication = true): ConversationRecord {
     const { id, approvalPolicy, executionProfile } = input
-    const current = this.#requireWritable(id)
-    if (current.approvalPolicy === approvalPolicy && current.executionProfile === executionProfile) {
-      await this.#applyPermissions(id)
-      return current
-    }
-    const conversation = this.#options.repository.setPermissionSettings({ id, approvalPolicy, executionProfile, updatedAt: new Date().toISOString() })
+    const current = this.#requireActive(id)
+    const conversation = current.approvalPolicy === approvalPolicy && current.executionProfile === executionProfile
+      ? current
+      : this.#options.repository.setPermissionSettings({ id, approvalPolicy, executionProfile, updatedAt: new Date().toISOString() })
     if (!conversation)
       throw new BuddyServiceError('VALIDATION_FAILED')
-    this.#pendingPermissions.set(id, Symbol('permission-invalidation'))
-    this.#publish('permissions', conversation)
-    await this.#applyPermissions(id)
+    if (conversation !== current) {
+      this.#afterCommit(() => this.#pendingPermissions.set(id, Symbol('permission-invalidation')))
+      this.#publish('permissions', conversation)
+    }
+    if (deferApplication)
+      this.#afterCommit(() => this.#run(() => this.#applyPermissions(id)))
     return conversation
   }
 
   listMembers(conversationId: string) {
-    this.#requireReadable(conversationId)
-    return this.#options.repository.listMembers(conversationId).map(({ actorId, joinedAt }) => ({ actorId, joinedAt }))
+    const conversation = this.#requireReadable(conversationId)
+    return this.#options.repository.listMembers(conversationId).map(({ actorId, joinedAt }) => ({ actorId, joinedAt, ...(conversation.metadataRevision !== undefined ? { metadataRevision: conversation.metadataRevision } : {}) }))
   }
 
   addMember(input: { id: string, buddyId: string }) {
-    this.#requireWritable(input.id)
+    this.#requireActive(input.id)
     this.#options.repository.addMember({ ...input, updatedAt: new Date().toISOString() })
     this.#publish('buddy', this.#requireActive(input.id))
     return this.listMembers(input.id)
   }
 
   removeMember(input: { id: string, buddyId: string }) {
-    this.#requireWritable(input.id)
+    this.#requireActive(input.id)
     this.#options.repository.removeMember({ ...input, updatedAt: new Date().toISOString() })
     this.#publish('buddy', this.#requireActive(input.id))
     return this.listMembers(input.id)
   }
 
   setBuddy(input: { id: string, buddyId: string }): ConversationRecord {
-    const current = this.#requireWritable(input.id)
+    const current = this.#requireActive(input.id)
     const conversation = this.#options.repository.setBuddy({ ...input, updatedAt: new Date().toISOString() })
     if (!conversation)
       throw new BuddyServiceError('VALIDATION_FAILED')
@@ -141,7 +147,6 @@ export class ConversationMetadataService {
     const spaces = this.#options.spaces
     if (!moves || !spaces)
       throw new BuddyServiceError('VALIDATION_FAILED')
-    this.#options.assertWritable?.(input.id)
     return moves.mutations.run(input.id, async () => {
       const current = this.#requireActive(input.id)
       requireActiveSpace(spaces.findById(input.spaceId))
@@ -175,6 +180,63 @@ export class ConversationMetadataService {
     })
   }
 
+  withMutationScope<T>(conversationId: string, operation: () => Promise<T>): Promise<T> {
+    const scoped = async () => {
+      const result = await operation()
+      await this.#spaceApplications.get(conversationId)?.catch(() => {})
+      return result
+    }
+    return this.#options.spaceMoves?.mutations.run(conversationId, scoped) ?? scoped()
+  }
+
+  async prepareSpaceMove(input: { id: string, spaceId: string }) {
+    const current = this.#requireActive(input.id)
+    const moves = this.#options.spaceMoves
+    if (!moves || !this.#options.spaces)
+      throw new BuddyServiceError('VALIDATION_FAILED')
+    if (current.spaceId !== null && current.spaceId !== input.spaceId)
+      throw new BuddyServiceError('CONVERSATION_SPACE_CONFLICT')
+    this.#assertMoveIdle(input.id)
+    const context = createSpaceExecutionContext(requireActiveSpace(this.#options.spaces.findById(input.spaceId)))
+    await moves.validateTarget(current, input.spaceId)
+    return { ...input, context }
+  }
+
+  commitSpaceMove(input: Awaited<ReturnType<ConversationMetadataService['prepareSpaceMove']>>): ConversationRecord {
+    const current = this.#requireActive(input.id)
+    this.#assertMoveIdle(input.id)
+    if (!this.#options.spaces || !matchesSpaceExecutionContext(requireActiveSpace(this.#options.spaces.findById(input.spaceId)), input.context))
+      throw new BuddyServiceError('DIRECTORY_NOT_AUTHORIZED')
+    if (current.spaceId === input.spaceId)
+      return current
+    if (current.spaceId !== null)
+      throw new BuddyServiceError('CONVERSATION_SPACE_CONFLICT')
+    const conversation = this.#options.repository.setSpace({ id: input.id, spaceId: input.spaceId, updatedAt: new Date().toISOString() })
+    if (!conversation)
+      throw new BuddyServiceError('CONVERSATION_SPACE_CONFLICT')
+    this.#publish('space', conversation)
+    this.#afterCommit(() => {
+      const applied = this.#run(async () => {
+        const result = await this.#options.sessions.invalidateConversation(input.id)
+        if (result.pending || result.degraded)
+          throw new ConversationSettingsApplicationError(result.degraded ? 'CONVERSATION_SETTINGS_FAILED' : 'CONVERSATION_SETTINGS_PENDING')
+      }).finally(() => {
+        if (this.#spaceApplications.get(input.id) === applied)
+          this.#spaceApplications.delete(input.id)
+      })
+      this.#spaceApplications.set(input.id, applied)
+      return applied
+    })
+    return conversation
+  }
+
+  #assertMoveIdle(conversationId: string): void {
+    if (this.#options.runs?.findActiveForConversation(conversationId) || this.#options.spaceMoves?.hasActiveExecution(conversationId))
+      throw new BuddyServiceError('CONVERSATION_BUSY')
+    if (this.#options.spaceMoves?.hasPendingMessages(conversationId))
+      throw new BuddyServiceError('CONVERSATION_QUEUE_NOT_EMPTY')
+  }
+
   getModelControls(conversationId: string, actorId?: string) {
     const conversation = this.#requireReadable(conversationId)
     const nextActorId = actorId ?? conversation.buddyId
@@ -184,7 +246,8 @@ export class ConversationMetadataService {
       throw new BuddyServiceError('BUDDY_NOT_ACTOR')
     const member = this.#options.repository.findMember(conversationId, nextActorId)
     return {
-      current: run ? { runId: run.id, actorId: run.buddyId, modelSelection: this.#runModelSelection(run) } : null,
+      ...(conversation.metadataRevision !== undefined ? { metadataRevision: conversation.metadataRevision } : {}),
+      current: run ? { runId: run.id, ...(conversation.metadataRevision !== undefined ? { generation: run.generation } : {}), actorId: run.buddyId, modelSelection: this.#runModelSelection(run) } : null,
       next: { actorId: nextActorId, isMember: Boolean(member), modelSelection: member?.modelSelection ?? (nextActorId === conversation.buddyId ? conversation.modelSelection : null) ?? buddy?.settings.model ?? null },
     }
   }
@@ -195,23 +258,23 @@ export class ConversationMetadataService {
   }
 
   setModelSelection(input: { id: string, actorId?: string, runId?: string, modelSelection: ConversationModelSelection | null }): Promise<ConversationRecord> {
-    return this.#run(() => this.#setModelSelection({
+    return this.#run(async () => this.commitModelSelection(await this.prepareModelSelection({
       id: input.id,
       actorId: input.actorId,
       runId: input.runId,
       modelSelection: input.modelSelection === null ? null : { ...input.modelSelection },
-    }))
+    })))
   }
 
-  async #setModelSelection(input: { id: string, actorId?: string, runId?: string, modelSelection: ConversationModelSelection | null }): Promise<ConversationRecord> {
+  async prepareModelSelection(input: { id: string, actorId?: string, runId?: string, modelSelection: ConversationModelSelection | null }) {
     const id = input.id
     const actorId = input.actorId ?? this.#targetRunActor(input.runId, id) ?? this.#requireActive(id).buddyId
     this.#targetRunActor(input.runId, id, actorId)
-    this.#requireWritable(id)
+    this.#requireActive(id)
     if (!input.runId && !this.#options.repository.findMember(id, actorId))
       throw new BuddyServiceError('VALIDATION_FAILED')
     const resolved = input.modelSelection === null ? null : await this.#options.resolveModelSelection({ ...input.modelSelection })
-    const current = this.#requireWritable(id)
+    this.#requireActive(id)
     const selection: ConversationModelSelection | null = resolved === null
       ? null
       : {
@@ -220,12 +283,18 @@ export class ConversationMetadataService {
           reasoning: resolved.reasoning,
           serviceTier: resolved.serviceTier,
         }
+    return { id, actorId, runId: input.runId, selection }
+  }
+
+  commitModelSelection(input: Awaited<ReturnType<ConversationMetadataService['prepareModelSelection']>>): ConversationRecord {
+    const { id, actorId, selection } = input
+    const current = this.#requireActive(id)
     if (input.runId) {
       this.#targetRunActor(input.runId, id, actorId)
       if (!this.#options.runs?.setModelSelection(input.runId, selection))
         throw new BuddyServiceError('VALIDATION_FAILED')
       this.#publish('model', current, actorId)
-      this.#options.sessions.refreshModelSelection?.(input.runId)
+      this.#afterCommit(() => this.#options.sessions.refreshModelSelection?.(input.runId!))
       return current
     }
     const member = this.#options.repository.findMember(id, actorId)
@@ -252,7 +321,7 @@ export class ConversationMetadataService {
       return false
     if (!this.#options.runs?.setModelSelection(run.id, selection))
       return false
-    this.#options.sessions.refreshModelSelection?.(run.id)
+    this.#afterCommit(() => this.#options.sessions.refreshModelSelection?.(run.id))
     return true
   }
 
@@ -266,7 +335,7 @@ export class ConversationMetadataService {
   }
 
   activateBranch(input: { conversationId: string, branchId: string }): ConversationRecord {
-    const current = this.#requireWritable(input.conversationId)
+    const current = this.#requireActive(input.conversationId)
     if (current.activeBranchId === input.branchId)
       return current
     const conversation = this.#options.repository.activateBranch({ ...input, updatedAt: new Date().toISOString() })
@@ -293,11 +362,6 @@ export class ConversationMetadataService {
       pending.reject(error)
     })
     return pending.promise
-  }
-
-  #requireWritable(id: string): ConversationRecord {
-    this.#options.assertWritable?.(id)
-    return this.#requireActive(id)
   }
 
   #requireActive(id: string): ConversationRecord {
@@ -327,15 +391,24 @@ export class ConversationMetadataService {
       this.#pendingPermissions.delete(id)
   }
 
+  #afterCommit(operation: () => unknown): void {
+    const onError = this.#options.onObserverError ?? (() => {})
+    if (this.#options.database)
+      afterTransactionCommit(this.#options.database, operation, onError)
+    else
+      void Promise.resolve(operation()).catch(onError)
+  }
+
   #publish(kind: ConversationMetadataCommit['kind'], conversation: ConversationRecord, actorId?: string): void {
     const title = kind === 'title' ? this.#options.repository.getTitleState(conversation.id) : null
-    this.#committed.fire(copyEventSnapshot({
+    const event = copyEventSnapshot({
       commitId: randomUUID(),
       kind,
       conversation,
       ...(actorId ? { actorId } : {}),
       ...(title ? { titleRevision: title.revision, titleSource: title.source } : {}),
-    }))
+    })
+    this.#afterCommit(() => this.#committed.fire(event))
   }
 }
 

@@ -15,12 +15,12 @@ import type {
   ProviderModelStateRepository,
 } from '../storage/providerModelStateRepository'
 import type { InputModel } from './modelCapabilities'
-import type { CatalogModel, ModelMetadataCatalog } from './ModelsDevCatalog'
+import type { ModelMetadataCatalog } from './ModelsDevCatalog'
 import type { ProviderModelDefinition, ProviderModelDiscoveryResult } from './ProviderModelDiscovery'
+import type { ModelReconciliationPolicy, ObservedProviderModel } from './providerModelReconciliation'
+import type { ModelSourceMetadata } from './providerModelSource'
 import type { BuddyModel, ModelParametersOverride } from './providerSchemas'
-import { createHash } from 'node:crypto'
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai'
-import { BUDDY_THINKING_LEVELS } from '../../../shared/conversation/modelSelection'
 import { pluginChatApi } from '../../../shared/extensions/extensionChat'
 import { supportsPdfInputApi } from '../../../shared/providers/pdfInput'
 import { modelCapabilityOverridesSchema } from '../../../shared/providers/providerCapabilities'
@@ -33,6 +33,8 @@ import { serializeModelMetadata } from './modelMetadata'
 import { MODEL_RESOLUTION_VERSION, modelResolutionFingerprint } from './modelResolution'
 import { normalizeProviderBaseUrl, ProviderCatalogMatcher } from './ProviderCatalogMatcher'
 import { ProviderUnavailableError, ProviderValidationError } from './ProviderFailure'
+import { planModelReconciliation } from './providerModelReconciliation'
+import { createSourceMetadata, emptyModelCost, nextSourceRevision, sourceMetadataFromCatalogModel, sourceParametersChanged } from './providerModelSource'
 import { buddyModelSchema, modelParametersOverrideSchema } from './providerSchemas'
 
 export interface ProviderRegistration {
@@ -85,10 +87,7 @@ export class ProviderModelCatalog {
     this.#configs = options.configs
     this.#catalogMatcher = new ProviderCatalogMatcher(options.metadata)
     this.#modelRuntime = options.modelRuntime
-    this.#models = {
-      ...options.models,
-      upsert: record => options.models.upsert({ ...record, resolution: effectiveType(record) === 'chat' ? this.#resolveSource(record) : null }),
-    }
+    this.#models = options.models
     this.#supportsOperation = options.supportsOperation ?? (() => true)
   }
 
@@ -102,7 +101,7 @@ export class ProviderModelCatalog {
         continue
       const resolution = this.#resolveSource(model)
       if (resolution !== model.resolution)
-        this.#models.upsert({ ...model, resolution })
+        this.#saveModel({ ...model, resolution })
     }
   }
 
@@ -184,7 +183,7 @@ export class ProviderModelCatalog {
         sourceMaxTokens: model.maxTokens,
         thinkingLevelMap: model.thinkingLevelMap ?? null,
       })
-      this.#models.upsert({
+      this.#saveModel({
         catalogSelection: model.catalogSelection ?? null,
         capabilityOverrides: null,
         acknowledgedSourceRevision: null,
@@ -211,43 +210,18 @@ export class ProviderModelCatalog {
   }
 
   reconcilePluginModels(providerId: string, models: readonly Model<Api>[]): void {
-    const now = new Date().toISOString()
-    for (const model of models) {
-      const current = this.#models.find(providerId, model.id)
-      const source = createSourceMetadata({ api: model.api, catalogProviderId: null, catalogModelId: null, compat: null, cost: model.cost, displayName: model.name, input: [...model.input], reasoning: model.reasoning, samplingParams: null, sourceContextWindow: model.contextWindow, sourceMaxTokens: model.maxTokens, thinkingLevelMap: model.thinkingLevelMap ?? null })
-      this.#models.upsert({
-        catalogSelection: null,
-        capabilityOverrides: current?.capabilityOverrides ?? null,
-        acknowledgedSourceRevision: current?.acknowledgedSourceRevision ?? null,
-        available: true,
-        createdAt: current?.createdAt ?? now,
-        enabled: current?.enabled ?? true,
-        lastSeenAt: now,
-        modelId: model.id,
-        providerId,
-        overrideContextWindow: null,
-        overrideMaxTokens: null,
-        ...source,
-        source: 'synced',
-        sourceRevision: sourceParametersChanged(current, source) ? nextSourceRevision(current?.sourceRevision, now) : current?.sourceRevision ?? now,
-        updatedAt: now,
-      })
-    }
-    for (const current of this.#models.list(providerId)) {
-      if (effectiveType(current) === 'chat' && !models.some(model => model.id === current.modelId))
-        this.#models.upsert({ ...current, available: false, updatedAt: now })
-    }
+    const observations = models.map(model => ({
+      providerId,
+      modelId: model.id,
+      metadata: createSourceMetadata({ api: model.api, catalogProviderId: null, catalogModelId: null, compat: null, cost: model.cost, displayName: model.name, input: [...model.input], reasoning: model.reasoning, samplingParams: null, sourceContextWindow: model.contextWindow, sourceMaxTokens: model.maxTokens, thinkingLevelMap: model.thinkingLevelMap ?? null }),
+    }))
+    this.#reconcileModels(providerId, observations, 'plugin-chat')
   }
 
   reconcileBuiltinModels(providerId: string, builtinProviderId = providerId, options: { models?: readonly Model<Api>[], metadataOnly?: boolean, preserveUnchanged?: boolean } = {}): void {
-    const now = new Date().toISOString()
     const runtimeModels = options.models ?? this.#modelRuntime.getModels(providerId)
-    const seen = new Set(runtimeModels.map(model => model.id))
     const channel = Boolean(this.#modelRuntime.getProviders().find(provider => provider.id === providerId)?.auth.oauth)
-    for (const model of runtimeModels) {
-      const current = this.#models.find(providerId, model.id)
-      if (current?.source === 'manual' || (options.metadataOnly && !current))
-        continue
+    const observations = runtimeModels.map((model) => {
       const match = this.#catalogMatcher.match({ api: model.api, baseUrl: model.baseUrl, modelId: model.id, providerId: builtinProviderId })
       const metadata = match.status === 'matched' ? match.model : null
       const source = createSourceMetadata({
@@ -264,48 +238,14 @@ export class ProviderModelCatalog {
         sourceMaxTokens: channel ? model.maxTokens : metadata?.maxTokens ?? model.maxTokens,
         thinkingLevelMap: channel ? model.thinkingLevelMap ?? null : metadata?.thinkingLevelMap ?? model.thinkingLevelMap ?? null,
       })
-      this.#upsertReconciled({
-        catalogSelection: null,
-        typeOverride: current?.typeOverride ?? null,
-        capabilityOverrides: current?.capabilityOverrides ?? null,
-        acknowledgedSourceRevision: current?.acknowledgedSourceRevision ?? null,
-        available: options.metadataOnly ? current!.available : true,
-        createdAt: current?.createdAt ?? now,
-        enabled: current?.enabled ?? false,
-        lastSeenAt: options.metadataOnly ? current!.lastSeenAt : now,
-        modelId: model.id,
-        overrideContextWindow: current?.overrideContextWindow ?? null,
-        overrideMaxTokens: current?.overrideMaxTokens ?? null,
-        providerId,
-        ...source,
-        source: 'builtin',
-        sourceRevision: sourceParametersChanged(current, source)
-          ? nextSourceRevision(current?.sourceRevision, now)
-          : current?.sourceRevision ?? now,
-        updatedAt: now,
-      }, current, options.preserveUnchanged)
-    }
-    if (options.metadataOnly)
-      return
-    for (const current of this.#models.list(providerId)) {
-      if (current.source === 'manual' || effectiveType(current) !== 'chat' || seen.has(current.modelId))
-        continue
-      if (current.available)
-        this.#models.upsert({ ...current, available: false, updatedAt: now })
-    }
+      return { providerId, modelId: model.id, metadata: source }
+    })
+    this.#reconcileModels(providerId, observations, options.metadataOnly ? 'builtin-metadata' : 'builtin', options.preserveUnchanged)
   }
 
-  reconcileSyncedModels(
-    provider: ProviderConfigRecord,
-    result: ProviderModelDiscoveryResult,
-  ): void {
-    const definitions = result.models
-    const now = new Date().toISOString()
-    const seen = new Set(definitions.map(model => model.id))
-    for (const definition of definitions) {
+  reconcileSyncedModels(provider: ProviderConfigRecord, result: ProviderModelDiscoveryResult): void {
+    const observations = result.models.map((definition) => {
       const current = this.#models.find(provider.id, definition.id)
-      if (current?.source === 'manual')
-        continue
       const serviceMetadata = definition.metadata
         ? serviceModelMetadataSchema.parse({
             api: provider.api,
@@ -313,35 +253,13 @@ export class ProviderModelCatalog {
             metadata: definition.metadata,
           })
         : null
-      const source = this.#syncedSourceMetadata(provider, definition, current, serviceMetadata)
-      this.#models.upsert({
-        catalogSelection: current?.catalogSelection ?? null,
-        typeOverride: current?.typeOverride ?? null,
-        capabilityOverrides: current?.capabilityOverrides ?? null,
-        acknowledgedSourceRevision: current?.acknowledgedSourceRevision ?? null,
-        available: true,
-        createdAt: current?.createdAt ?? now,
-        enabled: current?.enabled ?? false,
-        lastSeenAt: now,
-        modelId: definition.id,
-        overrideContextWindow: current?.overrideContextWindow ?? null,
-        overrideMaxTokens: current?.overrideMaxTokens ?? null,
+      return {
         providerId: provider.id,
-        ...source,
-        source: 'synced',
-        sourceRevision: sourceParametersChanged(current, source)
-          ? nextSourceRevision(current?.sourceRevision, now)
-          : current?.sourceRevision ?? now,
-        updatedAt: now,
-      })
-    }
-    if (!result.complete)
-      return
-    for (const current of this.#models.list(provider.id)) {
-      if (current.source !== 'synced' || seen.has(current.modelId))
-        continue
-      this.#models.upsert({ ...current, available: false, updatedAt: now })
-    }
+        modelId: definition.id,
+        metadata: this.#syncedSourceMetadata(provider, definition, current, serviceMetadata),
+      }
+    })
+    this.#reconcileModels(provider.id, observations, result.complete ? 'synced-complete' : 'synced-partial')
   }
 
   reconcileSyncedModelMetadata(provider: ProviderConfigRecord): boolean {
@@ -356,7 +274,7 @@ export class ProviderModelCatalog {
       }, current)
       if (current.sourceFingerprint === source.sourceFingerprint)
         continue
-      this.#models.upsert({
+      this.#saveModel({
         ...current,
         ...source,
         sourceRevision: sourceParametersChanged(current, source)
@@ -387,7 +305,7 @@ export class ProviderModelCatalog {
       sourceMaxTokens: model.maxTokens,
       thinkingLevelMap: null,
     })
-    const next = this.#models.upsert({
+    const next = this.#saveModel({
       catalogSelection: null,
       capabilityOverrides: current?.capabilityOverrides ?? null,
       acknowledgedSourceRevision: current?.acknowledgedSourceRevision ?? null,
@@ -417,7 +335,7 @@ export class ProviderModelCatalog {
     if (!providerModelTypeSchema.nullable().safeParse(type).success)
       throw new ProviderValidationError()
     const nextType = type ?? current.type ?? 'chat'
-    const next = this.#models.upsert({
+    const next = this.#saveModel({
       ...current,
       typeOverride: type,
       sourceContextWindow: nextType === 'chat' ? current.sourceContextWindow ?? 128_000 : current.sourceContextWindow,
@@ -429,57 +347,30 @@ export class ProviderModelCatalog {
 
   reconcileCatalogModels(providerId: string, baseUrl: string, catalogProviderId: string, preserveUnchanged = false): void {
     const entries = this.#metadata.getMediaModels?.(catalogProviderId) ?? []
-    const seen = new Set<string>()
-    const now = new Date().toISOString()
+    const observations: ObservedProviderModel[] = []
     for (const entry of entries) {
       if (!entry.type || entry.type === 'chat' || entry.api !== 'openai-audio' || normalizeProviderBaseUrl(entry.baseUrl ?? '') !== normalizeProviderBaseUrl(baseUrl))
         continue
-      seen.add(entry.id)
       const current = this.#models.find(providerId, entry.id)
-      if (current?.source === 'manual')
-        continue
       if (!current && !this.#supportsOperation(providerId, entry.type))
         continue
-      const source = createSourceMetadata({ type: entry.type, api: 'openai-audio', catalogProviderId, catalogModelId: entry.id, compat: null, cost: emptyModelCost(), displayName: entry.name, input: ['text'], reasoning: false, samplingParams: null, sourceContextWindow: null, sourceMaxTokens: null, thinkingLevelMap: null })
-      this.#upsertReconciled({
-        ...source,
+      observations.push({
         providerId,
         modelId: entry.id,
-        typeOverride: current?.typeOverride ?? null,
-        sourceContextWindow: current?.typeOverride === 'chat' ? current.sourceContextWindow : null,
-        sourceMaxTokens: current?.typeOverride === 'chat' ? current.sourceMaxTokens : null,
-        catalogSelection: null,
-        capabilityOverrides: current?.capabilityOverrides ?? null,
-        acknowledgedSourceRevision: current?.acknowledgedSourceRevision ?? null,
-        available: true,
-        enabled: current?.enabled ?? false,
-        source: 'builtin',
-        overrideContextWindow: current?.overrideContextWindow ?? null,
-        overrideMaxTokens: current?.overrideMaxTokens ?? null,
-        createdAt: current?.createdAt ?? now,
-        updatedAt: now,
-        lastSeenAt: now,
-        sourceRevision: current?.sourceRevision ?? now,
-      }, current, preserveUnchanged)
+        metadata: createSourceMetadata({ type: entry.type, api: 'openai-audio', catalogProviderId, catalogModelId: entry.id, compat: null, cost: emptyModelCost(), displayName: entry.name, input: ['text'], reasoning: false, samplingParams: null, sourceContextWindow: null, sourceMaxTokens: null, thinkingLevelMap: null }),
+      })
     }
-    for (const current of this.#models.list(providerId)) {
-      if (current.source === 'builtin' && current.api === 'openai-audio' && current.available && !seen.has(current.modelId))
-        this.#models.upsert({ ...current, available: false, updatedAt: now })
-    }
+    this.#reconcileModels(providerId, observations, 'catalog-media', preserveUnchanged)
   }
 
   reconcileCapabilityModels(models: readonly import('../../../shared/providers/providerCapabilityModel').ProviderCapabilityModel[]): void {
-    const now = new Date().toISOString()
-    const catalogModels = models.filter(model => model.kind !== 'image.read')
-    for (const model of catalogModels) {
-      const current = this.#models.find(model.providerId, model.modelId)
-      const source = createSourceMetadata({ type: model.kind === 'speech.transcribe' ? 'transcription' : model.kind === 'speech.synthesize' ? 'speech' : 'image-generation', api: model.kind.startsWith('image.') ? 'plugin-image' : 'plugin-speech', catalogProviderId: null, compat: null, cost: emptyModelCost(), displayName: model.title ?? model.modelId, input: ['text'], reasoning: false, samplingParams: null, sourceContextWindow: null, sourceMaxTokens: null, thinkingLevelMap: null })
-      this.#models.upsert({ ...source, providerId: model.providerId, modelId: model.modelId, typeOverride: null, catalogSelection: null, capabilityOverrides: current?.capabilityOverrides ?? null, acknowledgedSourceRevision: null, available: model.available, enabled: current?.enabled ?? true, source: 'synced', overrideContextWindow: null, overrideMaxTokens: null, createdAt: current?.createdAt ?? now, updatedAt: now, lastSeenAt: now, sourceRevision: current?.sourceRevision ?? now })
-    }
-    for (const current of this.#models.list()) {
-      if (['plugin-speech', 'plugin-image'].includes(current.api) && !catalogModels.some(model => model.providerId === current.providerId && model.modelId === current.modelId))
-        this.#models.upsert({ ...current, available: false, updatedAt: now })
-    }
+    const observations = models.filter(model => model.kind !== 'image.read').map(model => ({
+      providerId: model.providerId,
+      modelId: model.modelId,
+      available: model.available,
+      metadata: createSourceMetadata({ type: model.kind === 'speech.transcribe' ? 'transcription' : model.kind === 'speech.synthesize' ? 'speech' : 'image-generation', api: model.kind.startsWith('image.') ? 'plugin-image' : 'plugin-speech', catalogProviderId: null, compat: null, cost: emptyModelCost(), displayName: model.title ?? model.modelId, input: ['text'], reasoning: false, samplingParams: null, sourceContextWindow: null, sourceMaxTokens: null, thinkingLevelMap: null }),
+    }))
+    this.#reconcileModels(undefined, observations, 'plugin-capability')
   }
 
   setCatalogSource(provider: ProviderConfigRecord, modelId: string, selection: ModelCatalogReference | null): BuddyModel {
@@ -499,7 +390,7 @@ export class ProviderModelCatalog {
       catalogSelection: selection,
     })
     const now = new Date().toISOString()
-    const next = this.#models.upsert({
+    const next = this.#saveModel({
       ...current,
       ...source,
       catalogSelection: selection,
@@ -518,7 +409,7 @@ export class ProviderModelCatalog {
     const current = this.#requireModelState(providerId, modelId)
     if (effectiveType(current) !== 'chat')
       throw new ProviderValidationError()
-    return this.#toBuddyModel(this.#models.upsert({
+    return this.#toBuddyModel(this.#saveModel({
       ...current,
       capabilityOverrides: parsed.data && Object.values(parsed.data).some(value => value !== undefined) ? parsed.data : null,
       updatedAt: new Date().toISOString(),
@@ -537,7 +428,7 @@ export class ProviderModelCatalog {
     if (current.api === pluginChatApi || effectiveType(current) !== 'chat')
       throw new ProviderValidationError()
     const hadOverride = hasParameterOverride(current)
-    const next = this.#models.upsert({
+    const next = this.#saveModel({
       ...current,
       acknowledgedSourceRevision: hadOverride
         ? current.acknowledgedSourceRevision
@@ -553,7 +444,7 @@ export class ProviderModelCatalog {
     const current = this.#requireModelState(providerId, modelId)
     if (!hasParameterOverride(current))
       throw new ProviderValidationError()
-    return this.#toBuddyModel(this.#models.upsert({
+    return this.#toBuddyModel(this.#saveModel({
       ...current,
       acknowledgedSourceRevision: current.sourceRevision,
       updatedAt: new Date().toISOString(),
@@ -562,7 +453,7 @@ export class ProviderModelCatalog {
 
   restoreSourceParameters(providerId: string, modelId: string): BuddyModel {
     const current = this.#requireModelState(providerId, modelId)
-    return this.#toBuddyModel(this.#models.upsert({
+    return this.#toBuddyModel(this.#saveModel({
       ...current,
       acknowledgedSourceRevision: null,
       overrideContextWindow: null,
@@ -574,7 +465,7 @@ export class ProviderModelCatalog {
   setEnabled(providerId: string, modelId: string, enabled: boolean): BuddyModel {
     this.assertCanSetEnabled(providerId, modelId, enabled)
     const current = this.#requireModelState(providerId, modelId)
-    return this.#toBuddyModel(this.#models.upsert({
+    return this.#toBuddyModel(this.#saveModel({
       ...current,
       enabled,
       updatedAt: new Date().toISOString(),
@@ -591,7 +482,7 @@ export class ProviderModelCatalog {
         updatedAt,
       }
     })
-    return records.map(record => this.#toBuddyModel(this.#models.upsert(record)))
+    return records.map(record => this.#toBuddyModel(this.#saveModel(record)))
   }
 
   assertCanSetEnabled(providerId: string, modelId: string, enabled: boolean): void {
@@ -862,6 +753,19 @@ export class ProviderModelCatalog {
     }, serviceMetadata)
   }
 
+  #reconcileModels(providerId: string | undefined, observations: readonly ObservedProviderModel[], policy: ModelReconciliationPolicy, preserveUnchanged = false): void {
+    const current = this.#models.list(providerId)
+    const plan = planModelReconciliation(current, observations, policy, new Date().toISOString())
+    for (const record of plan.upserts)
+      this.#upsertReconciled(record, this.#models.find(record.providerId, record.modelId), preserveUnchanged)
+    for (const record of plan.unavailable)
+      this.#saveModel(record)
+  }
+
+  #saveModel(record: ProviderModelStateRecord): ProviderModelStateRecord {
+    return this.#models.upsert({ ...record, resolution: effectiveType(record) === 'chat' ? this.#resolveSource(record) : null })
+  }
+
   #upsertReconciled(record: ProviderModelStateRecord, current: ProviderModelStateRecord | null, preserveUnchanged = false): ProviderModelStateRecord {
     const next = { ...record, resolution: effectiveType(record) === 'chat' ? this.#resolveSource(record) : null }
     if (preserveUnchanged && current) {
@@ -898,94 +802,6 @@ function effectiveParameters(model: ProviderModelStateRecord): ModelParametersOv
     contextWindow: model.sourceContextWindow,
     maxTokens: model.sourceMaxTokens,
   }
-}
-
-function nextSourceRevision(previous: string | undefined, candidate: string): string {
-  if (!previous || candidate > previous)
-    return candidate
-  return new Date(Date.parse(previous) + 1).toISOString()
-}
-
-interface ModelSourceMetadata {
-  type: ProviderModelType
-  serviceMetadata: ServiceModelMetadata | null
-  api: string
-  catalogProviderId: string | null
-  catalogModelId: string | null
-  compat: Model<Api>['compat'] | null
-  cost: Model<Api>['cost']
-  displayName: string
-  input: Array<'text' | 'image'>
-  reasoning: boolean
-  samplingParams: Record<string, unknown> | null
-  sourceContextWindow: number | null
-  sourceFingerprint: string
-  sourceMaxTokens: number | null
-  thinkingLevelMap: Model<Api>['thinkingLevelMap'] | null
-}
-
-function sourceMetadataFromCatalogModel(api: string, model: CatalogModel, cost: Model<Api>['cost'], current: ProviderModelStateRecord | null = null, serviceMetadata: ServiceModelMetadata | null = null): ModelSourceMetadata {
-  return createSourceMetadata({
-    api,
-    catalogProviderId: model.provider,
-    catalogModelId: model.id,
-    compat: current?.api === api ? current.compat : null,
-    cost,
-    displayName: model.name,
-    input: [...model.input],
-    reasoning: model.reasoning,
-    samplingParams: current?.api === api ? current.samplingParams : null,
-    sourceContextWindow: model.contextWindow,
-    sourceMaxTokens: model.maxTokens,
-    thinkingLevelMap: model.thinkingLevelMap ?? null,
-  }, serviceMetadata)
-}
-
-function emptyModelCost(): Model<Api>['cost'] {
-  return { cacheRead: 0, cacheWrite: 0, input: 0, output: 0 }
-}
-
-function createSourceMetadata(
-  input: Omit<ModelSourceMetadata, 'type' | 'sourceFingerprint' | 'catalogModelId' | 'serviceMetadata'> & { type?: ProviderModelType, catalogModelId?: string | null },
-  serviceMetadata: ServiceModelMetadata | null = null,
-): ModelSourceMetadata {
-  const declared = serviceMetadata?.metadata
-  const reasoningOptions = declared?.reasoningOptions
-  const contextWindow = declared?.contextWindow ?? input.sourceContextWindow
-  const maxTokens = declared?.maxTokens ?? input.sourceMaxTokens
-  const metadata = {
-    ...input,
-    type: input.type ?? 'chat' as const,
-    catalogModelId: input.catalogModelId ?? null,
-    serviceMetadata,
-    ...(declared && (input.type ?? 'chat') === 'chat'
-      ? {
-          displayName: declared.name ?? input.displayName,
-          input: declared.input ? declared.input.filter((value): value is 'text' | 'image' => value === 'text' || value === 'image') : input.input,
-          reasoning: reasoningOptions !== undefined ? reasoningOptions.some(level => level !== 'off') : input.reasoning,
-          thinkingLevelMap: reasoningOptions !== undefined
-            ? Object.fromEntries(BUDDY_THINKING_LEVELS.map(level => [level, reasoningOptions.includes(level) ? level === 'off' ? 'none' : level : null]))
-            : input.thinkingLevelMap,
-          sourceContextWindow: declared.contextWindow === undefined ? Math.max(contextWindow ?? 128_000, maxTokens ?? 16_384) : contextWindow,
-          sourceMaxTokens: declared.maxTokens === undefined ? Math.min(maxTokens ?? 16_384, contextWindow ?? 128_000) : maxTokens,
-        }
-      : {}),
-  }
-  return {
-    ...metadata,
-    sourceFingerprint: createHash('sha256')
-      .update(serializeModelMetadata(metadata))
-      .digest('hex'),
-  }
-}
-
-function sourceParametersChanged(
-  current: ProviderModelStateRecord | null,
-  next: ModelSourceMetadata,
-): boolean {
-  return !current
-    || current.sourceContextWindow !== next.sourceContextWindow
-    || current.sourceMaxTokens !== next.sourceMaxTokens
 }
 
 function hasServiceMetadata(model: ProviderModelStateRecord): boolean {

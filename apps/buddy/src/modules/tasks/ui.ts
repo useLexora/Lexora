@@ -2,6 +2,11 @@ export { default as DesktopTaskResourcePanel } from './widgets/context-panel/Des
 export { default as DesktopExecutionDetail } from './widgets/executions/DesktopExecutionDetail.vue'
 export { default as DesktopSpaceIcon } from './widgets/space/DesktopSpaceIcon.vue'
 export { default as DesktopTaskArchiveManager } from './widgets/task-index/DesktopTaskArchiveManager.vue'
+export { default as BuddyChatActivityGroup } from './widgets/transcript/BuddyChatActivityGroup.vue'
+export { default as BuddyChatCompactionRow } from './widgets/transcript/BuddyChatCompactionRow.vue'
+export { default as BuddyChatPanelGroup } from './widgets/transcript/BuddyChatPanelGroup.vue'
+export { default as BuddyChatRunActivity } from './widgets/transcript/BuddyChatRunActivity.vue'
+
 export type { ChatReadingPositions } from './widgets/transcript/chatMessageViewport'
 export { default as DesktopTaskEditor } from './widgets/workspace/DesktopTaskEditor.vue'
 export { default as DesktopTaskIndexView } from './widgets/workspace/DesktopTaskIndexView.vue'

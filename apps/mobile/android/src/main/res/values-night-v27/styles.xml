@@ -1,0 +1,6 @@
+<resources>
+    <style name="Theme.Lexora" parent="Theme.Lexora.Base">
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:navigationBarColor">#202422</item>
+    </style>
+</resources>

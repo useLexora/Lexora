@@ -51,7 +51,6 @@ export class BuddyRunExecutionPlanner {
     if (
       !conversation
       || conversation.deletedAt !== null
-      || conversation.activeBranchId !== run.branchId
     ) {
       throw new BuddyAgentRunError('CONVERSATION_BINDING_MISMATCH')
     }

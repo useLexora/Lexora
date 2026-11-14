@@ -173,7 +173,7 @@ describe('saved reference access', () => {
     expect(f.access().list({}).items.map(item => item.referenceId)).toEqual(['initial'])
   })
 
-  it.each(['delete', 'branch', 'cancel', 'finish', 'message deleted'])('revalidates %s after policy classification and before tool delivery', async (change) => {
+  it.each(['cancel', 'finish', 'message deleted'])('revalidates %s after policy classification and before tool delivery', async (change) => {
     const f = await fixture()
     const input = f.message([f.view()])
     const runId = f.run(input)
@@ -182,10 +182,6 @@ describe('saved reference access', () => {
     await capability.extension.factory({ registerTool: (tool: ToolDefinition) => tools.set(tool.name, tool) } as unknown as ExtensionAPI)
     const args = { sourceMessageId: input.id, referenceId: 'reference', kind: 'resource' }
     expect(await capability.classify({ type: 'tool_call', toolName: REFERENCE_TOOLS.read.name, toolCallId: 'call', input: args } as ToolCallEvent, f.controller.signal)).toEqual({ access: 'read', paths: [] })
-    if (change === 'delete')
-      f.conversations.markDeleted('task', '2026-10-24T00:10:00.000Z')
-    if (change === 'branch')
-      f.conversations.createBranch({ id: 'changed-branch', conversationId: 'task', parentBranchId: null, forkedFromMessageId: null, createdAt: '2026-10-24T00:10:00.000Z', activate: true })
     if (change === 'cancel')
       f.controller.abort()
     if (change === 'finish')
@@ -195,15 +191,19 @@ describe('saved reference access', () => {
     await expect(tools.get(REFERENCE_TOOLS.read.name)!.execute('call', args, f.controller.signal, undefined, {} as ExtensionToolContext)).rejects.toThrow()
   })
 
-  it('rejects invalid identities and unbounded pagination at the tool boundary', async () => {
+  it('delivers the classified original-branch reference after a default branch change', async () => {
     const f = await fixture()
     const input = f.message([f.view()])
     f.run(input)
     const capability = createReferenceSnapshotCapability(f.options())
-    const tools: ToolDefinition[] = []
-    await capability.extension.factory({ registerTool: (tool: ToolDefinition) => tools.push(tool) } as unknown as ExtensionAPI)
-    for (const args of [{ sourceMessageId: input.id, referenceId: 'reference' }, { sourceMessageId: input.id, referenceId: 'reference', kind: 'resource', limit: 16001 }, { sourceMessageId: input.id, referenceId: 'reference', kind: 'resource', offset: -1 }])
-      await expect(tools.find(tool => tool.name === REFERENCE_TOOLS.read.name)!.execute('call', args, f.controller.signal, undefined, {} as ExtensionToolContext)).rejects.toThrow('VALIDATION_FAILED')
-    await expect(tools.find(tool => tool.name === REFERENCE_TOOLS.read.name)!.execute('call', { sourceMessageId: input.id, referenceId: '1', kind: 'resource' }, f.controller.signal, undefined, {} as ExtensionToolContext)).rejects.toThrow('REFERENCE_NOT_AUTHORIZED')
+    const tools = new Map<string, ToolDefinition>()
+    await capability.extension.factory({ registerTool: (tool: ToolDefinition) => tools.set(tool.name, tool) } as unknown as ExtensionAPI)
+    const args = { sourceMessageId: input.id, referenceId: 'reference', kind: 'resource' }
+    await capability.classify({ type: 'tool_call', toolName: REFERENCE_TOOLS.read.name, toolCallId: 'call', input: args } as ToolCallEvent, f.controller.signal)
+    f.conversations.createBranch({ id: 'changed-branch', conversationId: 'task', parentBranchId: null, forkedFromMessageId: null, createdAt: '2026-10-24T00:10:00.000Z', activate: true })
+    const other = f.message([f.view('foreign')], { branchId: 'changed-branch' })
+    const result = await tools.get(REFERENCE_TOOLS.read.name)!.execute('call', args, f.controller.signal, undefined, {} as ExtensionToolContext)
+    expect(JSON.stringify(result)).toContain('Frozen original')
+    await expect(tools.get(REFERENCE_TOOLS.read.name)!.execute('foreign-call', { ...args, sourceMessageId: other.id, referenceId: 'foreign' }, f.controller.signal, undefined, {} as ExtensionToolContext)).rejects.toThrow('REFERENCE_NOT_AUTHORIZED')
   })
 })

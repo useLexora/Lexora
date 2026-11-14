@@ -1,0 +1,1 @@
+-keepattributes Signature,InnerClasses,EnclosingMethod

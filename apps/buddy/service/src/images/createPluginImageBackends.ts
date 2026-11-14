@@ -10,7 +10,7 @@ import { extensionInvocationContext } from '../plugins/extensionInvocationContex
 import { ImageGenerationError } from './ImageGenerationGateway'
 import { ImageReadingError, validateReadingImage } from './ImageReadingService'
 
-export function createPluginImageBackends(rpc: RuntimeRpcPeerContract, providers: Pick<ProviderService, 'isPluginModelEnabled'>, gateway: PluginImageGateway): { reading: ImageReadingBackend, generation: ImageGenerationBackend } {
+export function createPluginImageBackends(rpc: RuntimeRpcPeerContract, providers: Pick<ProviderService, 'isPluginModelEnabled'>, gateway: Pick<PluginImageGateway, 'models' | 'generate'>): { reading: ImageReadingBackend, generation: ImageGenerationBackend } {
   const readers = async (signal?: AbortSignal) => extensionImageReaderSchema.array().max(512).parse(await rpc.request(extensionImageReadingRpc.list, {}, 30000, signal))
   return {
     reading: {

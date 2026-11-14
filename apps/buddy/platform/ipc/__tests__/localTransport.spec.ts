@@ -1,4 +1,5 @@
 import { chmod, lstat, mkdir, mkdtemp, rm, symlink } from 'node:fs/promises'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
@@ -23,4 +24,22 @@ describe.skipIf(process.platform === 'win32')('unix socket directory ownership',
       await rm(root, { recursive: true, force: true })
     }
   })
+})
+
+it.skipIf(process.platform === 'win32')('never unlinks an active socket or a socket it did not bind', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'lexora-owned-socket-'))
+  const address = join(root, 'active.sock')
+  const server = createServer(socket => socket.destroy())
+  try {
+    await new Promise<void>(resolve => server.listen(address, resolve))
+    const original = await lstat(address)
+    const contender = localTransports.unix(address, { ownsProfileLease: () => true })
+    await expect(contender.prepare()).rejects.toThrow('already owned')
+    await contender.dispose()
+    expect((await lstat(address)).ino).toBe(original.ino)
+  }
+  finally {
+    await new Promise<void>(resolve => server.close(() => resolve()))
+    await rm(root, { recursive: true, force: true })
+  }
 })

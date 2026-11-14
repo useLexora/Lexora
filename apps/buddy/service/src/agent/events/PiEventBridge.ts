@@ -270,6 +270,7 @@ class ActivePiEventChannel implements PiCompactionEventChannel, PiTurnEventChann
     this.#pendingTerminalToolUpdates.clear()
     for (const event of updates)
       this.#enqueueEvent(event)
+    this.#eventTail = this.#eventTail.then(() => this.#eventWriter.drain())
   }
 
   #queueTerminalToolUpdate(event: PiToolExecutionUpdateEvent): void {

@@ -1,0 +1,187 @@
+{
+  "version": 1,
+  "textCases": [
+    {
+      "name": "text-0",
+      "text": "",
+      "utf16Length": 0,
+      "androidParagraphs": 1,
+      "desktopParagraphs": 1
+    },
+    {
+      "name": "text-1",
+      "text": "first\n\nlast\n",
+      "utf16Length": 12,
+      "androidParagraphs": 1,
+      "desktopParagraphs": 4
+    },
+    {
+      "name": "text-2",
+      "text": "你好😀é\n第二行",
+      "utf16Length": 10,
+      "androidParagraphs": 1,
+      "desktopParagraphs": 2
+    },
+    {
+      "name": "text-3",
+      "text": "a\r\nb",
+      "utf16Length": 4,
+      "androidParagraphs": 1,
+      "desktopParagraphs": 2
+    }
+  ],
+  "contents": [
+    {
+      "name": "hard-break-utf16",
+      "value": {
+        "version": 1,
+        "body": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "A😀"
+              },
+              {
+                "type": "hard_break"
+              },
+              {
+                "type": "text",
+                "text": "B"
+              }
+            ]
+          }
+        ],
+        "panelResourceIds": []
+      },
+      "valid": true,
+      "editable": true,
+      "desktopText": "A😀\nB",
+      "preview": "A😀\nB",
+      "message": "A😀\nB"
+    },
+    {
+      "name": "legacy-multiline-single-node",
+      "value": {
+        "version": 1,
+        "body": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "first\n\nlast\n"
+              }
+            ]
+          }
+        ],
+        "panelResourceIds": []
+      },
+      "valid": true,
+      "editable": true,
+      "desktopText": "first\n\nlast\n",
+      "preview": "first\n\nlast\n",
+      "message": "first\n\nlast\n"
+    },
+    {
+      "name": "reference-rendering-is-host-specific",
+      "value": {
+        "version": 1,
+        "body": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "你好😀"
+              },
+              {
+                "type": "hard_break"
+              },
+              {
+                "type": "actor_ref",
+                "actorId": "buddy",
+                "name": "伙伴"
+              },
+              {
+                "type": "resource_ref",
+                "resourceId": "bound"
+              },
+              {
+                "type": "session_ref",
+                "sessionId": "task"
+              },
+              {
+                "type": "quote_ref",
+                "quoteKind": "message",
+                "quoteId": "quote"
+              },
+              {
+                "type": "prompt_directive",
+                "directive": "skill",
+                "value": "paper"
+              }
+            ]
+          }
+        ],
+        "panelResourceIds": [],
+        "sessionReferences": [
+          {
+            "id": "task",
+            "title": "原任务"
+          }
+        ],
+        "quotes": [
+          {
+            "id": "quote",
+            "text": "引用😀\n第二行",
+            "textOffset": 2,
+            "source": {
+              "conversationId": "task",
+              "branchId": "branch",
+              "messageId": "source",
+              "role": "assistant",
+              "runId": null
+            }
+          }
+        ]
+      },
+      "valid": true,
+      "editable": false,
+      "desktopText": "你好😀\n@伙伴@file$paper",
+      "preview": "你好😀\n@伙伴[附件][相关任务：原任务][引用] 引用😀\n第二行paper",
+      "message": "你好😀\n@伙伴[附件.txt][相关任务：原任务]\n> 引用😀\n> 第二行\npaper",
+      "resources": [
+        {
+          "bindingId": "bound",
+          "name": "附件.txt"
+        }
+      ]
+    },
+    {
+      "name": "unknown-node-is-readonly-and-preserved",
+      "value": {
+        "version": 1,
+        "body": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "future_node",
+                "payload": {
+                  "preserve": "😀"
+                }
+              }
+            ]
+          }
+        ],
+        "panelResourceIds": []
+      },
+      "valid": false,
+      "editable": false,
+      "preview": "[请在桌面端查看此内容]",
+      "message": "[未识别的内容]"
+    }
+  ]
+}

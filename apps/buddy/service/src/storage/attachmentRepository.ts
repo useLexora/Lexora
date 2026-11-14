@@ -1,4 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { AttachmentPersistenceRepository } from './attachmentPersistenceRepository'
+import { createAttachmentPersistenceRepository } from './attachmentPersistenceRepository'
+import { withTransaction } from './transaction'
 
 export interface AttachmentRecord {
   nameSource?: 'file' | 'clipboard'
@@ -15,6 +18,7 @@ export interface AttachmentRecord {
 }
 
 export interface AttachmentRepository {
+  persistence?: AttachmentPersistenceRepository
   create: (record: AttachmentRecord) => AttachmentRecord
   findById: (id: string) => AttachmentRecord | null
   findVisibleById: (id: string) => AttachmentRecord | null
@@ -75,20 +79,23 @@ export function createAttachmentRepository(database: DatabaseSync): AttachmentRe
   `)
 
   return {
+    persistence: database.prepare('SELECT 1 FROM sqlite_master WHERE type = \'table\' AND name = \'managed_files\'').get() ? createAttachmentPersistenceRepository(database) : undefined,
     create(record) {
-      insert.run(
-        record.id,
-        record.draftId,
-        record.messageId,
-        record.storedPath,
-        record.name,
-        record.mimeType,
-        record.sizeBytes,
-        record.createdAt,
-        record.nameSource ?? 'file',
-        record.sourcePath ?? null,
-      )
-      return requireAttachment(find.get(record.id), record.id)
+      return withTransaction(database, () => {
+        insert.run(
+          record.id,
+          record.draftId,
+          record.messageId,
+          record.storedPath,
+          record.name,
+          record.mimeType,
+          record.sizeBytes,
+          record.createdAt,
+          record.nameSource ?? 'file',
+          record.sourcePath ?? null,
+        )
+        return requireAttachment(find.get(record.id), record.id)
+      })
     },
     findById(id) {
       const row = find.get(id) as AttachmentRow | undefined
@@ -110,10 +117,10 @@ export function createAttachmentRepository(database: DatabaseSync): AttachmentRe
         .map(toAttachment)
     },
     removeDraft(id) {
-      return Number(removeDraft.run(id).changes) === 1
+      return withTransaction(database, () => Number(removeDraft.run(id).changes) === 1)
     },
     removeDrafts(ids) {
-      return ids.reduce((count, id) => count + Number(removeDraft.run(id).changes), 0)
+      return withTransaction(database, () => ids.reduce((count, id) => count + Number(removeDraft.run(id).changes), 0))
     },
   }
 }

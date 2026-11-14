@@ -36,6 +36,7 @@ allowBuilds:
   '@prisma/engines': true
   '@scarf/scarf': true
   '@swc/core': true
+  core-js: false
   electron: true
   electron-winstaller: false
   esbuild: true

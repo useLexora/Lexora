@@ -6,6 +6,7 @@ import { BuddyServiceError } from '../rpc/runtimeRequest'
 import { withTransaction } from './database'
 
 interface MarkRow {
+  revision?: number
   id: string
   name: string
   description: string
@@ -16,6 +17,7 @@ interface MarkRow {
 }
 
 interface StateRow {
+  assignment_revision?: number
   conversation_id: string
   mark_id: string | null
   result_run_id: string | null
@@ -38,6 +40,8 @@ const STATE_QUERY = `
 `
 
 export function createTaskMarkRepository(database: DatabaseSync) {
+  const hasRevisions = database.prepare('PRAGMA table_info(task_attention)').all().some(column => column.name === 'assignment_revision')
+  const stateQuery = hasRevisions ? STATE_QUERY.replace('attention.mark_id,', 'attention.mark_id, COALESCE(attention.assignment_revision, 0) AS assignment_revision,') : STATE_QUERY
   const listMarks = database.prepare(`
     SELECT task_marks.*, (
       SELECT COUNT(*) FROM task_attention
@@ -46,7 +50,7 @@ export function createTaskMarkRepository(database: DatabaseSync) {
     ) AS task_count
     FROM task_marks ORDER BY created_at, id
   `)
-  const readState = database.prepare(`${STATE_QUERY} AND conversations.id = ?`)
+  const readState = database.prepare(`${stateQuery} AND conversations.id = ?`)
   const insert = database.prepare('INSERT INTO task_marks (id, name, description, color, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
   const update = database.prepare('UPDATE task_marks SET name = ?, description = ?, color = ?, updated_at = ? WHERE id = ?')
   const remove = database.prepare('DELETE FROM task_marks WHERE id = ?')
@@ -63,6 +67,7 @@ export function createTaskMarkRepository(database: DatabaseSync) {
 
   function list(): LocalTaskMark[] {
     return (listMarks.all() as unknown as MarkRow[]).map(row => ({
+      ...(row.revision !== undefined ? { revision: row.revision } : {}),
       id: row.id,
       name: row.name,
       description: row.description,
@@ -102,12 +107,12 @@ export function createTaskMarkRepository(database: DatabaseSync) {
     list,
     getState,
     allStates(): LocalTaskMarkState[] {
-      return (database.prepare(STATE_QUERY).all() as unknown as StateRow[]).map(toState)
+      return (database.prepare(stateQuery).all() as unknown as StateRow[]).map(toState)
     },
     states(conversationIds: readonly string[]): LocalTaskMarkState[] {
       if (conversationIds.length === 0)
         return []
-      return (database.prepare(`${STATE_QUERY} AND conversations.id IN (${conversationIds.map(() => '?').join(', ')})`)
+      return (database.prepare(`${stateQuery} AND conversations.id IN (${conversationIds.map(() => '?').join(', ')})`)
         .all(...conversationIds) as unknown as StateRow[]).map(toState)
     },
     create(input: TaskMarkInput): LocalTaskMark {
@@ -157,6 +162,7 @@ export function createTaskMarkRepository(database: DatabaseSync) {
 
 function toState(row: StateRow): LocalTaskMarkState {
   return {
+    ...(row.assignment_revision !== undefined ? { assignmentRevision: row.assignment_revision } : {}),
     conversationId: row.conversation_id,
     markId: row.mark_id,
     resultRunId: row.result_run_id,

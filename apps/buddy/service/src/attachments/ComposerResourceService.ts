@@ -38,12 +38,14 @@ import { getBuddyUserContentResourceIds, readBuddyUserMessageContent } from '../
 import { buddyComposerResourceAcceptSchema, buddyComposerSourceListSchema, buddyComposerSourceSelectSchema, buddyComposerSpaceFileSelectSchema } from '../../../shared/conversation/composerResource'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
+import { AsyncOperationScope } from '../../../shared/lifecycle/AsyncOperationScope'
 import { resolveArtifactFile } from '../artifacts/ArtifactFileAccess'
 import { resolveGrantedPath } from '../directories/resolveGrantedPath'
 import { createSensitivePathMatcher } from '../permissions/sensitivePaths'
 import { BuddyServiceError } from '../rpc/runtimeRequest'
 import { requireActiveSpace } from '../spaces/requireActiveSpace'
 import { ComposerResourceConflictError } from '../storage/composerResourceRepository'
+import { readTransactionFailure } from '../storage/transaction'
 import { AttachmentError, DRAFT_ATTACHMENT_RETENTION_MS, normalizeAttachmentMetadata } from './AttachmentService'
 import { ComposerDirectorySources } from './ComposerDirectorySources'
 import { historicalComposerSources } from './historicalComposerSources'
@@ -73,14 +75,14 @@ export interface PreparedComposerInput {
   validate: () => void
   commit: () => Promise<void>
   rollback: () => Promise<void>
+  retain: () => Promise<void>
 }
 
 export class ComposerResourceService {
   readonly #changes = new Emitter<ComposerResourceChange>(() => console.error('COMPOSER_RESOURCE_OBSERVER_FAILED'))
   readonly onDidChange = this.#changes.event
-  readonly #pending = new Set<Promise<unknown>>()
+  readonly #operations = new AsyncOperationScope(() => new AttachmentError('RUNTIME_UNAVAILABLE'))
   #revision = 0
-  #stopping = false
   #disposed = false
   readonly #attachments: ComposerResourceServiceOptions['attachments']
   readonly #artifacts: ComposerResourceServiceOptions['artifacts']
@@ -105,7 +107,7 @@ export class ComposerResourceService {
   }
 
   accept(input: BuddyComposerResourceAccept): Promise<BuddyComposerResource[]> {
-    return this.#operate(() => this.#accept(input))
+    return this.#operations.track(() => this.#accept(input))
   }
 
   async #accept(input: BuddyComposerResourceAccept): Promise<BuddyComposerResource[]> {
@@ -190,7 +192,7 @@ export class ComposerResourceService {
 
   selectSource(input: BuddyComposerSourceSelect, referencedResourceIds: readonly string[] = [], reason: ComposerResourceChangeReason = 'selection'): Promise<BuddyComposerResource> {
     const ownedIds = [...referencedResourceIds]
-    return this.#operate(() => this.#selectSource(input, ownedIds, reason))
+    return this.#operations.track(() => this.#selectSource(input, ownedIds, reason))
   }
 
   async #selectSource(input: BuddyComposerSourceSelect, referencedResourceIds: readonly string[], reason: ComposerResourceChangeReason): Promise<BuddyComposerResource> {
@@ -204,7 +206,7 @@ export class ComposerResourceService {
   }
 
   async selectSpaceFilePath(draftId: string, spaceId: string, path: string, reason: ComposerResourceChangeReason = 'selection'): Promise<BuddyComposerResource> {
-    return this.#operate(async () => {
+    return this.#operations.track(async () => {
       const space = requireActiveSpace(this.#spaces?.findById(spaceId) ?? null)
       const bindings = [space.primaryDirectory, ...space.additionalDirectories].filter(binding => binding !== null)
       const requestedPath = isAbsolute(path) ? path : space.primaryDirectory ? join(space.primaryDirectory.canonicalRoot, path) : null
@@ -216,16 +218,17 @@ export class ComposerResourceService {
     })
   }
 
-  async resolveInput(draftId: string, content: BuddyUserContentV1, scope: ComposerSourceScope = { branchId: null, conversationId: null, spaceId: null }, model?: Pick<ResolvedInteractiveModelSelection, 'input' | 'fileInputMimeTypes' | 'api'>): Promise<PreparedComposerInput> {
+  async resolveInput(draftId: string, content: BuddyUserContentV1, scope: ComposerSourceScope = { branchId: null, conversationId: null, spaceId: null }, model?: Pick<ResolvedInteractiveModelSelection, 'input' | 'fileInputMimeTypes' | 'api'>, legacyResourceDraftId?: string): Promise<PreparedComposerInput> {
     content = copyEventSnapshot(content)
     scope = copyEventSnapshot(scope)
     model = model ? { ...model, input: [...model.input], fileInputMimeTypes: [...model.fileInputMimeTypes] } : undefined
-    return this.#operate(async () => {
+    return this.#operations.track(async () => {
       const resourceIds = getBuddyUserContentResourceIds(content)
       if (resourceIds.length > BUDDY_ATTACHMENT_COUNT_LIMIT)
         throw new AttachmentError('VALIDATION_FAILED')
       const resources = resourceIds.map((resourceId) => {
-        const resource = this.#requireOwned({ draftId, resourceId })
+        const candidate = this.#repository.findById(resourceId)
+        const resource = this.#requireOwned({ draftId: candidate?.draftId === legacyResourceDraftId ? legacyResourceDraftId! : draftId, resourceId })
         if (resource.state !== 'ready')
           throw new AttachmentError('VALIDATION_FAILED')
         if (resource.source && 'spaceId' in resource.source && resource.source.spaceId !== scope.spaceId)
@@ -235,7 +238,7 @@ export class ComposerResourceService {
         return resource
       })
       const uploads: PreparedAttachmentUploads[] = []
-      let settlement: { outcome: 'commit' | 'rollback', promise: Promise<void> } | undefined
+      let settlement: { outcome: 'commit' | 'rollback' | 'retain', promise: Promise<void> } | undefined
       const validate = () => {
         if (settlement)
           throw new Error('COMPOSER_INPUT_SETTLED')
@@ -245,7 +248,7 @@ export class ComposerResourceService {
             throw new AttachmentError('ATTACHMENT_NOT_FOUND')
         }
       }
-      const settle = (outcome: 'commit' | 'rollback') => {
+      const settle = (outcome: 'commit' | 'rollback' | 'retain') => {
         if (settlement) {
           return settlement.outcome === outcome
             ? settlement.promise
@@ -302,7 +305,7 @@ export class ComposerResourceService {
           throw new AttachmentError('VALIDATION_FAILED')
         const snapshots = new Map(result.map(snapshot => [snapshot.resourceId, snapshot]))
         validate()
-        return Object.freeze({ inputs: copyEventSnapshot(resourceIds.map(resourceId => snapshots.get(resourceId)!)), validate, commit: () => settle('commit'), rollback: () => settle('rollback') })
+        return Object.freeze({ inputs: copyEventSnapshot(resourceIds.map(resourceId => snapshots.get(resourceId)!)), validate, commit: () => settle('commit'), rollback: () => settle('rollback'), retain: () => settle('retain') })
       }
       catch (error) {
         try {
@@ -320,7 +323,7 @@ export class ComposerResourceService {
     if (!input.conversationId)
       return { branchId: null, conversationId: null, spaceId: input.spaceId }
     const conversation = this.#conversations?.findById(input.conversationId)
-    if (!conversation || conversation.deletedAt !== null || conversation.activeBranchId !== input.branchId)
+    if (!conversation || conversation.deletedAt !== null)
       throw new BuddyServiceError('VALIDATION_FAILED')
     if (conversation.spaceId !== input.spaceId)
       throw new BuddyServiceError('VALIDATION_FAILED')
@@ -509,7 +512,7 @@ export class ComposerResourceService {
 
   #requireVisibleHistory(conversationId: string, branchId: string) {
     const conversation = this.#conversations?.findById(conversationId)
-    if (!conversation || conversation.deletedAt !== null || conversation.activeBranchId !== branchId)
+    if (!conversation || conversation.deletedAt !== null)
       throw new BuddyServiceError('VALIDATION_FAILED')
     return this.#conversations!.listBranchMessages(conversationId, branchId)
   }
@@ -570,7 +573,7 @@ export class ComposerResourceService {
 
   async complete(input: BuddyComposerResourceComplete): Promise<BuddyComposerResource> {
     input = { ...input, bytes: Uint8Array.from(input.bytes) }
-    return this.#operate(async () => {
+    return this.#operations.track(async () => {
       const resource = this.#requireOwned(input)
       if (resource.source)
         throw new AttachmentError('VALIDATION_FAILED')
@@ -611,13 +614,17 @@ export class ComposerResourceService {
         return ready
       }
       catch (error) {
+        if (readTransactionFailure(error)?.outcome === 'unknown') {
+          await upload?.retain()
+          throw error
+        }
         if (upload) {
           let current: ComposerResourceRecord | null
           try {
             current = this.#repository.findById(input.resourceId)
           }
           catch (readError) {
-            await upload.commit()
+            await upload.retain()
             throw new AggregateError([error, readError], 'COMPOSER_IMPORT_OWNERSHIP_UNKNOWN')
           }
           if (current?.attachmentId === upload.records[0]?.id) {
@@ -638,7 +645,7 @@ export class ComposerResourceService {
   }
 
   fail(input: BuddyComposerResourceTarget): BuddyComposerResource {
-    this.#assertAccepting()
+    this.#operations.assertAccepting()
     return this.#fail(input)
   }
 
@@ -649,7 +656,7 @@ export class ComposerResourceService {
   }
 
   retry(input: BuddyComposerResourceTarget): BuddyComposerResource {
-    this.#assertAccepting()
+    this.#operations.assertAccepting()
     this.#requireOwned(input)
     if (this.#importing.has(input.resourceId))
       throw new AttachmentError('VALIDATION_FAILED')
@@ -662,7 +669,7 @@ export class ComposerResourceService {
     paths: readonly string[]
     referencedResourceIds?: readonly string[]
   }): Promise<BuddyComposerResource[]> {
-    return this.#operate(async () => {
+    return this.#operations.track(async () => {
       const { draftId, paths, referencedResourceIds = [] } = input
       if (!paths.length)
         return []
@@ -685,7 +692,7 @@ export class ComposerResourceService {
   }
 
   recoverInterruptedImports(unavailableAttachmentIds: readonly string[] = []): void {
-    this.#assertAccepting()
+    this.#operations.assertAccepting()
     this.#commit(null, 'recovery', () => {
       this.#repository.interruptImports(new Date().toISOString())
       this.#repository.failUnavailableAttachments(unavailableAttachmentIds, new Date().toISOString())
@@ -693,7 +700,7 @@ export class ComposerResourceService {
   }
 
   async cleanupDrafts(now = Date.now()): Promise<string[]> {
-    return this.#operate(async () => {
+    return this.#operations.track(async () => {
       const cutoff = new Date(now - DRAFT_ATTACHMENT_RETENTION_MS).toISOString()
       const staleResources = this.#repository.listAll().filter(resource => resource.createdAt < cutoff)
       const retainedAttachmentIds = new Set<string>()
@@ -721,16 +728,15 @@ export class ComposerResourceService {
   }
 
   async discard(draftId: string): Promise<void> {
-    return this.#operate(async () => {
+    return this.#operations.track(async () => {
       this.#commit(draftId, 'discard', () => this.#repository.remove(draftId, this.#repository.listForDraft(draftId).map(resource => resource.resourceId)))
       await this.#attachments.releaseDraft(draftId)
     })
   }
 
   async dispose(): Promise<void> {
-    this.#stopping = true
-    while (this.#pending.size)
-      await Promise.allSettled([...this.#pending])
+    this.#operations.stopAccepting()
+    await this.#operations.drain()
     this.#disposed = true
     this.#changes.dispose()
   }
@@ -762,24 +768,6 @@ export class ComposerResourceService {
       if (resources.length)
         this.#changes.fire(copyEventSnapshot({ revision: ++this.#revision, operationId: randomUUID(), reason, resources }))
     }
-  }
-
-  #assertAccepting(): void {
-    if (this.#stopping)
-      throw new AttachmentError('RUNTIME_UNAVAILABLE')
-  }
-
-  #operate<T>(work: () => Promise<T>): Promise<T> {
-    if (this.#stopping)
-      return Promise.reject(new AttachmentError('RUNTIME_UNAVAILABLE'))
-    const pending = Promise.withResolvers<T>()
-    this.#pending.add(pending.promise)
-    try {
-      void Promise.resolve(work()).then(pending.resolve, pending.reject)
-    }
-    catch (error) { pending.reject(error) }
-    void pending.promise.then(() => this.#pending.delete(pending.promise), () => this.#pending.delete(pending.promise))
-    return pending.promise
   }
 
   #requireOwned(input: BuddyComposerResourceTarget): ComposerResourceRecord {

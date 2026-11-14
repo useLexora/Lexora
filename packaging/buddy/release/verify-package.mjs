@@ -41,6 +41,7 @@ export function verifyDesktopResources(directory, targetId, cwd = repoRoot) {
   if (platform.features.includes('nativePet'))
     assertNativeExecutable(readFileSync(join(resources, 'native-pet/lexora-buddy-pet')), platform, 'native pet')
   const { version, prerelease } = readBuddyProductMetadata(cwd)
+  execFileSync(process.execPath, [join(repoRoot, 'packaging/buddy/release/product-release-set.mjs'), '--verify', join(resources, 'release-set.json'), platform.id, version], { stdio: 'pipe', timeout: 120_000 })
   if (prerelease)
     verifyDesktopNativeVersion(directory, executablePath, platformId, version)
   return { executablePath, resources }

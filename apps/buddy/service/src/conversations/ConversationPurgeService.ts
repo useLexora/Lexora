@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { ConversationStorageAuthority } from '../storage/conversationPurgeRepository'
 import { lstatSync, readdirSync, realpathSync, rmdirSync, unlinkSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 import { BuddyDataPaths } from '../storage/BuddyDataPaths'
@@ -8,6 +9,7 @@ import { ConversationPurgeError, ConversationPurgeRepository, isPurgeDescendant 
 export interface ConversationPurgeOptions {
   database: DatabaseSync
   home: string
+  storageAuthority: ConversationStorageAuthority
 }
 
 export class ConversationPurgeService {
@@ -17,7 +19,7 @@ export class ConversationPurgeService {
 
   constructor(options: ConversationPurgeOptions) {
     this.paths = new BuddyDataPaths(options.home)
-    this.repository = new ConversationPurgeRepository(options.database, this.paths)
+    this.repository = new ConversationPurgeRepository(options.database, this.paths, options.storageAuthority)
     this.deletion = createConversationDeletionRepository(options.database)
   }
 
@@ -29,10 +31,22 @@ export class ConversationPurgeService {
       if (!manifest)
         return
       const directories = this.repository.directories(id, manifest)
+      const stagingFiles = this.repository.stagingFiles(manifest)
       for (const directory of directories)
         this.inspect(directory)
+      for (const path of stagingFiles) {
+        this.assertPath(path)
+        const stat = this.stat(path)
+        if (stat && !stat.isFile())
+          throw new ConversationPurgeError('CONVERSATION_FILE_BOUNDARY')
+      }
       for (const directory of directories)
         this.remove(directory)
+      for (const path of stagingFiles) {
+        this.assertPath(path)
+        if (this.stat(path))
+          unlinkSync(path)
+      }
       this.repository.finish(id, manifest)
     }
     catch (error) {

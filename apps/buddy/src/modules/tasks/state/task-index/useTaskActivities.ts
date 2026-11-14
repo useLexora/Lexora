@@ -6,12 +6,11 @@ import { useDebounceFn } from '@vueuse/core'
 import { computed, onScopeDispose, shallowRef, watch } from 'vue'
 
 interface ActivityScope {
-  branchId: string
   version: number
 }
 
 export function useTaskActivities(options: {
-  api: Pick<LexoraDesktopApi['localChat']['executions'], 'list' | 'onChanged'>
+  api: Pick<LexoraDesktopApi['localChat']['executions'], 'activity' | 'onChanged'>
   tasks: Readonly<Ref<readonly LocalConversationSummary[]>>
   onError: (error: unknown) => void
 }) {
@@ -38,11 +37,9 @@ export function useTaskActivities(options: {
     const version = ++scope.version
     const current = () => !disposed && scopes.get(id) === scope && scope.version === version
     try {
-      const executions = await options.api.list({ conversationId: id, branchId: scope.branchId })
-      if (current()) {
-        setWaiting(id, executions.some(execution => execution.phase === 'waiting'
-          && execution.waitingFor === 'user_answer' && !execution.stopping))
-      }
+      const activity = await options.api.activity({ conversationId: id })
+      if (current())
+        setWaiting(id, activity.hasBlockingAnswer)
     }
     catch (error) {
       if (current()) {
@@ -66,7 +63,7 @@ export function useTaskActivities(options: {
     pending.add(event.conversationId)
     void flush()
   })
-  const stopTasks = watch(() => options.tasks.value.filter(task => task.activity === 'running' && task.activeBranchId), (tasks) => {
+  const stopTasks = watch(() => options.tasks.value.filter(task => task.activity === 'running'), (tasks) => {
     const active = new Set(tasks.map(task => task.id))
     for (const id of scopes.keys()) {
       if (!active.has(id)) {
@@ -76,9 +73,9 @@ export function useTaskActivities(options: {
       }
     }
     for (const task of tasks) {
-      if (!task.activeBranchId || scopes.get(task.id)?.branchId === task.activeBranchId)
+      if (scopes.has(task.id))
         continue
-      scopes.set(task.id, { branchId: task.activeBranchId, version: 0 })
+      scopes.set(task.id, { version: 0 })
       setWaiting(task.id, false)
       void refresh(task.id)
     }

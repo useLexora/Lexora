@@ -9,6 +9,7 @@ import type {
   SystemActionApprovalReviewInput,
 } from '../../../shared/permissions/approvalReviewPayload'
 import type { SandboxDirectoryRequest, SandboxNetworkTarget } from '../../../shared/permissions/shellSandbox'
+import type { CommandAdmissionService } from '../commands/CommandAdmissionService'
 import type { AppendBuddyRunEventInput } from '../events/BuddyRunEvent'
 import type { ToolCallBlockingError } from '../permissions/permissionContract'
 import type {
@@ -16,6 +17,7 @@ import type {
   ApprovalRepository,
 } from '../storage/approvalRepository'
 import type { ApprovalAuthorizationKeys, ApprovalAuthorizationOverride } from './approvalAuthorization'
+import type { ApprovalCommandAdmission, ApprovalCommandDecision } from './ApprovalCommandService'
 import { randomUUID } from 'node:crypto'
 import { readDiagnosticErrorCode } from '../../../shared/diagnostics/applicationDiagnostic'
 import { Emitter } from '../../../shared/events/Emitter'
@@ -23,6 +25,8 @@ import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { createApprovalReviewPayload } from '../../../shared/permissions/approvalReviewPayload'
 import { RunEventCorruptionError } from '../events/RunEventFailure'
 import { approvalReuseScopes, createApprovalAuthorizationKeys } from './approvalAuthorization'
+import { ApprovalCommandService } from './ApprovalCommandService'
+import { createApprovalReview } from './approvalReview'
 
 export const APPROVAL_WAIT_TIMEOUT_MS = 30 * 60 * 1_000
 
@@ -62,6 +66,7 @@ export interface ApprovalResolution {
 }
 
 export interface ApprovalServiceOptions {
+  commandAdmission?: ApprovalCommandAdmission
   approvalTimeoutMs?: number
   eventLog: { append: (input: AppendBuddyRunEventInput) => Promise<unknown> }
   onExpired?: (runId: string) => Promise<void> | void
@@ -82,6 +87,8 @@ export type ApprovalLifecycleFact = Readonly<
 >
 
 interface ApprovalWaiter {
+  active: boolean
+  approval: Pick<ApprovalRecord, 'id' | 'runId' | 'toolCallId'>
   persisted?: boolean
   persist?: () => Promise<void>
   startedAt: number
@@ -95,6 +102,7 @@ interface ApprovalWaiter {
 }
 
 export class ApprovalService {
+  readonly #commands: ApprovalCommandService | null
   readonly #approvalTimeoutMs: number
   readonly #eventLog: ApprovalServiceOptions['eventLog']
   readonly #onExpired: NonNullable<ApprovalServiceOptions['onExpired']>
@@ -116,6 +124,26 @@ export class ApprovalService {
   #disposePromise: Promise<void> | null = null
 
   constructor(options: ApprovalServiceOptions) {
+    this.#commands = options.commandAdmission
+      ? new ApprovalCommandService({
+          ...options.commandAdmission,
+          repository: options.repository,
+          onObserverError: options.onObserverError,
+          lifecycle: {
+            activate: (id) => {
+              const waiter = this.#waiters.get(id)
+              if (waiter)
+                waiter.active = true
+            },
+            captureDecision: approval => this.#captureCommandDecision(approval),
+            expire: (approval) => {
+              this.#waiters.get(approval.id)?.reject(new ApprovalExpiredError())
+              this.#releaseWaiter(approval, 'expired', 'committed')
+              return this.#onExpired(approval.runId)
+            },
+          },
+        })
+      : null
     this.#approvalTimeoutMs = options.approvalTimeoutMs ?? APPROVAL_WAIT_TIMEOUT_MS
     this.#eventLog = options.eventLog
     this.#onExpired = options.onExpired ?? (() => {})
@@ -208,11 +236,15 @@ export class ApprovalService {
       summary: input.summary,
       toolCallId: input.toolCallId,
     }
+    if (this.#commands)
+      approval.review = createApprovalReview(input, approval.id, approval.createdAt, this.#approvalTimeoutMs, reuseScopes)
     const abort = () => this.#scheduleCancellation(approval, 'cancelled')
     const expire = () => this.#scheduleCancellation(approval, 'expired')
     let timer: ReturnType<typeof setTimeout> | null = null
     const decision = new Promise<ApprovalRequestResult>((resolve, reject) => {
       this.#waiters.set(approval.id, {
+        active: false,
+        approval,
         persist: input.persist,
         startedAt: Date.now(),
         authorizationSignal: input.runSignal ?? input.signal,
@@ -234,8 +266,11 @@ export class ApprovalService {
     try {
       await this.#appendRequested(approval)
       this.#requireApproval(approval.id)
+      const waiter = this.#waiters.get(approval.id)
+      if (waiter)
+        waiter.active = true
       if (!this.#stopping && !input.signal.aborted && this.#waiters.has(approval.id)) {
-        timer = setTimeout(expire, this.#approvalTimeoutMs)
+        timer = setTimeout(expire, approval.review ? Math.max(0, Date.parse(approval.review.expiresAt) - Date.now()) : this.#approvalTimeoutMs)
         timer.unref?.()
       }
     }
@@ -253,7 +288,7 @@ export class ApprovalService {
   }
 
   async resolve(input: ApprovalResolution): Promise<ApprovalRecord> {
-    if (this.#stopping || this.#resolving.has(input.id))
+    if (this.#commands || this.#stopping || this.#resolving.has(input.id))
       throw new ApprovalResolutionError()
     return this.#trackResolution(input.id, this.#resolvePending(input))
   }
@@ -297,6 +332,13 @@ export class ApprovalService {
     const approval = this.#requireApproval(input.id)
     if (approval.status !== decision)
       throw new ApprovalResolutionError()
+    this.#finishDecision(pending, input.decision, waiter)
+    return approval
+  }
+
+  #finishDecision(pending: ApprovalRecord, resolution: ApprovalResolutionDecision, waiter: ApprovalWaiter | undefined): void {
+    const approvedScope = readApprovedScope(resolution)
+    const decision: ApprovalDecision = resolution === 'denied' ? 'denied' : 'approved'
     if (approvedScope && waiter && !this.#stopping && !waiter.signal.aborted && !waiter.authorizationSignal.aborted) {
       this.#storeAuthorization(
         approvedScope,
@@ -315,14 +357,57 @@ export class ApprovalService {
       approvalId: pending.id,
       decision: approvedScope
         ? `approved_for_${approvedScope}`
-        : input.decision === 'approved_persistently'
+        : resolution === 'approved_persistently'
           ? 'approved_persistently'
           : decision === 'approved'
             ? 'approved_once'
             : 'denied',
     })
     this.#releaseWaiter(pending, decision, 'committed')
-    return approval
+  }
+
+  getReview(approvalId: string): ApprovalRecord | null {
+    return this.#repository.findById(approvalId)
+  }
+
+  async resolveCommand(input: unknown, trustedAdmission?: CommandAdmissionService) {
+    if (!this.#commands)
+      throw new ApprovalResolutionError()
+    return this.#commands.resolve(input, trustedAdmission)
+  }
+
+  #captureCommandDecision(pending: ApprovalRecord): ApprovalCommandDecision | null {
+    const waiter = this.#waiters.get(pending.id)
+    if (this.#stopping || !waiter?.active || waiter.signal.aborted || waiter.authorizationSignal.aborted)
+      return null
+    return {
+      allows: (resolution) => {
+        const scope = readApprovedScope(resolution)
+        return (!scope || waiter.reuseScopes.has(scope)) && (resolution !== 'approved_persistently' || Boolean(waiter.persist))
+      },
+      release: resolution => this.#releaseApprovedCommand(pending, resolution, waiter),
+    }
+  }
+
+  async #releaseApprovedCommand(pending: ApprovalRecord, resolution: ApprovalResolutionDecision, waiter: ApprovalWaiter): Promise<void> {
+    try {
+      if (this.#waiters.get(pending.id) !== waiter)
+        return
+      if (this.#stopping || waiter.signal.aborted || waiter.authorizationSignal.aborted)
+        throw new ApprovalCancelledError()
+      if (resolution === 'approved_persistently') {
+        await waiter.persist!()
+        waiter.persisted = true
+        if (this.#stopping || waiter.signal.aborted || waiter.authorizationSignal.aborted)
+          throw new ApprovalCancelledError()
+      }
+      this.#finishDecision(pending, resolution, waiter)
+    }
+    catch (error) {
+      waiter.reject(asError(error))
+      this.#releaseWaiter(pending, 'request_failed', 'committed')
+      throw error
+    }
   }
 
   async cancelPendingApprovals(reason: 'recovery' | 'shutdown' = 'recovery', canCancel: (runId: string) => boolean = () => true): Promise<number> {
@@ -342,11 +427,19 @@ export class ApprovalService {
       await resolving.catch(() => {})
       return this.#cancel(approval, reason)
     }
-    const pending = this.#repository.findById(approval.id)
+    let pending: ApprovalRecord | null
+    try {
+      pending = this.#repository.findById(approval.id)
+    }
+    catch (error) {
+      this.#waiters.get(approval.id)?.reject(asError(error))
+      this.#releaseWaiter(approval, reason, 'failed')
+      throw error
+    }
     if (!pending || pending.status !== 'pending')
       return
     const waiter = this.#waiters.get(approval.id)
-    if (waiter?.persisted) {
+    if (!this.#commands && waiter?.persisted) {
       try {
         await this.#trackResolution(approval.id, this.#resolvePending({ id: approval.id, decision: 'approved_persistently' }))
       }
@@ -381,6 +474,7 @@ export class ApprovalService {
         resolvedAt,
         status: 'cancelled',
         resolution: 'cancelled',
+        cancellationReason: reason,
       })
       persistence = 'committed'
       waiter?.reject(reason === 'expired' ? new ApprovalExpiredError() : new ApprovalCancelledError())
@@ -405,20 +499,34 @@ export class ApprovalService {
   async #dispose(): Promise<void> {
     const failures: unknown[] = []
     try {
-      const pending = this.#repository.listPending()
-      const cancelled = await Promise.allSettled(pending.map(approval => this.#cancel(approval, 'shutdown')))
-      for (const [index, result] of cancelled.entries()) {
-        if (result.status !== 'rejected')
-          continue
-        if (!isIsolatedRecoveryFailure(result.reason)) {
-          failures.push(result.reason)
-          continue
+      try {
+        const pending = this.#repository.listPending()
+        const cancelled = await Promise.allSettled(pending.map(approval => this.#cancel(approval, 'shutdown')))
+        for (const [index, result] of cancelled.entries()) {
+          if (result.status !== 'rejected')
+            continue
+          if (!isIsolatedRecoveryFailure(result.reason)) {
+            failures.push(result.reason)
+            continue
+          }
+          const approval = pending[index]!
+          this.#lifecycle.fire(copyEventSnapshot({ kind: 'cancellation.failed', approvalId: approval.id, runId: approval.runId, toolCallId: approval.toolCallId, reason: 'shutdown', errorCode: readDiagnosticErrorCode(result.reason) }))
         }
-        const approval = pending[index]!
-        this.#lifecycle.fire(copyEventSnapshot({ kind: 'cancellation.failed', approvalId: approval.id, runId: approval.runId, toolCallId: approval.toolCallId, reason: 'shutdown', errorCode: readDiagnosticErrorCode(result.reason) }))
+      }
+      catch (error) {
+        failures.push(error)
+        for (const waiter of this.#waiters.values()) {
+          waiter.reject(asError(error))
+          this.#releaseWaiter(waiter.approval, 'shutdown', 'failed')
+        }
+      }
+      for (const waiter of this.#waiters.values()) {
+        waiter.reject(asError(this.#commands?.storageFailure ?? new ApprovalCancelledError()))
+        this.#releaseWaiter(waiter.approval, 'shutdown', 'failed')
       }
       await Promise.allSettled(this.#queues.values())
       await Promise.allSettled(this.#resolving.values())
+      await this.#commands?.drain()
       const cancellations = await Promise.allSettled(this.#cancellations)
       failures.push(...cancellations.flatMap(result => result.status === 'rejected' && !isIsolatedRecoveryFailure(result.reason) ? [result.reason] : []))
     }
@@ -426,13 +534,14 @@ export class ApprovalService {
       const runIds = new Set([...this.#authorizations.values()].flatMap(authorizations => [...authorizations.keys()]))
       for (const runId of runIds)
         this.clearRunAuthorizations(runId, 'shutdown')
+      this.#commands?.dispose()
       this.#lifecycle.dispose()
     }
     if (failures.length)
       throw new AggregateError(failures, 'Lexora Buddy approval shutdown could not persist every cancellation')
   }
 
-  #releaseWaiter(approval: ApprovalRecord, reason: Extract<ApprovalLifecycleFact, { kind: 'waiter.released' }>['reason'], persistence: 'committed' | 'failed'): void {
+  #releaseWaiter(approval: Pick<ApprovalRecord, 'id' | 'runId' | 'toolCallId'>, reason: Extract<ApprovalLifecycleFact, { kind: 'waiter.released' }>['reason'], persistence: 'committed' | 'failed'): void {
     const waiter = this.#waiters.get(approval.id)
     if (!waiter)
       return
@@ -451,6 +560,8 @@ export class ApprovalService {
   }
 
   #appendRequested(approval: ApprovalRecord): Promise<unknown> {
+    if (this.#commands)
+      return this.#commands.appendRequested(approval)
     return this.#eventLog.append({
       runId: approval.runId,
       type: 'approval.requested',
@@ -469,6 +580,7 @@ export class ApprovalService {
         resolution: approval.resolution,
         status: approval.status,
         resolvedAt: approval.resolvedAt,
+        ...(approval.cancellationReason ? { cancellationReason: approval.cancellationReason } : {}),
       },
     })
   }

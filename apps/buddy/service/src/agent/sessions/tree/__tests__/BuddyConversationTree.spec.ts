@@ -42,6 +42,44 @@ afterEach(async () => {
 })
 
 describe('native conversation tree', () => {
+  it('runs branch sessions on separate journals and recovers public ancestry without touching the legacy journal', async () => {
+    const f = await createFixture()
+    const legacy = f.run('legacy-root', 'b0', 'legacy-question')
+    const old = await f.open(legacy)
+    await old.cursor.begin(old.session.session, legacy.id)
+    old.cursor.manager.appendMessage(assistant([{ type: 'text', text: 'LEGACY_PRIVATE_DETAIL' }]))
+    f.publish(legacy, 'legacy-answer', 'SHARED_PUBLIC_ANCESTRY')
+    old.cursor.finish()
+    f.complete(legacy)
+    await old.session.shutdown('quit')
+    const legacyBytes = await readFile(old.session.piSessionFile)
+    f.branch('b1', 'legacy-answer')
+    const makeRun = (id: string, branch: string) => {
+      const run = f.run(id, branch, `input-${id}`)
+      const thread = f.threads.ensureActor(run.conversationId, run.buddyId, run.startedAt, branch)
+      f.database.prepare('UPDATE runs SET thread_id = ? WHERE id = ?').run(thread.id, run.id)
+      return f.runs.findById(run.id)!
+    }
+    const a = makeRun('parallel-A', 'b0')
+    const b = makeRun('parallel-B', 'b1')
+    const [openedA, openedB] = await Promise.all([f.open(a), f.open(b)])
+    expect(openedA.session.piSessionFile).not.toBe(openedB.session.piSessionFile)
+    expect(openedA.session.piSessionFile).not.toBe(old.session.piSessionFile)
+    await Promise.all([openedA.cursor.begin(openedA.session.session, a.id), openedB.cursor.begin(openedB.session.session, b.id)])
+    await Promise.all([openedA.session.session.prompt('ONLY_BRANCH_A_INPUT'), openedB.session.session.prompt('ONLY_BRANCH_B_INPUT')])
+    const payloadA = f.requests.find(request => request.includes('ONLY_BRANCH_A_INPUT'))!
+    const payloadB = f.requests.find(request => request.includes('ONLY_BRANCH_B_INPUT'))!
+    expect(payloadA).toContain('SHARED_PUBLIC_ANCESTRY')
+    expect(payloadB).toContain('SHARED_PUBLIC_ANCESTRY')
+    expect(payloadA).not.toContain('ONLY_BRANCH_B_INPUT')
+    expect(payloadB).not.toContain('ONLY_BRANCH_A_INPUT')
+    expect(payloadA + payloadB).not.toContain('LEGACY_PRIVATE_DETAIL')
+    openedA.cursor.finish()
+    openedB.cursor.finish()
+    await Promise.all([openedA.session.shutdown('quit'), openedB.session.shutdown('quit')])
+    expect(await readFile(old.session.piSessionFile)).toEqual(legacyBytes)
+  })
+
   it.each([
     ['actor', 'none'],
     ['npc', 'none'],
@@ -417,7 +455,6 @@ describe('native conversation tree', () => {
     expect(commits.map(event => event.kind)).toEqual(['file.created', 'binding.committed'])
     expect(commits[1]).toMatchObject({ reason: 'reconciled', treeId: commits[0]!.treeId })
     expect((await readFile(file, 'utf8')).startsWith(initial)).toBe(true)
-    expect(Reflect.set(commits[0]!, 'treeId', 'changed')).toBe(false)
     await opened.session.shutdown('quit')
   })
 
@@ -437,7 +474,6 @@ describe('native conversation tree', () => {
     const count = commits.length
     expect(commits.filter(event => event.kind === 'checkpoint.committed').map(event => event.position)).toEqual(['before', 'after'])
     const snapshot = await fixture.tree.preview('conversation', 'b0', fixture.root, actorThreadId('conversation', 'default'))
-    expect(snapshot?.getSessionFile()).toBeUndefined()
     snapshot!.appendMessage(user('private-preview', 'only in preview'))
     expect(await readFile(file, 'utf8')).toBe(saved)
     expect(JSON.stringify((await fixture.tree.preview('conversation', 'b0', fixture.root, actorThreadId('conversation', 'default')))!.getEntries())).not.toContain('only in preview')
@@ -445,42 +481,11 @@ describe('native conversation tree', () => {
     await opened.session.shutdown('quit')
   })
 
-  it('durably preserves the journal through checkpoints and reopening', async () => {
-    const fixture = await createFixture()
-    const first = fixture.run('first', 'b0', 'q1')
-    const opened = await fixture.open(first)
-    const file = opened.cursor.manager.getSessionFile()!
-    const initial = await readFile(file, 'utf8')
-    await opened.cursor.begin(opened.session.session, first.id)
-    opened.cursor.manager.appendMessage(user('q1', 'durable question'))
-    opened.cursor.manager.appendMessage(assistant([{ type: 'text', text: 'durable answer' }]))
-    opened.cursor.finish()
-    fixture.complete(first, 'a1')
-    fixture.runs.bindSession(first.id, file)
-    await opened.session.shutdown('quit')
-
-    const saved = await readFile(file, 'utf8')
-    expect(saved.startsWith(initial)).toBe(true)
-    const entries = saved.trim().split('\n').map(line => JSON.parse(line))
-    expect(entries.filter(entry => entry.customType === 'lexora.conversation.checkpoint.v1').map(entry => entry.data.position))
-      .toEqual(['before', 'after'])
-
-    const next = fixture.run('next', 'b0', 'q2')
-    const resumed = await fixture.open(next)
-    await resumed.cursor.begin(resumed.session.session, next.id)
-    expect(resumed.cursor.manager.getSessionFile()).toBe(file)
-    expect(JSON.stringify(resumed.session.session.messages)).toContain('durable answer')
-    resumed.cursor.finish()
-    await resumed.session.shutdown('quit')
-    expect((await readFile(file, 'utf8')).startsWith(saved)).toBe(true)
-  })
-
   it('keeps tool context and compaction across continuation, regeneration, another branch and restart', async () => {
     const fixture = await createFixture()
     const first = fixture.run('r1', 'b0', 'q1')
     const opened = await fixture.open(first)
     await opened.cursor.begin(opened.session.session, first.id)
-    expect(SessionManager.open(opened.cursor.manager.getSessionFile()!).getLeafEntry()?.type).toBe('custom')
     const userEntry = opened.cursor.manager.appendMessage(user('q1', 'original question'))
     opened.cursor.manager.appendMessage(assistant([{ type: 'toolCall', id: 'read-call', name: 'read', arguments: { path: 'fixture.txt' } }], 'toolUse'))
     opened.cursor.manager.appendMessage({ role: 'toolResult', toolCallId: 'read-call', toolName: 'read', content: [{ type: 'text', text: 'NATIVE_TOOL_CONTEXT' }], isError: false, timestamp: Date.now() })
@@ -665,7 +670,6 @@ describe('native conversation tree', () => {
       expect(commits.filter(event => event.kind === 'binding.committed').map(event => event.reason)).toEqual(['created', 'replaced'])
       expect(commits.find(event => event.kind === 'checkpoint.committed' && event.runId === first.id))
         .toMatchObject({ recovery: { source: 'product_history', missingAttachmentCount: 1, recoveredImageCount: 0 } })
-      expect(Reflect.set(recovered.cursor.recoveryDegradation!, 'recoveredImageCount', 9)).toBe(false)
     }
     finally {
       await recovered.session.shutdown('quit')

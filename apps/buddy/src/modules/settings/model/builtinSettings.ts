@@ -12,7 +12,7 @@ export const builtinSettings = {
     page: category === 'general' ? undefined : category,
     ...builtinSettingsCatalog[category],
     order,
-    fill: category === 'logs' || category === 'prompts',
+    fill: category === 'logs' || category === 'prompts' || category === 'connections',
     title: category === 'file-opening' ? language => language === 'en-US' ? 'Open with' : '打开方式' : text(`desktop.settings.category.${category}`),
     description: category === 'task-archive'
       ? undefined
@@ -32,6 +32,7 @@ export const builtinSettings = {
     })),
   ],
   items: [
+    { id: 'settings.general.exitBehavior', group: 'settings.general.general', order: 1, kind: 'general', field: 'exitBehavior' },
     { id: 'settings.general.pasteTextAsAttachment', group: 'settings.general.composer', order: 0, kind: 'general', field: 'pasteTextAsAttachment' },
     { id: 'settings.general.chineseInputTriggers', group: 'settings.general.composer', order: 10, kind: 'general', field: 'chineseInputTriggers' },
     ...(['language', 'contextPanelMode', 'contextPanelGlobal', 'contextPanelAutoCollapse'] as GeneralSettingField[]).map((field, order) => ({

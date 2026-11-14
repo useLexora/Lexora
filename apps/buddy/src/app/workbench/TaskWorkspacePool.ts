@@ -1,31 +1,41 @@
 import type { EffectScope } from 'vue'
+import type { TaskWorkspaceResource } from './taskResource'
 import type { TaskCapability, UseTaskCapabilityOptions } from '@/modules/tasks'
 import type { ResourceRef } from '@/workbench/common/workbench'
 import { Emitter } from '@buddy-shared/events/Emitter'
 import { copyEventSnapshot } from '@buddy-shared/events/eventSnapshot'
-import { effectScope } from 'vue'
-import { createUserQuestionInteractionState, useTaskCapability } from '@/modules/tasks'
+import { effectScope, watch } from 'vue'
+import { createUserQuestionInteractionState } from '@/modules/tasks'
 import { resourceKey } from '@/workbench/common/workbench'
+import { parseTaskResource, taskResource } from './taskResource'
+
+export type TaskWorkspaceCreationOptions = Pick<UseTaskCapabilityOptions, 'initialTarget' | 'initialConversation' | 'questionInteraction'>
+
+export interface TaskWorkspacePoolOptions {
+  conversations: Pick<UseTaskCapabilityOptions['api']['localChat']['conversations'], 'get' | 'listBranches'>
+  index: Pick<UseTaskCapabilityOptions['index']['data'], 'ensureConversation' | 'applyConversation'>
+  createTask: (options: TaskWorkspaceCreationOptions) => TaskCapability
+}
 
 export interface TaskWorkspaceChange {
   readonly kind: 'ready' | 'released' | 'adopted'
-  readonly resource: ResourceRef
-  readonly previous?: ResourceRef
+  readonly resource: TaskWorkspaceResource
+  readonly previous?: TaskWorkspaceResource
 }
 
 export class TaskWorkspacePool {
   readonly #questionInteraction = createUserQuestionInteractionState()
   readonly #changes = new Emitter<TaskWorkspaceChange>(() => console.error('TASK_WORKSPACE_OBSERVER_FAILED'))
   readonly onDidChange = this.#changes.event
-  readonly #options: Omit<UseTaskCapabilityOptions, 'initialTarget'>
-  readonly #entries = new Map<string, { task: TaskCapability, scope: EffectScope, ready: boolean }>()
+  readonly #options: TaskWorkspacePoolOptions
+  readonly #entries = new Map<string, { task: TaskCapability, scope: EffectScope, ready: boolean, resource: TaskWorkspaceResource }>()
   readonly #leases = new Map<TaskCapability, number>()
   readonly #loading = new Map<string, Promise<TaskCapability>>()
-  readonly #adopt: (previous: ResourceRef, task: TaskCapability, id: string) => void
+  readonly #adopt: (previous: TaskWorkspaceResource, task: TaskCapability, resource: TaskWorkspaceResource) => void
   #disposed = false
   #retained: Set<string> | null = null
 
-  constructor(options: Omit<UseTaskCapabilityOptions, 'initialTarget'>, adopt: (previous: ResourceRef, task: TaskCapability, id: string) => void, readonly prepareLayout: () => Promise<void>) {
+  constructor(options: TaskWorkspacePoolOptions, adopt: (previous: TaskWorkspaceResource, task: TaskCapability, resource: TaskWorkspaceResource) => void, readonly prepareLayout: () => Promise<void>) {
     this.#options = options
     this.#adopt = adopt
   }
@@ -36,15 +46,17 @@ export class TaskWorkspacePool {
   }
 
   open(resource: ResourceRef): Promise<TaskCapability> {
-    resource = copyEventSnapshot(resource)
-    const key = resourceKey(resource)
+    const target = parseTaskResource(copyEventSnapshot(resource))
+    if (!target)
+      return Promise.reject(new Error('TASK_UNAVAILABLE'))
+    const key = resourceKey(target)
     const pending = this.#loading.get(key)
     if (pending)
       return pending
     const existing = this.#entries.get(key)
     if (existing)
       return Promise.resolve(existing.task)
-    const open: Promise<TaskCapability> = Promise.resolve().then(() => this.#load(resource, () => this.#loading.get(key) === open)).finally(() => {
+    const open: Promise<TaskCapability> = Promise.resolve().then(() => this.#load(target, () => this.#loading.get(key) === open)).finally(() => {
       if (this.#loading.get(key) === open)
         this.#loading.delete(key)
     })
@@ -52,47 +64,84 @@ export class TaskWorkspacePool {
     return open
   }
 
-  async #load(resource: ResourceRef, current: () => boolean): Promise<TaskCapability> {
+  async #load(resource: TaskWorkspaceResource, current: () => boolean): Promise<TaskCapability> {
     if (resource.scheme === 'draft')
       await this.prepareLayout()
-    const conversation = resource.scheme === 'task' ? await this.#options.api.localChat.conversations.get(resource.id) : null
+    const conversation = resource.scheme === 'task' ? await this.#options.conversations.get(resource.id) : null
     if (!current() || (resource.scheme === 'task' && !conversation) || this.#disposed || conversation?.deletedAt || (this.#retained && !this.#retained.has(resourceKey(resource))))
       throw new Error('TASK_UNAVAILABLE')
+    const requestedBranchId = resource.scheme === 'task' ? resource.data.branchId : undefined
+    const branchId = requestedBranchId ?? conversation?.activeBranchId ?? null
+    if (conversation && requestedBranchId !== undefined) {
+      const branches = await this.#options.conversations.listBranches(conversation.id)
+      if (!branches.some(branch => branch.id === branchId && branch.conversationId === conversation.id))
+        throw new Error('TASK_BRANCH_UNAVAILABLE')
+    }
     if (conversation) {
-      await this.#options.index.data.ensureConversation(conversation.id)
-      this.#options.index.data.applyConversation(conversation)
+      await this.#options.index.ensureConversation(conversation.id)
+      this.#options.index.applyConversation(conversation)
     }
     if (!current() || this.#disposed || (this.#retained && !this.#retained.has(resourceKey(resource))))
       throw new Error('TASK_UNAVAILABLE')
+    const selectedResource = conversation && branchId
+      ? taskResource(conversation.id, branchId)
+      : resource
+    const selectedKey = resourceKey(selectedResource)
+    const existing = this.#entries.get(selectedKey)
+    if (existing) {
+      const shared = await (this.#loading.get(selectedKey) ?? Promise.resolve(existing.task))
+      if (!current() || this.#disposed || !existing.ready || this.#entries.get(selectedKey)?.task !== shared)
+        throw new Error('TASK_UNAVAILABLE')
+      this.#adoptResource(resource, shared, selectedResource)
+      return shared
+    }
     const scope = effectScope(true)
     let currentResource = resource
-    const task = scope.run(() => useTaskCapability({
-      ...this.#options,
+    const task = scope.run(() => this.#options.createTask({
       questionInteraction: this.#questionInteraction,
       initialConversation: conversation,
       initialTarget: {
         draftKey: resource.scheme === 'draft' ? resource.id : undefined,
         conversationId: conversation?.id ?? null,
-        branchId: conversation?.activeBranchId ?? null,
-        spaceId: conversation?.spaceId ?? (typeof resource.data.spaceId === 'string' ? resource.data.spaceId : null),
-      },
-      onDraftCommitted: (draftId, id) => {
-        const previous = currentResource
-        currentResource = { scheme: 'task', id, data: {} }
-        this.#entries.delete(resourceKey(previous))
-        this.#entries.set(resourceKey(currentResource), { task, scope, ready: true })
-        this.#options.onDraftCommitted?.(draftId, id)
-        this.#adopt(previous, task, id)
-        this.#changes.fire(Object.freeze({ kind: 'adopted', resource: currentResource, previous }))
+        branchId,
+        spaceId: conversation?.spaceId ?? (resource.scheme === 'draft' ? resource.data.spaceId : null),
       },
     }))!
-    const entry = { task, scope, ready: false }
+    const entry = { task, scope, ready: false, resource }
     this.#entries.set(resourceKey(resource), entry)
     try {
       await task.initialize()
-      if (this.#disposed || this.#entries.get(resourceKey(currentResource))?.task !== task || task.workspace.restoration.state.value !== 'ready')
+      if (this.#disposed || this.#entries.get(resourceKey(currentResource))?.task !== task || !['ready', 'conflict'].includes(task.workspace.restoration.state.value))
         throw new Error('TASK_RESTORATION_FAILED')
+      const concurrent = this.#entries.get(selectedKey)
+      if (concurrent && concurrent !== entry) {
+        const shared = await (this.#loading.get(selectedKey) ?? Promise.resolve(concurrent.task))
+        if (!current() || this.#disposed || !concurrent.ready || this.#entries.get(selectedKey)?.task !== shared)
+          throw new Error('TASK_UNAVAILABLE')
+        this.#entries.delete(resourceKey(currentResource))
+        task.dispose()
+        scope.stop()
+        this.#adoptResource(resource, shared, selectedResource)
+        return shared
+      }
       entry.ready = true
+      const adoptSelection = () => {
+        const id = task.workspace.session.activeConversationId.value
+        const selectedBranch = task.workspace.session.activeBranchId.value
+        if (!id || !selectedBranch || this.#disposed)
+          return
+        const next = taskResource(id, selectedBranch)
+        if (resourceKey(currentResource) === resourceKey(next))
+          return
+        const previous = currentResource
+        currentResource = next
+        entry.resource = next
+        this.#entries.delete(resourceKey(previous))
+        this.#entries.set(resourceKey(next), entry)
+        this.#adoptResource(previous, task, next)
+      }
+      scope.run(() => watch([task.workspace.session.activeConversationId, task.workspace.session.activeBranchId], adoptSelection))
+      adoptSelection()
       this.#changes.fire(Object.freeze({ kind: 'ready', resource: currentResource }))
       return task
     }
@@ -103,6 +152,15 @@ export class TaskWorkspacePool {
       scope.stop()
       throw error
     }
+  }
+
+  #adoptResource(previous: TaskWorkspaceResource, task: TaskCapability, next: TaskWorkspaceResource): void {
+    if (resourceKey(previous) === resourceKey(next))
+      return
+    if (this.#retained?.delete(resourceKey(previous)))
+      this.#retained.add(resourceKey(next))
+    this.#adopt(previous, task, next)
+    this.#changes.fire(Object.freeze({ kind: 'adopted', resource: next, previous }))
   }
 
   async flush(): Promise<boolean> {
@@ -157,8 +215,7 @@ export class TaskWorkspacePool {
         }
         catch (error) { failures.push(error) }
       }
-      const [scheme, id] = JSON.parse(key) as [string, string]
-      this.#changes.fire(Object.freeze({ kind: 'released', resource: copyEventSnapshot({ scheme, id, data: {} }) }))
+      this.#changes.fire(Object.freeze({ kind: 'released', resource: copyEventSnapshot(entry.resource) }))
     }
     if (failures.length)
       throw new AggregateError(failures, 'TASK_WORKSPACE_RELEASE_FAILED')

@@ -3,12 +3,14 @@ import type { DeepReadonly } from '../runtime/apiValidation'
 import { z } from 'zod'
 import { idSchema, nullableTimestampSchema, optionalLimitSchema, timestampSchema } from '../runtime/apiValidation'
 import { APPROVAL_GRANT_SCOPES, APPROVAL_REVIEW_KINDS, approvalReviewPayloadMatchesKind, approvalReviewPayloadSchema } from './approvalReviewPayload'
+import { approvalReviewSchema } from './conditionalApproval'
 
 export const approvalSchema = z.object({
   createdAt: timestampSchema,
   id: idSchema,
   kind: z.enum(APPROVAL_REVIEW_KINDS),
   payload: approvalReviewPayloadSchema,
+  review: approvalReviewSchema.nullable().optional(),
   resolvedAt: nullableTimestampSchema,
   runId: idSchema,
   status: z.enum(['pending', 'approved', 'denied', 'cancelled']),
@@ -21,9 +23,11 @@ export const approvalSchema = z.object({
 
 export type LocalApproval = DeepReadonly<z.infer<typeof approvalSchema>>
 
+export const approvalDecisionConditionsSchema = z.object({ runId: idSchema, reviewVersion: z.string().regex(/^[a-f0-9]{64}$/) }).strict()
+
 export const approvalsRequestSchemas = {
-  approvalId: z.object({ approvalId: idSchema }).strict(),
-  approvalGrant: z.object({ approvalId: idSchema, scope: z.enum(APPROVAL_GRANT_SCOPES) }).strict(),
+  approvalId: z.object({ approvalId: idSchema, conditions: approvalDecisionConditionsSchema.optional() }).strict(),
+  approvalGrant: z.object({ approvalId: idSchema, scope: z.enum(APPROVAL_GRANT_SCOPES), conditions: approvalDecisionConditionsSchema.optional() }).strict(),
   listApprovals: z.object({
     conversationId: idSchema.optional(),
     branchId: idSchema.optional(),

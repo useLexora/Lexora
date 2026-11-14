@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import process from 'node:process'
 import { Worker } from 'node:worker_threads'
 import { app, BrowserWindow, session, shell } from 'electron'
+import { BUDDY_DEVELOPMENT_RESTART_EXIT_CODE } from '../../../shared/runtime/profile'
 import { ApplicationLogReader } from '../diagnostics/ApplicationLogReader'
 import { saveApplicationDiagnosticBundle } from '../diagnostics/saveApplicationDiagnosticBundle'
 import { createFeedbackIssueUrl } from '../feedbackIssue'
@@ -17,6 +18,7 @@ import { storageMigrationPage, storageMigrationProgressScript } from './storageM
 export async function showStorageMigration(storage: DesktopStorage, diagnostics: DesktopDiagnosticLogger): Promise<void> {
   await app.whenReady()
   const operation = storage.state.pending!
+  const requiredUpgrade = operation.kind === 'consolidate' || operation.kind === 'upgrade'
   const isolated = session.fromPartition(`storage-${randomUUID()}`, { cache: false })
   isolated.setPermissionRequestHandler((_contents, _permission, respond) => respond(false))
   isolated.setPermissionCheckHandler(() => false)
@@ -45,8 +47,9 @@ export async function showStorageMigration(storage: DesktopStorage, diagnostics:
     if (finalizing)
       return
     finalizing = true
+    const restartDevelopment = relaunch && !process.argv.includes('--lexora-storage-maintenance') && !app.isPackaged && process.env.LEXORA_BUDDY_DEV_LAUNCHER === '1'
     try {
-      if (relaunch)
+      if (relaunch && !process.argv.includes('--lexora-storage-maintenance') && !restartDevelopment)
         app.relaunch()
     }
     catch (error) {
@@ -54,7 +57,7 @@ export async function showStorageMigration(storage: DesktopStorage, diagnostics:
       throw error
     }
     await diagnostics.close()
-    app.exit(0)
+    app.exit(restartDevelopment ? BUDDY_DEVELOPMENT_RESTART_EXIT_CODE : 0)
   }
   const render = (progress: StorageProgress) => {
     const failure = progress.phase === 'failed' || progress.phase === 'cancelled'
@@ -110,7 +113,7 @@ export async function showStorageMigration(storage: DesktopStorage, diagnostics:
           await rendering
           await quit(true)
         }
-        else if (cancelled && operation.kind !== 'consolidate') {
+        else if (cancelled && !requiredUpgrade) {
           await storage.store.cancel()
           await quit(true)
         }
@@ -190,12 +193,12 @@ export async function showStorageMigration(storage: DesktopStorage, diagnostics:
       if (starting)
         return
       cancelled = true
-      exiting = operation.kind === 'consolidate'
+      exiting = requiredUpgrade
       if (worker) {
         void window.webContents.executeJavaScript('document.getElementById(\'cancel\').hidden=true;document.getElementById(\'phase\').textContent=\'正在停止，原数据会保留\'').catch(() => {})
         worker.postMessage('cancel')
       }
-      else if (operation.kind !== 'consolidate') {
+      else if (!requiredUpgrade) {
         void storage.store.cancel().then(() => quit(true)).catch(error => failed(error))
       }
     }

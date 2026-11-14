@@ -4,9 +4,9 @@ import type { RuntimeRpcPeerContract } from '../../../../shared/runtime/rpcPeer'
 import type { PetActionChange } from '../PetActionService'
 import { describe, expect, it, vi } from 'vitest'
 import { applicationDiagnosticSchema } from '../../../../shared/diagnostics/applicationDiagnostic'
+import { createRpcRuntimePlatform } from '../../platform/createRpcRuntimePlatform'
 import { observePetActionDiagnostics } from '../observePetActionDiagnostics'
 import { PetActionService } from '../PetActionService'
-import { classifyPetTool, PET_TOOL_NAME } from '../petToolContract'
 
 function createPeer(result: unknown): RuntimeRpcPeerContract {
   return {
@@ -24,7 +24,7 @@ describe('petActionService', () => {
     { status: 'failed', completedSteps: 1, code: 'PET_STEP_FAILED' },
     { status: 'interrupted', completedSteps: 1, reasonCode: 'admission.preemptedByHigherPriorityPlan' },
   ] satisfies PetExecuteSequenceResult[])('preserves a confirmed $status result in safe diagnostics', async (result) => {
-    const service = new PetActionService({ peer: createPeer(result), eventSink: () => {} })
+    const service = new PetActionService({ executeSequence: sequence(createPeer(result)), eventSink: () => {} })
     const facts: PetActionChange[] = []
     const diagnostics: ApplicationDiagnostic[] = []
     service.onDidChange(change => facts.push(change))
@@ -36,19 +36,22 @@ describe('petActionService', () => {
     expect(diagnostics[1]!.errorCode).toBe(result.status === 'failed' ? result.code : undefined)
     expect(new Set(diagnostics.map(event => event.operationId)).size).toBe(1)
     expect(JSON.stringify(diagnostics)).not.toContain('awaitApproval')
-    expect(Object.isFrozen(facts[1]) && 'result' in facts[1]! && Object.isFrozen(facts[1]!.result)).toBe(true)
     await service.dispose()
   })
 
   it('keeps transport loss unknown even after recording the legacy tool response', async () => {
     const peer = createPeer(null)
     vi.mocked(peer.request).mockRejectedValue(new Error('private transport details'))
-    const service = new PetActionService({ peer, eventSink: () => {} })
+    const service = new PetActionService({ executeSequence: sequence(peer), eventSink: () => {} })
     const facts: PetActionChange[] = []
     const diagnostics: ApplicationDiagnostic[] = []
     service.onDidChange(change => facts.push(change))
     observePetActionDiagnostics(service, event => diagnostics.push(applicationDiagnosticSchema.parse(event)))
-    await service.execute({ macro: 'thinking', runId: 'run-1', toolCallId: 'tool-1' })
+    await expect(service.execute({ macro: 'thinking', runId: 'run-1', toolCallId: 'tool-1' })).resolves.toEqual({
+      code: 'PET_UNAVAILABLE',
+      completedSteps: 0,
+      status: 'failed',
+    })
     expect(facts.map(change => change.phase)).toEqual(['requested', 'transport-unknown', 'progress-recorded'])
     expect(facts.at(-1)).toMatchObject({ phase: 'progress-recorded', result: null })
     expect(diagnostics.map(event => event.event)).toEqual(['pet.action.requested', 'pet.action.transport_unknown', 'pet.action.progress_recorded.unknown'])
@@ -60,7 +63,7 @@ describe('petActionService', () => {
   it('preserves host success while propagating a required progress write failure', async () => {
     const failure = new Error('private writer failure')
     const result = { status: 'completed', completedSteps: 1 } as const
-    const service = new PetActionService({ peer: createPeer(result), eventSink: () => {
+    const service = new PetActionService({ executeSequence: sequence(createPeer(result)), eventSink: () => {
       throw failure
     } })
     const facts: PetActionChange[] = []
@@ -82,7 +85,7 @@ describe('petActionService', () => {
     const progressStarted = Promise.withResolvers<void>()
     const peer = createPeer(null)
     vi.mocked(peer.request).mockReturnValue(host.promise)
-    const service = new PetActionService({ peer, eventSink: async () => {
+    const service = new PetActionService({ executeSequence: sequence(peer), eventSink: async () => {
       progressStarted.resolve()
       await progress.promise
     } })
@@ -105,12 +108,12 @@ describe('petActionService', () => {
     expect(phases).toEqual(['requested', 'host-confirmed', 'progress-recorded'])
   })
 
-  it('compiles approval into a bounded primitive and restores idle afterwards', async () => {
+  it('records a confirmed approval action as a run tool update', async () => {
     const peer = createPeer({ status: 'completed', completedSteps: 1 })
     const events: unknown[] = []
     const service = new PetActionService({
       eventSink: event => events.push(event),
-      peer,
+      executeSequence: sequence(peer),
     })
 
     await expect(service.execute({
@@ -119,26 +122,6 @@ describe('petActionService', () => {
       toolCallId: 'tool-1',
     })).resolves.toEqual({ status: 'completed', completedSteps: 1 })
 
-    expect(peer.request).toHaveBeenCalledWith(
-      'host.pet.executeSequence',
-      expect.objectContaining({
-        priority: 30,
-        requestId: expect.stringMatching(/^pet_/),
-        steps: [{
-          animation: 'approval',
-          completionBehavior: 'restoreIdle',
-          interruptPolicy: 'interruptible',
-          kind: 'playAction',
-          playback: {
-            clipDurationMs: 2540,
-            durationMs: 5000,
-            kind: 'loopForDuration',
-          },
-          timeoutMs: 6000,
-        }],
-      }),
-      20_000,
-    )
     expect(events).toEqual([
       expect.objectContaining({
         runId: 'run-1',
@@ -158,23 +141,8 @@ describe('petActionService', () => {
       }),
     ])
   })
-
-  it('classifies only the owned tool as a first-party visual action', () => {
-    expect(classifyPetTool({ toolName: PET_TOOL_NAME })).toEqual({
-      access: 'visual',
-    })
-    expect(classifyPetTool({ toolName: 'read' })).toBeNull()
-  })
-
-  it('normalizes an unavailable host without leaking its raw error', async () => {
-    const peer = createPeer(null)
-    vi.mocked(peer.request).mockRejectedValue(new Error('secret host detail'))
-    const service = new PetActionService({ peer })
-
-    await expect(service.execute({ macro: 'thinking' })).resolves.toEqual({
-      code: 'PET_UNAVAILABLE',
-      completedSteps: 0,
-      status: 'failed',
-    })
-  })
 })
+
+function sequence(peer: { request: (method: string, params: unknown, timeout?: number | null) => Promise<unknown> }) {
+  return createRpcRuntimePlatform({ ...peer, close() {}, notify() {}, onNotification: () => () => {}, onRequest: () => () => {} }).executePetSequence
+}

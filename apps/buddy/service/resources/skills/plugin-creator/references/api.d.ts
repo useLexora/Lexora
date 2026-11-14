@@ -176,7 +176,10 @@ export interface AgentReference {
   scope: { taskId: string, branchId: string }
 }
 export interface AgentPublishedArtifact { id: string, name: string, mimeType: string, size: number }
+export type InvocationCapabilities = Pick<ExtensionContext, 'resources' | 'network' | 'inference' | 'storage' | 'window' | 'views' | 'placements' | 'notifications'>
+
 export interface AgentToolContext {
+  readonly capabilities: InvocationCapabilities
   readonly scope: Readonly<{ taskId: string, branchId: string, runId: string }>
   readonly artifacts: {
     /** Publish a private file to this task. Requires a write tool. Creates an independent workspace copy and a task output card. */
@@ -258,7 +261,7 @@ export interface ExtensionContext {
   readonly signal: AbortSignal
   readonly workers: WorkerApi
   readonly themes: ThemeApi
-  readonly extension: { readonly id: string, readonly version: string, readonly apiVersion: 1 | 2 | 3 | 4 }
+  readonly extension: { readonly id: string, readonly version: string, readonly apiVersion: 1 | 2 | 3 | 4 | 5, readonly executionScope: 'desktop' | 'service' }
   readonly events: EventSubscriber<ExtensionEvents>
   readonly configuration: {
     get: () => Promise<Record<string, SettingValue>>
@@ -272,7 +275,7 @@ export interface ExtensionContext {
     registerAction: (id: string, execute: (context: AgentActionContext) => AgentActionResult | Promise<AgentActionResult>) => Disposable
   }
   readonly subscriptions: { add: <T extends Disposable>(disposable: T) => T }
-  readonly commands: { register: (id: string, execute: (context: { resource: Resource | null, arguments: Json, invocation: CommandInvocation | null, taskCleanup?: LegacyTaskCleanupCommandApi }) => Json | void | Promise<Json | void>) => Disposable }
+  readonly commands: { register: (id: string, execute: (context: { signal: AbortSignal, capabilities: InvocationCapabilities, resource: Resource | null, arguments: Json, invocation: CommandInvocation | null, taskCleanup?: LegacyTaskCleanupCommandApi }) => Json | void | Promise<Json | void>) => Disposable }
   readonly placements: { show: (id: string, options?: string | PlacementOptions) => Promise<string>, hide: (id: string, options?: string | PlacementOptions) => Promise<string | null> }
   readonly window: { readonly styles: { set: (id: string, css: string) => Promise<void>, remove: (id: string) => Promise<void> } }
   readonly workbench: { readonly panes: readonly PaneSnapshot[], onPanesChange: (listener: (panes: readonly PaneSnapshot[]) => void) => Disposable }
@@ -493,7 +496,7 @@ export interface ViewContext {
   } | null
   readonly environment: ViewEnvironment
   onEnvironmentChange: (listener: (environment: ViewContext['environment']) => void) => Disposable
-  readonly apiVersion: 1 | 2 | 3 | 4
+  readonly apiVersion: 1 | 2 | 3 | 4 | 5
   readonly resource: Resource | null
   readonly state: Json
   readonly stateVersion: number

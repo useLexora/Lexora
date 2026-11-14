@@ -60,7 +60,7 @@ export function useChatPermissionSettings(options: UseChatPermissionSettingsOpti
     isUpdating.value = true
     try {
       if (conversation) {
-        const updated = await options.api.setPermissionSettings(conversation.id, settings)
+        const updated = await options.api.setPermissionSettings(conversation.id, settings, ...conversation.metadataRevision !== undefined ? [conversation.metadataRevision] as const : [])
         options.applyConversation(updated)
         return await options.persistWorkspaceState()
       }

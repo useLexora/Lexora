@@ -3,7 +3,7 @@ import type { BuddyToolPresentation } from '@buddy-shared/runs/runEventPresentat
 import type { ToolFailureCode } from '@buddy-shared/runs/toolFailure'
 import type { ChatAgentToolNode } from '../../model/transcript/chatAgentTurn'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { computed, inject } from 'vue'
+import { computed, defineAsyncComponent, inject } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { sessionReferenceNavigationKey } from '../references/sessionReferenceNavigation'
 import BuddyChatImageToolDetails from './BuddyChatImageToolDetails.vue'
@@ -12,7 +12,6 @@ import BuddyChatToolRead from './BuddyChatToolRead.vue'
 import BuddyChatToolSearch from './BuddyChatToolSearch.vue'
 import BuddyChatToolToolbar from './BuddyChatToolToolbar.vue'
 import { useChatContent } from './chatContentContext'
-import DesktopTerminalTranscript from './DesktopTerminalTranscript.vue'
 
 const props = defineProps<{
   errorCode?: ToolFailureCode
@@ -21,6 +20,8 @@ const props = defineProps<{
   status: ChatAgentToolNode['status']
   toolName: string
 }>()
+
+const DesktopTerminalTranscript = defineAsyncComponent(() => import('./DesktopTerminalTranscript.vue'))
 
 const { t } = useBuddyI18n(() => props.language)
 const actions = useChatContent()
@@ -124,7 +125,8 @@ const output = computed(() => {
         :language="language" :title="t('desktop.chat.processToolCommand')"
         :copy-text="terminal.command" :copy-label="t('desktop.chat.processToolCopyCommand')"
       />
-      <DesktopTerminalTranscript
+      <component
+        :is="actions.terminalRenderer ?? DesktopTerminalTranscript"
         :command="terminal.command"
         :output="terminalOutput"
         :shell="terminalShell"

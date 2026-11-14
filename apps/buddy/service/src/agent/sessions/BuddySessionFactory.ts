@@ -78,7 +78,6 @@ export class BuddySessionFactory {
       || run.status !== 'running'
       || !conversation
       || conversation.deletedAt !== null
-      || conversation.activeBranchId !== blueprint.branchId
       || conversation.id !== run.conversationId
       || conversation.spaceId !== (blueprint.space?.id ?? null)
       || conversation.approvalPolicy !== blueprint.approvalPolicy

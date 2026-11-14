@@ -6,7 +6,7 @@ import type { ChangeOverviewRequest, ChangeRecoveryListRequest, ChangeRecoveryRe
 import type { ConnectorChangeNotice, LocalConnector, LocalConnectorConfig, LocalConnectorCredential, LocalConnectorCredentialMutation } from '../../shared/connectors/connectorApi'
 import type { ConnectorRuntimeState, ConnectorToolSummary } from '../../shared/connectors/connectorState'
 import type { LocalChatCommandRequest, LocalStartTurnRequest, LocalTurnStart } from '../../shared/conversation/chatApi'
-import type { LocalChatQueueItem, LocalChatQueueReceipt, LocalChatQueueScope, LocalChatQueueSteerResult, LocalChatQueueTarget } from '../../shared/conversation/chatQueueApi'
+import type { LocalChatQueueItem, LocalChatQueueReceipt, LocalChatQueueScope, LocalChatQueueSteerResult, LocalChatQueueSteerTarget, LocalChatQueueTarget } from '../../shared/conversation/chatQueueApi'
 import type { ComposerResourcesChanged, LocalComposerDraft, LocalComposerDraftDiscard, LocalComposerDraftOpen, LocalComposerDraftSave } from '../../shared/conversation/composerApi'
 import type {
   BuddyComposerResource,
@@ -19,14 +19,15 @@ import type {
   BuddyComposerSpaceFileSelect,
 } from '../../shared/conversation/composerResource'
 import type { LocalContextUsageSnapshot, LocalContextUsageSnapshotRequest } from '../../shared/conversation/contextApi'
-import type { ConversationListFilter, ConversationModelControls, ConversationTimelineChangeNotice, LocalConversation, LocalConversationBranch, LocalConversationMember, LocalConversationSummary, LocalConversationTimelinePage, LocalMessagePage } from '../../shared/conversation/conversationApi'
+import type { ConversationListFilter, ConversationModelControls, ConversationModelMutationTarget, ConversationTimelineChangeNotice, LocalConversation, LocalConversationBranch, LocalConversationMember, LocalConversationSummary, LocalConversationTimelinePage, LocalMessagePage } from '../../shared/conversation/conversationApi'
 import type { ConversationArchivePage, ConversationArchivePolicy, ConversationArchiveQuery } from '../../shared/conversation/conversationArchiveApi'
 import type { ConversationHistoryQuery, LocalConversationHistoryItem, LocalConversationHistoryPage } from '../../shared/conversation/conversationHistoryApi'
 import type { ConversationNodeDetailRequest, LocalConversationTree } from '../../shared/conversation/conversationTree'
+import type { DraftRecoveryApi } from '../../shared/conversation/draftRecovery'
 import type { LocalTaskMark, LocalTaskMarkState, TaskMarkClearInput, TaskMarkInput, TaskMarkReadInput } from '../../shared/conversation/taskMarkApi'
 import type { LocalWorkspaceSetting, LocalWorkspaceStateValue } from '../../shared/conversation/workspaceApi'
 import type { LocalExecutionInputsPage } from '../../shared/executions/executionInputReceipt'
-import type { ExecutionAnswer, ExecutionEventsRequest, ExecutionInputsRequest, ExecutionsChanged, ExecutionScope, ExecutionSend, ExecutionSendDraft, ExecutionTarget, LocalExecution, LocalExecutionDetail, LocalExecutionEventsPage } from '../../shared/executions/executionPresentationApi'
+import type { ExecutionActivityRequest, ExecutionAnswer, ExecutionEventsRequest, ExecutionInputsRequest, ExecutionsChanged, ExecutionScope, ExecutionSend, ExecutionSendDraft, ExecutionTarget, LocalExecution, LocalExecutionActivity, LocalExecutionDetail, LocalExecutionEventsPage } from '../../shared/executions/executionPresentationApi'
 import type { DirectoryPage, FilePreview } from '../../shared/files/filePreview'
 import type { TaskFile, TaskFileLink, TaskFileTarget } from '../../shared/files/taskFileApi'
 import type { WebSettings, WebSettingsSnapshot } from '../../shared/network/webProtocol'
@@ -34,6 +35,7 @@ import type { LocalNotificationList, NotificationsChanged } from '../../shared/n
 import type { LocalApproval } from '../../shared/permissions/approvalApi'
 import type { ApprovalGrantScope } from '../../shared/permissions/approvalReviewPayload'
 import type { BuddyPermissionSettings } from '../../shared/permissions/permissionMode'
+import type { PrivateNetworkManagementApi } from '../../shared/privateNetwork/management'
 import type { BuiltinPromptCatalog } from '../../shared/prompts/promptApi'
 import type { LocalBuiltinProviderPreset, LocalCustomProvider, LocalCustomProviderModel, LocalDefaultModel, LocalModelSnapshot, LocalProvider, LocalProviderAuthChallenge, LocalRuntimeModelOption, ProviderChanged } from '../../shared/providers/providerApi'
 import type { ModelCapabilityOverrides } from '../../shared/providers/providerCapabilities'
@@ -43,6 +45,7 @@ import type { ProviderModelType } from '../../shared/providers/providerModelType
 import type { UserQuestionRequest, UserQuestionsChanged, UserQuestionSubmit, UserQuestionTarget } from '../../shared/questions/userQuestionApi'
 import type { LocalRun, LocalRunEvent } from '../../shared/runs/runApi'
 import type { LocalTaskMetrics, TaskMetricsChanged } from '../../shared/runs/taskMetricsApi'
+import type { ProductRecoveryItem } from '../../shared/runtime/productRecovery'
 import type { LocalBuddyServiceSupervisorState } from '../../shared/runtime/serviceState'
 
 import type { LocalSkillCatalog, SkillChangeNotice, SkillDetail, SkillDirectoryRequest, SkillFileTarget, SkillInstallPreview, SkillPreviewInput } from '../../shared/skills/skillApi'
@@ -54,11 +57,15 @@ import type { LocalUsageAnalytics, LocalUsageTopTasks, LocalUsageTrend, UsagePer
 import type { LocalUsageSnapshot } from '../../shared/usage/usageApi'
 
 export const LOCAL_CHAT_IPC_CHANNELS = {
+  draftRecoveryLoad: 'lexora:local-chat:draft-recovery:load',
+  draftRecoveryWrite: 'lexora:local-chat:draft-recovery:write',
+  draftRecoveryRemove: 'lexora:local-chat:draft-recovery:remove',
   questionsList: 'lexora:buddy:questions:list',
   questionsAnswer: 'lexora:buddy:questions:answer',
   questionsCancel: 'lexora:buddy:questions:cancel',
   questionsRetry: 'lexora:buddy:questions:retry',
   questionsChanged: 'lexora:buddy:questions:changed',
+  executionsActivity: 'lexora:local-chat:executions:activity',
   executionsList: 'lexora:local-chat:executions:list',
   executionsDetail: 'lexora:local-chat:executions:detail',
   executionsInputs: 'lexora:local-chat:executions:inputs',
@@ -169,7 +176,6 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   connectorsSetCredential: 'lexora:buddy:connectors:set-credential',
   connectorsConfirmExecution: 'lexora:buddy:connectors:confirm-execution',
   connectorsUpsert: 'lexora:buddy:connectors:upsert',
-  conversationsDeletePermanently: 'lexora:buddy:conversations:delete-permanently',
   conversationsArchive: 'lexora:buddy:conversations:archive',
   conversationsRestoreArchive: 'lexora:buddy:conversations:restore-archive',
   conversationsDeleteArchived: 'lexora:buddy:conversations:delete-archived',
@@ -253,6 +259,9 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   runtimeRestart: 'lexora:buddy:runtime:restart',
   runtimeStateChanged: 'lexora:buddy:runtime:state-changed',
   runtimeStatus: 'lexora:buddy:runtime:status',
+  runtimeRecoveryList: 'lexora:buddy:runtime:recovery:list',
+  runtimeRecoveryAcknowledge: 'lexora:buddy:runtime:recovery:acknowledge',
+  runtimeRecoveryRestore: 'lexora:buddy:runtime:recovery:restore',
   skillsList: 'lexora:buddy:skills:list',
   skillsGet: 'lexora:buddy:skills:get',
   skillsListFiles: 'lexora:buddy:skills:list-files',
@@ -280,6 +289,7 @@ interface LocalMutationResult {
 }
 
 export interface LocalChatApi {
+  draftRecovery?: DraftRecoveryApi
   questions: {
     list: (input: ExecutionScope) => Promise<UserQuestionRequest[]>
     answer: (input: UserQuestionSubmit) => Promise<UserQuestionRequest>
@@ -288,6 +298,7 @@ export interface LocalChatApi {
     onChanged: (listener: (event: UserQuestionsChanged) => void) => () => void
   }
   executions: {
+    activity: (input: ExecutionActivityRequest) => Promise<LocalExecutionActivity>
     list: (input: ExecutionScope) => Promise<readonly LocalExecution[]>
     detail: (input: ExecutionTarget) => Promise<LocalExecutionDetail>
     inputs: (input: ExecutionInputsRequest) => Promise<LocalExecutionInputsPage>
@@ -314,10 +325,10 @@ export interface LocalChatApi {
   taskMarks: {
     list: () => Promise<readonly LocalTaskMark[]>
     create: (input: TaskMarkInput) => Promise<LocalTaskMark>
-    update: (input: TaskMarkInput & { id: string }) => Promise<LocalTaskMark>
-    delete: (id: string) => Promise<boolean>
+    update: (input: TaskMarkInput & { id: string, expectedRevision?: number }) => Promise<LocalTaskMark>
+    delete: (id: string, expectedRevision?: number) => Promise<boolean>
     states: (conversationIds: readonly string[]) => Promise<readonly LocalTaskMarkState[]>
-    assign: (conversationId: string, markId: string | null) => Promise<LocalTaskMarkState>
+    assign: (conversationId: string, markId: string | null, expectedAssignmentRevision?: number) => Promise<LocalTaskMarkState>
     setRead: (input: TaskMarkReadInput) => Promise<LocalTaskMarkState>
     clear: (input: TaskMarkClearInput) => Promise<LocalTaskMarkState>
   }
@@ -353,7 +364,11 @@ export interface LocalChatApi {
   prompts: {
     get: () => Promise<BuiltinPromptCatalog>
   }
+  privateNetwork: PrivateNetworkManagementApi
   runtime: {
+    listRecovery: () => Promise<ProductRecoveryItem[]>
+    acknowledgeRecovery: (id: string) => Promise<void>
+    restoreRecovery: (id: string) => Promise<string>
     getStatus: () => Promise<LocalBuddyServiceSupervisorState>
     restart: () => Promise<LocalBuddyServiceSupervisorState>
     onStateChanged: (listener: (state: LocalBuddyServiceSupervisorState) => void) => () => void
@@ -517,15 +532,15 @@ export interface LocalChatApi {
     getHistoryEntries: (ids: readonly string[]) => Promise<readonly LocalConversationHistoryItem[]>
     get: (conversationId: string) => Promise<LocalConversation>
     getModelControls: (conversationId: string, actorId?: string) => Promise<ConversationModelControls>
-    deletePermanently: (conversationId: string, expectedRevision: number) => Promise<boolean>
     archive: (conversationId: string, expectedRevision: number) => Promise<boolean>
     restoreArchive: (conversationId: string, expectedRevision: number) => Promise<boolean>
     deleteArchived: (conversationId: string, expectedRevision: number) => Promise<boolean>
     listArchived: (query: ConversationArchiveQuery) => Promise<ConversationArchivePage>
     getArchivePolicy: () => Promise<ConversationArchivePolicy>
     setArchivePolicy: (days: ConversationArchivePolicy['days']) => Promise<ConversationArchivePolicy>
-    delete: (conversationId: string) => Promise<boolean>
+    delete: (conversationId: string, expectedRevision?: number) => Promise<boolean>
     activateBranch: (input: {
+      expectedRevision?: number
       branchId: string
       conversationId: string
     }) => Promise<LocalConversation>
@@ -536,20 +551,21 @@ export interface LocalChatApi {
       cursor?: string
       limit?: number
     }) => Promise<LocalMessagePage>
-    rename: (conversationId: string, title: string) => Promise<LocalConversation>
+    rename: (conversationId: string, title: string, expectedTitleRevision?: number) => Promise<LocalConversation>
     setPermissionSettings: (
       conversationId: string,
       settings: BuddyPermissionSettings,
+      expectedRevision?: number,
     ) => Promise<LocalConversation>
     listMembers: (conversationId: string) => Promise<readonly LocalConversationMember[]>
-    addMember: (conversationId: string, buddyId: string) => Promise<readonly LocalConversationMember[]>
-    removeMember: (conversationId: string, buddyId: string) => Promise<readonly LocalConversationMember[]>
-    setBuddy: (conversationId: string, buddyId: string) => Promise<LocalConversation>
-    moveToSpace: (conversationId: string, spaceId: string) => Promise<LocalConversation>
+    addMember: (conversationId: string, buddyId: string, expectedRevision?: number) => Promise<readonly LocalConversationMember[]>
+    removeMember: (conversationId: string, buddyId: string, expectedRevision?: number) => Promise<readonly LocalConversationMember[]>
+    setBuddy: (conversationId: string, buddyId: string, expectedRevision?: number) => Promise<LocalConversation>
+    moveToSpace: (conversationId: string, spaceId: string, expectedRevision?: number) => Promise<LocalConversation>
     setModelSelection: (
       conversationId: string,
       modelSelection: LocalConversation['modelSelection'],
-      target?: { actorId?: string, runId?: string },
+      target?: ConversationModelMutationTarget,
     ) => Promise<LocalConversation>
     listTimeline: (input: {
       branchId?: string
@@ -594,8 +610,8 @@ export interface LocalChatApi {
       runId?: string | null
       status?: 'pending' | 'approved' | 'denied' | 'cancelled' | null
     }) => Promise<ReadonlyArray<LocalApproval>>
-    approve: (approvalId: string, scope: ApprovalGrantScope) => Promise<LocalApproval>
-    deny: (approvalId: string) => Promise<LocalApproval>
+    approve: (approvalId: string, scope: ApprovalGrantScope, conditions?: { runId: string, reviewVersion: string }) => Promise<LocalApproval>
+    deny: (approvalId: string, conditions?: { runId: string, reviewVersion: string }) => Promise<LocalApproval>
   }
   composerResources: {
     readText: (input: BuddyComposerResourceTarget) => Promise<string>
@@ -620,7 +636,7 @@ export interface LocalChatApi {
     enqueue: (input: LocalStartTurnRequest) => Promise<LocalChatQueueReceipt>
     listQueue: (input: LocalChatQueueScope) => Promise<readonly LocalChatQueueItem[]>
     cancelQueued: (input: LocalChatQueueTarget) => Promise<boolean>
-    steerQueued: (input: LocalChatQueueTarget) => Promise<LocalChatQueueSteerResult>
+    steerQueued: (input: LocalChatQueueSteerTarget) => Promise<LocalChatQueueSteerResult>
     editUserMessage: (input: {
       conversationId: string
       draftId: string
@@ -635,7 +651,7 @@ export interface LocalChatApi {
       requestId: string
       sourceRunId: string
     }) => Promise<LocalTurnStart>
-    cancel: (runId: string) => Promise<LocalRun>
+    cancel: (runId: string, expectedRunGeneration?: number) => Promise<LocalRun>
     onRunEvent: (listener: (event: LocalRunEvent) => void) => () => void
   }
 }

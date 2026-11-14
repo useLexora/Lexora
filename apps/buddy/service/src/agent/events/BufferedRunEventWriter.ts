@@ -1,14 +1,23 @@
 import type { BuddyAssistantTextPhase } from '../../../../shared/runs/assistantTextPhase'
 import type { RunEventWriter } from '../../events/RunEventPorts'
 import type { BuddyProjectedEvent } from './projectPiEvent'
+import { Buffer } from 'node:buffer'
+import { performance } from 'node:perf_hooks'
 import { buddyAssistantTextPhaseSchema } from '../../../../shared/runs/assistantTextPhase'
 import { buddyToolPresentationDeltaSchema } from '../../../../shared/runs/runEventPresentation'
+
+const STREAM_WINDOW_MS = 25
+const STREAM_EVENT_LIMIT = 20
+const STREAM_BYTE_LIMIT = 64 * 1024
 
 export class BufferedRunEventWriter {
   readonly #eventLog: Pick<RunEventWriter, 'appendBatch'>
   readonly #runId: string
   readonly #timestamp: () => string
   #pending: TimestampedBuddyProjectedEvent[] = []
+  #pendingCount = 0
+  #pendingBytes = 0
+  #pendingSince = 0
   #tail = Promise.resolve()
   #timer: NodeJS.Timeout | undefined
 
@@ -30,14 +39,29 @@ export class BufferedRunEventWriter {
       return
     }
 
+    const bytes = Buffer.byteLength(JSON.stringify({ ...timestamped, runId: this.#runId }))
+    if (this.#pendingCount > 0 && (
+      this.#pendingBytes + bytes > STREAM_BYTE_LIMIT
+      || performance.now() - this.#pendingSince >= STREAM_WINDOW_MS
+    )) {
+      this.#flushPending()
+    }
+    if (this.#pendingCount === 0)
+      this.#pendingSince = performance.now()
+    this.#pendingCount += 1
+    this.#pendingBytes += bytes
     const previous = this.#pending.at(-1)
     const merged = previous ? mergeStreamDelta(previous, timestamped) : null
     if (merged)
       this.#pending[this.#pending.length - 1] = merged
     else
       this.#pending.push(timestamped)
+    if (this.#pendingCount >= STREAM_EVENT_LIMIT || this.#pendingBytes >= STREAM_BYTE_LIMIT) {
+      this.#flushPending()
+      return
+    }
     if (!this.#timer) {
-      this.#timer = setTimeout(() => this.#flushPending(), 25)
+      this.#timer = setTimeout(() => this.#flushPending(), STREAM_WINDOW_MS)
       this.#timer.unref()
     }
   }
@@ -85,6 +109,8 @@ export class BufferedRunEventWriter {
       return
     const events = this.#pending
     this.#pending = []
+    this.#pendingCount = 0
+    this.#pendingBytes = 0
     this.#enqueue(events)
   }
 }
@@ -111,7 +137,6 @@ function mergeStreamDelta(
     || leftPayload.messageId !== rightPayload.messageId
     || leftPayload.contentIndex !== rightPayload.contentIndex
     || leftPayload.phase !== rightPayload.phase
-    || leftPayload.delta.length + rightPayload.delta.length > 64 * 1024
   ) {
     return null
   }
@@ -140,7 +165,6 @@ function mergeToolPresentationDelta(
     || leftPayload.toolName !== rightPayload.toolName
     || leftPayload.delta.outputStart + leftPayload.delta.outputDelta.length
     !== rightPayload.delta.outputStart
-    || leftPayload.delta.outputDelta.length + rightPayload.delta.outputDelta.length > 64 * 1024
   ) {
     return null
   }
@@ -192,7 +216,6 @@ function mergeMessageBlockDelta(
     || !rightPayload
     || leftPayload.messageId !== rightPayload.messageId
     || leftPayload.contentIndex !== rightPayload.contentIndex
-    || leftPayload.delta.length + rightPayload.delta.length > 64 * 1024
   ) {
     return null
   }

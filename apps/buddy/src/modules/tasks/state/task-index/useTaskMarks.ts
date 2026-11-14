@@ -142,18 +142,18 @@ export function useTaskMarks(options: TaskMarksOptions): TaskMarks & { dispose: 
     return result
   }
 
-  async function save(input: TaskMarkInput, id?: string): Promise<boolean> {
+  async function save(input: TaskMarkInput, id?: string, expectedRevision?: number): Promise<boolean> {
     const value = { name: input.name, description: input.description, color: input.color }
     return mutate(async () => {
-      const mark = id ? await options.api.update({ ...value, id }) : await options.api.create(value)
+      const mark = id ? await options.api.update({ ...value, id, ...(expectedRevision !== undefined ? { expectedRevision } : {}) }) : await options.api.create(value)
       if (!stopped)
         items.value = id ? items.value.map(item => item.id === id ? mark : item) : [...items.value, mark]
     })
   }
 
-  function remove(id: string): Promise<boolean> {
+  function remove(id: string, expectedRevision?: number): Promise<boolean> {
     return mutate(async () => {
-      await options.api.delete(id)
+      await options.api.delete(id, ...expectedRevision !== undefined ? [expectedRevision] as const : [])
       if (stopped)
         return
       items.value = items.value.filter(item => item.id !== id)
@@ -174,9 +174,10 @@ export function useTaskMarks(options: TaskMarksOptions): TaskMarks & { dispose: 
   }
 
   function assign(conversationId: string, markId: string | null): Promise<boolean> {
+    const expectedAssignmentRevision = states.value.get(conversationId)?.assignmentRevision
     return mutate(async () => {
       const previous = states.value.get(conversationId)
-      const state = await options.api.assign(conversationId, markId)
+      const state = await options.api.assign(conversationId, markId, ...expectedAssignmentRevision !== undefined ? [expectedAssignmentRevision] as const : [])
       await applyMutationState(state, previous, true)
     })
   }
@@ -188,7 +189,7 @@ export function useTaskMarks(options: TaskMarksOptions): TaskMarks & { dispose: 
     suppressed.delete(conversationId)
     return mutate(async () => {
       const previous = states.value.get(conversationId)
-      const result = await options.api.clear({ conversationId, resultRunId: state.resultRunId, readRevision: state.readRevision })
+      const result = await options.api.clear({ conversationId, resultRunId: state.resultRunId, readRevision: state.readRevision, ...(state.assignmentRevision !== undefined ? { expectedAssignmentRevision: state.assignmentRevision } : {}) })
       await applyMutationState(result, previous, true)
     })
   }

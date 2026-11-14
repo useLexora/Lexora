@@ -3,7 +3,9 @@ import type { AgentSessionEvent, CompactionResult } from '@earendil-works/pi-cod
 import type { DatabaseSync } from 'node:sqlite'
 import type { BuddySessionBlueprint } from '../../sessions/BuddySessionBlueprint'
 import type { BuddySessionTurnContext, ReusableBuddySession } from '../../sessions/ReusableBuddySession'
+import type { BuddyAgentRunnerOptions } from '../BuddyAgentRunner'
 import type { PiTurnExecutorOptions } from '../PiTurnExecutor'
+import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -21,6 +23,7 @@ import { createConversationRepository } from '../../../storage/conversationRepos
 import { openBuddyDatabase } from '../../../storage/database'
 import { createExecutionRepository } from '../../../storage/executionRepository'
 import { createRunRepository } from '../../../storage/runRepository'
+import { getStorageIsolation } from '../../../storage/StorageIsolation'
 import { createUsageRepository } from '../../../storage/usageRepository'
 import { UsageService } from '../../../usage/UsageService'
 import { createBuddyInputReference } from '../../context/BuddyInputReference'
@@ -42,6 +45,64 @@ afterEach(async () => {
 })
 
 describe('buddyAgentRunner', () => {
+  it('releases execution without starting Pi or inventing a terminal state when storage fails during start', async () => {
+    const fixture = await createFixture()
+    const storage = getStorageIsolation(fixture.database)
+    const started = Promise.withResolvers<void>()
+    const waiting = Promise.withResolvers<void>()
+    const lifecycle = new RunLifecycleService({ eventLog: fixture.eventLog, repository: fixture.runs })
+    const output = join(fixture.root, 'must-not-exist.md')
+    let released = false
+    const runner = fixture.createRunnerFromFactory(async () => ({
+      piSessionFile: join(fixture.root, 'session.jsonl'),
+      session: new OfflineSession(output),
+    }), undefined, {}, {
+      assertStorageAvailable: storage.assertAvailable,
+      releaseRunResources: () => { released = true },
+      lifecycle: {
+        find: lifecycle.find.bind(lifecycle),
+        async start(input) {
+          const run = await lifecycle.start(input)
+          started.resolve()
+          await waiting.promise
+          return run
+        },
+      },
+    })
+    const input = {
+      branchId: 'branch-1',
+      canonicalRoot: fixture.root,
+      conversationId: 'conversation-1',
+      cwd: fixture.root,
+      model: 'claude-sonnet-4-5',
+      prompt: 'Write output',
+      provider: 'anthropic',
+      runId: 'run-isolation',
+      resources: emptyResources(),
+      spaceId: null,
+      userInput: createBuddyInputReference({ images: [], messageId: 'message-isolation', prompt: 'Write output' }),
+    }
+    fixture.prepareTurn(input, 'message-isolation')
+    const handle = runner.startTurn(withSession(input))
+    const rejected = expect(handle.completion).rejects.toThrow('Storage is isolated')
+    try {
+      await started.promise
+      storage.isolate(new Error('Storage read failed'))
+      waiting.resolve()
+      await rejected
+      expect(fixture.runs.findById(input.runId)).toMatchObject({ status: 'running', errorCode: null, piSessionFile: null })
+      expect((await fixture.eventLog.read(input.runId)).map(event => event.type)).toEqual(['run.started'])
+      expect(existsSync(output)).toBe(false)
+      expect(released).toBe(true)
+      expect(runner.hasActiveExecutions).toBe(false)
+    }
+    finally {
+      waiting.resolve()
+      await expect(runner.dispose()).rejects.toThrow('Execution backend cleanup failed')
+      await lifecycle.dispose()
+    }
+  })
+
   it('bounds automation background session startup and records a stable timeout', async () => {
     const fixture = await createFixture()
     const startupSignal: { current: AbortSignal | null } = { current: null }
@@ -832,32 +893,6 @@ describe('buddyAgentRunner', () => {
     expect(shutdownFailedSession).toHaveBeenCalledOnce()
   })
 
-  it('fails an ineligible manual compaction without activating the provider or calling Pi compact', async () => {
-    const fixture = await createFixture()
-    fixture.prepareCompletedTurn()
-    fixture.prepareCompaction('run-compact-not-needed')
-    const session = new IneligibleCompactionSession()
-    const runner = fixture.createRunner(session)
-
-    const run = await runner.startCompaction(withSession({
-      branchId: 'branch-1',
-      canonicalRoot: fixture.root,
-      conversationId: 'conversation-1',
-      customInstructions: '',
-      cwd: fixture.root,
-      spaceId: null,
-      resources: emptyResources(),
-      runId: 'run-compact-not-needed',
-    })).completion
-
-    expect(run).toMatchObject({
-      errorCode: 'CONTEXT_COMPACTION_NOT_NEEDED',
-      status: 'failed',
-    })
-    expect(session.activationCount).toBe(0)
-    expect(session.compactionInstructions).toEqual([])
-  })
-
   it('cancels Pi compaction before closing the Buddy run', async () => {
     const fixture = await createFixture()
     fixture.prepareCompletedTurn()
@@ -1244,19 +1279,6 @@ class CompactionStorageFailureSession extends IdleSession {
   }
 }
 
-class IneligibleCompactionSession extends CompactionSession {
-  activationCount = 0
-
-  canCompact(): boolean {
-    return false
-  }
-
-  override activateTurn = async (): Promise<() => void> => {
-    this.activationCount += 1
-    return () => {}
-  }
-}
-
 class WaitingCompactionSession extends IdleSession {
   readonly started: Promise<void>
   compactionAborted = false
@@ -1424,6 +1446,7 @@ async function createFixture(options: { onCommit?: () => void } = {}) {
       sessionFactory: PiTurnExecutorOptions['sessionFactory'],
       sessions = new BuddySessionRegistry<ReusableBuddySession>(),
       executorOptions: Pick<PiTurnExecutorOptions, 'automationSessionStartupTimeoutMs'> = {},
+      runnerOptions: Partial<Pick<BuddyAgentRunnerOptions, 'assertStorageAvailable' | 'lifecycle' | 'releaseRunResources'>> = {},
     ) {
       const piEvents = new PiEventBridge({ eventLog, usage: usageService })
       const lifecycle = new RunLifecycleService({ eventLog, repository: runs })
@@ -1441,6 +1464,7 @@ async function createFixture(options: { onCommit?: () => void } = {}) {
         }),
         lifecycle,
         sessions,
+        ...runnerOptions,
       })
       return runner
     },

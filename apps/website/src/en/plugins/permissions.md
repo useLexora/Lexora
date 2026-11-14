@@ -45,7 +45,7 @@ Clipboard access requires its independent permission and a visible, focused inte
 | Field | Meaning |
 | --- | --- |
 | `version` | Plugin release version |
-| `apiVersion` | Protocol major version; currently 1–4 |
+| `apiVersion` | Protocol major version; currently 1–5 |
 | `engines.lexora` | Host range supporting every required capability |
 
 An incremental API within version 4 may require Lexora 0.17.0. API 4 alone does not make an older host compatible. Check the requirements for [document editing](./files#edit-originals-and-recover) and reference capture. Do not lower the range to bypass installation checks.
@@ -59,3 +59,9 @@ The application capability catalog describes its running host. An independent SD
 A cancelled picker, expired view, revoked permission and save conflict are different outcomes. Handle null, false, result states and rejected promises according to each API.
 
 A timeout may leave an outcome unconfirmed. Inspect state or recovery receipts before repeating a write. Diagnostics should include plugin identity, version, method and error code, without credentials or material content.
+
+## Execution lifetime
+
+`executionScope` defaults to `desktop`: the plugin runs while Desktop is open. API 5 plugins can explicitly select `service` to keep serving an active task after Desktop closes. Installation review shows this change, and every runtime dependency must also declare service execution.
+
+A service package needs an `entry` and cannot request `schedules`. API 5 rejects unknown permissions. Activation registers capabilities, reads configuration and initializes private data; model, task and network operations require a current invocation and its cancellation signal. The backend stops when no task or view uses it. Window, picker and selection operations still require Desktop and return `EXTENSION_DESKTOP_REQUIRED` while it is unavailable. This declaration grants neither Node access nor additional system permissions.

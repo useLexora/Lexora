@@ -4,6 +4,7 @@ import type { DefaultModelRepository } from './defaultModelRepository'
 import type { ProviderConfigRepository } from './providerConfigRepository'
 import type { ProviderModelStateRepository } from './providerModelStateRepository'
 import type { ProviderStateRepository } from './providerStateRepository'
+import type { SynchronousOperation } from './transaction'
 import { createBuiltinProviderConfigRepository } from './builtinProviderConfigRepository'
 import { withTransaction } from './database'
 import { createDefaultModelRepository } from './defaultModelRepository'
@@ -17,7 +18,7 @@ export interface ProviderRepository {
   readonly defaultModel: DefaultModelRepository
   readonly models: ProviderModelStateRepository
   readonly states: ProviderStateRepository
-  transaction: <T>(operation: () => T) => T
+  transaction: <T>(operation: SynchronousOperation<T>) => T
 }
 
 export function createProviderRepository(database: DatabaseSync): ProviderRepository {

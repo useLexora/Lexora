@@ -38,10 +38,10 @@ export function createThreadBindingRepository(database: DatabaseSync) {
       const previous = previousSession.get(threadId, branchId) as { pi_session_file: string } | undefined
       return previous?.pi_session_file ?? null
     },
-    ensureActor(conversationId: string, actorId: string, createdAt: string): ExecutionThreadRecord {
+    ensureActor(conversationId: string, actorId: string, createdAt: string, branchId?: string): ExecutionThreadRecord {
       if (!database.prepare('SELECT 1 FROM conversation_members WHERE conversation_id = ? AND actor_id = ?').get(conversationId, actorId))
         throw new Error('Actor thread requires conversation membership')
-      const id = actorThreadId(conversationId, actorId)
+      const id = actorThreadId(conversationId, actorId, branchId)
       database.prepare('INSERT OR IGNORE INTO execution_threads (id, conversation_id, actor_id, kind, created_at) VALUES (?, ?, ?, \'actor\', ?)')
         .run(id, conversationId, actorId, createdAt)
       return find(id)!

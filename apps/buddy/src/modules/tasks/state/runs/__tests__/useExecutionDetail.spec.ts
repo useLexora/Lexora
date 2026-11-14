@@ -29,6 +29,7 @@ function message(runId: string, sequence: number, text: string): LocalRunEvent {
 }
 function setup() {
   const api: NonNullable<ReturnType<typeof useExecutionEnvironment>>['api'] = {
+    activity: async () => ({ hasBlockingAnswer: false }),
     list: vi.fn(async () => []),
     inputs: async () => ({ inputs: [], nextOffset: null }),
     detail: vi.fn(async input => detail(input.runId)),

@@ -5,12 +5,14 @@ import type { ConversationArchiveService } from './ConversationArchiveService'
 import type { ConversationLifecycleService } from './ConversationLifecycleService'
 import { conversationCleanupDeleteSchema, conversationCleanupQuerySchema } from '../../../shared/conversation/conversationCleanupApi'
 import { parse } from '../rpc/runtimeRequest'
+import { ExecutionResourceQueries } from '../storage/ExecutionResourceQueries'
 import { ConversationArchiveConflictError } from './ConversationArchiveService'
 
 interface Options {
   database: DatabaseSync
   archive: ConversationArchiveService
   lifecycle: ConversationLifecycleService
+  execute: (input: ConversationArchiveTarget) => Promise<boolean>
 }
 
 export class ConversationCleanupService {
@@ -23,13 +25,10 @@ export class ConversationCleanupService {
   list(input: ConversationCleanupQuery): ConversationCleanupPage {
     const { cursor, limit } = parse(conversationCleanupQuerySchema, input)
     const page = this.#options.archive.list({ cursor, limit, kind: 'removed' })
+    const resources = new ExecutionResourceQueries(this.#options.database).conversations(page.items.map(item => item.id))
     return {
       items: page.items.map((item) => {
-        const busy = this.#options.lifecycle.isCleanupPending(item.id)
-          || !!this.#options.database.prepare(`SELECT 1 FROM runs r LEFT JOIN execution_state s ON s.run_id = r.id
-            WHERE r.conversation_id = ? AND (r.status IN ('queued', 'running') OR s.phase <> 'closed' OR s.cleanup_state <> 'clean') LIMIT 1`).get(item.id)
-            || !!this.#options.database.prepare(`SELECT 1 FROM run_mutation_leases l JOIN runs r ON r.id = l.run_id
-            WHERE r.conversation_id = ? AND l.status <> 'released' LIMIT 1`).get(item.id)
+        const busy = resources.get(item.id) !== 'released'
         return {
           conversationId: item.id,
           title: item.title,
@@ -57,7 +56,7 @@ export class ConversationCleanupService {
 
   async delete(input: ConversationCleanupDelete): Promise<ConversationCleanupResult> {
     const { conversationId, expectedRevision } = parse(conversationCleanupDeleteSchema, input)
-    if (!await this.execute({ conversationId, expectedRevision }))
+    if (!await this.#options.execute({ conversationId, expectedRevision }))
       return { status: 'failed', errorCode: 'SOURCE_CHANGED' }
     await this.#options.lifecycle.settleDeletion(input.conversationId).catch(() => {})
     const job = this.#options.database.prepare('SELECT status, error_code FROM conversation_deletion_jobs WHERE conversation_id = ?').get(input.conversationId)

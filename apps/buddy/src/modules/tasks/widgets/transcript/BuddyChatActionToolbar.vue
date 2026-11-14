@@ -146,7 +146,7 @@ async function copyContent() {
       <NTooltip placement="bottom">
         <template #trigger>
           <NButton
-            :disabled="actions.disabled || !branchNavigator.previousBranchId"
+            :disabled="!branchNavigator.previousBranchId"
             class="buddy-icon-button buddy-chat-action-toolbar__branch-button"
             quaternary
             size="tiny"
@@ -164,7 +164,7 @@ async function copyContent() {
       <NTooltip placement="bottom">
         <template #trigger>
           <NButton
-            :disabled="actions.disabled || !branchNavigator.nextBranchId"
+            :disabled="!branchNavigator.nextBranchId"
             class="buddy-icon-button buddy-chat-action-toolbar__branch-button"
             quaternary
             size="tiny"

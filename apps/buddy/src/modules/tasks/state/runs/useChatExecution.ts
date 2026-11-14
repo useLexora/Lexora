@@ -16,7 +16,7 @@ export function useChatExecution(options: UseChatExecutionOptions) {
     persist: options.persistWorkspaceState,
   })
   const turnExecution = useChatTurnExecution({
-    archived: options.archived,
+    archived: computed(() => !!options.activeConversation?.value?.archivedAt),
     actorInput: options.actorInput,
     getNewBuddyId: options.getNewBuddyId,
     activeRun: options.activeRun,
@@ -44,7 +44,8 @@ export function useChatExecution(options: UseChatExecutionOptions) {
     unavailableCommandMessage: options.unavailableCommandMessage,
   })
   const branchMutations = useChatBranchMutations({
-    archived: options.archived,
+    openBranch: options.openBranch,
+    activeConversation: options.activeConversation,
     flushModelSelection: options.flushModelSelection,
     composerTarget,
     activeRun: options.branchActiveRun ?? options.activeRun,
