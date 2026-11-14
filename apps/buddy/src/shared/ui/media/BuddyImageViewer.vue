@@ -57,13 +57,16 @@ const transformControls = [
 ] as const
 const buttonTheme = {
   textColor: 'var(--buddy-media-overlay-text)',
-  textColorHover: 'var(--buddy-media-overlay-text)',
-  textColorPressed: 'var(--buddy-media-overlay-text)',
-  textColorFocus: 'var(--buddy-media-overlay-text)',
-  colorHover: 'var(--buddy-media-overlay-hover)',
-  colorPressed: 'var(--buddy-media-overlay-hover)',
+  colorQuaternaryHover: 'var(--buddy-media-overlay-hover)',
+  colorQuaternaryPressed: 'var(--buddy-media-overlay-hover)',
 }
-const navigationTheme = { ...buttonTheme, heightMedium: '44px' }
+const navigationTheme = {
+  ...buttonTheme,
+  heightMedium: '44px',
+  colorQuaternary: 'var(--buddy-media-overlay-background)',
+  colorQuaternaryHover: 'color-mix(in srgb, var(--buddy-media-overlay-background) 88%, var(--buddy-media-overlay-text))',
+  colorQuaternaryPressed: 'color-mix(in srgb, var(--buddy-media-overlay-background) 82%, var(--buddy-media-overlay-text))',
+}
 
 function navigate(delta: number) {
   current.value = Math.max(0, Math.min(index.value + delta, props.sources.length - 1))
@@ -148,7 +151,7 @@ function onKeydown(event: KeyboardEvent) {
         {{ t('desktop.imagePreview.loadFailed') }}
       </div>
       <div v-else-if="!ready" class="absolute inset-0 grid place-items-center pointer-events-none">
-        <NSpin size="small" />
+        <NSpin size="small" :theme-overrides="{ color: 'var(--buddy-media-overlay-text)' }" />
       </div>
       <template v-if="sources.length > 1">
         <NButton
@@ -242,13 +245,9 @@ function onKeydown(event: KeyboardEvent) {
   }
 }
 
-.buddy-image-viewer__navigation {
-  opacity: 0.4;
-
-  &:hover,
-  &:focus-visible {
-    opacity: 1;
-  }
+.buddy-image-viewer__navigation:focus-visible {
+  outline: 2px solid var(--buddy-media-overlay-focus);
+  outline-offset: 2px;
 }
 
 .buddy-image-viewer__divider {

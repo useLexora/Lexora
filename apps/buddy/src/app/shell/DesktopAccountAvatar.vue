@@ -83,7 +83,7 @@ const resolvedInitials = computed(() => {
 }
 
 .desktop-account-avatar__initials {
-  color: #ffffff;
+  color: var(--buddy-text-on-accent);
   letter-spacing: 0.02em;
 }
 
