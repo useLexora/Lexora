@@ -43,7 +43,7 @@ enum Action {
 #[derive(Debug, Deserialize)]
 #[serde(untagged, deny_unknown_fields)]
 #[cfg_attr(
-    not(any(windows, target_os = "linux")),
+    not(any(windows, target_os = "linux", target_os = "macos")),
     expect(dead_code, reason = "Process lookup requires a supported host")
 )]
 enum Selector {
