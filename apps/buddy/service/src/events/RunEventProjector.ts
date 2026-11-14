@@ -10,6 +10,7 @@ import {
   approvalReviewPayloadSchema,
 } from '../../../shared/permissions/approvalReviewPayload'
 import { buddyAssistantTextPhaseSchema } from '../../../shared/runs/assistantTextPhase'
+import { approvalReviewSchema } from '../approvals/approvalReview'
 import { projectConversationPublication } from '../storage/conversationPublicationRepository'
 import { withTransaction } from '../storage/database'
 import { createMailboxRepository } from '../storage/mailboxRepository'
@@ -19,6 +20,7 @@ import { canCertifyBootstrapCheckpoint, RUN_EVENT_COMPACTION_VERSION, RUN_EVENT_
 
 const messageIdSchema = z.string().min(1).max(256)
 const approvalRequestPayloadSchema = z.object({
+  review: approvalReviewSchema.optional(),
   createdAt: z.iso.datetime(),
   id: z.string().min(1),
   kind: z.enum(APPROVAL_REVIEW_KINDS),
@@ -33,6 +35,8 @@ const approvalRequestPayloadSchema = z.object({
   { path: ['payload'] },
 )
 const approvalResolutionPayloadSchema = z.object({
+  actorId: z.string().min(1).optional(),
+  cancellationReason: z.enum(['cancelled', 'expired', 'recovery', 'shutdown']).optional(),
   id: z.string().min(1),
   resolution: z.enum(['approved', 'approved_persistently', 'approved_for_operation', 'approved_for_source', 'approved_for_turn', 'cancelled', 'denied']).optional(),
   resolvedAt: z.iso.datetime(),
@@ -109,6 +113,17 @@ export class RunEventProjector {
 
   constructor(database: DatabaseSync) {
     this.#database = database
+  }
+
+  append(events: readonly BuddyRunEvent[]): number {
+    return withTransaction(this.#database, () => {
+      if (events.length === 0)
+        return 0
+      if (events.some(event => event.runId !== events[0]!.runId))
+        throw new Error('A run event batch must belong to one run')
+      this.validateNewFacts(events)
+      return events.reduce((count, event) => count + this.#project(event, 'new'), 0)
+    })
   }
 
   project(events: readonly BuddyRunEvent[], checkpoint?: RunEventCheckpoint): number {
@@ -287,11 +302,11 @@ export class RunEventProjector {
     }
   }
 
-  #project(event: BuddyRunEvent, mode: 'append' | 'rebuild' = 'append'): number {
+  #project(event: BuddyRunEvent, mode: 'append' | 'rebuild' | 'new' = 'append'): number {
     const result = this.#database.prepare(`
       INSERT INTO run_events (run_id, sequence, event_type, payload_json, created_at)
       VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT (run_id, sequence) DO NOTHING
+      ${mode === 'new' ? '' : 'ON CONFLICT (run_id, sequence) DO NOTHING'}
     `).run(
       event.runId,
       event.sequence,
@@ -300,8 +315,8 @@ export class RunEventProjector {
       event.createdAt,
     )
     createMailboxRepository(this.#database).project(event)
-    projectRunStatus(this.#database, event, mode)
-    projectProductMessage(this.#database, event, mode)
+    projectRunStatus(this.#database, event, mode === 'rebuild' ? 'rebuild' : 'append')
+    projectProductMessage(this.#database, event, mode === 'rebuild' ? 'rebuild' : 'append')
     projectConversationPublication(this.#database, event)
     projectApprovalRequest(this.#database, event)
     projectApprovalResolution(this.#database, event)
@@ -418,8 +433,13 @@ function projectApprovalResolution(database: DatabaseSync, event: BuddyRunEvent)
     UPDATE approvals SET status = ?, resolved_at = ?
     WHERE id = ? AND run_id = ? AND status = 'pending'
   `).run(resolution.status, resolution.resolvedAt, resolution.id, event.runId)
-  if (Number(result.changes) === 1)
+  if (Number(result.changes) === 1) {
+    if (database.prepare('SELECT 1 FROM sqlite_master WHERE type = \'table\' AND name = \'approval_decisions\'').get()) {
+      database.prepare('INSERT INTO approval_decisions (approval_id, resolution, actor_id, cancellation_reason, decided_at) VALUES (?, ?, ?, ?, ?)')
+        .run(resolution.id, resolution.resolution ?? null, resolution.actorId ?? null, resolution.cancellationReason ?? null, resolution.resolvedAt)
+    }
     return
+  }
   throw approvalConflict(resolution.id)
 }
 
@@ -444,8 +464,11 @@ function projectApprovalRequest(database: DatabaseSync, event: BuddyRunEvent): v
     payloadJson,
     approval.createdAt,
   )
-  if (Number(result.changes) === 1)
+  if (Number(result.changes) === 1) {
+    if (approval.review)
+      database.prepare('INSERT INTO approval_reviews (approval_id, review_json) VALUES (?, ?)').run(approval.id, JSON.stringify(approval.review))
     return
+  }
   throw approvalConflict(approval.id)
 }
 

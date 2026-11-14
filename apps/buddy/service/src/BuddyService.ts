@@ -6,47 +6,46 @@ import type { BuddySessionExtensionServices } from './agent/extensions/createBud
 import type { ReusableBuddySession } from './agent/sessions/ReusableBuddySession'
 import type { AutomationClock } from './automations/AutomationScheduleEvaluator'
 import type { BuddyRuntime } from './BuddyRuntime'
+import type { TrustedCommandPrincipal } from './commands/CommandAdmissionService'
 import type { RunEventLogPort } from './events/RunEventPorts'
-import type { BuddyServiceRpcServer } from './rpc/BuddyServiceRpcServer'
-import type { BuddyServiceErrorCode } from './rpc/runtimeRequest'
+import type { RuntimePlatform } from './platform/RuntimePlatform'
+import type { ProductActorCommands as BuddyServiceCommands } from './productProtocol/ProductActorCommandScope'
+import type { ProductConnectionOptions } from './productProtocol/ProductConnection'
+import type { BuddyServiceErrorCode, RuntimeRequestRegistrar } from './rpc/runtimeRequest'
+import type { ServiceClientPeer, ServiceClientRole } from './rpc/ServiceClientConnections'
 import type { ConversationRecord } from './storage/conversationRecord'
 import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import process from 'node:process'
 import { currentPlatform } from '../../platform/currentPlatform'
-import { resolveWindowsPowerShell } from '../../platform/windows/powerShell'
 import { artifactsChanged } from '../../shared/artifacts/artifactApi'
 import { automationNotifications } from '../../shared/automation/automationApi'
 import { buddiesChanged } from '../../shared/buddies/buddyApi'
 import { changesChanged } from '../../shared/changes/changeApi'
 import { connectorNotifications } from '../../shared/connectors/connectorApi'
-
-import { contextPanelRpc, contextPanelStateSchema } from '../../shared/context-panel/contextPanel'
 import { buddyUserMessageContentV1Schema, getBuddyUserContentActorReferences } from '../../shared/conversation/buddyUserContent'
+
 import { composerResourcesChanged } from '../../shared/conversation/composerApi'
 import { CONVERSATION_CHANGED, conversationTimelineChanged } from '../../shared/conversation/conversationApi'
-
 import { Emitter } from '../../shared/events/Emitter'
+
 import { executionsChanged } from '../../shared/executions/executionPresentationApi'
 import { extensionActionRpc } from '../../shared/extensions/extensionActionApi'
-import { extensionAgentRpc } from '../../shared/extensions/extensionAgent'
-import { extensionCapabilitiesRpc, extensionCapabilityApplyRpc, extensionCapabilityDescriptorSchema, extensionCapabilityImpactRpc } from '../../shared/extensions/extensionCapabilities'
-import { extensionShellRpc } from '../../shared/extensions/extensionShell'
-import { extensionSkillDescriptorSchema, extensionSkillsRpc } from '../../shared/extensions/extensionSkills'
-import { imagePreferencesSchema, imageRpc } from '../../shared/images/imagePreferences'
+import { imageRpc } from '../../shared/images/imagePreferences'
 import { ServiceHost } from '../../shared/lifecycle/ServiceHost'
 import { ServiceLifecycleSource } from '../../shared/lifecycle/ServiceLifecycleSource'
 import { webSettingsChanged } from '../../shared/network/webApi'
 import { notificationsChanged } from '../../shared/notifications/notificationApi'
 import { ApplicationEvents as EventPublisher } from '../../shared/observability/ApplicationEvents'
 import { observeLifecycleDiagnostics } from '../../shared/observability/lifecycleDiagnostics'
+import { resourcePrepareSchema } from '../../shared/privateNetwork/resources'
+import { ProductProtocolError } from '../../shared/productProtocol/errors'
+import { desktopProductContentProject } from '../../shared/productProtocol/transport'
 import { promptsRpc } from '../../shared/prompts/promptApi'
 import { userQuestionsChanged } from '../../shared/questions/userQuestionApi'
+import { toPublicRunEvent } from '../../shared/runs/publicRunEvent'
+import { runNotifications } from '../../shared/runs/runApi'
 import { taskMetricsChanged } from '../../shared/runs/taskMetricsApi'
-import { openExternalResultSchema } from '../../shared/runtime/credentialProtocol'
-import { runtimePreferencesRpc, runtimePreferencesSchema } from '../../shared/runtime/runtimePreferences'
-import { skillReviewRequested } from '../../shared/skills/skillApi'
 import { spaceChanged } from '../../shared/spaces/spaceApi'
 import { spaceFilesChanged } from '../../shared/spaces/spaceFileApi'
 import { PiEventBridge } from './agent/events/PiEventBridge'
@@ -61,6 +60,7 @@ import { ExecutionPresentationService } from './agent/execution/ExecutionPresent
 import { PiTurnExecutor } from './agent/execution/PiTurnExecutor'
 import { readExecutionResult } from './agent/execution/readExecutionResult'
 import { registerExecutionRpc } from './agent/execution/registerExecutionRpc'
+import { RuntimeExecutionLifecycle } from './agent/execution/RuntimeExecutionLifecycle'
 import { observeSessionResourceDiagnostics } from './agent/resources/observeSessionResourceDiagnostics'
 import { SessionResourceReconciler } from './agent/resources/SessionResourceReconciler'
 import { bindRuntimePreferences } from './agent/sessions/bindRuntimePreferences'
@@ -77,7 +77,6 @@ import { reconcileLegacyArtifactOutputs } from './artifacts/LegacyArtifactRecove
 import { registerArtifactRpc } from './artifacts/registerArtifactRpc'
 import { AttachmentService } from './attachments/AttachmentService'
 import { ComposerResourceService } from './attachments/ComposerResourceService'
-import { registerAttachmentRpc } from './attachments/registerAttachmentRpc'
 import { registerComposerResourceRpc } from './attachments/registerComposerResourceRpc'
 import { AgentTaskAutomationAction } from './automations/AgentTaskAutomationAction'
 import { AutomationChangeCoordinator } from './automations/AutomationChangeCoordinator'
@@ -89,7 +88,6 @@ import { AutomationService } from './automations/AutomationService'
 import { AutomationTurnService } from './automations/AutomationTurnService'
 import { registerAutomationRpc } from './automations/registerAutomationRpc'
 import { resolveAutomationModelSelection } from './automations/resolveAutomationModelSelection'
-import { BrowserHostClient } from './browser/BrowserHostClient'
 import { BuddiesService } from './buddies/BuddiesService'
 import { BuddyDefinitionResolver } from './buddies/BuddyDefinitionResolver'
 import { readBuddyToolOptions } from './buddies/readBuddyToolOptions'
@@ -111,8 +109,8 @@ import { QueueContinuation } from './chat/QueueContinuation'
 import { registerChatRpc } from './chat/registerChatRpc'
 import { registerComposerDraftRpc } from './chat/registerComposerDraftRpc'
 import { TurnRequestService } from './chat/TurnRequestService'
+import { createLocalCommandPrincipal } from './commands/CommandAdmissionService'
 import {
-  HostConnectorSecretStore,
   McpConnectorService,
 } from './connectors/mcp/McpConnectorService'
 import { McpSessionResourceConsumer } from './connectors/mcp/McpSessionResourceConsumer'
@@ -142,61 +140,68 @@ import { DirectoryGrantService } from './directories/DirectoryGrantService'
 import { observeRunDiagnostics } from './events/observeRunDiagnostics'
 import { RunEventCorruptionError } from './events/RunEventFailure'
 import { RunEventLog } from './events/RunEventLog'
+import { SqliteRunEventLog } from './events/SqliteRunEventLog'
 import { FileResourceCoordinator } from './files/FileResourceCoordinator'
 import { LocalDocumentFileService, registerLocalDocumentRpc } from './files/LocalDocumentFileService'
 import { NativeFileEngine } from './files/NativeFileEngine'
 import { registerTaskFileRpc } from './files/registerTaskFileRpc'
 import { TaskFileAccess } from './files/TaskFileAccess'
 import { TaskFileService } from './files/TaskFileService'
-import { createPluginImageBackends } from './images/createPluginImageBackends'
 import { observeImageDiagnostics } from './images/ImageOperationLifecycle'
-import { ImageReadingService } from './images/ImageReadingService'
 import { ImageRequestStore } from './images/ImageRequestStore'
 import { ImageTransformService } from './images/ImageTransformService'
 import { OpenAiImageGenerationService } from './images/OpenAiImageGenerationService'
-import { PluginImageGateway } from './images/PluginImageGateway'
 import { RoutedImageGateway } from './images/RoutedImageGateway'
 import { AttentionNotificationService } from './notifications/AttentionNotificationService'
 import { NotificationProjection } from './notifications/NotificationProjection'
 import { registerNotificationRpc } from './notifications/registerNotificationRpc'
-import { NetworkPermissionsClient } from './permissions/NetworkPermissionsClient'
 import { observePetActionDiagnostics } from './pet/observePetActionDiagnostics'
 import { PetActionService } from './pet/PetActionService'
+import { RuntimePlatformLifecycle } from './platform/RuntimePlatformLifecycle'
 import { bindExtensionActions } from './plugins/bindExtensionActions'
 import { ExtensionActionService } from './plugins/ExtensionActionService'
 import { ExtensionAgentRuntime } from './plugins/ExtensionAgentRuntime'
 import { ExtensionCapabilitySync } from './plugins/ExtensionCapabilitySync'
-import { createExtensionResourceCapabilities } from './plugins/extensionResourceCapabilities'
 import { observeExtensionAgentDiagnostics } from './plugins/observeExtensionAgentDiagnostics'
 import { PluginAuthoringService } from './plugins/PluginAuthoringService'
-import { registerExtensionConditionRpc } from './plugins/registerExtensionConditionRpc'
+import { PrivateNetworkController } from './privateNetwork/PrivateNetworkController'
+import { RemoteAvatarService } from './privateNetwork/RemoteAvatarService'
+import { RemoteResourceService } from './privateNetwork/RemoteResourceService'
+import { RemoteUploadService } from './privateNetwork/RemoteUploadService'
+import { createProductCommandHandlers } from './productProtocol/createProductCommandHandlers'
+import { createProductModelQueries } from './productProtocol/createProductModelQueries'
+import { createProductSynchronization } from './productProtocol/createProductSynchronization'
+import { ProductActorCommandScope } from './productProtocol/ProductActorCommandScope'
+import { ProductConnection } from './productProtocol/ProductConnection'
+import { ProductContentReferences } from './productProtocol/ProductContentReferences'
+import { ProductQueries } from './productProtocol/ProductQueries'
+import { registerLocalProductConnection } from './productProtocol/registerLocalProductConnection'
 import { getBuiltinPromptCatalog } from './prompts/builtinPromptCatalog'
 import { createProviderService } from './providers/createProviderService'
 import { createExtensionModelCapabilities } from './providers/extensionModelCapabilities'
-import { PluginModelRegistry } from './providers/PluginModelRegistry'
 import { ProviderDependents } from './providers/ProviderDependents'
-import { registerProviderRpc } from './providers/registerProviderRpc'
-import { refreshProviderSpeechModels, registerProviderSpeechRpc } from './providers/registerProviderSpeechRpc'
+import { registerProviderCatalogRpc, registerProviderRpc } from './providers/registerProviderRpc'
 import { resolveInteractiveModelSelection } from './providers/resolveInteractiveModelSelection'
 import { registerUserQuestionRpc } from './questions/registerUserQuestionRpc'
 import { UserQuestionDelivery } from './questions/UserQuestionDelivery'
 import { UserQuestionService } from './questions/UserQuestionService'
+import { candidateLegacyRegistrar, ProductCommandRequiredError } from './rpc/candidateLegacyRegistrar'
 import { BuddyServiceError, registerRuntimeRequest } from './rpc/runtimeRequest'
+import { ServiceClientConnections } from './rpc/ServiceClientConnections'
 import { ConversationStatusService } from './runs/ConversationStatusService'
 import { registerRunRpc } from './runs/registerRunRpc'
 import { RunContinuityService } from './runs/RunContinuityService'
 import { RunLifecycleService } from './runs/RunLifecycleService'
 import { RunRecoveryService } from './runs/RunRecoveryService'
 import { observeSandboxClient } from './sandbox/observeSandboxClient'
-import { ShellSandboxClient } from './sandbox/ShellSandboxClient'
-import { ExtensionShellRegistry } from './sandbox/ShellSelection'
 import { observeSkillDiagnostics, observeSkillNotifications } from './skills/observeSkillEvents'
 import {
+  registerSkillCatalogRpc,
   registerSkillServiceRpc,
   SkillService,
 } from './skills/SkillService'
 import { registerSpaceFileRpc } from './spaces/registerSpaceFileRpc'
-import { registerSpaceRpc } from './spaces/registerSpaceRpc'
+import { registerSpaceQueries, registerSpaceRpc } from './spaces/registerSpaceRpc'
 import { SpaceDependents } from './spaces/SpaceDependents'
 import { matchesSpaceExecutionContext } from './spaces/spaceExecutionContext'
 import { SpaceFileService } from './spaces/SpaceFileService'
@@ -208,9 +213,10 @@ import { createAutomationRepositories } from './storage/automationRepository'
 import { createAutomationTurnRepository } from './storage/automationTurnRepository'
 import { BuddyDataPaths } from './storage/BuddyDataPaths'
 import { createBuddyRepository } from './storage/buddyRepository'
+import { ChatControlCommandRepository } from './storage/ChatControlCommandRepository'
 import { createChatQueueRepository } from './storage/chatQueueRepository'
 import { createCommandRequestRepository } from './storage/commandRequestRepository'
-import { createComposerDraftRepository } from './storage/composerDraftRepository'
+import { createComposerDraftRepository, findPersonalComposerDraft } from './storage/composerDraftRepository'
 import { createComposerResourceRepository } from './storage/composerResourceRepository'
 import { createConnectorRepository } from './storage/connectorRepository'
 import { createConversationArchiveRepository } from './storage/conversationArchiveRepository'
@@ -234,9 +240,11 @@ import { createRunRepository } from './storage/runRepository'
 import { createSessionReferenceRepository } from './storage/sessionReferenceRepository'
 import { createSkillRepository } from './storage/skillRepository'
 import { createSpaceRepository } from './storage/spaceRepository'
+import { requireSqliteAuthority } from './storage/sqliteAuthority'
+import { guardStorageDatabase } from './storage/StorageIsolation'
 import { createTaskMarkRepository } from './storage/taskMarkRepository'
 import { createThreadBindingRepository } from './storage/threadBindingRepository'
-import { createTurnRequestRepository } from './storage/turnRequestRepository'
+import { afterTransactionCommit, withTransaction } from './storage/transaction'
 import { createUsageAnalyticsRepository } from './storage/usageAnalyticsRepository'
 import { createUsageRepository } from './storage/usageRepository'
 import { createWorkspaceRepository } from './storage/workspaceRepository'
@@ -244,13 +252,14 @@ import { registerUsageRpc } from './usage/registerUsageRpc'
 import { UsageService } from './usage/UsageService'
 import { observeWebDiagnostics, observeWebHostDiagnostics } from './web/observeWebDiagnostics'
 import { WebCapabilityService } from './web/WebCapabilityService'
-import { WebHostClient } from './web/WebHostClient'
 import { registerWebSettingsRpc, WebSettingsService } from './web/WebSettingsService'
 import { normalizeComposerWorkspace } from './workspace/normalizeComposerWorkspace'
 import { registerWorkspaceStateRpc } from './workspace/registerWorkspaceStateRpc'
 import { WorkspaceStateService } from './workspace/WorkspaceStateService'
 
 export interface StartBuddyServiceOptions {
+  serviceInstanceId?: string
+  productIdentity?: { serviceId: string, profileId: string }
   record?: ApplicationDiagnosticReporter
   events?: ApplicationEvents
   lifecycle?: ServiceLifecycleSource
@@ -258,11 +267,21 @@ export interface StartBuddyServiceOptions {
   buddyHome: string
   builtinSkillsDirectories?: readonly string[]
   database: DatabaseSync
-  rpc: BuddyServiceRpcServer
+  platform: RuntimePlatform
   eventLog: RunEventLogPort
 }
 
+export type { ProductActorCommands as BuddyServiceCommands } from './productProtocol/ProductActorCommandScope'
+
 export interface BuddyServiceHandle {
+  suspendPlatform: (reason?: string) => Promise<void>
+  resumePlatform: () => Promise<void>
+  assertPlatformAvailable: () => void
+
+  createLocalProductConnection: (options: Pick<ProductConnectionOptions, 'assertCurrent' | 'send' | 'close'> & { connectionId: string }) => ProductConnection
+  createProductConnection: (options: Pick<ProductConnectionOptions, 'context' | 'assertCurrent' | 'send' | 'close'> & { allowLocalEffects?: boolean, trustedPrincipal?: TrustedCommandPrincipal }) => ProductConnection
+  commands: BuddyServiceCommands | null
+  connectClient: (role: ServiceClientRole, peer: ServiceClientPeer) => () => void
   startMaintenance: () => void
   dispose: () => Promise<void>
   prepareIdleShutdown: () => boolean
@@ -272,18 +291,41 @@ export interface BuddyServiceHandle {
 export async function startBuddyService(
   options: StartBuddyServiceOptions,
 ): Promise<BuddyServiceHandle> {
+  if (options.database.prepare('SELECT 1 FROM sqlite_schema WHERE type = \'table\' AND name = \'storage_profile\'').get()) {
+    requireSqliteAuthority(options.database)
+    if (!options.productIdentity)
+      throw new ProductProtocolError('SERVICE_NOT_READY')
+    if (!(options.eventLog instanceof SqliteRunEventLog))
+      throw new Error('SQLite authority requires its event owner')
+  }
   const events = options.events ?? new EventPublisher()
   if (options.record)
     events.subscribe(options.record)
   const record = events.publish
   const host = new ServiceHost(options.lifecycle ?? new ServiceLifecycleSource(() => record({ event: 'observer.failed', component: 'runtime.lifecycle', level: 'warn' })))
   const stopLifecycleDiagnostics = options.lifecycle ? () => {} : observeLifecycleDiagnostics(host.lifecycle, events)
+  const storage = guardStorageDatabase(options.database)
+  const clients = new ServiceClientConnections(storage.assertAvailable)
+  let stopExecution: () => Promise<void> = async () => {}
+  const notify = (method: string, params: unknown) => clients.notify('product', method, params)
   try {
+    await host.start('runtime.clients', ({ defer }) => {
+      const isolation = storage.onDidIsolate(() => {
+        clients.stopAccepting()
+        void stopExecution().catch(() => record({ event: 'execution.cleanup_failed', level: 'error' }))
+      })
+      const delivery = options.eventLog.onDidCommit(event => notify(runNotifications.event.method, toPublicRunEvent(event)))
+      defer(() => {
+        isolation.dispose()
+        delivery.dispose()
+        clients.dispose()
+      })
+    })
+    const platformLifecycle = new RuntimePlatformLifecycle(record)
+    const assertPlatformAvailable = () => platformLifecycle.assertAvailable()
     const paths = new BuddyDataPaths(options.buddyHome)
     const agentDirectory = join(options.buddyHome, 'agent')
     await host.step('runtime.filesystem', async () => {
-      if (currentPlatform.shell === 'powershell')
-        process.env.PI_POWERSHELL_PATH ??= await resolveWindowsPowerShell()
       await Promise.all([
         mkdir(agentDirectory, { mode: 0o700, recursive: true }),
         mkdir(paths.conversationsDirectory, { mode: 0o700, recursive: true }),
@@ -291,6 +333,19 @@ export async function startBuddyService(
       ])
     })
 
+    const actorCommandScopes = new Map<string, ProductActorCommandScope>()
+    const commandContext = options.eventLog instanceof SqliteRunEventLog
+      ? await host.start('runtime.command_admission', ({ defer }) => {
+          const sourceInstanceId = options.serviceInstanceId ?? randomUUID()
+          const principal = createLocalCommandPrincipal(options.database)
+          const identity = { ...requireSqliteAuthority(options.database), serviceInstanceId: sourceInstanceId }
+          const scope = new ProductActorCommandScope(options.database, principal, identity)
+          actorCommandScopes.set(principal.actorId, scope)
+          const repository = new ChatControlCommandRepository(options.database, sourceInstanceId)
+          defer(() => scope.dispose())
+          return { admission: scope.admission, repository, principal, writer: (options.eventLog as SqliteRunEventLog).transactionWriter, identity }
+        })
+      : null
     const spacesRepository = createSpaceRepository(options.database)
     const conversations = createConversationRepository(options.database)
     const conversationHistory = createConversationHistoryStore(options.database)
@@ -298,6 +353,7 @@ export async function startBuddyService(
     const conversationMutations = new ConversationMutationGuard()
     const conversationAvailability = {
       assertConversationWritable: (id: string) => {
+        commandContext?.repository.assertAccepting()
         conversationMutations.assertWritable(id)
         const conversation = conversations.findById(id)
         if (conversation?.archivedAt || conversation?.deletedAt)
@@ -326,7 +382,7 @@ export async function startBuddyService(
     const conversationDirectoryGrants = createConversationDirectoryGrantRepository(options.database)
     const taskMarkRepository = createTaskMarkRepository(options.database)
     const taskMarks = await host.start('runtime.task_marks', ({ defer }) => {
-      const service = new TaskMarkService(taskMarkRepository, () => record({ event: 'observer.failed', component: 'runtime.task_marks', level: 'warn' }))
+      const service = new TaskMarkService(taskMarkRepository, () => record({ event: 'observer.failed', component: 'runtime.task_marks', level: 'warn' }), commandContext ? options.database : undefined)
       const diagnostics = service.onDidCommit(event => record({
         event: `task.mark.${event.kind}`,
         level: 'info',
@@ -361,11 +417,11 @@ export async function startBuddyService(
     const usageRepository = createUsageRepository(options.database)
     const workspace = createWorkspaceRepository(options.database)
     const turnRequests = await host.start('runtime.turn_requests', ({ defer }) => {
-      const service = new TurnRequestService(createTurnRequestRepository(options.database), () => record({ event: 'observer.failed', component: 'runtime.turn_requests', level: 'warn' }), conversationAvailability)
+      const service = new TurnRequestService(options.database, () => record({ event: 'observer.failed', component: 'runtime.turn_requests', level: 'warn' }), conversationAvailability, commandContext?.writer)
       const notifications = service.onDidCommit((event) => {
         const conversation = conversations.findById(event.conversationId)
         if (conversation)
-          options.rpc.notify(CONVERSATION_CHANGED, conversation)
+          notify(CONVERSATION_CHANGED, conversation)
       })
       const diagnostics = service.onDidCommit((event) => {
         for (const fact of event.facts)
@@ -382,7 +438,7 @@ export async function startBuddyService(
     managedCapabilities.suspendAll()
     const buddies = await host.start('runtime.buddies', ({ defer }) => {
       const service = new BuddiesService(createBuddyRepository(options.database), () => record({ event: 'buddies.observer.failed', level: 'warn' }))
-      const notices = service.onDidChange(event => options.rpc.notify(buddiesChanged.method, event))
+      const notices = service.onDidChange(event => notify(buddiesChanged.method, event))
       defer(() => {
         service.dispose()
         notices.dispose()
@@ -390,11 +446,12 @@ export async function startBuddyService(
       return service
     })
     const composerDrafts = createComposerDraftRepository(options.database)
+    const personalDrafts = commandContext ? { findById: (id: string) => findPersonalComposerDraft(options.database, id) } : composerDrafts
     const commandRequests = createCommandRequestRepository(options.database)
     const connectorsRepository = createConnectorRepository(options.database)
     const spaceService = await host.start('runtime.spaces', ({ defer }) => {
       const service = new SpaceService(spacesRepository, () => record({ event: 'space.observer.failed', level: 'warn' }))
-      const notices = service.onDidCommit(({ sourceId, revision, spaceId, kind }) => options.rpc.notify(spaceChanged.method, { sourceId, revision, spaceId, kind }))
+      const notices = service.onDidCommit(({ sourceId, revision, spaceId, kind }) => notify(spaceChanged.method, { sourceId, revision, spaceId, kind }))
       const diagnostics = service.onDidCommit(event => record({ event: `space.${event.kind.replaceAll('-', '_')}`, level: 'info', spaceId: event.spaceId, revision: event.revision, count: event.directories.length }))
       defer(async () => {
         await service.dispose()
@@ -412,7 +469,7 @@ export async function startBuddyService(
     const fileResources = new FileResourceCoordinator(fileEngine)
     const spaceFiles = await host.start('runtime.space_files', ({ defer }) => {
       const service = new SpaceFileService(spacesRepository, fileEngine)
-      const notices = service.onDidChange(event => options.rpc.notify(spaceFilesChanged.method, event))
+      const notices = service.onDidChange(event => notify(spaceFilesChanged.method, event))
       const revoked = spaceService.onDidCommit(event => service.revoke(event.revokedDirectoryIds))
       defer(() => {
         notices.dispose()
@@ -432,6 +489,7 @@ export async function startBuddyService(
     let delegation!: ExecutionDelegationService
     const approvalService = await host.start('runtime.approvals', ({ defer }) => {
       const service = new ApprovalService({
+        commandAdmission: commandContext ? { database: options.database, admission: commandContext.admission, events: commandContext.writer } : undefined,
         eventLog: options.eventLog,
         onExpired: async (runId) => {
           await runner.cancel(runId, 'AUTOMATION_APPROVAL_EXPIRED')
@@ -498,7 +556,7 @@ export async function startBuddyService(
     const notifyRecovery = (runId: string) => {
       const run = runs.findById(runId)
       if (run)
-        options.rpc.notify(changesChanged.method, { sourceId: recoverySourceId, revision: ++recoveryRevision, conversationId: run.conversationId, runId })
+        notify(changesChanged.method, { sourceId: recoverySourceId, revision: ++recoveryRevision, conversationId: run.conversationId, runId })
     }
     const mutations = await host.start('runtime.mutations', async ({ defer }) => {
       const service = new MutationCoordinator({ repository: createMutationRepository(options.database), evidence: mutationEvidence, resources: fileResources, getRunTitle: (runId) => {
@@ -525,7 +583,7 @@ export async function startBuddyService(
       service.onDidChange(event => record({ event: `changes.${event.kind.replaceAll('-', '_')}`, level: event.errorCode ? 'warn' : 'info', producerInstanceId: event.sourceId, operationId: event.operationId, conversationId: event.conversationId, runId: event.runId, toolCallId: event.toolCallId, revision: event.revision, count: event.count, errorCode: event.errorCode }))
       service.onDidChange((event) => {
         if (event.conversationId && !event.errorCode)
-          options.rpc.notify(changesChanged.method, { sourceId: event.sourceId, revision: event.revision, conversationId: event.conversationId, runId: event.runId })
+          notify(changesChanged.method, { sourceId: event.sourceId, revision: event.revision, conversationId: event.conversationId, runId: event.runId })
       })
       defer(() => service.dispose())
       return service
@@ -567,7 +625,7 @@ export async function startBuddyService(
       service.onDidChange(event => record({ event: `artifact.${event.receipt.cause}.${event.kind.replaceAll('-', '_')}${event.kind === 'batch-settled' ? `.${event.receipt.outcome}.${event.receipt.stage}` : ''}`, level: event.errorCode ? 'warn' : 'info', producerInstanceId: event.sourceId, operationId: event.receipt.operationId, conversationId: event.receipt.conversationId, revision: event.revision, count: event.kind === 'file-written' ? event.receipt.written : event.receipt.artifactIds.length, errorCode: event.errorCode }))
       service.onDidChange((event) => {
         if (event.kind === 'catalogue-committed')
-          options.rpc.notify(artifactsChanged.method, { sourceId: event.sourceId, revision: event.revision, conversationId: event.receipt.conversationId })
+          notify(artifactsChanged.method, { sourceId: event.sourceId, revision: event.revision, conversationId: event.receipt.conversationId })
       })
       defer(() => service.dispose())
       return service
@@ -580,8 +638,8 @@ export async function startBuddyService(
       paths,
     }))
     const composerResourceService = await host.start('runtime.composer_resources', ({ defer }) => {
-      const service = new ComposerResourceService({ artifacts: artifactService, attachments: attachmentService, conversationGrants: conversationDirectoryGrants, conversations, drafts: composerDrafts, publications: treeRepository, paths, repository: createComposerResourceRepository(options.database), spaces: spacesRepository })
-      service.onDidChange(event => options.rpc.notify(composerResourcesChanged.method, { revision: event.revision, draftIds: [...new Set(event.resources.map(resource => resource.draftId))] }))
+      const service = new ComposerResourceService({ artifacts: artifactService, attachments: attachmentService, conversationGrants: conversationDirectoryGrants, conversations, drafts: personalDrafts, publications: treeRepository, paths, repository: createComposerResourceRepository(options.database), spaces: spacesRepository })
+      service.onDidChange(event => notify(composerResourcesChanged.method, { revision: event.revision, draftIds: [...new Set(event.resources.map(resource => resource.draftId))] }))
       service.onDidChange(event => record({ event: 'composer.resources.committed', level: 'info', operationId: event.operationId, revision: event.revision, count: event.resources.length }))
       defer(() => service.dispose())
       return service
@@ -615,7 +673,9 @@ export async function startBuddyService(
         agentDirectory,
         database: options.database,
         getActiveRuns: () => runs.listIncomplete(),
-        peer: options.rpc,
+        platform: options.platform,
+        notify,
+        notifyManagement: (method, params) => clients.notify('management', method, params),
         providers: providersRepository,
         record,
       })
@@ -629,24 +689,24 @@ export async function startBuddyService(
       resolveSourceProviderId: providerId => executionModels.resolveSourceProviderId(providerId),
     })
     const pluginImages = await host.start('runtime.plugin_images', ({ defer }) => {
-      const gateway = new PluginImageGateway(options.rpc)
+      const gateway = options.platform.createPluginImages()
       defer(() => gateway.dispose())
       return gateway
     })
-    const pluginImageBackends = createPluginImageBackends(options.rpc, providerService, pluginImages)
-    const getImagePreferences = async (signal?: AbortSignal) => imagePreferencesSchema.parse(await options.rpc.request(imageRpc.preferences, {}, 30000, signal))
+    const pluginImageBackends = options.platform.createPluginImageBackends(providerService, pluginImages)
+    const getImagePreferences = options.platform.imagePreferences
     const imageGenerationGateway = new RoutedImageGateway({
       native: nativeImageGateway,
       plugins: pluginImageBackends.generation,
       providers: providerService,
       preferences: getImagePreferences,
     })
-    const imageReading = new ImageReadingService({ plugins: pluginImageBackends.reading, rpc: options.rpc, providers: providerService, usage: usageService, preferences: getImagePreferences })
+    const imageReading = options.platform.createImageReading({ plugins: pluginImageBackends.reading, providers: providerService, usage: usageService, preferences: getImagePreferences })
     const sessions = await host.start('runtime.sessions', () => new BuddySessionRegistry<ReusableBuddySession>())
     const sessionReferences = createSessionReferenceRepository(options.database)
     const conversationMetadata = await host.start('runtime.task_metadata', ({ defer }) => {
       const service = new ConversationMetadataService({
-        assertWritable: id => conversationMutations.assertWritable(id),
+        database: commandContext ? options.database : undefined,
         buddies,
         runInputs,
         runs,
@@ -666,7 +726,7 @@ export async function startBuddyService(
         resolveModelSelection: selection => resolveInteractiveModelSelection(providerService, selection),
         onObserverError: () => record({ event: 'task.observer_failed', level: 'warn' }),
       })
-      const notification = service.onDidCommit(event => options.rpc.notify(CONVERSATION_CHANGED, event.conversation))
+      const notification = service.onDidCommit(event => notify(CONVERSATION_CHANGED, event.conversation))
       const diagnostics = service.onDidCommit(event => record({
         event: `task.${event.kind}.committed`,
         level: 'info',
@@ -685,21 +745,31 @@ export async function startBuddyService(
     const extensionTaskContext = new ExtensionTaskContext(conversations, extensionHistory, runs, runInputs, conversationAvailability.assertConversationWritable)
     const extensionAgent = await host.start('runtime.plugins', ({ defer }) => {
       const service = new ExtensionAgentRuntime({
-        rpc: options.rpc,
+        host: options.platform.plugins,
         createHandlers: (scope) => {
           const task = extensionTaskContext.open(scope)
           return {
             ...createExtensionTaskCapabilities(conversationMetadata, extensionHistory, task, scope),
             ...createExtensionReferenceCapabilities(extensionReferences, task, scope),
-            ...createExtensionResourceCapabilities({ rpc: options.rpc, artifacts: artifactService }, task, scope),
+            ...options.platform.createExtensionResources(artifactService, task, scope),
             ...createExtensionModelCapabilities(executionModels, usageService, task),
           }
         },
         onObserverError: () => record({ event: 'plugins.observer_failed', level: 'warn' }),
       })
       const binding = service.bind()
+      const releases = new Set<Promise<void>>()
+      const terminal = options.eventLog.onDidCommit((event) => {
+        if (!['run.completed', 'run.failed', 'run.cancelled'].includes(event.type))
+          return
+        const release = service.releaseRun(event.runId).catch(() => record({ event: 'plugins.run_release_failed', level: 'warn', runId: event.runId }))
+        releases.add(release)
+        void release.finally(() => releases.delete(release))
+      })
       const diagnostics = observeExtensionAgentDiagnostics(service, record)
       defer(async () => {
+        terminal.dispose()
+        await Promise.all(releases)
         binding()
         try {
           await service.dispose()
@@ -708,22 +778,22 @@ export async function startBuddyService(
           diagnostics.dispose()
         }
       })
-      defer(options.rpc.onNotification((method) => {
-        if (method === extensionShellRpc.changed)
-          void sessions.invalidateAll().catch(() => record({ event: 'shells.sessions_invalidation.failed', level: 'warn', errorCode: 'EXTENSION_INVALIDATION_FAILED' }))
-        if (method === extensionAgentRpc.changed)
-          void sessions.invalidateMode('interactive').catch(() => record({ event: 'plugins.sessions_invalidation.failed', level: 'warn', errorCode: 'EXTENSION_INVALIDATION_FAILED' }))
+      defer(options.platform.subscribeShellChanges(() => {
+        void sessions.invalidateAll().catch(() => record({ event: 'shells.sessions_invalidation.failed', level: 'warn', errorCode: 'EXTENSION_INVALIDATION_FAILED' }))
+      }))
+      defer(options.platform.plugins.subscribe(() => {
+        void sessions.invalidateMode('interactive').catch(() => record({ event: 'plugins.sessions_invalidation.failed', level: 'warn', errorCode: 'EXTENSION_INVALIDATION_FAILED' }))
       }))
       return service
     })
     const pluginModels = await host.start('runtime.plugin_models', ({ defer }) => {
-      const registry = new PluginModelRegistry(options.rpc, providerService, () => record({ event: 'plugins.models.refresh_failed', level: 'warn', errorCode: 'EXTENSION_INFERENCE_CATALOG_FAILED' }))
+      const registry = options.platform.createPluginModels(providerService, () => record({ event: 'plugins.models.refresh_failed', level: 'warn', errorCode: 'EXTENSION_INFERENCE_CATALOG_FAILED' }))
       defer(() => registry.dispose())
       void registry.refresh().catch(() => record({ event: 'plugins.models.refresh_failed', level: 'warn', errorCode: 'EXTENSION_INFERENCE_CATALOG_FAILED' }))
       return registry
     })
     const pluginBuilder = await host.start('runtime.plugin_authoring', ({ defer }) => {
-      const service = new PluginAuthoringService(options.rpc, () => record({ event: 'plugins.authoring.observer_failed', level: 'warn' }))
+      const service = new PluginAuthoringService(options.platform.authoring, () => record({ event: 'plugins.authoring.observer_failed', level: 'warn' }))
       const diagnostics = service.onDidChange(event => record({ event: `plugins.authoring.${event.kind.replaceAll('-', '_')}`, level: event.errorCode ? 'warn' : 'info', extensionId: event.extensionId, operationId: event.operationId, conversationId: event.conversationId, runId: event.runId, count: event.bytes, ...(event.errorCode ? { errorCode: event.errorCode } : {}) }))
       defer(async () => {
         try {
@@ -753,16 +823,12 @@ export async function startBuddyService(
       const service = new McpConnectorService({
         connectors: connectorsRepository,
         managed: managedCapabilities,
-        openExternal: async (url) => {
-          const result = openExternalResultSchema.parse(await options.rpc.request('host.openExternal', { url }))
-          if (!result.ok)
-            throw new Error('MCP authorization page is unavailable')
-        },
+        openExternal: options.platform.openExternal,
         onListenerError: () => record({ event: 'connectors.observer.failed', level: 'warn', errorCode: 'MCP_OBSERVER_FAILED' }),
-        secrets: new HostConnectorSecretStore(options.rpc),
+        secrets: options.platform.connectorSecrets,
       })
       const diagnostics = observeMcpDiagnostics(service, record)
-      const notifications = observeMcpNotifications(service, event => options.rpc.notify(connectorNotifications.changed.method, event))
+      const notifications = observeMcpNotifications(service, event => notify(connectorNotifications.changed.method, event))
       defer(async () => {
         try {
           await service.close()
@@ -777,10 +843,7 @@ export async function startBuddyService(
     const { skillService, sessionResources } = await host.start('runtime.skills', async ({ defer }) => {
       const pluginSkillsChanged = new Emitter<void>(() => record({ event: 'skills.plugins.observer_failed', level: 'warn', errorCode: 'SKILL_OBSERVER_FAILED' }))
       defer(() => pluginSkillsChanged.dispose())
-      defer(options.rpc.onNotification((method) => {
-        if (method === extensionSkillsRpc.changed)
-          pluginSkillsChanged.fire()
-      }))
+      defer(options.platform.skills.subscribe(() => pluginSkillsChanged.fire()))
       const skillService = new SkillService({
         agentDirectory,
         builtinSkillsDirectories: options.builtinSkillsDirectories,
@@ -788,7 +851,7 @@ export async function startBuddyService(
         repository: createSkillRepository(options.database),
         paths,
         pluginSkills: {
-          list: async () => extensionSkillDescriptorSchema.array().parse(await options.rpc.request(extensionSkillsRpc.list, {})),
+          list: options.platform.skills.list,
           onDidChange: pluginSkillsChanged.event,
         },
         onListenerError: () => record({ event: 'skills.observer.failed', level: 'warn', errorCode: 'SKILL_OBSERVER_FAILED' }),
@@ -800,7 +863,7 @@ export async function startBuddyService(
       })
       const resourceDiagnostics = observeSessionResourceDiagnostics(sessionResources, record)
       const skillDiagnostics = observeSkillDiagnostics(skillService, record)
-      const notifications = observeSkillNotifications(skillService, event => options.rpc.notify('skills.changed', event))
+      const notifications = observeSkillNotifications(skillService, event => notify('skills.changed', event))
       defer(async () => {
         try {
           try {
@@ -830,26 +893,23 @@ export async function startBuddyService(
         buddies,
         connectors: connectorService,
         sources: managedCapabilities,
-        descriptors: async () => extensionCapabilityDescriptorSchema.array().parse(await options.rpc.request(extensionCapabilitiesRpc.list, {})),
+        descriptors: options.platform.capabilities.list,
         report: event => record(event),
       })
-      const impact = registerRuntimeRequest(options.rpc, extensionCapabilityImpactRpc, input => sync.impact(input.extensionId))
-      const apply = registerRuntimeRequest(options.rpc, extensionCapabilityApplyRpc, async (input, signal) => {
-        await sync.apply(input.descriptors, input.clearExtensionId, signal)
-        return null
+      const binding = options.platform.capabilities.bind({
+        impact: extensionId => sync.impact(extensionId),
+        apply: (descriptors, clearExtensionId, signal) => sync.apply(descriptors, clearExtensionId, signal),
       })
       const refreshAvailability = () => {
         void sync.refreshAvailability().catch(() => record({ event: 'extensions.capabilities.availability_failed', level: 'warn', errorCode: 'EXTENSION_CAPABILITY_FAILED' }))
       }
       const connectorChanges = connectorService.onDidChange(refreshAvailability)
       const connectionChanges = connectorService.onDidChangeConnection(refreshAvailability)
-      defer(options.rpc.onNotification((method) => {
-        if (method === extensionCapabilitiesRpc.changed)
-          void sync.schedule()
+      defer(options.platform.capabilities.subscribe(() => {
+        void sync.schedule()
       }))
       defer(async () => {
-        impact()
-        apply()
+        binding()
         connectorChanges.dispose()
         connectionChanges.dispose()
         await sync.dispose()
@@ -857,10 +917,10 @@ export async function startBuddyService(
       void sync.schedule()
       return sync
     }, ['runtime.buddies', 'runtime.connectors'])
-    const browserHost = new BrowserHostClient(options.rpc)
+    const browserHost = options.platform.browser
     const webSettings = await host.start('runtime.web_settings', ({ defer }) => {
-      const service = new WebSettingsService(workspace, options.rpc)
-      const notifications = service.onDidChange(change => options.rpc.notify(webSettingsChanged.method, { operationId: change.operationId, revision: change.revision }))
+      const service = new WebSettingsService(workspace, options.platform.webSecrets)
+      const notifications = service.onDidChange(change => notify(webSettingsChanged.method, { operationId: change.operationId, revision: change.revision }))
       const diagnostics = service.onDidChange(change => record({ event: `web.settings.${change.kind.replaceAll('-', '_')}`, level: change.kind === 'credential-failed' ? 'warn' : 'info', operationId: change.operationId, revision: change.revision }))
       defer(async () => {
         await service.dispose()
@@ -870,7 +930,7 @@ export async function startBuddyService(
       return service
     })
     const webHost = await host.start('runtime.web_host', ({ defer }) => {
-      const client = new WebHostClient(options.rpc)
+      const client = options.platform.createWeb()
       const diagnostics = observeWebHostDiagnostics(client, record)
       defer(async () => {
         await client.dispose()
@@ -895,14 +955,23 @@ export async function startBuddyService(
     const automationClock = options.automationClock ?? systemAutomationClock
     const automationRepositories = createAutomationRepositories(options.database)
     const automationTurns = await host.start('runtime.automation_turns', ({ defer }) => {
-      const service = new AutomationTurnService(createAutomationTurnRepository(options.database), () => record({ event: 'automation.turn_observer_failed', level: 'warn' }))
+      const repository = createAutomationTurnRepository(options.database)
+      const service = new AutomationTurnService({ bind: input => withTransaction(options.database, () => {
+        commandContext?.repository.assertAccepting()
+        const binding = repository.bind(input)
+        if (commandContext && binding.kind === 'bound') {
+          options.database.prepare('UPDATE runs SET next_event_sequence = 1 WHERE id = ? AND next_event_sequence IS NULL').run(binding.run.id)
+          commandContext.writer.append({ runId: binding.run.id, type: 'run.queued', payload: { automationId: binding.occurrence.automationId, occurrenceId: binding.occurrence.id }, createdAt: input.boundAt })
+        }
+        return binding
+      }) }, () => record({ event: 'automation.turn_observer_failed', level: 'warn' }))
       const notifications = service.onDidCommit((event) => {
         for (const fact of event.facts) {
           if (fact.kind !== 'task.created')
             continue
           const conversation = conversations.findById(fact.conversationId)
           if (conversation)
-            options.rpc.notify(CONVERSATION_CHANGED, conversation)
+            notify(CONVERSATION_CHANGED, conversation)
         }
       })
       const diagnostics = service.onDidCommit((event) => {
@@ -957,7 +1026,7 @@ export async function startBuddyService(
         ),
         listModels: () => providersRepository.models.list(),
       })
-      const changed = service.onDidCommit(event => options.rpc.notify(notificationsChanged.method, { revision: event.revision }))
+      const changed = service.onDidCommit(event => notify(notificationsChanged.method, { revision: event.revision }))
       const diagnostics = service.onDidCommit(event => record({ event: `notifications.${event.reason}`, level: 'info', operationId: event.operationId, revision: event.revision, count: event.changes.length }))
       const projection = new NotificationProjection({ service, providers: providerService, automations: automationService, runs: options.eventLog, runRecords: runs, lifecycle: runLifecycleService, record })
       defer(async () => {
@@ -970,10 +1039,9 @@ export async function startBuddyService(
     })
     let automationScheduler: AutomationScheduler | null = null
     let automationDispatcher: AutomationDispatcher | null = null
-    let stopExecution: () => Promise<void> = async () => {}
     const automationChanges = await host.start('runtime.automation_changes', ({ defer }) => {
       const consumer = new AutomationChangeCoordinator({
-        notify: automationId => options.rpc.notify(automationNotifications.changed.method, { automationId }),
+        notify: automationId => notify(automationNotifications.changed.method, { automationId }),
         service: automationService,
         turns: automationTurns,
         runChanges: { eventLog: options.eventLog, lifecycle: runLifecycleService, runs },
@@ -1006,7 +1074,7 @@ export async function startBuddyService(
     }, ['runtime.spaces', 'runtime.directory_grants', 'runtime.sessions'])
     let chatQueueService: ChatQueueService | undefined
     const petActions = await host.start('runtime.pet_actions', ({ defer }) => {
-      const service = new PetActionService({ eventSink: event => options.eventLog.append(event), peer: options.rpc })
+      const service = new PetActionService({ eventSink: event => options.eventLog.append(event), executeSequence: options.platform.executePetSequence })
       const diagnostics = observePetActionDiagnostics(service, record)
       defer(async () => {
         try {
@@ -1022,12 +1090,12 @@ export async function startBuddyService(
       codemodeWorkers: await host.start('runtime.codemode_workers', async ({ defer }) => {
         const pool = new CodemodeWorkerPool()
         defer(() => pool.dispose())
-        const unsubscribe = await bindRuntimePreferences(options.rpc, preferences => pool.configure(preferences))
+        const unsubscribe = await bindRuntimePreferences(options.platform.preferences, preferences => pool.configure(preferences))
         defer(unsubscribe)
         return pool
       }),
-      shells: new ExtensionShellRegistry(options.rpc),
-      networkPermissions: new NetworkPermissionsClient(options.rpc),
+      shells: options.platform.shells,
+      networkPermissions: options.platform.networkPermissions,
       imageReading,
       getImagePreferences,
       fileResources,
@@ -1036,7 +1104,7 @@ export async function startBuddyService(
       followUp: async (runId, signal) => { await chatQueueService?.followUp(runId, signal) },
       prepareForRun: signal => connectorService.prepareForRun(signal),
       shellSandbox: await host.start('runtime.shell_sandbox', ({ defer }) => {
-        const sandbox = new ShellSandboxClient(options.rpc)
+        const sandbox = options.platform.createSandbox()
         const diagnostics = observeSandboxClient(sandbox, record)
         const prepareSpaces = (spaceId?: string) => {
           if (currentPlatform.shell !== 'powershell')
@@ -1054,10 +1122,7 @@ export async function startBuddyService(
           if (event.facets.includes('directories') && event.kind !== 'deleted')
             prepareSpaces(event.spaceId)
         })
-        const installed = options.rpc.onNotification((method) => {
-          if (method === 'host.sandbox.ready')
-            prepareSpaces()
-        })
+        const installed = options.platform.subscribeSandboxReady(() => prepareSpaces())
         prepareSpaces()
         defer(async () => {
           preparedSpaces.dispose()
@@ -1079,9 +1144,9 @@ export async function startBuddyService(
         buddies,
         getRunBuddyId: runId => runs.findById(runId)?.buddyId ?? null,
         record,
-        pluginAuthoring: options.rpc,
+        pluginAuthoring: options.platform.authoring,
         pluginBuilder,
-        skillAuthoring: { skills: skillService, requestReview: preview => options.rpc.notify(skillReviewRequested.method, preview) },
+        skillAuthoring: { skills: skillService, requestReview: options.platform.reviewSkill },
         pluginCapabilities: context => extensionAgent.capabilities(context),
         artifactService,
         attachmentService,
@@ -1089,7 +1154,7 @@ export async function startBuddyService(
         browserHost,
         presentBrowser: async (source) => {
           try {
-            contextPanelStateSchema.parse(await options.rpc.request(contextPanelRpc.presentBrowser, source))
+            await options.platform.presentBrowser?.(source)
           }
           catch {
             record({ event: 'context_panel.presentation.failed', level: 'warn', errorCode: 'CONTEXT_PANEL_UNAVAILABLE' })
@@ -1207,7 +1272,7 @@ export async function startBuddyService(
     })
     questions = await host.start('runtime.user_questions', ({ defer }) => {
       const service = new UserQuestionService({ database: options.database, executions: executionRecords, conversations, coordinator: executionCoordinator, deliver: request => questionDelivery.deliver(request) })
-      const subscription = service.onDidChange(event => options.rpc.notify(userQuestionsChanged.method, { conversationId: event.conversationId, branchId: event.branchId, runId: event.runId }))
+      const subscription = service.onDidChange(event => notify(userQuestionsChanged.method, { conversationId: event.conversationId, branchId: event.branchId, runId: event.runId }))
       defer(async () => {
         subscription.dispose()
         await service.dispose()
@@ -1234,7 +1299,7 @@ export async function startBuddyService(
       const service = new BuddySessionFactory({
         getRunPermissionCeiling,
         getFileAccessCeiling,
-        bindPreferences: apply => bindRuntimePreferences(options.rpc, apply),
+        bindPreferences: apply => bindRuntimePreferences(options.platform.preferences, apply),
         tree: conversationTree,
         events,
         agentDirectory,
@@ -1264,7 +1329,7 @@ export async function startBuddyService(
         stopExecution: id => runner.interruptExecution(id),
         onObserverError: () => record({ event: 'execution.presentation_observer_failed', level: 'warn' }),
       })
-      const subscription = service.onDidChange(event => options.rpc.notify(executionsChanged.method, event))
+      const subscription = service.onDidChange(event => notify(executionsChanged.method, event))
       defer(() => {
         subscription.dispose()
         service.dispose()
@@ -1280,6 +1345,7 @@ export async function startBuddyService(
     })
     runner = await host.start('runtime.execution', ({ defer }) => {
       const service = new BuddyAgentRunner({
+        assertStorageAvailable: storage.assertAvailable,
         executor: piTurnExecutor,
         executions: executionCoordinator,
         lifecycle: runLifecycleService,
@@ -1320,18 +1386,12 @@ export async function startBuddyService(
         operationId: settled.executionId,
         ...(settled.cleanup === 'degraded' ? { errorCode: 'EXECUTION_CLEANUP_DEGRADED' } : {}),
       }))
-      let stopped: Promise<void> | undefined
-      stopExecution = () => stopped ??= (async () => {
-        const scanning = automationScheduler?.dispose()
-        automationDispatcher?.stop()
-        const errors: unknown[] = []
-        await scanning?.catch(error => errors.push(error))
-        await service.dispose().catch(error => errors.push(error))
-        await automationDispatcher?.dispose().catch(error => errors.push(error))
-        await automationScheduler?.settle().catch(error => errors.push(error))
-        if (errors.length)
-          throw new AggregateError(errors, 'Automation and execution cleanup failed')
-      })()
+      const executionLifecycle = new RuntimeExecutionLifecycle({
+        scheduler: () => automationScheduler,
+        dispatcher: () => automationDispatcher,
+        disposeExecutions: () => service.dispose(),
+      })
+      stopExecution = () => executionLifecycle.stop()
       defer(async () => {
         try {
           await stopExecution()
@@ -1343,7 +1403,7 @@ export async function startBuddyService(
       return service
     })
     let extensionActions: ExtensionActionService
-    const conversationPurge = new ConversationPurgeService({ database: options.database, home: paths.root })
+    const conversationPurge = new ConversationPurgeService({ database: options.database, home: paths.root, storageAuthority: commandContext ? 'sqlite' : 'legacy_jsonl' })
     const conversationLifecycle = await host.start('runtime.task_deletion', ({ defer }) => {
       const service = new ConversationLifecycleService({
         conversations,
@@ -1363,22 +1423,19 @@ export async function startBuddyService(
           }
         },
         sessions: { invalidateConversation: id => sessions.invalidateConversationWithResult(id) },
-        stopWriters: async (id) => {
-          chatQueue.pause(id)
-          await extensionActions.cancelAndWait(id)
+        stopWriters: async (conversationId) => {
+          chatQueue.pause(conversationId)
+          await extensionActions.cancelAndWait(conversationId)
         },
-        purge: (id) => {
-          const events = options.eventLog
-          if (!(events instanceof RunEventLog))
-            throw new BuddyServiceError('CONVERSATION_BUSY')
-          return attachmentService.withStorageScope(() => events.withConversationPurge(id, () => conversationPurge.purge(id)))
-        },
+        purge: id => attachmentService.withStorageScope(() => options.eventLog instanceof RunEventLog
+          ? options.eventLog.withConversationPurge(id, () => conversationPurge.purge(id))
+          : conversationPurge.purge(id)),
         onObserverError: () => record({ event: 'task.deletion_observer_failed', level: 'warn' }),
       })
       const notification = service.onDidCommit((event) => {
         const conversation = conversations.findById(event.conversationId)
         if (conversation)
-          options.rpc.notify(CONVERSATION_CHANGED, conversation)
+          notify(CONVERSATION_CHANGED, conversation)
       })
       const deletionDiagnostic = service.onDidCommit((event) => {
         if (event.tombstoned)
@@ -1404,13 +1461,9 @@ export async function startBuddyService(
       })
       const binding = bindExtensionActions(service, { turns: turnRequests, execution: runner, metadata: conversationMetadata, deletions: conversationLifecycle, runs, events: options.eventLog })
       const diagnostics = service.onDidFail(event => record({ event: 'plugins.action.failed', level: 'warn', ...event }))
-      const notification = service.onDidChange(event => options.rpc.notify(conversationTimelineChanged.method, event))
-      const list = registerRuntimeRequest(options.rpc, extensionActionRpc.list, (_input, signal) => service.list(signal))
-      const invoke = registerRuntimeRequest(options.rpc, extensionActionRpc.invoke, (input, signal) => service.invoke(input, signal))
+      const notification = service.onDidChange(event => notify(conversationTimelineChanged.method, event))
       defer(async () => {
         binding.dispose()
-        list()
-        invoke()
         await service.dispose()
         diagnostics.dispose()
         notification.dispose()
@@ -1445,6 +1498,11 @@ export async function startBuddyService(
       skills: skillService,
     })
     turnLauncher = new BuddyTurnLauncher({
+      assertServiceAccepting: () => {
+        assertPlatformAvailable()
+        commandContext?.repository.assertAccepting()
+      },
+      assertStorageAvailable: storage.assertAvailable,
       executions: executionCoordinator,
       planner: executionPlanner,
       runner,
@@ -1460,7 +1518,7 @@ export async function startBuddyService(
         commands: commandRequests,
         conversationLifecycle,
         conversations,
-        drafts: composerDrafts,
+        drafts: personalDrafts,
         spaces: spacesRepository,
         runs,
         turnLauncher,
@@ -1511,7 +1569,7 @@ export async function startBuddyService(
           tree: conversationTree,
         }),
         composerResources: composerResourceService,
-        drafts: composerDrafts,
+        drafts: personalDrafts,
         attachments: attachmentService,
         conversationLifecycle,
         conversations,
@@ -1529,12 +1587,12 @@ export async function startBuddyService(
     })
     questionDelivery = new UserQuestionDelivery({ database: options.database, executions: executionRecords, mailbox: createMailboxRepository(options.database), coordinator: executionCoordinator, runner, turns: chatTurnService })
     chatQueueService = await host.start('runtime.chat-queue', async ({ defer }) => {
-      const service = new ChatQueueService({ availability: conversationAvailability, queue: chatQueue, turns: chatTurnService, requests: turnRequests, launcher: turnLauncher, runner, runs, runInputs, getRunPermissionCeiling, eventLog: options.eventLog, onObserverError: () => record({ event: 'queue.observer_failed', level: 'error' }) })
+      const service = new ChatQueueService({ control: commandContext?.repository, availability: conversationAvailability, queue: chatQueue, turns: chatTurnService, requests: turnRequests, launcher: turnLauncher, runner, runs, runInputs, getRunPermissionCeiling, eventLog: options.eventLog, onObserverError: () => record({ event: 'queue.observer_failed', level: 'error' }) })
       const sourceId = randomUUID()
       let revision = 0
       const notification = service.onDidChange((event) => {
         if (event.kind === 'delivered' || event.kind === 'dispatched')
-          options.rpc.notify(conversationTimelineChanged.method, { sourceId, revision: ++revision, ...event.scope })
+          notify(conversationTimelineChanged.method, { sourceId, revision: ++revision, ...event.scope })
       })
       const actionInputs = service.onDidChange((event) => {
         if (event.kind === 'cancelled')
@@ -1573,18 +1631,20 @@ export async function startBuddyService(
       return service
     })
     const conversationArchive = await host.start('runtime.task_archive', ({ defer }) => {
+      const onError = () => record({ event: 'task.archive_failed', level: 'warn' as const })
       const service = new ConversationArchiveService({
         database: options.database,
         repository: createConversationArchiveRepository(options.database),
         conversations,
         mutations: conversationMutations,
         lifecycle: conversationLifecycle,
-        onError: () => record({ event: 'task.archive_failed', level: 'warn' }),
+        ...(commandContext ? { afterCommit: (publish: () => void) => afterTransactionCommit(options.database, publish, onError) } : {}),
+        onError,
       })
       const subscription = service.onDidChange((id) => {
         const conversation = conversations.findById(id)
         if (conversation)
-          options.rpc.notify(CONVERSATION_CHANGED, conversation)
+          notify(CONVERSATION_CHANGED, conversation)
       })
       defer(async () => {
         await service.dispose()
@@ -1592,9 +1652,56 @@ export async function startBuddyService(
       })
       return service
     })
-    const conversationCleanup = new ConversationCleanupService({ database: options.database, archive: conversationArchive, lifecycle: conversationLifecycle })
+    const remoteUploads = commandContext
+      ? await host.start('runtime.remote_uploads', ({ defer }) => {
+          const service = new RemoteUploadService({ database: options.database, root: paths.root, instanceId: commandContext.identity.serviceInstanceId, drafts: composerDraftService })
+          defer(() => service.close())
+          return service
+        })
+      : null
+    const createActorCommands = (principal: TrustedCommandPrincipal): BuddyServiceCommands => {
+      if (!commandContext)
+        throw new ProductProtocolError('SERVICE_NOT_READY')
+      const scope = actorCommandScopes.get(principal.actorId) ?? new ProductActorCommandScope(options.database, principal, commandContext.identity)
+      actorCommandScopes.set(principal.actorId, scope)
+      const draftAccess = {
+        find: (id: string) => personalDrafts.findById(id),
+        run: <T>(id: string, operation: () => T | Promise<T>) => composerDraftService.withDraftLock(id, operation),
+        withDraftLock: <T>(id: string, operation: () => T | Promise<T>) => composerDraftService.withDraftLock(id, operation),
+        notifyCommitted: composerDraftService.notifyCommitted.bind(composerDraftService),
+      }
+      return scope.initialize({
+        runs: { turns: turnRequests, events: commandContext.writer },
+        input: { turns: chatTurnService, compact: chatCommandService, queue: chatQueueService!, assertExecutionAvailable: assertPlatformAvailable },
+        drafts: { access: draftAccess, prepareAttachments: input => attachmentService.prepareDraftCopy(input), releaseResources: draftId => composerResourceService.discard(draftId) },
+        conversations: { metadata: conversationMetadata, lifecycle: conversationLifecycle, archive: conversationArchive ?? undefined, marks: taskMarks },
+        control: { repository: commandContext.repository, queue: chatQueueService!, stopExecution: () => stopExecution() },
+        uploads: remoteUploads!,
+        questions,
+        approvals: approvalService,
+        openDesktop: options.platform.openDesktop,
+        onError: () => record({ event: 'command.dispatch_failed', level: 'error' }),
+      })
+    }
+    const commands = commandContext
+      ? await host.start('runtime.input_commands', ({ defer }) => {
+          defer(async () => {
+            await Promise.all([...actorCommandScopes.values()].map(scope => scope.dispose()))
+          })
+          return createActorCommands(commandContext.principal)
+        })
+      : null
     const runtime: BuddyRuntime = {
-      startTurn: input => chatTurnService.start(input),
+      startTurn: async (input) => {
+        if (commands)
+          throw new ProductCommandRequiredError()
+        storage.assertAvailable()
+        assertPlatformAvailable()
+        commandContext?.repository.assertAccepting()
+        const result = await chatTurnService.start(input)
+        storage.assertAvailable()
+        return result
+      },
     }
     const statistics = await host.start('runtime.conversation_statistics', ({ defer }) => {
       const service = new ConversationStatusService({
@@ -1607,7 +1714,7 @@ export async function startBuddyService(
           return branchId ? sessions.getReady(conversationId, branchId, conversation?.buddyId)?.getCacheWarmingStatus?.() ?? null : null
         },
       })
-      const notices = service.onDidChange(event => options.rpc.notify(taskMetricsChanged.method, event))
+      const notices = service.onDidChange(event => notify(taskMetricsChanged.method, event))
       const inputs = chatQueueService.onDidChange((event) => {
         if (event.kind === 'delivered' || event.kind === 'dispatched')
           service.notifyChanged(event.scope.conversationId)
@@ -1627,9 +1734,7 @@ export async function startBuddyService(
       events: options.eventLog,
       definitions: buddyDefinitions,
       getDefaultActorId: () => buddies.defaultBuddyId,
-      getRuntimePreferences: async () => {
-        return runtimePreferencesSchema.parse(await options.rpc.request(runtimePreferencesRpc.get, {}))
-      },
+      getRuntimePreferences: options.platform.preferences.get,
       drafts: composerDrafts,
       tree: conversationTree,
       agentDirectory,
@@ -1678,14 +1783,15 @@ export async function startBuddyService(
     const scheduler = new AutomationScheduler({
       automationService,
       clock: automationClock,
+      canDispatch: () => platformLifecycle.available,
       dispatch: occurrence => dispatcher.dispatch(occurrence),
       onObserverError: () => record({ event: 'automation.scheduler_observer_failed', level: 'warn' }),
     })
     automationScheduler = scheduler
 
-    const isBusy = () => runner.hasActiveExecutions
-      || conversationLifecycle.hasPendingOperations
-      || conversationMutations.hasPendingOperations
+    const isBusy = () => conversationLifecycle.hasPendingOperations
+      || [...actorCommandScopes.values()].some(scope => scope.hasPendingOperations)
+      || runner.hasActiveExecutions
       || composerDraftService.hasPendingOperations
       || chatTurnService.hasPendingOperations
       || chatCommandService.hasPendingOperations
@@ -1705,113 +1811,156 @@ export async function startBuddyService(
       record({ event: 'runtime.runs_recovered', level: 'info', count })
     })
 
-    await host.start('runtime.rpc', ({ defer }) => {
-      const register = (dispose: () => void) => defer(dispose)
-      register(registerExtensionConditionRpc({ rpc: options.rpc, tasks: conversations, history: extensionHistory, runs, inputs: runInputs, providers: providerService }))
-      register(registerConversationCleanupRpc({ rpc: options.rpc, cleanup: conversationCleanup }))
-      register(registerConversationArchiveRpc({ rpc: options.rpc, archive: conversationArchive }))
-      register(
-        registerWebSettingsRpc(options.rpc, webSettings),
-      )
-      register(
+    let privateNetwork: PrivateNetworkController | null = null
+    const registerClient = await host.start('runtime.rpc', ({ defer }) => {
+      defer(() => clients.stopAccepting())
+      defer(options.platform.bindInternal({
+        attachments: attachmentService,
+        conditions: { tasks: conversations, history: extensionHistory, runs, inputs: runInputs, providers: providerService },
+        speech: { providers: providerService, workspace },
+      }))
+      defer(options.platform.subscribeWake(() => automationChanges.wakeScheduler()))
+      return (connection: RuntimeRequestRegistrar, role: ServiceClientRole) => {
+        const rpc = connection
+        const conditionalRpc = commandContext && role === 'product' ? candidateLegacyRegistrar(connection) : connection
+        if (role === 'management') {
+          privateNetwork?.register(rpc)
+          {
+            const cleanup = new ConversationCleanupService({
+              database: options.database,
+              archive: conversationArchive,
+              lifecycle: conversationLifecycle,
+              execute: async (intent) => {
+                if (!commands || !commandContext)
+                  return conversationArchive.deleteLegacyRemoved(intent)
+                const receipt = await commands.metadata.execute('conversations.deleteLegacyRemoved', {
+                  commandId: randomUUID(),
+                  dataGeneration: commandContext.identity.dataGeneration,
+                  expectedServiceInstanceId: commandContext.identity.serviceInstanceId,
+                  intent,
+                })
+                return receipt.receipt.decision === 'accepted'
+              },
+            })
+            registerConversationCleanupRpc({ rpc, cleanup })
+          }
+          if (commandContext) {
+            const references = new ProductContentReferences(options.database, commandContext.principal.actorId)
+            registerRuntimeRequest(rpc, desktopProductContentProject, input => ({ content: references.project(input.content) }))
+            registerComposerResourceRpc({ drafts: composerDraftService, rpc, service: composerResourceService })
+          }
+          registerWebSettingsRpc(rpc, webSettings)
+          registerWorkspaceStateRpc({
+            service: workspaceStateService,
+            rpc,
+          })
+          registerAutomationRpc({
+            approvals: approvalsRepository,
+            changes: automationChanges,
+            clock: automationClock,
+            lifecycle: automationOccurrenceLifecycle,
+            rpc,
+            runs,
+            service: automationService,
+          })
+          registerMcpConnectorRpc(rpc, connectorService)
+          registerSpaceRpc({
+            rpc,
+            service: spaceService,
+          })
+          registerLocalDocumentRpc(rpc, new LocalDocumentFileService(options.buddyHome, fileEngine, async (source) => {
+            const location = source.kind === 'artifact'
+              ? await artifactService.locate(source.artifactId)
+              : source.kind === 'space' ? await spaceFiles.locate(source.target) : await taskFileService.locate(source.target)
+            if (location.kind !== 'file')
+              throw new Error('FILE_PERMISSION_REVOKED')
+            return location.path
+          }))
+          registerSpaceFileRpc(rpc, spaceFiles)
+          registerProviderRpc({
+            rpc,
+            service: providerService,
+            refreshCapabilities: async () => {
+              await Promise.all([options.platform.refreshProviderSpeech({ providers: providerService, workspace }), pluginModels.refresh()])
+            },
+          })
+          registerSkillServiceRpc(rpc, skillService)
+          registerRuntimeRequest(rpc, extensionActionRpc.list, (_input, signal) => extensionActions.list(signal))
+          registerRuntimeRequest(rpc, extensionActionRpc.invoke, (input, signal) => extensionActions.invoke(input, signal))
+          return
+        }
+        registerProviderCatalogRpc({ rpc, service: providerService, refreshCapabilities: async () => {
+          await Promise.all([options.platform.refreshProviderSpeech({ providers: providerService, workspace }), pluginModels.refresh()])
+        } })
+        registerSpaceQueries({ rpc, service: spaceService })
+        registerSkillCatalogRpc(rpc, skillService)
         registerNotificationRpc({
-          rpc: options.rpc,
+          rpc,
           service: notificationService,
-        }),
-      )
-      register(
-        registerWorkspaceStateRpc({
-          service: workspaceStateService,
-          rpc: options.rpc,
-        }),
-      )
-      register(
+        })
         registerArtifactRpc({
-          rpc: options.rpc,
+          rpc,
           service: artifactService,
-        }),
-      )
-      register(
+        })
         registerChangeRpc({
           conversations,
           runs,
-          rpc: options.rpc,
+          rpc,
           service: changeCaptureService,
           recovery: mutationRecovery,
-        }),
-      )
-      register(
+        })
         registerRunRpc({
           statistics,
           isBusy,
           eventLog: options.eventLog,
           inputs: runInputs,
           repository: runs,
-          rpc: options.rpc,
-        }),
-      )
-      register(registerRuntimeRequest(options.rpc, promptsRpc.get, () => getBuiltinPromptCatalog()))
-      register(registerContextPanelRpc({ rpc: options.rpc, runs, events: options.eventLog }))
-      register(registerUserQuestionRpc({ rpc: options.rpc, service: questions }))
-      register(registerExecutionRpc({ rpc: options.rpc, service: executionPresentation, inputs: new ExecutionComposerInputService({ drafts: composerDraftService, conversations, executions: executionRecords, getRunPermissionCeiling, mailbox: createMailboxRepository(options.database), delivery: executionPresentation }) }))
-      register(
-        registerAttachmentRpc({
-          rpc: options.rpc,
-          service: attachmentService,
-        }),
-      )
-      register(
-        registerComposerResourceRpc({
-          drafts: composerDraftService,
-          rpc: options.rpc,
-          service: composerResourceService,
-        }),
-      )
-      register(
+          rpc,
+        })
+        registerRuntimeRequest(rpc, promptsRpc.get, () => getBuiltinPromptCatalog())
+        registerContextPanelRpc({ rpc, runs, events: options.eventLog })
+        registerUserQuestionRpc({ rpc: conditionalRpc, service: questions })
+        registerExecutionRpc({ rpc, service: executionPresentation, inputs: new ExecutionComposerInputService({ drafts: composerDraftService, conversations, executions: executionRecords, getRunPermissionCeiling, mailbox: createMailboxRepository(options.database), delivery: executionPresentation }) })
+        if (!commandContext) {
+          registerComposerResourceRpc({ drafts: composerDraftService, rpc, service: composerResourceService })
+        }
         registerComposerDraftRpc({
-          rpc: options.rpc,
+          rpc: conditionalRpc,
           service: composerDraftService,
-        }),
-      )
-      register(
+        })
         registerUsageRpc({
           analytics: createUsageAnalyticsRepository(options.database),
           repository: usageRepository,
-          rpc: options.rpc,
-        }),
-      )
-      register(
+          rpc,
+        })
         registerChatRpc({
           attachments: attachmentService,
           conversations,
           drafts: composerDraftService,
           commands: chatCommandService,
-          rpc: options.rpc,
+          rpc: conditionalRpc,
           runtime,
           turns: chatTurnService,
           queue: chatQueueService,
-        }),
-      )
-      register(
+        })
         registerContextRpc({
-          rpc: options.rpc,
+          rpc,
           service: contextUsageService,
-        }),
-      )
-      register(registerBuddiesRpc(options.rpc, buddies, signal => readBuddyToolOptions(sessionExtensionServices.createCapabilities, agentDirectory, signal, sessionExtensionServices.shells)))
-      register(registerTaskMarkRpc(options.rpc, taskMarks, taskAttention))
-      register(registerConversationTreeRpc({
-        database: options.database,
-        conversations,
-        rpc: options.rpc,
-        artifacts: artifactsRepository,
-        attachments: attachmentService,
-        changes: changeCaptureService,
-        eventLog: options.eventLog,
-        runInputs,
-        runs,
-      }))
-      register(
+        })
+        registerBuddiesRpc(rpc, buddies, signal => readBuddyToolOptions(sessionExtensionServices.createCapabilities, agentDirectory, signal, sessionExtensionServices.shells))
+        registerTaskMarkRpc(conditionalRpc, taskMarks, taskAttention)
+        registerConversationTreeRpc({
+          database: options.database,
+          conversations,
+          rpc,
+          artifacts: artifactsRepository,
+          attachments: attachmentService,
+          changes: changeCaptureService,
+          eventLog: options.eventLog,
+          runInputs,
+          runs,
+        })
+        registerConversationArchiveRpc({ rpc: conditionalRpc, archive: conversationArchive, legacyWrites: !commandContext })
         registerConversationRpc({
           artifacts: artifactsRepository,
           attachments: attachmentService,
@@ -1824,65 +1973,22 @@ export async function startBuddyService(
           },
           eventLog: options.eventLog,
           isDeleting: conversationId => conversationLifecycle.isDeleting(conversationId),
-          rpc: options.rpc,
+          rpc: conditionalRpc,
           runInputs,
           runs,
-        }),
-      )
-      register(
+        })
         registerApprovalRpc({
+          commandService: commands ? approvalService : undefined,
           repository: approvalsRepository,
-          rpc: options.rpc,
+          rpc: conditionalRpc,
           service: approvalService,
-        }),
-      )
-      register(
-        registerAutomationRpc({
-          approvals: approvalsRepository,
-          changes: automationChanges,
-          clock: automationClock,
-          lifecycle: automationOccurrenceLifecycle,
-          rpc: options.rpc,
-          runs,
-          service: automationService,
-        }),
-      )
-      register(
-        registerMcpConnectorRpc(options.rpc, connectorService),
-      )
-      register(
-        registerSpaceRpc({
-          rpc: options.rpc,
-          service: spaceService,
-        }),
-      )
-      register(registerLocalDocumentRpc(options.rpc, new LocalDocumentFileService(options.buddyHome, fileEngine, async (source) => {
-        const location = source.kind === 'artifact'
-          ? await artifactService.locate(source.artifactId)
-          : source.kind === 'space' ? await spaceFiles.locate(source.target) : await taskFileService.locate(source.target)
-        if (location.kind !== 'file')
-          throw new Error('FILE_PERMISSION_REVOKED')
-        return location.path
-      })))
-      register(registerSpaceFileRpc(options.rpc, spaceFiles))
-      register(registerTaskFileRpc(options.rpc, taskFileService))
-      register(options.rpc.onRequest(imageRpc.catalog, async () => {
-        await pluginModels.refresh()
-        return { ...await imageGenerationGateway.catalog(), readingCandidates: await imageReading.candidates() }
-      }))
-      register(registerProviderSpeechRpc({ rpc: options.rpc, providers: providerService, workspace }))
-      register(
-        registerProviderRpc({
-          rpc: options.rpc,
-          service: providerService,
-          refreshCapabilities: async () => {
-            await Promise.all([refreshProviderSpeechModels({ rpc: options.rpc, providers: providerService, workspace }), pluginModels.refresh()])
-          },
-        }),
-      )
-      register(
-        registerSkillServiceRpc(options.rpc, skillService),
-      )
+        })
+        registerTaskFileRpc(rpc, taskFileService)
+        rpc.onRequest(imageRpc.catalog, async () => {
+          await pluginModels.refresh()
+          return { ...await imageGenerationGateway.catalog(), readingCandidates: await imageReading.candidates() }
+        })
+      }
     })
     conversationArchive.start()
     await host.start('runtime.scheduler', ({ defer }) => {
@@ -1897,9 +2003,132 @@ export async function startBuddyService(
       })
       return scheduler.start()
     }, ['runtime.rpc', 'runtime.execution'])
+    const remoteResources = commandContext
+      ? await host.start('runtime.remote_resources', ({ defer }) => {
+          const service = new RemoteResourceService({ database: options.database, root: paths.root, instanceId: commandContext.identity.serviceInstanceId, artifacts: artifactService, views: actorId => new ProductQueries(options.database, actorId, commandContext.identity.serviceInstanceId).views })
+          defer(() => service.close())
+          return service
+        })
+      : null
+    const productQueries = commandContext ? new ProductQueries(options.database, commandContext.principal.actorId, commandContext.identity.serviceInstanceId, undefined, (id, version) => remoteResources!.hasReview(commandContext.principal.actorId, id, version)) : null
+    const productSync = productQueries ? createProductSynchronization({ database: options.database, queries: productQueries, drafts: composerDraftService, metadata: conversationMetadata, lifecycle: conversationLifecycle, archive: conversationArchive ?? undefined, marks: taskMarks, questions, events: options.eventLog, queue: chatQueueService }) : null
+    const actorProductScopes = new Map<string, { commands: BuddyServiceCommands, queries: ProductQueries, sync: ReturnType<typeof createProductSynchronization> }>()
+    if (commands && productQueries && productSync)
+      actorProductScopes.set(commandContext!.principal.actorId, { commands, queries: productQueries, sync: productSync })
+    let productStopping = false
+    const productConnections = new Set<ProductConnection>()
+    const createProductConnection: BuddyServiceHandle['createProductConnection'] = (connectionOptions) => {
+      if (!commands || !commandContext)
+        throw new ProductProtocolError('SERVICE_NOT_READY')
+      const context = Object.freeze({ ...connectionOptions.context })
+      const assertOwner = () => {
+        connectionOptions.assertCurrent()
+        storage.assertAvailable()
+        commandContext.principal.assertAuthenticated()
+        if (context.profileId !== options.productIdentity!.profileId || context.serviceId !== options.productIdentity!.serviceId)
+          throw new ProductProtocolError('NOT_AUTHORIZED')
+        if (context.ownerPrincipalId !== commandContext.principal.actorId)
+          throw new ProductProtocolError('NOT_AUTHORIZED')
+        if (context.dataGeneration !== commands.identity.dataGeneration)
+          throw new ProductProtocolError('DATA_GENERATION_CHANGED')
+        if (context.serviceInstanceId !== commands.identity.serviceInstanceId)
+          throw new ProductProtocolError('SERVICE_INSTANCE_CHANGED')
+      }
+      assertOwner()
+      const principal = connectionOptions.trustedPrincipal ?? commandContext.principal
+      if (principal.actorId !== context.deviceId)
+        throw new ProductProtocolError('NOT_AUTHORIZED')
+      principal.assertAuthenticated()
+      let scope = actorProductScopes.get(principal.actorId)
+      if (!scope) {
+        const queries = new ProductQueries(options.database, principal.actorId, commandContext.identity.serviceInstanceId, undefined, (id, version) => remoteResources!.hasReview(principal.actorId, id, version))
+        scope = { commands: createActorCommands(principal), queries, sync: createProductSynchronization({ database: options.database, queries, drafts: composerDraftService, metadata: conversationMetadata, lifecycle: conversationLifecycle, archive: conversationArchive ?? undefined, marks: taskMarks, questions, events: options.eventLog, queue: chatQueueService }) }
+        actorProductScopes.set(principal.actorId, scope)
+      }
+      const actorScope = scope
+      const connection = new ProductConnection({
+        ...connectionOptions,
+        context,
+        assertCurrent: assertOwner,
+        sync: actorScope.sync.publisher,
+        authorizeTopic: (topic) => {
+          assertOwner()
+          actorScope.sync.authorizeTopic(topic)
+        },
+        phase: () => productStopping ? 'stopping' : 'ready',
+        handlers: { 'resources.prepare': { handle: input => remoteResources!.prepare(resourcePrepareSchema.parse(input), principal) }, ...actorScope.queries.handlers(), ...createProductModelQueries(providerService, id => id ? conversationMetadata.getModelControls(id).next.modelSelection : buddies.get(buddies.defaultBuddyId).settings.model), ...createProductCommandHandlers({ commands: actorScope.commands, assertOwner, hasReview: (id, version) => remoteResources!.hasReview(principal.actorId, id, version), assertExecutionAvailable: assertPlatformAvailable, allowLocalEffects: principal.actorId === commandContext.principal.actorId && connectionOptions.allowLocalEffects, allowedActions: new Set(['compact']), resolveQuote: resourceId => actorScope.queries.resolveQuote(resourceId) }) },
+        close: () => {
+          productConnections.delete(connection)
+          connectionOptions.close()
+        },
+      })
+      productConnections.add(connection)
+      return connection
+    }
+    const createLocalProductConnection: BuddyServiceHandle['createLocalProductConnection'] = (transport) => {
+      if (!commands || !commandContext || !options.productIdentity)
+        throw new ProductProtocolError('SERVICE_NOT_READY')
+      return createProductConnection({ ...transport, allowLocalEffects: true, context: { ...options.productIdentity, ...commands.identity, ownerPrincipalId: commandContext.principal.actorId, deviceId: commandContext.principal.actorId, credentialId: commandContext.principal.actorId, grantGeneration: '0', role: 'owner', connectionId: transport.connectionId, clientSessionId: randomUUID() } })
+    }
+    if (commandContext && options.productIdentity) {
+      privateNetwork = await host.start('runtime.private_network', async ({ defer }) => {
+        const avatars = new RemoteAvatarService(options.database)
+        const controller: PrivateNetworkController = new PrivateNetworkController({ database: options.database, ...options.productIdentity!, serviceInstanceId: commandContext.identity.serviceInstanceId, secrets: options.platform.privateNetworkSecrets, bytes: async (request, response, identity) => avatars.bytes(request, response, controller.auth.principal(identity)) || await remoteUploads!.bytes(request, response, controller.auth.principal(identity)) || await remoteResources!.bytes(request, response, controller.auth.principal(identity)), connect: (identity, transport) => createProductConnection({ ...transport, context: controller.auth.context(identity), assertCurrent: () => controller.auth.assertCurrent(identity), trustedPrincipal: controller.auth.principal(identity) }) })
+        defer(() => controller.close())
+        await controller.restore()
+        return controller
+      })
+    }
+    const platformRecovery = {
+      pauseContinuations: () => { for (const scope of chatQueueService!.continuationScopes()) chatQueueService!.pause(scope) },
+      incompleteRunIds: () => runs.listIncomplete().map(run => run.id),
+      cancelRun: (id: string, reason: string) => runner.cancel(id, reason),
+      suspendConnectors: () => connectorService.suspendPlatform(),
+      resumeConnectors: () => connectorService.resumePlatform(),
+      invalidateSessions: () => sessions.invalidateAll(),
+      isStopping: () => productStopping,
+    }
     return {
+      commands,
+      createProductConnection,
+      createLocalProductConnection,
+      assertPlatformAvailable,
+      suspendPlatform: reason => platformLifecycle.suspend(platformRecovery, reason),
+      resumePlatform: () => platformLifecycle.resume(platformRecovery),
+      connectClient: (role, peer) => {
+        const disconnect = clients.connect(role, peer, registerClient)
+        if (!commands || !commandContext || role !== 'product' || !options.productIdentity)
+          return disconnect
+        try {
+          const stopProduct = registerLocalProductConnection(peer, transport => createLocalProductConnection({
+            ...transport,
+            connectionId: randomUUID(),
+            assertCurrent: () => {
+              if (peer.closed)
+                throw new ProductProtocolError('NOT_AUTHORIZED')
+            },
+          }))
+          return () => {
+            stopProduct()
+            disconnect()
+          }
+        }
+        catch (error) {
+          disconnect()
+          throw error
+        }
+      },
       startMaintenance: () => options.eventLog.startMaintenance({ isBusy }),
       async dispose() {
+        productStopping = true
+        for (const [actorId, scope] of actorProductScopes) {
+          scope.sync.stopping()
+          scope.sync.dispose()
+          actorCommandScopes.get(actorId)!.stopAccepting()
+        }
+        for (const connection of productConnections) connection.close()
+        for (const scope of actorCommandScopes.values()) scope.stopAccepting()
+        clients.stopAccepting()
         try {
           await options.eventLog.stopMaintenance()
         }
@@ -1910,6 +2139,9 @@ export async function startBuddyService(
       prepareIdleShutdown() {
         if (isBusy())
           return false
+        productStopping = true
+        for (const scope of actorCommandScopes.values()) scope.stopAccepting()
+        clients.stopAccepting()
         void options.eventLog.stopMaintenance().catch(() => record({ event: 'runtime.maintenance.stop_failed', level: 'error' }))
         void composerDraftService.dispose()
         void chatTurnService.dispose()

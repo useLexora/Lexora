@@ -1,6 +1,25 @@
 import type zhCN from '../zh-CN/chat'
 
 export default {
+  'desktop.recovery.pending': '{count} operations need review',
+  'desktop.recovery.review': 'Review',
+  'desktop.recovery.title': 'Operation recovery',
+  'desktop.recovery.description': 'These operations have not been confirmed to you. Check their results, open the original task, or save unaccepted input as a new draft.',
+  'desktop.recovery.accepted': 'Operation accepted',
+  'desktop.recovery.rejected': 'Operation was not performed',
+  'desktop.recovery.not_accepted': 'No acceptance record found',
+  'desktop.recovery.unknown': 'Result is unknown. Refresh later.',
+  'desktop.recovery.trust_changed': 'Connection identity changed. Original input is kept.',
+  'desktop.recovery.openTask': 'Open task',
+  'desktop.recovery.restore': 'Save as a new draft',
+  'desktop.recovery.acknowledge': 'Reviewed, remove this recovery item',
+  'desktop.recovery.refresh': 'Check again',
+
+  'desktop.chat.commandResultUnknown': 'The operation result is being checked. Your input is kept; wait for recovery before deciding what to do next.',
+  'desktop.chat.approvalAlreadyResolved': 'This operation has already been handled or has expired. Check the latest result.',
+  'desktop.chat.objectChanged': 'This item has changed. Review its current state before continuing.',
+  'desktop.chat.objectDeleted': 'This item has been deleted.',
+
   'desktop.chat.processToolQueued': 'Waiting for capacity',
   'desktop.chat.processToolResourceWaiting': 'Waiting for resources',
   'desktop.chat.processToolResourceTimeout': 'Resource wait timed out; command did not start',
@@ -604,4 +623,11 @@ export default {
   'desktop.chat.draftRestoration.resolveFailed': 'Restoration is incomplete, or the input changed while waiting. Your input is still available. Review it and retry.',
   'desktop.chat.draftRestoration.keepLocal': 'Keep input for now',
   'desktop.chat.draftRestoration.useSaved': 'Discard input and restore saved content',
+  'desktop.chat.openBranchBeside': 'Open to the side',
+  'desktop.chat.conversationBranches': 'Conversation branches',
+  'desktop.chat.branchesLoading': 'Loading…',
+  'desktop.chat.branchesUnavailable': 'Branches could not be loaded. Please try again.',
+  'desktop.chat.originalBranch': 'Original branch',
+  'desktop.chat.numberedBranch': 'Branch {index}',
+  'desktop.chat.viewedBranch': 'Viewing',
 } satisfies Record<keyof typeof zhCN, string>

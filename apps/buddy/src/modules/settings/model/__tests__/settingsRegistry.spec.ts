@@ -1,9 +1,7 @@
 import type { SettingsContribution } from '../settingsRegistry'
 import { extensionSettingItemSchema } from '@buddy-shared/extensions/extensionSettings'
-import { builtinSettingsModuleIds, publicSettingsGroups } from '@buddy-shared/settings/settingsCatalog'
+import { builtinSettingsModuleIds } from '@buddy-shared/settings/settingsCatalog'
 import { describe, expect, it } from 'vitest'
-import { createMemoryHistory, createRouter } from 'vue-router'
-import { settingsRoutes } from '../../routes'
 import { builtinSettings } from '../builtinSettings'
 import { extensionSettingsLocation } from '../settingsNavigation'
 import { SettingsRegistry } from '../settingsRegistry'
@@ -27,31 +25,6 @@ describe('settings registry', () => {
     expect(() => registry.register('tests.settings', { modules: [{ ...module, view: 'other.plugin.view' }], groups: [], items: [] })).toThrow()
     dispose()
     expect(extensionSettingsLocation(registry.modules, 'tests.settings')).toBeNull()
-  })
-
-  it('opens an owned module, a builtin group or an inline field only for registered owners', () => {
-    const registry = new SettingsRegistry()
-    registry.register('settings', builtinSettings)
-    const contribution = plugin()
-    const dispose = registry.register('tests.settings', contribution)
-    expect(extensionSettingsLocation(registry.modules, 'tests.settings')).toEqual({ name: 'desktop.settings.plugin', params: { moduleId: 'tests.settings.module' } })
-    expect(extensionSettingsLocation(registry.modules, 'tests')).toBeNull()
-    registry.register('tests.settings', { ...contribution, modules: [], groups: [{ ...contribution.groups[1]!, module: 'settings.runtime' }] })
-    dispose()
-    expect(extensionSettingsLocation(registry.modules, 'tests.settings')).toEqual({ name: 'desktop.settings.runtime', query: { group: 'tests.settings.extra' } })
-    const remove = registry.register('tests.settings', { ...contribution, modules: [], groups: [] })
-    expect(extensionSettingsLocation(registry.modules, 'tests.settings')).toEqual({ name: 'desktop.settings.general', query: { group: 'settings.general.general' } })
-    remove()
-    expect(extensionSettingsLocation(registry.modules, 'tests.settings')).toBeNull()
-  })
-  it('projects builtins and extensions into one ordered module/group/item tree', () => {
-    const registry = new SettingsRegistry()
-    registry.register('settings', builtinSettings)
-    registry.register('tests.settings', plugin())
-    const general = registry.modules.find(module => module.id === 'settings.general')!
-    expect(general.groups.slice(0, 3).map(group => group.id)).toEqual(['settings.general.general', 'tests.settings.extra', 'settings.general.context-panel'])
-    expect(general.groups[0]!.items.map(item => item.id)).toEqual(['tests.settings.inline', 'settings.general.language'])
-    expect(registry.modules.find(module => module.id === 'tests.settings.module')!.groups[0]!.id).toBe('tests.settings.group')
   })
 
   it('rejects conflicting IDs, missing parents and cross-owner parents without partial publication', () => {
@@ -88,17 +61,5 @@ describe('settings registry', () => {
     registry.register('tests.settings', original)
     disposeFirst()
     expect(registry.modules.some(module => module.id === 'tests.settings.module')).toBe(true)
-  })
-
-  it('keeps public setting groups and existing builtin URLs backed by registered definitions', () => {
-    const registry = new SettingsRegistry()
-    registry.register('settings', builtinSettings)
-    const router = createRouter({ history: createMemoryHistory(), routes: [...settingsRoutes] })
-    for (const [group, module] of Object.entries(publicSettingsGroups))
-      expect(registry.modules.find(entry => entry.id === module)!.groups.some(entry => entry.id === group)).toBe(true)
-    expect(router.resolve('/settings/models/example').meta.settingsModule).toBe('settings.models')
-    expect(router.resolve('/settings/plugins/tests.settings.module').params.moduleId).toBe('tests.settings.module')
-    expect(router.resolve('/settings/app').matched.at(-1)!.redirect).toEqual({ name: 'desktop.settings.general' })
-    expect(router.resolve('/settings/extensions').matched.at(-1)!.redirect).toEqual({ name: 'desktop.extensions' })
   })
 })

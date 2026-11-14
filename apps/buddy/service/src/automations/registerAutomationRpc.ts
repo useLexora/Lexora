@@ -2,7 +2,7 @@ import type {
   AutomationOccurrence,
   AutomationRunNowResult,
 } from '../../../shared/automation'
-import type { RuntimeRpcRegistrar } from '../rpc/runtimeRequest'
+import type { RuntimeRequestRegistrar } from '../rpc/runtimeRequest'
 import type { ApprovalRepository } from '../storage/approvalRepository'
 import type { AutomationOccurrenceRecord } from '../storage/automationOccurrenceRecord'
 import type { RunRepository } from '../storage/runRepository'
@@ -11,7 +11,7 @@ import type { AutomationOccurrenceLifecycleService } from './AutomationOccurrenc
 import type { AutomationClock } from './AutomationScheduleEvaluator'
 import type { AutomationService } from './AutomationService'
 
-import { automationNotifications, automationsRpc } from '../../../shared/automation/automationApi'
+import { automationsRpc } from '../../../shared/automation/automationApi'
 import { registerRuntimeRequest } from '../rpc/runtimeRequest'
 import { previewAutomationSchedule } from './AutomationScheduleEvaluator'
 import { AutomationServiceError } from './AutomationService'
@@ -21,20 +21,13 @@ export interface RegisterAutomationRpcOptions {
   changes: AutomationChangeCoordinator
   clock: AutomationClock
   lifecycle: Pick<AutomationOccurrenceLifecycleService, 'deleteOccurrence'>
-  rpc: RuntimeRpcRegistrar
+  rpc: RuntimeRequestRegistrar
   runs: Pick<RunRepository, 'findById'>
   service: AutomationService
 }
 
 export function registerAutomationRpc(options: RegisterAutomationRpcOptions): () => void {
   const disposers: Array<() => void> = []
-
-  disposers.push(options.rpc.onNotification((method, params) => {
-    if (method !== automationNotifications.wake.method)
-      return
-    if (automationNotifications.wake.params.safeParse(params).success)
-      options.changes.wakeScheduler()
-  }))
 
   disposers.push(registerRuntimeRequest(options.rpc, automationsRpc.preview, (input) => {
     return previewAutomationSchedule(input, options.clock)

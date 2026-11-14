@@ -3,7 +3,7 @@ import type { BuddyUserContentV1 } from '@buddy-shared/conversation/buddyUserCon
 import type { LocalTurnStart } from '@buddy-shared/conversation/chatApi'
 
 import type { BuddyComposerSource } from '@buddy-shared/conversation/composerResource'
-import type { LocalConversationBranch } from '@buddy-shared/conversation/conversationApi'
+import type { LocalConversation, LocalConversationBranch } from '@buddy-shared/conversation/conversationApi'
 import type { LocalRun } from '@buddy-shared/runs/runApi'
 import type { ComposerTarget } from '../composer/useComposerTarget'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
@@ -29,11 +29,12 @@ interface ValueRef<T> {
 
 export interface UseChatBranchMutationsOptions {
   flushModelSelection?: () => Promise<boolean>
+  openBranch?: (conversationId: string, branchId: string, options?: { editMessageId?: string, beside?: boolean }) => Promise<boolean>
   activeRun: ValueRef<LocalRun | null>
-  archived?: ValueRef<boolean>
+  activeConversation?: ValueRef<LocalConversation | null>
   api: {
     chat: Pick<LocalChatApi['chat'], 'editUserMessage' | 'regenerateAssistant'>
-    conversations: Pick<LocalChatApi['conversations'], 'activateBranch' | 'getNodeDetail'>
+    conversations: Pick<LocalChatApi['conversations'], 'getNodeDetail'>
   }
   canSendDraft: ValueRef<boolean>
   composerTarget: ComposerTarget
@@ -67,7 +68,7 @@ export function useChatBranchMutations(options: UseChatBranchMutationsOptions) {
   const requestIds = createRequestIdRegistry()
   const canRunBranchMutation = computed(() =>
     options.runtimeSupervisor.runtimeState.value.status === 'ready'
-    && !options.archived?.value
+    && !options.activeConversation?.value?.archivedAt
     && options.session.activeConversationId.value !== null
     && options.session.activeBranchId.value !== null
     && !options.activeRun.value
@@ -77,9 +78,9 @@ export function useChatBranchMutations(options: UseChatBranchMutationsOptions) {
   )
   const canMutateBranch = computed(() => canRunBranchMutation.value && editingMessage.value === null)
 
-  async function activateBranch(branchId: string) {
+  async function activateBranch(branchId: string, beside = false) {
     const conversationId = options.session.activeConversationId.value
-    if (!conversationId || !canMutateBranch.value)
+    if (!conversationId || isMutatingBranch.value || options.isSending.value || editingMessage.value)
       return false
     if (branchId === options.session.activeBranchId.value) {
       options.composerTarget.cancelFollowup()
@@ -90,23 +91,23 @@ export function useChatBranchMutations(options: UseChatBranchMutationsOptions) {
 
     options.composerTarget.cancelFollowup()
     const navigationVersion = options.session.generation()
+    const sourceBranchId = options.session.activeBranchId.value
     const isSourceViewCurrent = () => options.session.isCurrent(
       navigationVersion,
       conversationId,
-    )
+    ) && options.session.activeBranchId.value === sourceBranchId
     isMutatingBranch.value = true
+    let ownsMutation = true
     options.setErrorMessage(null)
     try {
-      const conversation = await options.api.conversations.activateBranch({
-        branchId,
-        conversationId,
-      })
-      if (!isSourceViewCurrent()) {
-        void options.taskIndexData.refreshIndex().catch(() => {})
-        return true
+      if (!await options.persistWorkspaceState() || !isSourceViewCurrent())
+        return false
+      if (options.openBranch) {
+        isMutatingBranch.value = false
+        ownsMutation = false
+        return await options.openBranch(conversationId, branchId, { beside })
       }
-      options.taskIndexData.applyConversation(conversation)
-      options.session.setActiveBranch(conversation.activeBranchId)
+      options.session.setActiveBranch(branchId)
       await refreshAcceptedBranchState(conversationId)
       return true
     }
@@ -116,7 +117,8 @@ export function useChatBranchMutations(options: UseChatBranchMutationsOptions) {
       return false
     }
     finally {
-      isMutatingBranch.value = false
+      if (ownsMutation)
+        isMutatingBranch.value = false
     }
   }
 
@@ -125,6 +127,16 @@ export function useChatBranchMutations(options: UseChatBranchMutationsOptions) {
     if (!conversationId || !canMutateBranch.value)
       return false
     if (sourceBranchId && sourceBranchId !== options.session.activeBranchId.value) {
+      if (options.openBranch) {
+        const generation = options.session.generation()
+        const previousBranchId = options.session.activeBranchId.value
+        if (!options.session.branches.value.some(branch => branch.id === sourceBranchId)
+          || !await options.persistWorkspaceState()
+          || !options.session.isCurrent(generation, conversationId, previousBranchId ?? undefined)) {
+          return false
+        }
+        return options.openBranch(conversationId, sourceBranchId, { editMessageId: userMessageId })
+      }
       const generation = options.session.generation()
       if (!await options.persistWorkspaceState() || !options.session.isCurrent(generation, conversationId)
         || !await activateBranch(sourceBranchId) || options.session.activeConversationId.value !== conversationId
@@ -259,7 +271,7 @@ export function useChatBranchMutations(options: UseChatBranchMutationsOptions) {
     options.setErrorMessage(null)
     try {
       options.drafts.setUserContent(payload.userContent ?? createBuddyUserContent(payload.content))
-      if (!await options.persistWorkspaceState() || !isSourceViewCurrent() || editingMessage.value !== editing || options.archived?.value)
+      if (!await options.persistWorkspaceState() || !isSourceViewCurrent() || editingMessage.value !== editing || options.activeConversation?.value?.archivedAt)
         return false
       const draft = options.drafts.snapshot(editScopeKey)
       if (!options.drafts.isPersisted(draft))
@@ -272,7 +284,7 @@ export function useChatBranchMutations(options: UseChatBranchMutationsOptions) {
       }
       const operationKey = `edit:${await createRequestFingerprint(requestInput)}`
       const requestId = requestIds.resolve(operationKey)
-      if (options.archived?.value || !isSourceViewCurrent())
+      if (options.activeConversation?.value?.archivedAt || !isSourceViewCurrent())
         return false
       const turn = await options.api.chat.editUserMessage({ ...requestInput, requestId })
       if (!turn.draftReceipt)
@@ -338,7 +350,7 @@ export function useChatBranchMutations(options: UseChatBranchMutationsOptions) {
     try {
       if (options.flushModelSelection && !await options.flushModelSelection())
         return false
-      if (!isSourceViewCurrent() || options.archived?.value)
+      if (!isSourceViewCurrent() || options.activeConversation?.value?.archivedAt)
         return false
       const turn = await options.api.chat.regenerateAssistant({
         conversationId,

@@ -5,7 +5,6 @@ import { randomUUID } from 'node:crypto'
 import { readDiagnosticErrorCode } from '../../../shared/diagnostics/applicationDiagnostic'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
-import { BuddyServiceError } from '../rpc/runtimeRequest'
 
 const conversationIdentityPattern = /^[A-Z0-9][\w-]{0,127}$/i
 
@@ -54,7 +53,7 @@ export class ConversationLifecycleService {
     const current = this.#deleting.get(conversationId)
     if (current)
       return current
-    if (this.#completed.has(conversationId) && !this.#options.deletion.has(conversationId))
+    if (this.#completed.has(conversationId))
       return Promise.resolve(false)
     this.#options.assertWritable?.(conversationId)
     const result = Promise.withResolvers<boolean>()
@@ -82,8 +81,6 @@ export class ConversationLifecycleService {
   }
 
   commitLegacyRemoved(conversationId: string): ConversationDeletionCommit {
-    if (this.#deleting.has(conversationId))
-      throw new BuddyServiceError('CONVERSATION_BUSY')
     if (this.#stopping || !conversationIdentityPattern.test(conversationId))
       throw new ConversationLifecycleError()
     this.#options.assertWritable?.(conversationId)
@@ -111,10 +108,6 @@ export class ConversationLifecycleService {
 
   get hasPendingOperations(): boolean {
     return this.#deleting.size > 0
-  }
-
-  isCleanupPending(conversationId: string): boolean {
-    return this.#deleting.has(conversationId)
   }
 
   finishDeletion(committed: ConversationDeletionCommit): Promise<boolean> {
@@ -162,13 +155,10 @@ export class ConversationLifecycleService {
 
   async #delete(conversationId: string, reason: ConversationCleanupFact['reason']): Promise<boolean> {
     const now = new Date().toISOString()
-    const shouldPurge = this.#options.deletion.has(conversationId)
-    const committed = shouldPurge
-      ? this.#options.deletion.commit(conversationId, now)
-      : this.#options.deletion.commitSoftDelete(conversationId, now)
+    const committed = this.#options.deletion.commit(conversationId, now)
     if (!committed)
       return false
-    if (shouldPurge && reason === 'delete')
+    if (reason === 'delete')
       this.#options.deletion.retry(conversationId, now)
     if (committed.tombstoned || committed.revokedGrantIds.length)
       this.#committed.fire(copyEventSnapshot({ ...committed, commitId: randomUUID() }))
@@ -176,15 +166,13 @@ export class ConversationLifecycleService {
     this.#cleanup.fire(copyEventSnapshot({ conversationId, operationId, reason, status: 'started' }))
     try {
       await this.suspendConversation(conversationId)
-      if (shouldPurge)
-        await this.#options.purge?.(conversationId)
+      await this.#options.purge?.(conversationId)
       this.#completed.add(conversationId)
       this.#cleanup.fire(copyEventSnapshot({ conversationId, operationId, reason, status: 'completed' }))
       return committed.tombstoned
     }
     catch (error) {
-      if (shouldPurge)
-        this.#options.deletion.failed(conversationId, readDiagnosticErrorCode(error), new Date().toISOString())
+      this.#options.deletion.failed(conversationId, readDiagnosticErrorCode(error), new Date().toISOString())
       this.#cleanup.fire(copyEventSnapshot({ conversationId, operationId, reason, status: 'failed', errorCode: readDiagnosticErrorCode(error) }))
       throw error
     }

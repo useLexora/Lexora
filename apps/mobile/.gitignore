@@ -1,0 +1,10 @@
+.gradle/
+.kotlin/
+**/build/
+local.properties
+*.jks
+*.keystore
+!android/src/**/__tests__/
+!android/src/**/__tests__/**
+!tools/__tests__/
+!tools/__tests__/**

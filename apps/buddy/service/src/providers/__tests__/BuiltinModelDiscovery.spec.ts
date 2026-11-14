@@ -6,6 +6,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createRpcRuntimePlatform } from '../../platform/createRpcRuntimePlatform'
 import { openBuddyDatabase } from '../../storage/database'
 import { createProviderService } from '../createProviderService'
 
@@ -52,7 +53,7 @@ async function fixture() {
   }
   return {
     credentials,
-    setup: () => createProviderService({ agentDirectory, database, peer }),
+    setup: () => createProviderService({ agentDirectory, database, platform: createRpcRuntimePlatform(peer), notify: peer.notify, notifyManagement: peer.notify }),
     cache: () => readFile(join(agentDirectory, 'models-store.json'), 'utf8'),
   }
 }

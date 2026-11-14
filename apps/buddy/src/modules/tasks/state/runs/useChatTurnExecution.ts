@@ -220,7 +220,8 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
         requestIds.release(operationKey)
         if (deliveryKey)
           pendingDeliveries.delete(deliveryKey)
-        options.composerTarget.complete(result.draftReceipt, sourceScopeKey, sourceScopeKey)
+        if (result.draftReceipt)
+          options.composerTarget.complete(result.draftReceipt, sourceScopeKey, sourceScopeKey)
         if (isSourceViewCurrent())
           submissionRevision.value += 1
         await queue.refreshQueue()
@@ -377,7 +378,7 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
     const isSourceViewCurrent = () => !isDisposed && !sourceViewChanged
       && options.session.isCurrent(navigationVersion)
     try {
-      const cancelled = await options.api.chat.cancel(run.id)
+      const cancelled = await (run.generation === undefined ? options.api.chat.cancel(run.id) : options.api.chat.cancel(run.id, run.generation))
       if (isSourceViewCurrent())
         options.runSync.upsertRuns([cancelled])
     }

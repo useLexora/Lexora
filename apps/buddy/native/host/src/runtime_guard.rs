@@ -2,6 +2,7 @@ use std::{
     io::{Read, Write},
     os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
     ptr,
+    time::{Duration, Instant},
 };
 
 use serde::Deserialize;
@@ -10,8 +11,9 @@ use windows_sys::Win32::{
     System::{
         JobObjects::{
             AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-            SetInformationJobObject,
+            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
+            QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
         },
         Threading::{
             GetCurrentProcess, GetProcessTimes, INFINITE, OpenProcess,
@@ -26,9 +28,11 @@ use windows_sys::Win32::{
 pub struct GuardError;
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Request {
     pid: u32,
+    #[serde(default)]
+    observe_cleanup: bool,
 }
 
 pub fn run() -> Result<(), GuardError> {
@@ -60,32 +64,45 @@ pub fn run() -> Result<(), GuardError> {
     if creation_time(runtime.as_raw_handle())? >= guard_created {
         return Err(GuardError);
     }
-    // SAFETY: Null attributes/name create a private, non-inheritable job.
-    let job = owned(unsafe { CreateJobObjectW(ptr::null(), ptr::null()) })?;
-    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-    // SAFETY: The live job and initialized limits remain valid for the exact supplied struct size.
-    if unsafe {
-        SetInformationJobObject(
-            job.as_raw_handle(),
-            JobObjectExtendedLimitInformation,
-            ptr::from_ref(&limits).cast(),
-            size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-        )
-    } == 0
-    {
-        return Err(GuardError);
-    }
-    // SAFETY: Both handles are owned and live; Runtime waits for readiness before creating tools.
-    if unsafe { AssignProcessToJobObject(job.as_raw_handle(), runtime.as_raw_handle()) } == 0 {
-        return Err(GuardError);
-    }
+    let job = create_job(runtime.as_raw_handle())?;
     let mut output = std::io::stdout().lock();
     output.write_all(b"ready\n").map_err(|_| GuardError)?;
     output.flush().map_err(|_| GuardError)?;
     // SAFETY: The process handle has SYNCHRONIZE access and remains owned until the wait completes.
     if unsafe { WaitForSingleObject(runtime.as_raw_handle(), INFINITE) } != WAIT_OBJECT_0 {
         return Err(GuardError);
+    }
+    if request.observe_cleanup {
+        // SAFETY: This owned private job contains only the supervised runtime and its descendants.
+        if unsafe { TerminateJobObject(job.as_raw_handle(), 1) } == 0 {
+            return Err(GuardError);
+        }
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let mut accounting = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+            // SAFETY: The owned job is live and the output buffer has the exact declared size.
+            if unsafe {
+                QueryInformationJobObject(
+                    job.as_raw_handle(),
+                    JobObjectBasicAccountingInformation,
+                    ptr::from_mut(&mut accounting).cast(),
+                    size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+                    ptr::null_mut(),
+                )
+            } == 0
+            {
+                return Err(GuardError);
+            }
+            if accounting.ActiveProcesses == 0 {
+                output.write_all(b"clean\n").map_err(|_| GuardError)?;
+                output.flush().map_err(|_| GuardError)?;
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err(GuardError);
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
     drop(job);
     Ok(())
@@ -109,4 +126,33 @@ fn creation_time(handle: HANDLE) -> Result<u64, GuardError> {
         return Err(GuardError);
     }
     Ok((u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
+}
+
+pub fn guard_current_process() -> Result<OwnedHandle, GuardError> {
+    // SAFETY: GetCurrentProcess supplies a live non-owning handle for the current process.
+    create_job(unsafe { GetCurrentProcess() })
+}
+
+fn create_job(process: HANDLE) -> Result<OwnedHandle, GuardError> {
+    // SAFETY: Null attributes/name create a private, non-inheritable job.
+    let job = owned(unsafe { CreateJobObjectW(ptr::null(), ptr::null()) })?;
+    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    // SAFETY: The live job and initialized limits remain valid for the exact supplied struct size.
+    if unsafe {
+        SetInformationJobObject(
+            job.as_raw_handle(),
+            JobObjectExtendedLimitInformation,
+            ptr::from_ref(&limits).cast(),
+            size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        )
+    } == 0
+    {
+        return Err(GuardError);
+    }
+    // SAFETY: Both handles are owned and live; Runtime waits for readiness before creating tools.
+    if unsafe { AssignProcessToJobObject(job.as_raw_handle(), process) } == 0 {
+        return Err(GuardError);
+    }
+    Ok(job)
 }

@@ -1,6 +1,7 @@
 import type { DesktopChatWelcomeItem, DesktopChatWelcomePreference, DesktopTaskPinnedItem, DesktopTaskSidebarSection } from '@buddy-electron/shared/desktopApi'
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { ChangeRecoveryResolveRequest, LocalChangeRecoveryItem, LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
+import type { BuddyUserContentV1 } from '@buddy-shared/conversation/buddyUserContent'
 import type { BuddyInputDelivery, LocalTurnStart } from '@buddy-shared/conversation/chatApi'
 import type { LocalChatQueueItem } from '@buddy-shared/conversation/chatQueueApi'
 import type { BuddyComposerDraftScope } from '@buddy-shared/conversation/composerDraft'
@@ -9,6 +10,7 @@ import type { LocalContextUsageSnapshotRequest } from '@buddy-shared/conversatio
 import type { LocalConversation, LocalConversationBranch, LocalConversationSummary, LocalConversationTimelineItem, LocalMessage } from '@buddy-shared/conversation/conversationApi'
 import type { LocalConversationHistoryPage } from '@buddy-shared/conversation/conversationHistoryApi'
 import type { LocalConversationTree } from '@buddy-shared/conversation/conversationTree'
+import type { DraftRecoveryRecord } from '@buddy-shared/conversation/draftRecovery'
 import type { BuddyServiceTier, BuddyThinkingLevel } from '@buddy-shared/conversation/modelSelection'
 import type { LocalTaskMark, LocalTaskMarkState, TaskMarkInput } from '@buddy-shared/conversation/taskMarkApi'
 import type { LocalExecutionInputReceipt } from '@buddy-shared/executions/executionInputReceipt'
@@ -40,8 +42,8 @@ export interface TaskMarks {
   loading: State<boolean>
   error: State<string | null>
   refresh: () => Promise<void>
-  save: (input: TaskMarkInput, id?: string) => Promise<boolean>
-  remove: (id: string) => Promise<boolean>
+  save: (input: TaskMarkInput, id?: string, expectedRevision?: number) => Promise<boolean>
+  remove: (id: string, expectedRevision?: number) => Promise<boolean>
   assign: (conversationId: string, markId: string | null) => Promise<boolean>
   clear: (conversationId: string) => Promise<boolean>
   setRead: (conversationId: string, read: boolean) => Promise<boolean>
@@ -107,9 +109,9 @@ export interface TaskIndex {
   createSpace: (input: TaskSpaceInput) => Promise<boolean>
   updateSpace: (input: TaskSpaceInput & { spaceId: string }) => Promise<boolean>
   deleteSpace: (spaceId: string) => Promise<boolean>
-  deleteTask: (taskId: string, expectedRevision: number) => Promise<void>
-  renameTask: (taskId: string, title: string) => Promise<boolean>
-  moveTaskToSpace: (taskId: string, spaceId: string) => Promise<boolean>
+  deleteTask: (taskId: string, expectedRevision?: number) => Promise<void>
+  renameTask: (taskId: string, title: string, expectedTitleRevision?: number) => Promise<boolean>
+  moveTaskToSpace: (taskId: string, spaceId: string, expectedRevision?: number) => Promise<boolean>
   selectSpaceDirectory: () => Promise<string | null>
   openSpaceDirectory: (spaceId: string) => Promise<boolean>
   refresh: () => Promise<void>
@@ -133,7 +135,7 @@ export interface TaskWorkspaceSession {
     error: State<string>
     refresh: () => Promise<void>
     add: (id: string) => Promise<boolean>
-    remove: (id: string) => Promise<boolean>
+    remove: (id: string, expectedRevision?: number) => Promise<boolean>
   }
   selectedBuddyId: State<string | null>
   isSelectingBuddy: State<boolean>
@@ -150,6 +152,8 @@ export interface TaskWorkspaceSession {
 
 export interface TaskComposer {
   target: State<BuddyComposerDraftScope>
+  content: Readonly<Ref<BuddyUserContentV1>>
+  hasUnsentContent: State<boolean>
   composerContent: Readonly<Ref<JSONContent>>
   contextUsage: State<ChatContextUsage | null>
   draft: State<string>
@@ -228,7 +232,8 @@ export interface TaskTranscript {
   runOutputs: State<readonly LocalRunOutput[]>
   runs: State<readonly LocalRun[]>
   timelineItems: State<readonly LocalConversationTimelineItem[]>
-  activateBranch: (branchId: string) => Promise<boolean>
+  activateBranch: (branchId: string, beside?: boolean) => Promise<boolean>
+  refreshBranches: () => Promise<void>
   loadOlderMessages: () => Promise<boolean>
 }
 
@@ -246,6 +251,7 @@ export interface TaskStatus {
 }
 
 export interface TaskDraftRestoration {
+  localCopies?: State<readonly DraftRecoveryRecord[]>
   state: State<DraftRestorationState>
   conflict: State<DraftRestorationConflict | null>
   restore: () => Promise<void>
@@ -327,4 +333,7 @@ export interface TaskCapability {
   flushDrafts: () => Promise<boolean>
   dispose: () => void
 }
+export type { ChatAgentTurn } from './model/transcript/chatAgentTurn'
+
+export type { DesktopTerminalShell } from './model/transcript/typing'
 export type { TaskResourcePanel } from './state/context-panel/useTaskResourcePanel'

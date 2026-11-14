@@ -19,7 +19,12 @@ const contextPanelModes = computed(() => [
   { label: t('desktop.settings.contextPanelSpace'), value: 'space' },
   { label: t('desktop.settings.contextPanelIndependent'), value: 'independent' },
 ])
+const exitBehaviors = computed(() => [
+  { label: t('desktop.settings.exitKeepService'), value: 'keep_service' },
+  { label: t('desktop.settings.exitStopService'), value: 'stop_service' },
+])
 const labels = computed(() => ({
+  exitBehavior: { title: t('desktop.settings.exitBehavior'), description: t('desktop.settings.exitBehaviorDescription'), testId: 'exit-behavior-setting' },
   language: { title: t('settings.language'), description: '', testId: undefined },
   contextPanelMode: { title: t('desktop.settings.contextPanelMode'), description: t('desktop.settings.contextPanelModeDescription'), testId: 'context-panel-mode-setting' },
   contextPanelGlobal: { title: t('desktop.settings.contextPanelGlobal'), description: t('desktop.settings.contextPanelGlobalDescription'), testId: 'context-panel-global-setting' },
@@ -36,6 +41,7 @@ function save(patch: LexoraConfigPatch) {
 <template>
   <DesktopSettingRow v-if="config" v-slot="{ controlAttrs }" :label="labels[field].title" :description="labels[field].description" :toggle="isToggle" :data-testid="labels[field].testId">
     <NSelect v-if="field === 'language'" v-bind="controlAttrs" :options="languageOptions" :value="config.desktop.language" :disabled="pending" @update:value="save({ desktop: { language: $event } })" />
+    <NSelect v-else-if="field === 'exitBehavior'" v-bind="controlAttrs" :options="exitBehaviors" :value="config.desktop.exitBehavior" :disabled="pending" @update:value="save({ desktop: { exitBehavior: $event } })" />
     <NSelect v-else-if="field === 'contextPanelMode'" v-bind="controlAttrs" :options="contextPanelModes" :value="config.desktop.contextPanelMode" :disabled="pending" @update:value="save({ desktop: { contextPanelMode: $event } })" />
     <NSwitch v-else-if="field === 'contextPanelGlobal'" v-bind="controlAttrs" :aria-disabled="pending" :round="false" :value="config.desktop.contextPanelGlobal" :loading="pending" :disabled="pending" @update:value="save({ desktop: { contextPanelGlobal: $event } })" />
     <NSwitch v-else-if="field === 'contextPanelAutoCollapse'" v-bind="controlAttrs" :aria-disabled="pending" :round="false" :value="config.desktop.contextPanelAutoCollapse" :loading="pending" :disabled="pending" @update:value="save({ desktop: { contextPanelAutoCollapse: $event } })" />

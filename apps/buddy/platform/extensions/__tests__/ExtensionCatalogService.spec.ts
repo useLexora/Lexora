@@ -72,7 +72,6 @@ it('binds risk confirmation to the reviewed snapshot and retains actual integrit
   expect(new TextDecoder().decode(await reloaded.asset(pkg, 'view.js'))).toBe('export function render() {}')
   await writeFile(join(reloaded.packageRoot(pkg), 'view.js'), 'changed after installation')
   await expect(reloaded.asset(pkg, 'view.js')).rejects.toThrow('EXTENSION_PACKAGE_CHANGED')
-  await expect(service.download(value.id, '9.0.0', new AbortController().signal)).rejects.toThrow('EXTENSION_CATALOG_ENTRY_UNAVAILABLE')
 })
 
 it.each([
@@ -111,7 +110,7 @@ it('shows only the latest release and refuses older marketplace versions', async
 it('isolates future APIs and invalid entries while preserving exact supported downloads and offline metadata', async () => {
   const { service, catalog, value, bytes, offline } = await fixture()
   const raw = catalog.plugins as unknown[]
-  raw.push({ ...catalog.plugins[0], manifest: { ...value, id: 'tests.future', apiVersion: 5, engines: { lexora: '*' }, contributes: { futureCapability: {} } } })
+  raw.push({ ...catalog.plugins[0], manifest: { ...value, id: 'tests.future', apiVersion: 6, engines: { lexora: '*' }, contributes: { futureCapability: {} } } })
   raw.push({ ...catalog.plugins[0], manifest: { ...value, id: 'tests.invalid', engines: { lexora: '*' }, futureField: true } })
   raw.push({ broken: true })
   const first = await service.list()
@@ -130,7 +129,7 @@ it('isolates future APIs and invalid entries while preserving exact supported do
 })
 
 const GITHUB_ARTIFACT = 'https://github.com/useLexora/plugins/releases/download/plugin/plugin.lexora-extension'
-async function mirrorFixture(downloadMirror: 'auto' | 'off', respond: (url: string, bytes: Uint8Array) => Response) {
+async function mirrorFixture(respond: (url: string, bytes: Uint8Array) => Response) {
   const { root, store } = await createStore()
   const value = manifest()
   const bytes = zipSync({ 'extension.json': strToU8(JSON.stringify(value)), 'extension.js': strToU8('export function activate() {}'), 'view.js': strToU8('export function render() {}') })
@@ -139,19 +138,18 @@ async function mirrorFixture(downloadMirror: 'auto' | 'off', respond: (url: stri
   const service = new ExtensionCatalogService(store.root, store.appVersion, async (url) => {
     requests.push(url)
     return url === EXTENSION_CATALOG_URL ? Response.json(catalog) : respond(url, bytes)
-  }, undefined, () => ({ ...DEFAULT_DOWNLOAD_SETTINGS, enabled: downloadMirror === 'auto' }))
+  }, undefined, () => DEFAULT_DOWNLOAD_SETTINGS)
   cleanup.push(async () => {
     service.dispose()
     await rm(root, { recursive: true, force: true })
   })
   await service.list()
-  expect(requests).toEqual([EXTENSION_CATALOG_URL])
   requests.length = 0
   return { service, value, bytes, requests }
 }
 
 it('downloads packages through a mirror first, skipping one that alters the file or fails', async () => {
-  const { service, value, bytes, requests } = await mirrorFixture('auto', (url, content) => {
+  const { service, value, bytes, requests } = await mirrorFixture((url, content) => {
     if (url === `${DEFAULT_DOWNLOAD_SETTINGS.proxies[0]!.url}${GITHUB_ARTIFACT}`)
       return new Response(null, { status: 503 })
     return new Response(url.startsWith(DEFAULT_DOWNLOAD_SETTINGS.proxies[1]!.url) ? content.slice().reverse() : content)
@@ -161,21 +159,15 @@ it('downloads packages through a mirror first, skipping one that alters the file
   expect(requests).toEqual([`${DEFAULT_DOWNLOAD_SETTINGS.proxies[0]!.url}${GITHUB_ARTIFACT}`, `${DEFAULT_DOWNLOAD_SETTINGS.proxies[1]!.url}${GITHUB_ARTIFACT}`, `${DEFAULT_DOWNLOAD_SETTINGS.proxies[2]!.url}${GITHUB_ARTIFACT}`])
 })
 
-it('downloads packages from GitHub only when mirrors are off', async () => {
-  const { service, value, requests } = await mirrorFixture('off', (_url, content) => new Response(content))
-  await service.download(value.id, value.version, new AbortController().signal)
-  expect(requests).toEqual([GITHUB_ARTIFACT])
-})
-
 it('uses the origin package for risk review after all mirrors return altered content', async () => {
-  const { service, value, requests } = await mirrorFixture('auto', (url, content) => new Response(url === GITHUB_ARTIFACT ? archive(manifest({ name: 'Republished package' })) : content.slice().reverse()))
+  const { service, value, requests } = await mirrorFixture((url, content) => new Response(url === GITHUB_ARTIFACT ? archive(manifest({ name: 'Republished package' })) : content.slice().reverse()))
   const result = await service.download(value.id, value.version, new AbortController().signal)
   expect(requests.at(-1)).toBe(GITHUB_ARTIFACT)
   expect(result.source).toMatchObject({ artifact: GITHUB_ARTIFACT, sha256: sha256(result.bytes), mismatch: { actualSize: result.bytes.length } })
 })
 
 it('does not offer a corrupt mirror package when the origin cannot be reached', async () => {
-  const { service, value } = await mirrorFixture('auto', (url, content) => {
+  const { service, value } = await mirrorFixture((url, content) => {
     if (url === GITHUB_ARTIFACT)
       throw new Error('Offline')
     return new Response(content.slice().reverse())

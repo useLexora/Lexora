@@ -6,6 +6,7 @@ import { registerRuntimeRequest } from '../../rpc/runtimeRequest'
 
 export function registerExecutionRpc(options: { rpc: RuntimeRequestRegistrar, service: ExecutionPresentationService, inputs: ExecutionComposerInputService }): () => void {
   const stops = [
+    registerRuntimeRequest(options.rpc, executionPresentationRpc.activity, input => options.service.activity(input)),
     registerRuntimeRequest(options.rpc, executionPresentationRpc.list, input => options.service.list(input)),
     registerRuntimeRequest(options.rpc, executionPresentationRpc.detail, input => options.service.detail(input)),
     registerRuntimeRequest(options.rpc, executionPresentationRpc.inputs, input => options.service.inputs(input)),

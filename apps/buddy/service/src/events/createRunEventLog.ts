@@ -11,6 +11,8 @@ export interface CreateRunEventLogOptions extends RunEventLogCallbacks {
 }
 
 export function createRunEventLog(options: CreateRunEventLogOptions): RunEventLog {
+  if (options.database.prepare('SELECT 1 FROM sqlite_master WHERE type = \'table\' AND name = \'storage_profile\'').get())
+    throw new Error('Legacy JSONL replay cannot open a migration candidate or SQLite authority')
   const queries = new RunEventQueries(options.database)
   return new RunEventLog({
     onObserverError: options.onObserverError,

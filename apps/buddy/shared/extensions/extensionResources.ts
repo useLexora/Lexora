@@ -74,3 +74,5 @@ const mimeTypes: Readonly<Record<string, string>> = {
 export function extensionResourceMimeType(extension: string): string {
   return mimeTypes[extension.toLowerCase()] ?? 'application/octet-stream'
 }
+
+export const extensionResourceWriteRequestSchema = z.object({ id: z.string().uuid(), offset: z.number().int().min(0).optional(), base64: z.string().max(128 * 1024).regex(/^(?:[A-Z0-9+/]{4})*(?:[A-Z0-9+/]{2}==|[A-Z0-9+/]{3}=)?$/i).optional() }).strict()

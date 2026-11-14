@@ -11,12 +11,12 @@ import { createSandboxEnvironment } from '../../../platform/process/sandboxEnvir
 import { resolveWindowsSandbox } from '../../../platform/process/windowsSandbox'
 import { resolveSensitivePathRoots } from '../../../service/src/permissions/sensitivePaths'
 import { runSandboxCommand } from '../../../service/src/sandbox/runSandboxCommand'
-import sandboxProcessPath from '../../../service/src/sandbox/sandboxProcess?modulePath'
 import { Emitter } from '../../../shared/events/Emitter'
 import { sandboxLifecycleNotificationSchema } from '../../../shared/permissions/sandboxLifecycle'
 import { SANDBOX_RPC_TIMEOUT_MS, sandboxCancelSchema, sandboxCommandSchema, sandboxNetworkRequestSchema, sandboxOutputSchema, sandboxPreparationSchema, sandboxProcessInputSchema, sandboxSettlementAckSchema, sandboxSettlementSchema } from '../../../shared/permissions/shellSandbox'
 import { isLinux, isWindows, OPERATING_SYSTEM, SHELL_SANDBOX_BACKEND } from '../../../shared/platform/identifiers'
 import { BuddyServicePeer } from '../runtime/BuddyServicePeer'
+import sandboxProcessPath from './sandboxProcess?modulePath'
 import { WindowsSandboxPreparation } from './WindowsSandboxPreparation'
 
 export interface SandboxHostOptions {

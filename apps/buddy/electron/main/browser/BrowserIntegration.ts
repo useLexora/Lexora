@@ -1,5 +1,6 @@
 import type { BrowserWindow } from 'electron'
 import type { LocalEndpoint } from '../../../platform/ipc/localTransport'
+import type { DesktopBrowserPresentationInput } from '../../../shared/browser/browserDesktopApi'
 import type { BrowserPreferences } from '../../../shared/browser/browserPreferences'
 import type { ApplicationDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import { DESKTOP_IPC_CHANNELS } from '../../shared/desktopApi'
@@ -8,6 +9,7 @@ import { BrowserAdapterTestLeasePublisher } from './BrowserAdapterTestLeasePubli
 import { BrowserDataService } from './BrowserDataService'
 import { BrowserHost } from './BrowserHost'
 import { BrowserOperationGuard } from './BrowserOperationGuard'
+import { BrowserPresentationHost } from './BrowserPresentationHost'
 import { BrowserScreenshotService } from './BrowserScreenshotService'
 
 interface BrowserIntegrationOptions {
@@ -23,6 +25,8 @@ export class BrowserIntegration {
   readonly adapter: BrowserAdapterServer
   readonly data: BrowserDataService
   readonly screenshots: BrowserScreenshotService
+  readonly #presentation = new BrowserPresentationHost((sessionId, visible) => this.#host?.setSurface({ sessionId, visible }))
+  #window: BrowserWindow | null = null
   readonly #operations = new BrowserOperationGuard()
   #host: BrowserHost | null = null
   #adapterStarted = false
@@ -43,7 +47,23 @@ export class BrowserIntegration {
   }
 
   bindWindow(window: BrowserWindow): void {
-    this.closeWindow()
+    this.#window = window
+    this.#presentation.bindWindow(window)
+  }
+
+  acquirePresentation(window: BrowserWindow): string {
+    return this.#presentation.acquire(window)
+  }
+
+  async present(window: BrowserWindow, input: DesktopBrowserPresentationInput): Promise<string | null> {
+    if (this.host?.getState(input.sessionId).pageId !== input.pageId)
+      throw new Error('BROWSER_PAGE_FAILED')
+    return this.#presentation.present(window, input)
+  }
+
+  #startHost(): void {
+    if (this.host)
+      return
     this.#host = new BrowserHost({
       getFreezeDelay: (visible) => {
         if (!this.#options.isTaskLinked?.())
@@ -54,22 +74,24 @@ export class BrowserIntegration {
           : null
       },
       onActivityError: this.#options.onActivityError,
-      window,
+      createPage: descriptor => this.#presentation.createPage(descriptor),
       operations: this.#operations,
       getDefaultZoomFactor: () => this.#options.getPreferences().defaultZoomFactor,
       requestGuestAttachment: () => {
-        if (!window.isDestroyed())
-          window.webContents.send(DESKTOP_IPC_CHANNELS.browserGuestsChanged)
+        this.#send(DESKTOP_IPC_CHANNELS.browserGuestsChanged)
       },
       revokeSession: id => this.adapter.revokeSession(id),
     })
     this.#host.onDidChange((change) => {
-      if ((change.kind === 'session' || (change.kind === 'guest' && change.status === 'detached')) && !window.isDestroyed())
-        window.webContents.send(DESKTOP_IPC_CHANNELS.browserGuestsChanged)
+      if (change.kind === 'session' || (change.kind === 'guest' && change.status === 'detached'))
+        this.#send(DESKTOP_IPC_CHANNELS.browserGuestsChanged)
     })
     this.#host.onDidChange((change) => {
-      if (change.kind === 'state' && !window.isDestroyed())
-        window.webContents.send(DESKTOP_IPC_CHANNELS.browserStateChanged, change.state)
+      if (change.kind === 'state') {
+        if (!change.state.visible)
+          this.#presentation.hide(change.state.sessionId)
+        this.#send(DESKTOP_IPC_CHANNELS.browserStateChanged, change.state)
+      }
     })
     this.#host.onDidChange((change) => {
       if (change.kind === 'state')
@@ -93,6 +115,17 @@ export class BrowserIntegration {
   }
 
   closeWindow(): void {
+    this.#presentation.detachWindow()
+    this.#window = null
+  }
+
+  #send(channel: string, value?: unknown): void {
+    const window = this.#window
+    if (window && !window.isDestroyed())
+      window.webContents.send(channel, value)
+  }
+
+  #stopHost(): void {
     const host = this.#host
     host?.dispose()
     if (host) {
@@ -103,6 +136,7 @@ export class BrowserIntegration {
   }
 
   async startAdapter(): Promise<void> {
+    this.#startHost()
     await this.adapter.start()
     this.#adapterStarted = true
     if (this.#options.testBrokerSocketPath) {
@@ -114,6 +148,7 @@ export class BrowserIntegration {
   }
 
   async stopAdapter(): Promise<void> {
+    this.#stopHost()
     await Promise.all([...this.#closingHosts])
     this.#testLeasePublisher?.dispose()
     this.#testLeasePublisher = null
@@ -121,5 +156,6 @@ export class BrowserIntegration {
       this.#adapterStarted = false
       await this.adapter.dispose()
     }
+    this.#presentation.dispose()
   }
 }

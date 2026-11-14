@@ -14,7 +14,7 @@ export default antfu({
     '**/native-pet/target/**',
   ],
 }, {
-  files: ['apps/buddy/{src,shared,platform}/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,vue}'],
+  files: ['apps/buddy/{src,shared,platform,service}/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,vue}'],
   plugins: {
     buddy: {
       rules: {

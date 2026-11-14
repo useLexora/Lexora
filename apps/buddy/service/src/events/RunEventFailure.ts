@@ -1,4 +1,5 @@
 import type { BuddyRunEvent } from './BuddyRunEvent'
+import { readTransactionFailure } from '../storage/transaction'
 
 export interface RunEventFailureScope {
   firstSequence: number | null
@@ -91,6 +92,19 @@ export class RunEventStorageError extends RunEventLogFatalError {
     this.commitState = commitState
     this.operation = operation
     this.stage = stage
+  }
+}
+
+export class RunEventDatabaseError extends RunEventLogFatalError {
+  readonly code = 'EVENT_STORAGE_FAILED'
+  readonly commitState: 'not_applicable' | 'unknown'
+  readonly operation: 'append' | 'checkpoint' | 'compact' | 'read'
+
+  constructor(runId: string, operation: RunEventDatabaseError['operation'], cause: unknown) {
+    super('Lexora Buddy run event database failed', runEventFailureScope(runId), { cause })
+    this.name = 'RunEventDatabaseError'
+    this.operation = operation
+    this.commitState = readTransactionFailure(cause)?.outcome === 'unknown' ? 'unknown' : 'not_applicable'
   }
 }
 

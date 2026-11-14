@@ -2,12 +2,12 @@ import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import type { ConnectorCredential, OAuthConnectorCredential } from '../../../../shared/connectors/connectorCredentials'
 import type { ConnectorRuntimeState, ConnectorToolSummary } from '../../../../shared/connectors/connectorState'
 import type { Event, ListenerErrorHandler } from '../../../../shared/events/Emitter'
-import type { RuntimeRpcPeerContract } from '../../../../shared/runtime/rpcPeer'
 import type { BuddyCapabilityResourceRevision } from '../../agent/extensions/BuddyCapability'
 import type { BuddyToolDisclosurePolicy } from '../../agent/extensions/discovery/toolDiscoveryContract'
 import type { BuddyToolClassification } from '../../approvals/toolClassification'
 import type { ConnectorRepository, McpServerRecord, McpServerWrite } from '../../storage/connectorRepository'
 import type { ManagedCapabilityRecord, ManagedCapabilityRepository } from '../../storage/managedCapabilityRepository'
+import type { ConnectorSecretStore } from './McpCredentialChanges'
 import type { McpConnectionEvent, McpConnectorDetails, McpConnectorEvent } from './mcpEvents'
 import type { McpServerConfig } from './mcpSchemas'
 import type { McpResultWriter } from './mcpToolResults'
@@ -16,20 +16,16 @@ import { connectorCredentialSchema } from '../../../../shared/connectors/connect
 import { managedMcpCredentialTarget } from '../../../../shared/connectors/managedMcp'
 import { Emitter } from '../../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../../shared/events/eventSnapshot'
-import { credentialMutationResultSchema, credentialReadResultSchema } from '../../../../shared/runtime/credentialProtocol'
 import { createMcpTools } from './createMcpTools'
 import { McpConnectionManager } from './McpConnectionManager'
+import { McpCredentialChanges } from './McpCredentialChanges'
 import { McpClientError, mcpErrorCode } from './mcpErrors'
 import { loginMcpOAuth, McpOAuthProvider } from './McpOAuthProvider'
 import { mcpServerConfigSchema } from './mcpSchemas'
 import { McpToolNames } from './mcpToolNames'
 import { waitForMcpOperation } from './waitForMcpOperation'
 
-export interface ConnectorSecretStore {
-  delete: (id: string) => Promise<void>
-  read: (id: string) => Promise<ConnectorCredential | null>
-  write: (id: string, credential: ConnectorCredential) => Promise<void>
-}
+export type { ConnectorSecretStore } from './McpCredentialChanges'
 
 export interface McpConnectorServiceOptions {
   connectors: ConnectorRepository
@@ -62,7 +58,7 @@ export interface SaveMcpConnectorInput {
 export class McpConnectorService {
   readonly #connectors: ConnectorRepository
   readonly #options: McpConnectorServiceOptions
-  readonly #secrets: ConnectorSecretStore
+  readonly #credentials: McpCredentialChanges
   readonly #manager: McpConnectionManager
   readonly #toolNames = new McpToolNames()
   readonly #managedTargets = new Map<string, string>()
@@ -80,7 +76,7 @@ export class McpConnectorService {
     this.#options = options
     this.#events = new Emitter(options.onListenerError ?? (() => console.error('MCP_CONNECTOR_OBSERVER_FAILED')))
     this.#connectors = options.connectors
-    this.#secrets = options.secrets
+    this.#credentials = new McpCredentialChanges(options.secrets, (id, event) => this.#publish(id, event))
     for (const source of options.managed?.listKind('mcp') ?? []) {
       if (source.kind === 'mcp' && 'authentication' in source.definition)
         this.#managedTargets.set(source.id, managedMcpCredentialTarget(source.definition))
@@ -183,21 +179,14 @@ export class McpConnectorService {
         this.#options.managed!.clearConfiguration(id)
         return
       }
-      const previous = record.credentialRef ? await this.#secrets.read(record.credentialRef) : null
-      let saved: McpServerRecord
-      try {
-        if (record.credentialRef)
-          await this.#deleteCredential(record.credentialRef, id)
-        saved = this.#connectors.configureManaged(
+      const saved = await this.#credentials.commit({
+        connectorId: id,
+        replacement: record.credentialRef ? { ref: record.credentialRef, value: null } : null,
+        commit: () => this.#connectors.configureManaged(
           { ...record, credentialRef: null, enabled: false, toolExposure: 'deferred', updatedAt: new Date().toISOString() },
           { credentialTarget: null, userEnabled: false, unavailableReason: null },
-        )
-      }
-      catch (error) {
-        if (record.credentialRef)
-          await this.#restoreSecret(record.credentialRef, previous, id)
-        throw error
-      }
+        ),
+      })
       this.#manager.clearCatalog(id)
       this.#configurationCommitted(record, saved)
     })
@@ -227,21 +216,14 @@ export class McpConnectorService {
         throw new McpConnectorError('VALIDATION_FAILED')
       if (input.credential.mode === 'replace' && (!connectorCredentialSchema.safeParse(input.credential.value).success || !credentialMatchesTransport(input.credential.value, parsed.data.transport)))
         throw new McpConnectorError('VALIDATION_FAILED')
-      const previous = previousRef && credentialChanged ? await this.#secrets.read(previousRef) : null
       const credentialRef = input.credential.mode === 'replace' ? previousRef ?? parsed.data.id : input.credential.mode === 'keep' ? previousRef : null
-      let record: McpServerRecord
-      try {
-        if (input.credential.mode === 'replace')
-          await this.#writeCredential(credentialRef!, input.credential.value, parsed.data.id)
-        else if (input.credential.mode === 'clear' && previousRef)
-          await this.#deleteCredential(previousRef, parsed.data.id)
-        record = this.#persistConfig({ ...parsed.data, credentialRef }, credentialChanged)
-      }
-      catch (error) {
-        if (credentialChanged)
-          await this.#restoreSecret(credentialRef ?? previousRef ?? parsed.data.id, previous, parsed.data.id)
-        throw error
-      }
+      const record = await this.#credentials.commit({
+        connectorId: parsed.data.id,
+        replacement: input.credential.mode === 'replace'
+          ? { ref: credentialRef!, value: input.credential.value }
+          : input.credential.mode === 'clear' && previousRef ? { ref: previousRef, value: null } : null,
+        commit: () => this.#persistConfig({ ...parsed.data, credentialRef }, credentialChanged),
+      })
       if (!existing || !sameExecutionTarget(existing, parsed.data) || credentialChanged)
         this.#manager.clearCatalog(record.id)
       return record
@@ -294,15 +276,11 @@ export class McpConnectorService {
       if (!parsed.success || !credentialMatchesTransport(parsed.data, record.transport))
         throw new McpConnectorError('VALIDATION_FAILED')
       const credentialRef = record.credentialRef ?? record.id
-      const previous = await this.#secrets.read(credentialRef)
-      try {
-        await this.#writeCredential(credentialRef, parsed.data, id)
-        this.#persistConfig(toConfig({ ...record, credentialRef, enabled: record.transport === 'stdio' ? false : record.enabled }), true)
-      }
-      catch (error) {
-        await this.#restoreSecret(credentialRef, previous, id)
-        throw error
-      }
+      await this.#credentials.commit({
+        connectorId: id,
+        replacement: { ref: credentialRef, value: parsed.data },
+        commit: () => this.#persistConfig(toConfig({ ...record, credentialRef, enabled: record.transport === 'stdio' ? false : record.enabled }), true),
+      })
       this.#manager.clearCatalog(id)
     })
   }
@@ -317,15 +295,11 @@ export class McpConnectorService {
       const record = this.#requireConnector(id)
       if (!record.credentialRef)
         return
-      const previous = await this.#secrets.read(record.credentialRef)
-      try {
-        await this.#deleteCredential(record.credentialRef, id)
-        this.#persistConfig(toConfig({ ...record, credentialRef: null, enabled: record.transport === 'stdio' ? false : record.enabled }), true)
-      }
-      catch (error) {
-        await this.#restoreSecret(record.credentialRef, previous, id)
-        throw error
-      }
+      await this.#credentials.commit({
+        connectorId: id,
+        replacement: { ref: record.credentialRef, value: null },
+        commit: () => this.#persistConfig(toConfig({ ...record, credentialRef: null, enabled: record.transport === 'stdio' ? false : record.enabled }), true),
+      })
       this.#manager.clearCatalog(id)
     }, () => this.#connectors.findById(id)?.credentialRef != null)
   }
@@ -341,20 +315,12 @@ export class McpConnectorService {
       const record = this.#connectors.findById(id)
       if (!record)
         return false
-      const previous = record.credentialRef ? await this.#secrets.read(record.credentialRef) : null
-      if (record.credentialRef)
-        await this.#deleteCredential(record.credentialRef, id)
-      let removed: boolean
-      try {
-        removed = this.#connectors.remove(id)
-      }
-      catch (error) {
-        if (record.credentialRef)
-          await this.#restoreSecret(record.credentialRef, previous, id)
-        throw error
-      }
-      if (!removed && record.credentialRef)
-        await this.#restoreSecret(record.credentialRef, previous, id)
+      const removed = await this.#credentials.commit({
+        connectorId: id,
+        replacement: record.credentialRef ? { ref: record.credentialRef, value: null } : null,
+        commit: () => this.#connectors.remove(id),
+        committed: removed => removed,
+      })
       if (removed) {
         this.#publish(id, { type: 'configuration', kind: 'removed', enabled: false, executionChanged: true })
         this.#manager.clearCatalog(id)
@@ -503,6 +469,33 @@ export class McpConnectorService {
     return { resourceRevisions: copyEventSnapshot(resourceRevisions), classifications, diagnostics, tools, disclosure, available: name => availability.get(name)?.() ?? false }
   }
 
+  async suspendPlatform(): Promise<void> {
+    this.#quiescing = true
+    for (const login of this.#logins.values())
+      login.controller.abort()
+    const ids = this.#connectors.list().map(record => record.id)
+    for (const id of ids) this.#manager.pause(id)
+    const reset = Promise.allSettled(ids.map(id => this.#manager.reset(id)))
+    const operations = [
+      ...[...this.#logins.values()].map(login => login.operation),
+      ...this.#mutations.values(),
+      ...this.#secretWrites.values(),
+      ...this.#tests,
+    ]
+    await Promise.allSettled(operations)
+    const results = await reset
+    const failures = results.filter(result => result.status === 'rejected').map(result => result.reason)
+    if (failures.length)
+      throw new AggregateError(failures, 'MCP_PLATFORM_CLEANUP_FAILED')
+  }
+
+  resumePlatform(): void {
+    if (this.#closed)
+      throw new McpClientError('MCP_SERVER_UNAVAILABLE')
+    this.#quiescing = false
+    for (const record of this.#connectors.list()) this.#manager.resume(record.id)
+  }
+
   async quiesce(): Promise<void> {
     this.#quiescing = true
     for (const login of this.#logins.values())
@@ -595,31 +588,24 @@ export class McpConnectorService {
       }
       const ref = replacing ? existing.credentialRef ?? source.id : credential.mode === 'clear' ? null : existing.credentialRef
       const changed = credential.mode !== 'keep'
-      const previous = changed && existing.credentialRef ? await this.#secrets.read(existing.credentialRef) : null
-      let saved: McpServerRecord
-      try {
-        if (replacing)
-          await this.#writeCredential(ref!, credential.value, source.id)
-        else if (credential.mode === 'clear' && existing.credentialRef)
-          await this.#deleteCredential(existing.credentialRef, source.id)
-        if (replacing)
-          this.#assertManagedCurrent(source, true)
-        else if (this.#requireManaged(source.id).revision !== source.revision)
-          throw new McpClientError('MCP_CONNECTOR_CHANGED')
-        saved = this.#connectors.configureManaged(
+      const saved = await this.#credentials.commit({
+        connectorId: source.id,
+        replacement: replacing ? { ref: ref!, value: credential.value } : credential.mode === 'clear' && existing.credentialRef ? { ref: existing.credentialRef, value: null } : null,
+        validate: () => {
+          if (replacing)
+            this.#assertManagedCurrent(source, true)
+          else if (this.#requireManaged(source.id).revision !== source.revision)
+            throw new McpClientError('MCP_CONNECTOR_CHANGED')
+        },
+        commit: () => this.#connectors.configureManaged(
           { ...existing, credentialRef: ref, toolExposure: config.toolExposure ?? existing.toolExposure, enabled: false, updatedAt: new Date().toISOString() },
           {
             credentialTarget: changed ? ref ? managedMcpCredentialTarget(definition) : null : source.credentialTarget,
             unavailableReason: changed ? ref || definition.authentication === 'none' ? null : 'authentication_required' : existing.managed?.unavailableReason ?? source.unavailableReason,
             userEnabled: config.enabled,
           },
-        )
-      }
-      catch (error) {
-        if (changed)
-          await this.#restoreSecret(ref ?? existing.credentialRef ?? source.id, previous, source.id)
-        throw error
-      }
+        ),
+      })
       if (changed)
         this.#manager.clearCatalog(source.id)
       this.#configurationCommitted(existing, saved)
@@ -646,31 +632,30 @@ export class McpConnectorService {
         throw new McpClientError('MCP_CONNECTOR_CHANGED')
       assertCurrent()
       const ref = record.credentialRef ?? record.id
-      const previous = await this.#secrets.read(ref)
-      try {
-        signal.throwIfAborted()
-        await this.#writeCredential(ref, credential, id)
-        signal.throwIfAborted()
-        if (generation !== this.#manager.generation(id))
-          throw new McpClientError('MCP_CONNECTOR_CHANGED')
-        assertCurrent()
-        if (source) {
-          const current = this.#requireManaged(id)
-          const saved = this.#connectors.configureManaged(
-            { ...record, credentialRef: ref, updatedAt: new Date().toISOString() },
-            { userEnabled: current.userEnabled, credentialTarget: managedMcpCredentialTarget(this.#managedDefinition(source)), unavailableReason: credential.tokens ? null : 'authentication_required' },
-          )
-          this.#configurationCommitted(record, saved)
-        }
-        else if (record.credentialRef !== ref) {
-          const saved = this.#connectors.upsert({ ...record, credentialRef: ref, updatedAt: new Date().toISOString() })
-          this.#configurationCommitted(record, saved)
-        }
-      }
-      catch (error) {
-        await this.#restoreSecret(ref, previous, id)
-        throw error
-      }
+      await this.#credentials.commit({
+        connectorId: id,
+        replacement: { ref, value: credential },
+        validate: () => {
+          signal.throwIfAborted()
+          if (this.#closed || generation !== this.#manager.generation(id))
+            throw new McpClientError('MCP_CONNECTOR_CHANGED')
+          assertCurrent()
+        },
+        commit: () => {
+          if (source) {
+            const current = this.#requireManaged(id)
+            const saved = this.#connectors.configureManaged(
+              { ...record, credentialRef: ref, updatedAt: new Date().toISOString() },
+              { userEnabled: current.userEnabled, credentialTarget: managedMcpCredentialTarget(this.#managedDefinition(source)), unavailableReason: credential.tokens ? null : 'authentication_required' },
+            )
+            this.#configurationCommitted(record, saved)
+          }
+          else if (record.credentialRef !== ref) {
+            const saved = this.#connectors.upsert({ ...record, credentialRef: ref, updatedAt: new Date().toISOString() })
+            this.#configurationCommitted(record, saved)
+          }
+        },
+      })
     })
   }
 
@@ -693,30 +678,6 @@ export class McpConnectorService {
     const saved = this.#connectors.upsert(next)
     this.#configurationCommitted(existing, saved)
     return saved
-  }
-
-  async #writeCredential(ref: string, credential: ConnectorCredential, connectorId: string): Promise<void> {
-    await this.#secrets.write(ref, credential)
-    this.#publish(connectorId, { type: 'credential', status: 'written', presence: 'present' })
-  }
-
-  async #deleteCredential(ref: string, connectorId: string): Promise<void> {
-    await this.#secrets.delete(ref)
-    this.#publish(connectorId, { type: 'credential', status: 'deleted', presence: 'absent' })
-  }
-
-  async #restoreSecret(ref: string, credential: ConnectorCredential | null, connectorId: string): Promise<void> {
-    try {
-      if (credential)
-        await this.#secrets.write(ref, credential)
-      else
-        await this.#secrets.delete(ref)
-      this.#publish(connectorId, { type: 'credential', status: 'restored', presence: credential ? 'present' : 'absent' })
-    }
-    catch (error) {
-      this.#publish(connectorId, { type: 'credential', status: 'restore-failed', presence: 'unknown' })
-      throw error
-    }
   }
 
   #configurationCommitted(previous: McpServerRecord | null | undefined, current: McpServerRecord): void {
@@ -743,42 +704,6 @@ function enqueue<T>(queue: Map<string, Promise<unknown>>, id: string, action: ()
       queue.delete(id)
   }).catch(() => {})
   return operation
-}
-
-export class HostConnectorSecretStore implements ConnectorSecretStore {
-  readonly #peer: RuntimeRpcPeerContract
-
-  constructor(peer: RuntimeRpcPeerContract) {
-    this.#peer = peer
-  }
-
-  async read(id: string): Promise<ConnectorCredential | null> {
-    const response = credentialReadResultSchema.parse(await this.#peer.request(
-      'host.secrets.read',
-      { id, namespace: 'connectors' },
-    ))
-    if (!response.ok)
-      throw new McpConnectorError(response.error.code)
-    return response.value === null ? null : connectorCredentialSchema.parse(response.value)
-  }
-
-  async write(id: string, credential: ConnectorCredential): Promise<void> {
-    const response = credentialMutationResultSchema.parse(await this.#peer.request(
-      'host.secrets.write',
-      { id, namespace: 'connectors', value: connectorCredentialSchema.parse(credential) },
-    ))
-    if (!response.ok)
-      throw new McpConnectorError(response.error.code)
-  }
-
-  async delete(id: string): Promise<void> {
-    const response = credentialMutationResultSchema.parse(await this.#peer.request(
-      'host.secrets.delete',
-      { id, namespace: 'connectors' },
-    ))
-    if (!response.ok)
-      throw new McpConnectorError(response.error.code)
-  }
 }
 
 export class McpConnectorError extends Error {

@@ -130,6 +130,13 @@ export class DesktopStartup {
     return true
   }
 
+  detachRenderer(): void {
+    if (this.#renderer)
+      this.#retiredRenderers.add(this.#renderer.sourceId)
+    this.#renderer = null
+    this.#update()
+  }
+
   stopping(): void {
     if (this.#terminalStatus)
       return

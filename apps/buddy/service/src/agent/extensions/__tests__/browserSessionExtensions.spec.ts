@@ -239,7 +239,7 @@ function createCompositionServices(
         },
       },
     } as unknown as BuddyCapabilityServices, new PetActionService({
-      peer: { request: async () => { throw new Error('No host action is expected during extensions') } },
+      executeSequence: async () => { throw new Error('No host action is expected during extensions') },
     })),
     directoryGrants: {
       assertCurrent: () => {},

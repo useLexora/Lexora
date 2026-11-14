@@ -16,6 +16,7 @@ export const builtinSettingsCatalog = {
   'browser': { section: 'integrations', requiresRuntime: false },
   'file-opening': { section: 'integrations', requiresRuntime: false },
   'storage': { section: 'system', requiresRuntime: false },
+  'connections': { section: 'system', requiresRuntime: true },
   'proxy': { section: 'system', requiresRuntime: false },
   'logs': { section: 'system', requiresRuntime: false },
   'about': { section: 'system', requiresRuntime: false },

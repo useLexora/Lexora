@@ -2,8 +2,8 @@
 import type { LocalTaskMark, LocalTaskMarkState } from '@buddy-shared/conversation/taskMarkApi'
 import type { DropdownOption } from 'naive-ui'
 import type { TaskActivity } from '../../contracts'
-
 import type { BuddyLocale } from '@/i18n/buddyI18n'
+
 import type { DesktopTaskPinnedDropPosition } from '@/modules/tasks/widgets/task-index/taskPinnedItems'
 import {
   Archive20Regular,
@@ -14,6 +14,7 @@ import { computed, h, shallowRef, useId, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopOverflowingLabel from '@/modules/tasks/widgets/task-index/DesktopOverflowingLabel.vue'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
+import BuddyChatActivitySpinner from '../transcript/BuddyChatActivitySpinner.vue'
 import DesktopTaskActivity from './DesktopTaskActivity.vue'
 import DesktopTaskMarkSwatch from './DesktopTaskMarkSwatch.vue'
 import { formatTaskRelativeTime } from './taskRelativeTime'

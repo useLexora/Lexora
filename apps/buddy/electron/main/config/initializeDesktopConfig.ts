@@ -23,7 +23,7 @@ export async function initializeDesktopConfig(store: LexoraConfigStore, options:
     readdir(options.buddyHome).catch(missing),
   ])
   if (config || data?.length)
-    return store.read()
+    return store.initializeExitBehavior()
   return store.update({ desktop: { onboardingCompleted: false, language: resolveSystemLanguage(options.languages) } })
 }
 

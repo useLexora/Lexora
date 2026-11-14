@@ -3,6 +3,7 @@ import type { LocalApproval } from '@buddy-shared/permissions/approvalApi'
 import type { Ref } from 'vue'
 import type { ChatApprovalDecision } from '../../model/runs/typing'
 import { computed, readonly, shallowRef } from 'vue'
+import { projectApprovalDecisions } from '../../model/approvals/approvalDecisions'
 
 interface UseChatApprovalsOptions {
   api: LocalChatApi
@@ -24,18 +25,23 @@ export function useChatApprovals(options: UseChatApprovalsOptions) {
     if (resolvingApprovalActions.value.has(approvalId))
       return
     const approval = options.approvals.value.find(item => item.id === approvalId)
-    if (!approval || approval.status !== 'pending')
+    if (!approval || approval.status !== 'pending' || approval.review === null)
       return
 
+    if (!projectApprovalDecisions(approval, Date.now()).decisions.includes(decision)) {
+      await options.refresh()
+      return
+    }
+    const conditions = approval.review ? { runId: approval.runId, reviewVersion: approval.review.reviewVersion } : undefined
     resolvingApprovalActions.value = new Map([
       ...resolvingApprovalActions.value,
       [approvalId, decision],
     ])
     try {
       if (decision === 'deny')
-        await options.api.approvals.deny(approvalId)
+        await (conditions ? options.api.approvals.deny(approvalId, conditions) : options.api.approvals.deny(approvalId))
       else
-        await options.api.approvals.approve(approvalId, decision)
+        await (conditions ? options.api.approvals.approve(approvalId, decision, conditions) : options.api.approvals.approve(approvalId, decision))
       await options.refresh()
     }
     catch (error) {

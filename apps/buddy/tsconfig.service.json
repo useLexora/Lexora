@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.node.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./.output/cache/typescript/tsconfig.service.tsbuildinfo",
+    "types": ["node"]
+  },
+  "include": ["service/**/*.ts", "platform/**/*.ts", "shared/**/*.ts"],
+  "exclude": ["**/__tests__/**"]
+}

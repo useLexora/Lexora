@@ -13,7 +13,7 @@ import { AutomationService } from '../../automations/AutomationService'
 import { createAutomationRepositories } from '../../storage/automationRepository'
 import { openBuddyDatabase } from '../../storage/database'
 import { createSpaceRepository } from '../../storage/spaceRepository'
-import { registerSpaceRpc } from '../registerSpaceRpc'
+import { registerSpaceQueries, registerSpaceRpc } from '../registerSpaceRpc'
 import { SpaceDependents } from '../SpaceDependents'
 import { SpaceService } from '../SpaceService'
 
@@ -69,6 +69,7 @@ describe('registerSpaceRpc', () => {
       record: () => {},
     })
     registerSpaceRpc({ rpc: harness.rpc, service })
+    registerSpaceQueries({ rpc: harness.rpc, service })
 
     const created = await harness.invoke('spaces.create', {
       memoryScope: 'space_only',

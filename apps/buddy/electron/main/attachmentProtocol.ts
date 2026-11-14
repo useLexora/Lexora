@@ -1,4 +1,5 @@
 import type { BuddyServiceSupervisor } from './runtime/BuddyServiceSupervisor'
+import { Buffer } from 'node:buffer'
 import { readFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import process from 'node:process'
@@ -8,6 +9,7 @@ import { resolveBuddyFileReader } from '../../platform/native/nativeHost'
 import { artifactsRequestSchemas, artifactsResponseSchemas } from '../../shared/artifacts/artifactApi'
 import { attachmentsRequestSchemas } from '../../shared/conversation/attachmentApi'
 import { composerResourcesRpc } from '../../shared/conversation/composerApi'
+import { attachmentPreviewBytesSchema } from '../../shared/runtime/attachmentHostProtocol'
 import { handleMediaRequest } from './mediaProtocol'
 import { resolveDevelopmentRendererUrl } from './security/navigationPolicy'
 
@@ -20,7 +22,7 @@ export const attachmentSchemePrivileges: Electron.CustomScheme[] = [ATTACHMENT_P
   privileges: { secure: true, standard: true, stream: true, supportFetchAPI: true, corsEnabled: scheme === ARTIFACT_PROTOCOL || scheme === ATTACHMENT_PROTOCOL },
 }))
 
-export function installAttachmentProtocol(runtime: BuddyServiceSupervisor): () => void {
+export function installAttachmentProtocol(runtime: Pick<BuddyServiceSupervisor, 'request'>): () => void {
   const fileReader = resolveBuddyFileReader({ appPath: app.getAppPath(), isPackaged: app.isPackaged, resourcesPath: process.resourcesPath })
   const developmentUrl = resolveDevelopmentRendererUrl(process.env.ELECTRON_RENDERER_URL, app.isPackaged)
   const rendererOrigin = developmentUrl ? new URL(developmentUrl).origin : 'lexora-app://renderer'
@@ -70,6 +72,10 @@ export function installAttachmentProtocol(runtime: BuddyServiceSupervisor): () =
 
     try {
       const input = schema.parse({ [idKey]: id })
+      if (scheme === ATTACHMENT_PROTOCOL) {
+        const preview = attachmentPreviewBytesSchema.parse(await runtime.request('attachments.readPreview', input))
+        return new Response(Buffer.from(preview.data, 'base64'), { headers: { 'cache-control': 'private, max-age=300', 'content-type': preview.mimeType, 'x-content-type-options': 'nosniff' } })
+      }
       const preview = artifactsResponseSchemas.artifactPreview.parse(
         await runtime.request(method, input),
       )

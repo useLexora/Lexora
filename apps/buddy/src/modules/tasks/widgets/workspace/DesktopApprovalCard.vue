@@ -1,21 +1,21 @@
 <script setup lang="ts">
 import type { LocalApproval } from '@buddy-shared/permissions/approvalApi'
-import type { ApprovalGrantScope, ApprovalReuseScope, ApprovalReviewPayload } from '@buddy-shared/permissions/approvalReviewPayload'
-import type { BuddyExecutionProfile } from '@buddy-shared/permissions/executionProfile'
+import type { ApprovalGrantScope, ApprovalReuseScope } from '@buddy-shared/permissions/approvalReviewPayload'
 import type { DropdownOption } from 'naive-ui'
-import type { CSSProperties } from 'vue'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { ChatApprovalDecision } from '@/modules/tasks/model/runs/typing'
-import { approvalReviewPayloadSchema } from '@buddy-shared/permissions/approvalReviewPayload'
 import { ChevronUp16Regular, ShieldError20Regular, Warning20Regular } from '@vicons/fluent'
-import { NButton, NDescriptions, NDescriptionsItem, NDropdown } from 'naive-ui'
+import { useIntervalFn, useNow } from '@vueuse/core'
+import { NButton, NDropdown } from 'naive-ui'
 import { computed, h, shallowRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
-import { translateSystemAction, translateSystemInterruption } from '../../model/approvals/systemActionPresentation'
+import { projectApprovalDecisions } from '../../model/approvals/approvalDecisions'
+import { translateSystemAction } from '../../model/approvals/systemActionPresentation'
 import { useExecutionTree } from '../../state/runs/chatExecutionContext'
 import BuddyExecutionIdentity from '../executions/BuddyExecutionIdentity.vue'
 import { executionLabels } from '../executions/executionLabels'
+import DesktopApprovalDetails from './DesktopApprovalDetails.vue'
 
 const props = defineProps<{
   approval: LocalApproval
@@ -27,21 +27,6 @@ const { t } = useBuddyI18n(() => props.language)
 const tree = useExecutionTree()
 const execution = computed(() => tree?.records.value.find(record => record.runId === props.approval.runId))
 const labels = computed(() => executionLabels(props.language))
-const detailsProps = {
-  bordered: true,
-  column: 1,
-  contentStyle: { overflowWrap: 'anywhere', verticalAlign: 'middle', whiteSpace: 'pre-wrap' } satisfies CSSProperties,
-  labelPlacement: 'left' as const,
-  labelStyle: { overflowWrap: 'anywhere', verticalAlign: 'middle', width: '8rem' } satisfies CSSProperties,
-  size: 'small' as const,
-}
-const automationOperationKeys = {
-  delete: 'desktop.chat.processToolAutomationDelete',
-  pause: 'desktop.chat.processToolAutomationPause',
-  resume: 'desktop.chat.processToolAutomationResume',
-  run_now: 'desktop.chat.processToolAutomationRunNow',
-  upsert: 'desktop.chat.processToolAutomationUpsert',
-} as const
 const browserEffectKeys = {
   'account-change': 'desktop.approval.browser.effect.accountChange',
   'authorize': 'desktop.approval.browser.effect.authorize',
@@ -51,34 +36,13 @@ const browserEffectKeys = {
   'send': 'desktop.approval.browser.effect.send',
   'submit': 'desktop.approval.browser.effect.submit',
 } as const
-const executionProfileKeys: Record<BuddyExecutionProfile, 'desktop.chat.permissionModePolicy' | 'desktop.chat.executionProfileFull' | 'desktop.chat.executionProfileReadOnly'> = {
-  full_access: 'desktop.chat.executionProfileFull',
-  read_only: 'desktop.chat.executionProfileReadOnly',
-  workspace_write: 'desktop.chat.permissionModePolicy',
-}
-const review = computed<ApprovalReviewPayload | null>(() => {
-  const parsed = approvalReviewPayloadSchema.safeParse(props.approval.payload)
-  return parsed.success ? parsed.data : null
-})
-const shellReason = computed(() => (
-  review.value?.card === 'shell' && review.value.context
-    ? t(`desktop.approval.shell.reason.${review.value.context.reason}`)
-    : ''
-))
+const now = useNow({ scheduler: update => useIntervalFn(update, 1000) })
+const decisionState = computed(() => projectApprovalDecisions(props.approval, now.value.getTime()))
+const review = computed(() => decisionState.value.review)
 const systemEffect = computed(() => {
   if (review.value?.card !== 'system-action')
     return ''
   return translateSystemAction(props.language, review.value.action)
-})
-const systemInterruption = computed(() => {
-  if (review.value?.card !== 'system-action')
-    return ''
-  return translateSystemInterruption(props.language, review.value.interruption)
-})
-const automationOperation = computed(() => {
-  if (review.value?.card !== 'automation')
-    return ''
-  return t(automationOperationKeys[review.value.operation])
 })
 const browserEffect = computed(() => {
   if (review.value?.card !== 'browser-action')
@@ -88,24 +52,6 @@ const browserEffect = computed(() => {
   return review.value.effect
     ? t(browserEffectKeys[review.value.effect])
     : t('desktop.approval.browser.effect.unknown')
-})
-const pathGrant = computed(() => (
-  review.value?.card === 'paths' ? review.value.grant : null
-))
-const grantNotice = computed(() => {
-  const grant = pathGrant.value
-  if (!grant)
-    return ''
-  return t(grant.owner === 'space'
-    ? 'desktop.approval.paths.grantSpace'
-    : 'desktop.approval.paths.grantConversation', { root: grant.root })
-})
-const browserAction = computed(() => {
-  if (review.value?.card !== 'browser-action')
-    return ''
-  if (review.value.action === 'press')
-    return t('desktop.approval.browser.action.pressKey', { key: review.value.key ?? '' })
-  return t(`desktop.approval.browser.action.${review.value.action}`)
 })
 const approvalOperation = computed(() => (
   (review.value?.card === 'network-permission' ? t(`desktop.approval.network.${review.value.operation}`) : '')
@@ -139,14 +85,12 @@ const approvalDescription = computed(() => (
 const approveActionLabel = computed(() => review.value?.card === 'sandbox-directory'
   ? t('desktop.approval.sandbox.approveDirectory')
   : t('approvalAction.approve'))
-const canPersist = computed(() => {
-  const value = review.value
-  return value?.card === 'network-permission'
-    ? value.canPersist
-    : value?.card === 'paths'
-      ? Boolean(value.canPersist && value.grant)
-      : value?.card === 'sandbox-directory' && Boolean(value.persistentDirectory)
-})
+const reviewExpired = computed(() => decisionState.value.expired)
+const canApprove = computed(() => decisionState.value.canApprove)
+const canDeny = computed(() => decisionState.value.canDeny)
+const fullOperation = computed(() => props.approval.review ? JSON.stringify(props.approval.review.body, null, 2) : '')
+const showFullOperation = shallowRef(false)
+const canPersist = computed(() => decisionState.value.canPersist)
 const persistentNotice = computed(() => {
   const value = review.value
   if (!canPersist.value || !value)
@@ -159,10 +103,7 @@ const persistentNotice = computed(() => {
 const headingId = computed(() => `desktop-approval-${props.approval.id}-title`)
 const isResolving = computed(() => props.resolvingAction !== null)
 const scopeMenuOpen = shallowRef(false)
-const reuseScopes = computed<readonly ApprovalReuseScope[]>(() => (
-  review.value?.reuseScopes
-  ?? (review.value?.allowForTurn ? ['turn'] : [])
-))
+const reuseScopes = computed(() => decisionState.value.reuseScopes)
 const reuseOptions = computed<DropdownOption[]>(() => [
   ...(reuseScopes.value.length
     ? [{
@@ -206,6 +147,8 @@ function scopeLabel(scope: ApprovalReuseScope) {
   }
 }
 function approveForScope(scope: string | number) {
+  if (!canApprove.value)
+    return
   if (scope === 'persistent' && canPersist.value)
     emit('approve', 'persistent')
   else if (typeof scope === 'string' && reuseScopes.value.includes(scope as ApprovalReuseScope))
@@ -249,211 +192,28 @@ function renderScopeLabel(option: DropdownOption) {
     <p v-if="persistentNotice" class="text-muted text-[length:var(--buddy-chat-caption-font-size)] leading-[var(--buddy-chat-caption-line-height)]">
       {{ persistentNotice }}
     </p>
-    <section
-      v-if="review?.card === 'automation'"
-      class="desktop-approval-card__details"
-    >
-      <NDescriptions v-bind="detailsProps">
-        <NDescriptionsItem :label="t('desktop.approval.automation.operation')">
-          {{ automationOperation }}
-        </NDescriptionsItem>
-        <NDescriptionsItem :label="t('desktop.approval.automation.name')">
-          {{ review.name }}
-        </NDescriptionsItem>
-        <NDescriptionsItem :label="t('desktop.approval.automation.schedule')">
-          {{ review.scheduleSummary }}
-        </NDescriptionsItem>
-        <NDescriptionsItem :label="t('desktop.approval.automation.timezone')">
-          {{ review.timezone }}
-        </NDescriptionsItem>
-        <NDescriptionsItem :label="t('desktop.approval.automation.prompt')">
-          {{ review.promptSummary }}
-        </NDescriptionsItem>
-        <NDescriptionsItem :label="t('desktop.approval.automation.space')">
-          {{ review.spaceId ?? t('desktop.approval.automation.noSpace') }}
-        </NDescriptionsItem>
-        <NDescriptionsItem :label="t('desktop.approval.automation.model')">
-          {{ review.modelMode }}
-        </NDescriptionsItem>
-        <NDescriptionsItem :label="t('desktop.approval.automation.executionProfile')">
-          {{ t(executionProfileKeys[review.executionProfile]) }}
-        </NDescriptionsItem>
-      </NDescriptions>
-    </section>
-    <section
-      v-else-if="review?.card === 'sandbox-directory'"
-      class="desktop-approval-card__details"
-    >
-      <NDescriptions v-bind="detailsProps">
-        <NDescriptionsItem :label="t('desktop.approval.target')">
-          <code>{{ review.path }}</code>
-        </NDescriptionsItem>
-        <NDescriptionsItem :label="t('desktop.approval.authorizationBoundary')">
-          {{ t(review.access === 'read' ? 'desktop.approval.sandbox.directoryRead' : 'desktop.approval.sandbox.directoryWrite') }}
-        </NDescriptionsItem>
-        <NDescriptionsItem :label="t('desktop.approval.reason')">
-          {{ review.reason }}
-        </NDescriptionsItem>
-      </NDescriptions>
-    </section>
-    <section v-else-if="review?.card === 'network-permission'" class="desktop-approval-card__details">
-      <NDescriptions v-bind="detailsProps">
-        <NDescriptionsItem :label="t('desktop.approval.target')">
-          <code>{{ review.host }}<template v-if="review.port"> · {{ review.port }}</template></code>
-        </NDescriptionsItem>
-        <NDescriptionsItem :label="t('desktop.approval.effect')">
-          {{ t(`desktop.approval.network.${review.operation}`) }}
-        </NDescriptionsItem>
-        <NDescriptionsItem v-if="review.command" :label="t('desktop.approval.runCommand')">
-          <pre>{{ review.command }}</pre>
-        </NDescriptionsItem>
-      </NDescriptions>
-    </section>
-    <section
-      v-else-if="review?.card === 'sandbox-network'"
-      class="desktop-approval-card__details"
-    >
-      <NDescriptions v-bind="detailsProps">
-        <NDescriptionsItem :label="t('desktop.approval.target')">
-          <code>{{ review.host }} · {{ review.port }}</code>
-        </NDescriptionsItem>
-        <NDescriptionsItem :label="t('desktop.approval.runCommand')">
-          <pre>{{ review.command }}</pre>
-        </NDescriptionsItem>
-      </NDescriptions>
-    </section>
-    <section
-      v-else-if="review?.card === 'web'"
-      class="desktop-approval-card__details"
-    >
-      <NDescriptions v-bind="detailsProps">
-        <NDescriptionsItem :label="t(review.operation === 'search' ? 'desktop.approval.web.query' : 'desktop.approval.web.url')">
-          {{ review.target }}
-        </NDescriptionsItem>
-        <NDescriptionsItem :label="t('desktop.approval.web.provider')">
-          {{ review.provider ?? t('desktop.approval.web.providerAuto') }}
-        </NDescriptionsItem>
-      </NDescriptions>
-    </section>
-    <section
-      v-else-if="review?.card === 'network-target'"
-      class="desktop-approval-card__details"
-    >
-      <NDescriptions v-bind="detailsProps">
-        <NDescriptionsItem :label="t('desktop.approval.target')">
-          <code>{{ review.target }}</code>
-        </NDescriptionsItem>
-      </NDescriptions>
-    </section>
-    <section
-      v-else-if="review?.card === 'system-action'"
-      class="desktop-approval-card__details"
-    >
-      <NDescriptions v-bind="detailsProps">
-        <NDescriptionsItem :label="t('desktop.approval.target')">
-          {{ review.target.displayName }}
-        </NDescriptionsItem>
-        <NDescriptionsItem v-if="review.target.pid" label="PID">
-          {{ review.target.pid }}
-        </NDescriptionsItem>
-        <NDescriptionsItem v-if="review.target.serviceId" :label="t('desktop.approval.systemUnit')">
-          {{ review.target.serviceId }}
-        </NDescriptionsItem>
-        <NDescriptionsItem v-if="review.target.startedAt" :label="t('desktop.approval.processStartedAt')">
-          {{ review.target.startedAt }}
-        </NDescriptionsItem>
-        <NDescriptionsItem :label="t('desktop.approval.effect')">
-          {{ systemEffect }}
-        </NDescriptionsItem>
-        <NDescriptionsItem :label="t('desktop.approval.reason')">
-          {{ review.reason }}
-        </NDescriptionsItem>
-        <NDescriptionsItem :label="t('desktop.approval.interruption')">
-          {{ systemInterruption }}
-        </NDescriptionsItem>
-        <NDescriptionsItem :label="t('desktop.approval.expiresAt')">
-          {{ review.expiresAt }}
-        </NDescriptionsItem>
-      </NDescriptions>
-    </section>
-    <section
-      v-else-if="review?.card === 'browser-action'"
-      class="desktop-approval-card__details"
-    >
-      <NDescriptions v-bind="detailsProps">
-        <NDescriptionsItem :label="t('desktop.approval.browser.origin')">
-          <code>{{ review.origin }}</code>
-        </NDescriptionsItem>
-        <NDescriptionsItem :label="t('desktop.approval.effect')">
-          {{ browserEffect }}
-        </NDescriptionsItem>
-        <NDescriptionsItem v-if="review.targetName" :label="t('desktop.approval.browser.pageTarget')">
-          {{ review.targetName }}
-        </NDescriptionsItem>
-        <NDescriptionsItem v-if="review.targetRole" :label="t('desktop.approval.browser.role')">
-          {{ review.targetRole }}
-        </NDescriptionsItem>
-        <NDescriptionsItem :label="t('desktop.approval.browser.action')">
-          {{ browserAction }}
-        </NDescriptionsItem>
-      </NDescriptions>
-    </section>
-    <section v-else-if="review?.card === 'shell'" class="desktop-approval-card__details">
-      <NDescriptions v-bind="detailsProps">
-        <NDescriptionsItem :label="t('desktop.approval.runCommand')">
-          <pre>{{ review.command }}</pre>
-        </NDescriptionsItem>
-        <NDescriptionsItem v-if="review.context" :label="t('desktop.approval.shell.approvalReason')">
-          {{ shellReason }}
-        </NDescriptionsItem>
-        <NDescriptionsItem v-if="review.context" :label="t('desktop.approval.workingDirectory')">
-          {{ review.context.cwd }}
-        </NDescriptionsItem>
-      </NDescriptions>
-    </section>
-    <div v-else-if="review?.card === 'paths'" class="desktop-approval-card__review border border-solid border-border rounded-2 bg-subtle py-[0.65rem] px-[0.7rem]">
-      <ul class="desktop-approval-card__paths">
-        <li v-for="target in review.targets" :key="target.path">
-          <code>{{ target.path }}</code>
-          <small v-if="target.zone === 'sensitive'" class="is-sensitive">
-            {{ t('desktop.approval.paths.zoneSensitive') }}
-          </small>
-          <small v-else-if="target.zone === 'outside'">
-            {{ t('desktop.approval.paths.zoneOutside') }}
-          </small>
-        </li>
-      </ul>
-      <p v-if="grantNotice" class="desktop-approval-card__grant">
-        {{ grantNotice }}
-      </p>
-    </div>
-    <section
-      v-else-if="review?.card === 'arguments'"
-      class="desktop-approval-card__details"
-    >
-      <NDescriptions v-bind="detailsProps">
-        <template v-if="review.parameters?.length">
-          <NDescriptionsItem v-for="parameter in review.parameters" :key="parameter.name">
-            <template #label>
-              <code>{{ parameter.name }}</code>
-            </template>
-            <span class="flex text-muted text-[length:var(--buddy-chat-caption-font-size)] leading-[var(--buddy-chat-caption-line-height)] [overflow-wrap:anywhere] whitespace-pre-wrap">{{ parameter.value }}</span>
-          </NDescriptionsItem>
-        </template>
-        <NDescriptionsItem v-else :label="t('desktop.approval.argumentNames')">
-          {{ review.argumentNames.join(', ') || t('desktop.approval.noArguments') }}
-        </NDescriptionsItem>
-      </NDescriptions>
-    </section>
-    <p v-else class="desktop-approval-card__review border border-solid border-border rounded-2 bg-subtle py-[0.65rem] px-[0.7rem]">
+    <DesktopApprovalDetails :review="review" :language="language" :browser-effect="browserEffect" :system-effect="systemEffect" />
+    <p v-if="approval.review === null" class="text-muted text-[length:var(--buddy-chat-caption-font-size)]">
       {{ t('desktop.approval.unsupported') }}
     </p>
+    <p v-if="reviewExpired" class="text-muted text-[length:var(--buddy-chat-caption-font-size)]">
+      {{ t('desktop.approval.expired') }}
+    </p>
+    <section v-if="approval.review" class="grid gap-2">
+      <p v-if="!approval.review.complete" class="text-muted text-[length:var(--buddy-chat-caption-font-size)]">
+        {{ t('desktop.approval.incomplete') }}
+      </p>
+      <NButton size="small" secondary :aria-expanded="showFullOperation" @click="showFullOperation = !showFullOperation">
+        {{ t('desktop.approval.fullOperation') }}
+      </NButton>
+      <pre v-if="showFullOperation" class="m-0 max-h-80 overflow-auto rounded-2 bg-subtle p-3 text-[length:var(--buddy-chat-caption-font-size)] whitespace-pre-wrap [overflow-wrap:anywhere]">{{ fullOperation }}</pre>
+    </section>
     <footer class="flex items-center justify-end gap-[0.6rem]">
       <div class="flex items-center justify-end gap-2">
         <NButton
           size="small"
           type="error"
-          :disabled="isResolving"
+          :disabled="isResolving || !canDeny"
           :loading="resolvingAction === 'deny'"
           @click="emit('deny')"
         >
@@ -464,7 +224,7 @@ function renderScopeLabel(option: DropdownOption) {
             class="desktop-approval-card__approve-button"
             size="small"
             type="primary"
-            :disabled="isResolving"
+            :disabled="isResolving || !canApprove"
             :loading="resolvingAction === 'once'"
             @click="emit('approve', 'once')"
           >
@@ -475,7 +235,7 @@ function renderScopeLabel(option: DropdownOption) {
             v-model:show="scopeMenuOpen"
             trigger="click"
             placement="top-end"
-            :disabled="isResolving"
+            :disabled="isResolving || !canApprove"
             :options="reuseOptions"
             :render-label="renderScopeLabel"
             @select="approveForScope"
@@ -484,7 +244,7 @@ function renderScopeLabel(option: DropdownOption) {
               class="desktop-approval-card__scope-button"
               size="small"
               type="primary"
-              :disabled="isResolving"
+              :disabled="isResolving || !canApprove"
               :loading="resolvingAction !== null && resolvingAction !== 'once' && resolvingAction !== 'deny'"
               :aria-label="t('approvalAction.selectScope')"
             >
@@ -504,12 +264,6 @@ function renderScopeLabel(option: DropdownOption) {
 </template>
 
 <style scoped lang="scss">
-.desktop-approval-card__details,
-.desktop-approval-card__review {
-  max-height: min(24rem, 40vh);
-  overflow-y: auto;
-}
-
 .desktop-approval-card__pending-icon {
   align-self: start;
   color: var(--buddy-status-warning-text);
@@ -528,19 +282,8 @@ function renderScopeLabel(option: DropdownOption) {
   white-space: pre-wrap;
 }
 
-.desktop-approval-card ul,
 .desktop-approval-card p {
   margin: 0;
-}
-
-.desktop-approval-card ul {
-  padding-left: 1.8rem;
-}
-
-.desktop-approval-card code {
-  color: var(--buddy-chat-code-color);
-  font-family: var(--buddy-font-mono);
-  font-size: var(--buddy-chat-code-font-size);
 }
 
 .desktop-approval-card__approve-button {

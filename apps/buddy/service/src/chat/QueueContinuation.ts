@@ -95,7 +95,7 @@ export class QueueContinuation {
   #request(scope: LocalChatQueueScope): void {
     if (this.#state === 'stopped')
       return
-    this.#dirty.set(`conversation:${scope.conversationId}`, { scope: { conversationId: scope.conversationId, branchId: scope.branchId }, attempts: 0 })
+    this.#dirty.set(JSON.stringify([scope.conversationId, scope.branchId]), { scope: { conversationId: scope.conversationId, branchId: scope.branchId }, attempts: 0 })
     this.#schedule()
   }
 

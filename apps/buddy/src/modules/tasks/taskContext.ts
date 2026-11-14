@@ -8,7 +8,7 @@ export interface TaskEnvironment {
   browser: LexoraDesktopApi['browser']
   browserGuests: DesktopBrowserGuestSurfaceHost
   clipboard: LexoraDesktopApi['clipboard']
-  notificationTarget: Readonly<Ref<{ conversationId: string, messageId: string } | null>>
+  notificationTarget: Readonly<Ref<{ conversationId: string, branchId: string, messageId: string } | null>>
   resources: TaskResourcePanel
 }
 

@@ -86,7 +86,9 @@ export interface WorkbenchCommand {
   execute: (context: CommandContext) => unknown
 }
 export function resourceKey(resource: ResourceRef): string {
-  return JSON.stringify([resource.scheme, resource.id])
+  return JSON.stringify(resource.scheme === 'task' && typeof resource.data.branchId === 'string'
+    ? [resource.scheme, resource.id, resource.data.branchId]
+    : [resource.scheme, resource.id])
 }
 export function createPane(id: string = crypto.randomUUID()): WorkbenchPane {
   return { kind: 'pane', id, view: null }

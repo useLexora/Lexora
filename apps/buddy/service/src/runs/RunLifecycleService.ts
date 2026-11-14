@@ -147,9 +147,11 @@ export class RunLifecycleService {
     }
     let run = this.#requireRun(input.runId)
     if (run.status !== status || run.completedAt !== input.completedAt || run.errorCode !== errorCode) {
-      if (!this.#repository.reconcileTerminal(input.runId, status, input.completedAt, errorCode))
+      if (terminalEventPersisted || !this.#repository.reconcileTerminal(input.runId, status, input.completedAt, errorCode))
         throw new BuddyAgentRunError('RUN_STATE_MISMATCH')
       run = this.#requireRun(input.runId)
+      if (run.status !== status || run.completedAt !== input.completedAt || run.errorCode !== errorCode)
+        throw new BuddyAgentRunError('RUN_STATE_MISMATCH')
     }
     if (!terminalEventPersisted) {
       this.#reconciled.fire(copyEventSnapshot({

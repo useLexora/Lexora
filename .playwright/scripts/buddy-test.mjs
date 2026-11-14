@@ -8,6 +8,7 @@ import { createServer } from 'node:net'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
+import { launchDaemonDesktop } from './fixtures/local-service.mjs'
 import { attachPageDiagnostics, ROOT, serializeError } from './shared.mjs'
 
 const repoRoot = ROOT
@@ -38,7 +39,7 @@ export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP
   const pending = new Set()
   const records = []
   let disposed = false
-  async function createInstance(label) {
+  async function createInstance(label, { executablePath: instanceExecutablePath = executablePath } = {}) {
     assert(/^[\w-]{1,64}$/.test(label), 'Invalid test instance name')
     const home = await fs.mkdtemp(path.join(instancesRoot, `${label}-`))
     const identity = await fs.stat(home)
@@ -83,11 +84,17 @@ export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP
     instances.push(instance)
     return instance
 
-    async function launch({ maintenance = false, expectedRoot = home, startupStatus = 'ready' } = {}) {
+    async function launch({ maintenance = false, profileRoot = home, expectedRoot = profileRoot, startupStatus = 'ready', storageAuthority = 'legacy_jsonl', serviceMode = 'utility' } = {}) {
       assert(['ready', 'failed'].includes(startupStatus), 'Unsupported startup expectation')
       assert(contains(instancesRoot, await canonicalPath(expectedRoot)), 'Expected root must stay in this isolated test run')
-      const { _electron: electron } = await import('@playwright/test')
-      const environment = createTestEnvironment(home)
+      const { _electron: electron, expect } = await import('@playwright/test')
+      assert(['legacy_jsonl', 'sqlite', 'default'].includes(storageAuthority), 'Unsupported storage authority')
+      assert(contains(instancesRoot, await canonicalPath(profileRoot)), 'Profile must stay in this isolated test run')
+      assert(['utility', 'daemon'].includes(serviceMode), 'Unsupported service mode')
+      assert(serviceMode !== 'daemon' || (!maintenance && !instanceExecutablePath && !rendererUrl && storageAuthority === 'sqlite'), 'Daemon fixture requires the SQLite development application')
+      const environment = createTestEnvironment(profileRoot)
+      if (storageAuthority !== 'default')
+        environment.LEXORA_BUDDY_STORAGE_AUTHORITY = storageAuthority
       if (rendererUrl)
         environment.ELECTRON_RENDERER_URL = rendererUrl
       if (process.platform === 'linux') {
@@ -99,9 +106,11 @@ export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP
       launchNumber += 1
       try {
         const args = [...(process.platform === 'linux' ? ['--ozone-platform=x11', '--disable-setuid-sandbox'] : []), ...(passwordStore ? [`--password-store=${passwordStore}`] : []), '--disable-gpu']
-        application = executablePath
-          ? await launchInstalled(executablePath, args, environment, { maintenance, artifactDirectory, launchNumber })
-          : await electron.launch({ executablePath: require('electron'), args: [...args, path.resolve(appPath)], chromiumSandbox: true, cwd: repoRoot, env: environment, timeout: 45000 })
+        application = serviceMode === 'daemon'
+          ? await launchDaemonDesktop({ home: profileRoot, buddyRoot, hostExecutable: require('electron'), hostArguments: args, environment, artifactDirectory })
+          : instanceExecutablePath
+            ? await launchInstalled(instanceExecutablePath, args, environment, { maintenance, artifactDirectory, launchNumber })
+            : await electron.launch({ executablePath: require('electron'), args: [...args, path.resolve(appPath)], chromiumSandbox: true, cwd: repoRoot, env: environment, timeout: 45000 })
         applicationProcess = application.process()
         launchRecord.pid = applicationProcess.pid
         applicationProcess.stderr?.on('data', (chunk) => {
@@ -117,10 +126,10 @@ export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP
           return { app: application, page, diagnostics: launchRecord.diagnostics }
         }
         assert.equal(rendererUrl ? new URL(page.url()).origin : new URL(page.url()).protocol, rendererUrl ? new URL(rendererUrl).origin : 'lexora-app:')
-        await page.waitForFunction(async status => (await window.lexoraDesktop?.app.startup.getState())?.status === status, startupStatus, { timeout: 45000 })
+        await expect.poll(() => page.evaluate(async () => (await window.lexoraDesktop?.app.startup.getState())?.status), { timeout: 45000 }).toBe(startupStatus)
         const info = await page.evaluate(() => window.lexoraDesktop.app.getInfo())
         assert.equal(info.runtimeProfile, 'test')
-        if (executablePath)
+        if (instanceExecutablePath)
           assert.equal(info.isPackaged, true)
         assert.equal(await fs.realpath(path.dirname(info.configPath)), await canonicalPath(expectedRoot))
         const { runtimeProfile, isPackaged, version, platform, configPath } = info
@@ -137,7 +146,7 @@ export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP
       if (application) {
         const current = application
         const child = applicationProcess
-        if (executablePath || (child.exitCode === null && child.signalCode === null)) {
+        if (instanceExecutablePath || current.serviceMode === 'daemon' || (child.exitCode === null && child.signalCode === null)) {
           await page?.screenshot({ path: path.join(artifactDirectory, `launch-${launchNumber}.png`), animations: 'disabled', timeout: 5000 }).catch(() => {})
           await withTimeout(current.context().tracing.stop({ path: path.join(artifactDirectory, `trace-${launchNumber}.zip`) }), 10000, 'Trace export timed out').catch(() => {})
           try {
@@ -169,9 +178,9 @@ export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP
     artifacts,
     runId,
     records,
-    async createInstance(label = 'desktop') {
+    async createInstance(label = 'desktop', options = {}) {
       assert(!disposed, 'Test run has been disposed')
-      const operation = createInstance(label)
+      const operation = createInstance(label, options)
       pending.add(operation)
       try {
         return await operation
@@ -197,10 +206,10 @@ export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP
   }
 }
 
-function createTestEnvironment(home) {
+export function createTestEnvironment(home) {
   const environment = Object.fromEntries(Object.entries(process.env).filter(([key, value]) => value !== undefined
     && !/^(?:LEXORA_|ELECTRON_|PI_|XDG_|WAYLAND_DISPLAY$)/.test(key)))
-  return { ...environment, LEXORA_BUDDY_PROFILE: 'test', LEXORA_HOME: home }
+  return { ...environment, LEXORA_BUDDY_PROFILE: 'test', LEXORA_HOME: home, LEXORA_BUDDY_SERVICE_MODE: 'utility' }
 }
 
 function contains(root, candidate) {
@@ -225,7 +234,7 @@ async function canonicalPath(value) {
   }
 }
 
-async function startDisplay() {
+export async function startDisplay() {
   const child = spawn('Xvfb', ['-displayfd', '3', '-screen', '0', '1500x950x24', '-nolisten', 'tcp'], { stdio: ['ignore', 'ignore', 'pipe', 'pipe'] })
   let stderr = ''
   child.stderr.on('data', (chunk) => {

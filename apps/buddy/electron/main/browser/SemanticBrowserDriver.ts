@@ -25,6 +25,7 @@ import { BrowserDebugger } from './BrowserDebugger'
 import { collectBrowserRegionNodes, resolveBrowserRegion } from './browserDomRegion'
 import { BrowserHostError } from './BrowserHostError'
 import { collectDomFieldMetadata, collectFrameIds, collectViewportNodeIds, containsSensitiveFieldMetadata, createScreenshotRef, createTruncation, deduplicateAccessibilityNodes, hasPngSignature, MAX_OBSERVED_FRAMES, normalizeElementLimit, projectElements, scopeAccessibilityNodes } from './browserObservationProjection'
+import { BrowserObservationStore } from './BrowserObservationStore'
 import {
   projectBrowserObservedValue,
   redactBrowserRuntimeUrl,
@@ -96,17 +97,6 @@ export interface SemanticBrowserScreenshot {
 
 export type { SemanticBrowserTarget } from './browserObservationProjection'
 
-interface StoredObservation {
-  documentRevision: number
-  expiresAt: number
-  requiresHumanInput: boolean
-  screenshot?: {
-    bytes: Uint8Array
-    ref: BrowserScreenshotRef
-  }
-  targets: Map<string, SemanticBrowserTarget>
-}
-
 type SemanticBrowserDriverErrorCode = Extract<
   BrowserErrorCode,
   | 'BROWSER_HUMAN_INPUT_REQUIRED'
@@ -114,9 +104,7 @@ type SemanticBrowserDriverErrorCode = Extract<
   | 'BROWSER_TARGET_STALE'
 >
 
-const DEFAULT_MAX_OBSERVATIONS = 8
 const DEFAULT_OBSERVATION_TTL_MS = 30_000
-const MAX_SCREENSHOT_CACHE_BYTES = 32 * 1_024 * 1_024
 const BROWSER_ACTION_OBJECT_GROUP = 'lexora-browser-action'
 const BROWSER_TARGET_ACTIONABILITY_FUNCTION = `async function (checkClickability) {
   const element = this
@@ -264,10 +252,8 @@ export class SemanticBrowserDriverError extends Error {
 export class SemanticBrowserDriver {
   readonly #createId: () => string
   readonly #createScreenshotId: () => string
-  readonly #maxObservations: number
   readonly #now: () => number
-  readonly #observations = new Map<string, StoredObservation>()
-  #observationExpiryTimer: ReturnType<typeof setTimeout> | null = null
+  readonly #observations: BrowserObservationStore
   readonly #observationTtlMs: number
   readonly #contentReader: BrowserContentReader
   readonly #page: SemanticBrowserPage
@@ -279,10 +265,10 @@ export class SemanticBrowserDriver {
   constructor(options: SemanticBrowserDriverOptions) {
     this.#createId = options.createId ?? randomUUID
     this.#createScreenshotId = options.createScreenshotId ?? randomUUID
-    this.#maxObservations = options.maxObservations ?? DEFAULT_MAX_OBSERVATIONS
     this.#now = options.now ?? Date.now
     this.#observationTtlMs = options.observationTtlMs ?? DEFAULT_OBSERVATION_TTL_MS
     this.#contentReader = new BrowserContentReader(this.#now, this.#observationTtlMs)
+    this.#observations = new BrowserObservationStore({ now: this.#now, ttlMs: this.#observationTtlMs, maxObservations: options.maxObservations })
     this.#page = options.page
     this.#connection = options.connection ?? new BrowserDebugger(options.page.debugger)
     this.#ownsConnection = !options.connection
@@ -477,16 +463,14 @@ export class SemanticBrowserDriver {
         projected.targets.delete(removed.ref)
       }
 
-      this.#storeObservation(
-        observation.observationId,
-        input.mode === 'screenshot' ? new Map() : projected.targets,
-        screenshot && observation.screenshot
-          ? {
-              bytes: screenshot.bytes,
-              ref: observation.screenshot,
-            }
+      this.#assertActive()
+      this.#observations.store(observation.observationId, {
+        documentRevision: revision,
+        targets: input.mode === 'screenshot' ? new Map() : projected.targets,
+        screenshot: screenshot && observation.screenshot
+          ? { bytes: screenshot.bytes, ref: observation.screenshot }
           : undefined,
-      )
+      })
       return observation
     }
     catch (error) {
@@ -614,7 +598,6 @@ export class SemanticBrowserDriver {
     observationId: string
   }): void {
     this.#assertActive()
-    this.#pruneObservations(this.#now())
     const observation = this.#observations.get(reference.observationId)
     if (
       reference.documentRevision !== this.#documentRevision
@@ -640,7 +623,6 @@ export class SemanticBrowserDriver {
     reference: SemanticBrowserScreenshotReference,
   ): SemanticBrowserScreenshot {
     this.#assertActive()
-    this.#pruneObservations(this.#now())
     const observation = this.#observations.get(reference.observationId)
     const screenshot = observation?.screenshot
     if (
@@ -662,7 +644,7 @@ export class SemanticBrowserDriver {
       throw new SemanticBrowserDriverError()
     this.#documentRevision += 1
     this.#contentReader.clear()
-    this.#clearObservations()
+    this.#observations.clear()
   }
 
   async isTextVisible(text: string): Promise<boolean> {
@@ -753,7 +735,7 @@ export class SemanticBrowserDriver {
       return
     this.#disposed = true
     this.#contentReader.clear()
-    this.#clearObservations()
+    this.#observations.dispose()
     if (this.#ownsConnection)
       this.#connection.dispose()
   }
@@ -984,68 +966,6 @@ export class SemanticBrowserDriver {
       screenshotId: this.#createScreenshotId(),
       width,
     }
-  }
-
-  #pruneObservations(now: number): void {
-    for (const [observationId, observation] of this.#observations) {
-      if (
-        observation.expiresAt <= now
-        || observation.documentRevision !== this.#documentRevision
-      ) {
-        this.#observations.delete(observationId)
-      }
-    }
-  }
-
-  #clearObservations(): void {
-    if (this.#observationExpiryTimer)
-      clearTimeout(this.#observationExpiryTimer)
-    this.#observationExpiryTimer = null
-    this.#observations.clear()
-  }
-
-  #scheduleObservationExpiry(): void {
-    if (this.#observationExpiryTimer)
-      clearTimeout(this.#observationExpiryTimer)
-    this.#observationExpiryTimer = null
-    if (!this.#observations.size)
-      return
-    const expiresAt = Math.min(...[...this.#observations.values()].map(observation => observation.expiresAt))
-    this.#observationExpiryTimer = setTimeout(() => {
-      this.#observationExpiryTimer = null
-      this.#pruneObservations(this.#now())
-      this.#scheduleObservationExpiry()
-    }, Math.max(1, expiresAt - this.#now()))
-    this.#observationExpiryTimer.unref()
-  }
-
-  #storeObservation(
-    observationId: string,
-    targets: Map<string, SemanticBrowserTarget>,
-    screenshot?: StoredObservation['screenshot'],
-  ): void {
-    this.#assertActive()
-    const now = this.#now()
-    this.#pruneObservations(now)
-    this.#observations.delete(observationId)
-    this.#observations.set(observationId, {
-      documentRevision: this.#documentRevision,
-      expiresAt: now + this.#observationTtlMs,
-      requiresHumanInput: [...targets.values()].some(
-        target => target.inputMode === 'human',
-      ),
-      ...(screenshot ? { screenshot } : {}),
-      targets,
-    })
-    let screenshotBytes = [...this.#observations.values()].reduce((total, observation) => total + (observation.screenshot?.bytes.byteLength ?? 0), 0)
-    while (this.#observations.size > this.#maxObservations || screenshotBytes > MAX_SCREENSHOT_CACHE_BYTES) {
-      const oldestObservationId = this.#observations.keys().next().value
-      if (oldestObservationId === undefined)
-        break
-      screenshotBytes -= this.#observations.get(oldestObservationId)?.screenshot?.bytes.byteLength ?? 0
-      this.#observations.delete(oldestObservationId)
-    }
-    this.#scheduleObservationExpiry()
   }
 }
 

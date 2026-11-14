@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { withTransaction } from './database'
+import { ExecutionResourceQueries } from './ExecutionResourceQueries'
 
 export interface ConversationDeletionCommit {
   conversationId: string
@@ -11,21 +12,6 @@ export interface ConversationDeletionCommit {
 export type ConversationDeletionRepository = ReturnType<typeof createConversationDeletionRepository>
 
 export function createConversationDeletionRepository(database: DatabaseSync) {
-  const commitRemoval = (conversationId: string, now: string, permanent: boolean): ConversationDeletionCommit | null => withTransaction(database, () => {
-    const conversation = database.prepare('SELECT deleted_at, archived_at FROM conversations WHERE id = ?').get(conversationId) as { deleted_at: string | null, archived_at: string | null } | undefined
-    if (!conversation || (!permanent && conversation.archived_at !== null))
-      return null
-    const deletedAt = conversation.deleted_at ?? now
-    const grants = database.prepare('SELECT id FROM conversation_directory_grants WHERE conversation_id = ? AND revoked_at IS NULL').all(conversationId) as { id: string }[]
-    if (conversation.deleted_at === null)
-      database.prepare('UPDATE conversations SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL').run(deletedAt, deletedAt, conversationId)
-    database.prepare('UPDATE conversation_directory_grants SET revoked_at = ? WHERE conversation_id = ? AND revoked_at IS NULL').run(deletedAt, conversationId)
-    if (permanent) {
-      database.prepare(`INSERT OR IGNORE INTO conversation_deletion_jobs (conversation_id, status, created_at, updated_at)
-        VALUES (?, 'pending', ?, ?)`).run(conversationId, now, now)
-    }
-    return { conversationId, deletedAt, tombstoned: conversation.deleted_at === null, revokedGrantIds: grants.map(grant => grant.id) }
-  })
   return {
     recoverLegacy(conversationId: string, now: string): ConversationDeletionCommit | null {
       return withTransaction(database, () => {
@@ -46,10 +32,7 @@ export function createConversationDeletionRepository(database: DatabaseSync) {
       return withTransaction(database, () => {
         const conversation = database.prepare(`SELECT deleted_at FROM conversations WHERE id = ? AND deleted_at IS NOT NULL AND archived_at IS NULL
           AND NOT EXISTS (SELECT 1 FROM conversation_deletion_jobs WHERE conversation_id = conversations.id AND origin <> 'legacy_removed')`).get(conversationId)
-        if (!conversation || database.prepare(`SELECT 1 FROM runs r LEFT JOIN execution_state s ON s.run_id = r.id
-          WHERE r.conversation_id = ? AND (r.status IN ('queued', 'running') OR s.phase <> 'closed' OR s.cleanup_state <> 'clean')`).get(conversationId)
-          || database.prepare(`SELECT 1 FROM run_mutation_leases l JOIN runs r ON r.id = l.run_id
-            WHERE r.conversation_id = ? AND l.status <> 'released'`).get(conversationId)) {
+        if (!conversation || new ExecutionResourceQueries(database).conversation(conversationId) !== 'released') {
           return null
         }
         const grants = database.prepare('SELECT id FROM conversation_directory_grants WHERE conversation_id = ? AND revoked_at IS NULL').all(conversationId)
@@ -60,10 +43,19 @@ export function createConversationDeletionRepository(database: DatabaseSync) {
       })
     },
     commit(conversationId: string, now: string): ConversationDeletionCommit | null {
-      return commitRemoval(conversationId, now, true)
-    },
-    commitSoftDelete(conversationId: string, now: string): ConversationDeletionCommit | null {
-      return commitRemoval(conversationId, now, false)
+      return withTransaction(database, () => {
+        const conversation = database.prepare('SELECT deleted_at FROM conversations WHERE id = ?').get(conversationId) as { deleted_at: string | null } | undefined
+        if (!conversation)
+          return null
+        const deletedAt = conversation.deleted_at ?? now
+        const grants = database.prepare('SELECT id FROM conversation_directory_grants WHERE conversation_id = ? AND revoked_at IS NULL').all(conversationId) as { id: string }[]
+        if (conversation.deleted_at === null)
+          database.prepare('UPDATE conversations SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL').run(deletedAt, deletedAt, conversationId)
+        database.prepare('UPDATE conversation_directory_grants SET revoked_at = ? WHERE conversation_id = ? AND revoked_at IS NULL').run(deletedAt, conversationId)
+        database.prepare(`INSERT OR IGNORE INTO conversation_deletion_jobs (conversation_id, status, created_at, updated_at)
+          VALUES (?, 'pending', ?, ?)`).run(conversationId, now, now)
+        return { conversationId, deletedAt, tombstoned: conversation.deleted_at === null, revokedGrantIds: grants.map(grant => grant.id) }
+      })
     },
     has(conversationId: string): boolean {
       return !!database.prepare('SELECT 1 FROM conversation_deletion_jobs WHERE conversation_id = ?').get(conversationId)

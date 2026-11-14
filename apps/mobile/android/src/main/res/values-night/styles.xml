@@ -1,0 +1,28 @@
+<resources>
+    <style name="Theme.Lexora" parent="Theme.Lexora.Base" />
+    <style name="Theme.Lexora.Base" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:alertDialogTheme">@style/Theme.Lexora.Dialog</item>
+        <item name="android:colorAccent">#91ABCC</item>
+        <item name="android:colorBackground">#202422</item>
+        <item name="android:colorBackgroundFloating">#2A2F2B</item>
+        <item name="android:textColorPrimary">#F2F4F0</item>
+        <item name="android:textColorSecondary">#AAB1AB</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">#202422</item>
+        <item name="android:navigationBarColor">#202422</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:windowTranslucentStatus">false</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">#202422</item>
+    </style>
+    <color name="dialog_surface">#2A2F2B</color>
+    <style name="Theme.Lexora.Dialog" parent="android:style/Theme.Material.Dialog.Alert">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#91ABCC</item>
+        <item name="android:colorBackgroundFloating">#2A2F2B</item>
+        <item name="android:textColorPrimary">#F2F4F0</item>
+        <item name="android:textColorSecondary">#AAB1AB</item>
+        <item name="android:windowBackground">@drawable/mobile_dialog_background</item>
+    </style>
+</resources>

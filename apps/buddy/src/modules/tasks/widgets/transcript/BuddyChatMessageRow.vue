@@ -5,6 +5,7 @@ import type { LocalMessage } from '@buddy-shared/conversation/conversationApi'
 import type { LocalRunTokenUsage } from '@buddy-shared/usage/runTokenUsage'
 
 import type { ChatAgentTurn } from '../../model/transcript/chatAgentTurn'
+import type { ChatTranscriptResultTarget } from '../../model/transcript/chatMessageActions'
 import type { ChatMessageBranchNavigator } from '../../model/transcript/chatMessageBranches'
 import type { ChatTranscriptTurnOutputs } from '../../model/transcript/chatTranscriptProjection'
 import type { ChatTranscriptExecutionStatus } from '../../model/transcript/chatTranscriptTypes'
@@ -12,7 +13,7 @@ import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
-import { getChatMessageFollowupSourceId, projectChatMessageActions } from '../../model/transcript/chatMessageActions'
+import { projectChatMessageActions } from '../../model/transcript/chatMessageActions'
 import {
   getChatMessageDisplayText,
 } from '../../model/transcript/chatMessageContent'
@@ -34,7 +35,7 @@ const props = defineProps<{
   showActions?: boolean
   actionMessages?: readonly LocalMessage[]
   resultRunId?: string
-  ownsResultActions?: boolean
+  resultTarget: ChatTranscriptResultTarget
   processRunId?: string
   language: BuddyLocale
   message: LocalMessage
@@ -56,9 +57,7 @@ const emit = defineEmits<{
 
 const { t } = useBuddyI18n(() => props.language)
 const { writeClipboardText } = useChatContent()
-const followupSourceId = computed(() => getChatMessageFollowupSourceId(props))
-const regenerationRunId = computed(() => props.turnResult?.runId ?? (props.ownsResultActions ? props.message.runId : null))
-const actions = computed(() => projectChatMessageActions(props.message, props.actionsDisabled, !!regenerationRunId.value, props.canFollowup))
+const actions = computed(() => projectChatMessageActions(props.message, props.actionsDisabled, !!props.resultTarget.regenerateRunId, props.canFollowup))
 const showAssistantIdentity = computed(() => (
   props.message.role === 'assistant' && props.showIdentity !== false
 ))
@@ -137,8 +136,8 @@ const messageText = computed(() => (props.actionMessages ?? [props.message]).map
       :usage="turnUsage"
       :following-up="followingUp"
       @activate-branch="emit('activateBranch', $event)"
-      @regenerate="regenerationRunId && emit('regenerate', regenerationRunId)"
-      @followup="followupSourceId && emit('followup', followupSourceId)"
+      @regenerate="resultTarget.regenerateRunId && emit('regenerate', resultTarget.regenerateRunId)"
+      @followup="resultTarget.followupMessageId && emit('followup', resultTarget.followupMessageId)"
       @start-edit="emit('startEdit')"
     />
   </article>

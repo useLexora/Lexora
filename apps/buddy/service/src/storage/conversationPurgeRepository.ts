@@ -2,9 +2,14 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { BuddyDataPaths } from './BuddyDataPaths'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { withTransaction } from './database'
+import { ExecutionResourceQueries } from './ExecutionResourceQueries'
+
+export type ConversationStorageAuthority = 'legacy_jsonl' | 'sqlite'
 
 export interface ConversationPurgeManifest {
   draftIds: string[]
+  fileIds: string[]
+  contentReferenceIds: string[]
 }
 
 export class ConversationPurgeError extends Error {
@@ -27,14 +32,29 @@ export function isPurgeDescendant(directory: string, path: string): boolean {
 export class ConversationPurgeRepository {
   private readonly database: DatabaseSync
   private readonly paths: BuddyDataPaths
+  private readonly storageAuthority: ConversationStorageAuthority
 
-  constructor(database: DatabaseSync, paths: BuddyDataPaths) {
+  constructor(database: DatabaseSync, paths: BuddyDataPaths, storageAuthority: ConversationStorageAuthority) {
     this.database = database
     this.paths = paths
+    this.storageAuthority = storageAuthority
   }
 
   directories(id: string, manifest: ConversationPurgeManifest): string[] {
     return [this.paths.conversationDirectory(id), ...manifest.draftIds.map(draftId => resolve(this.paths.draftAttachments(draftId), '..'))]
+  }
+
+  stagingFiles(manifest: ConversationPurgeManifest): string[] {
+    if (this.storageAuthority === 'legacy_jsonl')
+      return []
+    return this.database.prepare('SELECT id, temporary_path FROM managed_files WHERE id IN (SELECT value FROM json_each(?))')
+      .all(JSON.stringify(manifest.fileIds))
+      .flatMap((row) => {
+        if (!/^[A-Z0-9][\w-]{0,127}$/i.test(String(row.id)))
+          throw new ConversationPurgeError('CONVERSATION_FILE_BOUNDARY')
+        const expected = resolve(this.paths.root, 'managed-files', 'staging', `${row.id}.part`)
+        return row.temporary_path === expected ? [expected] : []
+      })
   }
 
   prepare(id: string): ConversationPurgeManifest | null {
@@ -47,10 +67,7 @@ export class ConversationPurgeRepository {
         throw new ConversationPurgeError('CONVERSATION_DELETION_FAILED')
       if (!db.prepare('SELECT 1 FROM conversations WHERE id = ? AND deleted_at IS NOT NULL').get(id))
         throw new ConversationPurgeError('CONVERSATION_DELETION_STATE_CHANGED')
-      if (db.prepare(`SELECT 1 FROM runs WHERE conversation_id = ? AND status IN ('running', 'queued')`).get(id)
-        || db.prepare(`SELECT 1 FROM execution_state s JOIN runs r ON r.id = s.run_id
-          WHERE r.conversation_id = ? AND (s.phase <> 'closed' OR s.cleanup_state <> 'clean')`).get(id)
-          || db.prepare(`SELECT 1 FROM run_mutation_leases l JOIN runs r ON r.id = l.run_id WHERE r.conversation_id = ? AND l.status <> 'released'`).get(id)) {
+      if (new ExecutionResourceQueries(db).conversation(id) !== 'released') {
         throw new ConversationPurgeError('CONVERSATION_RESOURCES_BUSY')
       }
       const manifest: ConversationPurgeManifest = job.manifest_json
@@ -58,7 +75,19 @@ export class ConversationPurgeRepository {
         : {
             draftIds: db.prepare(`SELECT id FROM composer_drafts WHERE conversation_id = ?
               UNION SELECT id FROM chat_queue WHERE conversation_id = ?`).all(id, id).map(row => String(row.id)),
+            fileIds: [],
+            contentReferenceIds: [],
           }
+      if (this.storageAuthority === 'sqlite') {
+        const directories = this.directories(id, manifest)
+        const files = db.prepare('SELECT id, path FROM managed_files').all().filter(row => directories.some(directory => isPurgeDescendant(directory, String(row.path))))
+        manifest.fileIds = [...new Set([...manifest.fileIds, ...files.map(row => String(row.id))])]
+        manifest.contentReferenceIds = db.prepare(`SELECT DISTINCT reference_id FROM product_content_reference_owners
+          WHERE (owner_kind = 'conversation' AND owner_id = ?)
+            OR (owner_kind = 'draft' AND owner_id IN (SELECT value FROM json_each(?)))`)
+          .all(id, JSON.stringify(manifest.draftIds))
+          .map(row => String(row.reference_id))
+      }
       this.assertReferences(id, manifest)
       db.prepare('UPDATE conversation_deletion_jobs SET manifest_json = ? WHERE conversation_id = ?').run(JSON.stringify(manifest), id)
       db.exec('SAVEPOINT purge_preflight')
@@ -69,6 +98,11 @@ export class ConversationPurgeRepository {
       }
       finally {
         db.exec('ROLLBACK TO purge_preflight; RELEASE purge_preflight')
+      }
+      if (this.storageAuthority === 'sqlite') {
+        this.releaseOwnedFileReferences(id, manifest)
+        db.prepare(`UPDATE managed_files SET state = 'deleting', updated_at = ?
+          WHERE id IN (SELECT value FROM json_each(?)) AND state <> 'deleted'`).run(new Date().toISOString(), JSON.stringify(manifest.fileIds))
       }
       return manifest
     })
@@ -101,6 +135,8 @@ export class ConversationPurgeRepository {
         WHERE b.conversation_id = ? AND q.conversation_id <> ?`).get(id, id, id, id, id, id, id, id, id, id, id, id)) {
       throw new ConversationPurgeError('CONVERSATION_REFERENCED')
     }
+    if (this.storageAuthority === 'sqlite')
+      this.assertManagedFileReferences(id, manifest)
     if (db.prepare(`SELECT 1 FROM composer_drafts WHERE id IN (SELECT value FROM json_each(?))
       AND (conversation_id IS NULL OR conversation_id <> ?)
       UNION ALL SELECT 1 FROM chat_queue WHERE id IN (SELECT value FROM json_each(?)) AND conversation_id <> ?`).get(draftIds, id, draftIds, id)) {
@@ -128,17 +164,65 @@ export class ConversationPurgeRepository {
     }
   }
 
+  private assertManagedFileReferences(id: string, manifest: ConversationPurgeManifest): void {
+    const db = this.database
+    const draftIds = JSON.stringify(manifest.draftIds)
+    const fileIds = JSON.stringify(manifest.fileIds)
+    if (db.prepare(`SELECT 1 FROM file_preparations WHERE state IN ('preparing', 'published')
+      AND (id IN (SELECT value FROM json_each(?)) OR source_file_id IN (SELECT value FROM json_each(?))
+        OR target_owner_id IN (SELECT value FROM json_each(?))
+        OR target_owner_id IN (SELECT id FROM messages WHERE conversation_id = ?))`).get(fileIds, fileIds, draftIds, id)) {
+      throw new ConversationPurgeError('CONVERSATION_RESOURCES_BUSY')
+    }
+    if (db.prepare(`SELECT 1 FROM file_references f WHERE f.file_id IN (SELECT value FROM json_each(?)) AND NOT (
+      (f.kind = 'message' AND f.owner_id IN (SELECT id FROM messages WHERE conversation_id = ?))
+      OR (f.kind IN ('draft', 'queue') AND f.owner_id IN (SELECT value FROM json_each(?))))`).get(fileIds, id, draftIds)
+      || db.prepare(`SELECT 1 FROM file_preparations WHERE source_file_id IN (SELECT value FROM json_each(?))
+        AND id NOT IN (SELECT value FROM json_each(?))`).get(fileIds, fileIds)) {
+      throw new ConversationPurgeError('CONVERSATION_FILES_REFERENCED')
+    }
+  }
+
+  private releaseOwnedFileReferences(id: string, manifest: ConversationPurgeManifest): void {
+    this.database.prepare(`DELETE FROM file_references WHERE
+      (kind = 'message' AND owner_id IN (SELECT id FROM messages WHERE conversation_id = ?))
+      OR (kind IN ('draft', 'queue') AND owner_id IN (SELECT value FROM json_each(?)))`).run(id, JSON.stringify(manifest.draftIds))
+  }
+
   private erase(id: string, manifest: ConversationPurgeManifest): void {
     const db = this.database
     const draftIds = JSON.stringify(manifest.draftIds)
     db.exec('PRAGMA defer_foreign_keys = ON')
+    if (this.storageAuthority === 'sqlite')
+      this.releaseOwnedFileReferences(id, manifest)
     db.prepare('DELETE FROM composer_resources WHERE draft_id IN (SELECT value FROM json_each(?))').run(draftIds)
     db.prepare(`DELETE FROM attachments WHERE message_id IN (SELECT id FROM messages WHERE conversation_id = ?)
       OR draft_id IN (SELECT value FROM json_each(?))`).run(id, draftIds)
+    if (this.storageAuthority === 'sqlite')
+      this.eraseManagedContent(id, manifest)
     db.prepare('DELETE FROM run_mutation_leases WHERE run_id IN (SELECT id FROM runs WHERE conversation_id = ?)').run(id)
     db.prepare('DELETE FROM automation_occurrences WHERE conversation_id = ?').run(id)
     db.prepare('DELETE FROM task_attention WHERE conversation_id = ?').run(id)
     db.prepare('DELETE FROM conversation_members WHERE conversation_id = ?').run(id)
     db.prepare('DELETE FROM conversations WHERE id = ?').run(id)
+  }
+
+  private eraseManagedContent(id: string, manifest: ConversationPurgeManifest): void {
+    const db = this.database
+    const draftIds = JSON.stringify(manifest.draftIds)
+    const fileIds = JSON.stringify(manifest.fileIds)
+    db.prepare(`DELETE FROM remote_upload_chunks WHERE upload_id IN (SELECT id FROM remote_uploads WHERE file_id IN (SELECT value FROM json_each(?)))`).run(fileIds)
+    db.prepare('DELETE FROM remote_uploads WHERE file_id IN (SELECT value FROM json_each(?))').run(fileIds)
+    db.prepare('DELETE FROM remote_exports WHERE file_id IN (SELECT value FROM json_each(?))').run(fileIds)
+    db.prepare('DELETE FROM file_preparations WHERE id IN (SELECT value FROM json_each(?))').run(fileIds)
+    db.prepare(`UPDATE managed_files SET state = 'deleted' WHERE id IN (SELECT value FROM json_each(?))`).run(fileIds)
+    db.prepare('DELETE FROM managed_files WHERE id IN (SELECT value FROM json_each(?))').run(fileIds)
+    db.prepare(`DELETE FROM product_content_reference_owners WHERE
+      (owner_kind = 'conversation' AND owner_id = ?)
+      OR (owner_kind = 'draft' AND owner_id IN (SELECT value FROM json_each(?)))`).run(id, draftIds)
+    db.prepare(`DELETE FROM product_content_references WHERE id IN (SELECT value FROM json_each(?))
+      AND NOT EXISTS (SELECT 1 FROM product_content_reference_owners WHERE reference_id = product_content_references.id)`)
+      .run(JSON.stringify(manifest.contentReferenceIds))
+    db.prepare(`DELETE FROM composer_draft_slots WHERE draft_id IN (SELECT value FROM json_each(?)) OR json_extract(scope_key, '$[2]') = ?`).run(draftIds, id)
   }
 }

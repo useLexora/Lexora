@@ -32,6 +32,23 @@ let activated = false
 const interactions = new Map()
 const code = (error, method) => /^EXTENSION_[A-Z_]+$/.test(error?.message) ? error.message : method === 'activate' ? 'EXTENSION_ACTIVATION_FAILED' : 'EXTENSION_OPERATION_FAILED'
 const request = (method, params = null) => bridge.request(method, params)
+function executionCapabilities(invocationId, signal) {
+  const scoped = (method, params = null) => {
+    signal.throwIfAborted()
+    return request('invocation.request', { invocationId, method, params })
+  }
+  return Object.freeze({
+    resources: createExtensionResourceClient(scoped),
+    network: createExtensionNetworkClient(scoped),
+    inference: createExtensionInferenceClient(scoped, events),
+    storage: Object.freeze({ get: () => scoped('storage.get'), set: value => scoped('storage.set', { value, version: manifest.dataVersion }) }),
+    window: Object.freeze({ styles: Object.freeze({ set: (id, css) => scoped('window.styles.set', { id, css }), remove: id => scoped('window.styles.remove', { id }) }) }),
+    views: Object.freeze({ broadcast: message => scoped('views.broadcast', message), open: (type, options = {}) => scoped('views.open', { type, resource: options.resource ?? null, state: options.state ?? {} }) }),
+    placements: Object.freeze({ show: (id, options) => scoped('placements.show', { id, ...(typeof options === 'string' ? { instanceId: options } : options ?? {}) }), hide: (id, options) => scoped('placements.hide', { id, ...(typeof options === 'string' ? { instanceId: options } : options ?? {}) }) }),
+    notifications: Object.freeze({ show: notification => scoped('notifications.show', notification) }),
+  })
+}
+
 function cleanupCommand(token, signal) {
   let used = false
   return Object.freeze({ run: async (options) => {
@@ -115,7 +132,7 @@ bridge.subscribe(async ({ id, method, params }) => {
       context = Object.freeze({
         signal: lifetime.signal,
         workers,
-        extension: Object.freeze({ id: manifest.id, version: manifest.version, apiVersion: manifest.apiVersion }),
+        extension: Object.freeze({ id: manifest.id, version: manifest.version, apiVersion: manifest.apiVersion, executionScope: manifest.executionScope ?? 'desktop' }),
         events,
         themes: createThemeClient(input => request('themes.request', input), (listener) => {
           themeListeners.add(listener)
@@ -282,6 +299,7 @@ bridge.subscribe(async ({ id, method, params }) => {
       try {
         const invocation = Object.freeze({
           signal: controller.signal,
+          capabilities: executionCapabilities(params.invocationId, controller.signal),
           task: Object.freeze({ get: () => call('task.get'), messages: () => call('task.messages'), rename: value => call('task.rename', value) }),
           models: Object.freeze({ generateText: value => call('models.generateText', value) }),
           ...!params.action ? { scope: Object.freeze(await call('task.scope')), artifacts: Object.freeze({ publish: input => call('artifacts.publish', { ...input, resource: { id: input.resource.id } }) }), results: Object.freeze({ addImage: input => call('results.addImage', { resource: { id: input.resource.id } }) }), references: Object.freeze({ list: () => call('references.list'), resolve: (referenceId, options = {}) => call('references.resolve', { ...options, referenceId }) }) } : {},
@@ -301,7 +319,7 @@ bridge.subscribe(async ({ id, method, params }) => {
         throw new Error('EXTENSION_COMMAND_UNAVAILABLE')
       const controller = new AbortController()
       try {
-        result = await commands.get(params.command)(Object.freeze({ resource: params.resource, arguments: params.arguments ?? null, invocation: params.invocation ?? null, taskCleanup: params.cleanupToken ? cleanupCommand(params.cleanupToken, controller.signal) : undefined })) ?? null
+        result = await commands.get(params.command)(Object.freeze({ signal: controller.signal, capabilities: executionCapabilities(params.scopeId, controller.signal), resource: params.resource, arguments: params.arguments ?? null, invocation: params.invocation ?? null, taskCleanup: params.cleanupToken ? cleanupCommand(params.cleanupToken, controller.signal) : undefined })) ?? null
       }
       finally { controller.abort() }
     }

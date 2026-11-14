@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { ApplicationDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
-import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
+import type { RuntimePlatform } from '../platform/RuntimePlatform'
 import type { ProviderRepository } from '../storage/providerRepository'
 import { chmod, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -14,7 +14,6 @@ import { createWorkspaceRepository } from '../storage/workspaceRepository'
 import { AuthInteractionService } from './AuthInteractionService'
 import { createProviderLoginOptions } from './createProviderLoginOptions'
 import { createProviderModelRuntime } from './createProviderModelRuntime'
-import { HostCredentialStore } from './HostCredentialStore'
 import { createProviderCredentialStatus } from './ProviderCredentialStatus'
 import { clearAmbientProviderCredentials } from './providerEnvironment'
 import { OpenAiCompatibleModelDiscovery } from './ProviderModelDiscovery'
@@ -25,7 +24,9 @@ export interface CreateProviderServiceOptions {
   agentDirectory: string
   database: DatabaseSync
   getActiveRuns?: () => ReadonlyArray<{ model: string, provider: string }>
-  peer: RuntimeRpcPeerContract
+  platform: Pick<RuntimePlatform, 'createCredentials' | 'openExternal'>
+  notify: (method: string, params: unknown) => void
+  notifyManagement: (method: string, params: unknown) => void
   providers?: ProviderRepository
   record?: ApplicationDiagnosticReporter
 }
@@ -42,7 +43,7 @@ export async function createProviderService(
   await writeFile(modelsPath, '{}\n', { encoding: 'utf8', mode: 0o600 })
   await chmod(modelsPath, 0o600)
 
-  const credentials = new HostCredentialStore(options.peer)
+  const credentials = options.platform.createCredentials()
   const modelRuntime = await ModelRuntime.create({
     allowModelNetwork: false,
     refreshOnCreate: false,
@@ -53,10 +54,8 @@ export async function createProviderService(
   const providers = options.providers ?? createProviderRepository(options.database)
   const requestHeaders = new ProviderRequestHeaders(providers.states)
   const providerRuntime = createProviderModelRuntime(modelRuntime, requestHeaders, options.record)
-  const authInteractions = new AuthInteractionService({ openExternal: async (url) => {
-    await options.peer.request('host.openExternal', { url })
-  } })
-  authInteractions.onDidChallenge(challenge => options.peer.notify(providerNotifications.authChallenge.method, challenge))
+  const authInteractions = new AuthInteractionService({ openExternal: options.platform.openExternal })
+  authInteractions.onDidChallenge(challenge => options.notifyManagement(providerNotifications.authChallenge.method, challenge))
   authInteractions.onDidChange(change => options.record?.({ event: `provider.auth.${change.kind.replaceAll('-', '_')}`, level: 'info', operationId: change.loginId, count: change.kind === 'challenge-opened' ? 1 : 0 }))
   const service = new ProviderService({
     authInteractions,
@@ -73,14 +72,14 @@ export async function createProviderService(
     sessionRuntime: modelRuntime,
   })
   service.onDidResolve(event => options.record?.({ event: `provider.resolution.${event.restored ? 'restored' : 'rebuilt'}`, level: 'info', count: 1 }))
-  service.onDidCommit(event => options.peer.notify(providerNotifications.changed.method, { source: 'catalog', revision: event.revision }))
+  service.onDidCommit(event => options.notify(providerNotifications.changed.method, { source: 'catalog', revision: event.revision }))
   service.onDidChangeMetadata((event) => {
     if (event.kind === 'refresh-completed' || event.kind === 'refresh-failed' || event.kind === 'accepted')
-      options.peer.notify(providerNotifications.changed.method, { source: 'metadata', revision: event.revision })
+      options.notify(providerNotifications.changed.method, { source: 'metadata', revision: event.revision })
   })
   service.onDidChangeCredential((event) => {
     if (event.kind === 'observation' || event.kind === 'store-availability')
-      options.peer.notify(providerNotifications.changed.method, { source: 'credentials', revision: event.kind === 'observation' ? event.current.revision : event.revision })
+      options.notify(providerNotifications.changed.method, { source: 'credentials', revision: event.kind === 'observation' ? event.current.revision : event.revision })
   })
   service.onDidOperate(event => options.record?.({ event: `provider.operation.${event.stage}`, level: event.stage === 'failed' ? 'warn' : 'info', operationId: event.operationId }))
   service.onDidCommit(event => options.record?.({ event: 'provider.state.committed', level: 'info', operationId: event.commitId, revision: event.revision, count: event.providers.length + event.models.length }))

@@ -66,6 +66,7 @@ export const browserAttachGuestInputSchema: z.ZodType<DesktopBrowserAttachGuestI
 
 export const desktopBrowserGuestDescriptorSchema: z.ZodType<DesktopBrowserGuestDescriptor>
   = z.object({
+    pageId: z.uuid().optional(),
     owner: browserPageOwnerSchema.optional(),
     conversationId: browserConversationIdSchema.optional(),
     partition: z.string().trim().min(1).max(256),
@@ -130,4 +131,20 @@ export const desktopBrowserStateSchema: z.ZodType<DesktopBrowserState> = z.objec
   title: z.string().max(512),
   url: z.union([z.literal('about:blank'), browserPageUrlSchema]),
   visible: z.boolean(),
+}).strict()
+
+const browserPresentationRectSchema = z.object({
+  x: z.number().finite().min(-100_000).max(100_000),
+  y: z.number().finite().min(-100_000).max(100_000),
+  width: z.number().finite().nonnegative().max(100_000),
+  height: z.number().finite().nonnegative().max(100_000),
+}).strict()
+
+export const browserPresentationInputSchema = z.object({
+  presentationId: z.uuid(),
+  sessionId: browserSessionIdSchema,
+  pageId: z.uuid(),
+  visible: z.boolean(),
+  bounds: browserPresentationRectSchema,
+  clip: browserPresentationRectSchema,
 }).strict()

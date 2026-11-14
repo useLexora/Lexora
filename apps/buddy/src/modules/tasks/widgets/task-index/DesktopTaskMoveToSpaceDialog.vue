@@ -9,7 +9,7 @@ import { resolveLocalChatErrorMessage } from '@/shared/lib/localChatError'
 const props = defineProps<{
   busy: boolean
   language: BuddyLocale
-  moveTaskToSpace: (taskId: string, spaceId: string) => Promise<boolean>
+  moveTaskToSpace: (taskId: string, spaceId: string, expectedRevision?: number) => Promise<boolean>
   show: boolean
   spaces: readonly { id: string, name: string }[]
   task: LocalConversationSummary | null
@@ -29,11 +29,13 @@ const taskUnavailable = computed(() => !props.task || props.task.spaceId !== nul
 const taskBusy = computed(() => props.busy || (props.task && props.task.activity !== 'idle'))
 const canMove = computed(() => props.show && !taskUnavailable.value && !taskBusy.value && Boolean(selectedSpace.value) && !saving.value)
 let session = 0
+let expectedRevision: number | undefined
 watch([() => props.show, () => props.task?.id], () => {
   session += 1
+  expectedRevision = props.task?.metadataRevision
   selectedSpaceId.value = null
   saving.value = false
-}, { flush: 'sync' })
+}, { flush: 'sync', immediate: true })
 onScopeDispose(() => {
   session += 1
 })
@@ -51,7 +53,7 @@ async function confirmMove() {
   const current = session
   saving.value = true
   try {
-    const moved = await props.moveTaskToSpace(task.id, space.id)
+    const moved = await props.moveTaskToSpace(task.id, space.id, ...expectedRevision !== undefined ? [expectedRevision] as const : [])
     if (current !== session)
       return
     if (!moved) {

@@ -30,35 +30,34 @@ export function createConversationApi(): Pick<LocalChatApi, 'context' | 'workspa
         { conversationId },
       ),
       getModelControls: (conversationId, actorId) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsGetModelControls, { conversationId, ...(actorId ? { actorId } : {}) }),
-      deletePermanently: (conversationId, expectedRevision) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsDeletePermanently, { conversationId, expectedRevision }),
       archive: (conversationId, expectedRevision) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsArchive, { conversationId, expectedRevision }),
       restoreArchive: (conversationId, expectedRevision) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsRestoreArchive, { conversationId, expectedRevision }),
       deleteArchived: (conversationId, expectedRevision) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsDeleteArchived, { conversationId, expectedRevision }),
       listArchived: query => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsListArchived, query),
       getArchivePolicy: () => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsGetArchivePolicy, {}),
       setArchivePolicy: days => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsSetArchivePolicy, { days }),
-      delete: conversationId =>
-        ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsDelete, { conversationId }),
+      delete: (conversationId, expectedRevision) =>
+        ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsDelete, { conversationId, ...revisionCondition(expectedRevision) }),
       activateBranch: input =>
         ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsActivateBranch, input),
       listBranches: conversationId =>
         ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsListBranches, { conversationId }),
       listMessages: input =>
         ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsListMessages, input),
-      rename: (conversationId, title) =>
-        ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsRename, { conversationId, title }),
-      setPermissionSettings: (conversationId, settings) => ipcRenderer.invoke(
+      rename: (conversationId, title, expectedTitleRevision) =>
+        ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsRename, { conversationId, title, ...(expectedTitleRevision !== undefined ? { expectedTitleRevision } : {}) }),
+      setPermissionSettings: (conversationId, settings, expectedRevision) => ipcRenderer.invoke(
         LOCAL_CHAT_IPC_CHANNELS.conversationsSetPermissionSettings,
-        { conversationId, ...settings },
+        { conversationId, ...settings, ...revisionCondition(expectedRevision) },
       ),
       listMembers: conversationId => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsListMembers, { conversationId }),
-      addMember: (conversationId, buddyId) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsAddMember, { conversationId, buddyId }),
-      removeMember: (conversationId, buddyId) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsRemoveMember, { conversationId, buddyId }),
-      setBuddy: (conversationId, buddyId) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsSetBuddy, { conversationId, buddyId }),
-      moveToSpace: (conversationId, spaceId) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsMoveToSpace, { conversationId, spaceId }),
+      addMember: (conversationId, buddyId, expectedRevision) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsAddMember, { conversationId, buddyId, ...revisionCondition(expectedRevision) }),
+      removeMember: (conversationId, buddyId, expectedRevision) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsRemoveMember, { conversationId, buddyId, ...revisionCondition(expectedRevision) }),
+      setBuddy: (conversationId, buddyId, expectedRevision) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsSetBuddy, { conversationId, buddyId, ...revisionCondition(expectedRevision) }),
+      moveToSpace: (conversationId, spaceId, expectedRevision) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsMoveToSpace, { conversationId, spaceId, ...revisionCondition(expectedRevision) }),
       setModelSelection: (conversationId, modelSelection, target) => ipcRenderer.invoke(
         LOCAL_CHAT_IPC_CHANNELS.conversationsSetModelSelection,
-        { conversationId, modelSelection, ...(target?.actorId ? { actorId: target.actorId } : {}), ...(target?.runId ? { targetRunId: target.runId } : {}) },
+        { conversationId, modelSelection, ...revisionCondition(target?.expectedRevision), ...(target?.expectedRunGeneration !== undefined ? { expectedRunGeneration: target.expectedRunGeneration } : {}), ...(target?.expectedRunModelSelection !== undefined ? { expectedRunModelSelection: target.expectedRunModelSelection } : {}), ...(target?.expectedActiveRun !== undefined ? { expectedActiveRun: target.expectedActiveRun } : {}), ...(target?.actorId ? { actorId: target.actorId } : {}), ...(target?.runId ? { targetRunId: target.runId } : {}) },
       ),
       listTimeline: input =>
         ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsListTimeline, input),
@@ -75,9 +74,13 @@ export function createConversationApi(): Pick<LocalChatApi, 'context' | 'workspa
       startTurn: request => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.chatStartTurn, request),
       regenerateAssistant: input =>
         ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.chatRegenerateAssistant, input),
-      cancel: runId => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.chatCancel, { runId }),
+      cancel: (runId, expectedRunGeneration) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.chatCancel, { runId, ...(expectedRunGeneration !== undefined ? { expectedRunGeneration } : {}) }),
       onRunEvent: (listener: (event: LocalRunEvent) => void) =>
         subscribe(LOCAL_CHAT_IPC_CHANNELS.runEvent, listener),
     }),
   }
+}
+
+function revisionCondition(expectedRevision: number | undefined) {
+  return expectedRevision !== undefined ? { expectedRevision } : {}
 }

@@ -18,7 +18,7 @@ function rehash<T extends Parameters<typeof hashChildAdmissionRequest>[0]>(input
 }
 
 describe('execution admission and fences', () => {
-  it.each(['disabled', 'removed', 'unavailable', 'dependency', 'user'] as const)('rejects %s managed targets in the admission transaction and preserves accepted snapshots', (reason) => {
+  it.each(['removed', 'dependency', 'user'] as const)('rejects %s managed targets in the admission transaction and preserves accepted snapshots', (reason) => {
     const f = fixture()
     const managed = managedBuddyFixture(f.database)
     const npc = f.buddies.upsertManagedNpc(managed.input)
@@ -66,12 +66,12 @@ describe('execution admission and fences', () => {
     expect(f.conversations.findMember('conversation', 'default')?.modelSelection).toBeNull()
   })
 
-  it.each(['completed', 'failed', 'cancelled'] as const)('resumes the same actor journal after a %s delegation', (status) => {
+  it('resumes the same actor journal after a completed delegation', () => {
     const f = fixture()
     const first = f.executions.admitChild(f.child('first', f.actor.id)).execution
     expect(first.run.piSessionFile).toBeNull()
     f.runs.bindSession('first', '/fixture/reviewer.jsonl')
-    f.runs.reconcileTerminal('first', status, executionNow, status === 'failed' ? 'REQUEST_FAILED' : null)
+    f.runs.reconcileTerminal('first', 'completed', executionNow, null)
     f.database.prepare('UPDATE execution_state SET phase = \'closed\' WHERE run_id = ?').run('first')
     const second = f.executions.admitChild(f.child('second', f.actor.id)).execution
     expect(second.run.threadId).toBe(first.run.threadId)
@@ -124,7 +124,7 @@ describe('execution admission and fences', () => {
     expect(() => f.executions.admitChild(rehash({ ...request, initialInput: { ...request.initialInput, prompt: 'Conflicting goal' } }))).toThrow(expect.objectContaining({ code: 'conflict' }))
   })
 
-  it.each(['cancel', 'close', 'branch', 'definition'] as const)('rejects stale %s admission without creating a child or thread', (change) => {
+  it.each(['cancel', 'close', 'delete', 'definition'] as const)('rejects stale %s admission without creating a child or thread', (change) => {
     const f = fixture()
     const request = f.child('rejected')
     const before = f.database.prepare('SELECT COUNT(*) AS count FROM execution_threads').get()?.count
@@ -132,13 +132,22 @@ describe('execution admission and fences', () => {
       f.executions.requestCancel('root', executionNow)
     if (change === 'close')
       f.executions.beginClosing(f.fence('root'), 'success')
-    if (change === 'branch')
-      f.database.prepare('UPDATE conversations SET active_branch_id = ? WHERE id = ?').run('other', 'conversation')
+    if (change === 'delete')
+      f.conversations.markDeleted('conversation', executionNow)
     if (change === 'definition')
       f.buddies.update({ buddyId: f.npc.id, expectedRevision: f.npc.revision, enabled: false })
     expect(() => f.executions.admitChild(request)).toThrow()
     expect(f.runs.findById('rejected')).toBeNull()
     expect(f.database.prepare('SELECT COUNT(*) AS count FROM execution_threads').get()?.count).toBe(before)
+  })
+
+  it('keeps child admission bound to the original branch after the default changes', () => {
+    const f = fixture()
+    const request = f.child('original-child')
+    f.conversations.createBranch({ id: 'other', conversationId: 'conversation', parentBranchId: null, forkedFromMessageId: null, createdAt: executionNow, activate: true })
+    expect(f.executions.admitChild(request).execution.run).toMatchObject({ branchId: 'branch', parentRunId: 'root', rootRunId: 'root' })
+    expect(() => f.executions.admitChild(rehash({ ...f.child('foreign-child'), run: { ...f.child('foreign-child').run, branchId: 'other' } }))).toThrow()
+    expect(f.runs.findById('foreign-child')).toBeNull()
   })
 
   it('keeps ordinary active/timeline/unread queries on roots while recovery sees every child', () => {

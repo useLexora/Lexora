@@ -11,13 +11,11 @@ function fixture() {
   let key: string | null = null
   let failing = false
   const service = new WebSettingsService(createWorkspaceRepository(database), {
-    request: async (method, input) => {
-      if (method === 'host.secrets.read')
-        return { ok: true, value: key }
+    read: async () => key,
+    write: async (value) => {
       if (failing)
         throw new Error('fixture-private-credential-failure')
-      key = method === 'host.secrets.delete' ? null : (input as { value: string }).value
-      return { ok: true }
+      key = value
     },
   })
   return { service, database, fail: () => {
@@ -46,15 +44,15 @@ describe('web settings ownership', () => {
   })
   it('fences a late credential read and suppresses unchanged read observations', async () => {
     const { service, database } = fixture()
-    const delayed = Promise.withResolvers<unknown>()
-    const original = service.peer.request
+    const delayed = Promise.withResolvers<string | null>()
+    const original = service.secrets.read
     let delay = true
-    service.peer.request = (method, input) => {
-      if (method === 'host.secrets.read' && delay) {
+    service.secrets.read = () => {
+      if (delay) {
         delay = false
         return delayed.promise
       }
-      return original(method, input)
+      return original()
     }
     try {
       const changes: unknown[] = []
@@ -62,7 +60,7 @@ describe('web settings ownership', () => {
       const reading = service.getTavilyKey()
       await service.saveCredential({ key: 'fixture-only-key' })
       const revision = service.state.revision
-      delayed.resolve({ ok: true, value: null })
+      delayed.resolve(null)
       await reading
       expect(service.state).toMatchObject({ revision, tavilyKeyConfigured: true })
       await service.getTavilyKey()

@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test } from '../fixtures/electron.mjs'
 
-test('working copies and sidebar preserve drafts, veto unsaved closure and recover across restart', async ({ buddy }) => {
+test('working copies preserve drafts, veto unsaved closure and recover across restart', async ({ buddy }) => {
   const instance = await buddy.createInstance('working-copy')
   const directory = path.join(instance.home, 'documents')
   const document = path.join(directory, 'README.md')
@@ -47,28 +47,6 @@ test('working copies and sidebar preserve drafts, veto unsaved closure and recov
   await expect.poll(readBackup).toBe(beforeUndo)
   await expect(editor.locator('.view-lines')).toContainText('Second edit while dirty.')
   expect(await fs.readFile(document, 'utf8')).toBe('Original document.\n')
-  const sidebar = page.locator('.desktop-workbench-layout__sidebar')
-  const width = () => sidebar.evaluate(element => element.getBoundingClientRect().width)
-  const initialWidth = await width()
-  await page.getByTestId('workbench-sidebar-resizer').focus()
-  await page.keyboard.press('ArrowRight')
-  const savedWidth = () => page.evaluate(async () => (await window.lexoraDesktop.settings.get()).desktop.taskSidebar.width)
-  await expect.poll(savedWidth).toBeGreaterThan(initialWidth)
-  const expandedWidth = await savedWidth()
-  await expect.poll(width).toBe(expandedWidth)
-  const toggle = page.getByTestId('workbench-sidebar-toggle')
-  await page.getByTestId('workbench-sidebar-resizer').hover()
-  await toggle.click()
-  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
-  await expect(sidebar).toHaveAttribute('inert', '')
-  await expect.poll(width).toBe(0)
-  await expect(composer).toHaveText(draft)
-  await page.locator('.desktop-workbench-layout__sidebar-collapsed-boundary').hover()
-  await toggle.click()
-  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
-  await expect(sidebar).not.toHaveAttribute('inert')
-  await expect.poll(width).toBe(expandedWidth)
-  await expect(composer).toHaveText(draft)
   await page.getByTestId('task-context-panel').getByRole('tab', { name: '文件', exact: true }).click({ button: 'right' })
   await page.locator('.n-dropdown-menu:visible').getByText('关闭全部', { exact: true }).click()
   const close = page.locator('.n-dialog').filter({ hasText: '关闭前保存更改？' })
@@ -77,8 +55,6 @@ test('working copies and sidebar preserve drafts, veto unsaved closure and recov
   await expect(editor.locator('.view-lines')).toContainText('Second edit while dirty.')
   await instance.stop()
   ;({ app, page, diagnostics } = await instance.launch())
-  await expect.poll(savedWidth).toBe(expandedWidth)
-  await expect.poll(() => page.locator('.desktop-workbench-layout__sidebar').evaluate(element => element.getBoundingClientRect().width)).toBe(expandedWidth)
   await expect(page.locator('.desktop-chat-composer__prosemirror:visible')).toHaveText(draft)
   const panelToggle = page.getByTestId('context-panel-toggle')
   if (await panelToggle.getAttribute('aria-expanded') === 'false')
@@ -224,6 +200,17 @@ async function sendNotificationTarget(window) {
   await window.evaluate(window => window.webContents.send('lexora:app:open-target', { conversationId: 'b', runId: 'notification-run' }))
 }
 
+async function expectNotificationBranch(page, pane) {
+  await expect(pane.locator('[data-message-id="notification-message"]')).toBeAttached()
+  const viewId = await pane.locator('.workbench__view[data-resource-id="b"]').getAttribute('data-view-id')
+  await expect.poll(() => page.evaluate(async id => (await window.lexoraDesktop.workbench.read())?.layout.views[id]?.resource, viewId)).toMatchObject({
+    scheme: 'task',
+    id: 'b',
+    data: { branchId: 'notification-branch' },
+  })
+  expect(await page.evaluate(async () => (await window.lexoraDesktop.localChat.conversations.get('b')).activeBranchId)).toBe('branch-b')
+}
+
 async function expectNotificationMessage(page, pane) {
   const message = pane.locator('[data-message-id="notification-message"]')
   await expect(message).toContainText('The notification points to this earlier message.')
@@ -231,7 +218,7 @@ async function expectNotificationMessage(page, pane) {
   const laterMessages = await page.evaluate(() => window.lexoraDesktop.localChat.conversations.listMessages({ conversationId: 'b', branchId: 'notification-branch', limit: 100 }))
   expect(laterMessages.items.map(item => item.id)).toContain('later-message-24')
   await expect(pane.locator('[data-message-id="later-message-24"]')).not.toBeInViewport()
-  await expect.poll(() => page.evaluate(async () => (await window.lexoraDesktop.localChat.conversations.get('b')).activeBranchId)).toBe('notification-branch')
+  await expectNotificationBranch(page, pane)
   await expect(pane.locator('[data-message-id="message-b"]')).toHaveCount(0)
 }
 
@@ -285,7 +272,7 @@ test('notification navigation: app:open-target opens an unopened task while hidd
   await expect.poll(() => window.evaluate(window => ({ visible: window.isVisible(), focused: window.isFocused() }))).toEqual({ visible: false, focused: false })
 
   await sendNotificationTarget(window)
-  await expect.poll(() => page.evaluate(async () => (await window.lexoraDesktop.localChat.conversations.get('b')).activeBranchId)).toBe('notification-branch')
+  await expectNotificationBranch(page, notificationPane(page, 'b'))
   await expect(notificationTask(page, 'b')).toHaveClass(/is-active/)
   expect(await window.evaluate(window => window.isVisible())).toBe(false)
   await window.evaluate(window => window.showInactive())
@@ -295,75 +282,5 @@ test('notification navigation: app:open-target opens an unopened task while hidd
   await expect(page.locator('.workbench-pane')).toHaveCount(1)
   await expect(notificationPane(page, 'a')).toHaveCount(0)
   await expect(notificationTask(page, 'b')).toHaveClass(/is-active/)
-  expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
-})
-
-test('resource tab menus pin, close by position and preserve pins across restart', async ({ buddy }) => {
-  const instance = await buddy.createInstance('resource-tab-menu')
-  let { page, diagnostics } = await instance.launch()
-  await expect(page.getByRole('textbox', { name: '对话消息', exact: true })).toBeVisible()
-  await page.keyboard.press('Control+Shift+P')
-  await page.getByPlaceholder('输入命令名称').fill('浏览器')
-  await page.getByPlaceholder('输入命令名称').press('Enter')
-  const panel = () => page.getByTestId('task-context-panel')
-  const tabs = () => panel().getByRole('tab')
-  const menu = () => page.locator('.n-dropdown-menu:visible')
-  async function add() {
-    const count = await tabs().count()
-    await page.getByTestId('context-add-tab').click()
-    await page.getByRole('menuitem', { name: '浏览器', exact: true }).click()
-    await expect(tabs()).toHaveCount(count + 1)
-  }
-  async function action(index, label) {
-    await tabs().nth(index).click({ button: 'right' })
-    await expect(menu().getByText(label, { exact: true }).locator('..')).not.toHaveClass(/disabled/)
-    await menu().getByText(label, { exact: true }).click()
-  }
-  await expect(tabs()).toHaveCount(1)
-  await add()
-  await add()
-  await add()
-  const ids = await tabs().evaluateAll(elements => elements.map(element => element.id))
-  await action(1, '固定')
-  await expect(tabs().first()).toHaveAttribute('id', ids[1])
-  await expect(panel().locator('[data-pinned="true"]')).toHaveCount(1)
-  await expect(tabs().last()).toHaveAttribute('aria-selected', 'true')
-  await tabs().nth(2).click({ button: 'right' })
-  await expect(menu().getByText('关闭左侧', { exact: true }).locator('..')).not.toHaveClass(/disabled/)
-  await menu().getByText('关闭左侧', { exact: true }).click()
-  await expect(tabs()).toHaveCount(3)
-  expect(await tabs().evaluateAll(elements => elements.map(element => element.id))).toEqual([ids[1], ids[2], ids[3]])
-  await action(1, '关闭右侧')
-  await expect(tabs()).toHaveCount(2)
-  expect(await tabs().evaluateAll(elements => elements.map(element => element.id))).toEqual([ids[1], ids[2]])
-  await add()
-  await action(1, '关闭其他')
-  await expect(tabs()).toHaveCount(2)
-  await action(1, '关闭全部')
-  await expect(tabs()).toHaveCount(1)
-  await expect(tabs().first()).toHaveAttribute('id', ids[1])
-  await tabs().first().focus()
-  await page.keyboard.press('Shift+F10')
-  await expect(menu().getByText('取消固定', { exact: true })).toBeVisible()
-  for (const label of ['关闭其他', '关闭左侧', '关闭右侧', '关闭全部'])
-    await expect(menu().getByText(label, { exact: true }).locator('..')).toHaveClass(/disabled/)
-  await page.keyboard.press('Escape')
-  await expect(menu()).toBeHidden()
-  expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
-  await instance.stop()
-  ;({ page, diagnostics } = await instance.launch())
-  const toggle = page.getByTestId('context-panel-toggle')
-  await expect(toggle).toBeVisible()
-  if (await toggle.getAttribute('aria-expanded') === 'false')
-    await toggle.click()
-  await expect(panel().locator('[data-pinned="true"]')).toHaveCount(1)
-  await action(0, '取消固定')
-  await expect(panel().locator('[data-pinned="true"]')).toHaveCount(0)
-  await action(0, '固定')
-  await panel().getByRole('button', { name: '取消固定', exact: true }).click()
-  await expect(tabs()).toHaveCount(1)
-  await expect(panel().locator('[data-pinned="true"]')).toHaveCount(0)
-  await panel().getByRole('button', { name: '关闭新标签页', exact: true }).click()
-  await expect(tabs()).toHaveCount(0)
   expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })

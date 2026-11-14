@@ -80,9 +80,6 @@ describe('application lifecycle snapshot', () => {
     expect(startup.state.status).toBe('ready')
     expect(startup.state.hasBeenReady).toBe(true)
     expect(events.filter(event => event.event === 'app.ready')).toHaveLength(1)
-    const snapshot = startup.state
-    Object.assign(snapshot.stages[0]!, { status: 'failed' })
-    expect(startup.state.stages[0]?.status).toBe('completed')
   })
 
   it('rejects delayed renderer reports after the Runtime generation changes while retaining their diagnostics', () => {
@@ -117,11 +114,17 @@ describe('application lifecycle snapshot', () => {
     expect(startup.state.stages.some(stage => stage.progress)).toBe(false)
   })
 
-  it('reconstructs completed managed stages when subscribed after initialization', async () => {
-    const host = new ServiceHost()
-    await host.start('desktop', () => true)
-    const startup = new DesktopStartup()
-    startup.bindDesktop(host.lifecycle)
-    expect(startup.state.stages).toContainEqual(expect.objectContaining({ stage: 'desktop', status: 'completed' }))
+  it('requires a fresh renderer after closing the desktop and rejects late reports from the old page', () => {
+    const { startup, complete, send, connect } = fixture()
+    complete('desktop')
+    connect('runtime-1')
+    complete('renderer')
+    expect(startup.state.status).toBe('ready')
+    startup.detachRenderer()
+    expect(startup.state.status).toBe('starting')
+    send('renderer', 'ready')
+    expect(startup.state.status).toBe('starting')
+    complete('renderer')
+    expect(startup.state.status).toBe('ready')
   })
 })

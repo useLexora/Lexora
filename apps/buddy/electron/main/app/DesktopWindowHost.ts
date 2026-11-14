@@ -15,6 +15,7 @@ interface WindowBindings {
   onHidden: () => void
   onRecoveryExhausted: () => void
   onWindowCreated: (window: BrowserWindow) => void
+  onWindowReleasing?: (window: BrowserWindow) => void
 }
 
 export class DesktopWindowHost {
@@ -45,6 +46,7 @@ export class DesktopWindowHost {
       screen.getAllDisplays().map(display => display.bounds),
     )
     const manager = new DesktopWindowManager({
+      onBeforeDestroy: bindings.onWindowReleasing,
       onRecoveryStarted: () => environment.events.publish({ level: 'warn', event: 'renderer.recovery.started', attempt: 1 }),
       onRecoveryRebuilding: () => environment.events.publish({ level: 'info', event: 'renderer.recovery.rebuilding', attempt: 1 }),
       onRecoveryExhausted: () => {

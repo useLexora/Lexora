@@ -4,9 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
-import { openBuddyDatabase } from '../database'
-import { BUDDY_SCHEMA_MIGRATIONS } from '../schema'
-import { EXPERIMENTAL_PERSISTENCE_SCHEMA_SQL } from './experimentalPersistenceSchema'
+import { openBuddyDatabase, openBuddyMigrationCandidate, openBuddySqliteDatabase } from '../database'
+import { BUDDY_PERSISTENCE_SCHEMA_LINEAGE } from '../migrations/v43Persistence'
+import { BUDDY_MIGRATION_SCHEMA_VERSION, BUDDY_SCHEMA_MIGRATIONS } from '../schema'
 import { MIGRATION_TEST_TIMEOUT, openMigrationFixtureDatabase } from './migrationFixture'
 
 const roots: string[] = []
@@ -109,35 +109,45 @@ describe('archive schema lineage', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
     expect(readdirSync(external)).toEqual(['session.jsonl'])
   })
 
-  it('persists archive CAS, admission guards, deletion jobs and detached usage on the legacy schema', () => {
+  it.each([42, BUDDY_MIGRATION_SCHEMA_VERSION])('upgrades or reopens v%s preserving identity, receipts and revisions', (version) => {
     const { databasePath, database: previous } = fixture()
     seed(previous, '/synthetic/session.jsonl')
+    apply(previous, BUDDY_SCHEMA_MIGRATIONS.filter(migration => migration.version >= 42 && migration.version <= version))
+    previous.exec(`UPDATE conversations SET archived_at = '${now}' WHERE id = 'task'`)
+    const identity = version >= 43 ? previous.prepare('SELECT * FROM storage_profile').get() : undefined
+    if (identity) {
+      previous.exec(`INSERT INTO command_receipts
+        (data_generation, actor_id, command_id, method, fingerprint_version, fingerprint, source_instance_id, decision, target_json, result_json, decided_at)
+        SELECT data_generation, local_actor_id, 'preserved-command', 'fixture.command', 1, 'fingerprint', 'instance', 'accepted', '{}', '{"kept":true}', '${now}' FROM storage_profile`)
+    }
+    const receipts = identity ? previous.prepare('SELECT * FROM command_receipts').all() : []
+    if (identity)
+      previous.exec('UPDATE product_query_revisions SET revision = 9007199254740993')
+    const revisions = identity
+      ? previous.prepare('SELECT table_name, scope, CAST(revision AS TEXT) AS revision FROM product_query_revisions').all()
+      : []
     previous.close()
-    const database = open(databasePath)
-    database.exec(`UPDATE conversations SET archived_at = '${now}' WHERE id = 'task'`)
-    expect(database.prepare('SELECT metadata_revision FROM conversations WHERE id = \'task\'').get()?.metadata_revision).toBe(1)
-    database.exec(`UPDATE conversation_members SET removed_at = '${now}' WHERE conversation_id = 'task'`)
-    expect(database.prepare('SELECT metadata_revision FROM conversations WHERE id = \'task\'').get()?.metadata_revision).toBe(2)
-    expect(database.prepare('UPDATE conversations SET archived_at = NULL WHERE id = ? AND metadata_revision = ?').run('task', 0).changes).toBe(0)
-    expect(() => database.exec('UPDATE runs SET status = \'queued\' WHERE id = \'run\'')).toThrow('CONVERSATION_NOT_ACTIVE')
-    expect(() => database.exec(`INSERT INTO runs (id, conversation_id, branch_id, triggering_message_id, provider, model, purpose, status, started_at)
-      VALUES ('blocked', 'task', 'branch', 'input', 'fixture', 'fixture', 'chat', 'queued', '${now}')`)).toThrow('CONVERSATION_NOT_ACTIVE')
-    database.exec(`INSERT INTO conversation_deletion_jobs VALUES ('task', 'failed', 'conversation', 'RETRY_REQUIRED', '{"files":[]}', '${now}', '${now}')`)
-    database.exec('DELETE FROM runs; DELETE FROM extension_invocations')
-    const retainedUsage = database.prepare('SELECT id, run_id, invocation_id, detached, total_tokens, total_cost FROM usage_records ORDER BY id').all()
-    expect(retainedUsage).toEqual(['usage-action', 'usage-run'].map(id => ({ id, run_id: null, invocation_id: null, detached: 1, total_tokens: 10, total_cost: 10 })))
-    database.close()
-    const reopened = open(databasePath)
-    expect(reopened.prepare('SELECT status, origin, error_code, manifest_json FROM conversation_deletion_jobs').get()).toEqual({ status: 'failed', origin: 'conversation', error_code: 'RETRY_REQUIRED', manifest_json: '{"files":[]}' })
-    expect(reopened.prepare('SELECT id, run_id, invocation_id, detached, total_tokens, total_cost FROM usage_records ORDER BY id').all()).toEqual(retainedUsage)
-    expect(reopened.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    const candidate = openBuddyMigrationCandidate({ databasePath })
+    databases.push(candidate)
+    expect(candidate.prepare('PRAGMA user_version').get()?.user_version).toBe(BUDDY_MIGRATION_SCHEMA_VERSION)
+    expect(candidate.prepare('SELECT lineage FROM buddy_schema_lineage').get()?.lineage).toBe(BUDDY_PERSISTENCE_SCHEMA_LINEAGE)
+    expect(candidate.prepare('SELECT archived_at, metadata_revision FROM conversations WHERE id = \'task\'').get()).toEqual({ archived_at: now, metadata_revision: 1 })
+    expect(candidate.prepare('SELECT authority FROM storage_profile').get()?.authority).toBe('legacy_jsonl')
+    if (identity)
+      expect(candidate.prepare('SELECT * FROM storage_profile').get()).toEqual(identity)
+    expect(candidate.prepare('SELECT * FROM command_receipts').all()).toEqual(receipts)
+    for (const row of revisions)
+      expect(candidate.prepare('SELECT CAST(revision AS TEXT) AS revision FROM product_query_revisions WHERE table_name = ? AND scope = ?').get(row.table_name!, row.scope!)).toEqual({ revision: row.revision })
+    expect(candidate.prepare('SELECT name FROM sqlite_master WHERE name IN (\'managed_files\', \'product_content_reference_owners\')').all()).toHaveLength(2)
+    expect(candidate.prepare('SELECT * FROM conversation_deletion_jobs').all()).toEqual([])
+    expect(candidate.prepare('PRAGMA foreign_key_check').all()).toEqual([])
   })
 
-  it.each([false, true])('rejects experimental v42 before changing database or WAL bytes (live WAL=%s)', (wal) => {
+  it.each([false, true])('rejects a mismatched lineage (live WAL=%s) before changing database bytes or version', (wal) => {
     const { databasePath, database } = fixture()
     seed(database, '/synthetic/session.jsonl')
-    database.exec(EXPERIMENTAL_PERSISTENCE_SCHEMA_SQL)
-    database.exec('PRAGMA user_version = 42')
+    apply(database, BUDDY_SCHEMA_MIGRATIONS.filter(migration => migration.version === 42))
+    database.exec(`PRAGMA user_version = ${BUDDY_MIGRATION_SCHEMA_VERSION}`)
     if (wal) {
       database.exec('PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0')
       database.exec('UPDATE conversations SET title = \'Keep committed WAL data\' WHERE id = \'task\'')
@@ -147,20 +157,13 @@ describe('archive schema lineage', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
     }
     const paths = wal ? [databasePath, `${databasePath}-wal`] : [databasePath]
     const original = paths.map(path => readFileSync(path))
-    expect(() => openBuddyDatabase({ databasePath })).toThrowError(expect.objectContaining({ name: 'BuddyDatabaseVersionError', reason: 'incompatible schema lineage' }))
-    paths.forEach((path, index) => expect(readFileSync(path).equals(original[index]!)).toBe(true))
+    for (const opener of [openBuddyDatabase, openBuddyMigrationCandidate, openBuddySqliteDatabase]) {
+      expect(() => opener({ databasePath })).toThrowError(expect.objectContaining({ name: 'BuddyDatabaseVersionError', reason: 'incompatible schema lineage' }))
+      paths.forEach((path, index) => expect(readFileSync(path).equals(original[index]!)).toBe(true))
+    }
     const check = new DatabaseSync(databasePath, { readOnly: true })
     databases.push(check)
-    expect(check.prepare('PRAGMA user_version').get()?.user_version).toBe(42)
+    expect(check.prepare('PRAGMA user_version').get()?.user_version).toBe(BUDDY_MIGRATION_SCHEMA_VERSION)
     expect(check.prepare('SELECT title FROM conversations WHERE id = \'task\'').get()?.title).toBe(wal ? 'Keep committed WAL data' : 'Keep task')
-  })
-
-  it.each([43, 44, 45, 46, 47, 48, 49])('rejects future schema v%s without changing its bytes', (version) => {
-    const { databasePath, database } = fixture()
-    database.exec(`PRAGMA user_version = ${version}`)
-    database.close()
-    const original = readFileSync(databasePath)
-    expect(() => openBuddyDatabase({ databasePath })).toThrow('newer schema version')
-    expect(readFileSync(databasePath).equals(original)).toBe(true)
   })
 })

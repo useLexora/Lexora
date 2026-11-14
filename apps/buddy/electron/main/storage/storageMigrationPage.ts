@@ -35,6 +35,7 @@ function size(bytes: number): string {
 }
 
 function presentation(kind: StorageOperation['kind'], progress: StorageProgress, committing: boolean) {
+  const requiredUpgrade = kind === 'consolidate' || kind === 'upgrade'
   const failure = progress.phase === 'failed' || progress.phase === 'cancelled'
   const copying = progress.phase === 'copying'
   const percent = copying && progress.totalBytes !== null ? Math.min(100, Math.floor(progress.completedBytes / Math.max(1, progress.totalBytes) * 100)) : null
@@ -42,7 +43,7 @@ function presentation(kind: StorageOperation['kind'], progress: StorageProgress,
   const phases: Record<StorageProgress['phase'], string> = {
     preparing: '正在检查需要保留的资料',
     copying: `正在复制${category}`,
-    converting: '正在更新资料中的目录位置',
+    converting: kind === 'upgrade' ? '正在升级任务与对话记录' : '正在更新资料中的目录位置',
     verifying: '正在验证数据库与附件',
     activating: '即将完成，正在启用数据目录',
     completed: '资料已准备好，正在重新启动',
@@ -55,12 +56,12 @@ function presentation(kind: StorageOperation['kind'], progress: StorageProgress,
     percent,
     text: {
       'phase': phases[progress.phase],
-      'amount': percent === null ? '' : `${size(progress.completedBytes)} / ${size(progress.totalBytes!)}`,
-      'detail': failure ? failureMessage(progress.error) : copying ? `${percent === null ? '' : `复制进度 ${percent}% · `}已复制 ${progress.files.toLocaleString('zh-CN')} 个文件` : progress.phase === 'preparing' ? '正在确认文件与可用空间，文件较多时请稍候。' : '完成后会自动重新启动 Lexora，请稍候。',
-      'cancel': kind === 'consolidate' ? '停止整理并退出' : failure ? '使用原目录' : '取消并使用原目录',
+      'amount': progress.totalBytes === null ? '' : `${size(progress.completedBytes)} / ${size(progress.totalBytes!)}`,
+      'detail': failure ? failureMessage(progress.error) : copying ? `${percent === null ? '' : `复制进度 ${percent}% · `}已复制 ${progress.files.toLocaleString('zh-CN')} 个文件` : progress.phase === 'preparing' ? `已检查 ${progress.files.toLocaleString('zh-CN')} 项资料，正在确认文件与可用空间。` : progress.phase === 'verifying' ? `已校验 ${progress.files.toLocaleString('zh-CN')} 项资料。` : '完成后会自动重新启动 Lexora，请稍候。',
+      'cancel': requiredUpgrade ? '停止整理并退出' : failure ? '使用原目录' : '取消并使用原目录',
       'error-code': failure ? storageMigrationErrorCode(progress.error) : '',
     },
-    hidden: { retry: !failure, cancel: committing || (failure && kind === 'consolidate'), exit: !failure, support: !failure },
+    hidden: { retry: !failure, cancel: committing || (failure && requiredUpgrade), exit: !failure, support: !failure },
   }
 }
 
@@ -83,10 +84,12 @@ export function storageMigrationProgressScript(kind: StorageOperation['kind'], p
 
 export function storageMigrationPage(operation: Pick<StorageOperation, 'kind' | 'target'>, progress: StorageProgress = preparing, committing = false, diagnosticReference = ''): string {
   const state = presentation(operation.kind, progress, committing)
-  const title = operation.kind === 'consolidate' ? '统一数据目录' : operation.kind === 'restore' ? '正在恢复数据' : '正在搬迁数据'
-  const explanation = operation.kind === 'consolidate'
-    ? '本次升级将分散的本机资料整理到同一目录，便于管理和备份。仅首次启动时需要整理。'
-    : operation.kind === 'restore' ? '正在把所选备份内容恢复到当前数据目录，未选择的内容保持原样。完成后会重新启动。' : '正在将资料复制到你选择的目录。验证完成后，Lexora 会从新目录启动。'
+  const title = operation.kind === 'upgrade' ? '正在升级本地数据' : operation.kind === 'consolidate' ? '统一数据目录' : operation.kind === 'restore' ? '正在恢复数据' : '正在搬迁数据'
+  const explanation = operation.kind === 'upgrade'
+    ? '正在升级本机的任务与对话记录。验证完成后将启用新格式，原始数据会保留为恢复副本。'
+    : operation.kind === 'consolidate'
+      ? '本次升级将分散的本机资料整理到同一目录，便于管理和备份。仅首次启动时需要整理。'
+      : operation.kind === 'restore' ? '正在把所选备份内容恢复到当前数据目录，未选择的内容保持原样。完成后会重新启动。' : '正在将资料复制到你选择的目录。验证完成后，Lexora 会从新目录启动。'
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>Lexora · 数据整理</title><style>
     :root {
       color-scheme: light dark;
@@ -327,7 +330,7 @@ export function storageMigrationPage(operation: Pick<StorageOperation, 'kind' | 
       .location { gap: 12px; }
       .diagnostic-field { flex-direction: column; gap: 2px; }
     }
-    </style></head><body data-phase="${state.phase}"><header><div class="symbol" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M8 14h8m-3-3 3 3-3 3"/></svg></div><span>Lexora · ${operation.kind === 'consolidate' ? '首次升级整理' : operation.kind === 'restore' ? '恢复备份' : '更改数据目录'}</span></header>
+    </style></head><body data-phase="${state.phase}"><header><div class="symbol" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M8 14h8m-3-3 3 3-3 3"/></svg></div><span>Lexora · ${operation.kind === 'upgrade' ? '本地数据升级' : operation.kind === 'consolidate' ? '首次升级整理' : operation.kind === 'restore' ? '恢复备份' : '更改数据目录'}</span></header>
     <h1>${title}</h1><p class="intro">${explanation}</p><p class="safety"><svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m10 2 6 3v5c0 4-6 7-6 7s-6-3-6-7V5Z"/><path d="m7 9 2 2 4-4"/></svg>原数据会保留 · 本次操作仅在本机进行</p>
     <div class="location"><span>整理到</span><code>${escape(operation.target)}</code></div>
     <ol aria-label="整理步骤">${['检查资料', '复制资料', '完成准备'].map((label, index) => `<li data-step="${index}" data-state="${index < state.step ? 'done' : index === state.step ? 'active' : 'waiting'}"><b aria-hidden="true">${index + 1}</b>${label}</li>`).join('')}</ol>
@@ -339,5 +342,5 @@ export function storageMigrationPage(operation: Pick<StorageOperation, 'kind' | 
       <div class="support-actions"><a id="export" href="https://storage.lexora.invalid/export">导出诊断日志</a><a id="issue" href="https://storage.lexora.invalid/issue">提交 Issue</a></div>
       <div id="support-status" role="status" aria-live="polite"></div>
     </section>
-    <p class="note">${operation.kind === 'restore' ? '恢复前的数据将保留为副本，浏览器资料与缓存不受影响。' : '缓存、旧日志与崩溃报告留在原位置，无需搬迁。'}<br>完成后会自动重新启动 Lexora。</p><nav aria-label="整理操作">${(['cancel', 'retry', 'exit'] as const).map(id => `<a id="${id}" href="https://storage.lexora.invalid/${id}" ${state.hidden[id] ? 'hidden' : ''}>${id === 'cancel' ? state.text.cancel : id === 'retry' ? '重试' : '退出'}</a>`).join('')}</nav></body></html>`
+    <p class="note">${operation.kind === 'upgrade' ? '升级前的数据将保留在当前目录的 recovery 文件夹中。' : operation.kind === 'restore' ? '恢复前的数据将保留为副本，浏览器资料与缓存不受影响。' : '缓存、旧日志与崩溃报告留在原位置，无需搬迁。'}<br>完成后会自动重新启动 Lexora。</p><nav aria-label="整理操作">${(['cancel', 'retry', 'exit'] as const).map(id => `<a id="${id}" href="https://storage.lexora.invalid/${id}" ${state.hidden[id] ? 'hidden' : ''}>${id === 'cancel' ? state.text.cancel : id === 'retry' ? '重试' : '退出'}</a>`).join('')}</nav></body></html>`
 }

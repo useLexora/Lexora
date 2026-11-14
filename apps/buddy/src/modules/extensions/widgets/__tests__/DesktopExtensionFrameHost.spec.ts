@@ -102,7 +102,7 @@ it('scopes broadcasts by extension and generation and header actions by exact vi
 })
 
 it('allows clipboard writes only from a focused visible ready frame and preserves accepted results after focus changes', async () => {
-  const installed = shallowRef<ExtensionStatus[]>([{ manifest: extensionManifestSchema.parse({ schemaVersion: 1, id: 'tests.cleanup', name: 'Cleanup', version: '1.0.0', apiVersion: 4, engines: { lexora: '*' }, contributes: {} }), revision: 'first', enabled: true, compatible: true, development: false, pending: null, state: 'active', generation: crypto.randomUUID(), error: null, activationMs: null, logs: [] }])
+  const installed = shallowRef<ExtensionStatus[]>([{ manifest: extensionManifestSchema.parse({ schemaVersion: 1, id: 'tests.cleanup', name: 'Cleanup', version: '1.0.0', apiVersion: 5, engines: { lexora: '*' }, contributes: {} }), revision: 'first', enabled: true, compatible: true, development: false, pending: null, state: 'active', generation: crypto.randomUUID(), error: null, activationMs: null, logs: [] }])
   const viewRequest = vi.fn<ExtensionApi['viewRequest']>().mockResolvedValue(null)
   const api: Partial<ExtensionApi> = {
     openView: async input => ({ id: input.viewId, extensionId: input.extensionId, generation: installed.value[0]!.generation!, token: crypto.randomUUID(), url: 'about:blank' }),

@@ -109,6 +109,7 @@ export function createExecutionRepository(database: DatabaseSync) {
       return null
     const initial = inputs.findByRunId(runId)
     return {
+
       work: work.find(runId)!,
       run,
       phase: row.phase as ExecutionPhase,
@@ -156,8 +157,8 @@ export function createExecutionRepository(database: DatabaseSync) {
 
   function assertLive(record: ExecutionStateRecord): ExecutionStateRecord[] {
     const chain = ancestors(record)
-    const conversation = database.prepare('SELECT active_branch_id, deleted_at FROM conversations WHERE id = ?').get(record.run.conversationId)
-    if (!conversation || conversation.deleted_at !== null || conversation.active_branch_id !== record.run.branchId || chain.some(item => !isOpen(item)))
+    const conversation = database.prepare('SELECT deleted_at FROM conversations WHERE id = ?').get(record.run.conversationId)
+    if (!conversation || conversation.deleted_at !== null || chain.some(item => !isOpen(item)))
       throw new ExecutionAdmissionError('stale')
     for (let index = 0; index < chain.length - 1; index++) {
       if (chain[index]!.admittedParentGeneration !== chain[index + 1]!.run.generation || chain[index]!.admittedRootGeneration !== chain.at(-1)!.run.generation)
@@ -249,6 +250,15 @@ export function createExecutionRepository(database: DatabaseSync) {
   }
 
   return {
+    waitingRunIds(conversationId: string): string[] {
+      return database.prepare(`SELECT r.id FROM runs r
+        JOIN execution_state e ON e.run_id = r.id JOIN runs root ON root.id = r.root_run_id
+        JOIN execution_state root_state ON root_state.run_id = root.id
+        JOIN conversations c ON c.id = r.conversation_id
+        WHERE r.conversation_id = ? AND r.status = 'running' AND e.phase = 'waiting' AND e.cancel_requested_at IS NULL
+          AND root.status IN ('queued', 'running') AND root_state.phase NOT IN ('closing', 'closed') AND root_state.cancel_requested_at IS NULL
+          AND c.deleted_at IS NULL`).all(conversationId).map(row => String(row.id))
+    },
     find,
     listAttachments,
     assertNoForwardFallback,
@@ -384,8 +394,8 @@ export function createExecutionRepository(database: DatabaseSync) {
         }
         if (snapshot.kind === 'actor' && database.prepare(`SELECT 1 FROM runs JOIN execution_state ON execution_state.run_id = runs.id
           JOIN execution_threads ON execution_threads.id = runs.thread_id
-          WHERE execution_threads.conversation_id = ? AND execution_threads.actor_id = ? AND execution_threads.kind = 'actor'
-            AND execution_state.phase <> 'closed' LIMIT 1`).get(caller.run.conversationId, snapshot.id)) {
+          WHERE execution_threads.conversation_id = ? AND runs.branch_id = ? AND execution_threads.actor_id = ? AND execution_threads.kind = 'actor'
+            AND execution_state.phase <> 'closed' LIMIT 1`).get(caller.run.conversationId, caller.run.branchId, snapshot.id)) {
           throw new ExecutionAdmissionError('busy')
         }
         if (database.prepare('SELECT 1 FROM execution_state WHERE result_mailbox_id = ?').get(input.resultMailboxId))
@@ -408,7 +418,7 @@ export function createExecutionRepository(database: DatabaseSync) {
         if (snapshot.kind === 'actor')
           freezeConversationMemberModel(database, caller.run.conversationId, snapshot.id, snapshot.model)
         const threadId = previous?.run.threadId ?? (snapshot.kind === 'actor' && context.contextMode === 'conversation'
-          ? threads.ensureActor(caller.run.conversationId, snapshot.id, input.run.startedAt).id
+          ? threads.ensureActor(caller.run.conversationId, snapshot.id, input.run.startedAt, caller.run.branchId).id
           : threads.createIsolated(caller.run.conversationId, snapshot.id, snapshot.kind, input.run.startedAt).id)
         const piSessionFile = threads.findPreviousSession(threadId, input.run.branchId)
         const run = runs.create({ ...input.run, actorSnapshot: snapshot, status: 'queued', piSessionFile, rootRunId: root.run.id, parentRunId: caller.run.id, executionKind: snapshot.kind === 'npc' ? 'npc_child' : 'actor_child', threadId, generation: 0 })

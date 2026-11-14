@@ -1,20 +1,17 @@
-import type { RuntimeRpcPeerContract } from '../../../../shared/runtime/rpcPeer'
 import type { RuntimePreferences } from '../../../../shared/runtime/runtimePreferences'
-import { runtimePreferencesRpc, runtimePreferencesSchema } from '../../../../shared/runtime/runtimePreferences'
+import type { RuntimePreferenceSource } from '../../platform/RuntimePlatform'
 
 export async function bindRuntimePreferences(
-  rpc: Pick<RuntimeRpcPeerContract, 'request' | 'onNotification'>,
+  source: RuntimePreferenceSource,
   apply: (preferences: RuntimePreferences) => void,
 ): Promise<() => void> {
   let updated = false
-  const unsubscribe = rpc.onNotification((method, params) => {
-    if (method !== runtimePreferencesRpc.changed)
-      return
+  const unsubscribe = source.subscribe((preferences) => {
     updated = true
-    apply(runtimePreferencesSchema.parse(params))
+    apply(preferences)
   })
   try {
-    const preferences = runtimePreferencesSchema.parse(await rpc.request(runtimePreferencesRpc.get, {}))
+    const preferences = await source.get()
     if (!updated)
       apply(preferences)
     return unsubscribe

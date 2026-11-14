@@ -9,12 +9,16 @@ export interface RegisterAttachmentRpcOptions {
   rpc: RuntimeRequestRegistrar
   service: Pick<
     AttachmentService,
-    'resolvePreview'
+    'resolvePreview' | 'readPreview'
   >
 }
 
 export function registerAttachmentRpc(options: RegisterAttachmentRpcOptions): () => void {
   const disposers = [
+    options.rpc.onRequest('attachments.readPreview', (params) => {
+      const input = parse(z.object({ attachmentId: idSchema }).strict(), params)
+      return options.service.readPreview(input.attachmentId)
+    }),
     options.rpc.onRequest('attachments.resolvePreview', (params) => {
       const input = parse(z.object({ attachmentId: idSchema }).strict(), params)
       return options.service.resolvePreview(input.attachmentId)

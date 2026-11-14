@@ -19,6 +19,7 @@ export interface ChatDraftState {
   modelSelection: LocalComposerDraft['modelSelection']
   participants?: LocalComposerDraft['participants']
   revision: number | null
+  slotRevision?: number
 }
 
 export interface ChatDraftSnapshot extends ChatDraftState {
@@ -29,6 +30,7 @@ export type ComposerDraftReceipt = NonNullable<LocalTurnStart['draftReceipt']>
 
 export interface ChatDrafts {
   approvalPolicy: ComputedRef<ChatDraftState['approvalPolicy']>
+  content: ComputedRef<BuddyUserContentV1>
   composerContent: ComputedRef<JSONContent>
   draft: ComputedRef<string>
   draftId: ComputedRef<string>
@@ -48,6 +50,7 @@ export interface ChatDrafts {
   confirmSave: (submitted: ChatDraftSnapshot, remote: LocalComposerDraft) => boolean
   discard: (targetKey: string) => Promise<void>
   discardConversation: (conversationId: string) => Promise<void>
+  restoreSnapshot: (value: ChatDraftSnapshot) => boolean
   hydrate: (values: ReadonlyArray<{ draft: LocalComposerDraft, targetKey: string }>) => void
   isEditorSessionCurrent: (value: Pick<ChatDraftState, 'draftId' | 'editorSessionId'>) => boolean
   isPersisted: (value: ChatDraftSnapshot) => boolean

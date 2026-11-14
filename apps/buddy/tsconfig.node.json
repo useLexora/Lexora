@@ -25,12 +25,17 @@
   },
   "include": [
     "electron.vite.config.ts",
+    "mobile-reader.vite.config.ts",
     "platform/**/*.ts",
     "service/**/*.ts",
     "electron/**/*.ts",
     "shared/**/*.ts",
     "vitest.setup.ts",
     "vite.config.ts",
-    "uno.config.ts"
+    "uno.config.ts",
+    "service.vite.config.ts"
+  ],
+  "exclude": [
+    "service/assets.d.ts"
   ]
 }

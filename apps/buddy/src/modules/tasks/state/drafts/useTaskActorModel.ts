@@ -1,6 +1,6 @@
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { BuddyCatalog } from '@buddy-shared/buddies/buddyApi'
-import type { ConversationModelControls, LocalConversation } from '@buddy-shared/conversation/conversationApi'
+import type { ConversationModelControls, ConversationModelMutationTarget, LocalConversation } from '@buddy-shared/conversation/conversationApi'
 import type { Ref } from 'vue'
 import { computed, readonly, shallowRef, watch } from 'vue'
 
@@ -8,8 +8,7 @@ interface TaskActorModelOptions {
   activeConversation: Readonly<Ref<LocalConversation | null>>
   api: Pick<LocalChatApi['conversations'], 'getModelControls' | 'onChanged'>
   buddyCatalog?: Readonly<Ref<BuddyCatalog | null>>
-  draftBuddyId: Readonly<Ref<string | null>>
-  addressedActorId?: Readonly<Ref<string | null>>
+  actorId: Readonly<Ref<string | null>>
   restoreModel: (selection: LocalConversation['modelSelection']) => void
   onError: (error: unknown) => void
 }
@@ -21,7 +20,14 @@ export function useTaskActorModel(options: TaskActorModelOptions) {
   let refreshRevision = 0
   let disposed = false
   let scheduled: Promise<void> | null = null
-  const actorId = computed(() => options.addressedActorId?.value ?? options.activeConversation.value?.buddyId ?? options.draftBuddyId.value ?? options.buddyCatalog?.value?.defaultBuddyId ?? null)
+  const actorId = options.actorId
+  const modelSelection = computed(() => {
+    const id = actorId.value
+    const memberModel = id === options.activeConversation.value?.buddyId
+      ? options.activeConversation.value.modelSelection
+      : snapshot.value?.next.actorId === id ? snapshot.value.next.modelSelection : null
+    return memberModel ?? options.buddyCatalog?.value?.buddies.find(buddy => buddy.id === id)?.settings.model ?? null
+  })
   const isLoadingModel = computed(() => isLoading.value && Boolean(options.activeConversation.value) && snapshot.value?.next.actorId !== actorId.value && actorId.value !== options.activeConversation.value?.buddyId)
 
   async function refresh() {
@@ -73,10 +79,23 @@ export function useTaskActorModel(options: TaskActorModelOptions) {
 
   return {
     isLoading: readonly(isLoadingModel),
+    modelSelection,
     persistTarget: () => actorId.value === options.activeConversation.value?.buddyId || (snapshot.value?.next.actorId === actorId.value && snapshot.value?.next.isMember === true),
     refresh,
     canUpdate: () => !isLoadingModel.value && (!options.activeConversation.value || actorId.value === options.activeConversation.value.buddyId || snapshot.value?.next.actorId === actorId.value),
-    target: () => ({ actorId: actorId.value ?? undefined }),
+    target: (): ConversationModelMutationTarget => {
+      const controls = snapshot.value
+      const current = controls?.current
+      return {
+        actorId: actorId.value ?? undefined,
+        ...(controls?.metadataRevision !== undefined && controls.next.actorId === actorId.value
+          ? {
+              expectedRevision: controls.metadataRevision,
+              ...current === null ? { expectedActiveRun: null } : current?.generation !== undefined ? { expectedActiveRun: { runId: current.runId, generation: current.generation, modelSelection: { ...current.modelSelection } } } : {},
+            }
+          : {}),
+      }
+    },
     dispose() {
       disposed = true
       refreshRevision++

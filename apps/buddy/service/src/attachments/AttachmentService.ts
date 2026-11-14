@@ -1,65 +1,38 @@
-import type { ImageContent } from '@earendil-works/pi-ai'
 import type { Buffer } from 'node:buffer'
 import type { BuddyAttachmentUpload } from '../../../shared/conversation/attachmentPolicy'
-import type { BuddyPromptDirective, BuddyUserContentV1, BuddyUserMessageContentV1, BuddyUserMessageResourceSnapshot } from '../../../shared/conversation/buddyUserContent'
-import type { InputMaterialProjectionState } from '../../../shared/conversation/inputMaterialProjection'
-import type { BuddyInputReferenceV1 } from '../agent/context/BuddyInputReference'
-import type { InputModel } from '../providers/modelCapabilities'
 import type { AttachmentRecord, AttachmentRepository } from '../storage/attachmentRepository'
 import type { BuddyDataPaths } from '../storage/BuddyDataPaths'
-import type { AttachmentDocumentReference, AttachmentFileInput } from './AttachmentDocumentReference'
 import type { AttachmentChange } from './attachmentEvents'
-import type { AttachmentImageReference } from './AttachmentImageReference'
-import type { PreparedAttachmentImage } from './AttachmentImageStore'
-import type { AttachmentToolWorkspace } from './AttachmentToolWorkspace'
-import { randomUUID } from 'node:crypto'
-import { constants } from 'node:fs'
-import { chmod, copyFile, mkdir, open, readdir, readFile, realpath, rmdir, stat, unlink, writeFile } from 'node:fs/promises'
-import { basename, dirname, extname, join, normalize } from 'node:path'
+import type { AttachmentInputScope } from './AttachmentInputReader'
+import { createHash, randomUUID } from 'node:crypto'
+import { constants, createReadStream } from 'node:fs'
+import { chmod, copyFile, mkdir, open, readdir, readFile, realpath, rmdir, stat, statfs, unlink, writeFile } from 'node:fs/promises'
+import { basename, dirname, extname, isAbsolute, join, normalize, relative, sep } from 'node:path'
 import { readBoundedFile } from '../../../platform/filesystem/boundedFile'
 import { fileStorage } from '../../../platform/filesystem/fileStorage'
-import { BUDDY_MEDIA_EXTENSIONS, BUDDY_MEDIA_FILE_BYTES_LIMIT, isDocumentMimeType } from '../../../shared/conversation/attachmentFormats'
+import { isDocumentMimeType } from '../../../shared/conversation/attachmentFormats'
 import {
   BUDDY_ATTACHMENT_COUNT_LIMIT,
   BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT,
   BUDDY_TEXT_ATTACHMENT_BYTES_LIMIT,
-  BUDDY_TEXT_ATTACHMENT_EXTENSIONS,
-  getAttachmentKind,
   isTextAttachmentMimeType,
 } from '../../../shared/conversation/attachmentPolicy'
-import { projectBuddyUserContent } from '../../../shared/conversation/buddyUserContentProjection'
-import { InputMaterialProjectionBudget, InputMaterialProjectionError } from '../../../shared/conversation/inputMaterialProjection'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
-import { AttachmentImageStore } from './AttachmentImageStore'
-import { getAttachmentLabels } from './attachmentLabels'
+import { ATTACHMENT_PREVIEW_BYTES_LIMIT } from '../../../shared/runtime/attachmentHostProtocol'
+import { readTransactionFailure } from '../storage/transaction'
+import { AttachmentError } from './AttachmentError'
+
+import { AttachmentInputMaterializer } from './AttachmentInputMaterializer'
+import { normalizeAttachmentMetadata, validateTotalBytes } from './attachmentMetadata'
+import { InputMaterialProjector } from './InputMaterialProjector'
 import { hasDocumentSignature } from './validateDocumentBytes'
 
-export const DRAFT_ATTACHMENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
-const { replace: rename, syncDirectory } = fileStorage
-const MIME_TYPES: Readonly<Record<string, string>> = {
-  ...BUDDY_MEDIA_EXTENSIONS,
-  '.csv': 'text/csv',
-  '.gif': 'image/gif',
-  '.jpeg': 'image/jpeg',
-  '.jpg': 'image/jpeg',
-  '.json': 'application/json',
-  '.md': 'text/markdown',
-  '.pdf': 'application/pdf',
-  '.png': 'image/png',
-  '.toml': 'application/toml',
-  '.tsv': 'text/tab-separated-values',
-  '.txt': 'text/plain',
-  '.webp': 'image/webp',
-  '.xml': 'application/xml',
-  '.yaml': 'application/yaml',
-  '.yml': 'application/yaml',
-}
-const SUPPORTED_IMAGE_MIME_TYPES = new Set(
-  Object.values(MIME_TYPES).filter(mimeType => mimeType.startsWith('image/')),
-)
-const textExtensions = new Set<string>(BUDDY_TEXT_ATTACHMENT_EXTENSIONS)
+export { AttachmentError } from './AttachmentError'
+export type { AttachmentRecoveryResult } from './AttachmentInputMaterializer'
+export { inferMimeType, normalizeAttachmentMetadata } from './attachmentMetadata'
 
+export const DRAFT_ATTACHMENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 export interface AttachmentServiceOptions {
   assertConversationWritable?: (conversationId: string) => void
   paths: BuddyDataPaths
@@ -70,13 +43,6 @@ export interface AttachmentServiceOptions {
 export interface AttachmentFileReader {
   (path: string): Promise<Buffer>
   (path: string, encoding: 'utf8'): Promise<string>
-}
-
-export interface AttachmentRecoveryResult {
-  resourceLabels?: Record<string, string>
-  documents: AttachmentDocumentReference[]
-  images: AttachmentImageReference[]
-  missingAttachmentIds: string[]
 }
 
 export interface AttachmentStorageReconciliation {
@@ -103,22 +69,31 @@ export interface PreparedMessageAttachments {
   bindings: readonly Readonly<MessageAttachmentBinding>[]
   commit: () => Promise<void>
   rollback: () => Promise<void>
+  retain: () => Promise<void>
+}
+
+export interface PreparedDraftAttachmentCopy extends PreparedAttachmentUploads {
+  validate: () => void
 }
 
 export interface PreparedAttachmentUploads {
   readonly records: readonly Readonly<AttachmentRecord>[]
   commit: () => Promise<void>
   rollback: () => Promise<void>
+  retain: () => Promise<void>
 }
 
 export class AttachmentService {
   readonly #changes = new Emitter<AttachmentChange>(() => console.error('ATTACHMENT_OBSERVER_FAILED'))
   readonly onDidChange = this.#changes.event
   readonly #leasedPaths = new Map<string, number>()
+  readonly #ownerInstance = randomUUID()
+  readonly #pendingReads = new Set<Promise<Buffer>>()
   #revision = 0
   #storageTail = Promise.resolve()
   #stopping = false
-  readonly #images = new AttachmentImageStore()
+  readonly #projector: InputMaterialProjector
+  readonly #materializer: AttachmentInputMaterializer
   readonly #paths: BuddyDataPaths
   readonly #readFile: AttachmentFileReader
   readonly #repository: AttachmentRepository
@@ -129,6 +104,17 @@ export class AttachmentService {
     this.#readFile = options.readFile ?? readFile
     this.#repository = options.repository
     this.#assertConversationWritable = options.assertConversationWritable
+    const reader = {
+      get: (id: string, scope: AttachmentInputScope) => this.#requireForPrompt(id, scope.conversationId, scope.draftId ?? null, scope.legacyResourceDraftId),
+      read: (record: AttachmentRecord) => this.#readBytes(record),
+      inspect: async (record: AttachmentRecord) => {
+        this.#assertFileReady(record)
+        const metadata = await stat(record.storedPath)
+        return { isFile: metadata.isFile(), size: metadata.size }
+      },
+    }
+    this.#projector = new InputMaterialProjector(reader)
+    this.#materializer = new AttachmentInputMaterializer({ reader, projector: this.#projector, imageDirectory: id => join(this.#paths.conversationDirectory(id), 'image-inputs'), listForConversation: id => this.listForConversation(id) })
   }
 
   registerFiles(draftId: string, paths: readonly string[], limits = { count: BUDDY_ATTACHMENT_COUNT_LIMIT, errorCode: 'VALIDATION_FAILED', totalBytes: BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT }): Promise<AttachmentRecord[]> {
@@ -150,8 +136,8 @@ export class AttachmentService {
         const path = normalize(record.storedPath)
         this.#leasedPaths.set(path, (this.#leasedPaths.get(path) ?? 0) + 1)
       }
-      let settlement: { outcome: 'commit' | 'rollback', promise: Promise<void> } | undefined
-      const settle = (outcome: 'commit' | 'rollback'): Promise<void> => {
+      let settlement: { outcome: 'commit' | 'rollback' | 'retain', promise: Promise<void> } | undefined
+      const settle = (outcome: 'commit' | 'rollback' | 'retain'): Promise<void> => {
         if (settlement) {
           return settlement.outcome === outcome
             ? settlement.promise
@@ -176,15 +162,59 @@ export class AttachmentService {
         settlement = { outcome, promise }
         return promise
       }
-      return Object.freeze({ records: copyEventSnapshot(records), commit: () => settle('commit'), rollback: () => settle('rollback') })
+      return Object.freeze({ records: copyEventSnapshot(records), commit: () => settle('commit'), rollback: () => settle('rollback'), retain: () => settle('retain') })
     })
   }
 
-  prepareMessageAttachments(input: { attachmentIds: readonly string[], conversationId: string, draftId: string, messageId: string }): Promise<PreparedMessageAttachments> {
+  prepareMessageAttachments(input: { attachmentIds: readonly string[], conversationId: string, draftId: string, messageId: string, legacyResourceDraftId?: string }): Promise<PreparedMessageAttachments> {
     const owned = { ...input, attachmentIds: [...input.attachmentIds] }
     return this.#storage(() => {
       this.#assertConversationWritable?.(owned.conversationId)
       return this.#prepareMessageAttachments(owned)
+    })
+  }
+
+  prepareDraftCopy(input: { sourceDraftId: string, targetDraftId: string, attachmentIds: readonly string[] }): Promise<PreparedDraftAttachmentCopy> {
+    const owned = { ...input, attachmentIds: [...input.attachmentIds] }
+    return this.#storage(async () => {
+      if (owned.sourceDraftId === owned.targetDraftId)
+        throw new AttachmentError('VALIDATION_FAILED')
+      const sources = owned.attachmentIds.map(id => this.#requireForPrompt(id, null, owned.sourceDraftId))
+      const prepared = await this.#prepareMessageAttachments({ attachmentIds: owned.attachmentIds, conversationId: '', draftId: owned.sourceDraftId, messageId: owned.targetDraftId, targetDraftId: owned.targetDraftId })
+      const records = prepared.bindings.map((binding): AttachmentRecord => ({
+        id: binding.id,
+        draftId: owned.targetDraftId,
+        messageId: null,
+        conversationId: null,
+        storedPath: binding.storedPath,
+        createdAt: binding.createdAt,
+        name: binding.name,
+        nameSource: binding.nameSource,
+        mimeType: binding.mimeType,
+        sizeBytes: binding.sizeBytes,
+        sourcePath: sources.find(source => source.id === binding.sourceAttachmentId)?.sourcePath,
+      }))
+      let settled = false
+      const settle = (outcome: 'commit' | 'rollback' | 'retain') => {
+        settled = true
+        return prepared[outcome]()
+      }
+      return Object.freeze({
+        records: copyEventSnapshot(records),
+        validate: () => {
+          if (settled)
+            throw new Error('ATTACHMENT_PREPARATION_SETTLED')
+          for (const source of sources) {
+            if (JSON.stringify(this.#repository.findById(source.id)) !== JSON.stringify(source))
+              throw new AttachmentError('ATTACHMENT_NOT_FOUND')
+            this.#assertFileReady(source)
+          }
+          for (const record of records) this.#assertFileReady(record)
+        },
+        commit: () => settle('commit'),
+        rollback: () => settle('rollback'),
+        retain: () => settle('retain'),
+      })
     })
   }
 
@@ -212,6 +242,7 @@ export class AttachmentService {
       tail = this.#storageTail
       await tail
     } while (tail !== this.#storageTail)
+    await Promise.allSettled([...this.#pendingReads])
     if (this.#leasedPaths.size)
       throw new Error('ATTACHMENT_PREPARATIONS_PENDING')
     this.#changes.dispose()
@@ -273,16 +304,21 @@ export class AttachmentService {
           storedPath,
         }
         attempted.push(record)
-        await publishFile(sourcePath, storedPath)
+        const preparation = this.#repository.persistence?.prepare({ operationId, stagingDirectory: join(this.#paths.root, 'managed-files', 'staging'), availableBytes: await availableStorageBytes(directory), ownerInstance: this.#ownerInstance, kind: 'import', targetOwnerId: draftId, path: storedPath, sizeBytes: record.sizeBytes })
+        const proof = await publishFile(sourcePath, storedPath, record.sizeBytes, undefined, preparation?.temporaryPath ?? undefined)
+        this.#repository.persistence?.publish(storedPath, proof)
         this.#publish('file-published', 'import', [record.id], operationId)
         if (isDocumentMimeType(mimeType) && !hasDocumentSignature(mimeType, await this.#readFile(storedPath)))
           throw new AttachmentError('ATTACHMENT_INVALID')
         this.#repository.create(record)
+        this.#repository.persistence?.settle([storedPath], 'commit')
         this.#publish('registered', 'import', [record.id], operationId)
         records.push(record)
       }
     }
     catch (error) {
+      if (readTransactionFailure(error)?.outcome === 'unknown')
+        throw error
       try {
         await this.#rollbackRegistration(attempted, operationId)
       }
@@ -328,14 +364,19 @@ export class AttachmentService {
           storedPath,
         }
         attempted.push(record)
-        await publishBytes(source.bytes, storedPath)
+        const preparation = this.#repository.persistence?.prepare({ operationId, stagingDirectory: join(this.#paths.root, 'managed-files', 'staging'), availableBytes: await availableStorageBytes(directory), ownerInstance: this.#ownerInstance, kind: 'import', targetOwnerId: draftId, path: storedPath, sizeBytes: record.sizeBytes })
+        const proof = await publishBytes(source.bytes, storedPath, preparation?.temporaryPath ?? undefined)
+        this.#repository.persistence?.publish(storedPath, proof)
         this.#publish('file-published', 'import', [record.id], operationId)
         this.#repository.create(record)
+        this.#repository.persistence?.settle([storedPath], 'commit')
         this.#publish('registered', 'import', [record.id], operationId)
         records.push(record)
       }
     }
     catch (error) {
+      if (readTransactionFailure(error)?.outcome === 'unknown')
+        throw error
       try {
         await this.#rollbackRegistration(attempted, operationId)
       }
@@ -350,11 +391,14 @@ export class AttachmentService {
     conversationId: string
     draftId: string
     messageId: string
+    targetDraftId?: string
+    legacyResourceDraftId?: string
   }): Promise<PreparedMessageAttachments> {
     const records = input.attachmentIds.map(id => this.#requireForPrompt(
       id,
       input.conversationId,
       input.draftId,
+      input.legacyResourceDraftId,
     ))
     validateTotalBytes(records.map(record => record.sizeBytes))
     if (records.length === 0) {
@@ -362,9 +406,10 @@ export class AttachmentService {
         bindings: [],
         commit: () => Promise.resolve(),
         rollback: () => Promise.resolve(),
+        retain: () => Promise.resolve(),
       }
     }
-    const directory = this.#paths.messageInputs(input.conversationId, input.messageId)
+    const directory = input.targetDraftId ? this.#paths.draftAttachments(input.targetDraftId) : this.#paths.messageInputs(input.conversationId, input.messageId)
     await mkdir(directory, { mode: 0o700, recursive: true })
     const operationId = randomUUID()
     const bindings: MessageAttachmentBinding[] = []
@@ -385,14 +430,16 @@ export class AttachmentService {
     }
     try {
       for (const record of records) {
-        const id = record.draftId === input.draftId ? record.id : randomUUID()
+        const id = !input.targetDraftId && record.draftId === input.draftId ? record.id : randomUUID()
         const storedPath = join(directory, `${id}${safeExtension(record.name)}`)
         if (this.#leasedPaths.has(normalize(storedPath)) || this.#repository.listAll().some(owned => normalize(owned.storedPath) === normalize(storedPath)))
           throw new AttachmentError('VALIDATION_FAILED')
         lease(record.storedPath)
         lease(storedPath)
         attemptedPaths.push(storedPath)
-        await publishFile(record.storedPath, storedPath)
+        const preparation = this.#repository.persistence?.prepare({ operationId, stagingDirectory: join(this.#paths.root, 'managed-files', 'staging'), availableBytes: await availableStorageBytes(directory), ownerInstance: this.#ownerInstance, kind: input.targetDraftId ? 'copy' : 'message', targetOwnerId: input.targetDraftId ?? input.messageId, path: storedPath, sizeBytes: record.sizeBytes, source: record })
+        const proof = await publishFile(record.storedPath, storedPath, record.sizeBytes, this.#repository.persistence?.get(record.storedPath)?.sha256 ?? undefined, preparation?.temporaryPath ?? undefined)
+        this.#repository.persistence?.publish(storedPath, proof)
         this.#publish('file-published', 'message', [id], operationId)
         bindings.push({
           createdAt: new Date().toISOString(),
@@ -410,8 +457,19 @@ export class AttachmentService {
       }
     }
     catch (error) {
+      if (readTransactionFailure(error)?.outcome === 'unknown') {
+        releaseLeases()
+        throw error
+      }
       try {
-        await removeFiles(attemptedPaths)
+        if (this.#repository.persistence) {
+          this.#repository.persistence.settle(attemptedPaths.filter(path => this.#repository.persistence!.get(path)), 'rollback')
+          releaseLeases()
+          await this.#collectFiles(attemptedPaths)
+        }
+        else {
+          await removeFiles(attemptedPaths)
+        }
         if (attemptedPaths.length)
           this.#publish('cleanup-completed', 'rollback', bindings.map(binding => binding.id), operationId, attemptedPaths.length)
       }
@@ -423,8 +481,8 @@ export class AttachmentService {
       throw error
     }
     this.#publish('prepared', 'message', bindings.map(binding => binding.id), operationId)
-    let settlement: { outcome: 'commit' | 'rollback', promise: Promise<void> } | undefined
-    const settle = (outcome: 'commit' | 'rollback'): Promise<void> => {
+    let settlement: { outcome: 'commit' | 'rollback' | 'retain', promise: Promise<void> } | undefined
+    const settle = (outcome: 'commit' | 'rollback' | 'retain'): Promise<void> => {
       if (settlement) {
         return settlement.outcome === outcome
           ? settlement.promise
@@ -432,6 +490,8 @@ export class AttachmentService {
       }
       const promise = this.#storage(async () => {
         try {
+          if (outcome === 'retain')
+            return
           const owned = new Set(this.#repository.listAll().map(record => normalize(record.storedPath)))
           if (outcome === 'commit' && bindings.some(binding => !owned.has(normalize(binding.storedPath))))
             throw new Error('ATTACHMENT_OWNERSHIP_NOT_COMMITTED')
@@ -439,11 +499,19 @@ export class AttachmentService {
             ? bindings.flatMap(binding => binding.sourceDraftId ? [binding.sourceStoredPath] : [])
             : bindings.map(binding => binding.storedPath)
           const removable = candidates.filter(path => !owned.has(normalize(path)))
-          await removeFiles(removable)
+          if (this.#repository.persistence) {
+            this.#repository.persistence.settle(bindings.map(binding => binding.storedPath), outcome)
+            releaseLeases()
+            await this.#collectFiles(removable)
+          }
+          else {
+            await removeFiles(removable)
+          }
           this.#publish('cleanup-completed', outcome, bindings.map(binding => binding.id), operationId, removable.length)
         }
         catch (error) {
-          this.#publish('cleanup-failed', outcome, bindings.map(binding => binding.id), operationId)
+          if (outcome !== 'retain')
+            this.#publish('cleanup-failed', outcome, bindings.map(binding => binding.id), operationId)
           throw error
         }
         finally { releaseLeases() }
@@ -455,6 +523,7 @@ export class AttachmentService {
       bindings: copyEventSnapshot(bindings),
       commit: () => settle('commit'),
       rollback: () => settle('rollback'),
+      retain: () => settle('retain'),
     }
   }
 
@@ -462,9 +531,56 @@ export class AttachmentService {
     const record = this.#repository.findVisibleById(id)
     if (!record)
       throw new AttachmentError('ATTACHMENT_NOT_FOUND')
+    this.#assertFileReady(record)
     if (!record.mimeType.startsWith('image/'))
       throw new AttachmentError('VALIDATION_FAILED')
     return { mimeType: record.mimeType, path: record.storedPath }
+  }
+
+  async readPreview(id: string): Promise<{ mimeType: string, data: string }> {
+    const preview = this.resolvePreview(id)
+    const record = this.#requireAvailable(id)
+    if (record.sizeBytes > ATTACHMENT_PREVIEW_BYTES_LIMIT)
+      throw new AttachmentError('ATTACHMENT_TOO_LARGE')
+    const bytes = await this.#readBytes(record, () => readBoundedFile(dirname(preview.path), preview.path, ATTACHMENT_PREVIEW_BYTES_LIMIT))
+    return { mimeType: preview.mimeType, data: bytes.toString('base64') }
+  }
+
+  #readBytes(record: AttachmentRecord, read: () => Promise<Buffer> = () => this.#readFile(record.storedPath)): Promise<Buffer> {
+    if (this.#stopping)
+      return Promise.reject(new AttachmentError('RUNTIME_OFFLINE'))
+    const result = this.#readLeasedBytes(record, read)
+    this.#pendingReads.add(result)
+    void result.then(() => this.#pendingReads.delete(result), () => this.#pendingReads.delete(result))
+    return result
+  }
+
+  async #readLeasedBytes(record: AttachmentRecord, read: () => Promise<Buffer>): Promise<Buffer> {
+    this.#assertFileReady(record)
+    const path = normalize(record.storedPath)
+    this.#leasedPaths.set(path, (this.#leasedPaths.get(path) ?? 0) + 1)
+    try {
+      const bytes = await read()
+      const expected = this.#repository.persistence?.get(record.storedPath)
+      if (bytes.byteLength !== record.sizeBytes || (expected?.sha256 && createHash('sha256').update(bytes).digest('hex') !== expected.sha256)) {
+        this.#repository.persistence?.unavailable(record.storedPath)
+        throw new AttachmentError('ATTACHMENT_INVALID')
+      }
+      return bytes
+    }
+    catch (error) {
+      if (isFileNotFound(error)) {
+        this.#repository.persistence?.unavailable(record.storedPath)
+        throw new AttachmentError('ATTACHMENT_NOT_FOUND', { cause: error })
+      }
+      throw error
+    }
+    finally {
+      const remaining = (this.#leasedPaths.get(path) ?? 1) - 1
+      if (remaining)
+        this.#leasedPaths.set(path, remaining)
+      else this.#leasedPaths.delete(path)
+    }
   }
 
   async readText(id: string, draftId: string | null, conversationId: string | null): Promise<string> {
@@ -473,7 +589,7 @@ export class AttachmentService {
       throw new AttachmentError('ATTACHMENT_UNSUPPORTED')
     if (record.sizeBytes > BUDDY_TEXT_ATTACHMENT_BYTES_LIMIT)
       throw new AttachmentError('ATTACHMENT_TOO_LARGE')
-    const bytes = await readBoundedFile(dirname(record.storedPath), record.storedPath, BUDDY_TEXT_ATTACHMENT_BYTES_LIMIT)
+    const bytes = await this.#readBytes(record, () => readBoundedFile(dirname(record.storedPath), record.storedPath, BUDDY_TEXT_ATTACHMENT_BYTES_LIMIT))
     return bytes.toString('utf8')
   }
 
@@ -483,12 +599,14 @@ export class AttachmentService {
       const record = this.#repository.findById(id)
       if (!record?.draftId)
         continue
-      if (this.#leasedPaths.has(normalize(record.storedPath)) || !this.#repository.removeDraft(id))
+      if (this.#leasedPaths.has(normalize(record.storedPath)) || this.#repository.persistence?.hasProtection(record.storedPath) || !this.#repository.removeDraft(id))
         continue
       released.push(id)
       this.#publish('released', 'release', [id])
       try {
-        await unlinkAvailableFile(record.storedPath)
+        if (this.#repository.persistence)
+          await this.#collectFiles([record.storedPath])
+        else await unlinkAvailableFile(record.storedPath)
         this.#publish('cleanup-completed', 'release', [id])
       }
       catch (error) {
@@ -521,36 +639,47 @@ export class AttachmentService {
   }
 
   async #reconcileStorage(): Promise<AttachmentStorageReconciliation> {
+    this.#repository.persistence?.recover(this.#ownerInstance)
     const records = this.#repository.listAll()
     const ownedPaths = new Set(records.map(record => normalize(record.storedPath)))
     const invalidAttachmentIds: string[] = []
     const missingAttachmentIds: string[] = []
 
     for (const record of records) {
+      if (this.#repository.persistence && !this.#repository.persistence.get(record.storedPath))
+        throw new Error('ATTACHMENT_CATALOG_INCOMPLETE')
       try {
         const metadata = await stat(record.storedPath)
-        if (!metadata.isFile() || metadata.size !== record.sizeBytes)
+        if (!metadata.isFile() || metadata.size !== record.sizeBytes) {
           invalidAttachmentIds.push(record.id)
+          this.#repository.persistence?.unavailable(record.storedPath)
+        }
       }
       catch (error) {
         if (isFileNotFound(error)) {
           missingAttachmentIds.push(record.id)
+          this.#repository.persistence?.unavailable(record.storedPath)
           continue
         }
         throw error
       }
     }
 
-    const roots = [this.#paths.draftsDirectory]
-    const conversationDirectories = await listDirectories(this.#paths.conversationsDirectory)
-    roots.push(...conversationDirectories.map(directory => join(directory, 'inputs')))
     let removedOrphanFiles = 0
-    for (const root of roots) {
-      for (const path of await listFilesRecursively(root)) {
-        if (ownedPaths.has(normalize(path)) || this.#leasedPaths.has(normalize(path)))
-          continue
-        await unlinkAvailableFile(path)
-        removedOrphanFiles += 1
+    if (this.#repository.persistence) {
+      removedOrphanFiles = await this.#collectFiles(this.#repository.persistence.candidates().map(file => file.path))
+    }
+    else {
+      const roots = [this.#paths.draftsDirectory]
+      const conversationDirectories = await listDirectories(this.#paths.conversationsDirectory)
+      roots.push(...conversationDirectories.map(directory => join(directory, 'inputs')))
+      for (const root of roots) {
+        for (const path of await listFilesRecursively(root)) {
+          if (ownedPaths.has(normalize(path)) || this.#leasedPaths.has(normalize(path)))
+            continue
+          await unlinkAvailableFile(path)
+          removedOrphanFiles += 1
+        }
       }
     }
 
@@ -566,334 +695,92 @@ export class AttachmentService {
     return this.#repository.listForConversation(conversationId)
   }
 
-  async materializeConversationImages(
-    conversationId: string,
-    ids?: readonly string[],
-  ): Promise<{ images: ImageContent[], records: AttachmentRecord[] }> {
-    const available = this.listForConversation(conversationId)
-      .filter(record => record.mimeType.startsWith('image/'))
-    const selectedIds = ids === undefined
-      ? available.slice(-1).map(record => record.id)
-      : ids
-    if (selectedIds.length === 0)
-      throw new AttachmentError('ATTACHMENT_NOT_FOUND')
-    const materialized = await this.materializePrompt(selectedIds, '', conversationId)
-    if (materialized.images.length !== selectedIds.length)
-      throw new AttachmentError('VALIDATION_FAILED')
-    return {
-      images: materialized.images,
-      records: materialized.records,
-    }
+  materializeConversationImages(...input: Parameters<AttachmentInputMaterializer['materializeConversationImages']>) {
+    return this.#materializer.materializeConversationImages(...input)
   }
 
-  async materializePrompt(
-    ids: readonly string[],
-    content: string,
-    conversationId: string | null = null,
-    draftId: string | null = null,
-    composer?: { content: BuddyUserContentV1, resourceIds: readonly string[], resources?: readonly BuddyUserMessageResourceSnapshot[], resolveDirective?: (directive: BuddyPromptDirective) => string, sourceMessageId?: string, quoteReadAvailable?: boolean, inlineBytes?: number },
-  ): Promise<{ documents: AttachmentFileInput[], images: ImageContent[], prompt: string, records: AttachmentRecord[], materialProjection?: InputMaterialProjectionState }> {
-    const prepared = await this.preparePrompt(ids, content, conversationId, draftId, composer)
-    return {
-      documents: await this.materializeDocumentInputs(prepared.documentReferences, conversationId, draftId),
-      images: await this.materializePiInputImages(
-        prepared.imageReferences,
-        conversationId,
-        draftId,
-      ),
-      prompt: prepared.prompt,
-      records: prepared.records,
-    }
+  materializePrompt(...input: Parameters<AttachmentInputMaterializer['materializePrompt']>) {
+    return this.#materializer.materializePrompt(...input)
   }
 
-  async preparePrompt(
-    ids: readonly string[],
-    content: string,
-    conversationId: string | null = null,
-    draftId: string | null = null,
-    composer?: { content: BuddyUserContentV1, resourceIds: readonly string[], resources?: readonly BuddyUserMessageResourceSnapshot[], resolveDirective?: (directive: BuddyPromptDirective) => string, sourceMessageId?: string, quoteReadAvailable?: boolean, inlineBytes?: number },
-  ): Promise<{ documentReferences: AttachmentDocumentReference[], imageReferences: AttachmentImageReference[], prompt: string, records: AttachmentRecord[], materialProjection?: InputMaterialProjectionState }> {
-    const records = ids.map(id => this.#requireForPrompt(id, conversationId, draftId))
-    validateTotalBytes(records.map(record => record.sizeBytes))
-    const materialized = await Promise.all(records.map(async (record): Promise<{
-      imageReference: AttachmentImageReference | null
-      documentReference?: AttachmentDocumentReference
-      section: string
-      text: string | null
-    }> => {
-      try {
-        if (isDocumentMimeType(record.mimeType)) {
-          return {
-            documentReference: toDocumentReference(record),
-            imageReference: null,
-            section: `附件：${record.name}（${record.mimeType}，attachmentId=${record.id}）`,
-            text: null,
-          }
-        }
-        if (record.mimeType.startsWith('image/') && record.mimeType !== 'image/svg+xml') {
-          return {
-            imageReference: toImageReference(record),
-            section: `附件：${record.name}（图像，attachmentId=${record.id}）`,
-            text: null,
-          }
-        }
-        if (!isTextAttachmentMimeType(record.mimeType) || record.sizeBytes > BUDDY_TEXT_ATTACHMENT_BYTES_LIMIT)
-          throw new AttachmentError('VALIDATION_FAILED')
-        const text = await this.#readFile(record.storedPath, 'utf8')
-        return {
-          imageReference: null,
-          section: `附件：${record.name}（attachmentId=${record.id}）\n\n${text}`,
-          text,
-        }
-      }
-      catch (error) {
-        if (error instanceof AttachmentError)
-          throw error
-        if (isFileNotFound(error))
-          throw new AttachmentError('ATTACHMENT_NOT_FOUND', { cause: error })
-        throw error
-      }
-    }))
-    const budget = new InputMaterialProjectionBudget(composer?.inlineBytes)
-    let projected
-    try {
-      projected = composer
-        ? projectBuddyUserContent(composer.content, (resourceId) => {
-            const resource = composer.resources?.find(item => item.resourceId === resourceId)
-            const localReference = resource?.localReference
-            if (localReference && !resource.attachmentId)
-              return { kind: 'local', name: localReference.name, localReference }
-            const index = resource?.attachmentId ? ids.indexOf(resource.attachmentId) : composer.resourceIds.indexOf(resourceId)
-            const record = records[index]
-            const value = materialized[index]
-            if (!record || !value)
-              throw new AttachmentError('ATTACHMENT_NOT_FOUND')
-            return value.imageReference
-              ? { kind: 'image', name: record.name, nameSource: record.nameSource, localReference }
-              : value.documentReference
-                ? { kind: getDocumentKind(value.documentReference.mimeType), name: record.name, localReference }
-                : { kind: 'text', name: record.name, text: value.text! }
-          }, (directive) => {
-            if (!composer.resolveDirective)
-              throw new AttachmentError('VALIDATION_FAILED')
-            return composer.resolveDirective(directive)
-          }, { sourceMessageId: composer.sourceMessageId, readAvailable: composer.quoteReadAvailable, budget })
-        : null
-      if (!composer) {
-        for (const value of materialized) {
-          if (value.text !== null)
-            budget.project(value.text, false)
-        }
-      }
-    }
-    catch (error) {
-      if (error instanceof InputMaterialProjectionError)
-        throw new AttachmentError(error.code, { cause: error })
-      throw error
-    }
-    return {
-      materialProjection: projected?.materialProjection,
-      documentReferences: materialized.flatMap(item => item.documentReference ? [item.documentReference] : []),
-      imageReferences: materialized.flatMap(item => item.imageReference ? [item.imageReference] : []),
-      prompt: [projected?.prompt ?? content.trim(), ...materialized.slice(composer?.resourceIds.length ?? 0).map(item => item.section)]
-        .filter(Boolean)
-        .join('\n\n---\n\n'),
-      records,
-    }
+  materializeInputResources(...input: Parameters<AttachmentInputMaterializer['materializeInputResources']>) {
+    return this.#materializer.materializeInputResources(...input)
+  }
+
+  resolveInputReferences(...input: Parameters<AttachmentInputMaterializer['resolveInputReferences']>) {
+    return this.#materializer.resolveInputReferences(...input)
+  }
+
+  materializePiInputImages(...input: Parameters<AttachmentInputMaterializer['materializePiInputImages']>) {
+    return this.#materializer.materializePiInputImages(...input)
+  }
+
+  prepareInputImages(...input: Parameters<AttachmentInputMaterializer['prepareInputImages']>) {
+    return this.#materializer.prepareInputImages(...input)
+  }
+
+  materializeDocumentInputs(...input: Parameters<AttachmentInputMaterializer['materializeDocumentInputs']>) {
+    return this.#materializer.materializeDocumentInputs(...input)
+  }
+
+  resolveRecoveryInputReferences(...input: Parameters<AttachmentInputMaterializer['resolveRecoveryInputReferences']>) {
+    return this.#materializer.resolveRecoveryInputReferences(...input)
+  }
+
+  preparePrompt(...input: Parameters<InputMaterialProjector['preparePrompt']>) {
+    return this.#projector.preparePrompt(...input)
   }
 
   getInputMetadata(ids: readonly string[], conversationId: string | null, draftId: string | null = null): AttachmentRecord[] {
     return ids.map(id => this.#requireForPrompt(id, conversationId, draftId))
   }
 
-  async materializeInputResources(input: BuddyInputReferenceV1, conversationId: string, workspace: AttachmentToolWorkspace, message?: Pick<BuddyUserMessageContentV1, 'materialProjection' | 'resourceSnapshots'> | null): Promise<string> {
-    const ids = input.attachmentIds ?? [...input.images, ...input.documents ?? []].map(file => file.attachmentId)
-    const records = this.getInputMetadata(ids, conversationId)
-    const nativeIds = new Set([...input.images, ...input.documents ?? []].map(file => file.attachmentId))
-    const labels = input.resourceLabels ?? getAttachmentLabels(records, input.prompt)
-    const resources = await Promise.all(records.map(async (record) => {
-      const bytes = await this.#readFile(record.storedPath)
-      if (bytes.length !== record.sizeBytes || (isDocumentMimeType(record.mimeType) && !hasDocumentSignature(record.mimeType, bytes)))
-        throw new AttachmentError('VALIDATION_FAILED')
-      const path = await workspace.materialize(record, bytes)
-      const savedResource = message?.resourceSnapshots.find(resource => resource.attachmentId === record.id)
-      const deferred = savedResource && message?.materialProjection?.deferredResourceIds.includes(savedResource.resourceId)
-      return {
-        ...(deferred ? { snapshotRead: { sourceMessageId: input.messageId, referenceId: savedResource.resourceId, kind: 'attachment' } } : {}),
-        attachmentId: record.id,
-        label: labels[record.id],
-        name: record.name,
-        mimeType: record.mimeType,
-        path,
-        sourcePath: record.sourcePath,
-        content: nativeIds.has(record.id) ? 'native' : isTextAttachmentMimeType(record.mimeType) && !deferred ? 'text' : 'file_only',
-      }
-    }))
-    return resources.length ? `<attachment_resources>\n${JSON.stringify(resources)}\n</attachment_resources>` : ''
-  }
-
-  async resolveInputReferences(
-    ids: readonly string[],
-    conversationId: string,
-    prompt = '',
-  ): Promise<{ images: AttachmentImageReference[], documents: AttachmentDocumentReference[], resourceLabels?: Record<string, string> }> {
-    const records = ids.map(id => this.#requireForPrompt(id, conversationId, null))
-    validateTotalBytes(records.map(record => record.sizeBytes))
-    return {
-      resourceLabels: getAttachmentLabels(records, prompt),
-      images: records.flatMap(record => (
-        record.mimeType.startsWith('image/') && record.mimeType !== 'image/svg+xml'
-          ? [toImageReference(record)]
-          : []
-      )),
-      documents: records.filter(record => isDocumentMimeType(record.mimeType)).map(toDocumentReference),
-    }
-  }
-
-  async materializePiInputImages(
-    references: readonly AttachmentImageReference[],
-    conversationId: string | null,
-    draftId: string | null = null,
-  ): Promise<ImageContent[]> {
-    const records = references.map((reference) => {
-      const record = this.#requireForPrompt(reference.attachmentId, conversationId, draftId)
-      if (
-        record.mimeType !== reference.mimeType
-        || !record.mimeType.startsWith('image/')
-        || record.mimeType === 'image/svg+xml'
-      ) {
-        throw new AttachmentError('VALIDATION_FAILED')
-      }
-      return record
-    })
-    validateTotalBytes(records.map(record => record.sizeBytes))
-    return Promise.all(records.map(async (record) => {
-      try {
-        return {
-          data: (await this.#readFile(record.storedPath)).toString('base64'),
-          mimeType: record.mimeType,
-          type: 'image' as const,
-        }
-      }
-      catch (error) {
-        if (isFileNotFound(error))
-          throw new AttachmentError('ATTACHMENT_NOT_FOUND', { cause: error })
-        throw error
-      }
-    }))
-  }
-
-  async prepareInputImages(
-    references: readonly AttachmentImageReference[],
-    conversationId: string,
-    model: InputModel,
-  ): Promise<ReadonlyMap<string, PreparedAttachmentImage | null>> {
-    const images = new Map<string, PreparedAttachmentImage | null>()
-    for (const reference of references) {
-      const record = this.#requireForPrompt(reference.attachmentId, conversationId, null)
-      if (record.mimeType !== reference.mimeType)
-        throw new AttachmentError('VALIDATION_FAILED')
-      const metadata = await stat(record.storedPath)
-      if (!metadata.isFile() || metadata.size !== record.sizeBytes || metadata.size > BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT)
-        throw new AttachmentError('ATTACHMENT_INVALID')
-      const bytes = await this.#readFile(record.storedPath)
-      const directory = join(this.#paths.conversationDirectory(conversationId), 'image-inputs')
-      images.set(record.id, await this.#images.prepare(record, bytes, directory, model))
-    }
-    return images
-  }
-
-  async materializeDocumentInputs(
-    references: readonly AttachmentDocumentReference[],
-    conversationId: string | null,
-    draftId: string | null = null,
-  ): Promise<AttachmentFileInput[]> {
-    const records = references.map((reference) => {
-      const record = this.#requireForPrompt(reference.attachmentId, conversationId, draftId)
-      if (!isDocumentMimeType(record.mimeType) || reference.mimeType !== record.mimeType)
-        throw new AttachmentError('VALIDATION_FAILED')
-      return record
-    })
-    validateTotalBytes(records.map(record => record.sizeBytes))
-    return Promise.all(records.map(async (record) => {
-      try {
-        const bytes = await this.#readFile(record.storedPath)
-        if (bytes.length !== record.sizeBytes || !hasDocumentSignature(record.mimeType, bytes))
-          throw new AttachmentError('VALIDATION_FAILED')
-        return { data: bytes.toString('base64'), name: record.name, mimeType: toDocumentReference(record).mimeType }
-      }
-      catch (error) {
-        if (isFileNotFound(error))
-          throw new AttachmentError('ATTACHMENT_NOT_FOUND', { cause: error })
-        throw error
-      }
-    }))
-  }
-
-  async resolveRecoveryInputReferences(
-    ids: readonly string[],
-    conversationId: string,
-    prompt = '',
-  ): Promise<AttachmentRecoveryResult> {
-    const resolved = ids.map((id) => {
-      try {
-        return { id, record: this.#requireForPrompt(id, conversationId, null) }
-      }
-      catch (error) {
-        if (error instanceof AttachmentError && error.code === 'ATTACHMENT_NOT_FOUND')
-          return { id, record: null }
-        throw error
-      }
-    })
-    validateTotalBytes(resolved.flatMap(item => item.record ? [item.record.sizeBytes] : []))
-    const recovered = await Promise.all(resolved.map(async ({ id, record }): Promise<{
-      images: AttachmentImageReference[]
-      documents?: AttachmentDocumentReference[]
-      missingAttachmentId: string | null
-    }> => {
-      if (!record)
-        return { images: [], missingAttachmentId: id }
-      try {
-        const metadata = await stat(record.storedPath)
-        if (!metadata.isFile() || metadata.size !== record.sizeBytes)
-          return { images: [], missingAttachmentId: id }
-        if (!isDocumentMimeType(record.mimeType) && (!record.mimeType.startsWith('image/') || record.mimeType === 'image/svg+xml'))
-          return { images: [], missingAttachmentId: null }
-        return isDocumentMimeType(record.mimeType)
-          ? { documents: [toDocumentReference(record)], images: [], missingAttachmentId: null }
-          : { images: [toImageReference(record)], missingAttachmentId: null }
-      }
-      catch (error) {
-        if (isFileNotFound(error))
-          return { images: [], missingAttachmentId: id }
-        throw error
-      }
-    }))
-    return {
-      resourceLabels: resolved.every(item => item.record) ? getAttachmentLabels(resolved.map(item => item.record!), prompt) : {},
-      documents: recovered.flatMap(item => item.documents ?? []),
-      images: recovered.flatMap(item => item.images),
-      missingAttachmentIds: recovered.flatMap(
-        item => item.missingAttachmentId ? [item.missingAttachmentId] : [],
-      ),
-    }
-  }
-
   #requireAvailable(id: string): AttachmentRecord {
     const record = this.#repository.findById(id)
     if (!record)
       throw new AttachmentError('ATTACHMENT_NOT_FOUND')
+    this.#assertFileReady(record)
     return record
+  }
+
+  #assertFileReady(record: AttachmentRecord): void {
+    if (this.#repository.persistence && this.#repository.persistence.get(record.storedPath)?.state !== 'ready')
+      throw new AttachmentError('ATTACHMENT_NOT_FOUND')
+  }
+
+  async #collectFiles(paths: readonly string[]): Promise<number> {
+    const repository = this.#repository.persistence!
+    let removed = 0
+    for (const path of new Set(paths)) {
+      const location = relative(this.#paths.root, path)
+      if (!location || location === '..' || location.startsWith(`..${sep}`) || isAbsolute(location))
+        throw new Error('FILE_UNMANAGED_PATH')
+      if (this.#leasedPaths.has(normalize(path)))
+        continue
+      const claimed = repository.claim(path)
+      if (!claimed)
+        continue
+      if (claimed.temporaryPath) {
+        await unlinkAvailableFile(claimed.temporaryPath)
+        await syncAvailableDirectory(dirname(claimed.temporaryPath))
+      }
+      await unlinkAvailableFile(path)
+      await syncAvailableDirectory(dirname(path))
+      repository.deleted(claimed.id)
+      removed++
+    }
+    return removed
   }
 
   #requireForPrompt(
     id: string,
     conversationId: string | null,
     draftId: string | null,
+    legacyResourceDraftId?: string,
   ): AttachmentRecord {
     const record = this.#requireAvailable(id)
     if (record.draftId !== null) {
-      if (record.draftId === draftId)
+      if (record.draftId === draftId || record.draftId === legacyResourceDraftId)
         return record
       throw new AttachmentError('VALIDATION_FAILED')
     }
@@ -910,7 +797,15 @@ export class AttachmentService {
           this.#publish('released', 'rollback', [record.id], operationId)
         if (this.#repository.findById(record.id))
           continue
-        await unlinkAvailableFile(record.storedPath)
+        if (this.#repository.persistence) {
+          if (this.#repository.persistence.get(record.storedPath)) {
+            this.#repository.persistence.settle([record.storedPath], 'rollback')
+            await this.#collectFiles([record.storedPath])
+          }
+        }
+        else {
+          await unlinkAvailableFile(record.storedPath)
+        }
         this.#publish('cleanup-completed', 'rollback', [record.id], operationId)
       }
       catch (error) {
@@ -923,71 +818,9 @@ export class AttachmentService {
   }
 }
 
-function toImageReference(record: AttachmentRecord): AttachmentImageReference {
-  return { attachmentId: record.id, mimeType: record.mimeType }
-}
-
-function toDocumentReference(record: AttachmentRecord): AttachmentDocumentReference {
-  if (!isDocumentMimeType(record.mimeType))
-    throw new AttachmentError('VALIDATION_FAILED')
-  return { attachmentId: record.id, mimeType: record.mimeType }
-}
-
-function getDocumentKind(mimeType: string): 'pdf' | 'audio' | 'video' {
-  const kind = getAttachmentKind(mimeType)
-  if (kind !== 'pdf' && kind !== 'audio' && kind !== 'video')
-    throw new AttachmentError('VALIDATION_FAILED')
-  return kind
-}
-
-function validateTotalBytes(
-  sizes: readonly number[],
-  limit = BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT,
-  errorCode = 'VALIDATION_FAILED',
-): void {
-  if (sizes.reduce((total, size) => total + size, 0) > limit)
-    throw new AttachmentError(errorCode)
-}
-
-export class AttachmentError extends Error {
-  readonly code: string
-
-  constructor(code: string, options?: ErrorOptions) {
-    super('Lexora Buddy attachment operation failed', options)
-    this.name = 'AttachmentError'
-    this.code = code
-  }
-}
-
 function safeExtension(path: string): string {
   const extension = extname(path).toLowerCase()
   return /^\.[a-z0-9]{1,16}$/.test(extension) ? extension : ''
-}
-
-export function normalizeAttachmentMetadata(input: { mimeType: string, name: string, sizeBytes: number }) {
-  const name = input.name.trim()
-  const mimeType = extname(name).toLowerCase() === '.pdf' || Object.hasOwn(BUDDY_MEDIA_EXTENSIONS, extname(name).toLowerCase()) || textExtensions.has(extname(name).slice(1).toLowerCase())
-    ? inferMimeType(name)
-    : input.mimeType.trim() || inferMimeType(name)
-  if (!name || /[/\\\0]/.test(name) || !Number.isSafeInteger(input.sizeBytes) || input.sizeBytes < 0)
-    throw new AttachmentError('VALIDATION_FAILED')
-  if (!isDocumentMimeType(mimeType) && !SUPPORTED_IMAGE_MIME_TYPES.has(mimeType) && !isTextAttachmentMimeType(mimeType))
-    throw new AttachmentError('ATTACHMENT_UNSUPPORTED')
-  const byteLimit = isTextAttachmentMimeType(mimeType)
-    ? BUDDY_TEXT_ATTACHMENT_BYTES_LIMIT
-    : isDocumentMimeType(mimeType) && mimeType !== 'application/pdf'
-      ? BUDDY_MEDIA_FILE_BYTES_LIMIT
-      : BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT
-  if (input.sizeBytes > byteLimit)
-    throw new AttachmentError('ATTACHMENT_TOO_LARGE')
-  if (isDocumentMimeType(mimeType) && input.sizeBytes === 0)
-    throw new AttachmentError('ATTACHMENT_INVALID')
-  return { mimeType, name, sizeBytes: input.sizeBytes }
-}
-
-export function inferMimeType(path: string): string {
-  const extension = extname(path).toLowerCase()
-  return MIME_TYPES[extension] ?? (textExtensions.has(extension.slice(1)) ? 'text/plain' : 'application/octet-stream')
 }
 
 function isFileNotFound(error: unknown): boolean {
@@ -1008,23 +841,31 @@ async function removeFiles(paths: readonly string[]): Promise<void> {
   await Promise.all(paths.map(unlinkAvailableFile))
 }
 
-async function publishBytes(bytes: Uint8Array, storedPath: string): Promise<void> {
-  const temporaryPath = `${storedPath}.part`
+async function publishBytes(bytes: Uint8Array, storedPath: string, temporaryPath = `${storedPath}.part`) {
+  await mkdir(dirname(temporaryPath), { mode: 0o700, recursive: true })
   try {
     await writeFile(temporaryPath, bytes, { flag: 'wx', flush: true, mode: 0o600 })
-    await rename(temporaryPath, storedPath)
-    await syncDirectory(dirname(storedPath))
+    await fileStorage.replace(temporaryPath, storedPath)
+    await fileStorage.syncDirectory(dirname(storedPath))
+    if (dirname(temporaryPath) !== dirname(storedPath))
+      await fileStorage.syncDirectory(dirname(temporaryPath))
+    return { sizeBytes: bytes.byteLength, sha256: createHash('sha256').update(bytes).digest('hex'), durability: fileStorage.durability }
   }
   finally {
     await unlinkAvailableFile(temporaryPath)
   }
 }
 
-async function publishFile(sourcePath: string, storedPath: string): Promise<void> {
-  const temporaryPath = `${storedPath}.part`
+async function publishFile(sourcePath: string, storedPath: string, expectedSize: number, expectedHash?: string, temporaryPath = `${storedPath}.part`) {
+  await mkdir(dirname(temporaryPath), { mode: 0o700, recursive: true })
   try {
     await copyFile(sourcePath, temporaryPath, constants.COPYFILE_EXCL)
     await chmod(temporaryPath, 0o600)
+    const sha256 = await hashFile(temporaryPath, expectedSize)
+    if (expectedHash && sha256 !== expectedHash)
+      throw new AttachmentError('ATTACHMENT_INVALID')
+    if (await hashFile(sourcePath, expectedSize) !== sha256)
+      throw new AttachmentError('ATTACHMENT_INVALID')
     const file = await open(temporaryPath, 'r+')
     try {
       await file.sync()
@@ -1032,8 +873,11 @@ async function publishFile(sourcePath: string, storedPath: string): Promise<void
     finally {
       await file.close()
     }
-    await rename(temporaryPath, storedPath)
-    await syncDirectory(dirname(storedPath))
+    await fileStorage.replace(temporaryPath, storedPath)
+    await fileStorage.syncDirectory(dirname(storedPath))
+    if (dirname(temporaryPath) !== dirname(storedPath))
+      await fileStorage.syncDirectory(dirname(temporaryPath))
+    return { sizeBytes: expectedSize, sha256, durability: fileStorage.durability }
   }
   finally {
     await unlinkAvailableFile(temporaryPath)
@@ -1072,4 +916,34 @@ async function listFilesRecursively(root: string): Promise<string[]> {
       files.push(path)
   }
   return files
+}
+
+async function hashFile(path: string, expectedSize: number): Promise<string> {
+  let size = 0
+  const hash = createHash('sha256')
+  for await (const chunk of createReadStream(path)) {
+    size += chunk.length
+    if (size > expectedSize)
+      throw new AttachmentError('ATTACHMENT_INVALID')
+    hash.update(chunk)
+  }
+  if (size !== expectedSize)
+    throw new AttachmentError('ATTACHMENT_INVALID')
+  return hash.digest('hex')
+}
+
+async function availableStorageBytes(path: string): Promise<number> {
+  const storage = await statfs(path, { bigint: true })
+  const available = storage.bavail * storage.bsize
+  return Number(available > BigInt(Number.MAX_SAFE_INTEGER) ? BigInt(Number.MAX_SAFE_INTEGER) : available)
+}
+
+async function syncAvailableDirectory(path: string): Promise<void> {
+  try {
+    await fileStorage.syncDirectory(path)
+  }
+  catch (error) {
+    if (!isFileNotFound(error))
+      throw error
+  }
 }

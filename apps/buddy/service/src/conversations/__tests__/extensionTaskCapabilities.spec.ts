@@ -68,20 +68,25 @@ describe('invocation-owned task capabilities', () => {
     expect(f.tasks.findById('task')?.title).toBe('User wins')
   })
 
-  it.each(['new input', 'branch', 'delete', 'abort'])('rejects writes and message reads after %s', async (change) => {
+  it('rejects writes and message reads after a newer input', async () => {
     const f = fixture()
     const invocation = f.invocation(true)
-    if (change === 'new input')
-      f.tasks.createMessage({ id: 'next', conversationId: 'task', branchId: 'branch', runId: null, role: 'user', content: 'New goal', createdAt: '2026-09-28T00:00:01.000Z' })
-    if (change === 'branch')
-      f.tasks.createBranch({ id: 'other', conversationId: 'task', parentBranchId: 'branch', forkedFromMessageId: 'input', createdAt: '2026-09-28T00:00:01.000Z', activate: true })
-    if (change === 'delete')
-      f.tasks.markDeleted('task', '2026-09-28T00:00:01.000Z')
-    if (change === 'abort')
-      f.controller.abort()
+    f.tasks.createMessage({ id: 'next', conversationId: 'task', branchId: 'branch', runId: null, role: 'user', content: 'New goal', createdAt: '2026-09-28T00:00:01.000Z' })
     await expect(invocation.handlers['task.rename']({ title: 'Late' }, invocation.context)).rejects.toThrow()
     await expect(invocation.handlers['task.messages'](null, invocation.context)).rejects.toThrow()
     expect(f.tasks.findById('task')?.title).toBe('Original')
+  })
+
+  it('retains captured branch reads and title revision after a default branch change', async () => {
+    const f = fixture()
+    const invocation = f.invocation(true)
+    f.tasks.createBranch({ id: 'other', conversationId: 'task', parentBranchId: null, forkedFromMessageId: null, createdAt: '2026-09-28T00:00:01.000Z', activate: true })
+    f.tasks.createMessage({ id: 'other-input', conversationId: 'task', branchId: 'other', runId: null, role: 'user', content: 'OTHER_BRANCH_INPUT', createdAt: '2026-09-28T00:00:02.000Z' })
+    const messages = await invocation.handlers['task.messages'](null, invocation.context)
+    expect(JSON.stringify(messages)).toContain('Initial goal')
+    expect(JSON.stringify(messages)).not.toContain('OTHER_BRANCH_INPUT')
+    expect(await invocation.handlers['task.rename']({ title: 'Captured title' }, invocation.context)).toEqual({ applied: true })
+    expect(f.tasks.findById('task')?.activeBranchId).toBe('other')
   })
 
   it('returns bounded visible text while excluding tool output and inactive branches', () => {

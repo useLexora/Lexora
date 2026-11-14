@@ -1,9 +1,10 @@
 import process from 'node:process'
 import { setTimeout as delay } from 'node:timers/promises'
-import { startRuntimeNetwork } from '../../../apps/buddy/service/src/network/runtimeNetwork.ts'
+import { RuntimeNetwork } from '../../../apps/buddy/service/src/network/runtimeNetwork.ts'
 
 async function run() {
-  const stop = startRuntimeNetwork()
+  const network = new RuntimeNetwork()
+  await network.replace({ httpProxy: process.env.HTTP_PROXY, httpsProxy: process.env.HTTPS_PROXY, noProxy: '' })
   const start = performance.now()
   const before = process.cpuUsage()
   let failure
@@ -49,7 +50,7 @@ async function run() {
     catch (error) { cancelled = error.name === 'AbortError' }
     return { versions: { electron: process.versions.electron, node: process.versions.node, undici: process.versions.undici }, failure, settleMs: settled - start, totalCpuMs: (total.user + total.system) / 1000, idleCpuMs: (idleUsage.user + idleUsage.system) / 1000, stream, responseCompatible: response instanceof Response, websocket, cancelled }
   }
-  finally { await stop() }
+  finally { await network.dispose() }
 }
 
 run().then(result => process.parentPort.postMessage(result), error => process.parentPort.postMessage({ error: error.message }))

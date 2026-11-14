@@ -12,7 +12,7 @@ import { createAttachmentRepository } from '../attachmentRepository'
 import { ComposerDraftCommitConflictError } from '../commitComposerDraft'
 import { createComposerDraftRepository } from '../composerDraftRepository'
 import { createConversationRepository } from '../conversationRepository'
-import { openBuddyDatabase } from '../database'
+import { openBuddyDatabase, withTransaction } from '../database'
 import { createRunRepository } from '../runRepository'
 import { createThreadBindingRepository } from '../threadBindingRepository'
 import {
@@ -29,6 +29,29 @@ afterEach(() => {
 })
 
 describe('turnRequestRepository', () => {
+  it('publishes accepted facts only after the outer owner transaction commits', () => {
+    const database = createDatabase()
+    const service = new TurnRequestService(database)
+    const events: TurnRequestCommit[] = []
+    service.onDidCommit(event => events.push(event))
+    const original = createComposerDraftRepository(database).findById('draft-1')
+    expect(() => withTransaction(database, () => {
+      service.prepare(createInput())
+      expect(events).toEqual([])
+      throw new Error('owner rejected')
+    })).toThrow('owner rejected')
+    expect(database.prepare('SELECT id FROM runs').all()).toEqual([])
+    expect(createComposerDraftRepository(database).findById('draft-1')).toEqual(original)
+    expect(events).toEqual([])
+    withTransaction(database, () => {
+      service.prepare(createInput())
+      expect(events).toEqual([])
+    })
+    expect(events).toHaveLength(1)
+    expect(database.prepare('SELECT id FROM runs').all()).toEqual([{ id: 'run-1' }])
+    service.dispose()
+  })
+
   it('continues a persisted question answer without reading or consuming a composer draft', () => {
     const database = createDatabase()
     const repository = createTurnRequestRepository(database)
@@ -180,7 +203,7 @@ describe('turnRequestRepository', () => {
     const database = createDatabase()
     const repository = createTurnRequestRepository(database)
     const failure = new RunEventCorruptionError('historical-run')
-    const service = new TurnRequestService(repository, undefined, {
+    const service = new TurnRequestService(database, undefined, {
       assertConversationWritable: () => { throw failure },
     })
     const original = createComposerDraftRepository(database).findById('draft-1')
@@ -202,7 +225,7 @@ describe('turnRequestRepository', () => {
     attachments.create({ id: 'owned-attachment', conversationId: null, draftId: 'draft-1', messageId: null, name: 'private-name.txt', mimeType: 'text/plain', sizeBytes: 1, storedPath: '/private/source.txt', createdAt: '2026-08-14T00:00:00.000Z' })
     const input = createInput()
     const prepared = { ...input, runInput: { ...input.runInput, attachmentIds: ['owned-attachment'] }, attachmentBindings: [{ id: 'owned-attachment', sourceAttachmentId: 'owned-attachment', sourceDraftId: 'draft-1', messageId: input.userMessageId, storedPath: '/private/destination.txt', createdAt: input.createdAt }] }
-    const service = new TurnRequestService(createTurnRequestRepository(database))
+    const service = new TurnRequestService(database)
     const events: TurnRequestCommit[] = []
     service.onDidCommit(event => events.push(event))
     expect(() => service.prepare({ ...prepared, draft: { draftId: 'draft-1', expectedRevision: 99 } })).toThrow(ComposerDraftCommitConflictError)
@@ -217,7 +240,7 @@ describe('turnRequestRepository', () => {
 
   it('publishes one frozen transaction batch and no facts for rollback or request replay', () => {
     const database = createDatabase()
-    const service = new TurnRequestService(createTurnRequestRepository(database))
+    const service = new TurnRequestService(database)
     const events: TurnRequestCommit[] = []
     service.onDidCommit(event => events.push(event))
     const input = createInput()
@@ -434,8 +457,7 @@ describe('turnRequestRepository', () => {
 
   it('atomically replaces an interrupted run without duplicating the user message', () => {
     const database = createDatabase()
-    const repository = createTurnRequestRepository(database)
-    const service = new TurnRequestService(repository)
+    const service = new TurnRequestService(database)
     const events: TurnRequestCommit[] = []
     service.onDidCommit(event => events.push(event))
     service.prepare(createInput())

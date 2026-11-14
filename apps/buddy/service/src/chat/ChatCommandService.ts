@@ -6,6 +6,7 @@ import type { RunEventAvailability } from '../events/RunEventPorts'
 import type {
   CommandRequestRecord,
   CommandRequestRepository,
+  PrepareCommandRequestInput,
 } from '../storage/commandRequestRepository'
 import type { ComposerDraftCommitReceipt } from '../storage/commitComposerDraft'
 import type { ComposerDraftRepository } from '../storage/composerDraftRepository'
@@ -13,14 +14,18 @@ import type { ConversationRepository } from '../storage/conversationRepository'
 import type { RunRecord } from '../storage/runRecord'
 import type { RunRepository } from '../storage/runRepository'
 import type { SpaceRepository } from '../storage/spaceRepository'
+import type { ChatInputSource } from './resolveChatInput'
 import { randomUUID } from 'node:crypto'
 import { parseBuddyChatCommand } from '../../../shared/conversation/buddyChatCommands'
 import { buddyUserContentToText, getBuddyUserContentResourceIds } from '../../../shared/conversation/buddyUserContent'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
+import { AsyncOperationScope } from '../../../shared/lifecycle/AsyncOperationScope'
+import { canonicalCommandJson } from '../commands/commandIntent'
 import { BuddyServiceError } from '../rpc/runtimeRequest'
 import { toPublicRun } from '../runs/publicRun'
 import { requireActiveSpace } from '../spaces/requireActiveSpace'
+import { resolveChatInput } from './resolveChatInput'
 
 export type ExecuteChatCommandInput = BuddyComposerDraftSend
 
@@ -32,7 +37,7 @@ export type ChatCommandCommit = EventSnapshot<{
   facts: [
     { kind: 'command.accepted', command: 'compact' },
     { kind: 'run.queued', runId: string, purpose: 'conversation.compaction' },
-    { kind: 'draft.consumed' } & ComposerDraftCommitReceipt,
+    ...({ kind: 'draft.consumed' } & ComposerDraftCommitReceipt)[],
   ]
 }>
 
@@ -52,7 +57,7 @@ export class ChatCommandService {
   readonly #options: ChatCommandServiceOptions
   readonly #committed: Emitter<ChatCommandCommit>
   readonly #stopping = new AbortController()
-  readonly #pending = new Set<Promise<unknown>>()
+  readonly #operations = new AsyncOperationScope(() => this.#stopping.signal.reason)
   readonly onDidCommit: Emitter<ChatCommandCommit>['event']
 
   constructor(options: ChatCommandServiceOptions) {
@@ -62,20 +67,11 @@ export class ChatCommandService {
   }
 
   get hasPendingOperations(): boolean {
-    return this.#pending.size > 0
+    return this.#operations.hasPending
   }
 
   execute(input: ExecuteChatCommandInput): Promise<ReturnType<typeof toTurnStart>> {
-    const pending = Promise.withResolvers<ReturnType<typeof toTurnStart>>()
-    this.#pending.add(pending.promise)
-    void this.#execute({ ...input }).then((value) => {
-      this.#pending.delete(pending.promise)
-      pending.resolve(value)
-    }, (error) => {
-      this.#pending.delete(pending.promise)
-      pending.reject(error)
-    })
-    return pending.promise
+    return this.#operations.track(() => this.#execute({ ...input }))
   }
 
   async #execute(input: ExecuteChatCommandInput) {
@@ -89,9 +85,30 @@ export class ChatCommandService {
       return toTurnStart(replay, requireValue(replayRun))
     }
 
-    const draft = requireValue(this.#options.drafts.findById(input.draftId), 'DRAFT_CONFLICT')
-    if (draft.revision !== input.expectedRevision)
-      throw new BuddyServiceError('DRAFT_CONFLICT')
+    const prepared = this.#options.commands.prepare(this.prepare(input))
+
+    if (!prepared.created)
+      return toTurnStart(prepared, this.#requireRun(prepared.runId))
+
+    this.#committed.fire(copyEventSnapshot({
+      commitId: prepared.runId,
+      requestId: prepared.requestId,
+      conversationId: prepared.conversationId,
+      branchId: prepared.branchId,
+      facts: [
+        { kind: 'command.accepted', command: prepared.command },
+        { kind: 'run.queued', runId: prepared.runId, purpose: 'conversation.compaction' },
+        ...(prepared.draftReceipt ? [{ kind: 'draft.consumed' as const, ...prepared.draftReceipt }] : []),
+      ],
+    }))
+    const operation = await this.#options.turnLauncher.launch(prepared.runId, this.#stopping.signal)
+    void operation.completion.catch(() => {})
+    return toTurnStart(prepared, this.#requireRun(operation.runId))
+  }
+
+  prepare(input: ChatInputSource & { requestId: string }): PrepareCommandRequestInput {
+    this.#stopping.signal.throwIfAborted()
+    const draft = resolveChatInput(input, this.#options.drafts)
     if (draft.scope.kind !== 'conversation_branch')
       throw new BuddyServiceError('VALIDATION_FAILED')
     const content = buddyUserContentToText(draft.content).trim()
@@ -117,7 +134,7 @@ export class ChatCommandService {
       this.#options.conversations.findById(draft.scope.conversationId),
     )
     if (
-      conversation.activeBranchId !== draft.scope.branchId
+      conversation.deletedAt !== null
       || conversation.approvalPolicy !== draft.executionConfig.approvalPolicy
       || conversation.executionProfile !== draft.executionConfig.executionProfile
       || this.#options.conversationLifecycle.isDeleting(conversation.id)
@@ -128,41 +145,25 @@ export class ChatCommandService {
       requireActiveSpace(this.#options.spaces.findById(conversation.spaceId))
     this.#options.availability?.assertConversationWritable(conversation.id)
     const runId = randomUUID()
-    const prepared = this.#options.commands.prepare({
+    return {
       approvalPolicy: conversation.approvalPolicy,
       arguments: command.arguments,
       branchId: draft.scope.branchId,
       command: command.name,
       conversationId: conversation.id,
       createdAt: new Date().toISOString(),
-      draft: { draftId: draft.draftId, expectedRevision: input.expectedRevision },
+      draft: draft.commit,
       executionProfile: conversation.executionProfile,
-      requestFingerprint,
+      requestFingerprint: createCommandFingerprint(input),
       requestId: input.requestId,
       runId,
-    })
-    if (!prepared.created)
-      return toTurnStart(prepared, this.#requireRun(prepared.runId))
-
-    this.#committed.fire(copyEventSnapshot({
-      commitId: prepared.runId,
-      requestId: prepared.requestId,
-      conversationId: prepared.conversationId,
-      branchId: prepared.branchId,
-      facts: [
-        { kind: 'command.accepted', command: prepared.command },
-        { kind: 'run.queued', runId: prepared.runId, purpose: 'conversation.compaction' },
-        { kind: 'draft.consumed', ...prepared.draftReceipt },
-      ],
-    }))
-    const operation = await this.#options.turnLauncher.launch(prepared.runId, this.#stopping.signal)
-    void operation.completion.catch(() => {})
-    return toTurnStart(prepared, this.#requireRun(operation.runId))
+    }
   }
 
   async dispose(): Promise<void> {
+    this.#operations.stopAccepting()
     this.#stopping.abort()
-    await Promise.allSettled(this.#pending)
+    await this.#operations.drain()
     this.#committed.dispose()
   }
 
@@ -171,8 +172,8 @@ export class ChatCommandService {
   }
 }
 
-function createCommandFingerprint(input: ExecuteChatCommandInput): string {
-  return `${input.draftId}:${input.expectedRevision}`
+function createCommandFingerprint(input: ChatInputSource): string {
+  return 'snapshot' in input ? canonicalCommandJson(input.snapshot) : `${input.draftId}:${input.expectedRevision}`
 }
 
 function toTurnStart(request: CommandRequestRecord, run: RunRecord) {

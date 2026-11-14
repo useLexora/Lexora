@@ -2,22 +2,20 @@ import type { ListenerErrorHandler } from '../../../shared/events/Emitter'
 import type { EventSnapshot } from '../../../shared/events/eventTypes'
 import type { ExtensionAgentCatalog, ExtensionAgentDescriptor, ExtensionAgentInvocation } from '../../../shared/extensions/extensionAgent'
 import type { ExtensionAgentMethod } from '../../../shared/extensions/extensionAgentCapabilities'
-import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
 import type { JsonValue } from '../../../shared/workbench/workbenchState'
 import type { BuddyCapability, BuddyCapabilityContext } from '../agent/extensions/BuddyCapability'
 import type { ExtensionAgentChange, ExtensionAgentFact, ExtensionCapabilityProjection } from './ExtensionAgentEvents'
 import type { ExtensionAgentHandlers, ExtensionInvocationScope } from './extensionAgentHandlers'
+import type { PluginAgentHost } from './PluginHost'
 import { createHash, randomUUID } from 'node:crypto'
 import { defineTool } from '@earendil-works/pi-coding-agent'
 import { Check } from 'typebox/value'
 import { z } from 'zod'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
-import { extensionAgentCatalogSchema, extensionAgentDescriptorSchema, extensionAgentRequestSchema, extensionAgentRpc } from '../../../shared/extensions/extensionAgent'
+import { extensionAgentRequestSchema } from '../../../shared/extensions/extensionAgent'
 import { extensionAgentCapabilities } from '../../../shared/extensions/extensionAgentCapabilities'
-import { extensionJsonSchema } from '../../../shared/extensions/extensionApi'
 import { ExtensionInvocationQueue } from '../../../shared/extensions/ExtensionInvocationQueue'
-import { extensionIdSchema } from '../../../shared/extensions/extensionManifest'
 import { extensionToolInputSchema } from '../../../shared/extensions/extensionToolParameters'
 import { extensionInvocationContext } from './extensionInvocationContext'
 import { extensionToolSchema } from './extensionToolSchema'
@@ -37,7 +35,7 @@ interface ProjectionState {
   release: () => void
 }
 interface ExtensionAgentRuntimeOptions {
-  rpc: RuntimeRpcPeerContract
+  host: PluginAgentHost
   createHandlers: (scope: ExtensionInvocationScope) => ExtensionAgentHandlers
   onObserverError?: ListenerErrorHandler
 }
@@ -67,9 +65,8 @@ export class ExtensionAgentRuntime {
   }
 
   bind(): () => void {
-    const request = this.#options.rpc.onRequest(extensionAgentRpc.request, (input, signal) => this.#request(input, signal))
-    const acquire = this.#options.rpc.onRequest('extensions.inference.acquire', async (raw, signal) => {
-      const input = z.object({ extensionId: extensionIdSchema, invocationId: z.uuid(), parentInvocationId: z.uuid().optional() }).strict().parse(raw)
+    const request = this.#options.host.bind((input, signal) => this.#request(input, signal))
+    const inference = this.#options.host.bindInference({ acquire: async (input, signal) => {
       const abort = AbortSignal.any([this.#stop.signal, ...signal ? [signal] : []])
       const parent = input.parentInvocationId ? this.#invocations.get(input.parentInvocationId) : undefined
       if (input.parentInvocationId && (!parent?.accepting || parent.scope.signal.aborted))
@@ -83,28 +80,22 @@ export class ExtensionAgentRuntime {
       }
       this.#inferencePermits.set(input.invocationId, release)
       return null
-    })
-    const release = this.#options.rpc.onRequest('extensions.inference.release', (raw) => {
-      const { invocationId } = z.object({ invocationId: z.uuid() }).strict().parse(raw)
+    }, release: (invocationId) => {
       this.#inferencePermits.get(invocationId)?.()
       this.#inferencePermits.delete(invocationId)
       return null
-    })
-    const changed = this.#options.rpc.onNotification((method, params) => {
-      if (method === extensionAgentRpc.changed)
-        this.#setCatalog(extensionAgentCatalogSchema.parse(params))
-    })
+    } })
+    const changed = this.#options.host.subscribe(catalog => this.#setCatalog(catalog))
     return () => {
       request()
-      acquire()
-      release()
+      inference()
       changed()
     }
   }
 
   async descriptors(signal: AbortSignal): Promise<ExtensionAgentDescriptor[]> {
     signal.throwIfAborted()
-    return z.array(extensionAgentDescriptorSchema.extend({ id: extensionIdSchema })).parse(await this.#options.rpc.request(extensionAgentRpc.list, {}, 10000, AbortSignal.any([signal, this.#stop.signal])))
+    return this.#options.host.list(AbortSignal.any([signal, this.#stop.signal]))
   }
 
   async invoke(descriptor: ExtensionAgentDescriptor, request: InvocationRequest, scope: Omit<ExtensionInvocationScope, 'extensionId' | 'invocationId' | 'signal'>, signal: AbortSignal, invocationId = randomUUID()): Promise<JsonValue> {
@@ -134,7 +125,7 @@ export class ExtensionAgentRuntime {
     this.#publish({ kind: 'invocation', stage: 'started', ...identity })
     try {
       const input: ExtensionAgentInvocation = { extensionId: descriptor.id, revision: descriptor.revision, configurationRevision: descriptor.configurationRevision, invocationId, context: { taskId: scope.conversationId, runId: scope.runId }, ...request }
-      const result = extensionJsonSchema.parse(await this.#options.rpc.request(extensionAgentRpc.invoke, input, null, abort))
+      const result = await this.#options.host.invoke(input, abort)
       abort.throwIfAborted()
       return result
     }
@@ -178,6 +169,10 @@ export class ExtensionAgentRuntime {
       this.#acceptProjection(projection, request, 'unavailable', [])
       return []
     }
+  }
+
+  async releaseRun(runId: string): Promise<void> {
+    await this.#options.host.releaseRun?.(runId)
   }
 
   dispose(): Promise<void> {

@@ -1,7 +1,6 @@
 import type { ContextPanelSource } from '../../shared/context-panel/contextPanel'
 import type { ApplicationDiagnosticReporter } from '../../shared/diagnostics/applicationDiagnostic'
 import type { BuddyFeatureId, BuddyPlatform } from '../../shared/platform'
-import type { RuntimeRpcPeerContract } from '../../shared/runtime/rpcPeer'
 import type { BuddyCapability, BuddyCapabilityContext, BuddyCapabilityFactory } from './agent/extensions/BuddyCapability'
 import type { ArtifactService } from './artifacts/ArtifactService'
 import type { AttachmentService } from './attachments/AttachmentService'
@@ -17,6 +16,7 @@ import type { ImageRequestStore } from './images/ImageRequestStore'
 import type { ImageTransformService } from './images/ImageTransformService'
 import type { PetActionService } from './pet/PetActionService'
 import type { PluginAuthoringService } from './plugins/PluginAuthoringService'
+import type { PluginAuthoringHost } from './plugins/PluginHost'
 import type { SkillAuthoringServices } from './skills/skillAuthoringCapability'
 import type { ExtensionReferenceRepository } from './storage/extensionReferenceRepository'
 import type { SessionReferenceRepository } from './storage/sessionReferenceRepository'
@@ -47,7 +47,7 @@ export interface BuddyCapabilityServices {
   getRunBuddyId: (runId: string) => string | null
   record?: ApplicationDiagnosticReporter
   pluginCapabilities?: (context: BuddyCapabilityContext) => Promise<BuddyCapability[]>
-  pluginAuthoring: Pick<RuntimeRpcPeerContract, 'request' | 'notify'>
+  pluginAuthoring: PluginAuthoringHost
   pluginBuilder: PluginAuthoringService
   skillAuthoring: Omit<SkillAuthoringServices, 'conversations'>
   artifactService: ImageGenerationServiceOptions['artifactService'] & Pick<ArtifactService, 'presentOutputs'> & SessionReferenceServices['artifacts']

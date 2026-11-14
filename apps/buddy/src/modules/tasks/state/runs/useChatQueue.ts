@@ -71,9 +71,12 @@ export function useChatQueue(options: {
       return
     pendingQueueActions.value = new Set([...pendingQueueActions.value, id])
     try {
+      const item = queuedMessages.value.find(item => item.id === id)
+      const condition = item?.revision === undefined ? {} : { expectedRevision: item.revision }
+      const steer = item?.steerTarget === undefined ? {} : item.steerTarget === null ? { targetRunId: null } : { targetRunId: item.steerTarget.runId, expectedRunGeneration: item.steerTarget.generation }
       const result = action === 'cancelQueued'
-        ? await options.api.cancelQueued({ ...target, id }) ? 'accepted' : 'cancel'
-        : await options.api.steerQueued({ ...target, id })
+        ? await options.api.cancelQueued({ ...target, id, ...condition }) ? 'accepted' : 'cancel'
+        : await options.api.steerQueued({ ...target, id, ...condition, ...steer })
       await refreshQueue()
       if (scope()?.conversationId !== target.conversationId || scope()?.branchId !== target.branchId || disposed)
         return

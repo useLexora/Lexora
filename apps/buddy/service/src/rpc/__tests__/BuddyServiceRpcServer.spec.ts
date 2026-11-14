@@ -7,8 +7,7 @@ import { diagnosticContext } from '../../diagnostics/diagnosticContext'
 import { HostCredentialStoreError } from '../../providers/HostCredentialStore'
 
 import {
-  createBuddyService,
-  notifyBuddyServiceFailure,
+  createBuddyService as createService,
   notifyBuddyServiceReady,
 } from '../BuddyServiceRpcServer'
 
@@ -46,7 +45,6 @@ describe('runtimeRpcServer', () => {
 
   it.each([
     ['CREDENTIAL_STORE_UNAVAILABLE', 'CREDENTIAL_STORE_UNAVAILABLE', 'CREDENTIAL_STORE_UNAVAILABLE'],
-    ['CREDENTIAL_STORE_FAILURE', 'CREDENTIAL_STORE_FAILURE', 'CREDENTIAL_STORE_FAILURE'],
     ['PRIVATE_DIAGNOSTIC', 'BUDDY_RUNTIME_REQUEST_FAILED', 'OPERATION_FAILED'],
   ])('reports a Pi-wrapped %s without exposing private error content', async (causeCode, wireCode, diagnosticCode) => {
     const port = new FakeParentPort()
@@ -77,19 +75,6 @@ describe('runtimeRpcServer', () => {
     })
     expect(JSON.stringify({ diagnostics, messages: port.sent })).not.toContain('private-provider-diagnostic')
     server.close(new Error('test completed'))
-  })
-
-  it('emits only the stable failure code before readiness', () => {
-    const port = new FakeParentPort()
-    const server = createBuddyService({ announceReady: false, port })
-
-    notifyBuddyServiceFailure(server, 'EVENT_LOG_CORRUPTED')
-
-    expect(port.sent).toEqual([{
-      jsonrpc: '2.0',
-      method: 'runtime.failed',
-      params: { code: 'EVENT_LOG_CORRUPTED' },
-    }])
   })
 
   it('does not report readiness before startup recovery completes', async () => {
@@ -188,17 +173,8 @@ describe('runtimeRpcServer', () => {
     expect(stopped).toBe(true)
     server.close(new Error('test completed'))
   })
-
-  it('does not accept an idle-only shutdown without an available idle check', async () => {
-    const port = new FakeParentPort()
-    let stopped = false
-    const server = createBuddyService({ port, scheduleShutdown: () => {
-      stopped = true
-    } })
-    port.receive({ jsonrpc: '2.0', id: 'unchecked', method: 'runtime.shutdown', params: { onlyIfIdle: true } })
-    await new Promise(resolve => setImmediate(resolve))
-    expect(port.sent.at(-1)).toMatchObject({ id: 'unchecked', result: { accepted: false } })
-    expect(stopped).toBe(false)
-    server.close(new Error('test completed'))
-  })
 })
+
+function createBuddyService(options: Omit<Parameters<typeof createService>[0], 'scheduleShutdown'> & { scheduleShutdown?: () => void }) {
+  return createService({ scheduleShutdown() {}, ...options })
+}

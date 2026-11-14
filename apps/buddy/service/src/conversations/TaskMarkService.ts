@@ -1,3 +1,4 @@
+import type { DatabaseSync } from 'node:sqlite'
 import type { LocalTaskMarkState, TaskMarkClearInput, TaskMarkInput, TaskMarkReadInput } from '../../../shared/conversation/taskMarkApi'
 import type { EventSnapshot } from '../../../shared/events/eventTypes'
 import type { TaskMarkRepository } from '../storage/taskMarkRepository'
@@ -5,6 +6,7 @@ import { randomUUID } from 'node:crypto'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { BuddyServiceError } from '../rpc/runtimeRequest'
+import { afterTransactionCommit } from '../storage/transaction'
 
 export type TaskMarkCommit = EventSnapshot<{ commitId: string } & (
   | { kind: 'created' | 'updated', markId: string }
@@ -13,12 +15,16 @@ export type TaskMarkCommit = EventSnapshot<{ commitId: string } & (
 )>
 
 export class TaskMarkService {
+  readonly #database?: DatabaseSync
+  readonly #onObserverError: (error: unknown) => void
   readonly #repository: TaskMarkRepository
   readonly #committed: Emitter<TaskMarkCommit>
   readonly onDidCommit: Emitter<TaskMarkCommit>['event']
   #disposed = false
 
-  constructor(repository: TaskMarkRepository, onObserverError: (error: unknown) => void = () => {}) {
+  constructor(repository: TaskMarkRepository, onObserverError: (error: unknown) => void = () => {}, database?: DatabaseSync) {
+    this.#database = database
+    this.#onObserverError = onObserverError
     this.#repository = repository
     this.#committed = new Emitter(onObserverError)
     this.onDidCommit = this.#committed.event
@@ -27,7 +33,7 @@ export class TaskMarkService {
   create(input: TaskMarkInput) {
     this.#requireActive()
     const mark = this.#repository.create(input)
-    this.#committed.fire(copyEventSnapshot({ commitId: randomUUID(), kind: 'created', markId: mark.id }))
+    this.#publish(copyEventSnapshot({ commitId: randomUUID(), kind: 'created', markId: mark.id }))
     return mark
   }
 
@@ -37,7 +43,7 @@ export class TaskMarkService {
     if (current?.name === input.name && current.description === input.description && current.color === input.color)
       return current
     const mark = this.#repository.update(id, input)
-    this.#committed.fire(copyEventSnapshot({ commitId: randomUUID(), kind: 'updated', markId: mark.id }))
+    this.#publish(copyEventSnapshot({ commitId: randomUUID(), kind: 'updated', markId: mark.id }))
     return mark
   }
 
@@ -45,7 +51,7 @@ export class TaskMarkService {
     this.#requireActive()
     const result = this.#repository.deleteWithReceipt(id)
     if (result.deleted)
-      this.#committed.fire(copyEventSnapshot({ commitId: randomUUID(), kind: 'deleted', markId: id, conversationIds: result.conversationIds }))
+      this.#publish(copyEventSnapshot({ commitId: randomUUID(), kind: 'deleted', markId: id, conversationIds: result.conversationIds }))
     return result.deleted
   }
 
@@ -80,6 +86,13 @@ export class TaskMarkService {
     this.#committed.dispose()
   }
 
+  #publish(event: TaskMarkCommit): void {
+    if (this.#database)
+      afterTransactionCommit(this.#database, () => this.#committed.fire(event), this.#onObserverError)
+    else
+      this.#committed.fire(event)
+  }
+
   #requireActive(): void {
     if (this.#disposed)
       throw new BuddyServiceError('VALIDATION_FAILED')
@@ -89,6 +102,6 @@ export class TaskMarkService {
     const assignmentChanged = before.markId !== state.markId
     const readChanged = before.readRevision !== state.readRevision
     if (assignmentChanged || readChanged)
-      this.#committed.fire(copyEventSnapshot({ commitId: randomUUID(), kind: 'attention', conversationId: state.conversationId, assignmentChanged, readChanged, state }))
+      this.#publish(copyEventSnapshot({ commitId: randomUUID(), kind: 'attention', conversationId: state.conversationId, assignmentChanged, readChanged, state }))
   }
 }

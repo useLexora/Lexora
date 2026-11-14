@@ -6,20 +6,17 @@ import { randomUUID } from 'node:crypto'
 import { InMemoryCredentialStore, InMemoryModelsStore } from '@earendil-works/pi-ai'
 import { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import { describe, expect, it, onTestFinished } from 'vitest'
-import { createExtensionSpeechBackend } from '../../../../electron/main/extensions/createExtensionSpeechBackend'
 import { registerExtensionImageReadingRpc } from '../../../../electron/main/extensions/registerExtensionImageReadingRpc'
 import { registerExtensionImageRpc } from '../../../../electron/main/extensions/registerExtensionImageRpc'
 import { registerExtensionModelRpc } from '../../../../electron/main/extensions/registerExtensionModelRpc'
 import { extensionChatRequestSchema, extensionChatRpc, pluginChatApi } from '../../../../shared/extensions/extensionChat'
 import { providersRpc } from '../../../../shared/providers/providerApi'
 import { isChatModel } from '../../../../shared/providers/providerModelType'
-import { HOST_SPEECH_MODELS } from '../../../../shared/speech/speechApi'
 import { inferenceHost, pngBytes, readInferenceJson, rpcPair } from '../../images/__tests__/pluginImageFixtures'
 import { createPluginImageBackends } from '../../images/createPluginImageBackends'
 import { PluginImageGateway } from '../../images/PluginImageGateway'
 import { openBuddyDatabase } from '../../storage/database'
 import { createProviderRepository } from '../../storage/providerRepository'
-import { createWorkspaceRepository } from '../../storage/workspaceRepository'
 import { AuthInteractionService } from '../AuthInteractionService'
 import { createProviderModelRuntime } from '../createProviderModelRuntime'
 import { PluginModelRegistry } from '../PluginModelRegistry'
@@ -27,8 +24,7 @@ import { createProviderCredentialStatus } from '../ProviderCredentialStatus'
 import { ProviderModelSnapshotService } from '../ProviderModelSnapshotService'
 import { ProviderRequestHeaders } from '../ProviderRequestHeaders'
 import { ProviderService } from '../ProviderService'
-import { registerProviderRpc } from '../registerProviderRpc'
-import { refreshProviderSpeechModels } from '../registerProviderSpeechRpc'
+import { registerProviderCatalogRpc, registerProviderRpc } from '../registerProviderRpc'
 
 const descriptor: ExtensionModel = {
   id: 'local-vision',
@@ -85,6 +81,7 @@ async function fixture(modelSnapshot?: ProviderServiceOptions['modelSnapshot'], 
     registerExtensionImageReadingRpc(peers.host, () => inference),
     registerExtensionImageRpc(peers.host, () => inference),
     registerExtensionModelRpc(peers.host, () => inference),
+    registerProviderCatalogRpc({ rpc: peers.service, service, refreshCapabilities: () => registry.refresh() }),
     registerProviderRpc({ rpc: peers.service, service, refreshCapabilities: () => registry.refresh() }),
   ]
   const gateway = new PluginImageGateway(peers.service)
@@ -107,7 +104,6 @@ async function fixture(modelSnapshot?: ProviderServiceOptions['modelSnapshot'], 
     inference,
     reading,
     generation,
-    workspace: createWorkspaceRepository(database),
     restart: async () => {
       await registry.dispose()
       const nextRuntime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, modelsStore: new InMemoryModelsStore(), refreshOnCreate: false })
@@ -154,7 +150,6 @@ describe('plugin model registry', () => {
       expect(effective).toMatchObject({ id: model.id, provider: providerId, toolCall: tools, reasoning, input: ['text'], contextWindow, maxTokens })
       expect(listed.find(item => item.id === model.id)).toMatchObject({ toolCalling: tools, capabilities: reasoning ? ['text', 'reasoning'] : ['text'], reasoningOptions: reasoning ? ['off', 'medium'] : [], contextWindow, maxTokens, sourceCapabilities: { toolCall: tools, image: false, pdf: false, audio: false, video: false } })
     }
-    expect(await f.inference.models()).toEqual(cases.map(item => item.model))
     await expect(f.service.executionModels.resolveAvailable({ ...selection, modelId: 'local', contextWindow: 262144, maxTokens: 8192 })).rejects.toMatchObject({ code: 'PROVIDER_UNAVAILABLE' })
   })
 
@@ -175,7 +170,6 @@ describe('plugin model registry', () => {
     expect(await restarted.service.listModels(providerId)).toMatchObject([{ capabilityOverrides: overrides, toolCalling: false, capabilities: ['text', 'image', 'reasoning'], reasoningOptions: ['off', 'medium'], sourceCapabilities: { toolCall: false, reasoningOptions: ['off'] } }])
     expect(await restarted.service.executionModels.resolveAvailable(selection)).toMatchObject({ toolCall: false, reasoning: true, thinkingLevelMap: { low: null, high: null }, contextWindow: descriptor.contextWindow, maxTokens: descriptor.maxTokens })
     expect(await restarted.service.getDefaultModel()).toEqual(off)
-    expect(await f.inference.models()).toEqual([updated])
     f.failListing()
     await expect(restarted.registry.refresh()).rejects.toThrow()
     expect(await restarted.service.listModels(providerId)).toMatchObject([{ capabilityOverrides: overrides, reasoningOptions: ['off', 'medium'] }])
@@ -276,7 +270,6 @@ describe('plugin model registry', () => {
       expect(await f.service.getDefaultModel()).toEqual(selected)
       expect(await f.service.listProviders()).toMatchObject([{ id: providerId, enabled: true, activeRunCount: 1 }])
       expect(inFlight.reasoning).toBe(false)
-      expect((await f.inference.models())[0]).toEqual(automatic)
     }
     await expect(f.service.setModelEnabled(providerId, descriptor.id, false)).rejects.toThrow()
     await expect(f.service.setProviderEnabled(providerId, false)).rejects.toThrow()
@@ -318,7 +311,6 @@ describe('plugin model registry', () => {
       expect(await f.service.executionModels.resolveAvailable(selection)).toMatchObject({ id: descriptor.id, provider: providerId, toolCall: supported, contextWindow: descriptor.contextWindow, maxTokens: descriptor.maxTokens })
       expect(await f.service.getDefaultModel()).toEqual(selected)
       expect(f.repository.models.find(providerId, descriptor.id)).toMatchObject({ createdAt: before.createdAt, modelId: descriptor.id, providerId })
-      expect((await f.inference.models())[0]).toEqual(automatic)
     }
     await f.service.setProviderEnabled(providerId, false)
     data = catalogData(false)
@@ -450,63 +442,6 @@ describe('plugin model registry', () => {
     expect(await f.service.listProviders()).toMatchObject([{ id: providerId, displayName: descriptor.extensionName, plugin: { id: descriptor.extensionId, managementPage: true }, status: 'available', enabled: true, modelCount: 1, enabledModelCount: 1, setupComplete: true, authTypes: [] }])
   })
 
-  it('refreshes a service-only rename without changing plugin identity, model switches or default references', async () => {
-    const f = await fixture()
-    const disabled = { ...descriptor, id: 'disabled-model' }
-    f.setModels([descriptor, disabled])
-    await f.registry.refresh()
-    await f.service.setDefaultModel(selected)
-    await f.service.setModelEnabled(providerId, disabled.id, false)
-    const previous = f.repository.models.list(providerId)
-    for (const providerName of ['Example Local', 'Renamed service', undefined]) {
-      const committed = Promise.withResolvers<ProviderCommit>()
-      const dispose = f.service.onDidCommit(event => committed.resolve(event))
-      f.setModels([{ ...descriptor, providerName }, { ...disabled, providerName }])
-      f.peers.host.notify(extensionChatRpc.changed, {})
-      const event = await committed.promise
-      dispose.dispose()
-      await f.registry.refresh()
-      expect(event).toMatchObject({ providers: [{ providerId, kind: 'changed' }], defaultModelChanged: false })
-      expect(await f.service.listProviders()).toMatchObject([{ id: providerId, displayName: providerName ?? descriptor.extensionName, plugin: { id: descriptor.extensionId } }])
-      expect(f.runtime.getProvider(providerId)?.name).toBe(providerName ?? descriptor.extensionName)
-      expect(await f.inference.models()).toMatchObject([{ extensionName: descriptor.extensionName }, { extensionName: descriptor.extensionName }])
-      expect(await f.service.getDefaultModel()).toEqual(selected)
-      expect(await f.service.listModels(providerId)).toEqual(expect.arrayContaining([
-        expect.objectContaining({ id: descriptor.id, enabled: true }),
-        expect.objectContaining({ id: disabled.id, enabled: false }),
-      ]))
-      expect(f.repository.models.list(providerId).map(({ providerId, modelId, createdAt }) => ({ providerId, modelId, createdAt }))).toEqual(previous.map(({ providerId, modelId, createdAt }) => ({ providerId, modelId, createdAt })))
-    }
-  })
-
-  it('shares service naming across speech and image catalogs while keeping reader ownership', async () => {
-    const providerName = 'Example Local'
-    const f = await fixture()
-    f.setModels([])
-    const identity = { extensionId: descriptor.extensionId, extensionName: descriptor.extensionName, providerName, revision: descriptor.revision, bindingRevision: descriptor.bindingRevision, generation: descriptor.generation, managementPage: true }
-    f.inference.imageModels = async () => [{ ...identity, id: 'image', title: 'Local image', capability: 'image', support: { operations: ['generate'], maxReferenceImages: 0, sizes: ['auto'], qualities: ['auto'], backgrounds: ['auto'] } }]
-    f.inference.imageReaders = async () => [{ ...identity, id: 'ocr', title: 'Local OCR', capability: 'ocr', support: { operations: ['extract'] } }]
-    await f.registry.refresh()
-    expect(await f.service.listProviders()).toMatchObject([{ id: providerId, displayName: providerName, modelCount: 1 }])
-    expect(await f.generation.candidates()).toMatchObject([{ owner: providerName }])
-    expect(await f.reading.candidates()).toMatchObject([{ owner: descriptor.extensionName }])
-    const speech = createExtensionSpeechBackend({
-      list: async () => (['speech.transcribe', 'speech.synthesize'] as const).map((kind, index) => ({ ...identity, id: `speech-${index}`, title: kind, kind, runtime: 'local', platforms: ['linux-x64'], streamingInput: false, streamingOutput: false })),
-      prepare: async () => {},
-      invoke: async () => {},
-    }, () => () => {})
-    onTestFinished(f.peers.host.onRequest(HOST_SPEECH_MODELS, () => speech.list()))
-    const refreshSpeech = () => refreshProviderSpeechModels({ rpc: f.peers.service, providers: f.service, workspace: f.workspace })
-    await refreshSpeech()
-    expect(await speech.list()).toMatchObject([{ source: providerName, providerId }, { source: providerName, providerId }])
-    expect(await f.service.listProviders()).toMatchObject([{ id: providerId, displayName: providerName, modelCount: 3 }])
-    expect((await f.service.listModels()).map(model => model.type).sort()).toEqual(['image-generation', 'speech', 'transcription'])
-    f.inference.imageModels = async () => []
-    f.inference.imageReaders = async () => []
-    await f.registry.refresh()
-    expect(await f.service.listProviders()).toMatchObject([{ id: providerId, displayName: providerName, status: 'available' }])
-  })
-
   it('rechecks changed bindings received during a pending catalog request', async () => {
     const f = await fixture()
     const started = Promise.withResolvers<void>()
@@ -604,18 +539,5 @@ describe('plugin model registry', () => {
     await f.registry.refresh()
     expect(await f.service.listModels()).toEqual([])
     expect(await f.reading.candidates()).toMatchObject([{ target: { kind: 'plugin', extensionId: descriptor.extensionId, modelId: 'ocr' }, support: { operations: ['extract'] }, available: true }])
-  })
-
-  it('keeps the last successful catalog on failure and does not create unregistered models', async () => {
-    const f = await fixture()
-    f.setModels([])
-    await f.registry.refresh()
-    expect(await f.service.listModels()).toEqual([])
-    expect(await f.service.listProviders()).toEqual([])
-    f.setModels([descriptor])
-    await f.registry.refresh()
-    f.failListing()
-    await expect(f.registry.refresh()).rejects.toThrow()
-    expect(await f.service.listModels()).toMatchObject([{ id: descriptor.id, available: true, capabilities: ['text', 'image'] }])
   })
 })

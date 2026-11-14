@@ -20,6 +20,7 @@ export interface AutomationSchedulerOptions {
   automationService: AutomationService
   clock?: AutomationClock
   createOwnerId?: () => string
+  canDispatch?: () => boolean
   dispatch: (occurrence: AutomationOccurrenceRecord) => Promise<void>
   onObserverError?: (error: unknown) => void
 }
@@ -28,6 +29,7 @@ export class AutomationScheduler {
   readonly #automationService: AutomationService
   readonly #clock: AutomationClock
   readonly #dispatch: AutomationSchedulerOptions['dispatch']
+  readonly #canDispatch: () => boolean
   readonly #changes: Emitter<Readonly<{ state: 'starting' | 'ready' | 'degraded' | 'stopping' | 'drained', activeCount: number, errorCode?: string }>>
   readonly onDidChange: Emitter<Readonly<{ state: 'starting' | 'ready' | 'degraded' | 'stopping' | 'drained', activeCount: number, errorCode?: string }>>['event']
   readonly #owner: string
@@ -45,6 +47,7 @@ export class AutomationScheduler {
     this.#automationService = options.automationService
     this.#clock = options.clock ?? systemAutomationClock
     this.#dispatch = options.dispatch
+    this.#canDispatch = options.canDispatch ?? (() => true)
     this.#changes = new Emitter(options.onObserverError ?? (() => {}))
     this.onDidChange = this.#changes.event
     this.#owner = (options.createOwnerId ?? randomUUID)()
@@ -121,8 +124,11 @@ export class AutomationScheduler {
       this.#publish('degraded', 'AUTOMATION_SCAN_FAILED')
       throw error
     }).finally(() => {
-      if (this.#scan === scan)
-        this.#scan = null
+      if (this.#scan !== scan)
+        return
+      this.#scan = null
+      if (this.#scanRequested && !this.#disposed)
+        return this.#requestScan()
     })
     this.#scan = scan
     return scan
@@ -218,7 +224,7 @@ export class AutomationScheduler {
   }
 
   #dispatchAvailable(): void {
-    if (this.#disposed)
+    if (this.#disposed || !this.#canDispatch())
       return
     const available = AUTOMATION_GLOBAL_CONCURRENCY - this.#activeDispatches.size
     if (available <= 0)
@@ -232,7 +238,13 @@ export class AutomationScheduler {
     })
     for (const occurrence of leased) {
       const dispatch = Promise.resolve()
-        .then(() => this.#disposed ? undefined : this.#dispatch(occurrence))
+        .then(() => {
+          if (this.#disposed || !this.#canDispatch()) {
+            this.#automationService.finishQueued({ errorCode: 'RUNTIME_RESTARTED', id: occurrence.id, leaseOwner: this.#owner, status: 'skipped' })
+            return
+          }
+          return this.#dispatch(occurrence)
+        })
         .catch((error) => {
           if (this.#disposed && error instanceof Error && error.name === 'AbortError')
             return

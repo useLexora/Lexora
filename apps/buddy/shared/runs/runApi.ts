@@ -16,6 +16,7 @@ export const runSchema = z.object({
   errorCode: z.string().nullable(),
   executionProfile: executionProfileSchema,
   id: idSchema,
+  generation: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
   modelId: idSchema,
   providerId: idSchema,
   purpose: z.string().min(1),
@@ -65,6 +66,7 @@ export const runsRequestSchemas = {
     }).strict(),
   ]),
   runId: z.object({ runId: idSchema }).strict(),
+  cancel: z.object({ runId: idSchema, expectedRunGeneration: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional() }).strict(),
   runStateEvent: runEventEnvelopeSchema,
 } as const
 

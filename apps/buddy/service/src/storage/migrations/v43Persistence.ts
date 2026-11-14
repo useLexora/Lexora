@@ -1,0 +1,28 @@
+import { BRANCH_EXECUTION_SCHEMA_SQL } from './branchExecutionSchema'
+import { PERSISTENCE_COMMANDS_SCHEMA_SQL } from './persistenceCommandsSchema'
+import { PERSISTENCE_IDENTITY_SCHEMA_SQL } from './persistenceIdentitySchema'
+import { PRIVATE_NETWORK_SCHEMA_SQL } from './privateNetworkSchema'
+import { PRODUCT_QUERY_REVISIONS_SCHEMA_SQL } from './productQueryRevisionsSchema'
+import { REMOTE_FILES_SCHEMA_SQL } from './remoteFilesSchema'
+import { RESOURCE_EXPORTS_SCHEMA_SQL } from './resourceExportsSchema'
+
+export const BUDDY_PERSISTENCE_SCHEMA_LINEAGE = 'persistence-v43' as const
+const PERSISTENCE_LINEAGE_SCHEMA_SQL = `
+DROP TABLE buddy_schema_lineage;
+CREATE TABLE buddy_schema_lineage (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  lineage TEXT NOT NULL CHECK (lineage = '${BUDDY_PERSISTENCE_SCHEMA_LINEAGE}')
+) STRICT;
+INSERT INTO buddy_schema_lineage VALUES (1, '${BUDDY_PERSISTENCE_SCHEMA_LINEAGE}');
+`
+
+export const BUDDY_V43_PERSISTENCE_SCHEMA_SQL = [
+  PERSISTENCE_IDENTITY_SCHEMA_SQL,
+  PERSISTENCE_COMMANDS_SCHEMA_SQL,
+  PRIVATE_NETWORK_SCHEMA_SQL,
+  REMOTE_FILES_SCHEMA_SQL,
+  RESOURCE_EXPORTS_SCHEMA_SQL,
+  BRANCH_EXECUTION_SCHEMA_SQL,
+  PRODUCT_QUERY_REVISIONS_SCHEMA_SQL,
+  PERSISTENCE_LINEAGE_SCHEMA_SQL,
+].join('\n')

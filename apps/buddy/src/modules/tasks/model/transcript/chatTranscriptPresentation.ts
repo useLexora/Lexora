@@ -1,5 +1,10 @@
-import type { ExecutionGroups } from '../executions/executionGroups'
+import type { LocalRunTokenUsage } from '@buddy-shared/usage/runTokenUsage'
+import type { ExecutionGroup, ExecutionGroups } from '../executions/executionGroups'
+import type { ChatTranscriptResultTarget } from './chatMessageActions'
+import type { ChatTranscriptDisplayRow } from './chatMessageTime'
 import type { ChatTranscriptAgentTurnRow, ChatTranscriptMessageRow, ChatTranscriptRow } from './chatTranscriptTypes'
+
+import { getChatTranscriptResultTarget } from './chatMessageActions'
 
 export interface ChatTranscriptContinuation {
   precedingAssistantRunId: string | null
@@ -116,4 +121,61 @@ function attachTurnResults(rows: readonly ChatTranscriptRow[], executions?: Exec
     }
   }
   return combined
+}
+
+export interface ChatTranscriptBindings {
+  executionAnchors: ReadonlyMap<string, string>
+  messageAliases: ReadonlyMap<string, string>
+  resultTargets: ReadonlyMap<string, ChatTranscriptResultTarget>
+  resultUsage: ReadonlyMap<string, LocalRunTokenUsage>
+  activityGroups: ReadonlyMap<string, ExecutionGroup>
+}
+
+export function createChatTranscriptBindingProjector() {
+  const resultTargetsByRow = new WeakMap<ChatTranscriptRow, ChatTranscriptResultTarget | null>()
+  return {
+    project(rows: readonly ChatTranscriptDisplayRow[], executions?: ExecutionGroups): ChatTranscriptBindings {
+      const executionAnchors = new Map<string, string>()
+      const messageAliases = new Map<string, string>()
+      const resultTargets = new Map<string, ChatTranscriptResultTarget>()
+      const resultUsage = new Map<string, LocalRunTokenUsage>()
+      const activityGroups = new Map<string, ExecutionGroup>()
+      const anchoredRoots = new Set<string>()
+      for (const row of rows) {
+        if (row.kind === 'day-divider')
+          continue
+        const runId = row.kind === 'agent-turn' || row.kind === 'activity'
+          ? row.turn.runId
+          : row.kind === 'message' && row.message.role === 'assistant' ? row.message.runId : null
+        const rootRunId = runId ? executions?.byRun.get(runId)?.rootRunId ?? runId : null
+        if (rootRunId && !anchoredRoots.has(rootRunId)) {
+          anchoredRoots.add(rootRunId)
+          executionAnchors.set(row.key, rootRunId)
+        }
+        if (row.kind === 'message' && row.turnResult?.finalMessageId && !messageAliases.has(row.turnResult.finalMessageId))
+          messageAliases.set(row.turnResult.finalMessageId, row.message.id)
+        let result = resultTargetsByRow.get(row)
+        if (result === undefined) {
+          result = getChatTranscriptResultTarget(row)
+          resultTargetsByRow.set(row, result)
+        }
+        if (result) {
+          resultTargets.set(row.key, result)
+          const usage = result.usageRunId ? executions?.byRoot.get(result.usageRunId)?.usage : null
+          if (usage)
+            resultUsage.set(row.key, usage)
+        }
+        if (row.kind === 'activity') {
+          const group = executions?.byRoot.get(row.turn.runId)
+          if (group)
+            activityGroups.set(row.key, group)
+        }
+      }
+      return { executionAnchors, messageAliases, resultTargets, resultUsage, activityGroups }
+    },
+  }
+}
+
+export function projectChatTranscriptBindings(rows: readonly ChatTranscriptDisplayRow[], executions?: ExecutionGroups): ChatTranscriptBindings {
+  return createChatTranscriptBindingProjector().project(rows, executions)
 }

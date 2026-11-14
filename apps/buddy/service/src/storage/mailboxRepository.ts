@@ -66,7 +66,7 @@ export function createMailboxRepository(database: DatabaseSync) {
       WHERE target.id = ? AND target.generation = ? AND target.status IN ('queued', 'running')
         AND state.phase NOT IN ('closing', 'closed') AND state.cancel_requested_at IS NULL
         AND root.status IN ('queued', 'running') AND root_state.phase NOT IN ('closing', 'closed') AND root_state.cancel_requested_at IS NULL
-        AND conversations.deleted_at IS NULL AND conversations.active_branch_id = target.branch_id
+        AND conversations.deleted_at IS NULL
         AND NOT EXISTS (SELECT 1 FROM chain JOIN runs ancestor ON ancestor.id = chain.id JOIN execution_state ancestor_state ON ancestor_state.run_id = ancestor.id
           LEFT JOIN runs parent ON parent.id = ancestor.parent_run_id
           WHERE ancestor_state.phase IN ('closing', 'closed') OR ancestor_state.cancel_requested_at IS NOT NULL

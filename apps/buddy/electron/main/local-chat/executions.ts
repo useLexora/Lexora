@@ -3,6 +3,7 @@ import { executionPresentationRpc } from '../../../shared/executions/executionPr
 import { LOCAL_CHAT_IPC_CHANNELS } from '../../shared/localChatApi'
 
 export function registerExecutionsIpc({ handle, request }: LocalChatIpcContext): void {
+  handle(LOCAL_CHAT_IPC_CHANNELS.executionsActivity, (_event, input) => request(executionPresentationRpc.activity, executionPresentationRpc.activity.input.parse(input)))
   handle(LOCAL_CHAT_IPC_CHANNELS.executionsList, (_event, input) => request(executionPresentationRpc.list, executionPresentationRpc.list.input.parse(input)))
   handle(LOCAL_CHAT_IPC_CHANNELS.executionsDetail, (_event, input) => request(executionPresentationRpc.detail, executionPresentationRpc.detail.input.parse(input)))
   handle(LOCAL_CHAT_IPC_CHANNELS.executionsInputs, (_event, input) => request(executionPresentationRpc.inputs, executionPresentationRpc.inputs.input.parse(input)))

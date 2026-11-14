@@ -7,6 +7,7 @@ import { registerConnectorsIpc } from './local-chat/connectors'
 import { registerConversationIpc } from './local-chat/conversation'
 import { registerExecutionsIpc } from './local-chat/executions'
 import { registerLocalChatNotifications } from './local-chat/notifications'
+import { registerPrivateNetworkIpc } from './local-chat/privateNetwork'
 import { registerPromptsIpc } from './local-chat/prompts'
 import { registerProvidersIpc } from './local-chat/providers'
 import { registerQuestionsIpc } from './local-chat/questions'
@@ -26,6 +27,7 @@ export function registerLocalChatIpc(options: RegisterLocalChatIpcOptions): () =
   registerExecutionsIpc(context)
   registerQuestionsIpc(context)
   registerRuntimeIpc(context)
+  registerPrivateNetworkIpc(context)
   registerActivityIpc(context)
   registerAutomationsIpc(context)
   registerPromptsIpc(context)

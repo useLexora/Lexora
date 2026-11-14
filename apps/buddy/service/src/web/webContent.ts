@@ -53,7 +53,7 @@ export function extractHtml(html: string, url: string): WebDocument {
       catch { element.removeAttribute(attribute) }
     }
   }
-  const article = new Readability(document as unknown as Document, { charThreshold: 120 }).parse()
+  const article = new Readability(document as unknown as ConstructorParameters<typeof Readability>[0], { charThreshold: 120 }).parse()
   const source = article?.content || document.querySelector('main, article')?.innerHTML || document.body?.innerHTML || ''
   const markdown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' })
   markdown.addRule('table', {

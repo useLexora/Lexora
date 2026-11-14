@@ -13,6 +13,7 @@ import type { DesktopUpdateAction, DesktopUpdateState } from '../shared/desktopU
 import { ipcRenderer, webUtils } from 'electron'
 import { DESKTOP_NOTIFICATION_CHANNEL } from '../../shared/notifications/desktopNotification'
 import { NOTIFICATION_SOUND_CHANNEL } from '../../shared/notifications/notificationSound'
+import { desktopTargetRequestSchema } from '../../shared/service/localServiceProtocol'
 import { STORAGE_CHANGED, STORAGE_CHANNEL } from '../../shared/storage/storageApi'
 import { SYNC_CHANGED, SYNC_CHANNEL } from '../../shared/sync/syncApi'
 import { DESKTOP_IPC_CHANNELS } from '../shared/desktopApi'
@@ -120,9 +121,20 @@ export function createDesktopApi(): Pick<LexoraDesktopApi, 'app' | 'clipboard' |
         ipcRenderer.on(DESKTOP_IPC_CHANNELS.appPrepareQuit, handler)
         return () => ipcRenderer.off(DESKTOP_IPC_CHANNELS.appPrepareQuit, handler)
       },
-      onOpenTarget: (listener: (target: DesktopOpenTarget) => void) => (
-        subscribe(DESKTOP_IPC_CHANNELS.appOpenTarget, listener)
-      ),
+      onOpenTarget: (listener: (target: DesktopOpenTarget) => Promise<boolean>) => {
+        const stopLegacy = subscribe<DesktopOpenTarget>(DESKTOP_IPC_CHANNELS.appOpenTarget, target => void listener(target).catch(() => {}))
+        const stopRequests = subscribe(DESKTOP_IPC_CHANNELS.appOpenTargetRequest, (raw) => {
+          const { requestId, intent } = desktopTargetRequestSchema.parse(raw)
+          const target: DesktopOpenTarget = intent.kind === 'tasks' && intent.conversationId ? { conversationId: intent.conversationId } : { kind: intent.kind }
+          void Promise.resolve().then(() => listener(target)).catch(() => false).then((opened) => {
+            ipcRenderer.send(DESKTOP_IPC_CHANNELS.appOpenTargetAck, { requestId, opened: opened === true })
+          })
+        })
+        return () => {
+          stopLegacy()
+          stopRequests()
+        }
+      },
       onHidden: (listener: () => void) => subscribe(DESKTOP_IPC_CHANNELS.appHidden, listener),
       openFeedbackIssue: (feedback: string) => ipcRenderer.invoke(
         DESKTOP_IPC_CHANNELS.appOpenFeedbackIssue,

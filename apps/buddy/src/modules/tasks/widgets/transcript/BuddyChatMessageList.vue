@@ -2,6 +2,7 @@
 import type { DesktopChatOutlinePosition } from '@buddy-electron/shared/desktopApi'
 import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 
+import type { ChatTranscriptResultTarget } from '../../model/transcript/chatMessageActions'
 import type { ChatMessageBranchNavigator } from '../../model/transcript/chatMessageBranches'
 import type { ChatTranscriptDisplayRow } from '../../model/transcript/chatMessageTime'
 import type { ChatOutlineItem } from '../../model/transcript/chatOutline'
@@ -17,10 +18,10 @@ import { NButton, NSpin } from 'naive-ui'
 import { computed, onBeforeUnmount, shallowRef, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { useWorkbenchAnchor } from '@/shared/ui/contributions/workbenchUiContext'
-import { getChatMessageFollowupSourceId } from '../../model/transcript/chatMessageActions'
 import {
   formatChatDayDividerLabel,
 } from '../../model/transcript/chatMessageTime'
+import { createChatTranscriptBindingProjector } from '../../model/transcript/chatTranscriptPresentation'
 import { useExecutionTree } from '../../state/runs/chatExecutionContext'
 import BuddyExecutionGroup from '../executions/BuddyExecutionGroup.vue'
 import BuddyQuestionHistory from '../questions/BuddyQuestionHistory.vue'
@@ -83,21 +84,9 @@ const OUTLINE_HIGHLIGHT_DURATION_MS = 1_200
 const activeOutlineMessageId = shallowRef<string | null>(null)
 const highlightedOutlineMessageId = shallowRef<string | null>(null)
 const executionTree = useExecutionTree()
-const executionAnchors = computed(() => {
-  const anchors = new Map<string, string>()
-  const seen = new Set<string>()
-  for (const row of props.displayRows) {
-    const runId = row.kind === 'agent-turn' || row.kind === 'activity'
-      ? row.turn.runId
-      : row.kind === 'message' && row.message.role === 'assistant' ? row.message.runId : null
-    const rootRunId = runId ? executionTree?.groups.value.byRun.get(runId)?.rootRunId ?? runId : null
-    if (rootRunId && !seen.has(rootRunId)) {
-      seen.add(rootRunId)
-      anchors.set(row.key, rootRunId)
-    }
-  }
-  return anchors
-})
+const bindingProjector = createChatTranscriptBindingProjector()
+const bindings = computed(() => bindingProjector.project(props.displayRows, executionTree?.groups.value))
+const executionAnchors = computed(() => bindings.value.executionAnchors)
 let outlineHighlightTimer: number | null = null
 watch([() => props.conversationId, () => props.activeBranchId], () => {
   activeOutlineMessageId.value = null
@@ -148,8 +137,17 @@ function scrollToMessage(
 }
 
 function resolveFollowupSourceId(messageId: string) {
-  const row = props.displayRows.find(row => row.kind === 'message' && row.turnResult?.finalMessageId === messageId)
-  return row?.kind === 'message' ? row.message.id : messageId
+  return bindings.value.messageAliases.get(messageId) ?? messageId
+}
+
+function followup(target: ChatTranscriptResultTarget | undefined) {
+  if (target?.followupMessageId)
+    emit('followupAssistant', target.followupMessageId, target.branchId)
+}
+
+function regenerate(target: ChatTranscriptResultTarget | undefined) {
+  if (target?.regenerateRunId)
+    emit('regenerateAssistant', target.regenerateRunId)
 }
 
 function highlightMessage(messageId: string) {
@@ -251,7 +249,7 @@ onBeforeUnmount(clearOutlineHighlight)
           v-else-if="item.kind === 'message'"
           :data-chat-row-key="item.key"
           :actions-disabled="actionsDisabled ?? false"
-          :branch-navigator="branchNavigators.get(item.turnResult?.runId ?? item.message.id) ?? null"
+          :branch-navigator="branchNavigators.get(bindings.resultTargets.get(item.key)!.branchNavigatorId) ?? null"
           class="buddy-chat-transcript-row" :class="[
             { 'is-outline-highlighted': item.message.id === highlightedOutlineMessageId, 'is-speech-end': item.endsSpeech },
           ]"
@@ -261,10 +259,10 @@ onBeforeUnmount(clearOutlineHighlight)
           :action-messages="item.actionMessages"
           :process-run-id="item.processRunId"
           :result-run-id="item.resultRunId"
-          :owns-result-actions="item.ownsResultActions"
+          :result-target="bindings.resultTargets.get(item.key)!"
           :editing="item.message.id === editingMessageId"
-          :can-followup="followupMessageIds?.has(getChatMessageFollowupSourceId(item) ?? '')"
-          :following-up="!!followupMessageId && getChatMessageFollowupSourceId(item) === followupMessageId"
+          :can-followup="followupMessageIds?.has(bindings.resultTargets.get(item.key)?.followupMessageId ?? '')"
+          :following-up="!!followupMessageId && bindings.resultTargets.get(item.key)?.followupMessageId === followupMessageId"
           :execution-status="item.executionStatus"
           :language="language"
           :message="item.message"
@@ -272,12 +270,12 @@ onBeforeUnmount(clearOutlineHighlight)
           :turn-outputs="item.turnOutputs"
           :turn-changes="item.turnChanges"
           :turn-result="item.turnResult"
-          :turn-usage="item.turnResult ? executionTree?.groups.value.byRoot.get(item.turnResult.runId)?.usage ?? undefined : item.ownsResultActions && item.resultRunId ? executionTree?.groups.value.byRoot.get(item.resultRunId)?.usage ?? undefined : undefined"
+          :turn-usage="bindings.resultUsage.get(item.key)"
           @activate-branch="emit('activateBranch', $event)"
           @open-artifact="emit('openArtifact', $event)"
           @open-changes="emit('openChanges', $event)"
           @regenerate="emit('regenerateAssistant', $event)"
-          @followup="emit('followupAssistant', $event, item.turnResult?.branchId ?? item.message.branchId)"
+          @followup="followup(bindings.resultTargets.get(item.key))"
           @start-edit="emit('editUserMessage', item.message.id)"
         >
           <template #before-actions>
@@ -313,38 +311,38 @@ onBeforeUnmount(clearOutlineHighlight)
           :data-chat-row-key="item.key"
           :data-message-id="item.turn.finalMessageId ?? undefined"
           :actions-disabled="actionsDisabled ?? false"
-          :branch-navigator="branchNavigators.get(item.turn.runId) ?? null"
+          :branch-navigator="branchNavigators.get(bindings.resultTargets.get(item.key)!.branchNavigatorId) ?? null"
           class="buddy-chat-transcript-row"
           :class="{ 'is-outline-highlighted': item.turn.finalMessageId === highlightedOutlineMessageId }"
           :language="language"
           :turn="item.turn"
-          :following-up="item.turn.finalMessageId !== null && item.turn.finalMessageId === followupMessageId"
-          :can-followup="item.turn.finalMessageId !== null && followupMessageIds?.has(item.turn.finalMessageId)"
-          :usage="executionTree?.groups.value.byRoot.get(item.turn.runId)?.usage ?? null"
+          :following-up="!!followupMessageId && bindings.resultTargets.get(item.key)?.followupMessageId === followupMessageId"
+          :can-followup="followupMessageIds?.has(bindings.resultTargets.get(item.key)?.followupMessageId ?? '')"
+          :usage="bindings.resultUsage.get(item.key) ?? null"
           @activate-branch="emit('activateBranch', $event)"
-          @regenerate="emit('regenerateAssistant', item.turn.runId)"
-          @followup="item.turn.finalMessageId && emit('followupAssistant', item.turn.finalMessageId, item.turn.branchId)"
+          @regenerate="regenerate(bindings.resultTargets.get(item.key))"
+          @followup="followup(bindings.resultTargets.get(item.key))"
         />
 
         <BuddyChatAgentTurn
           v-else-if="item.kind === 'agent-turn'"
           :data-chat-row-key="item.key"
           :actions-disabled="actionsDisabled ?? false"
-          :branch-navigator="branchNavigators.get(item.turn.runId) ?? null"
+          :branch-navigator="branchNavigators.get(bindings.resultTargets.get(item.key)!.branchNavigatorId) ?? null"
           class="buddy-chat-transcript-row"
           :class="{ 'is-speech-end': item.endsSpeech }"
           :language="language"
           :owns-result-actions="item.ownsResultActions === true"
-          :following-up="item.turn.finalMessageId !== null && item.turn.finalMessageId === followupMessageId"
-          :can-followup="item.turn.finalMessageId !== null && followupMessageIds?.has(item.turn.finalMessageId)"
+          :following-up="!!followupMessageId && bindings.resultTargets.get(item.key)?.followupMessageId === followupMessageId"
+          :can-followup="followupMessageIds?.has(bindings.resultTargets.get(item.key)?.followupMessageId ?? '')"
           :execution-status="item.executionStatus"
-          :result-usage="executionTree?.groups.value.byRoot.get(item.turn.runId)?.usage ?? null"
+          :result-usage="bindings.resultUsage.get(item.key) ?? null"
           :show-identity="item.showIdentity"
           :show-outcome="item.showOutcome"
           :turn="item.turn"
           @activate-branch="emit('activateBranch', $event)"
-          @regenerate="emit('regenerateAssistant', item.turn.runId)"
-          @followup="item.turn.finalMessageId && emit('followupAssistant', item.turn.finalMessageId, item.turn.branchId)"
+          @regenerate="regenerate(bindings.resultTargets.get(item.key))"
+          @followup="followup(bindings.resultTargets.get(item.key))"
         >
           <template #before-actions>
             <BuddyExecutionGroup
@@ -364,7 +362,7 @@ onBeforeUnmount(clearOutlineHighlight)
           :language="language"
           :turn="item.turn"
           :stopping="stoppingRunId === item.turn.runId"
-          :execution-group="executionTree?.groups.value.byRoot.get(item.turn.runId)"
+          :execution-group="bindings.activityGroups.get(item.key)"
         />
 
         <div

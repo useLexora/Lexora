@@ -5,7 +5,7 @@ import type { BuddyPermissionMode, BuddyPermissionSettings } from '@buddy-shared
 import type { JSONContent } from '@tiptap/core'
 import type { ComputedRef } from 'vue'
 import type { ChatDrafts, ChatDraftSnapshot, ChatDraftState, ComposerDraftReceipt } from './typing'
-import { buddyUserContentToText, createBuddyUserContent, getBuddyUserContentActorReferences } from '@buddy-shared/conversation/buddyUserContent'
+import { buddyUserContentToText, createBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
 import { BUDDY_DEFAULT_PERMISSION_MODE, resolveBuddyPermissionSettings } from '@buddy-shared/permissions/permissionMode'
 import { computed, shallowReactive, shallowRef, watch } from 'vue'
 import {
@@ -15,11 +15,14 @@ import {
   pruneChatComposerResources,
   userContentToChatComposerDocument,
 } from '@/modules/prompt-input'
+import { resolveInputActors } from '../../model/composer/actorInputTarget'
+
 import { createDraftValueFingerprint } from '../../model/drafts/draftValueFingerprint'
 
 interface UseChatDraftsOptions {
   defaultPermissionMode?: ComputedRef<BuddyPermissionMode>
   onChange: () => void
+  onLocalChange?: () => void
   targetKey: ComputedRef<string>
   defaultActorId?: () => string | null
 }
@@ -42,7 +45,8 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
     { flush: 'sync', immediate: true },
   )
   const currentDraft = computed(() => load(activeTargetKey.value))
-  const composerContent = computed(() => userContentToChatComposerDocument(currentDraft.value.content))
+  const content = computed(() => currentDraft.value.content)
+  const composerContent = computed(() => userContentToChatComposerDocument(content.value))
   const draft = computed(() => buddyUserContentToText(currentDraft.value.content))
   const draftId = computed(() => currentDraft.value.draftId)
   const editorKey = computed(() => currentDraft.value.editorSessionId)
@@ -70,8 +74,7 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
   }
 
   function actorTarget(content: BuddyUserContentV1) {
-    const actors = getBuddyUserContentActorReferences(content)
-    return actors.length === 1 ? actors[0]!.actorId : options.defaultActorId?.() ?? null
+    return resolveInputActors(content, options.defaultActorId?.() ?? null).actorId
   }
 
   function load(key: string): ChatDraftState {
@@ -137,7 +140,9 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
       confirmedSnapshot: createDraftValueFingerprint(remote),
       draftId: remote.draftId,
       revision: remote.revision,
+      ...(remote.slotRevision !== undefined ? { slotRevision: remote.slotRevision } : {}),
     })
+    options.onLocalChange?.()
     return true
   }
 
@@ -169,6 +174,7 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
       draftsByScope.set(key, next)
       if (!wasConfirmed || next.modelSelection !== current.modelSelection)
         options.onChange()
+      options.onLocalChange?.()
       return wasConfirmed
     },
     appendResourcePanel(draftId: string, resourceIds: readonly string[], editorSessionId?: string) {
@@ -268,10 +274,18 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
         draftsByScope.delete(key)
       options.onChange()
     },
+    content,
     draft,
     draftId,
     editorKey,
     executionProfile,
+    restoreSnapshot(value) {
+      const current = draftsByScope.get(value.targetKey)
+      if (current && current.editVersion > 0)
+        return false
+      draftsByScope.set(value.targetKey, { ...value, content: cloneContent(value.content) })
+      return true
+    },
     hydrate(values: ReadonlyArray<{ draft: LocalComposerDraft, targetKey: string }>) {
       draftsByScope.clear()
       for (const value of values)
@@ -361,6 +375,7 @@ function fromRemote(draft: LocalComposerDraft): ChatDraftState {
     modelSelection: draft.modelSelection,
     participants: draft.participants,
     revision: draft.revision,
+    ...(draft.slotRevision !== undefined ? { slotRevision: draft.slotRevision } : {}),
   }
 }
 

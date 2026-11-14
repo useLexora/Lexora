@@ -37,7 +37,6 @@ export function registerConversationIpc(context: LocalChatIpcContext): void {
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsGet, (_event, input) => request(conversationsRpc.get, conversationRequestSchemas.conversationId.parse(input)))
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsGetModelControls, (_event, input) => request(conversationsRpc.getModelControls, conversationRequestSchemas.modelControls.parse(input)))
 
-  handle(LOCAL_CHAT_IPC_CHANNELS.conversationsDeletePermanently, (_event, input) => request(conversationArchiveRpc.deletePermanently, conversationArchiveRpc.deletePermanently.input.parse(input)))
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsArchive, (_event, input) => request(conversationArchiveRpc.archive, conversationArchiveRpc.archive.input.parse(input)))
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsRestoreArchive, (_event, input) => request(conversationArchiveRpc.restoreArchive, conversationArchiveRpc.restoreArchive.input.parse(input)))
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsDeleteArchived, (_event, input) => request(conversationArchiveRpc.deleteArchived, conversationArchiveRpc.deleteArchived.input.parse(input)))
@@ -45,7 +44,7 @@ export function registerConversationIpc(context: LocalChatIpcContext): void {
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsGetArchivePolicy, () => request(conversationArchiveRpc.getArchivePolicy, {}))
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsSetArchivePolicy, (_event, input) => request(conversationArchiveRpc.setArchivePolicy, conversationArchiveRpc.setArchivePolicy.input.parse(input)))
 
-  handle(LOCAL_CHAT_IPC_CHANNELS.conversationsDelete, (_event, input) => request(conversationsRpc.delete, conversationRequestSchemas.conversationId.parse(input)))
+  handle(LOCAL_CHAT_IPC_CHANNELS.conversationsDelete, (_event, input) => request(conversationsRpc.delete, conversationsRpc.delete.input.parse(input)))
 
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsActivateBranch, (_event, input) => request(conversationsRpc.activateBranch, conversationRequestSchemas.conversationBranchActivation.parse(input)))
 
@@ -77,5 +76,5 @@ export function registerConversationIpc(context: LocalChatIpcContext): void {
 
   handle(LOCAL_CHAT_IPC_CHANNELS.chatRegenerateAssistant, (_event, input) => request(chatRpc.regenerateAssistant, chatRequestSchemas.regenerateAssistant.parse(input)))
 
-  handle(LOCAL_CHAT_IPC_CHANNELS.chatCancel, (_event, input) => request(chatRpc.cancel, runsRequestSchemas.runId.parse(input)))
+  handle(LOCAL_CHAT_IPC_CHANNELS.chatCancel, (_event, input) => request(chatRpc.cancel, runsRequestSchemas.cancel.parse(input)))
 }

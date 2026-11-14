@@ -11,6 +11,7 @@ import { buddyDraftParticipantsSchema } from '../../../shared/conversation/compo
 import { isExecutionProfileWithin } from '../../../shared/permissions/executionProfile'
 import { BuddyServiceError } from '../rpc/runtimeRequest'
 import { createComposerDraftCommitter } from './commitComposerDraft'
+import { createConversationHistoryStore } from './conversationHistoryRepository'
 import { freezeConversationMemberModel } from './conversationMemberRepository'
 import { CONVERSATION_CURRENT_MODEL_SELECTION_SQL } from './conversationRecord'
 import { withTransaction } from './database'
@@ -51,7 +52,7 @@ export function assertTurnInputDelivery(database: DatabaseSync, input: PrepareTu
   if (boundary === 'dispatch' && target && (target.phase !== 'closed' || target.cleanupState !== 'clean'))
     throw new BuddyServiceError('INPUT_DELIVERY_TARGET_UNAVAILABLE')
   if (!target && database.prepare(`SELECT 1 FROM runs r JOIN execution_state e ON e.run_id = r.id
-    WHERE r.conversation_id = ? AND r.buddy_id = ? AND (r.status IN ('queued', 'running') OR e.phase <> 'closed' OR e.cleanup_state <> 'clean') LIMIT 1`).get(input.conversationId, delivery.actorId)) {
+    WHERE r.conversation_id = ? AND r.branch_id = ? AND r.buddy_id = ? AND (r.status IN ('queued', 'running') OR e.phase <> 'closed' OR e.cleanup_state <> 'clean') LIMIT 1`).get(input.conversationId, input.branchId, delivery.actorId)) {
     throw new BuddyServiceError('INPUT_DELIVERY_TARGET_UNAVAILABLE')
   }
   if (target && delivery.mode === 'current') {
@@ -79,6 +80,7 @@ export function resolveTurnExecutionProfile(input: { executionProfile: BuddyExec
 }
 
 export interface PrepareTurnRequestInput {
+  participants?: { leaderId: string, actorIds: readonly string[] } | null
   delivery?: BuddyInputDelivery
   leaderId?: string
   expectedActorModelSelection?: ConversationModelSelection | null
@@ -96,7 +98,7 @@ export interface PrepareTurnRequestInput {
   draft: {
     draftId: string
     expectedRevision: number
-  }
+  } | null
   executionProfile: BuddyExecutionProfile
   runExecutionProfile?: BuddyExecutionProfile
   model: string
@@ -260,6 +262,14 @@ export interface TurnRequestRepository {
 export function createTurnRequestRepository(database: DatabaseSync): TurnRequestRepository {
   const executions = createExecutionRepository(database)
   const threads = createThreadBindingRepository(database)
+  const history = createConversationHistoryStore(database).repository
+  const hasMaintenance = (conversationId: string) => !!database.prepare('SELECT 1 FROM runs WHERE conversation_id = ? AND execution_kind = \'maintenance\' AND status IN (\'queued\', \'running\') LIMIT 1').get(conversationId)
+  const hasBranch = (conversationId: string, branchId: string) => !!database.prepare('SELECT 1 FROM conversation_branches WHERE conversation_id = ? AND id = ?').get(conversationId, branchId)
+  const bindBranchThread = (runId: string, conversationId: string, branchId: string, actorId: string, createdAt: string) => {
+    const thread = threads.ensureActor(conversationId, actorId, createdAt, branchId)
+    database.prepare('UPDATE runs SET thread_id = ? WHERE id = ?').run(thread.id, runId)
+    return thread.id
+  }
   const insertTreeSource = database.prepare('INSERT INTO run_tree_sources (run_id, source_run_id, position) VALUES (?, ?, ?)')
   const findFollowupSource = database.prepare(`
     SELECT messages.id FROM messages INNER JOIN runs ON runs.id = messages.run_id
@@ -321,8 +331,10 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
     }
     if (input.expectedActorModelSelection !== undefined) {
       const member = database.prepare('SELECT model_selection_json FROM conversation_members WHERE conversation_id = ? AND actor_id = ?').get(input.conversationId, actorId) as { model_selection_json: string | null } | undefined
-      if (!sameModelSelection(member?.model_selection_json ?? null, input.expectedActorModelSelection ? JSON.stringify(input.expectedActorModelSelection) : null))
+      if (!sameModelSelection(member?.model_selection_json ?? null, input.expectedActorModelSelection ? JSON.stringify(input.expectedActorModelSelection) : null)
+        && !sameModelSelection(member?.model_selection_json ?? null, JSON.stringify(input.modelOverride ?? selection))) {
         throw new BuddyServiceError('BUDDY_CONFLICT')
+      }
     }
     const member = database.prepare('SELECT model_selection_json FROM conversation_members WHERE conversation_id = ? AND actor_id = ? AND removed_at IS NULL').get(input.conversationId, actorId) as { model_selection_json: string | null } | undefined
     if (!member)
@@ -362,8 +374,8 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
     SELECT ?, NULL, ?, ?, attachments.name, attachments.mime_type,
       attachments.size_bytes, ?, attachments.name_source, attachments.source_path
     FROM attachments
-    INNER JOIN messages ON messages.id = attachments.message_id
-    WHERE attachments.id = ? AND messages.conversation_id = ?
+    LEFT JOIN messages ON messages.id = attachments.message_id
+    WHERE attachments.id = ? AND (messages.conversation_id = ? OR (attachments.draft_id = ? AND attachments.message_id IS NULL))
   `)
   const insertMessage = database.prepare(`
     INSERT INTO messages (
@@ -398,11 +410,6 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
   const findRun = database.prepare('SELECT * FROM runs WHERE id = ?')
   const findMessage = database.prepare(`
     SELECT conversation_id, role FROM messages WHERE id = ?
-  `)
-  const findIncompleteRun = database.prepare(`
-    SELECT 1 FROM runs
-    WHERE conversation_id = ? AND execution_kind IN ('root', 'maintenance') AND status IN ('queued', 'running')
-    LIMIT 1
   `)
   const findPreviousCompletedSession = database.prepare(`
     SELECT pi_session_file FROM runs
@@ -458,15 +465,17 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
         if (
           !conversation
           || conversation.space_id !== input.spaceId
-          || conversation.active_branch_id !== input.parentBranchId
+          || !hasBranch(input.conversationId, input.parentBranchId)
+          || hasMaintenance(input.conversationId)
           || conversation.approval_policy !== input.approvalPolicy
           || conversation.execution_profile !== input.executionProfile
           || conversation.deleted_at !== null
-          || findIncompleteRun.get(input.conversationId)
+          || !history.listBranchMessages(input.conversationId, input.parentBranchId).some(message => message.id === input.sourceUserMessageId)
           || !sourceMessage
           || sourceMessage.conversation_id !== input.conversationId
           || sourceMessage.role !== 'user'
-          || (input.forkedFromMessageId && forkMessage?.conversation_id !== input.conversationId)
+          || (input.forkedFromMessageId && (forkMessage?.conversation_id !== input.conversationId
+            || !history.listBranchMessages(input.conversationId, input.parentBranchId).some(message => message.id === input.forkedFromMessageId)))
         ) {
           throw new TurnRequestConflictError()
         }
@@ -477,8 +486,6 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           input.forkedFromMessageId,
           input.createdAt,
         )
-        activateBranch.run(input.branchId, input.createdAt, input.conversationId)
-
         insertMessage.run(
           input.userMessageId,
           input.conversationId,
@@ -507,6 +514,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           input.buddyId ?? conversation!.buddy_id,
           input.actorSnapshot ? JSON.stringify(input.actorSnapshot) : null,
         )
+        bindBranchThread(input.runId, input.conversationId, input.branchId, input.buddyId ?? conversation!.buddy_id, input.createdAt)
         insertRunInput.run(
           input.runId,
           input.runInput.prompt,
@@ -517,18 +525,20 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           input.createdAt,
         )
         const modelChanged = persistActor(input, { providerId: input.provider, modelId: input.model, reasoning: input.runInput.reasoning, serviceTier: input.runInput.serviceTier })
-        const draftReceipt = commitDraft({
-          approvalPolicy: input.approvalPolicy,
-          branchId: input.branchId,
-          conversationId: input.conversationId,
-          draftId: input.draft.draftId,
-          executionProfile: input.executionProfile,
-          expectedBranchId: input.parentBranchId,
-          expectedRevision: input.draft.expectedRevision,
-          expectedSourceMessageId: input.sourceUserMessageId,
-          spaceId: input.spaceId,
-          updatedAt: input.createdAt,
-        })
+        const draftReceipt = input.draft
+          ? commitDraft({
+              approvalPolicy: input.approvalPolicy,
+              branchId: input.branchId,
+              conversationId: input.conversationId,
+              draftId: input.draft.draftId,
+              executionProfile: input.executionProfile,
+              expectedBranchId: input.parentBranchId,
+              expectedRevision: input.draft.expectedRevision,
+              expectedSourceMessageId: input.sourceUserMessageId,
+              spaceId: input.spaceId,
+              updatedAt: input.createdAt,
+            })
+          : null
         insertDraftRequest.run(
           input.requestId,
           input.requestFingerprint,
@@ -536,9 +546,9 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           input.branchId,
           input.runId,
           input.createdAt,
-          input.draft.draftId,
-          input.draft.expectedRevision,
-          draftReceipt.committedRevision,
+          input.draft?.draftId ?? null,
+          input.draft?.expectedRevision ?? null,
+          draftReceipt?.committedRevision ?? null,
         )
         return {
           branchId: input.branchId,
@@ -568,7 +578,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
         }
         let questionOwner: ReturnType<typeof executions.find> = null
         let questionFileAccessCeiling = false
-        if (!input.draft) {
+        if ('questionReply' in input) {
           const question = database.prepare('SELECT request_json FROM user_questions WHERE id = ? AND run_id = ?').get(input.questionReply.requestId, input.questionReply.sourceRunId)
           const request = question && JSON.parse(String(question.request_json))
           if (!request || request.status !== 'answered' || request.conversationId !== input.conversationId || request.branchId !== input.branchId
@@ -606,22 +616,21 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
         if (conversation) {
           if (
             conversation.space_id !== input.spaceId
-            || (!input.followup && conversation.active_branch_id !== input.branchId)
+            || !hasBranch(input.conversationId, input.followup?.parentBranchId ?? input.branchId)
+            || hasMaintenance(input.conversationId)
             || conversation.approval_policy !== input.approvalPolicy
             || conversation.execution_profile !== input.executionProfile
             || conversation.deleted_at !== null
-            || (input.followup
-              ? findIncompleteRun.get(input.conversationId)
-              : database.prepare(`SELECT 1 FROM runs
+            || (!input.followup && database.prepare(`SELECT 1 FROM runs
               WHERE conversation_id = ? AND status IN ('queued', 'running')
-                AND (buddy_id = ? OR execution_kind = 'maintenance' OR (? = 0 AND execution_kind = 'root' AND scheduling_lane = 'conversation')) LIMIT 1`)
-                  .get(input.conversationId, buddyId, actorLane ? 1 : 0))
+                AND (execution_kind = 'maintenance' OR (branch_id = ? AND (buddy_id = ? OR (? = 0 AND execution_kind = 'root' AND scheduling_lane = 'conversation')))) LIMIT 1`)
+              .get(input.conversationId, input.branchId, buddyId, actorLane ? 1 : 0))
           ) {
             throw new TurnRequestConflictError()
           }
         }
         else {
-          if (!input.draft)
+          if ('questionReply' in input)
             throw new TurnRequestConflictError()
           insertConversation.run(
             input.conversationId,
@@ -633,8 +642,8 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
             input.executionProfile,
             input.leaderId ?? buddyId,
           )
-          const draft = database.prepare('SELECT participants_json FROM composer_drafts WHERE id = ? AND revision = ?').get(input.draft.draftId, input.draft.expectedRevision)
-          const participants = draft?.participants_json ? buddyDraftParticipantsSchema.parse(JSON.parse(String(draft.participants_json))) : null
+          const draft = input.draft ? database.prepare('SELECT participants_json FROM composer_drafts WHERE id = ? AND revision = ?').get(input.draft.draftId, input.draft.expectedRevision) : null
+          const participants = draft?.participants_json ? buddyDraftParticipantsSchema.parse(JSON.parse(String(draft.participants_json))) : input.participants ?? null
           if (participants && participants.leaderId !== (input.leaderId ?? buddyId))
             throw new BuddyServiceError('DRAFT_CONFLICT')
           for (const id of participants?.actorIds ?? [input.leaderId ?? buddyId]) {
@@ -652,13 +661,15 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
             throw new TurnRequestConflictError()
           }
           insertForkBranch.run(input.branchId, input.conversationId, input.followup.parentBranchId, input.followup.sourceMessageId, input.createdAt)
-          activateBranch.run(input.branchId, input.createdAt, input.conversationId)
         }
-        const actorThread = (input.actorIds?.length === 1 || input.delivery?.mode === 'next') && !input.followup
+        const previousActorThread = (input.actorIds?.length === 1 || input.delivery?.mode === 'next') && !input.followup
           ? database.prepare(`SELECT thread_id FROM runs WHERE conversation_id = ? AND branch_id = ? AND buddy_id = ?
           AND status IN ('completed', 'failed', 'cancelled') AND pi_session_file IS NOT NULL ORDER BY rowid DESC LIMIT 1`).get(input.conversationId, input.branchId, buddyId)?.thread_id as string | undefined
           : undefined
-        const threadId = questionOwner?.run.threadId ?? actorThread ?? actorThreadId(input.conversationId, buddyId)
+        const preferredThread = questionOwner?.run.threadId ?? previousActorThread
+        const reusableThread = preferredThread && preferredThread !== actorThreadId(input.conversationId, buddyId)
+          && !database.prepare('SELECT 1 FROM runs WHERE thread_id = ? AND branch_id <> ? LIMIT 1').get(preferredThread, input.branchId)
+        const threadId = reusableThread ? preferredThread : threads.ensureActor(input.conversationId, buddyId, input.createdAt, input.branchId).id
         const previous = threads.findPreviousSession(threadId, input.branchId)
         insertMessage.run(
           input.userMessageId,
@@ -770,7 +781,8 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           || conversation.approval_policy !== input.approvalPolicy
           || conversation.execution_profile !== input.executionProfile
           || conversation.deleted_at !== null
-          || findIncompleteRun.get(input.conversationId)
+          || !hasBranch(input.conversationId, input.parentBranchId)
+          || hasMaintenance(input.conversationId)
           || !sourceRun
           || sourceRun.conversation_id !== input.conversationId
           || sourceRun.triggering_message_id !== input.forkedFromMessageId
@@ -786,7 +798,6 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           input.forkedFromMessageId,
           input.createdAt,
         )
-        activateBranch.run(input.branchId, input.createdAt, input.conversationId)
         insertRun.run(
           input.runId,
           input.conversationId,
@@ -803,6 +814,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           input.buddyId ?? conversation!.buddy_id,
           input.actorSnapshot ? JSON.stringify(input.actorSnapshot) : null,
         )
+        bindBranchThread(input.runId, input.conversationId, input.branchId, input.buddyId ?? conversation!.buddy_id, input.createdAt)
         if (Number(cloneRunInput.run(input.runId, input.createdAt, input.sourceRunId).changes) !== 1)
           throw new TurnRequestConflictError()
         updateRunSelection.run(input.reasoning, input.serviceTier, input.runId)
@@ -846,11 +858,11 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           throw new TurnRequestConflictError()
         if (run.status !== 'failed' || run.error_code !== 'RUNTIME_RESTARTED')
           return toRecord(request, false)
-        if (findIncompleteRun.get(run.conversation_id))
+        if (database.prepare('SELECT 1 FROM runs WHERE conversation_id = ? AND branch_id = ? AND status IN (\'queued\', \'running\') LIMIT 1').get(run.conversation_id, run.branch_id))
           throw new TurnRequestConflictError()
 
         const previous = findPreviousCompletedSession.get(
-          actorThreadId(run.conversation_id, run.buddy_id),
+          actorThreadId(run.conversation_id, run.buddy_id, run.branch_id),
           run.branch_id,
         ) as { pi_session_file: string } | undefined
         insertRun.run(
@@ -869,6 +881,7 @@ export function createTurnRequestRepository(database: DatabaseSync): TurnRequest
           run.buddy_id,
           run.actor_snapshot_json ?? null,
         )
+        bindBranchThread(input.runId, run.conversation_id, run.branch_id, run.buddy_id, input.createdAt)
         database.prepare('UPDATE runs SET model_override_json = ? WHERE id = ?').run(run.model_override_json ?? null, input.runId)
         if (Number(cloneRunInput.run(input.runId, input.createdAt, request.run_id).changes) !== 1)
           throw new TurnRequestConflictError()
@@ -934,7 +947,8 @@ function sameModelSelection(left: string | null, right: string | null): boolean 
 function createTurnFacts(input: { taskCreated?: boolean, branchCreated?: boolean, parentBranchId?: string | null, messageId?: string, attachmentIds?: readonly string[], draftReceipt?: ComposerDraftCommitReceipt | null, queueId?: string, modelChanged?: boolean }): TurnCommitFact[] {
   return [
     ...(input.taskCreated ? [{ kind: 'task.created' as const }] : []),
-    ...(input.branchCreated ? [{ kind: 'branch.created' as const, parentBranchId: input.parentBranchId ?? null }, { kind: 'task.branch_activated' as const }] : []),
+    ...(input.branchCreated ? [{ kind: 'branch.created' as const, parentBranchId: input.parentBranchId ?? null }] : []),
+    ...(input.taskCreated ? [{ kind: 'task.branch_activated' as const }] : []),
     ...(input.modelChanged ? [{ kind: 'task.model_changed' as const }] : []),
     ...(input.messageId ? [{ kind: 'message.created' as const, messageId: input.messageId }] : []),
     ...(input.messageId && input.attachmentIds?.length ? [{ kind: 'attachments.bound' as const, messageId: input.messageId, attachmentIds: input.attachmentIds }] : []),
@@ -951,15 +965,13 @@ function bindAttachments(
 ): void {
   assertTurnAttachmentBindings(input)
   for (const binding of input.attachmentBindings) {
-    const changes = binding.sourceDraftId !== null
-      ? binding.id === binding.sourceAttachmentId
-        ? Number(bindDraftAttachment.run(
-            binding.messageId,
-            binding.storedPath,
-            binding.sourceAttachmentId,
-            binding.sourceDraftId,
-          ).changes)
-        : 0
+    const changes = binding.sourceDraftId !== null && binding.id === binding.sourceAttachmentId
+      ? Number(bindDraftAttachment.run(
+          binding.messageId,
+          binding.storedPath,
+          binding.sourceAttachmentId,
+          binding.sourceDraftId,
+        ).changes)
       : Number(cloneMessageAttachment.run(
           binding.id,
           binding.messageId,
@@ -967,6 +979,7 @@ function bindAttachments(
           binding.createdAt,
           binding.sourceAttachmentId,
           input.conversationId,
+          binding.sourceDraftId,
         ).changes)
     if (changes !== 1)
       throw new TurnRequestAttachmentError()

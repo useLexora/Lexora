@@ -5,7 +5,7 @@ import type { NotificationCenterStore } from '@/modules/notifications'
 import type { DesktopNotification } from '@/modules/notifications/contracts'
 import type { TaskSession } from '@/modules/tasks/contracts'
 import { useTimeoutFn } from '@vueuse/core'
-import { onScopeDispose, readonly, shallowRef, watch } from 'vue'
+import { nextTick, onScopeDispose, readonly, shallowRef, watch } from 'vue'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 
 interface DesktopNavigationOptions {
@@ -23,7 +23,7 @@ type RunTarget = Pick<LocalRun, 'conversationId' | 'branchId' | 'triggeringMessa
 
 export function useDesktopNavigation(options: DesktopNavigationOptions) {
   const { router, session } = options
-  const notificationTarget = shallowRef<{ conversationId: string, messageId: string } | null>(null)
+  const notificationTarget = shallowRef<{ conversationId: string, branchId: string, messageId: string } | null>(null)
   const highlightTimer = useTimeoutFn(() => notificationTarget.value = null, 3_000, { immediate: false })
   let pending: { controller: AbortController, taskId: string | null, spaceId?: string, version: number } | null = null
   let disposed = false
@@ -72,7 +72,7 @@ export function useDesktopNavigation(options: DesktopNavigationOptions) {
         return
       if (!await options.activateRunBranch(run) || signal.aborted || session.activeTaskId.value !== conversationId)
         return
-      notificationTarget.value = { conversationId, messageId: run.triggeringMessageId }
+      notificationTarget.value = { conversationId, branchId: run.branchId, messageId: run.triggeringMessageId }
       highlightTimer.start()
     })
   }
@@ -116,8 +116,15 @@ export function useDesktopNavigation(options: DesktopNavigationOptions) {
       : openTask(notification.action.conversationId, notification.action.runId)
   }
 
-  function openTarget(target: DesktopOpenTarget) {
-    return openTask(target.conversationId, target.runId)
+  async function openTarget(target: DesktopOpenTarget): Promise<boolean> {
+    const location = 'kind' in target && target.kind === 'settings' ? desktopRouteLocations.settings('general') : desktopRouteLocations.tasks()
+    if ('kind' in target)
+      await navigate(location)
+    else
+      await openTask(target.conversationId, target.runId)
+    await nextTick()
+    return !disposed && router.currentRoute.value.path === router.resolve(location).path
+      && ('kind' in target || session.activeTaskId.value === target.conversationId)
   }
 
   return { navigate, notificationTarget: readonly(notificationTarget), openNotification, openSpace, openTarget, openTask }

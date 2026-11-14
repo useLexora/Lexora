@@ -1,0 +1,12 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <provider android:name="app.uselexora.mobile.FileWorkflowProvider" android:authorities="app.uselexora.mobile.dev.test.file-workflow" android:exported="true" />
+        <activity android:name="app.uselexora.mobile.FileReceiverActivity" android:label="Lexora File Receiver" android:exported="true" android:theme="@android:style/Theme.Material.Light.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

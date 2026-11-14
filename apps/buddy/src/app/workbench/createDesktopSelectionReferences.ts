@@ -6,7 +6,7 @@ import type { SelectionReferenceTarget } from '@/shared/ui/selection/workbenchSe
 import { buddyUserContentToText } from '@buddy-shared/conversation/buddyUserContent'
 import { getCurrentScope, onScopeDispose } from 'vue'
 import { translateBuddy } from '@/i18n/buddyI18n'
-import { chatComposerDocumentToUserContent, userContentToChatComposerDocument } from '@/modules/prompt-input'
+import { userContentToChatComposerDocument } from '@/modules/prompt-input'
 import { WorkbenchSelectionReferences } from '@/shared/ui/selection/workbenchSelectionReferences'
 import { panes } from '@/workbench/common/workbench'
 import { registerBuiltinSelectionReferenceProviders } from './builtinSelectionReferenceProviders'
@@ -44,7 +44,7 @@ export function createDesktopSelectionReferences(options: BuiltinSelectionRefere
           scope: workspace.session.activeConversationId.value ? `task:${workspace.session.activeConversationId.value}` : `draft:${workspace.composer.draftId.value}`,
           label: translateBuddy(options.language.value, 'desktop.chat.quoteTargetPane', { index: index + 1, title }),
           pane: { index: index + 1, title },
-          read: () => chatComposerDocumentToUserContent(workspace.composer.composerContent.value),
+          read: () => workspace.composer.content.value,
           write: content => workspace.composer.updateComposerContent(buddyUserContentToText(content), userContentToChatComposerDocument(content)),
         }]
       })

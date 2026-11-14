@@ -1,0 +1,264 @@
+{
+  "version": 1,
+  "requests": [
+    {
+      "name": "initialize",
+      "method": "initialize",
+      "params": {
+        "protocol": {
+          "major": 1,
+          "minMinor": 0,
+          "maxMinor": 0
+        },
+        "client": {
+          "kind": "desktop",
+          "version": "1.0"
+        },
+        "supportedContentKinds": [
+          "buddy-user-content-v1"
+        ],
+        "supportedReviewKinds": []
+      },
+      "valid": true
+    },
+    {
+      "name": "no-client-role",
+      "method": "initialize",
+      "params": {
+        "protocol": {
+          "major": 1,
+          "minMinor": 0,
+          "maxMinor": 0
+        },
+        "client": {
+          "kind": "desktop",
+          "version": "1.0"
+        },
+        "supportedContentKinds": [
+          "buddy-user-content-v1"
+        ],
+        "supportedReviewKinds": [],
+        "role": "owner"
+      },
+      "valid": false
+    },
+    {
+      "name": "start-draft",
+      "method": "chat.startTurn",
+      "params": {
+        "dataGeneration": "generation-1",
+        "commandId": "command-1",
+        "expectedServiceInstanceId": "instance-1",
+        "intent": {
+          "draftId": "draft-1",
+          "expectedRevision": "0"
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "reject-auth-actor",
+      "method": "chat.startTurn",
+      "params": {
+        "dataGeneration": "generation-1",
+        "commandId": "command-1",
+        "expectedServiceInstanceId": "instance-1",
+        "intent": {
+          "draftId": "draft-1",
+          "expectedRevision": "0"
+        },
+        "actorId": "actor-1"
+      },
+      "valid": false
+    },
+    {
+      "name": "numeric-revision",
+      "method": "chat.startTurn",
+      "params": {
+        "dataGeneration": "generation-1",
+        "commandId": "command-1",
+        "expectedServiceInstanceId": "instance-1",
+        "intent": {
+          "draftId": "draft-1",
+          "expectedRevision": 0
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "host-method-unavailable",
+      "method": "runtime.stop",
+      "params": {},
+      "valid": false
+    },
+    {
+      "name": "default-page",
+      "method": "conversations.list",
+      "params": {},
+      "valid": true
+    },
+    {
+      "name": "null-page",
+      "method": "conversations.list",
+      "params": {
+        "cursor": null
+      },
+      "valid": true
+    },
+    {
+      "name": "unknown-page-field",
+      "method": "conversations.list",
+      "params": {
+        "path": "/fixture/private"
+      },
+      "valid": false
+    }
+  ],
+  "revisions": [
+    {
+      "name": "0",
+      "value": "0",
+      "valid": true
+    },
+    {
+      "name": "9223372036854775807",
+      "value": "9223372036854775807",
+      "valid": true
+    },
+    {
+      "name": "9223372036854775808",
+      "value": "9223372036854775808",
+      "valid": false
+    },
+    {
+      "name": "01",
+      "value": "01",
+      "valid": false
+    },
+    {
+      "name": "-1",
+      "value": "-1",
+      "valid": false
+    },
+    {
+      "name": "1.0",
+      "value": "1.0",
+      "valid": false
+    },
+    {
+      "name": "invalid",
+      "value": "invalid",
+      "valid": false
+    },
+    {
+      "name": "9007199254740992",
+      "value": 9007199254740992,
+      "valid": false
+    }
+  ],
+  "responses": [
+    {
+      "name": "receipt-over-js-safe-integer",
+      "method": "composerDrafts.save",
+      "result": {
+        "receipt": {
+          "dataGeneration": "generation-1",
+          "commandId": "command-1",
+          "method": "composerDrafts.save",
+          "decision": "accepted",
+          "decidedAt": "2026-01-01T00:00:00.000Z",
+          "target": {
+            "draftId": "draft-1"
+          },
+          "result": {
+            "revision": "9007199254740992"
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "receipt-reject-internal-field",
+      "method": "composerDrafts.save",
+      "result": {
+        "receipt": {
+          "dataGeneration": "generation-1",
+          "commandId": "command-1",
+          "method": "composerDrafts.save",
+          "decision": "accepted",
+          "decidedAt": "2026-01-01T00:00:00.000Z",
+          "target": {
+            "draftId": "draft-1"
+          },
+          "result": {
+            "revision": "9007199254740992"
+          }
+        },
+        "fingerprint": "fixture-internal"
+      },
+      "valid": false
+    },
+    {
+      "name": "lookup-pending",
+      "method": "commands.get",
+      "result": {
+        "lookup": "pending"
+      },
+      "valid": true
+    },
+    {
+      "name": "lookup-unknown-is-not-notfound",
+      "method": "commands.get",
+      "result": {
+        "lookup": "unknown"
+      },
+      "valid": false
+    }
+  ],
+  "contents": [
+    {
+      "name": "chinese-emoji-utf16",
+      "value": {
+        "kind": "editable",
+        "content": {
+          "version": 1,
+          "body": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "你好😀世界"
+                }
+              ]
+            }
+          ],
+          "panelResourceIds": []
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "unknown-preserved-readonly",
+      "value": {
+        "kind": "unsupported",
+        "contentReference": "content-1",
+        "version": 2,
+        "summary": "不支持的内容",
+        "readOnly": true
+      },
+      "valid": true
+    },
+    {
+      "name": "unknown-must-not-be-editable",
+      "value": {
+        "kind": "unsupported",
+        "contentReference": "content-1",
+        "version": 2,
+        "summary": "不支持的内容",
+        "readOnly": false
+      },
+      "valid": false
+    }
+  ]
+}

@@ -2,6 +2,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { LocalBuddy } from '../../../shared/buddies/buddyApi'
 import type { LocalTurnStart } from '../../../shared/conversation/chatApi'
 import type { ExtensionShellDescriptor } from '../../../shared/extensions/extensionShell'
+import type { StartBuddyServiceOptions } from '../BuddyService'
 import type { MutationLease } from '../changes/MutationCoordinator'
 import type { BuddyServiceRpcServer } from '../rpc/BuddyServiceRpcServer'
 import { Buffer } from 'node:buffer'
@@ -15,12 +16,14 @@ import { SessionManager } from '@earendil-works/pi-coding-agent'
 import { expect, vi } from 'vitest'
 import { DEFAULT_BUDDY_SETTINGS } from '../../../shared/buddies/buddySettings'
 import { createBuddyUserContent } from '../../../shared/conversation/buddyUserContent'
+import { Emitter } from '../../../shared/events/Emitter'
 import { DEFAULT_RUNTIME_PREFERENCES } from '../../../shared/runtime/runtimePreferences'
 import { readCheckpoint } from '../agent/sessions/tree/BuddyTreeStore'
-import { startBuddyService } from '../BuddyService'
+import { startBuddyService as startService } from '../BuddyService'
 import { createChangeSetRepository } from '../changes/changeSetRepository'
 import { MutationCoordinator } from '../changes/MutationCoordinator'
 import { createRunEventLog } from '../events/createRunEventLog'
+import { createRpcRuntimePlatform } from '../platform/createRpcRuntimePlatform'
 import { openBuddyDatabase } from '../storage/database'
 import { createRunRepository } from '../storage/runRepository'
 
@@ -68,8 +71,15 @@ function requestRole(payload: Payload): Role {
 
 function rpcHarness(shells: readonly ExtensionShellDescriptor[]) {
   const handlers = new Map<string, Parameters<BuddyServiceRpcServer['onRequest']>[1]>()
+  const closed = new Emitter<void>(() => {})
+  let isClosed = false
   const rpc = {
-    close() {},
+    get closed() { return isClosed },
+    onDidClose: closed.event,
+    close() {
+      isClosed = true
+      closed.fire()
+    },
     notify() {},
     onNotification() { return () => {} },
     onRequest(method: string, handler: Parameters<BuddyServiceRpcServer['onRequest']>[1]) {
@@ -405,4 +415,12 @@ export async function assertCaptureChain(f: ConcurrencyRuntime, path: string, be
     }
   }
   return chain
+}
+
+async function startBuddyService(options: Omit<StartBuddyServiceOptions, 'platform'> & { rpc: BuddyServiceRpcServer }) {
+  const { rpc, ...configuration } = options
+  const service = await startService({ ...configuration, platform: createRpcRuntimePlatform(rpc) })
+  service.connectClient('product', rpc)
+  service.connectClient('management', rpc)
+  return service
 }

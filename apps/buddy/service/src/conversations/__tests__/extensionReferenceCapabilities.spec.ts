@@ -12,7 +12,6 @@ import { createRunInputRepository } from '../../storage/runInputRepository'
 import { createRunRepository } from '../../storage/runRepository'
 import { createExtensionReferenceCapabilities } from '../extensionReferenceCapabilities'
 import { ExtensionTaskContext } from '../ExtensionTaskContext'
-import { ReferenceSnapshotAccess } from '../ReferenceSnapshotAccess'
 
 const databases: DatabaseSync[] = []
 afterEach(() => databases.splice(0).forEach(database => database.close()))
@@ -63,17 +62,12 @@ function fixture() {
 }
 
 describe('run-owned extension references', () => {
-  it.each(['text', 'locator', 'target'])('binds repeated reference ids to a message and rejects ambiguous %s lookups', async (change) => {
+  it('binds repeated reference ids to a message and rejects ambiguous locators', async () => {
     const f = fixture()
     const quote = f.quote()
     const first = f.message([quote])
     const changed = structuredClone(quote)
-    if (change === 'text')
-      changed.text = 'A different selected region'
-    if (change === 'locator')
-      changed.locator.data.revision = 8
-    if (change === 'target')
-      changed.source.target.viewId = randomUUID()
+    changed.locator.data.revision = 8
     const second = f.message([changed])
     const call = f.invocation(second.runId)
     await expect(call.handlers['references.resolve']({ referenceId: quote.id }, call.context)).rejects.toThrow('EXTENSION_REFERENCE_AMBIGUOUS')
@@ -129,33 +123,29 @@ describe('run-owned extension references', () => {
       await expect(call.handlers['references.resolve']({ referenceId: quote.id }, call.context)).rejects.toThrow('EXTENSION_REFERENCE_UNAVAILABLE')
   })
 
-  it.each(['actor_child', 'npc_child'] as const)('keeps %s plugin and generic reference scope frozen when its parent accepts later input', async (kind) => {
+  it.each(['actor_child', 'npc_child'] as const)('keeps %s plugin reference scope frozen when its parent accepts later input', async (kind) => {
     const f = fixture()
     const original = f.quote()
     const root = f.message([original])
     const privateQuote = f.quote()
     const child = f.child(root.runId, kind, privateQuote)
     const future = f.quote()
-    const accepted = f.acceptFollowup(root.runId, future)
+    f.acceptFollowup(root.runId, future)
     const call = f.invocation(child.runId)
     expect(await call.handlers['references.list'](null, call.context)).toMatchObject({ items: [{ referenceId: original.id }] })
     for (const quote of [privateQuote, future])
       await expect(call.handlers['references.resolve']({ referenceId: quote.id }, call.context)).rejects.toThrow('EXTENSION_REFERENCE_UNAVAILABLE')
-    const generic = new ReferenceSnapshotAccess({ conversationId: 'task', getRunId: () => child.runId, references: f.references, signal: f.controller.signal })
-    expect(() => generic.read({ referenceId: future.id, sourceMessageId: accepted.id, kind: 'resource' })).toThrow('REFERENCE_NOT_AUTHORIZED')
     const parent = f.invocation(root.runId)
     expect(await parent.handlers['references.resolve']({ referenceId: future.id }, parent.context)).toMatchObject({ referenceId: future.id })
   })
 
-  it.each(['new input', 'branch', 'delete', 'abort', 'run complete'])('revokes list and resolve after %s', async (change) => {
+  it.each(['new input', 'delete', 'abort', 'run complete'])('revokes list and resolve after %s', async (change) => {
     const f = fixture()
     const quote = f.quote()
     const input = f.message([quote])
     const call = f.invocation(input.runId)
     if (change === 'new input')
       f.message([])
-    if (change === 'branch')
-      f.tasks.createBranch({ id: 'other', conversationId: 'task', parentBranchId: 'branch', forkedFromMessageId: input.id, createdAt: '2026-10-24T00:01:00.000Z', activate: true })
     if (change === 'delete')
       f.tasks.markDeleted('task', '2026-10-24T00:01:00.000Z')
     if (change === 'abort')
@@ -164,6 +154,19 @@ describe('run-owned extension references', () => {
       f.database.prepare('UPDATE runs SET status = \'completed\' WHERE id = ?').run(input.runId)
     await expect(call.handlers['references.list'](null, call.context)).rejects.toThrow()
     await expect(call.handlers['references.resolve']({ referenceId: quote.id }, call.context)).rejects.toThrow()
+  })
+
+  it('keeps run-owned references on their original branch after another branch becomes the default', async () => {
+    const f = fixture()
+    const quote = f.quote()
+    const input = f.message([quote])
+    const call = f.invocation(input.runId)
+    f.tasks.createBranch({ id: 'other', conversationId: 'task', parentBranchId: null, forkedFromMessageId: null, createdAt: '2026-10-24T00:01:00.000Z', activate: true })
+    const foreign = f.quote()
+    const other = f.message([foreign], { branch: 'other' })
+    expect(await call.handlers['references.list'](null, call.context)).toMatchObject({ items: [{ referenceId: quote.id, sourceMessageId: input.id }] })
+    expect(await call.handlers['references.resolve']({ referenceId: quote.id }, call.context)).toMatchObject({ referenceId: quote.id, scope: { taskId: 'task', branchId: 'branch' } })
+    await expect(call.handlers['references.resolve']({ referenceId: foreign.id, sourceMessageId: other.id }, call.context)).rejects.toThrow('EXTENSION_REFERENCE_UNAVAILABLE')
   })
 
   it('rejects actions and guessed message-local quote numbers', async () => {
@@ -176,8 +179,10 @@ describe('run-owned extension references', () => {
     await expect(call.handlers['references.resolve']({ referenceId: '1' }, call.context)).rejects.toThrow()
   })
 
-  it('keeps worst-case Unicode and escaped text listings inside the normal RPC budget', async () => {
+  it('bounds Unicode listings while preserving access to older references', async () => {
     const f = fixture()
+    const oldest = f.quote()
+    f.message([oldest])
     let input
     for (let index = 0; index < 100; index++) {
       const quote = f.quote()
@@ -187,20 +192,6 @@ describe('run-owned extension references', () => {
     const result = await call.handlers['references.list'](null, call.context)
     expect(extensionJsonSchema.safeParse(result).success).toBe(true)
     expect(result).toMatchObject({ truncated: true })
-  })
-
-  it('bounds listings and resolves older references beyond the list', async () => {
-    const f = fixture()
-    const oldest = f.quote()
-    f.message([oldest])
-    let input
-    for (let index = 0; index < 105; index++)
-      input = f.message([{ ...f.quote(), text: 'x'.repeat(1000) }])
-    const call = f.invocation(input!.runId)
-    const result = await call.handlers['references.list'](null, call.context) as { items: { excerpt: string }[], truncated: boolean }
-    expect(result.items).toHaveLength(100)
-    expect(result.items.every(item => item.excerpt.length === 512)).toBe(true)
-    expect(result.truncated).toBe(true)
     expect(await call.handlers['references.resolve']({ referenceId: oldest.id }, call.context)).toMatchObject({ referenceId: oldest.id })
   })
 

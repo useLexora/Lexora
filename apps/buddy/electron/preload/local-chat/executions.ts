@@ -6,6 +6,7 @@ import { subscribe } from '../subscribe'
 export function createExecutionsApi(): Pick<LocalChatApi, 'executions'> {
   return {
     executions: Object.freeze({
+      activity: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.executionsActivity, input),
       list: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.executionsList, input),
       detail: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.executionsDetail, input),
       inputs: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.executionsInputs, input),

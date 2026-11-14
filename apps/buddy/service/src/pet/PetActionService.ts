@@ -1,6 +1,6 @@
 import type { PetExecuteSequenceResult } from '../../../shared/runtime/petProtocol'
-import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
 import type { AppendBuddyRunEventInput } from '../events/BuddyRunEvent'
+import type { RuntimePlatform } from '../platform/RuntimePlatform'
 import type { PetMacroId } from './petMacroCatalog'
 import { randomUUID } from 'node:crypto'
 import { Emitter } from '../../../shared/events/Emitter'
@@ -12,15 +12,13 @@ import {
 import { compilePetMacro } from './petMacroCatalog'
 import { createPetToolPresentation, PET_TOOL_NAME } from './petToolContract'
 
-const PET_HOST_TIMEOUT_MS = 20_000
-
 export interface PetActionEventSink {
   (event: AppendBuddyRunEventInput): Promise<unknown> | unknown
 }
 
 export interface PetActionServiceOptions {
   eventSink?: PetActionEventSink
-  peer: Pick<RuntimeRpcPeerContract, 'request'>
+  executeSequence: RuntimePlatform['executePetSequence']
 }
 
 export interface ExecutePetActionInput {
@@ -45,11 +43,11 @@ export class PetActionService {
   #revision = 0
   #disposing: Promise<void> | undefined
   readonly #eventSink?: PetActionEventSink
-  readonly #peer: Pick<RuntimeRpcPeerContract, 'request'>
+  readonly #executeSequence: RuntimePlatform['executePetSequence']
 
   constructor(options: PetActionServiceOptions) {
     this.#eventSink = options.eventSink
-    this.#peer = options.peer
+    this.#executeSequence = options.executeSequence
   }
 
   execute(input: ExecutePetActionInput): Promise<PetExecuteSequenceResult> {
@@ -71,11 +69,7 @@ export class PetActionService {
     let confirmed: PetExecuteSequenceResult | null = null
     this.#changes.fire(copyEventSnapshot({ ...identity, phase: 'requested', revision: ++this.#revision }))
     try {
-      result = petExecuteSequenceResultSchema.parse(await this.#peer.request(
-        'host.pet.executeSequence',
-        request,
-        PET_HOST_TIMEOUT_MS,
-      ))
+      result = await this.#executeSequence(request)
       confirmed = result
       this.#changes.fire(copyEventSnapshot({ ...identity, phase: 'host-confirmed', result, revision: ++this.#revision }))
     }

@@ -59,6 +59,14 @@ name = "bounded-file-macos"
 path = "__tests__/bounded_file_macos.rs"
 
 [[test]]
+name = "service-launcher"
+path = "__tests__/service_launcher.rs"
+
+[[test]]
+name = "process-identity-macos"
+path = "__tests__/process_identity_macos.rs"
+
+[[test]]
 name = "process-control-linux"
 path = "__tests__/process_control_linux.rs"
 

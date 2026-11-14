@@ -6,6 +6,13 @@ import { DatabaseSync } from 'node:sqlite'
 import { ensurePrivateDirectoriesSync } from '../filesystem/privateDirectories'
 import { isMissing, storageError } from './storageFiles'
 
+const activeLeases = new WeakMap<() => void, string>()
+
+export function assertStorageRootLease(lease: () => void, root: string): void {
+  if (activeLeases.get(lease) !== canonical(resolve(root)))
+    throw storageError('STORAGE_LEASE_INVALID')
+}
+
 function canonical(path: string): string {
   try {
     return realpathSync.native(path)
@@ -18,7 +25,8 @@ function canonical(path: string): string {
 }
 export function acquireStorageRootLease(root: string, directory = join(homedir(), '.lexora-locations', 'locks'), privateDirectoriesExecutable?: string): () => void {
   ensurePrivateDirectoriesSync([directory], privateDirectoriesExecutable)
-  const identity = createHash('sha256').update(canonical(resolve(root))).digest('hex')
+  const canonicalRoot = canonical(resolve(root))
+  const identity = createHash('sha256').update(canonicalRoot).digest('hex')
   const database = new DatabaseSync(join(directory, `${identity}.sqlite3`))
   try {
     database.exec('PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;')
@@ -27,5 +35,11 @@ export function acquireStorageRootLease(root: string, directory = join(homedir()
     database.close()
     throw storageError('STORAGE_ROOT_IN_USE')
   }
-  return () => database.close()
+  const release = () => {
+    if (!activeLeases.delete(release))
+      return
+    database.close()
+  }
+  activeLeases.set(release, canonicalRoot)
+  return release
 }

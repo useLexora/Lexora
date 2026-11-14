@@ -15,7 +15,7 @@ export async function writeContributionPlugin(directory, name, { uno = false, me
     entry: 'host.js',
     ...(media ? { permissions: { network: ['https://media.example.com'], themeManagement: true } } : {}),
     contributes: {
-      commands: ['read', 'save', 'failure', 'invalid', 'timeout', ...(media ? ['download'] : [])].map(command => ({ id: `${id}.${command}`, title: command, hidden: true })),
+      commands: ['read', 'save', 'failure', 'invalid', 'wait', ...(media ? ['download'] : [])].map(command => ({ id: `${id}.${command}`, title: command, hidden: true })),
       views: [
         { id: `${id}.settings`, title: `Settings ${name}`, entry: 'settings.js', resource: 'none', location: 'page' },
         { id: `${id}.footer`, title: `Footer ${name}`, entry: 'footer.js', resource: 'none' },
@@ -55,7 +55,7 @@ async function activate(media, context) {
     throw new Error('Private plugin error')
   }))
   context.subscriptions.add(context.commands.register(`${id}.invalid`, () => Number.NaN))
-  context.subscriptions.add(context.commands.register(`${id}.timeout`, () => new Promise(() => {})))
+  context.subscriptions.add(context.commands.register(`${id}.wait`, () => new Promise(() => {})))
   context.subscriptions.add(context.commands.register(`${id}.save`, async ({ arguments: patch }) => {
     state = { ...state, ...patch }
     await context.storage.set(state)
@@ -78,7 +78,7 @@ async function settings(pluginId, context, container) {
 
 async function footer(pluginId, uno, context, container) {
   container.dataset.contributionFixture = `${pluginId}.footer`
-  window.fixture = { instance: crypto.randomUUID(), visible: context.visible }
+  window.fixture = { visible: context.visible }
   context.onVisibilityChange(visible => window.fixture.visible = visible)
   if (uno)
     container.className = 'h-full grid place-items-center rounded-control bg-accent text-on-accent text-[14px] font-sans transition-colors duration-[var(--lexora-motion-state-duration)]'

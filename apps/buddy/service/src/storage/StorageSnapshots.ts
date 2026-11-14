@@ -14,10 +14,10 @@ import { backupDirectoryAllowed, backupScopes } from '../../../shared/storage/ba
 import { snapshotManifestSchema } from '../../../shared/storage/snapshot'
 import { selectBackupDatabase } from './backupDatabase'
 import { portableSettings } from './backupSettings'
-import { openBuddyDatabase } from './database'
 import { prepareNotificationSoundBackup } from './notificationSoundBackup'
 import { sanitizeRestoredDatabase } from './restorePolicy'
-import { BUDDY_SCHEMA_VERSION } from './schema'
+import { BUDDY_MIGRATION_SCHEMA_VERSION } from './schema'
+import { rewriteIsolatedSnapshotDatabase } from './snapshotDatabase'
 
 export function snapshotDirectory(root: string, id: string): string {
   return join(root, 'exports', 'snapshots', id)
@@ -43,17 +43,14 @@ export async function createStorageSnapshot(root: string, dataId: string, signal
     signal.throwIfAborted()
     if (!(await lstat(join(stage, 'files', 'buddy', 'buddy.sqlite3'))).isFile())
       throw storageError('SNAPSHOT_DATABASE_MISSING')
-    const database = openBuddyDatabase({ databasePath: join(stage, 'files', 'buddy', 'buddy.sqlite3') })
-    try {
+    const databaseVersion = await rewriteIsolatedSnapshotDatabase(join(stage, 'files', 'buddy', 'buddy.sqlite3'), (database) => {
       sanitizeRestoredDatabase(database, !!encryptedCredentials)
       selectBackupDatabase(database, options.scopes, paths)
       if (Object.values(database.prepare('PRAGMA quick_check').get() ?? {})[0] !== 'ok' || database.prepare('PRAGMA foreign_key_check').all().length)
         throw storageError('SNAPSHOT_DATABASE_INVALID')
       database.exec('VACUUM; PRAGMA wal_checkpoint(TRUNCATE)')
-    }
-    finally {
-      database.close()
-    }
+      return Number(database.prepare('PRAGMA user_version').get()!.user_version)
+    })
     await syncStorageFile(join(stage, 'files', 'buddy', 'buddy.sqlite3'))
     if (options.scopes.includes('settings')) {
       const path = join(stage, 'files', 'config.toml')
@@ -79,7 +76,7 @@ export async function createStorageSnapshot(root: string, dataId: string, signal
         throw storageError('SNAPSHOT_INVALID_LINK')
       files.push({ kind: 'file', path: entry.path, executable: entry.executable, ...await packSnapshotFile(join(stage, 'files', entry.path), entry.size, entry.executable, signal) })
     }
-    const manifest = snapshotManifestSchema.parse({ version: 4, ...(options.automatic ? { automatic: options.automatic } : {}), scopes: options.scopes, credentials: !!encryptedCredentials, id, dataId, sourceRoot: root, createdAt: new Date().toISOString(), databaseVersion: BUDDY_SCHEMA_VERSION, files, excludedLinks })
+    const manifest = snapshotManifestSchema.parse({ version: 4, ...(options.automatic ? { automatic: options.automatic } : {}), scopes: options.scopes, credentials: !!encryptedCredentials, id, dataId, sourceRoot: root, createdAt: new Date().toISOString(), databaseVersion, files, excludedLinks })
     await verifySnapshotFiles(stage, manifest, signal)
     await writeSnapshotManifest(stage, manifest)
     await syncStorageDirectories(stage)
@@ -95,7 +92,7 @@ export async function createStorageSnapshot(root: string, dataId: string, signal
 }
 export async function verifyStorageSnapshot(directory: string, signal: AbortSignal): Promise<SnapshotManifest> {
   const manifest = await readSnapshotManifest(directory)
-  if (manifest.databaseVersion > BUDDY_SCHEMA_VERSION)
+  if (manifest.databaseVersion > BUDDY_MIGRATION_SCHEMA_VERSION)
     throw storageError('SNAPSHOT_NEWER_VERSION')
   await verifySnapshotFiles(directory, manifest, signal)
   return manifest

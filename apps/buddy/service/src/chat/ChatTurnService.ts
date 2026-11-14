@@ -1,13 +1,5 @@
-import type {
-  BuddyPromptDirective,
-  BuddyUserContentV1,
-  BuddyUserMessageResourceSnapshot,
-} from '../../../shared/conversation/buddyUserContent'
 import type { BuddyComposerDraftScope } from '../../../shared/conversation/composerDraft'
-import type { InputMaterialProjectionState } from '../../../shared/conversation/inputMaterialProjection'
-import type { BuddyThinkingLevel } from '../../../shared/conversation/modelSelection'
 import type { UserQuestionRequest } from '../../../shared/questions/userQuestionApi'
-import type { SkillReference } from '../../../shared/skills/skillApi'
 import type { BuddyAgentRunner } from '../agent/execution/BuddyAgentRunner'
 import type { BuddyTurnLauncher } from '../agent/execution/BuddyTurnLauncher'
 import type {
@@ -17,15 +9,13 @@ import type { ComposerResourceService } from '../attachments/ComposerResourceSer
 import type { BuddyDefinitionResolver } from '../buddies/BuddyDefinitionResolver'
 import type {
   BuddyStartTurnInput,
-  BuddyTurnContextItem,
   BuddyTurnStart,
 } from '../BuddyRuntime'
 import type { ConversationLifecycleService } from '../conversations/ConversationLifecycleService'
 import type {
-  InteractiveModelSelection,
   RuntimeModelProvider,
 } from '../providers/resolveInteractiveModelSelection'
-import type { BuddyMaterializedSkill, SkillService } from '../skills/SkillService'
+import type { SkillService } from '../skills/SkillService'
 import type { QueuedTurnRequestInput } from '../storage/chatQueueRepository'
 import type { ComposerDraftRepository } from '../storage/composerDraftRepository'
 import type { ConversationHistoryRepository } from '../storage/conversationHistoryRepository'
@@ -39,61 +29,43 @@ import type { RunRecord } from '../storage/runRecord'
 import type { RunRepository } from '../storage/runRepository'
 import type { SpaceRecord, SpaceRepository } from '../storage/spaceRepository'
 import type {
+  EditTurnRequestInput,
   PrepareTurnRequestInput,
+  RegenerateTurnRequestInput,
   TurnRequestRecord,
   TurnRequestRepository,
 } from '../storage/turnRequestRepository'
-import type { ChatInputHistoryPoint, ChatInputValidationService } from './ChatInputValidationService'
-import type { PreparedTurnAttachments } from './persistPreparedTurn'
-import { Buffer } from 'node:buffer'
+import type { TurnReplay } from './ChatInputMaterializer'
+import type { ChatInputValidationService } from './ChatInputValidationService'
+import type { ChatInputSource } from './resolveChatInput'
 import { createHash, randomUUID } from 'node:crypto'
-import { isAbsolute, join } from 'node:path'
-import { readBoundedFile } from '../../../platform/filesystem/boundedFile'
+
 import {
-  isBuddyReviewCommand,
-  isBuddyRunChatCommand,
-  isRetiredBuddyPromptCommand,
-  parseBuddyChatCommand,
-} from '../../../shared/conversation/buddyChatCommands'
-import {
-  bindResourceAttachments,
-  buddyUserContentToText,
   buddyUserMessageContentV1Schema,
   createBuddyUserContent,
   getBuddyUserContentActorReferences,
-  getResourceAttachmentIds,
   readBuddyUserMessageContent,
 } from '../../../shared/conversation/buddyUserContent'
-import { inputMaterialInlineBytes } from '../../../shared/conversation/inputMaterialProjection'
-import { isBuddyThinkingLevel } from '../../../shared/conversation/modelSelection'
+import { AsyncOperationScope } from '../../../shared/lifecycle/AsyncOperationScope'
 import { isExecutionProfileWithin } from '../../../shared/permissions/executionProfile'
 import { renderUserQuestionReply, userQuestionReplyText } from '../../../shared/questions/userQuestionReply'
 import { canReadReferenceSnapshots } from '../conversations/referenceSnapshotToolContract'
-import { resolveGrantedPath } from '../directories/resolveGrantedPath'
-import { getModelFileInputMimeTypes } from '../providers/modelCapabilities'
-import { resolveInteractiveModelSelection } from '../providers/resolveInteractiveModelSelection'
 import { BuddyServiceError } from '../rpc/runtimeRequest'
 import { toPublicRun } from '../runs/publicRun'
-import { SkillError } from '../skills/skillFiles'
-import {
-  formatBuddySkillPrompt,
-} from '../skills/SkillService'
+
 import { requireActiveSpace } from '../spaces/requireActiveSpace'
-import { BUDDY_REVIEW_PROMPT, buildBuddyReviewPrompt, isReviewUserMessage } from './buddyReviewPrompt'
+import { isReviewUserMessage } from './buddyReviewPrompt'
+import { assertPromptSize, ChatInputMaterializer, normalizeThinkingLevel, toModelParameters } from './ChatInputMaterializer'
+import { ChatInputPreparation } from './ChatInputPreparation'
 import { createConversationTitle } from './conversationTitle'
-import { combinePreparedAttachments, persistPreparedTurn } from './persistPreparedTurn'
+import { persistPreparedTurn } from './persistPreparedTurn'
+import { resolveChatInput } from './resolveChatInput'
 import { resolveAuthorizedSessionReferences } from './sessionReferenceAuthorization'
 
-const MAX_CONTEXT_FILE_BYTES = 1024 * 1024
-const MAX_MODEL_INPUT_BYTES = 4 * 1024 * 1024
-const PROMPT_SECTION_SEPARATOR = '\n\n---\n\n'
+export type PreparedStartTurnInput = ChatInputSource & Omit<BuddyStartTurnInput, 'draftId' | 'expectedRevision'>
 
-type ChatContextItem = BuddyTurnContextItem
-
-export interface EditChatUserMessageInput {
+export type EditChatUserMessageInput = ChatInputSource & {
   conversationId: string
-  draftId: string
-  expectedRevision: number
   requestId: string
   userMessageId: string
 }
@@ -127,47 +99,21 @@ export interface ChatTurnServiceOptions {
   turnRequests: TurnRequestRepository
 }
 
-interface TurnReplay {
-  request: TurnRequestRecord
-  run: RunRecord
-}
-
-interface TurnModelSelection extends Omit<InteractiveModelSelection, 'reasoning'> {
-  api: string
-  contextWindow: number | null
-  input: Array<'text' | 'image'>
-  fileInputMimeTypes: ReturnType<typeof getModelFileInputMimeTypes>
-  maxTokens: number | null
-  reasoning: string | null
-}
-
-interface PrepareTurnMaterializationInput {
-  actorId: string
-  composer?: { content: BuddyUserContentV1, resourceIds: readonly string[], resources?: readonly BuddyUserMessageResourceSnapshot[], sourceMessageId?: string, quoteReadAvailable?: boolean }
-  attachmentIds: readonly string[]
-  content: string
-  contextItems: readonly ChatContextItem[]
-  conversationId: string
-  branchId: string
-  point?: ChatInputHistoryPoint
-  draftId: string
-  space: SpaceRecord | null
-  replay: TurnReplay | null
-  requestedModel: InteractiveModelSelection | null
-  preparedSelection?: TurnModelSelection
-}
-
 export class ChatTurnService {
   readonly #options: ChatTurnServiceOptions
   readonly #stopping = new AbortController()
-  readonly #pending = new Set<Promise<unknown>>()
+  readonly #operations = new AsyncOperationScope(() => this.#stopping.signal.reason)
+  readonly #materials: ChatInputMaterializer
+  readonly #preparation: ChatInputPreparation
 
   constructor(options: ChatTurnServiceOptions) {
     this.#options = options
+    this.#materials = new ChatInputMaterializer({ attachments: options.attachments, definitions: options.definitions, inputValidation: options.inputValidation, providers: options.providers, runInputs: options.runInputs, skills: options.skills })
+    this.#preparation = new ChatInputPreparation({ definitions: options.definitions, resources: options.composerResources, attachments: options.attachments, materials: this.#materials })
   }
 
   get hasPendingOperations(): boolean {
-    return this.#pending.size > 0
+    return this.#operations.hasPending
   }
 
   start(input: BuddyStartTurnInput): Promise<BuddyTurnStart> {
@@ -201,8 +147,6 @@ export class ChatTurnService {
     if (previous)
       return previous.runId
     const conversation = this.#requireActiveConversation(request.conversationId)
-    if (conversation.activeBranchId !== request.branchId)
-      throw new BuddyServiceError('VALIDATION_FAILED')
     const resolved = await this.#options.definitions.resolve({ buddyId: owner.buddyId, kind: 'actor', conversationId: conversation.id, requestedModel: null })
     const prompt = `The user answered an earlier question. Continue the original task using this answer. If the source was an NPC, resume that work only when needed. Existing permissions still apply.\n${renderUserQuestionReply(request)}`
     const selection = resolved.selection
@@ -242,15 +186,12 @@ export class ChatTurnService {
     return prepared.runId
   }
 
-  async prepareStart(input: BuddyStartTurnInput) {
+  async prepareStart(input: PreparedStartTurnInput) {
     this.#stopping.signal.throwIfAborted()
-    const draft = this.#options.drafts.findById(input.draftId)
-    if (!draft || draft.revision !== input.expectedRevision)
-      throw new BuddyServiceError('DRAFT_CONFLICT')
+    const draft = resolveChatInput(input, this.#options.drafts)
     if (draft.scope.kind === 'message_edit')
       throw new BuddyServiceError('VALIDATION_FAILED')
     const followupScope = draft.scope.kind === 'message_followup' ? draft.scope : null
-    const content = buddyUserContentToText(draft.content).trim()
     const scope = resolveDraftScope(draft.scope)
     if (scope.conversationId && this.#options.conversationLifecycle.isDeleting(scope.conversationId))
       throw new BuddyServiceError('VALIDATION_FAILED')
@@ -288,8 +229,6 @@ export class ChatTurnService {
       ?? existingConversation?.activeBranchId
       ?? randomUUID()
     const branchId = followupScope ? randomUUID() : parentBranchId
-    if (existingConversation && !followupScope && existingConversation.activeBranchId !== branchId)
-      throw new BuddyServiceError('VALIDATION_FAILED')
     let followup: { parentBranchId: string, sourceMessageId: string, sourceRunId: string } | undefined
     if (followupScope) {
       const history = this.#options.conversations.listBranchMessages(conversationId, followupScope.branchId)
@@ -304,114 +243,26 @@ export class ChatTurnService {
     if (this.#options.conversationLifecycle.isDeleting(conversationId))
       throw new BuddyServiceError('VALIDATION_FAILED')
 
-    const resolvedActor = await this.#options.definitions.resolve({ buddyId, kind: 'actor', conversationId: existingConversation?.id ?? null, requestedModel: draft.modelSelection })
-    const selectedModel = resolvedActor.selection
-    this.#options.definitions.validateActors(actorIds, existingConversation?.id)
-    if (!existingConversation)
-      this.#options.definitions.validateActors(draft.participants?.actorIds ?? [leaderId])
-    const materialized = await requireValue(this.#options.composerResources ?? null)
-      .resolveInput(input.draftId, draft.content, {
-        branchId: existingConversation ? parentBranchId : null,
-        conversationId: existingConversation?.id ?? null,
-        spaceId: space?.id ?? null,
-      }, selectedModel)
-    let stagedAttachments: PreparedTurnAttachments | null = null
-    try {
-      const resourceInputs = materialized.inputs
-      if ((!content && draft.content.sessionReferences?.length) || (!content && resourceInputs.length === 0 && !draft.content.quotes?.length && !draft.content.resourceQuotes?.length))
-        throw new BuddyServiceError('VALIDATION_FAILED')
-      const attachmentIds = getResourceAttachmentIds(resourceInputs)
-      const userMessageId = randomUUID()
-
-      const {
-        attachmentPrompt,
-        prompt,
-        reviewRequested,
-        contextItems: resolvedContextItems,
-        selection,
-        thinkingLevel,
-      } = await this.#prepareTurnMaterialization({
-        actorId: buddyId,
-        attachmentIds,
-        composer: {
-          sourceMessageId: userMessageId,
-          quoteReadAvailable: selectedModel.toolCall !== false && canReadReferenceSnapshots(resolvedActor.definition.settings.tools),
-          content: { ...draft.content, sessionReferences },
-          resourceIds: resourceInputs.map(resource => resource.resourceId),
-          resources: resourceInputs,
-        },
-        content: '',
-        contextItems: [],
-        conversationId,
-        draftId: input.draftId,
-        branchId: parentBranchId,
-        point: !existingConversation ? { kind: 'empty' } : followup ? { kind: 'after_run', runId: followup.sourceRunId, messageId: followup.sourceMessageId } : undefined,
-        space,
-        replay: null,
-        requestedModel: draft.modelSelection,
-        preparedSelection: selectedModel,
-      })
-      const runId = randomUUID()
-      stagedAttachments = combinePreparedAttachments(await this.#options.attachments.prepareMessageAttachments({
-        attachmentIds,
-        conversationId,
-        draftId: input.draftId,
-        messageId: userMessageId,
-      }), materialized)
-      const persistedAttachmentIds = stagedAttachments.bindings.map(binding => binding.id)
-      const prepared: PrepareTurnRequestInput = {
-        ...(input.delivery ? { delivery: input.delivery } : {}),
-        leaderId,
-        expectedActorModelSelection: resolvedActor.memberModelSelection,
-        actorSnapshot: resolvedActor.definition,
-        actorIds,
-        ...(draft.modelSelection ? { modelOverride: draft.modelSelection } : {}),
-        buddyId,
-        followup,
-        approvalPolicy: draft.executionConfig.approvalPolicy,
-        attachmentBindings: stagedAttachments.bindings,
-        branchId,
-        conversationId,
-        createdAt: new Date().toISOString(),
-        draft: {
-          draftId: input.draftId,
-          expectedRevision: input.expectedRevision,
-        },
-        executionProfile: draft.executionConfig.executionProfile,
-        runExecutionProfile: reviewRequested ? 'read_only' : undefined,
-        model: selection.modelId,
-        modelParameters: toModelParameters(selection),
-        spaceId: space?.id ?? null,
-        provider: selection.providerId,
-        requestFingerprint: createStartTurnFingerprint(input),
-        requestId: input.requestId,
-        runInput: {
-          attachmentIds: persistedAttachmentIds,
-          contextItems: resolvedContextItems,
-          prompt,
-          reasoning: thinkingLevel ?? null,
-          serviceTier: selection.serviceTier,
-        },
-        runId,
-        title: createConversationTitle(draft.content, attachmentPrompt.records),
-        userMessageContent: createPersistedUserMessageContent(
-          { ...draft.content, ...(sessionReferences.length ? { sessionReferences } : { sessionReferences: undefined }) },
-          bindResourceAttachments(resourceInputs, persistedAttachmentIds),
-          attachmentPrompt.materialProjection,
-        ),
-        userMessageId,
-      }
-      return { prepared, stagedAttachments }
-    }
-    catch (error) {
-      await (stagedAttachments ?? materialized).rollback()
-      throw error
-    }
+    return this.#preparation.prepare({ draft, buddyId, actorIds, newParticipants: !existingConversation ? draft.participants?.actorIds ?? [leaderId] : undefined, conversationId, existingConversationId: existingConversation?.id ?? null, branchId: parentBranchId, space, sessionReferences, point: !existingConversation ? { kind: 'empty' } : followup ? { kind: 'after_run', runId: followup.sourceRunId, messageId: followup.sourceMessageId } : undefined }, (fields, records): PrepareTurnRequestInput => ({
+      ...fields,
+      ...(input.delivery ? { delivery: input.delivery } : {}),
+      leaderId,
+      followup,
+      approvalPolicy: draft.executionConfig.approvalPolicy,
+      branchId,
+      conversationId,
+      participants: draft.participants,
+      executionProfile: draft.executionConfig.executionProfile,
+      spaceId: space?.id ?? null,
+      requestFingerprint: createStartTurnFingerprint(input),
+      requestId: input.requestId,
+      title: createConversationTitle(draft.content, records),
+    }))
   }
 
   async refreshQueuedInput(input: QueuedTurnRequestInput): Promise<QueuedTurnRequestInput> {
     const conversation = this.#options.conversations.findById(input.conversationId)
-    if (!conversation || conversation.activeBranchId !== input.branchId || this.#options.conversationLifecycle.isDeleting(input.conversationId))
+    if (!conversation || conversation.deletedAt || this.#options.conversationLifecycle.isDeleting(input.conversationId))
       throw new BuddyServiceError('VALIDATION_FAILED')
     const buddyId = input.delivery?.actorId ?? (input.queueRouting?.mode === 'actor' ? input.queueRouting.actorId : conversation.buddyId)
     if (buddyId !== input.buddyId)
@@ -438,7 +289,7 @@ export class ChatTurnService {
   async validatePreparedInput(input: PrepareTurnRequestInput, validateSkills = true): Promise<void> {
     this.#options.definitions.validateActors([input.buddyId ?? this.#options.getDefaultBuddyId(), ...input.actorIds ?? []])
     if (validateSkills)
-      input.runInput.contextItems = await this.#validateSkillItems(input.spaceId, input.runInput.contextItems)
+      input.runInput.contextItems = await this.#materials.validateSkills(input.spaceId, input.runInput.contextItems)
     await this.#options.inputValidation.validate({
       actorId: input.buddyId ?? this.#options.getDefaultBuddyId(),
       conversationId: input.conversationId,
@@ -448,7 +299,7 @@ export class ChatTurnService {
       contextWindow: input.modelParameters?.contextWindow ?? null,
       maxTokens: input.modelParameters?.maxTokens ?? null,
       prompt: input.runInput.prompt,
-      attachments: this.#options.attachments.getInputMetadata(input.runInput.attachmentIds, input.conversationId, input.queuedMessageId ?? input.draft.draftId),
+      attachments: this.#options.attachments.getInputMetadata(input.runInput.attachmentIds, input.conversationId, input.queuedMessageId ?? input.draft?.draftId ?? null),
     })
   }
 
@@ -457,16 +308,24 @@ export class ChatTurnService {
   }
 
   async #editUserMessage(input: EditChatUserMessageInput) {
-    const replay = this.#findReplay(
-      input.requestId,
-      createEditUserMessageFingerprint(input),
-      input.conversationId,
-    )
-    if (replay && !isInterruptedRun(replay.run))
+    const replay = this.#findReplay(input.requestId, createEditUserMessageFingerprint(input), input.conversationId)
+    if (replay)
       return this.#toTurnStart(replay.request, replay.run)
+    const { prepared, stagedAttachments } = await this.prepareEdit(input)
+    const request = await persistPreparedTurn(stagedAttachments, () => {
+      this.#stopping.signal.throwIfAborted()
+      return this.#options.turnRequests.edit(prepared)
+    })
+    return this.#launchPreparedTurn(request)
+  }
 
+  async prepareEdit(input: EditChatUserMessageInput) {
+    this.#stopping.signal.throwIfAborted()
     const conversation = this.#requireActiveConversation(input.conversationId)
-    const parentBranchId = requireValue(conversation.activeBranchId)
+    const draft = resolveChatInput(input, this.#options.drafts)
+    if (draft.scope.kind !== 'message_edit')
+      throw new BuddyServiceError('VALIDATION_FAILED')
+    const parentBranchId = draft.scope.branchId
     const history = this.#options.conversations.listBranchMessages(
       conversation.id,
       parentBranchId,
@@ -475,141 +334,35 @@ export class ChatTurnService {
     const sourceMessage = sourceIndex >= 0 ? history[sourceIndex] : null
     if (sourceMessage?.role !== 'user')
       throw new BuddyServiceError('VALIDATION_FAILED')
-    const draft = replay ? null : this.#options.drafts.findById(input.draftId)
-    if (!replay && (!draft || draft.revision !== input.expectedRevision))
-      throw new BuddyServiceError('DRAFT_CONFLICT')
-    if (draft && (
+    if ((
       draft.scope.kind !== 'message_edit'
       || draft.scope.conversationId !== conversation.id
       || draft.scope.branchId !== parentBranchId
       || draft.scope.userMessageId !== input.userMessageId
-      || draft!.executionConfig.approvalPolicy !== conversation.approvalPolicy
-      || draft!.executionConfig.executionProfile !== conversation.executionProfile
+      || draft.executionConfig.approvalPolicy !== conversation.approvalPolicy
+      || draft.executionConfig.executionProfile !== conversation.executionProfile
     )) {
       throw new BuddyServiceError('VALIDATION_FAILED')
     }
     const forkedFromMessageId = sourceIndex > 0 ? history[sourceIndex - 1]?.id ?? null : null
     const space = this.#resolveConversationSpace(conversation)
-    const sessionReferences = draft
-      ? resolveAuthorizedSessionReferences(draft.content.sessionReferences ?? [], this.#options.conversations)
-      : []
-    const content = draft ? buddyUserContentToText(draft.content).trim() : ''
-    const actorIds = draft ? [...new Set(getBuddyUserContentActorReferences(draft.content).map(reference => reference.actorId))] : []
+    const sessionReferences = resolveAuthorizedSessionReferences(draft.content.sessionReferences ?? [], this.#options.conversations)
+    const actorIds = [...new Set(getBuddyUserContentActorReferences(draft.content).map(reference => reference.actorId))]
     const buddyId = actorIds.length === 1 ? actorIds[0]! : conversation.buddyId
-    const resolvedActor = draft && !replay ? await this.#options.definitions.resolve({ buddyId, kind: 'actor', conversationId: conversation.id, requestedModel: draft.modelSelection }) : undefined
-    const selectedModel = resolvedActor?.selection
-    this.#options.definitions.validateActors(actorIds, conversation.id)
-    const materialized = draft && !replay
-      ? await requireValue(this.#options.composerResources ?? null).resolveInput(
-          draft.draftId,
-          draft.content,
-          { branchId: parentBranchId, conversationId: conversation.id, spaceId: space?.id ?? null },
-          selectedModel,
-        )
-      : null
-    let stagedAttachments: PreparedTurnAttachments | null = null
-    let persistenceOwnsAttachments = false
-    let prepared: TurnRequestRecord
-    try {
-      const resourceInputs = materialized?.inputs ?? []
-      if (!replay && ((!content && draft?.content.sessionReferences?.length) || (!content && resourceInputs.length === 0 && !draft?.content.quotes?.length && !draft?.content.resourceQuotes?.length)))
-        throw new BuddyServiceError('VALIDATION_FAILED')
-      const attachmentIds = getResourceAttachmentIds(resourceInputs)
-      const userMessageId = randomUUID()
-      const {
-        attachmentPrompt,
-        prompt,
-        replayInput,
-        reviewRequested,
-        contextItems: resolvedContextItems,
-        selection,
-        thinkingLevel,
-      } = await this.#prepareTurnMaterialization({
-        actorId: buddyId,
-        attachmentIds,
-        composer: draft
-          ? { content: { ...draft.content, sessionReferences }, resourceIds: resourceInputs.map(resource => resource.resourceId), resources: resourceInputs, sourceMessageId: userMessageId, quoteReadAvailable: selectedModel?.toolCall !== false && !!resolvedActor && canReadReferenceSnapshots(resolvedActor.definition.settings.tools) }
-          : undefined,
-        content: '',
-        contextItems: [],
-        conversationId: conversation.id,
-        draftId: input.draftId,
-        branchId: parentBranchId,
-        point: { kind: 'before_message', messageId: input.userMessageId },
-        space,
-        replay,
-        requestedModel: draft?.modelSelection ?? null,
-        preparedSelection: selectedModel,
-      })
-      const runId = randomUUID()
-      stagedAttachments = replay
-        ? null
-        : combinePreparedAttachments(await this.#options.attachments.prepareMessageAttachments({
-            attachmentIds,
-            conversationId: conversation.id,
-            draftId: input.draftId,
-            messageId: userMessageId,
-          }), requireValue(materialized))
-      const persistedAttachmentIds = replayInput?.attachmentIds
-        ?? stagedAttachments?.bindings.map(binding => binding.id)
-        ?? []
-      const persistedResourceSnapshots = replay ? [] : bindResourceAttachments(resourceInputs, persistedAttachmentIds)
-      persistenceOwnsAttachments = true
-      prepared = await persistPreparedTurn(stagedAttachments, () => {
-        this.#stopping.signal.throwIfAborted()
-        return replay
-          ? this.#options.turnRequests.retryInterrupted({
-              createdAt: new Date().toISOString(),
-              requestId: input.requestId,
-              runId,
-            })
-          : this.#options.turnRequests.edit({
-              expectedActorModelSelection: resolvedActor?.memberModelSelection,
-              actorSnapshot: resolvedActor?.definition,
-              actorIds,
-              ...(draft?.modelSelection ? { modelOverride: draft.modelSelection } : {}),
-              buddyId,
-              approvalPolicy: conversation.approvalPolicy,
-              attachmentBindings: stagedAttachments?.bindings ?? [],
-              branchId: randomUUID(),
-              conversationId: conversation.id,
-              createdAt: new Date().toISOString(),
-              draft: { draftId: input.draftId, expectedRevision: input.expectedRevision },
-              executionProfile: conversation.executionProfile,
-              runExecutionProfile: reviewRequested ? 'read_only' : undefined,
-              forkedFromMessageId,
-              model: selection.modelId,
-              modelParameters: toModelParameters(selection),
-              parentBranchId,
-              spaceId: space?.id ?? null,
-              provider: selection.providerId,
-              requestFingerprint: createEditUserMessageFingerprint(input),
-              requestId: input.requestId,
-              runId,
-              runInput: {
-                attachmentIds: persistedAttachmentIds,
-                contextItems: resolvedContextItems,
-                prompt,
-                reasoning: thinkingLevel ?? null,
-                serviceTier: replayInput ? replayInput.serviceTier : selection.serviceTier,
-              },
-              sourceUserMessageId: input.userMessageId,
-              title: null,
-              userMessageContent: createPersistedUserMessageContent(
-                { ...draft!.content, ...(sessionReferences.length ? { sessionReferences } : { sessionReferences: undefined }) },
-                persistedResourceSnapshots,
-                attachmentPrompt.materialProjection,
-              ),
-              userMessageId,
-            })
-      })
-    }
-    catch (error) {
-      if (!persistenceOwnsAttachments)
-        await (stagedAttachments ?? materialized)?.rollback()
-      throw error
-    }
-    return this.#launchPreparedTurn(prepared)
+    return this.#preparation.prepare({ draft, buddyId, actorIds, conversationId: conversation.id, existingConversationId: conversation.id, branchId: parentBranchId, space, sessionReferences, point: { kind: 'before_message', messageId: input.userMessageId } }, (fields): EditTurnRequestInput => ({
+      ...fields,
+      approvalPolicy: conversation.approvalPolicy,
+      branchId: randomUUID(),
+      conversationId: conversation.id,
+      executionProfile: conversation.executionProfile,
+      forkedFromMessageId,
+      parentBranchId,
+      spaceId: space?.id ?? null,
+      requestFingerprint: createEditUserMessageFingerprint(input),
+      requestId: input.requestId,
+      sourceUserMessageId: input.userMessageId,
+      title: null,
+    }))
   }
 
   regenerateAssistant(input: RegenerateChatAssistantInput) {
@@ -617,14 +370,16 @@ export class ChatTurnService {
   }
 
   async #regenerateAssistant(input: RegenerateChatAssistantInput) {
-    const replay = this.#findReplay(
-      input.requestId,
-      createRegenerationFingerprint(input),
-      input.conversationId,
-    )
-    if (replay && !isInterruptedRun(replay.run))
+    const replay = this.#findReplay(input.requestId, createRegenerationFingerprint(input), input.conversationId)
+    if (replay)
       return this.#toTurnStart(replay.request, replay.run)
+    const prepared = await this.prepareRegenerate(input)
+    const request = this.#options.turnRequests.regenerate(prepared)
+    return this.#launchPreparedTurn(request)
+  }
 
+  async prepareRegenerate(input: RegenerateChatAssistantInput): Promise<RegenerateTurnRequestInput> {
+    this.#stopping.signal.throwIfAborted()
     const conversation = this.#requireActiveConversation(input.conversationId)
     const sourceRun = this.#options.runs.findById(input.sourceRunId)
     if (!sourceRun || sourceRun.conversationId !== conversation.id || sourceRun.purpose === 'conversation.compaction')
@@ -635,16 +390,16 @@ export class ChatTurnService {
     if (triggerIndex < 0)
       throw new BuddyServiceError('VALIDATION_FAILED')
 
-    const storedInput = this.#requireRunInput(requireValue(replay?.run ?? sourceRun).id)
+    const storedInput = this.#requireRunInput(sourceRun.id)
     const sourceContent = buddyUserMessageContentV1Schema.safeParse(history[triggerIndex]!.content)
     const actorIds = sourceContent.success ? [...new Set(getBuddyUserContentActorReferences(sourceContent.data.userContent).map(reference => reference.actorId))] : []
     const buddyId = actorIds.length === 1 ? actorIds[0]! : conversation.buddyId
-    const resolvedActor = !replay ? await this.#options.definitions.resolve({ buddyId, kind: 'actor', conversationId: conversation.id }) : undefined
-    const selectedModel = resolvedActor?.selection ?? await this.#resolveSelection(replay?.run ?? null, replay ? storedInput : null, conversation.modelSelection)
-    await this.#validateSkillItems(conversation.spaceId, storedInput.contextItems)
+    const resolvedActor = await this.#options.definitions.resolve({ buddyId, kind: 'actor', conversationId: conversation.id })
+    const selectedModel = resolvedActor.selection
+    await this.#materials.validateSkills(conversation.spaceId, storedInput.contextItems)
     assertPromptSize(storedInput.prompt)
     await this.#options.inputValidation.validate({
-      actorId: replay?.run.buddyId ?? buddyId,
+      actorId: buddyId,
       conversationId: conversation.id,
       branchId: parentBranchId,
       point: { kind: 'before_message', messageId: sourceRun.triggeringMessageId },
@@ -657,37 +412,37 @@ export class ChatTurnService {
     })
     const runId = randomUUID()
     this.#stopping.signal.throwIfAborted()
-    const prepared = replay
-      ? this.#options.turnRequests.retryInterrupted({
-          createdAt: new Date().toISOString(),
-          requestId: input.requestId,
-          runId,
-        })
-      : this.#options.turnRequests.regenerate({
-          actorIds,
-          expectedActorModelSelection: resolvedActor?.memberModelSelection,
-          actorSnapshot: resolvedActor?.definition,
-          buddyId,
-          approvalPolicy: conversation.approvalPolicy,
-          branchId: randomUUID(),
-          conversationId: conversation.id,
-          createdAt: new Date().toISOString(),
-          executionProfile: conversation.executionProfile,
-          model: selectedModel.modelId,
-          provider: selectedModel.providerId,
-          modelParameters: toModelParameters(selectedModel),
-          reasoning: normalizeThinkingLevel(selectedModel.reasoning) ?? null,
-          serviceTier: selectedModel.serviceTier,
-          expectedModelSelection: conversation.modelSelection,
-          runExecutionProfile: isReviewUserMessage(history[triggerIndex]!.content) ? 'read_only' : undefined,
-          forkedFromMessageId: requireValue(sourceRun).triggeringMessageId,
-          parentBranchId,
-          requestFingerprint: createRegenerationFingerprint(input),
-          requestId: input.requestId,
-          runId,
-          sourceRunId: requireValue(sourceRun).id,
-        })
-    return this.#launchPreparedTurn(prepared)
+    return {
+      actorIds,
+      expectedActorModelSelection: resolvedActor?.memberModelSelection,
+      actorSnapshot: resolvedActor?.definition,
+      buddyId,
+      approvalPolicy: conversation.approvalPolicy,
+      branchId: randomUUID(),
+      conversationId: conversation.id,
+      createdAt: new Date().toISOString(),
+      executionProfile: conversation.executionProfile,
+      model: selectedModel.modelId,
+      provider: selectedModel.providerId,
+      modelParameters: toModelParameters(selectedModel),
+      reasoning: normalizeThinkingLevel(selectedModel.reasoning) ?? null,
+      serviceTier: selectedModel.serviceTier,
+      expectedModelSelection: conversation.modelSelection,
+      runExecutionProfile: isReviewUserMessage(history[triggerIndex]!.content) ? 'read_only' : undefined,
+      forkedFromMessageId: requireValue(sourceRun).triggeringMessageId,
+      parentBranchId,
+      requestFingerprint: createRegenerationFingerprint(input),
+      requestId: input.requestId,
+      runId,
+      sourceRunId: requireValue(sourceRun).id,
+    }
+  }
+
+  launchAccepted(runId: string): Promise<void> {
+    return this.#run(async () => {
+      const turn = await this.#options.turnLauncher.launch(runId, this.#stopping.signal)
+      void turn.completion.catch(() => {})
+    })
   }
 
   async cancel(runId: string) {
@@ -721,23 +476,13 @@ export class ChatTurnService {
   }
 
   async dispose(): Promise<void> {
+    this.#operations.stopAccepting()
     this.#stopping.abort()
-    await Promise.allSettled(this.#pending)
+    await this.#operations.drain()
   }
 
   #run<T>(operation: () => Promise<T>): Promise<T> {
-    if (this.#stopping.signal.aborted)
-      return Promise.reject(this.#stopping.signal.reason)
-    const result = Promise.withResolvers<T>()
-    this.#pending.add(result.promise)
-    void operation().then((value) => {
-      this.#pending.delete(result.promise)
-      result.resolve(value)
-    }, (error) => {
-      this.#pending.delete(result.promise)
-      result.reject(error)
-    })
-    return result.promise
+    return this.#operations.track(operation)
   }
 
   #publicRun(run: RunRecord) {
@@ -759,111 +504,10 @@ export class ChatTurnService {
     return requireValue(this.#options.runInputs.findByRunId(runId))
   }
 
-  async #prepareTurnMaterialization(input: PrepareTurnMaterializationInput) {
-    const replayInput = input.replay ? this.#requireRunInput(input.replay.run.id) : null
-    const selection = input.preparedSelection ?? await this.#resolveSelection(
-      input.replay?.run ?? null,
-      replayInput,
-      input.requestedModel,
-    )
-    const directives = !replayInput && input.composer
-      ? await materializeComposerDirectives(input.composer.content, input.space, this.#options.skills)
-      : null
-    const composer = directives && input.composer
-      ? { ...input.composer, inlineBytes: inputMaterialInlineBytes(selection), resolveDirective: directives.resolveDirective }
-      : undefined
-    const legacyContext = !replayInput && !composer
-      ? await materializeContextItems(input.contextItems, input.space, this.#options.skills)
-      : null
-    const contextItems = replayInput?.contextItems ?? directives?.contextItems ?? legacyContext?.contextItems ?? input.contextItems
-    if (replayInput)
-      await this.#validateSkillItems(input.space?.id ?? null, contextItems)
-    const attachmentPrompt = replayInput
-      ? {
-          prompt: '',
-          records: this.#options.attachments.getInputMetadata(replayInput.attachmentIds, input.conversationId),
-          materialProjection: undefined,
-        }
-      : await this.#options.attachments.preparePrompt(
-          input.attachmentIds,
-          input.content,
-          input.conversationId,
-          input.draftId,
-          composer,
-        )
-    const context = replayInput
-      ? ''
-      : [
-          legacyContext?.prompt ?? '',
-          directives?.contextSuffix ?? '',
-          input.composer && this.#options.definitions ? formatActorReferences(this.#options.definitions.validateActors(getBuddyUserContentActorReferences(input.composer.content).map(reference => reference.actorId))) : '',
-        ].filter(Boolean).join(PROMPT_SECTION_SEPARATOR)
-    const prompt = replayInput?.prompt
-      ?? [attachmentPrompt.prompt, context].filter(Boolean).join(PROMPT_SECTION_SEPARATOR)
-    assertPromptSize(prompt)
-    await this.#options.inputValidation.validate({
-      actorId: input.replay?.run.buddyId ?? input.actorId,
-      conversationId: input.conversationId,
-      branchId: input.branchId,
-      point: input.point,
-      modelId: selection.modelId,
-      providerId: selection.providerId,
-      contextWindow: selection.contextWindow,
-      maxTokens: selection.maxTokens,
-      prompt,
-      attachments: attachmentPrompt.records,
-    })
-    const thinkingLevel = normalizeThinkingLevel(
-      replayInput ? replayInput.reasoning : selection.reasoning,
-    )
-    return {
-      attachmentPrompt,
-      prompt,
-      contextItems,
-      replayInput,
-      reviewRequested: directives?.reviewRequested ?? false,
-      selection,
-      thinkingLevel,
-    }
-  }
-
-  async #validateSkillItems(spaceId: string | null, items: readonly RunInputRecord['contextItems'][number][]) {
-    const selections = items.filter(item => item.kind === 'skill').map(item => item.skill ?? item.value)
-    const loaded = await this.#options.skills.materializeForSpace(spaceId, selections)
-    return items.map(item => item.kind === 'skill' ? { ...item, skill: resolveMaterializedSkill(loaded, item.skill ?? item.value).reference } : item)
-  }
-
   #resolveConversationSpace(conversation: ConversationRecord): SpaceRecord | null {
     return conversation.spaceId
       ? requireActiveSpace(this.#options.spaces.findById(conversation.spaceId))
       : null
-  }
-
-  async #resolveSelection(
-    replayRun: RunRecord | null,
-    replayInput: RunInputRecord | null,
-    requested: InteractiveModelSelection | null,
-  ): Promise<TurnModelSelection> {
-    if (replayRun) {
-      const model = await this.#options.providers.executionModels.resolveAvailable({
-        contextWindow: replayRun.contextWindow,
-        maxTokens: replayRun.maxTokens,
-        modelId: replayRun.model,
-        providerId: replayRun.provider,
-      })
-      return {
-        api: model.api,
-        contextWindow: replayRun.contextWindow,
-        input: model.input,
-        fileInputMimeTypes: getModelFileInputMimeTypes(model),
-        maxTokens: replayRun.maxTokens,
-        modelId: replayRun.model,
-        providerId: replayRun.provider,
-        reasoning: replayInput?.reasoning ?? null,
-        serviceTier: replayInput?.serviceTier ?? null,
-      }
-    }
-    return resolveInteractiveModelSelection(this.#options.providers, requested)
   }
 
   #toTurnStart(request: TurnRequestRecord, run: RunRecord): BuddyTurnStart {
@@ -877,39 +521,7 @@ export class ChatTurnService {
   }
 }
 
-async function materializeComposerDirectives(
-  content: BuddyUserContentV1,
-  space: SpaceRecord | null,
-  skills: Pick<SkillService, 'materializeForSpace'>,
-) {
-  const directives = content.body.flatMap(paragraph => paragraph.content.filter(node => node.type === 'prompt_directive'))
-  if (directives.some(node => node.directive === 'slash_command' && node.commandId))
-    throw new BuddyServiceError('VALIDATION_FAILED')
-  const textCommand = parseBuddyChatCommand(buddyUserContentToText(content))
-  if (textCommand && isBuddyRunChatCommand(textCommand.name))
-    throw new BuddyServiceError('VALIDATION_FAILED')
-  const hasReviewDirective = directives.some(node => node.directive === 'slash_command' && isBuddyReviewCommand(node.value))
-  const reviewsAsText = textCommand?.name === 'review' && !hasReviewDirective
-  const selections = directives.flatMap(node => node.directive === 'skill' ? [node.skill ?? node.value] : [])
-  const loaded = await skills.materializeForSpace(space?.id ?? null, selections)
-  return {
-    reviewRequested: hasReviewDirective || reviewsAsText,
-    contextSuffix: reviewsAsText ? BUDDY_REVIEW_PROMPT : '',
-    contextItems: loaded.map(skill => ({ kind: 'skill' as const, value: skill.name, skill: skill.reference })),
-    resolveDirective(directive: BuddyPromptDirective): string {
-      if (directive.directive === 'skill') {
-        return formatBuddySkillPrompt(resolveMaterializedSkill(loaded, directive.skill ?? directive.value))
-      }
-      if (isRetiredBuddyPromptCommand(directive.value))
-        return directive.value
-      if (isBuddyReviewCommand(directive.value) && directive.commandMode === 'prompt')
-        return buildBuddyReviewPrompt(parseBuddyChatCommand(directive.value)!.arguments)
-      throw new BuddyServiceError('VALIDATION_FAILED')
-    },
-  }
-}
-
-function createStartTurnFingerprint(input: BuddyStartTurnInput): string {
+function createStartTurnFingerprint(input: PreparedStartTurnInput): string {
   return fingerprint({ ...input, requestId: undefined })
 }
 
@@ -944,18 +556,6 @@ function createEditUserMessageFingerprint(input: EditChatUserMessageInput): stri
   })
 }
 
-function createPersistedUserMessageContent(
-  userContent: BuddyUserContentV1,
-  resourceSnapshots: readonly BuddyUserMessageResourceSnapshot[],
-  materialProjection?: InputMaterialProjectionState,
-) {
-  return buddyUserMessageContentV1Schema.parse({
-    resourceSnapshots: [...resourceSnapshots],
-    ...(materialProjection?.deferredReferences || materialProjection?.deferredResourceIds.length ? { materialProjection } : {}),
-    userContent,
-  })
-}
-
 function createRegenerationFingerprint(input: RegenerateChatAssistantInput): string {
   return fingerprint({
     conversationId: input.conversationId,
@@ -981,99 +581,8 @@ function stableSerialize(value: unknown): string {
   return JSON.stringify(value) ?? 'null'
 }
 
-async function materializeContextItems(
-  items: readonly ChatContextItem[],
-  space: SpaceRecord | null,
-  skills: Pick<SkillService, 'materializeForSpace'>,
-) {
-  const selectedSkills = await skills.materializeForSpace(
-    space?.id ?? null,
-    items.filter(item => item.kind === 'skill').map(item => item.skill ?? item.value),
-  )
-  const sections: string[] = []
-  for (const item of items) {
-    if (item.kind === 'skill') {
-      const skill = resolveMaterializedSkill(selectedSkills, item.skill ?? item.value)
-      sections.push(formatBuddySkillPrompt(skill))
-      continue
-    }
-    if (item.kind === 'slashCommand')
-      continue
-    if (!space)
-      throw new BuddyServiceError('DIRECTORY_NOT_AUTHORIZED')
-    const primaryDirectory = space.primaryDirectory
-    const directories = [
-      ...(primaryDirectory ? [primaryDirectory] : []),
-      ...space.additionalDirectories,
-    ]
-    const requestedPath = isAbsolute(item.value)
-      ? item.value
-      : primaryDirectory ? join(primaryDirectory.canonicalRoot, item.value) : null
-    if (!requestedPath)
-      throw new BuddyServiceError('DIRECTORY_NOT_AUTHORIZED')
-    const resolution = await resolveGrantedPath(directories.map(directory => ({
-      canonicalRoot: directory.canonicalRoot,
-      grantId: directory.id,
-      kind: 'workspace' as const,
-      root: directory.root,
-    })), requestedPath, 'existing')
-    const directory = directories.find(item => item.id === resolution.grantId)
-    if (!directory)
-      throw new BuddyServiceError('DIRECTORY_NOT_AUTHORIZED')
-    const content = await readBoundedFile(directory.canonicalRoot, resolution.canonicalPath)
-    if (content.byteLength > MAX_CONTEXT_FILE_BYTES)
-      throw new BuddyServiceError('VALIDATION_FAILED')
-    sections.push(`上下文文件：${item.value}\n\n${content.toString('utf8')}`)
-  }
-  return {
-    prompt: sections.join(PROMPT_SECTION_SEPARATOR),
-    contextItems: items.map(item => item.kind === 'skill' ? { ...item, skill: resolveMaterializedSkill(selectedSkills, item.skill ?? item.value).reference } : item),
-  }
-}
-
-function resolveMaterializedSkill(skills: readonly BuddyMaterializedSkill[], selection: string | SkillReference): BuddyMaterializedSkill {
-  const matches = skills.filter(skill => typeof selection === 'string' ? skill.name === selection : skill.reference.id === selection.id)
-  if (matches.length > 1)
-    throw new SkillError('SKILL_NAME_COLLISION')
-  if (!matches[0])
-    throw new SkillError('SKILL_NOT_FOUND')
-  return matches[0]
-}
-
-function normalizeThinkingLevel(value: string | null | undefined): BuddyThinkingLevel | undefined {
-  if (!value)
-    return undefined
-  if (!isBuddyThinkingLevel(value))
-    throw new BuddyServiceError('VALIDATION_FAILED')
-  return value
-}
-
-function assertPromptSize(prompt: string): void {
-  if (Buffer.byteLength(prompt) > MAX_MODEL_INPUT_BYTES)
-    throw new BuddyServiceError('VALIDATION_FAILED')
-}
-
-function toModelParameters(selection: TurnModelSelection) {
-  return selection.contextWindow !== null && selection.maxTokens !== null
-    ? { contextWindow: selection.contextWindow, maxTokens: selection.maxTokens }
-    : undefined
-}
-
-function isInterruptedRun(run: RunRecord): boolean {
-  return run.status === 'failed' && run.errorCode === 'RUNTIME_RESTARTED'
-}
-
 function requireValue<T>(value: T | null): T {
   if (value === null)
     throw new BuddyServiceError('VALIDATION_FAILED')
   return value
-}
-
-function formatActorReferences(actors: readonly { id: string, name: string }[]): string {
-  if (!actors.length)
-    return ''
-  const routing = actors.length === 1
-    ? 'This request is addressed directly to the named actor. This does not change the conversation leader.'
-    : 'The conversation leader coordinates these explicitly requested actors. Delegate relevant tasks only to these named actors; bound NPCs may help as private workers.'
-  return `${routing}\nRequested conversation actors (stable IDs):\n${JSON.stringify(actors)}`
 }

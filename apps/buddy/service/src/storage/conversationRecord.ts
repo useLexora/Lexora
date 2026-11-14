@@ -10,6 +10,8 @@ export interface ConversationModelSelection {
 }
 
 export interface ConversationRecord {
+  metadataRevision?: number
+  titleRevision?: number
   buddyId: string
   approvalPolicy: BuddyApprovalPolicy
   id: string
@@ -20,13 +22,14 @@ export interface ConversationRecord {
   executionProfile: BuddyExecutionProfile
   modelSelection: ConversationModelSelection | null
   origin: 'automation' | 'interactive'
-  archivedAt: string | null
-  metadataRevision: number
+  archivedAt?: string | null
   deletedAt: string | null
   updatedAt: string
 }
 
 export interface ConversationRow {
+  metadata_revision?: number
+  title_revision?: number
   buddy_id: string
   approval_policy: BuddyApprovalPolicy
   id: string
@@ -37,8 +40,7 @@ export interface ConversationRow {
   execution_profile: BuddyExecutionProfile
   actor_model_selection_json?: string | null
   origin: ConversationRecord['origin']
-  archived_at: string | null
-  metadata_revision: number
+  archived_at?: string | null
   deleted_at: string | null
   updated_at: string
 }
@@ -54,6 +56,7 @@ export function requireConversationRecord(value: unknown, id: string): Conversat
 
 export function toConversationRecord(row: ConversationRow): ConversationRecord {
   return {
+    ...(row.metadata_revision !== undefined ? { metadataRevision: row.metadata_revision, titleRevision: row.title_revision } : {}),
     buddyId: row.buddy_id,
     approvalPolicy: row.approval_policy,
     id: row.id,
@@ -66,8 +69,7 @@ export function toConversationRecord(row: ConversationRow): ConversationRecord {
       ? JSON.parse(row.actor_model_selection_json) as ConversationModelSelection
       : null,
     origin: row.origin,
-    archivedAt: row.archived_at,
-    metadataRevision: row.metadata_revision,
+    archivedAt: row.archived_at ?? null,
     deletedAt: row.deleted_at,
     updatedAt: row.updated_at,
   }

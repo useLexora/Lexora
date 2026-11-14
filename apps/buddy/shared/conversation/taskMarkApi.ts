@@ -22,12 +22,14 @@ export const taskMarkSchema = taskMarkInputSchema.extend({
   id: idSchema,
   createdAt: timestampSchema,
   updatedAt: timestampSchema,
+  revision: z.number().int().nonnegative().optional(),
   taskCount: z.number().int().nonnegative(),
 }).strict()
 
 export const taskMarkStateSchema = z.object({
   conversationId: idSchema,
   markId: idSchema.nullable(),
+  assignmentRevision: z.number().int().nonnegative().optional(),
   resultRunId: idSchema.nullable(),
   readRevision: z.number().int().nonnegative(),
   unread: z.boolean(),
@@ -40,7 +42,7 @@ export const taskMarkReadSchema = z.object({
   read: z.boolean(),
 }).strict()
 
-export const taskMarkClearSchema = taskMarkReadSchema.omit({ read: true })
+export const taskMarkClearSchema = taskMarkReadSchema.omit({ read: true }).extend({ expectedAssignmentRevision: z.number().int().nonnegative().optional() })
 
 export type LocalTaskMark = DeepReadonly<z.infer<typeof taskMarkSchema>>
 export type LocalTaskMarkState = DeepReadonly<z.infer<typeof taskMarkStateSchema>>
@@ -51,10 +53,10 @@ export type TaskMarkClearInput = z.infer<typeof taskMarkClearSchema>
 export const taskMarksRpc = {
   list: { method: 'taskMarks.list', input: validationRequestSchemas.empty, response: z.array(taskMarkSchema) },
   create: { method: 'taskMarks.create', input: taskMarkInputSchema, response: taskMarkSchema },
-  update: { method: 'taskMarks.update', input: taskMarkInputSchema.extend({ id: idSchema }).strict(), response: taskMarkSchema },
-  delete: { method: 'taskMarks.delete', input: z.object({ id: idSchema }).strict(), response: validationResponseSchemas.mutation },
+  update: { method: 'taskMarks.update', input: taskMarkInputSchema.extend({ id: idSchema, expectedRevision: z.number().int().nonnegative().optional() }).strict(), response: taskMarkSchema },
+  delete: { method: 'taskMarks.delete', input: z.object({ id: idSchema, expectedRevision: z.number().int().nonnegative().optional() }).strict(), response: validationResponseSchemas.mutation },
   states: { method: 'taskMarks.states', input: z.object({ conversationIds: z.array(idSchema).max(500) }).strict(), response: z.array(taskMarkStateSchema) },
-  assign: { method: 'taskMarks.assign', input: z.object({ conversationId: idSchema, markId: idSchema.nullable() }).strict(), response: taskMarkStateSchema },
+  assign: { method: 'taskMarks.assign', input: z.object({ conversationId: idSchema, markId: idSchema.nullable(), expectedAssignmentRevision: z.number().int().nonnegative().optional() }).strict(), response: taskMarkStateSchema },
   setRead: { method: 'taskMarks.setRead', input: taskMarkReadSchema, response: taskMarkStateSchema },
   clear: { method: 'taskMarks.clear', input: taskMarkClearSchema, response: taskMarkStateSchema },
 } as const satisfies Record<string, RuntimeRequestContract>

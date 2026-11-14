@@ -2,6 +2,7 @@ import type { BrowserWindow, IpcMainInvokeEvent } from 'electron'
 import type { TaskFileTarget } from '../../../shared/files/taskFileApi'
 import type { BrowserDataService } from './BrowserDataService'
 import type { BrowserHost } from './BrowserHost'
+import type { BrowserIntegration } from './BrowserIntegration'
 import type { BrowserScreenshotService } from './BrowserScreenshotService'
 import { fileURLToPath } from 'node:url'
 import { ipcMain, session, shell, webContents } from 'electron'
@@ -12,6 +13,7 @@ import {
   browserNavigateInputSchema,
   browserOpenArtifactInputSchema,
   browserOpenFileInputSchema,
+  browserPresentationInputSchema,
   browserSessionInputSchema,
   browserSetProfileModeInputSchema,
   browserSetSurfaceInputSchema,
@@ -24,6 +26,7 @@ import { DESKTOP_IPC_CHANNELS } from '../../shared/desktopApi'
 import { assertTrustedSender } from '../ipc'
 
 export interface RegisterBrowserDesktopIpcOptions {
+  presentation?: Pick<BrowserIntegration, 'acquirePresentation' | 'present'>
   data: Pick<BrowserDataService, 'clear' | 'getSummary'>
   screenshots: Pick<BrowserScreenshotService, 'capture'>
   getHost: () => BrowserHost | null
@@ -51,6 +54,18 @@ export function registerBrowserDesktopIpc(
     })
   }
 
+  handle(DESKTOP_IPC_CHANNELS.browserAcquirePresentation, (_host, _input, event) => {
+    const window = options.getWindow()
+    if (!window || !options.presentation || event.senderFrame !== event.sender.mainFrame)
+      throw new Error('DESKTOP_REQUIRED')
+    return options.presentation.acquirePresentation(window)
+  })
+  handle(DESKTOP_IPC_CHANNELS.browserPresent, (_host, input, event) => {
+    const window = options.getWindow()
+    if (!window || !options.presentation || event.senderFrame !== event.sender.mainFrame)
+      throw new Error('DESKTOP_REQUIRED')
+    return options.presentation.present(window, browserPresentationInputSchema.parse(input))
+  })
   handle(DESKTOP_IPC_CHANNELS.browserPickElement, async (host, input, event) => {
     if (event.senderFrame !== event.sender.mainFrame)
       throw new Error('Element picking requires the trusted main frame')
@@ -69,6 +84,8 @@ export function registerBrowserDesktopIpc(
     return host.locateElement(browserLocateElementInputSchema.parse(input))
   })
   handle(DESKTOP_IPC_CHANNELS.browserAttachGuest, (host, input, event) => {
+    if (options.presentation)
+      throw new Error('Browser pages are owned by the platform host')
     const { sessionId, webContentsId } = browserAttachGuestInputSchema.parse(input)
     const guest = webContents.fromId(webContentsId)
     if (

@@ -1,12 +1,13 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { createReadStream } from 'node:fs'
-import { lstat, open, readFile, rename, writeFile } from 'node:fs/promises'
+import { lstat, open, readFile, realpath, rename, writeFile } from 'node:fs/promises'
 import { join, posix, relative, win32 } from 'node:path'
 import { createInterface } from 'node:readline'
 import { containsStoragePath, storageError } from '../../../platform/storage/storageFiles'
-import { walkStorage } from '../../../platform/storage/storageTree'
+import { hashStorageFile, walkStorage } from '../../../platform/storage/storageTree'
 
 const pathColumns: Record<string, string[]> = {
+  managed_files: ['path', 'temporary_path'],
   attachments: ['stored_path', 'source_path'],
   composer_resources: ['source_path'],
   artifacts: ['current_path', 'directory_root'],
@@ -47,6 +48,8 @@ export function relocateDatabaseReferences(database: DatabaseSync, source: strin
   database.exec('BEGIN IMMEDIATE')
   try {
     for (const { name: table } of tables) {
+      if (['command_receipts', 'approval_reviews', 'product_content_references', 'persistence_migration_entries', 'legacy_request_aliases'].includes(table))
+        continue
       if (!/^\w+$/.test(table))
         throw storageError('STORAGE_UNKNOWN_SCHEMA')
       const columns = database.prepare(`PRAGMA table_info("${table}")`).all() as {
@@ -146,6 +149,17 @@ export async function verifyProfileReferences(database: DatabaseSync, candidate:
           throw storageError('STORAGE_REFERENCE_MISSING')
         })
       }
+    }
+  }
+  if (database.prepare('SELECT 1 FROM sqlite_master WHERE type = \'table\' AND name = \'managed_files\'').get()) {
+    const root = await realpath(candidate)
+    for (const file of database.prepare('SELECT path, size_bytes, sha256 FROM managed_files WHERE state = \'ready\' AND EXISTS (SELECT 1 FROM file_references WHERE file_id = managed_files.id)').iterate()) {
+      if (typeof file.path !== 'string' || !containsStoragePath(target, file.path))
+        throw storageError('STORAGE_REFERENCE_OUTSIDE')
+      const path = join(candidate, relative(target, file.path))
+      const info = await lstat(path).catch(() => null)
+      if (!info?.isFile() || !containsStoragePath(root, await realpath(path)) || info.size !== Number(file.size_bytes) || await hashStorageFile(path) !== file.sha256)
+        throw storageError('STORAGE_REFERENCE_INVALID')
     }
   }
 }

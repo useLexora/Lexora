@@ -10,11 +10,11 @@ export interface TaskIndexManagementOptions {
   spaces: Readonly<Ref<readonly LocalSpace[]>>
   getUntitledLabel: () => string
   onCreateSpace: (input: TaskSpaceInput) => Promise<boolean>
-  onDeleteTask: (conversationId: string, expectedRevision: number) => void
+  onDeleteTask: (conversationId: string, expectedRevision?: number) => void
   onDeleteSpace: (spaceId: string) => void
   onNewTask: (spaceId: string) => void
   onOpenSpaceDirectory: (spaceId: string) => void
-  onRenameTask: (conversationId: string, title: string) => void
+  onRenameTask: (conversationId: string, title: string, expectedTitleRevision?: number) => void
   onUpdateSpace: (input: TaskSpaceInput & { spaceId: string }) => Promise<boolean>
 }
 
@@ -48,7 +48,7 @@ export function useTaskIndexManagement(options: TaskIndexManagementOptions) {
   }
 
   function requestTaskDelete(conversation: LocalConversation) {
-    taskDeleteTarget.value = { ...conversation }
+    taskDeleteTarget.value = conversation
   }
 
   function confirmTaskRename() {
@@ -56,15 +56,14 @@ export function useTaskIndexManagement(options: TaskIndexManagementOptions) {
     const title = taskTitleDraft.value.trim()
     if (!target || !title)
       return
-    options.onRenameTask(target.id, title)
+    options.onRenameTask(target.id, title, target.titleRevision)
     taskRenameTarget.value = null
   }
 
   function confirmTaskDelete() {
-    const target = taskDeleteTarget.value
-    if (!target || target.metadataRevision === undefined)
+    if (!taskDeleteTarget.value)
       return
-    options.onDeleteTask(target.id, target.metadataRevision)
+    options.onDeleteTask(taskDeleteTarget.value.id, taskDeleteTarget.value.metadataRevision)
     taskDeleteTarget.value = null
   }
 

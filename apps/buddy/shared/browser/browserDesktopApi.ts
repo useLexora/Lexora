@@ -68,10 +68,20 @@ export interface DesktopBrowserState {
 }
 
 export interface DesktopBrowserGuestDescriptor {
+  pageId?: string
   owner?: BrowserPageOwner
   conversationId?: string
   partition: string
   sessionId: string
+}
+
+export interface DesktopBrowserPresentationInput {
+  presentationId: string
+  sessionId: string
+  pageId: string
+  visible: boolean
+  bounds: { x: number, y: number, width: number, height: number }
+  clip: { x: number, y: number, width: number, height: number }
 }
 
 export interface DesktopBrowserAttachGuestInput {
@@ -109,6 +119,8 @@ export interface DesktopBrowserSetSurfaceInput {
 }
 
 export interface DesktopBrowserApi {
+  acquirePresentation: () => Promise<string>
+  present: (input: DesktopBrowserPresentationInput) => Promise<string | null>
   pickElement: (sessionId: string, requestId: string) => Promise<BrowserPickResult>
   cancelElementPick: (sessionId: string, requestId: string) => Promise<void>
   locateElement: (input: BrowserLocateElementInput) => Promise<boolean>

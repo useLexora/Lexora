@@ -1,47 +1,35 @@
-import type { Api, Context, Model, UserMessage } from '@earendil-works/pi-ai'
+import type { Api, Model } from '@earendil-works/pi-ai'
 import type {
   AgentSession,
   SessionEntry,
 } from '@earendil-works/pi-coding-agent'
-import type { ExecutionMailboxMessage, ExecutionMailboxReceipt } from '../../../../shared/executions/executionApi'
+import type { ExecutionMailboxMessage } from '../../../../shared/executions/executionApi'
 import type { ImagePreferences } from '../../../../shared/images/imagePreferences'
 import type { BuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
 import type { RuntimePreferences } from '../../../../shared/runtime/runtimePreferences'
 import type { SkillReference } from '../../../../shared/skills/skillApi'
-import type { AttachmentFileInput } from '../../attachments/AttachmentDocumentReference'
-import type { AttachmentImageReference } from '../../attachments/AttachmentImageReference'
-import type { PreparedAttachmentImage } from '../../attachments/AttachmentImageStore'
-import type { InputModel } from '../../providers/modelCapabilities'
 import type {
   BuddyInputReferenceStore,
   BuddyInputReferenceV1,
 } from '../context/BuddyInputReference'
 import type { BuddyExtensionRunContextStore } from '../extensions/BuddyExtensionRunContext'
+import type { PiInputMaterialization } from './PiRequestMaterializer'
 import type { BuddySessionModelSelection, BuddySessionShutdownReason, ReusableBuddySession } from './ReusableBuddySession'
 import type { BuddyConversationTreeCursor } from './tree/BuddyConversationTree'
-import { Buffer } from 'node:buffer'
-import { randomUUID } from 'node:crypto'
-import { createAssistantMessageEventStream } from '@earendil-works/pi-ai'
 import { prepareCompaction } from '@earendil-works/pi-coding-agent'
 import { BUDDY_DEFAULT_THINKING_LEVEL } from '../../../../shared/conversation/modelSelection'
 import { copyEventSnapshot } from '../../../../shared/events/eventSnapshot'
-import { EXECUTION_MAILBOX_ENTRY_TYPE, executionMailboxMessageSchema, executionMailboxReceiptSchema } from '../../../../shared/executions/executionApi'
 import { DEFAULT_RUNTIME_PREFERENCES } from '../../../../shared/runtime/runtimePreferences'
-import { applyDocumentInputPayload } from '../../providers/documentInputPayload'
-import { supportsModelFileInput, supportsModelToolCalls } from '../../providers/modelCapabilities'
-import { getModelImageLimits, getModelRequestBytesLimit, getModelRequestOverheadReserve } from '../../providers/modelInputBudget'
 import { BuddyAgentRunError } from '../../runs/runError'
 import { SkillError } from '../../skills/skillFiles'
 import { createBuddyInputReferenceMessage, readBuddyInputReference } from '../context/BuddyInputReference'
 import { createContextUsageBreakdown, createEstimatedContextUsage } from '../context/contextUsageBreakdown'
-import { prepareBuddyInputHistory } from '../context/prepareBuddyInputHistory'
-import { projectBuddyInput, projectMessageImages } from '../context/projectBuddyInput'
-import { readExecutionMailboxEntries, renderMailboxMessage } from '../execution/executionMailboxEntries'
-import { BuddySessionStorageError, toBuddySessionStorageError } from './BuddySessionErrors'
 import { getBuddyCacheWarmingStatus } from './getBuddyCacheWarmingStatus'
-import { syncBuddySessionJournal } from './tree/syncBuddySessionJournal'
+import { PiRequestMaterializer } from './PiRequestMaterializer'
+import { PiSessionMailbox } from './PiSessionMailbox'
+import { withPiSessionStorageBoundary } from './withPiSessionStorageBoundary'
 
-export interface CreateReusableBuddySessionOptions {
+export interface CreateReusableBuddySessionOptions extends PiInputMaterialization {
   getPendingExecutionMessages?: (runId: string, entries: readonly SessionEntry[]) => readonly ExecutionMailboxMessage[]
   getModelSelection?: () => Promise<BuddySessionModelSelection | null>
   getImagePreferences?: (signal: AbortSignal) => Promise<ImagePreferences>
@@ -58,11 +46,6 @@ export interface CreateReusableBuddySessionOptions {
     maxTokens: number | null,
   ) => Promise<Model<Api>>
   inputReferences: BuddyInputReferenceStore
-  getInputMetadata?: (ids: readonly string[]) => readonly { id: string, sizeBytes: number }[]
-  allowsNativeImages?: () => Promise<boolean>
-  prepareInputImages?: (images: readonly AttachmentImageReference[], model: InputModel) => Promise<ReadonlyMap<string, PreparedAttachmentImage | null>>
-  materializeInput: (input: BuddyInputReferenceV1, images?: ReadonlyMap<string, PreparedAttachmentImage | null>) => Promise<UserMessage['content']>
-  materializeDocuments?: (input: BuddyInputReferenceV1) => Promise<AttachmentFileInput[]>
   runContext: BuddyExtensionRunContextStore
   session: AgentSession
   shutdown: (reason: BuddySessionShutdownReason) => Promise<void>
@@ -78,6 +61,7 @@ export function createReusableBuddySession(
   let pendingRetryOffset: number | null = null
   let finishingTurn: Promise<void> | undefined
   let generation: number | undefined
+  const mailbox = new PiSessionMailbox(session, options.runContext, () => generation)
   let preparedModelRun: BuddyExtensionRunContextStore['current'] = null
   let completedTurn: Parameters<NonNullable<AgentSession['agent']['finishTurn']>>[0] | undefined
   const finishAgentTurn = session.agent.finishTurn
@@ -134,20 +118,10 @@ export function createReusableBuddySession(
     const messages = options.getPendingExecutionMessages?.(run.runId, session.sessionManager.getBranch()) ?? []
     if (!messages.length)
       return prepared ?? undefined
-    return withPiSessionStorageBoundary(session, async () => {
-      for (const value of messages) {
-        const message = executionMailboxMessageSchema.parse(value)
-        if (message.targetRunId !== run.runId || message.targetGeneration !== generation)
-          throw new BuddyAgentRunError('CONVERSATION_BINDING_MISMATCH')
-        session.sessionManager.appendCustomMessageEntry(EXECUTION_MAILBOX_ENTRY_TYPE, renderMailboxMessage(message), false, message)
-      }
-      syncBuddySessionJournal(session.sessionManager)
-      assertCurrentRun(run)
-      return {
-        ...prepared,
-        context: { ...(prepared?.context ?? request.context), messages: session.sessionManager.buildSessionProjection().messages },
-      }
-    })
+    return {
+      ...prepared,
+      context: { ...(prepared?.context ?? request.context), messages: await mailbox.appendPending(messages, run) },
+    }
   }
   async function refreshRequestModel(signal?: AbortSignal) {
     const run = options.runContext.current
@@ -187,9 +161,6 @@ export function createReusableBuddySession(
     pendingRetryOffset = null
     applySessionSettings(preferences.cacheWarming)
   })
-  const convertToLlm = session.agent.convertToLlm
-  const streamFunction = session.agent.streamFunction
-  let latestContext: Context | null = null
   const pendingInputs = new Map<string, BuddyInputReferenceV1>()
   const pendingSteering = new Set<string>()
   const idleInputs: { input: BuddyInputReferenceV1, mode: 'steer' | 'followUp' }[] = []
@@ -202,7 +173,6 @@ export function createReusableBuddySession(
       pendingSteering.delete(input.messageId)
     }
   })
-  const requestInputs = new WeakMap<Context['messages'], { failed: boolean, failureCode?: string, documents: Map<string, AttachmentFileInput> }>()
   function enqueueInput(mode: 'steer' | 'followUp', prepare: () => BuddyInputReferenceV1, skills: readonly SkillReference[] = []) {
     if (!options.runContext.current || options.runContext.current.signal.aborted || finishingTurn)
       return false
@@ -241,135 +211,27 @@ export function createReusableBuddySession(
         options.inputReferences.pending = null
     })
   }
-  session.agent.convertToLlm = async (messages) => {
-    const request = { failed: options.inputReferences.pending !== null, failureCode: undefined as string | undefined, documents: new Map<string, AttachmentFileInput>() }
-    const materialized = []
-    const projected = new Map<string, BuddyInputReferenceV1>()
-    const preparedImages = new Map<string, PreparedAttachmentImage | null>()
-    const projectedMessages = new Map<AgentSession['messages'][number], AgentSession['messages'][number]>()
-    const model = session.model
-    if (!model)
+  const materializer = new PiRequestMaterializer({
+    hasPendingInput: () => options.inputReferences.pending !== null,
+    convertToLlm: session.agent.convertToLlm,
+    streamFunction: session.agent.streamFunction,
+    getInputMetadata: options.getInputMetadata,
+    allowsNativeImages: options.allowsNativeImages,
+    prepareInputImages: options.prepareInputImages,
+    materializeInput: options.materializeInput,
+    materializeDocuments: options.materializeDocuments,
+    onRequest: (model) => {
+      const run = options.runContext.current
+      if (run && !run.signal.aborted)
+        run.requestModel = Object.freeze({ providerId: model.provider, modelId: model.id, reasoning: session.thinkingLevel, serviceTier: run.serviceTier ?? null })
+    },
+  })
+  session.agent.convertToLlm = (messages) => {
+    if (!session.model)
       throw new Error('Missing input model')
-    const imageModel = model.input.includes('image') && await options.allowsNativeImages?.() === false ? { ...model, input: model.input.filter(kind => kind !== 'image') } : model
-    const history = prepareBuddyInputHistory(messages)
-    const imageLimits = getModelImageLimits(model)
-    const mergeToolImages = ['openai-completions', 'anthropic-messages', 'bedrock-converse-stream'].includes(model.api)
-    const budget = {
-      remainingBytes: getModelRequestBytesLimit(model) - getModelRequestOverheadReserve(model)
-        - Buffer.byteLength(JSON.stringify(history.map(message => projectMessageImages(message, { ...model, input: ['text'] }))), 'utf8'),
-      remainingImages: imageLimits.maxPerRequest,
-      remainingMessageImages: imageLimits.maxPerMessage,
-    }
-    try {
-      let previousRole: AgentSession['messages'][number]['role'] | undefined
-      for (const message of [...history].reverse()) {
-        if (!mergeToolImages || message.role !== 'toolResult' || previousRole !== 'toolResult')
-          budget.remainingMessageImages = imageLimits.maxPerMessage
-        previousRole = message.role
-        const reference = readBuddyInputReference(message)
-        if (!reference) {
-          projectedMessages.set(message, projectMessageImages(message, imageModel, budget))
-          continue
-        }
-        const ids = reference.attachmentIds ?? [...reference.images, ...reference.documents ?? []].map(file => file.attachmentId)
-        const sizes = new Map(options.getInputMetadata?.(ids).map(file => [file.id, file.sizeBytes]) ?? [])
-        let images: ReadonlyMap<string, PreparedAttachmentImage | null> | undefined
-        if (imageModel.input.includes('image') && options.prepareInputImages) {
-          images = budget.remainingBytes > 512 && budget.remainingImages > 0
-            ? await options.prepareInputImages(reference.images, model)
-            : new Map<string, PreparedAttachmentImage | null>()
-          for (const image of reference.images) {
-            const prepared = images.get(image.attachmentId) ?? null
-            sizes.set(image.attachmentId, prepared ? Buffer.byteLength(prepared.image.data, 'base64') : Number.POSITIVE_INFINITY)
-          }
-        }
-        const projection = projectBuddyInput(reference, imageModel, sizes, budget.remainingBytes, budget.remainingImages)
-        for (const image of projection.input.images) {
-          const prepared = images?.get(image.attachmentId)
-          if (prepared)
-            preparedImages.set(image.attachmentId, prepared)
-        }
-        projected.set(reference.messageId, projection.input)
-        budget.remainingBytes -= projection.bytes
-        budget.remainingImages -= projection.input.images.length
-      }
-    }
-    catch {
-      request.failed = true
-    }
-    for (const message of history) {
-      try {
-        const reference = readBuddyInputReference(message)
-        if (!reference) {
-          materialized.push(projectedMessages.get(message) ?? message)
-          continue
-        }
-        const input = projected.get(reference.messageId)
-        if (!input)
-          throw new Error('Missing input projection')
-        const content = await options.materializeInput(input, preparedImages)
-        if (
-          !Array.isArray(content)
-          || content.some(block => block.type === 'image' && !block.data)
-        ) {
-          throw new Error('Empty image input')
-        }
-        const documents = input.documents?.length ? await options.materializeDocuments?.(input) : []
-        if (!documents || documents.length !== (input.documents?.length ?? 0))
-          throw new Error('Missing document input')
-        const documentBlocks = documents.flatMap((file, index) => {
-          const token = `buddy-file:${randomUUID()}`
-          request.documents.set(token, file)
-          return [
-            { type: 'text' as const, text: `Native attachment: ${input.documents![index]!.attachmentId} (${JSON.stringify(file.name)})` },
-            { type: 'text' as const, text: token },
-          ]
-        })
-        materialized.push({ content: [...content, ...documentBlocks], role: 'user' as const, timestamp: message.timestamp })
-      }
-      catch (error) {
-        request.failed = true
-        if (error instanceof Error && error.message === 'MODEL_INPUT_UNSUPPORTED')
-          request.failureCode = error.message
-      }
-    }
-    const converted = await convertToLlm(materialized)
-    requestInputs.set(converted, request)
-    return converted
+    return materializer.convert(messages, session.model)
   }
-  session.agent.streamFunction = (model, context, streamOptions) => {
-    latestContext = null
-    const request = requestInputs.get(context.messages)
-    if (request?.failed)
-      return createInputMaterializationFailure(model, request.failureCode)
-    if (request && [...request.documents.values()].some(file => !supportsModelFileInput(model, file.mimeType)))
-      return createInputMaterializationFailure(model, 'MODEL_INPUT_UNSUPPORTED')
-    const requestContext = supportsModelToolCalls(model)
-      ? context
-      : {
-          ...context,
-          messages: context.messages.map(message => message.role === 'system'
-            ? { ...message, toolsAdded: undefined, toolsRemoved: undefined }
-            : message),
-        }
-    latestContext = requestContext
-    const run = options.runContext.current
-    if (run && !run.signal.aborted) {
-      run.requestModel = Object.freeze({
-        providerId: model.provider,
-        modelId: model.id,
-        reasoning: session.thinkingLevel,
-        serviceTier: run.serviceTier ?? null,
-      })
-    }
-    return streamFunction(model, requestContext, {
-      ...streamOptions,
-      onPayload: async (payload, target) => {
-        const previous = await streamOptions?.onPayload?.(payload, target)
-        return applyDocumentInputPayload(previous ?? payload, target, request?.documents ?? new Map())
-      },
-    })
-  }
+  session.agent.streamFunction = (...input) => materializer.stream(...input)
   return {
     updatePermissionSettings: options.updatePermissionSettings,
     refreshModelSelection: () => {
@@ -431,7 +293,7 @@ export function createReusableBuddySession(
       options.assertCodemodeReady?.()
       input.signal.throwIfAborted()
       finishingTurn = undefined
-      latestContext = null
+      materializer.reset()
       preparedModelRun = null
       completedTurn = undefined
       generation = input.generation
@@ -498,66 +360,16 @@ export function createReusableBuddySession(
       },
     ),
     getToolLabel: name => session.getToolDefinition(name)?.label,
-    getContextUsageEstimate: () => latestContext ? createEstimatedContextUsage(latestContext) : null,
-    getContextUsageBreakdown: totalTokens => latestContext
-      ? createContextUsageBreakdown(latestContext, totalTokens)
+    getContextUsageEstimate: () => materializer.context ? createEstimatedContextUsage(materializer.context) : null,
+    getContextUsageBreakdown: totalTokens => materializer.context
+      ? createContextUsageBreakdown(materializer.context, totalTokens)
       : null,
     prompt,
-    readInternalMessageReceipts: messages => withPiSessionStorageBoundary(session, async () => {
-      const run = requireIdleRun()
-      const receipts: ExecutionMailboxReceipt[] = []
-      for (const value of messages) {
-        const message = executionMailboxMessageSchema.parse(value)
-        if (message.targetRunId !== run.runId || message.targetGeneration !== generation)
-          throw new BuddyAgentRunError('CONVERSATION_BINDING_MISMATCH')
-        const entry = findMailboxEntry(message)
-        if (entry)
-          receipts.push({ sourceRunId: message.sourceRunId, messageId: message.messageId, payloadHash: message.payloadHash, contextEntryId: entry.contextEntryId })
-      }
-      if (receipts.length)
-        syncBuddySessionJournal(session.sessionManager)
-      assertCurrentRun(run)
-      return receipts
-    }),
-    appendInternalMessages: messages => withPiSessionStorageBoundary(session, async () => {
-      const run = requireIdleRun()
-      const receipts: ExecutionMailboxReceipt[] = []
-      for (const value of messages) {
-        const message = executionMailboxMessageSchema.parse(value)
-        assertCurrentRun(run)
-        if (message.targetRunId !== run.runId || message.targetGeneration !== generation)
-          throw new BuddyAgentRunError('CONVERSATION_BINDING_MISMATCH')
-        let entry = findMailboxEntry(message)
-        if (!entry) {
-          await session.sendCustomMessage({
-            customType: EXECUTION_MAILBOX_ENTRY_TYPE,
-            content: renderMailboxMessage(message),
-            details: message,
-            display: false,
-          }, { triggerTurn: false })
-          assertCurrentRun(run)
-          entry = findMailboxEntry(message)
-        }
-        if (!entry)
-          throw new BuddySessionStorageError()
-        receipts.push({ sourceRunId: message.sourceRunId, messageId: message.messageId, payloadHash: message.payloadHash, contextEntryId: entry.contextEntryId })
-      }
-      if (receipts.length)
-        syncBuddySessionJournal(session.sessionManager)
-      assertCurrentRun(run)
-      return receipts
-    }),
+    readInternalMessageReceipts: messages => withPiSessionStorageBoundary(session, () => mailbox.readReceipts(messages, requireIdleRun())),
+    appendInternalMessages: messages => withPiSessionStorageBoundary(session, () => mailbox.append(messages, requireIdleRun())),
     resumeInternal: receipts => withPiSessionStorageBoundary(session, async () => {
       const run = requireIdleRun()
-      if (!receipts.length)
-        throw new BuddyAgentRunError('VALIDATION_FAILED')
-      const sources = receipts.map((value) => {
-        const receipt = executionMailboxReceiptSchema.parse(value)
-        const entry = mailboxEntries().find(entry => entry.contextEntryId === receipt.contextEntryId && entry.message.sourceRunId === receipt.sourceRunId && entry.message.messageId === receipt.messageId)
-        if (!entry || entry.message.payloadHash !== receipt.payloadHash)
-          throw new BuddySessionStorageError()
-        return { sourceRunId: receipt.sourceRunId, messageId: receipt.messageId, payloadHash: receipt.payloadHash }
-      })
+      const sources = mailbox.resolveReceipts(receipts)
       if (options.getPermissionSettings)
         options.updatePermissionSettings?.(options.getPermissionSettings(run.runId))
       assertCurrentRun(run)
@@ -610,65 +422,6 @@ export function createReusableBuddySession(
     run.signal.throwIfAborted()
     if (options.runContext.current !== run)
       throw new BuddyAgentRunError('RUN_STATE_MISMATCH')
-  }
-
-  function mailboxEntries() {
-    const run = options.runContext.current
-    if (!run || generation === undefined)
-      throw new BuddyAgentRunError('RUN_STATE_MISMATCH')
-    return readExecutionMailboxEntries(session.sessionManager.getBranch(), { runId: run.runId, generation })
-  }
-
-  function findMailboxEntry(message: ExecutionMailboxMessage) {
-    const entry = mailboxEntries().find(entry => entry.message.sourceRunId === message.sourceRunId && entry.message.messageId === message.messageId)
-    if (entry && JSON.stringify(entry.message) !== JSON.stringify(message))
-      throw new BuddySessionStorageError()
-    return entry ?? null
-  }
-}
-
-function createInputMaterializationFailure(model: Model<Api>, code = 'RESOURCE_MATERIALIZATION_FAILED') {
-  const stream = createAssistantMessageEventStream()
-  queueMicrotask(() => {
-    stream.push({
-      error: {
-        api: model.api,
-        content: [],
-        errorMessage: code,
-        model: model.id,
-        provider: model.provider,
-        role: 'assistant',
-        stopReason: 'error',
-        timestamp: Date.now(),
-        usage: {
-          cacheRead: 0,
-          cacheWrite: 0,
-          cost: { cacheRead: 0, cacheWrite: 0, input: 0, output: 0, total: 0 },
-          input: 0,
-          output: 0,
-          totalTokens: 0,
-        },
-      },
-      reason: 'error',
-      type: 'error',
-    })
-  })
-  return stream
-}
-
-async function withPiSessionStorageBoundary<TResult>(
-  session: AgentSession,
-  operation: () => Promise<TResult>,
-): Promise<TResult> {
-  try {
-    return await operation()
-  }
-  catch (error) {
-    const sessionFile = session.sessionManager.getSessionFile()
-    const storageError = sessionFile
-      ? toBuddySessionStorageError(error, sessionFile)
-      : null
-    throw storageError ?? error
   }
 }
 

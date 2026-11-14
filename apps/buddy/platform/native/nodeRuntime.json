@@ -1,0 +1,45 @@
+{
+  "version": "26.2.0",
+  "release": "https://nodejs.org/dist/v26.2.0",
+  "resource": {
+    "from": ".output/resources/node-runtime",
+    "to": "lexora-runtime"
+  },
+  "targets": {
+    "linux-x64": {
+      "archive": "node-v26.2.0-linux-x64.tar.gz",
+      "sha256": "8e5b4b969bb2414aca2ff84d2b99608511aedca32bf8a8427e6187dbdd703bbe",
+      "entry": "node-v26.2.0-linux-x64/bin/node",
+      "license": "node-v26.2.0-linux-x64/LICENSE",
+      "binary": "node"
+    },
+    "linux-arm64": {
+      "archive": "node-v26.2.0-linux-arm64.tar.gz",
+      "sha256": "bf52461d25017479cdc549642c4e7a2303ac5c5395d7c3d026d5d8b3fa283c05",
+      "entry": "node-v26.2.0-linux-arm64/bin/node",
+      "license": "node-v26.2.0-linux-arm64/LICENSE",
+      "binary": "node"
+    },
+    "win32-x64": {
+      "archive": "node-v26.2.0-win-x64.zip",
+      "sha256": "371071a4f7e2c8a5dd280730049c685911feecc59f50ebc488d675dc1087c69c",
+      "entry": "node-v26.2.0-win-x64/node.exe",
+      "license": "node-v26.2.0-win-x64/LICENSE",
+      "binary": "node.exe"
+    },
+    "win32-arm64": {
+      "archive": "node-v26.2.0-win-arm64.zip",
+      "sha256": "131efa8bd858f8ad000a1a0436d8bb1320c638291c779a921fb20e5702a1cc0a",
+      "entry": "node-v26.2.0-win-arm64/node.exe",
+      "license": "node-v26.2.0-win-arm64/LICENSE",
+      "binary": "node.exe"
+    },
+    "darwin-arm64": {
+      "archive": "node-v26.2.0-darwin-arm64.tar.gz",
+      "sha256": "2d8575b6a749c0bc66cc6ecd22a952f7d9bbf3b0ea76fcb0ed3ce858018afff7",
+      "entry": "node-v26.2.0-darwin-arm64/bin/node",
+      "license": "node-v26.2.0-darwin-arm64/LICENSE",
+      "binary": "node"
+    }
+  }
+}

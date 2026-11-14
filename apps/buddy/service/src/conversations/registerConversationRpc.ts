@@ -69,7 +69,7 @@ export function registerConversationRpc(options: RegisterConversationRpcOptions)
   disposers.push(registerRuntimeRequest(options.rpc, conversationHistoryRpc.listHistory, input => options.conversations.listHistory(input)))
   disposers.push(registerRuntimeRequest(options.rpc, conversationHistoryRpc.getHistoryEntries, input => options.conversations.getHistoryEntries(input.ids)))
   disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.get, (input) => {
-    return requireReadableConversation(options, input.conversationId)
+    return requireActiveConversation(options, input.conversationId)
   }))
   disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.getModelControls, input => options.metadata.getModelControls(input.conversationId, input.actorId)))
   disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.rename, (input) => {
@@ -102,13 +102,13 @@ export function registerConversationRpc(options: RegisterConversationRpcOptions)
     return options.metadata.activateBranch(input)
   }))
   disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.listBranches, (input) => {
-    requireReadableConversation(options, input.conversationId)
+    requireActiveConversation(options, input.conversationId)
     if (options.isDeleting(input.conversationId))
       throw new BuddyServiceError('VALIDATION_FAILED')
     return options.conversations.listBranches(input.conversationId)
   }))
   disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.listMessages, async (input) => {
-    const conversation = requireReadableConversation(options, input.conversationId)
+    const conversation = requireActiveConversation(options, input.conversationId)
     const branchId = input.branchId ?? requireValue(conversation.activeBranchId)
     const readPage = () => options.conversations.listMessagePage(
       input.conversationId,
@@ -124,7 +124,7 @@ export function registerConversationRpc(options: RegisterConversationRpcOptions)
       },
     )
     const page = await readVerifiedHistoryPage(options, readPage, page => page.items.flatMap(item => item.runId ? [item.runId] : []))
-    requireReadableConversation(options, input.conversationId)
+    requireActiveConversation(options, input.conversationId)
     return {
       items: withMessageAttachments(
         page.items,
@@ -140,7 +140,7 @@ export function registerConversationRpc(options: RegisterConversationRpcOptions)
     }
   }))
   disposers.push(registerRuntimeRequest(options.rpc, conversationsRpc.listTimeline, async (input) => {
-    const conversation = requireReadableConversation(options, input.conversationId)
+    const conversation = requireActiveConversation(options, input.conversationId)
     const branchId = input.branchId ?? requireValue(conversation.activeBranchId)
     const readPage = () => options.conversations.listTimelinePage(
       input.conversationId,
@@ -165,7 +165,7 @@ export function registerConversationRpc(options: RegisterConversationRpcOptions)
       ...runs.map(run => run.id),
       ...page.items.flatMap(item => item.kind === 'message' && item.runId ? [item.runId] : []),
     ], true)
-    requireReadableConversation(options, input.conversationId)
+    requireActiveConversation(options, input.conversationId)
     const items = withMessageAttachments(
       page.items,
       options.attachments.listForConversation(input.conversationId),
@@ -225,7 +225,7 @@ async function readVerifiedHistoryPage<T>(
   throw new BuddyServiceError('VALIDATION_FAILED')
 }
 
-function requireReadableConversation(
+function requireActiveConversation(
   options: Pick<RegisterConversationRpcOptions, 'conversations'>,
   conversationId: string,
 ) {

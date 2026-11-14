@@ -7,6 +7,19 @@ fn main() -> ExitCode {
         return ipc_result(lexora_buddy_host::sandbox_ipc::launch(arguments));
     }
     if let Some(command) = arguments.next() {
+        if command == "--launch-service" {
+            let path = arguments.next();
+            if let Some(path) = path.filter(|_| arguments.next().is_none()) {
+                return match lexora_buddy_host::service_launcher::run(std::path::Path::new(&path)) {
+                    Ok(code) => ExitCode::from(code.clamp(0, 255) as u8),
+                    Err(_) => {
+                        eprintln!("SERVICE_LAUNCH_FAILED");
+                        ExitCode::FAILURE
+                    }
+                };
+            }
+            return ExitCode::FAILURE;
+        }
         #[cfg(any(windows, target_os = "linux"))]
         if matches!(
             command.to_str(),

@@ -1,5 +1,5 @@
 import type { DesktopEnvironment } from './typing'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, realpathSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
@@ -18,6 +18,7 @@ import { resolveBuddyRuntimePaths } from '../paths'
 import { desktopHosts } from '../platform/desktopHost'
 import { rendererSchemePrivileges } from '../rendererProtocol'
 import { resolveDesktopLaunchIntent } from '../startupIntent'
+import { requestPersistenceUpgrade } from '../storage/requestPersistenceUpgrade'
 import { prepareStorageBootstrap, readStorageBootstrap, unifiedStoragePaths } from '../storage/storageBootstrap'
 import { fileIconSchemePrivileges } from '../themes/registerFileIconIpc'
 import { themeSchemePrivileges } from '../themes/registerThemeIpc'
@@ -27,7 +28,7 @@ import { DesktopStartup } from './DesktopStartup'
 import { checkDesktopDirectories, criticalDesktopDirectories, DesktopInstanceLockUnavailable, prepareDesktopPrivateStorage } from './desktopStorage'
 import { observeStartupDiagnostics } from './startupDiagnostics'
 
-export function prepareDesktopEnvironment(): DesktopEnvironment {
+export async function prepareDesktopEnvironment(platformHost?: DesktopEnvironment['platformHost']): Promise<DesktopEnvironment> {
   if (currentPlatform.id === OPERATING_SYSTEM.Linux)
     app.commandLine.appendSwitch('enable-speech-dispatcher')
   const desktopHost = desktopHosts[currentPlatform.id]
@@ -63,8 +64,27 @@ export function prepareDesktopEnvironment(): DesktopEnvironment {
   if (!app.requestSingleInstanceLock({ executablePath: process.execPath }))
     throw new DesktopInstanceLockUnavailable(legacyPaths.userData)
   const storage = prepareStorageBootstrap(legacyPaths, privateDirectoriesExecutable())
-  const releaseStorage = acquireStorageRootLease(storage.state.activeRoot, storage.leaseDirectory, storage.privateDirectoriesExecutable)
-  app.once('will-quit', releaseStorage)
+  if (platformHost) {
+    if (platformHost.peer.closed || storage.state.pending || realpathSync(storage.state.activeRoot) !== realpathSync(platformHost.bootstrap.profileRoot) || legacyPaths.profile !== platformHost.bootstrap.profile)
+      throw new Error('PLATFORM_HOST_PROFILE_CHANGED')
+  }
+  else if (!storage.state.pending) {
+    const releaseStorage = acquireStorageRootLease(storage.state.activeRoot, storage.leaseDirectory, storage.privateDirectoriesExecutable)
+    try {
+      if (!process.argv.includes('--lexora-storage-maintenance') && process.env.LEXORA_BUDDY_STORAGE_AUTHORITY === 'sqlite') {
+        await requestPersistenceUpgrade(storage)
+        storage.state = await storage.store.read()
+      }
+    }
+    catch (error) {
+      releaseStorage()
+      throw error
+    }
+    if (storage.state.pending)
+      releaseStorage()
+    else
+      app.once('will-quit', releaseStorage)
+  }
   const paths = unifiedStoragePaths(legacyPaths, storage.state.activeRoot)
   if (process.env.LEXORA_BUDDY_PET_STATE_PATH)
     paths.nativePetState = legacyPaths.nativePetState
@@ -84,6 +104,7 @@ export function prepareDesktopEnvironment(): DesktopEnvironment {
   events.subscribe(event => diagnostics.record({ ...event, scope: 'desktop' }))
   observeStartupDiagnostics(startup, events)
   return {
+    ...(platformHost ? { platformHost } : {}),
     diagnostics,
     events,
     startup,
@@ -131,9 +152,7 @@ export function initializeDesktopEnvironment(environment: DesktopEnvironment): v
       environment.diagnostics.record({ scope: 'desktop', level: 'warn', event: 'crash_reporter.unavailable', ...readDiagnosticError(error) })
     }
   }
-  bootstrapStep('register_protocols', () => {
-    protocol.registerSchemesAsPrivileged([...attachmentSchemePrivileges, rendererSchemePrivileges, extensionSchemePrivileges, fileIconSchemePrivileges, themeSchemePrivileges])
-  })
+  registerDesktopSchemes()
   bootstrapStep('desktop_identity', () => desktopHosts[currentPlatform.id].setIdentity?.(paths.desktopName))
 }
 
@@ -162,4 +181,14 @@ export async function prepareDesktopReady(environment: DesktopEnvironment): Prom
   }
   app.setAppUserModelId(paths.desktopName)
   Menu.setApplicationMenu(null)
+}
+
+let desktopSchemesRegistered = false
+export function registerDesktopSchemes(): void {
+  if (desktopSchemesRegistered)
+    return
+  bootstrapStep('register_protocols', () => {
+    protocol.registerSchemesAsPrivileged([...attachmentSchemePrivileges, rendererSchemePrivileges, extensionSchemePrivileges, fileIconSchemePrivileges, themeSchemePrivileges])
+  })
+  desktopSchemesRegistered = true
 }

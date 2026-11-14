@@ -13,12 +13,13 @@ import {
   unlink,
 } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import process from 'node:process'
 import { safeStorage } from 'electron'
 import { safeDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import { credentialVaultSystemCodeSchema } from '../../../shared/diagnostics/credentialVaultFailure'
 import { OPERATING_SYSTEM } from '../../../shared/platform/identifiers'
+import { runProfileWrite } from '../storage/profileWrites'
 
 type LocalCredentialNamespace = CredentialNamespace | 'sync' | 'backup' | 'extensions' | 'images'
 
@@ -89,7 +90,7 @@ export function createCredentialVault(
     try {
       if (operation !== 'delete')
         assertAvailable(cipher)
-      return await action()
+      return await (operation === 'write' || operation === 'delete' ? runProfileWrite(dirname(dirname(root)), action) : action())
     }
     catch (error) {
       const failure = error instanceof CredentialStoreUnavailableError || error instanceof CredentialVaultError

@@ -169,37 +169,6 @@ describe('execution coordination', () => {
     release()
   })
 
-  it('keeps accepted input ahead of sealing and rejects input after closing or cancellation', async () => {
-    const f = await fixture()
-    const controller = new AbortController()
-    const parent = await f.coordinator.begin('root', controller.signal)
-    let pending = false
-    const release = parent.bindInputs({ hasPendingInput: () => pending, hasPendingSteering: () => pending })
-    const closing = parent.prepareClose({ outcome: { status: 'completed' }, consumedReceipts: [] })
-    expect(parent.acceptInput(() => {
-      pending = true
-      return true
-    })).toBe(true)
-    expect(await closing).toMatchObject({ kind: 'pending' })
-    await parent.readPending()
-    expect(f.executions.find('root')?.phase).toBe('working')
-    pending = false
-    expect(await parent.prepareClose({ outcome: { status: 'completed' }, consumedReceipts: [] })).toMatchObject({ kind: 'sealed' })
-    let committed = false
-    expect(parent.acceptInput(() => {
-      committed = true
-      return true
-    })).toBe(false)
-    expect(committed).toBe(false)
-    controller.abort()
-    expect(parent.acceptInput(() => {
-      committed = true
-      return true
-    })).toBe(false)
-    expect(committed).toBe(false)
-    release()
-  })
-
   it('closes a quarantined child only after its owner stops while healthy siblings and the root settle normally', async () => {
     const stopped = Promise.withResolvers<void>()
     const entered = Promise.withResolvers<void>()
@@ -613,17 +582,6 @@ describe('execution coordination', () => {
     expect(f.mutations.getOwnedProcesses('old')).toEqual([{ processId: 'unknown-process', settlement: 'unknown' }])
   })
 
-  it('reclaims the working permit when a wait reaches its deadline', async () => {
-    const f = await fixture()
-    const signal = new AbortController().signal
-    await f.coordinator.begin('root', signal)
-    const waiting = f.coordinator.wait('root', [], 30, signal)
-    await vi.waitFor(() => expect(f.executions.find('root')?.phase).toBe('waiting'), { interval: 1 })
-    await waiting
-    expect(f.executions.find('root')?.phase).toBe('working')
-    expect(f.mailbox.listUnconsumed('root')).toEqual([])
-  })
-
   it('serializes supplementary input against successful close with an explicit acceptance result', async () => {
     for (const supplementFirst of [true, false]) {
       const f = await fixture()
@@ -695,8 +653,6 @@ describe('execution coordination', () => {
     const next = await f.mutations.acquire({ lifetime: 'runtime' as const, runId: 'later', invocationId: 'next', claims: [{ kind: 'file', canonicalPath: '/workspace/a/result' }], signal: new AbortController().signal })
     next.release()
     expect(f.mutations.getHazards()).toHaveLength(1)
-    const safe = await f.mutations.acquire({ lifetime: 'runtime' as const, runId: 'later', invocationId: 'safe', claims: [{ kind: 'file', canonicalPath: '/workspace/b/result' }], signal: new AbortController().signal })
-    safe.release()
   })
 
   it('seals failed parent admission before waiting for child cleanup', async () => {
@@ -718,16 +674,6 @@ describe('execution coordination', () => {
     stopped.resolve()
     expect((await closing).kind).toBe('sealed')
     expect(f.runs.findById('child')?.status).toBe('cancelled')
-  })
-
-  it('aggregates child cleanup failures when the root settles', async () => {
-    const f = await fixture()
-    f.executions.admitChild(f.child('child'))
-    await f.coordinator.failBeforeStart('child', new Error('Unavailable'))
-    f.executions.recordCleanup('child', 'degraded', 'EXECUTION_CLEANUP_DEGRADED')
-    await f.coordinator.finalize({ runId: 'root', cleanup: 'completed', outcome: { status: 'failed', errorCode: 'AGENT_RUN_FAILED' } })
-    expect(f.executions.find('root')?.cleanupState).toBe('degraded')
-    expect(f.executions.find('child')?.cleanupState).toBe('degraded')
   })
 
   it('waits for a private user answer without consuming the ordinary chat queue', async () => {

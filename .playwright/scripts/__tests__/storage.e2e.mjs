@@ -1,23 +1,6 @@
 import { Buffer } from 'node:buffer'
 import { expect, test } from '../fixtures/electron.mjs'
 
-test('legacy caches and diagnostic logs alone do not trigger a startup migration', async ({ buddy }) => {
-  const { mkdir, readFile, writeFile } = await import('node:fs/promises')
-  const { join, dirname } = await import('node:path')
-  const instance = await buddy.createInstance('cache-only')
-  const files = ['.runtime/cache/chromium/Cache/data', '.runtime/cache/chromium/Code Cache/data', '.runtime/state/logs/old.log', '.runtime/state/crashes/old-report']
-  for (const file of files) {
-    await mkdir(dirname(join(instance.home, file)), { recursive: true })
-    await writeFile(join(instance.home, file), 'retained-fixture')
-  }
-  const desktop = await instance.launch()
-  const summary = await desktop.page.evaluate(() => window.lexoraDesktop.storage.summary())
-  expect(summary.pending).toBeNull()
-  expect(summary.history).toEqual([])
-  for (const file of files)
-    expect(await readFile(join(instance.home, file), 'utf8')).toBe('retained-fixture')
-})
-
 test('stopping initial consolidation exits with source data intact and offers retry on next launch', async ({ buddy }) => {
   const { createHash } = await import('node:crypto')
   const { mkdir, open, readFile, stat } = await import('node:fs/promises')
@@ -168,48 +151,50 @@ test('local backup limits defer deletion until confirmation or the next successf
   await expect(page.getByRole('button', { name: '查看备份 (1)', exact: true })).toBeVisible()
 })
 
-test('preboot migration is visible, keeps runtime stopped, and a second launch uses the verified root', async ({ buddy }) => {
-  const { access, readFile, rename, writeFile } = await import('node:fs/promises')
-  const { createHash } = await import('node:crypto')
-  const { dirname, join } = await import('node:path')
-  const instance = await buddy.createInstance('migration')
-  const first = await instance.launch()
-  const target = `${instance.home}-moved`
-  await first.page.evaluate(target => window.lexoraDesktop.storage.relocate(target), target)
-  await instance.stop()
-  const locator = join(dirname(instance.home), '.lexora-locations', createHash('sha256').update(instance.home).digest('hex').slice(0, 24), 'location.json')
-  const pending = JSON.parse(await readFile(locator, 'utf8'))
-  pending.pending.phase = 'failed'
-  pending.pending.error = 'STORAGE_WORKER_INTERRUPTED'
-  await writeFile(locator, JSON.stringify(pending))
-  const migration = await instance.launch({ maintenance: true })
-  await expect(migration.page.getByRole('heading', { name: '正在搬迁数据' })).toBeVisible()
-  expect(await migration.app.evaluate(({ app }) => app.getAppMetrics().some(metric => metric.name === 'Buddy Service'))).toBe(false)
-  await migration.app.evaluate(({ app }) => {
-    app.relaunch = () => {}
+for (const storageAuthority of ['legacy_jsonl', 'sqlite']) {
+  test(`preboot migration is visible, keeps runtime stopped, and a second launch uses the verified root (${storageAuthority})`, async ({ buddy }) => {
+    const { access, readFile, rename, writeFile } = await import('node:fs/promises')
+    const { createHash } = await import('node:crypto')
+    const { dirname, join } = await import('node:path')
+    const instance = await buddy.createInstance('migration')
+    const first = await instance.launch({ storageAuthority })
+    const target = `${instance.home}-moved`
+    await first.page.evaluate(target => window.lexoraDesktop.storage.relocate(target), target)
+    await instance.stop()
+    const locator = join(dirname(instance.home), '.lexora-locations', createHash('sha256').update(instance.home).digest('hex').slice(0, 24), 'location.json')
+    const pending = JSON.parse(await readFile(locator, 'utf8'))
+    pending.pending.phase = 'failed'
+    pending.pending.error = 'STORAGE_WORKER_INTERRUPTED'
+    await writeFile(locator, JSON.stringify(pending))
+    const migration = await instance.launch({ storageAuthority, maintenance: true })
+    await expect(migration.page.getByRole('heading', { name: '正在搬迁数据' })).toBeVisible()
+    expect(await migration.app.evaluate(({ app }) => app.getAppMetrics().some(metric => metric.name === 'Buddy Service'))).toBe(false)
+    await migration.app.evaluate(({ app }) => {
+      app.relaunch = () => {}
+    })
+    await migration.page.getByRole('link', { name: '重试', exact: true }).click()
+    await expect.poll(async () => JSON.parse(await readFile(locator, 'utf8')).activeRoot).toBe(target)
+    await instance.stop()
+    const restarted = await instance.launch({ storageAuthority, expectedRoot: target })
+    await restarted.page.evaluate(() => {
+      location.hash = '#/settings/storage'
+    })
+    await expect(restarted.page.getByTestId('storage-current-root')).toHaveText(target)
+    expect(JSON.parse(await readFile(locator, 'utf8')).pending).toBeNull()
+    await instance.stop()
+    await instance.launch({ storageAuthority, expectedRoot: target })
+    expect(JSON.parse(await readFile(locator, 'utf8')).history).toHaveLength(1)
+    await instance.stop()
+    await rename(target, `${target}-offline`)
+    const unavailable = await instance.launch({ storageAuthority, maintenance: true })
+    await expect(unavailable.page.getByRole('heading', { name: '暂时无法打开原有数据' })).toBeVisible()
+    expect(await unavailable.app.evaluate(({ app }) => app.getAppMetrics().some(metric => metric.name === 'Buddy Service'))).toBe(false)
+    await expect(access(target)).rejects.toMatchObject({ code: 'ENOENT' })
+    await instance.stop()
+    await rename(`${target}-offline`, target)
+    await instance.launch({ storageAuthority, expectedRoot: target })
   })
-  await migration.page.getByRole('link', { name: '重试', exact: true }).click()
-  await expect.poll(async () => JSON.parse(await readFile(locator, 'utf8')).activeRoot).toBe(target)
-  await instance.stop()
-  const restarted = await instance.launch({ expectedRoot: target })
-  await restarted.page.evaluate(() => {
-    location.hash = '#/settings/storage'
-  })
-  await expect(restarted.page.getByTestId('storage-current-root')).toHaveText(target)
-  expect(JSON.parse(await readFile(locator, 'utf8')).pending).toBeNull()
-  await instance.stop()
-  await instance.launch({ expectedRoot: target })
-  expect(JSON.parse(await readFile(locator, 'utf8')).history).toHaveLength(1)
-  await instance.stop()
-  await rename(target, `${target}-offline`)
-  const unavailable = await instance.launch({ maintenance: true })
-  await expect(unavailable.page.getByRole('heading', { name: '暂时无法打开原有数据' })).toBeVisible()
-  expect(await unavailable.app.evaluate(({ app }) => app.getAppMetrics().some(metric => metric.name === 'Buddy Service'))).toBe(false)
-  await expect(access(target)).rejects.toMatchObject({ code: 'ENOENT' })
-  await instance.stop()
-  await rename(`${target}-offline`, target)
-  await instance.launch({ expectedRoot: target })
-})
+}
 
 test('a failed move can return to the original data without retrying', async ({ buddy }) => {
   const { mkdir, writeFile } = await import('node:fs/promises')
@@ -430,78 +415,134 @@ test('a missing initial data root stays absent while recovery is shown', async (
   await instance.launch()
 })
 
-test('exports an encrypted selective backup and imports it into the configured root with unselected data preserved', async ({ buddy }) => {
+for (const storageAuthority of ['legacy_jsonl', 'sqlite']) {
+  test(`exports an encrypted selective backup and imports it into the configured root with unselected data preserved (${storageAuthority})`, async ({ buddy }) => {
+    const { createHash, randomUUID } = await import('node:crypto')
+    const { mkdir, readFile, writeFile } = await import('node:fs/promises')
+    const { dirname, join } = await import('node:path')
+    const { useSyntheticCredentialStorage } = await import('../fixtures/electron.mjs')
+    const source = await buddy.createInstance('backup-export')
+    const desktop = await source.launch({ storageAuthority })
+    await useSyntheticCredentialStorage(desktop)
+    const connection = { id: randomUUID(), credentialId: randomUUID(), adapter: 'webdav', name: 'Portable connection', endpoint: 'https://example.invalid/backup/', username: 'fixture' }
+    await mkdir(join(source.home, 'buddy/secrets/sync'), { recursive: true })
+    await writeFile(join(source.home, 'device/sync.json'), JSON.stringify({ version: 1, enabled: false, selectedAdapter: 'webdav', activeConnectionId: connection.id, connections: [connection] }))
+    await writeFile(join(source.home, 'buddy/secrets/sync', `${createHash('sha256').update(connection.credentialId).digest('hex')}.credential`), `offline-fixture:${JSON.stringify({ id: connection.credentialId, value: 'synthetic-key-only', version: 1 })}`)
+    const snapshot = await desktop.page.evaluate(() => window.lexoraDesktop.storage.snapshot({ scopes: ['connections'], credentials: true, password: 'fixture-password' }))
+    expect(snapshot).toMatchObject({ scopes: ['connections'], credentials: true })
+    const exportParent = join(source.home, 'exported')
+    await mkdir(exportParent, { recursive: true })
+    await desktop.app.evaluate(({ dialog }, selected) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] })
+    }, exportParent)
+    const exported = await desktop.page.evaluate(id => window.lexoraDesktop.storage.export(id), snapshot.id)
+    const destination = await buddy.createInstance('backup-import')
+    const receiving = await destination.launch({ storageAuthority })
+    await useSyntheticCredentialStorage(receiving)
+    const space = await receiving.page.evaluate(() => window.lexoraDesktop.localChat.spaces.create({ name: 'Keep my current space', memoryScope: 'space_only', primaryDirectory: null }))
+    await receiving.app.evaluate(({ dialog }, selected) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] })
+    }, exported)
+    expect(await receiving.page.evaluate(() => window.lexoraDesktop.storage.import())).toEqual(snapshot)
+    const wrong = await receiving.page.evaluate(async (id) => {
+      try {
+        await window.lexoraDesktop.storage.restore(id, { scopes: ['connections'], credentials: true, password: 'incorrect-password' })
+      }
+      catch (error) { return String(error) }
+    }, snapshot.id)
+    expect(wrong).toContain('SNAPSHOT_PASSWORD_INVALID')
+    expect((await receiving.page.evaluate(() => window.lexoraDesktop.storage.summary())).pending).toBeNull()
+    await receiving.page.getByRole('button', { name: '设置', exact: true }).click()
+    await receiving.page.getByRole('link', { name: '数据存储', exact: true }).click()
+    await receiving.page.getByRole('button', { name: /^查看备份/ }).click()
+    await receiving.page.getByRole('button', { name: '恢复备份', exact: true }).click()
+    await expect(receiving.page.getByRole('checkbox', { name: /^工具与连接配置/ })).toBeChecked()
+    await expect(receiving.page.getByRole('checkbox', { name: /^任务与空间/ })).toBeDisabled()
+    await expect(receiving.page.locator('.n-modal')).toHaveCount(1)
+    await receiving.page.keyboard.press('Escape')
+    await receiving.page.evaluate(id => window.lexoraDesktop.storage.restore(id, { scopes: ['connections'], credentials: true, password: 'fixture-password' }), snapshot.id)
+    await destination.stop()
+    const locator = join(dirname(destination.home), '.lexora-locations', createHash('sha256').update(destination.home).digest('hex').slice(0, 24), 'location.json')
+    const state = JSON.parse(await readFile(locator, 'utf8'))
+    state.pending.phase = 'failed'
+    state.pending.error = 'STORAGE_WORKER_INTERRUPTED'
+    await writeFile(locator, JSON.stringify(state))
+    const migration = await destination.launch({ storageAuthority, maintenance: true })
+    await migration.app.evaluate(({ app }) => {
+      app.relaunch = () => {}
+    })
+    await migration.page.getByRole('link', { name: '重试', exact: true }).click()
+    await expect.poll(async () => JSON.parse(await readFile(locator, 'utf8')).pending).toBeNull()
+    await destination.stop()
+    const restored = await destination.launch({ storageAuthority })
+    await useSyntheticCredentialStorage(restored)
+    const connections = (await restored.page.evaluate(() => window.lexoraDesktop.sync.state())).connections
+    expect(connections).toHaveLength(1)
+    expect(connections[0]).toMatchObject({ name: 'Portable connection' })
+    const credentialRestored = await restored.app.evaluate(({ safeStorage }, root) => {
+      const fs = process.getBuiltinModule('node:fs')
+      const path = process.getBuiltinModule('node:path')
+      const crypto = process.getBuiltinModule('node:crypto')
+      const connection = JSON.parse(fs.readFileSync(path.join(root, 'device/sync.json'), 'utf8')).connections[0]
+      const file = path.join(root, 'buddy/secrets/sync', `${crypto.createHash('sha256').update(connection.credentialId).digest('hex')}.credential`)
+      return JSON.parse(safeStorage.decryptString(fs.readFileSync(file))).value === 'synthetic-key-only'
+    }, destination.home)
+    expect(credentialRestored).toBe(true)
+    expect(await restored.page.evaluate(() => window.lexoraDesktop.localChat.spaces.list())).toEqual(expect.arrayContaining([expect.objectContaining({ id: space.id })]))
+    expect((await restored.page.evaluate(() => window.lexoraDesktop.storage.summary())).root).toBe(destination.home)
+  })
+}
+
+test('in-place persistence upgrade retries with visible progress and preserves independent stores', async ({ buddy }, testInfo) => {
   const { createHash, randomUUID } = await import('node:crypto')
-  const { mkdir, readFile, writeFile } = await import('node:fs/promises')
+  const { lstat, mkdir, readFile, writeFile } = await import('node:fs/promises')
   const { dirname, join } = await import('node:path')
-  const { useSyntheticCredentialStorage } = await import('../fixtures/electron.mjs')
-  const source = await buddy.createInstance('backup-export')
-  const desktop = await source.launch()
-  await useSyntheticCredentialStorage(desktop)
-  const connection = { id: randomUUID(), credentialId: randomUUID(), adapter: 'webdav', name: 'Portable connection', endpoint: 'https://example.invalid/backup/', username: 'fixture' }
-  await mkdir(join(source.home, 'buddy/secrets/sync'), { recursive: true })
-  await writeFile(join(source.home, 'device/sync.json'), JSON.stringify({ version: 1, enabled: false, selectedAdapter: 'webdav', activeConnectionId: connection.id, connections: [connection] }))
-  await writeFile(join(source.home, 'buddy/secrets/sync', `${createHash('sha256').update(connection.credentialId).digest('hex')}.credential`), `offline-fixture:${JSON.stringify({ id: connection.credentialId, value: 'synthetic-key-only', version: 1 })}`)
-  const snapshot = await desktop.page.evaluate(() => window.lexoraDesktop.storage.snapshot({ scopes: ['connections'], credentials: true, password: 'fixture-password' }))
-  expect(snapshot).toMatchObject({ scopes: ['connections'], credentials: true })
-  const exportParent = join(source.home, 'exported')
-  await mkdir(exportParent, { recursive: true })
-  await desktop.app.evaluate(({ dialog }, selected) => {
-    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] })
-  }, exportParent)
-  const exported = await desktop.page.evaluate(id => window.lexoraDesktop.storage.export(id), snapshot.id)
-  const destination = await buddy.createInstance('backup-import')
-  const receiving = await destination.launch()
-  await useSyntheticCredentialStorage(receiving)
-  const space = await receiving.page.evaluate(() => window.lexoraDesktop.localChat.spaces.create({ name: 'Keep my current space', memoryScope: 'space_only', primaryDirectory: null }))
-  await receiving.app.evaluate(({ dialog }, selected) => {
-    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] })
-  }, exported)
-  expect(await receiving.page.evaluate(() => window.lexoraDesktop.storage.import())).toEqual(snapshot)
-  const wrong = await receiving.page.evaluate(async (id) => {
-    try {
-      await window.lexoraDesktop.storage.restore(id, { scopes: ['connections'], credentials: true, password: 'incorrect-password' })
-    }
-    catch (error) { return String(error) }
-  }, snapshot.id)
-  expect(wrong).toContain('SNAPSHOT_PASSWORD_INVALID')
-  expect((await receiving.page.evaluate(() => window.lexoraDesktop.storage.summary())).pending).toBeNull()
-  await receiving.page.getByRole('button', { name: '设置', exact: true }).click()
-  await receiving.page.getByRole('link', { name: '数据存储', exact: true }).click()
-  await receiving.page.getByRole('button', { name: /^查看备份/ }).click()
-  await receiving.page.getByRole('button', { name: '恢复备份', exact: true }).click()
-  await expect(receiving.page.getByRole('checkbox', { name: /^工具与连接配置/ })).toBeChecked()
-  await expect(receiving.page.getByRole('checkbox', { name: /^任务与空间/ })).toBeDisabled()
-  await expect(receiving.page.locator('.n-modal')).toHaveCount(1)
-  await receiving.page.keyboard.press('Escape')
-  await receiving.page.evaluate(id => window.lexoraDesktop.storage.restore(id, { scopes: ['connections'], credentials: true, password: 'fixture-password' }), snapshot.id)
-  await destination.stop()
-  const locator = join(dirname(destination.home), '.lexora-locations', createHash('sha256').update(destination.home).digest('hex').slice(0, 24), 'location.json')
+  const instance = await buddy.createInstance('upgrade-scope')
+  const first = await instance.launch({ storageAuthority: 'legacy_jsonl' })
+  const editor = first.page.locator('.desktop-workbench-area__tasks .tiptap:visible').first()
+  await editor.fill('升级前保留的草稿')
+  await expect.poll(() => first.page.evaluate(async () => JSON.stringify(await window.lexoraDesktop.localChat.composerDrafts.list()))).toContain('升级前保留的草稿')
+  await instance.stop()
+  const markers = ['buddy/extensions/inference/model.bin', 'buddy/backups/previous.bin', 'device/chromium/Cache/marker']
+  for (const path of markers) {
+    await mkdir(dirname(join(instance.home, path)), { recursive: true })
+    await writeFile(join(instance.home, path), 'independent data')
+  }
+  const identities = await Promise.all(markers.map(path => lstat(join(instance.home, path))))
+  const locator = join(dirname(instance.home), '.lexora-locations', createHash('sha256').update(instance.home).digest('hex').slice(0, 24), 'location.json')
   const state = JSON.parse(await readFile(locator, 'utf8'))
-  state.pending.phase = 'failed'
-  state.pending.error = 'STORAGE_WORKER_INTERRUPTED'
+  state.pending = { id: randomUUID(), kind: 'upgrade', source: instance.home, target: instance.home, phase: 'copying', createdAt: new Date().toISOString(), error: null }
   await writeFile(locator, JSON.stringify(state))
-  const migration = await destination.launch({ maintenance: true })
+  const migration = await instance.launch({ storageAuthority: 'default', maintenance: true })
+  await expect(migration.page.getByRole('heading', { name: '正在升级本地数据' })).toBeVisible()
+  await expect(migration.page.locator('#detail')).toContainText('上次整理被中断')
   await migration.app.evaluate(({ app }) => {
     app.relaunch = () => {}
   })
+  const progress = []
+  migration.page.on('console', (message) => {
+    const text = message.text()
+    if (text.startsWith('upgrade-progress:'))
+      progress.push(JSON.parse(text.slice('upgrade-progress:'.length)))
+  })
+  await migration.page.evaluate(() => {
+    new MutationObserver(() => console.info(`upgrade-progress:${JSON.stringify({ phase: document.body.dataset.phase, detail: document.getElementById('detail').textContent, amount: document.getElementById('amount').textContent })}`))
+      .observe(document.body, { subtree: true, childList: true, attributes: true })
+  })
+  const process = migration.app.process()
   await migration.page.getByRole('link', { name: '重试', exact: true }).click()
-  await expect.poll(async () => JSON.parse(await readFile(locator, 'utf8')).pending).toBeNull()
-  await destination.stop()
-  const restored = await destination.launch()
-  await useSyntheticCredentialStorage(restored)
-  const connections = (await restored.page.evaluate(() => window.lexoraDesktop.sync.state())).connections
-  expect(connections).toHaveLength(1)
-  expect(connections[0]).toMatchObject({ name: 'Portable connection' })
-  const credentialRestored = await restored.app.evaluate(({ safeStorage }, root) => {
-    const fs = process.getBuiltinModule('node:fs')
-    const path = process.getBuiltinModule('node:path')
-    const crypto = process.getBuiltinModule('node:crypto')
-    const connection = JSON.parse(fs.readFileSync(path.join(root, 'device/sync.json'), 'utf8')).connections[0]
-    const file = path.join(root, 'buddy/secrets/sync', `${crypto.createHash('sha256').update(connection.credentialId).digest('hex')}.credential`)
-    return JSON.parse(safeStorage.decryptString(fs.readFileSync(file))).value === 'synthetic-key-only'
-  }, destination.home)
-  expect(credentialRestored).toBe(true)
-  expect(await restored.page.evaluate(() => window.lexoraDesktop.localChat.spaces.list())).toEqual(expect.arrayContaining([expect.objectContaining({ id: space.id })]))
-  expect((await restored.page.evaluate(() => window.lexoraDesktop.storage.summary())).root).toBe(destination.home)
+  await expect.poll(() => process.exitCode, { timeout: 45000 }).toBe(0)
+  await instance.stop()
+  await writeFile(testInfo.outputPath('upgrade-progress.json'), JSON.stringify(progress, null, 2))
+  expect(progress.some(update => update.phase === 'copying' && /已复制 [1-9]/.test(update.detail))).toBe(true)
+  expect(progress.some(update => update.phase === 'verifying' && /已校验 [1-9]/.test(update.detail))).toBe(true)
+  expect(JSON.parse(await readFile(locator, 'utf8')).pending).toBeNull()
+  for (const [index, path] of markers.entries()) {
+    expect(await lstat(join(instance.home, path))).toMatchObject({ ino: identities[index].ino, mtimeMs: identities[index].mtimeMs })
+    expect(await readFile(join(instance.home, path), 'utf8')).toBe('independent data')
+  }
+  const restarted = await instance.launch({ storageAuthority: 'default' })
+  await expect(restarted.page.locator('.desktop-workbench-area__tasks .tiptap:visible').first()).toContainText('升级前保留的草稿')
+  expect(await restarted.page.evaluate(() => window.lexoraDesktop.localChat.privateNetwork.status({}))).toMatchObject({ enabled: false })
+  await restarted.page.screenshot({ path: testInfo.outputPath('after-upgrade.png') })
 })

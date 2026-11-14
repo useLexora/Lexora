@@ -91,7 +91,13 @@ export type LocalExecutionEventsPage = DeepReadonly<z.infer<typeof executionEven
 export type LocalExecution = DeepReadonly<z.infer<typeof executionPresentationSchema>>
 export type LocalExecutionDetail = DeepReadonly<z.infer<typeof executionDetailSchema>>
 
+export const executionActivityRequestSchema = z.object({ conversationId: idSchema }).strict()
+export const executionActivitySchema = z.object({ hasBlockingAnswer: z.boolean() }).strict()
+export type ExecutionActivityRequest = z.input<typeof executionActivityRequestSchema>
+export type LocalExecutionActivity = DeepReadonly<z.infer<typeof executionActivitySchema>>
+
 export const executionPresentationRpc = {
+  activity: { method: 'executions.activity', input: executionActivityRequestSchema, response: executionActivitySchema },
   list: { method: 'executions.list', input: executionScopeSchema, response: z.array(executionPresentationSchema) },
   detail: { method: 'executions.detail', input: executionTargetSchema, response: executionDetailSchema },
   inputs: { method: 'executions.inputs', input: executionInputsRequestSchema, response: executionInputsPageSchema },

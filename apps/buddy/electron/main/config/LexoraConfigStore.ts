@@ -17,6 +17,7 @@ import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { extensionAuthorSchema } from '../../../shared/extensions/extensionIdentity'
 import { BUILTIN_FILE_ICON_THEME, fileIconPreferenceSchema } from '../../../shared/icons/fileIconTheme'
 import { imagePreferencesSchema } from '../../../shared/images/imagePreferences'
+import { DEFAULT_DESKTOP_EXIT_BEHAVIOR, desktopExitBehaviorSchema } from '../../../shared/lifecycle/exitBehavior'
 import { downloadSettingsSchema } from '../../../shared/network/downloadSettings'
 import { DEFAULT_PROXY_SETTINGS, proxySettingsSchema } from '../../../shared/network/proxySettings'
 import { DEFAULT_NOTIFICATION_SOUND_PREFERENCES, notificationSoundAssetIdSchema, notificationSoundAssetSchema, notificationSoundPreferencesPatchSchema, notificationSoundPreferencesSchema } from '../../../shared/notifications/notificationSound'
@@ -30,11 +31,12 @@ import { DEFAULT_LOCAL_BACKUP_LIMIT, localBackupLimitSchema } from '../../../sha
 import { DESKTOP_ACCENT_COLORS, legacyThemePreferenceSchema, migrateThemePreference, themePreferenceSchema } from '../../../shared/theme/themePreferences'
 import { DEFAULT_TYPOGRAPHY, typographyPreferencesSchema } from '../../../shared/typography/typographyPreferences'
 import { DEFAULT_DESKTOP_CHAT_PREFERENCES, DEFAULT_DESKTOP_CHAT_WELCOME_ITEMS, DESKTOP_CHAT_OUTLINE_POSITIONS, DESKTOP_CHAT_READING_WIDTHS, DESKTOP_PROFILE_AVATAR_MAX_DATA_URL_LENGTH, DESKTOP_TASK_SIDEBAR_SECTIONS } from '../../shared/desktopApi'
-
 import { desktopChatWelcomeItemsSchema } from '../../shared/desktopApiSchemas'
+
 import { isPresetWelcomeId, normalizeDesktopChatWelcomePreference } from '../../shared/desktopChatWelcome'
 import { desktopUpdateChannelSchema } from '../../shared/desktopUpdates'
 import { isWelcomeCompanionImageDataUrl, welcomeCompanionImageSchema, welcomeCompanionImagesSchema } from '../../shared/welcomeCompanionImage'
+import { runProfileWrite } from '../storage/profileWrites'
 
 function migrateWelcomeItems(value: unknown): unknown {
   if (!Array.isArray(value))
@@ -120,6 +122,7 @@ const desktopConfigSchema = z.object({
   }),
   developer_tools_enabled: z.boolean().default(false),
   language: z.enum(['zh-CN', 'en-US']).default('zh-CN'),
+  exit_behavior: desktopExitBehaviorSchema.default(DEFAULT_DESKTOP_EXIT_BEHAVIOR),
   launch_at_login: z.boolean().default(false),
   notifications_enabled: z.boolean().default(true),
   notification_sound: notificationSoundPreferencesSchema.prefault({}),
@@ -165,6 +168,7 @@ const desktopConfigSchema = z.object({
   profile: { user_name: '', device_name: '', avatar: '' },
   developer_tools_enabled: false,
   language: 'zh-CN',
+  exit_behavior: DEFAULT_DESKTOP_EXIT_BEHAVIOR,
   launch_at_login: false,
   notifications_enabled: true,
   notification_sound: DEFAULT_NOTIFICATION_SOUND_PREFERENCES,
@@ -244,10 +248,27 @@ export class LexoraConfigStore {
   }
 
   async read(): Promise<LexoraConfig> {
-    await this.#writeQueue
     const config = decodeConfig(await this.#readFile())
     this.#persisted = structuredClone(config)
     return config
+  }
+
+  initializeExitBehavior(): Promise<LexoraConfig> {
+    return runProfileWrite(dirname(this.#configPath), () => this.#initializeExitBehavior())
+  }
+
+  #initializeExitBehavior(): Promise<LexoraConfig> {
+    const operation = this.#writeQueue.then(async () => {
+      const raw = await this.#readFile() as Record<string, unknown>
+      const config = decodeConfig(raw)
+      const desktop = raw.desktop as Record<string, unknown> | undefined
+      if (desktop?.exit_behavior === undefined)
+        await this.#write({ ...raw, desktop: { ...desktop, exit_behavior: DEFAULT_DESKTOP_EXIT_BEHAVIOR } }, () => {}, () => {})
+      this.#persisted = structuredClone(config)
+      return config
+    })
+    this.#writeQueue = operation.then(() => undefined, () => undefined)
+    return operation
   }
 
   get snapshot() { return copyEventSnapshot({ revision: this.#revision, persisted: this.#persisted, applied: this.#applied }) }
@@ -300,6 +321,10 @@ export class LexoraConfigStore {
   }
 
   #update(transform: (current: LexoraConfig) => LexoraConfig, apply: ((config: LexoraConfig) => Promise<void> | void) | undefined, assertCurrent: () => void): Promise<LexoraConfig> {
+    return runProfileWrite(dirname(this.#configPath), () => this.#updateWritable(transform, apply, assertCurrent))
+  }
+
+  #updateWritable(transform: (current: LexoraConfig) => LexoraConfig, apply: ((config: LexoraConfig) => Promise<void> | void) | undefined, assertCurrent: () => void): Promise<LexoraConfig> {
     if (this.#disposing)
       return Promise.reject(new Error('CONFIG_STORE_STOPPED'))
     const operation = this.#writeQueue.then(async () => {
@@ -472,6 +497,7 @@ function decodeConfig(value: unknown): LexoraConfig {
       },
       developerToolsEnabled: config.desktop.developer_tools_enabled,
       language: config.desktop.language,
+      exitBehavior: config.desktop.exit_behavior,
       launchAtLogin: config.desktop.launch_at_login,
       notificationsEnabled: config.desktop.notifications_enabled,
       notificationSound: config.desktop.notification_sound,
@@ -555,6 +581,7 @@ function encodeConfig(config: LexoraConfig) {
       },
       developer_tools_enabled: config.desktop.developerToolsEnabled,
       language: config.desktop.language,
+      exit_behavior: config.desktop.exitBehavior,
       launch_at_login: config.desktop.launchAtLogin,
       notifications_enabled: config.desktop.notificationsEnabled,
       notification_sound: config.desktop.notificationSound,

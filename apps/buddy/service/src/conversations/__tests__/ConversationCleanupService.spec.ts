@@ -25,7 +25,7 @@ function fixture() {
   const repository = createConversationArchiveRepository(database)
   const deletion = createConversationDeletionRepository(database)
   const mutations = new ConversationMutationGuard()
-  const purge = new ConversationPurgeService({ database, home })
+  const purge = new ConversationPurgeService({ database, home, storageAuthority: 'legacy_jsonl' })
   let fail = false
   const lifecycle = new ConversationLifecycleService({ conversations, deletion, assertWritable: id => mutations.assertWritable(id), runner: { cancelAndWaitForConversation: async () => {
     if (fail)
@@ -33,7 +33,7 @@ function fixture() {
     return 0
   } }, cancelQueuedRuns: async () => {}, sessions: { invalidateConversation: async () => ({ pending: 0, degraded: 0 }) }, purge: id => purge.purge(id) })
   const archive = new ConversationArchiveService({ database, repository, conversations, mutations, lifecycle, onError: () => {} })
-  const service = new ConversationCleanupService({ database, archive, lifecycle })
+  const service: ConversationCleanupService = new ConversationCleanupService({ database, archive, lifecycle, execute: input => service.execute(input) })
   const cleanup = createExtensionTaskCleanup({ list: async input => service.list(input), delete: input => service.delete(input) })
   disposers.push(async () => {
     await archive.dispose()
@@ -50,12 +50,26 @@ function fixture() {
     const path = join(home, 'conversations', id)
     mkdirSync(path, { recursive: true })
     writeFileSync(join(path, 'owned.txt'), 'fixture')
-    return { conversationId: id, expectedRevision: conversations.findById(id)!.metadataRevision }
+    return { conversationId: id, expectedRevision: conversations.findById(id)!.metadataRevision! }
   }
-  return { database, home, seed, cleanup, deletion, setFailure: (value: boolean) => {
+  return { database, home, seed, cleanup, service, deletion, setFailure: (value: boolean) => {
     fail = value
   } }
 }
+
+it('reports a removed task with missing execution evidence as blocked and preserves its files', async () => {
+  const f = fixture()
+  const target = f.seed('legacy', 'active')
+  f.database.exec(`INSERT INTO messages (id, conversation_id, branch_id, role, content_json, created_at)
+    VALUES ('input', 'legacy', 'branch-legacy', 'user', '{}', '2026-01-01T00:00:00Z');
+    INSERT INTO runs (id, conversation_id, branch_id, triggering_message_id, provider, model, purpose, status, started_at)
+    VALUES ('run-legacy', 'legacy', 'branch-legacy', 'input', 'fixture', 'fixture', 'chat', 'queued', '2026-01-01T00:00:00Z')`)
+  f.database.exec('UPDATE runs SET status = \'completed\'; DELETE FROM execution_state; UPDATE conversations SET deleted_at = \'2026-01-02T00:00:00Z\'')
+  expect(f.service.list({ scope: 'legacy_removed', limit: 10 }).items).toMatchObject([{ conversationId: 'legacy', canDelete: false, blockedReason: 'CONVERSATION_BUSY' }])
+  expect(await f.cleanup.delete(target)).toEqual({ status: 'failed', errorCode: 'SOURCE_CHANGED' })
+  expect(f.deletion.has('legacy')).toBe(false)
+  expect(existsSync(join(f.home, 'conversations', 'legacy', 'owned.txt'))).toBe(true)
+})
 
 it('cancellation creates no jobs and confirmation uses frozen CAS against a real database', async () => {
   const f = fixture()

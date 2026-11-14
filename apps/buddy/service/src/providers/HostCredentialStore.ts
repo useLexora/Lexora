@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
 import { pluginProviderPrefix } from '../../../shared/extensions/extensionChat'
+import { AsyncOperationScope } from '../../../shared/lifecycle/AsyncOperationScope'
 import {
   credentialMutationResultSchema,
   credentialProviderListResultSchema,
@@ -38,9 +39,8 @@ export type CredentialChange = { readonly kind: 'observation', readonly previous
   | { readonly kind: 'store-availability', readonly revision: number, readonly status: 'known' | 'unknown' }
 
 export class HostCredentialStore implements CredentialStore {
-  readonly #pending = new Set<Promise<unknown>>()
-  #stopping = false
-  readonly #peer: RuntimeRpcPeerContract
+  readonly #operations = new AsyncOperationScope(() => new HostCredentialStoreError('CREDENTIAL_STORE_UNAVAILABLE'))
+  readonly #peer: Omit<RuntimeRpcPeerContract, 'close'>
   readonly #providerLocks = new Map<string, Promise<void>>()
   readonly #observations = new Map<string, CredentialObservation>()
   readonly #observedRequests = new Map<string, number>()
@@ -55,12 +55,12 @@ export class HostCredentialStore implements CredentialStore {
     return copyEventSnapshot({ revision: this.#revision, availability: this.#availability, providers: [...this.#observations.values()] })
   }
 
-  constructor(peer: RuntimeRpcPeerContract) {
+  constructor(peer: Omit<RuntimeRpcPeerContract, 'close'>) {
     this.#peer = peer
   }
 
   read(providerId: string, options?: AuthOperationOptions): Promise<Credential | undefined> {
-    return this.#operate(() => this.#read(providerId, options))
+    return this.#operations.track(() => this.#read(providerId, options))
   }
 
   async #read(providerId: string, options?: AuthOperationOptions): Promise<Credential | undefined> {
@@ -84,7 +84,7 @@ export class HostCredentialStore implements CredentialStore {
   }
 
   list(options?: AuthOperationOptions): Promise<readonly CredentialInfo[]> {
-    return this.#operate(() => this.#list(options))
+    return this.#operations.track(() => this.#list(options))
   }
 
   async #list(options?: AuthOperationOptions): Promise<readonly CredentialInfo[]> {
@@ -154,23 +154,9 @@ export class HostCredentialStore implements CredentialStore {
   }
 
   async dispose(): Promise<void> {
-    this.#stopping = true
-    while (this.#pending.size)
-      await Promise.allSettled([...this.#pending])
+    this.#operations.stopAccepting()
+    await this.#operations.drain()
     this.#changes.dispose()
-  }
-
-  #operate<T>(operation: () => Promise<T>): Promise<T> {
-    if (this.#stopping)
-      return Promise.reject(new HostCredentialStoreError('CREDENTIAL_STORE_UNAVAILABLE'))
-    const pending = Promise.withResolvers<T>()
-    this.#pending.add(pending.promise)
-    try {
-      void operation().then(pending.resolve, pending.reject)
-    }
-    catch (error) { pending.reject(error) }
-    void pending.promise.then(() => this.#pending.delete(pending.promise), () => this.#pending.delete(pending.promise))
-    return pending.promise
   }
 
   #observe(providerId: string, type: 'api_key' | 'oauth' | 'unknown' | null, request: number): void {
@@ -198,10 +184,10 @@ export class HostCredentialStore implements CredentialStore {
   }
 
   #withProviderLock<T>(providerId: string, operation: () => Promise<T>): Promise<T> {
-    if (this.#stopping)
+    if (!this.#operations.isAccepting)
       return Promise.reject(new HostCredentialStoreError('CREDENTIAL_STORE_UNAVAILABLE'))
     const previous = this.#providerLocks.get(providerId) ?? Promise.resolve()
-    const result = this.#operate(() => previous.catch(() => {}).then(operation))
+    const result = this.#operations.track(() => previous.catch(() => {}).then(operation))
     const tail = result.then(() => {}, () => {})
     this.#providerLocks.set(providerId, tail)
     void tail.then(() => {

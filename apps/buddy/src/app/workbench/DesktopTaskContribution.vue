@@ -11,16 +11,24 @@ import { DesktopTaskEditor, DesktopTaskViewProvider } from '@/modules/tasks/ui'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import WorkbenchPaneActions from '@/workbench/browser/WorkbenchPaneActions.vue'
 import WorkbenchPaneTitle from '@/workbench/browser/WorkbenchPaneTitle.vue'
+import { resourceKey } from '@/workbench/common/workbench'
 import DesktopTaskLoading from './DesktopTaskLoading.vue'
 import { useDesktopWorkbenchContext } from './desktopWorkbenchContext'
+import { draftResource, parseTaskResource } from './taskResource'
 
 const props = defineProps<{ view: WorkbenchView, visible: boolean }>()
 const workbench = useDesktopWorkbenchContext()
 const environment = useTaskEnvironment()
 const task = shallowRef<TaskCapability | null>(null)
 const failed = shallowRef(false)
-const taskResource = computed(() => ['task', 'draft'].includes(props.view.resource.scheme))
-const notificationTargetMessageId = computed(() => environment.notificationTarget.value?.conversationId === task.value?.session.activeTaskId.value ? environment.notificationTarget.value?.messageId ?? null : null)
+const taskResource = computed(() => parseTaskResource(props.view.resource))
+const notificationTargetMessageId = computed(() => {
+  const target = environment.notificationTarget.value
+  return target?.conversationId === task.value?.session.activeTaskId.value
+    && target?.branchId === task.value?.workspace.session.activeBranchId.value
+    ? target?.messageId ?? null
+    : null
+})
 const context = computed(() => ({ ...environment, notificationTargetMessageId, tasks: task.value!, startTask: (spaceId: string | null = null) => task.value!.session.startTask(spaceId) }))
 const message = useMessage()
 const newTaskActions = computed<DropdownOption[]>(() => {
@@ -56,8 +64,8 @@ watch(() => task.value?.workspace.status.errorMessage.value, (error) => {
   }
 })
 watch(() => task.value?.session.spaceId.value, (spaceId) => {
-  if (props.view.resource.scheme === 'draft' && task.value && props.view.resource.data.spaceId !== spaceId)
-    workbench.controller.updateView(props.view.id, { resource: { ...props.view.resource, data: { spaceId: spaceId ?? null } } })
+  if (taskResource.value?.scheme === 'draft' && task.value && taskResource.value.data.spaceId !== spaceId)
+    workbench.controller.updateView(props.view.id, { resource: draftResource(taskResource.value.id, spaceId ?? null) })
 })
 let loadVersion = 0
 onScopeDispose(() => loadVersion++)
@@ -79,8 +87,19 @@ async function load() {
     }
   }
 }
-watch(() => props.view.resource.id, load, { immediate: true })
-watch(() => task.value?.session.currentTitle.value, (title) => {
+watch(() => resourceKey(props.view.resource), load, { immediate: true })
+watch(() => {
+  const current = task.value
+  const title = current?.session.currentTitle.value
+  if (!current || !title)
+    return title
+  const branches = [...current.workspace.transcript.branches.value].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+  const index = branches.findIndex(branch => branch.id === current.workspace.session.activeBranchId.value)
+  if (branches.length < 2 || index < 0)
+    return title
+  const label = translateBuddy(workbench.language.value, index === 0 ? 'desktop.chat.originalBranch' : 'desktop.chat.numberedBranch', { index: index + 1 })
+  return `${title} · ${label}`
+}, (title) => {
   if (title)
     workbench.controller.updateView(props.view.id, { title })
 })
@@ -102,7 +121,7 @@ watch(() => task.value?.session.currentTitle.value, (title) => {
       <WorkbenchPaneTitle :view="view" />
     </template>
     <template #actions>
-      <WorkbenchPaneActions :view-id="view.id" :actions="newTaskActions" @select="selectAction($event)" @split="workbench.newTask({ spaceId: typeof view.resource.data.spaceId === 'string' ? view.resource.data.spaceId : null, paneId: workbench.controller.owner(view.id)?.id, direction: $event })" />
+      <WorkbenchPaneActions :view-id="view.id" :actions="newTaskActions" @select="selectAction($event)" @split="workbench.newTask({ spaceId: taskResource?.scheme === 'draft' ? taskResource.data.spaceId : null, paneId: workbench.controller.owner(view.id)?.id, direction: $event })" />
     </template>
   </DesktopTaskLoading>
 </template>

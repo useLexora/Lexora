@@ -3,11 +3,13 @@ import type { DesktopDistribution } from '../../shared/desktopDistribution'
 import type { DesktopUpdateManualInstallation } from '../../shared/desktopUpdates'
 import type { DesktopUpdatePackage } from './DesktopUpdatePackage'
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { accessSync, constants, readFileSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import process from 'node:process'
 import { z } from 'zod'
+import { createChildProcessEnvironment } from '../../../platform/process/childProcessEnvironment'
 import { desktopUpdateArtifactName } from '../../shared/desktopDistribution'
 import { desktopVersionSchema } from '../../shared/desktopUpdates'
 
@@ -24,7 +26,7 @@ export function linuxInstallerAvailable(helper: string | undefined, format: Linu
   if (!helper || process.getuid?.() === 0 || process.execPath !== '/opt/lexora-buddy/lexora-buddy')
     return false
   try {
-    for (const path of [helper, '/usr/bin/pkexec', managers[format]])
+    for (const path of [helper, '/usr/bin/pkexec', '/usr/bin/systemd-run', '/usr/bin/env', managers[format]])
       accessSync(path, constants.X_OK)
     return true
   }
@@ -62,7 +64,8 @@ export async function prepareLinuxInstaller(options: {
   quit: () => void
 }): Promise<() => void> {
   await mkdir(options.directory, { recursive: true })
-  const child = spawn(options.helper, ['--supervise-linux-update'], { detached: true, stdio: ['pipe', 'pipe', 'ignore'] })
+  const environment = createChildProcessEnvironment({ source: process.env, additions: { LEXORA_HOME: process.env.LEXORA_HOME, LEXORA_BUDDY_PROFILE: process.env.LEXORA_BUDDY_PROFILE } })
+  const child = spawn('/usr/bin/systemd-run', ['--user', '--pipe', '--wait', '--collect', '--quiet', `--unit=lexora-update-${randomUUID()}`, '--property=Type=exec', '--', '/usr/bin/env', '-i', ...Object.entries(environment).map(([key, value]) => `${key}=${value}`), options.helper, '--supervise-linux-update'], { detached: true, stdio: ['pipe', 'pipe', 'ignore'], env: environment })
   child.stdin.on('error', () => {})
   const ready = new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -90,7 +93,7 @@ export async function prepareLinuxInstaller(options: {
     version: options.update.version,
     receipt: join(options.directory, 'installation.json'),
     log: join(options.directory, 'installation.log'),
-    arguments: process.argv.slice(1).filter(argument => argument !== '--background'),
+    arguments: process.argv.slice(1).filter(argument => !['--background', '--lexora-platform-host', '--lexora-storage-maintenance'].includes(argument)),
   })}\n`)
   try {
     await ready

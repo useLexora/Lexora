@@ -3,10 +3,6 @@ import { BuddyServiceError } from '../rpc/runtimeRequest'
 export class ConversationMutationGuard {
   readonly #changing = new Set<string>()
 
-  get hasPendingOperations(): boolean {
-    return this.#changing.size > 0
-  }
-
   assertWritable(conversationId: string): void {
     if (this.#changing.has(conversationId))
       throw new BuddyServiceError('CONVERSATION_BUSY')

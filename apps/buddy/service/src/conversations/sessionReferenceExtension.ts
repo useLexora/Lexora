@@ -29,8 +29,8 @@ export function createSessionReferenceCapability(options: SessionReferenceServic
     }
     const message = messageId ? options.conversations.findMessageById(messageId) : null
     const sequence = message ? options.references.messageSequence(options.conversationId, message.id) : null
-    return access.resolve(current && !current.deletedAt && current.activeBranchId && message?.conversationId === current.id && message.role === 'user' && sequence !== null
-      ? { conversationId: current.id, branchId: current.activeBranchId, throughSequence: sequence }
+    return access.resolve(current && !current.deletedAt && message?.conversationId === current.id && message.role === 'user' && sequence !== null
+      ? { conversationId: current.id, branchId: message.branchId, throughSequence: sequence }
       : null)
   }
   function requireTarget(sessionId: string, branchId?: string) {

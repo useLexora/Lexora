@@ -17,6 +17,7 @@ use sha2::{Digest, Sha256};
 
 const LOCK: &str = "/run/lexora-buddy-update.lock";
 const EXECUTABLE: &str = "/opt/lexora-buddy/lexora-buddy";
+const CORE_EXECUTABLE: &str = "/opt/lexora-buddy/resources/lexora-runtime/node";
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -176,7 +177,7 @@ pub fn supervise() -> io::Result<()> {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .spawn()?;
+            .status()?;
     }
     receipt
 }
@@ -294,7 +295,9 @@ fn application_running() -> io::Result<bool> {
             .is_some_and(|value| value.parse::<u32>().is_ok())
         {
             match fs::read_link(entry.path().join("exe")) {
-                Ok(path) if path == Path::new(EXECUTABLE) => return Ok(true),
+                Ok(path) if path == Path::new(EXECUTABLE) || path == Path::new(CORE_EXECUTABLE) => {
+                    return Ok(true);
+                }
                 Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
                 _ => {}
             }

@@ -36,8 +36,6 @@ export interface RunEventMaintenance {
   compactTerminalRun: (runId: string) => Promise<number>
   compactTerminalRuns: () => Promise<number>
   recoverAll: (options?: RunEventRecoveryOptions) => Promise<Readonly<RunEventRecoverySummary>>
-  replay: (runId: string) => Promise<number>
-  replayAll: () => Promise<number>
 }
 
 export interface RunEventObservation {

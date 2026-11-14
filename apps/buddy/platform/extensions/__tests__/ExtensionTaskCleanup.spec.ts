@@ -2,7 +2,7 @@ import type { JsonValue } from '../../../shared/workbench/workbenchState'
 import { randomUUID } from 'node:crypto'
 import { rm } from 'node:fs/promises'
 import { afterEach, expect, it } from 'vitest'
-import { addedExtensionPermissions, extensionManifestSchema, extensionPermissionsSchema } from '../../../shared/extensions/extensionManifest'
+import { addedExtensionPermissions, extensionPermissionsSchema } from '../../../shared/extensions/extensionManifest'
 import { ExtensionService } from '../ExtensionService'
 import { createStore, manifest, reviewPackage } from './fixtures'
 
@@ -16,7 +16,7 @@ const item = { ...target, title: 'Legacy task', removedAt: '2026-01-01T00:00:00Z
 async function fixture(permission = true) {
   const { root, store } = await createStore()
   cleanups.push(() => rm(root, { recursive: true, force: true }))
-  const definition = manifest({ apiVersion: 4, permissions: { legacyTaskCleanup: permission }, contributes: { views: [{ id: 'tests.reader.page', title: 'Cleanup', entry: 'view.js', location: 'page', resource: 'none' }] } })
+  const definition = manifest({ apiVersion: 5, permissions: { legacyTaskCleanup: permission }, contributes: { views: [{ id: 'tests.reader.page', title: 'Cleanup', entry: 'view.js', location: 'page', resource: 'none' }] } })
   await store.install((await reviewPackage(root, store, definition)).token)
   const records = [item]
   let broker!: (method: string, params: unknown) => Promise<JsonValue>
@@ -44,13 +44,6 @@ async function fixture(permission = true) {
   return { service, records, view, broker: (method: string, params: unknown) => broker(method, params), request: (method: string, params: unknown) => service.viewRequest(view.id, view.generation, view.token, method, params) }
 }
 
-it('requires API 4 and an interactive view for legacy cleanup permission', () => {
-  const definition = manifest({ apiVersion: 4, permissions: { legacyTaskCleanup: true }, contributes: { views: [{ id: 'tests.reader.page', title: 'Cleanup', entry: 'view.js', location: 'page', resource: 'none' }] } })
-  expect(extensionManifestSchema.safeParse(definition).success).toBe(true)
-  expect(extensionManifestSchema.safeParse({ ...definition, apiVersion: 3 }).success).toBe(false)
-  expect(extensionManifestSchema.safeParse({ ...definition, contributes: {} }).success).toBe(false)
-})
-
 it('requires an explicitly reviewed permission and denies background access', async () => {
   expect(extensionPermissionsSchema.parse({}).legacyTaskCleanup).toBe(false)
   expect(addedExtensionPermissions(extensionPermissionsSchema.parse({}), extensionPermissionsSchema.parse({ legacyTaskCleanup: true }))).toContain('legacyTaskCleanup')
@@ -59,17 +52,12 @@ it('requires an explicitly reviewed permission and denies background access', as
   await expect(denied.request('taskCleanup.delete', target)).rejects.toThrow('EXTENSION_METHOD_DENIED')
   expect(denied.records).toEqual([item])
   const allowed = await fixture()
+  await expect(allowed.request('taskCleanup.list', { limit: 50 })).rejects.toThrow('EXTENSION_METHOD_DENIED')
+  await expect(allowed.request('taskCleanup.delete', target)).rejects.toThrow('EXTENSION_METHOD_DENIED')
   await expect(allowed.request('taskCleanup.run', { token: randomUUID() })).rejects.toThrow('EXTENSION_METHOD_DENIED')
   await expect(allowed.broker('taskCleanup.run', { token: randomUUID() })).rejects.toThrow('EXTENSION_METHOD_DENIED')
   await expect(allowed.broker('taskCleanup.delete', target)).rejects.toThrow('EXTENSION_METHOD_DENIED')
   expect(allowed.records).toEqual([item])
-})
-
-it('denies legacy view list and delete even with permission and a valid revision', async () => {
-  const f = await fixture()
-  await expect(f.request('taskCleanup.list', { limit: 50 })).rejects.toThrow('EXTENSION_METHOD_DENIED')
-  await expect(f.request('taskCleanup.delete', target)).rejects.toThrow('EXTENSION_METHOD_DENIED')
-  expect(f.records).toEqual([item])
 })
 
 it('revokes the old session after uninstall', async () => {

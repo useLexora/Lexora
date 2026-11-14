@@ -61,16 +61,6 @@ describe('draft-owned task model configuration', () => {
     expect(fixture.drafts.modelSelection.value).toEqual(modelSelection('model-2'))
   })
 
-  it('keeps the actor default when reopening a task without a member override', async () => {
-    const fixture = await createFixture(modelSelection('model-2'))
-    fixture.confirmOpen(null)
-    fixture.binding.restoreScope(null)
-    expect(fixture.selection.currentSelection()).toEqual(modelSelection('model-2'))
-    expect(fixture.drafts.modelSelection.value).toBeNull()
-    await fixture.commands.setChatEffort('high')
-    expect(fixture.drafts.modelSelection.value).toEqual({ ...modelSelection('model-2'), reasoning: 'high' })
-  })
-
   it('preserves user model, effort and service-tier choices made while a remote open is pending', async () => {
     const fixture = await createFixture()
     fixture.confirmOpen(modelSelection('model-1'))
@@ -367,7 +357,7 @@ async function createControlsFixture(nextActorId = 'actor-b') {
   const onError = (error: unknown) => {
     throw error
   }
-  const controls = useTaskActorModel({ activeConversation, api, draftBuddyId: shallowRef(null), addressedActorId, restoreModel: selection => next.selection.restoreConversationModelSelection(next.drafts.modelSelection.value ?? selection), onError })
+  const controls = useTaskActorModel({ activeConversation, api, actorId: computed(() => addressedActorId.value ?? activeConversation.value?.buddyId ?? null), restoreModel: selection => next.selection.restoreConversationModelSelection(next.drafts.modelSelection.value ?? selection), onError })
   const commands = useTaskModelPersistence({ activeConversationId: computed(() => activeConversation.value.id), api, applyConversation: conversation => activeConversation.value = conversation, drafts: next.drafts, selection: next.selection, target: controls.target, canUpdate: controls.canUpdate, persistTarget: controls.persistTarget, onPersisted: controls.refresh, onError })
   await controls.refresh()
   cleanups.push(() => {

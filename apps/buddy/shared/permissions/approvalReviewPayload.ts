@@ -477,7 +477,7 @@ export function redactShellCommand(command: string): string {
       '$1$2=[redacted]',
     )
     .replace(/\bBearer\s+[^\s"']+/gi, 'Bearer [redacted]')
-    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, '$1[redacted]@')
+    .replace(/([a-z][a-z0-9+.-]{0,63}:\/\/)[^\s/@]+@/gi, '$1[redacted]@')
     .slice(0, MAX_COMMAND_REVIEW_LENGTH)
 }
 
@@ -494,7 +494,7 @@ export function redactSensitiveText(value: string): string {
       /\b((?:api[-_]?key|secret|token|password|credential)\s*[:=]\s*)([^\s,;]+)/gi,
       '$1[redacted]',
     )
-    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, '$1[redacted]@')
+    .replace(/([a-z][a-z0-9+.-]{0,63}:\/\/)[^\s/@]+@/gi, '$1[redacted]@')
 }
 
 function isSensitiveName(name: string): boolean {

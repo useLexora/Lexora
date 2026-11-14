@@ -5,7 +5,7 @@ import { ensurePrivateDirectories } from '../filesystem/privateDirectories'
 import { isMissing, readStorageJson, storageError, writeStorageJson } from './storageFiles'
 
 export function storageOperationStage(operation: StorageOperation): string {
-  return operation.kind === 'relocate'
+  return operation.kind === 'relocate' || operation.kind === 'upgrade'
     ? join(dirname(operation.target), `.${basename(operation.target)}.storage-${operation.id}`)
     : join(operation.target, `.storage-${operation.id}`)
 }

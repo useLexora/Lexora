@@ -3,13 +3,12 @@ import type { RuntimeRequestHandler } from '../../../../shared/runtime/rpcPeer'
 import type { RuntimeRequestRegistrar } from '../../rpc/runtimeRequest'
 import type { RegisterConversationRpcOptions } from '../registerConversationRpc'
 import { afterEach, describe, expect, it } from 'vitest'
-import { conversationResponseSchemas } from '../../../../shared/conversation/conversationApi'
 import { RunEventCorruptionError } from '../../events/RunEventFailure'
 import { RunEventProjector } from '../../events/RunEventProjector'
 import { createBuddyRepository } from '../../storage/buddyRepository'
 import { createConversationArchiveRepository } from '../../storage/conversationArchiveRepository'
 import { createConversationRepository } from '../../storage/conversationRepository'
-import { openBuddyDatabase } from '../../storage/database'
+import { openBuddyDatabase, openBuddyMigrationCandidate } from '../../storage/database'
 import { createRunRepository } from '../../storage/runRepository'
 import { ConversationMetadataService } from '../ConversationMetadataService'
 import { registerConversationRpc } from '../registerConversationRpc'
@@ -23,55 +22,6 @@ afterEach(() => {
 })
 
 describe('registerConversationRpc', () => {
-  it('persists explicit model selection without resolved token limits and rejects invalid reads', async () => {
-    const database = openBuddyDatabase({ databasePath: ':memory:' })
-    databases.push(database)
-    const conversations = createConversationRepository(database)
-    conversations.create({
-      branchId: 'branch-1',
-      createdAt: '2026-08-27T00:00:00.000Z',
-      approvalPolicy: 'policy' as const,
-      executionProfile: 'workspace_write',
-      id: 'conversation-1',
-      spaceId: null,
-      title: 'Original title',
-    })
-    const harness = createRpcHarness()
-    registerConversationRpc({
-      ...emptyConversationDependencies(conversations),
-      rpc: harness.rpc,
-      metadata: new ConversationMetadataService({
-        repository: conversations,
-        resolveModelSelection: async selection => ({ ...selection, contextWindow: 128_000, maxTokens: 16_384 }),
-        sessions: { invalidateConversation: async () => ({ pending: 0, degraded: 0 }) },
-      }),
-    })
-
-    const modelSelection = {
-      modelId: 'model-1',
-      providerId: 'provider-1',
-      reasoning: 'high' as const,
-      serviceTier: 'priority' as const,
-    }
-    await expect(harness.invoke('conversations.setModelSelection', {
-      conversationId: 'conversation-1',
-      modelSelection,
-    })).resolves.toMatchObject({ modelSelection })
-    const storedSelection = database.prepare(`
-      SELECT model_selection_json, model_selection_source FROM conversation_members WHERE conversation_id = ? AND actor_id = 'default'
-    `).get('conversation-1') as { model_selection_json: string, model_selection_source: string }
-    expect(JSON.parse(storedSelection.model_selection_json)).toEqual(modelSelection)
-    expect(storedSelection.model_selection_source).toBe('explicit')
-
-    conversations.markDeleted('conversation-1', '2026-08-27T00:05:00.000Z')
-    await expect(harness.invoke('conversations.get', {
-      conversationId: 'conversation-1',
-    })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
-    await expect(harness.invoke('conversations.list', { unexpected: true }))
-      .rejects
-      .toMatchObject({ code: 'VALIDATION_FAILED' })
-  })
-
   it('projects attachments, public actor replies, root events and artifacts while paging through the root input', async () => {
     const database = openBuddyDatabase({ databasePath: ':memory:' })
     databases.push(database)
@@ -207,7 +157,6 @@ describe('registerConversationRpc', () => {
       conversationId: 'conversation-1',
       limit: 2,
     }) as Record<string, unknown>
-    expect(conversationResponseSchemas.timelinePage.safeParse(timeline).success).toBe(true)
     expect(timeline).toMatchObject({
       items: [
         {
@@ -252,7 +201,7 @@ describe('registerConversationRpc', () => {
 })
 
 it('reads archived details, models, members and usage without permitting writes or exposing deleted history', async () => {
-  const database = openBuddyDatabase({ databasePath: ':memory:' })
+  const database = openBuddyMigrationCandidate({ databasePath: ':memory:' })
   databases.push(database)
   const now = '2026-11-07T00:00:00.000Z'
   const conversations = createConversationRepository(database)

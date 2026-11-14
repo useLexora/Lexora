@@ -18,6 +18,7 @@ function receipt(runId: string, branchId = 'branch'): LocalExecutionInputReceipt
 function setup(overrides: Partial<LocalChatApi['executions']> = {}) {
   let changed: ((notice: ExecutionsChanged) => void) | undefined
   const api: LocalChatApi['executions'] = {
+    activity: async () => ({ hasBlockingAnswer: false }),
     list: async () => [execution('root')],
     inputs: async input => ({ inputs: [receipt(input.runIds[0]!, input.branchId)], nextOffset: null }),
     detail: async () => { throw new Error('Not used') },

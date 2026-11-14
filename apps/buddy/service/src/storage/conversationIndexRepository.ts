@@ -108,10 +108,13 @@ function parseHistoryCursor(cursor: string, identity: string): HistoryCursor {
 export function createConversationIndexRepository(
   database: DatabaseSync,
 ): ConversationIndexRepository {
+  const visiblePredicate = database.prepare('PRAGMA table_info(conversations)').all().some(column => column.name === 'archived_at')
+    ? 'conversations.deleted_at IS NULL AND conversations.archived_at IS NULL'
+    : 'conversations.deleted_at IS NULL'
   const marks = createTaskMarkRepository(database)
   const listRecent = database.prepare(`
     ${SUMMARY_SELECT}
-    WHERE conversations.deleted_at IS NULL AND conversations.archived_at IS NULL
+    WHERE ${visiblePredicate}
       AND (? = 0 OR conversations.space_id IS ?)
       AND instr(lower(COALESCE(conversations.title, '')), lower(?)) > 0
       AND (? IS NULL OR conversations.id != ?)
@@ -132,7 +135,7 @@ export function createConversationIndexRepository(
       const query = parse(conversationHistoryQuerySchema, input)
       const identity = queryIdentity(query)
       const cursor = query.cursor ? parseHistoryCursor(query.cursor, identity) : null
-      const conditions = ['conversations.deleted_at IS NULL AND conversations.archived_at IS NULL']
+      const conditions = [visiblePredicate]
       const parameters: SQLInputValue[] = []
       if (query.spaceId !== undefined) {
         conditions.push('conversations.space_id IS ?')
@@ -179,7 +182,7 @@ export function createConversationIndexRepository(
         return []
       const rows = database.prepare(`
         ${SUMMARY_SELECT}
-        WHERE conversations.deleted_at IS NULL AND conversations.archived_at IS NULL AND conversations.id IN (${unique.map(() => '?').join(', ')})
+        WHERE ${visiblePredicate} AND conversations.id IN (${unique.map(() => '?').join(', ')})
       `).all(...unique) as unknown as ConversationSummaryRow[]
       const entries = new Map(withMarks(rows).map(entry => [entry.conversation.id, entry]))
       return unique.flatMap(id => entries.has(id) ? [entries.get(id)!] : [])

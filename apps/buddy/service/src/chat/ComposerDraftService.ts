@@ -116,6 +116,10 @@ export class ComposerDraftService {
     })
   }
 
+  withDraftLock<T>(draftId: string, operation: () => T | Promise<T>): Promise<T> {
+    return this.#enqueue(draftId, operation)
+  }
+
   run<T>(draftId: string, operation: () => T | Promise<T>): Promise<T> {
     return this.#enqueue(draftId, () => {
       this.get(draftId)
@@ -141,6 +145,10 @@ export class ComposerDraftService {
     await Promise.allSettled(this.#pending.values())
     this.#committed.dispose()
     this.#cleanup.dispose()
+  }
+
+  notifyCommitted(kind: ComposerDraftCommit['kind'], draft: BuddyComposerDraft): void {
+    this.#publish(kind, draft)
   }
 
   #publish(kind: ComposerDraftCommit['kind'], draft: BuddyComposerDraft): void {

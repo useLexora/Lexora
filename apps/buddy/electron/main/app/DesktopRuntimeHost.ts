@@ -1,4 +1,6 @@
 import type { ExtensionInspection } from '../../../shared/extensions/extensionAuthoring'
+import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
+import type { DesktopOpenIntent, DesktopOpenResult } from '../../../shared/service/localServiceProtocol'
 import type { SpeechProvider } from '../../../shared/speech/speechApi'
 import type { LexoraConfig } from '../../shared/desktopApi'
 import type { BrowserIntegration } from '../browser/BrowserIntegration'
@@ -10,6 +12,7 @@ import type { DesktopEnvironment } from './typing'
 import { join } from 'node:path'
 import process from 'node:process'
 import { app, powerMonitor } from 'electron'
+import { z } from 'zod'
 import { currentPlatform } from '../../../platform/currentPlatform'
 import { createBuddyNativeEnvironment, resolveBuddyProcessControl, resolveBuddyShellSandbox } from '../../../platform/native/nativeHost'
 import shellSandbox from '../../../platform/native/shellSandbox.json'
@@ -28,6 +31,7 @@ import { ocrRpc } from '../../../shared/images/ocrService'
 import { networkPermissionGrantSchema, networkPermissionsRpc } from '../../../shared/permissions/networkPermissionsRpc'
 import { isLinux } from '../../../shared/platform/identifiers'
 import { runtimePreferencesRpc } from '../../../shared/runtime/runtimePreferences'
+import { desktopOpenIntentSchema } from '../../../shared/service/localServiceProtocol'
 import { HOST_SPEECH_MODELS } from '../../../shared/speech/speechApi'
 import { installAttachmentProtocol } from '../attachmentProtocol'
 import { registerBrowserHostRpc } from '../browser/registerBrowserHostRpc'
@@ -49,12 +53,15 @@ import { installRendererProtocol } from '../rendererProtocol'
 import { createBuddyServiceEnvironment, resolveBuddySearchToolsDirectory } from '../runtime/buddyServiceEnvironment'
 import { forkBuddyServiceProcess } from '../runtime/buddyServiceProcess'
 import { BuddyServiceSupervisor } from '../runtime/BuddyServiceSupervisor'
+import { RemoteServiceClient } from '../runtime/RemoteServiceClient'
 import { registerSandboxHostRpc } from '../sandbox/registerSandboxHostRpc'
 import { verifySandboxInstallation } from '../sandbox/verifySandboxInstallation'
 import { createCredentialVault } from '../secrets/CredentialVault'
 import { registerCredentialHostRpc } from '../secrets/registerCredentialHostRpc'
+import { withProfileWritesStopped } from '../storage/profileWrites'
 
 export class DesktopRuntimeHost {
+  openDesktop: ((intent: DesktopOpenIntent, signal?: AbortSignal) => Promise<DesktopOpenResult>) | null = null
   readonly performance: DesktopPerformanceMonitor
   inspectExtension: ((id: string) => Promise<ExtensionInspection>) | null = null
   extensionAgent: ReturnType<typeof registerExtensionIpc>['agent'] | null = null
@@ -71,7 +78,8 @@ export class DesktopRuntimeHost {
   #credentials: CredentialVault | null = null
   #config: LexoraConfig | null = null
   #features: DesktopFeature[] = []
-  #service: BuddyServiceSupervisor | null = null
+  #service: Pick<BuddyServiceSupervisor, keyof BuddyServiceSupervisor> | null = null
+  #desktopAvailable = true
   #network: DesktopNetwork | null = null
   #webHost: HostWebService | null = null
   #windowsPowerShell: string | undefined
@@ -83,6 +91,7 @@ export class DesktopRuntimeHost {
 
   constructor(environment: DesktopEnvironment, windows: DesktopWindowHost, browser: BrowserIntegration) {
     this.#environment = environment
+    this.#desktopAvailable = !environment.platformHost
     this.#windows = windows
     this.#browser = browser
     this.performance = new DesktopPerformanceMonitor(() => ({ metrics: app.getAppMetrics(), proxy: this.network.activity }), environment.events.publish)
@@ -101,7 +110,8 @@ export class DesktopRuntimeHost {
   }
 
   withStoppedStorage<T>(operation: () => Promise<T>): Promise<T> {
-    return this.service.withStoppedStorage(() => this.extensionStorage ? this.extensionStorage.withStoppedStorage(operation) : operation())
+    const snapshot = () => withProfileWritesStopped(this.#environment.paths.lexoraHome, operation)
+    return this.service.withStoppedStorage(() => this.extensionStorage ? this.extensionStorage.withStoppedStorage(snapshot) : snapshot())
   }
 
   get language(): LexoraConfig['desktop']['language'] {
@@ -160,7 +170,7 @@ export class DesktopRuntimeHost {
     }
   }
 
-  get service(): BuddyServiceSupervisor {
+  get service(): Pick<BuddyServiceSupervisor, keyof BuddyServiceSupervisor> {
     if (!this.#service)
       throw new Error('Desktop Runtime is not prepared')
     return this.#service
@@ -217,91 +227,103 @@ export class DesktopRuntimeHost {
       paths: environment.paths,
     })
     this.#features = composition.features
-    this.#service = new BuddyServiceSupervisor({
-      onDiagnostic: (event) => {
+    const bindPeer = (peer: RuntimeRpcPeerContract) => {
+      const sandbox = registerSandboxHostRpc(peer, {
+        buddyHome: environment.paths.buddyHome,
+        protectedRoots: environment.storage.protection.sandboxRoots,
+        protectionScope: environment.storage.bootstrapRoot,
+        proxyUrl: this.#network!.sandboxProxyUrl,
+        ...this.#sandboxOptions(),
+      })
+      const prepareSandbox = () => {
+        sandbox.prepare()
+        peer.notify('host.sandbox.ready', {})
+      }
+      this.#prepareSandbox = prepareSandbox
+      sandbox.onDidChange(event => environment.events.publish({
+        event: `sandbox.supervisor.${event.kind}`,
+        level: event.kind === 'cleanup_failed' ? 'warn' : 'info',
+        requestId: event.requestId,
+        sandboxProcess: { phase: event.kind, pid: event.pid, exitCode: event.exitCode },
+      }))
+      const stopAuthoring = registerExtensionAuthoringRpc(peer, (id) => {
+        if (!this.inspectExtension)
+          throw new Error('EXTENSION_SERVICE_UNAVAILABLE')
+        return this.inspectExtension(id)
+      }, () => this.#config?.desktop.pluginAuthor ?? '')
+      const disposers = [
+        peer.onRequest('host.openDesktop', (raw, signal) => {
+          if (!this.openDesktop)
+            throw new Error('DESKTOP_UNAVAILABLE')
+          return this.openDesktop(desktopOpenIntentSchema.parse(raw), signal)
+        }),
+        peer.onRequest(imageRpc.preferences, async () => (await this.configStore.read()).desktop.images ?? {}),
+        peer.onRequest(ocrRpc.read, (raw, signal) => this.ocr.read(raw, signal ?? new AbortController().signal)),
+        peer.onRequest(HOST_SPEECH_MODELS, () => this.speechModels?.() ?? []),
+        registerExtensionImageReadingRpc(peer, () => this.extensionInference),
+        registerExtensionImageRpc(peer, () => this.extensionInference),
+        registerExtensionModelRpc(peer, () => this.extensionInference),
+        registerExtensionShellRpc(peer, () => this.extensionShells),
+        peer.onRequest(extensionAgentRpc.list, () => this.extensionAgent?.list() ?? []),
+        peer.onRequest(extensionAgentRpc.releaseRun, (input) => {
+          const { runId } = z.object({ runId: z.string().min(1).max(256) }).strict().parse(input)
+          this.extensionAgent?.releaseRun(runId)
+          return {}
+        }),
+        peer.onRequest(extensionSkillsRpc.list, () => this.extensionSkills?.list() ?? []),
+        peer.onRequest(extensionAgentRpc.resource, (input, signal) => {
+          if (!this.extensionAgent)
+            throw new Error('EXTENSION_AGENT_UNAVAILABLE')
+          return this.extensionAgent.readResource(extensionAgentResourceRequestSchema.parse(input), signal ?? new AbortController().signal)
+        }),
+        // Unlike skills, an empty answer here would read as "everything was uninstalled", so an unready service must fail instead.
+        peer.onRequest(extensionCapabilitiesRpc.list, () => {
+          if (!this.extensionCapabilities)
+            throw new Error('EXTENSION_SERVICE_UNAVAILABLE')
+          return this.extensionCapabilities.list()
+        }),
+        peer.onRequest(extensionAgentRpc.invoke, (input, signal) => {
+          if (!this.extensionAgent)
+            throw new Error('EXTENSION_AGENT_UNAVAILABLE')
+          return this.extensionAgent.invoke(extensionAgentInvocationSchema.parse(input), signal ?? new AbortController().signal)
+        }),
+        peer.onRequest(runtimePreferencesRpc.get, () => this.#config!.runtime),
+        peer.onRequest(networkPermissionsRpc.get, async () => (await this.configStore.read()).browser.networkPermissions),
+        peer.onRequest(networkPermissionsRpc.allow, async (params, signal) => {
+          const input = networkPermissionGrantSchema.parse(params)
+          await this.configStore.allowNetworkPermission(input.host, input.operation, () => signal?.throwIfAborted())
+          return {}
+        }),
+        peer.onRequest(contextPanelRpc.presentBrowser, (params) => {
+          const source = contextPanelSourceSchema.parse(params)
+          return this.contextPanel.execute({ action: 'open', target: { kind: 'browser', source } }, 'harness')
+        }),
+        registerWebHostRpc(peer, this.#webHost!),
+        registerBrowserHostRpc(peer, {
+          createAdapterLease: input => this.#browser.adapter.issueLease(input),
+          getHost: () => this.#browser.host,
+        }),
+        registerCredentialHostRpc(peer, credentials),
+        ...this.#features.map(feature => feature.bindPeer(peer)),
+      ]
+      return () => {
+        this.extensionAgent?.releaseAllRuns()
+        if (this.#prepareSandbox === prepareSandbox)
+          this.#prepareSandbox = undefined
+        const cleanup = Promise.allSettled([sandbox.dispose(), stopAuthoring()]).then((results) => {
+          const failures = results.filter(result => result.status === 'rejected').map(result => result.reason)
+          if (failures.length)
+            throw new AggregateError(failures, 'RUNTIME_CLEANUP_FAILED')
+        }).finally(() => this.#sandboxCleanup.delete(cleanup))
+        this.#sandboxCleanup.add(cleanup)
+        disposers.forEach(dispose => dispose())
+      }
+    }
+    const supervisorOptions = {
+      onDiagnostic: (event: Parameters<NonNullable<ConstructorParameters<typeof BuddyServiceSupervisor>[0]['onDiagnostic']>>[0]) => {
         environment.diagnostics.record({ ...event, scope: 'local-service' })
       },
-      bindPeer: (peer) => {
-        const sandbox = registerSandboxHostRpc(peer, {
-          buddyHome: environment.paths.buddyHome,
-          protectedRoots: environment.storage.protection.sandboxRoots,
-          protectionScope: environment.storage.bootstrapRoot,
-          proxyUrl: this.#network!.sandboxProxyUrl,
-          ...this.#sandboxOptions(),
-        })
-        const prepareSandbox = () => {
-          sandbox.prepare()
-          peer.notify('host.sandbox.ready', {})
-        }
-        this.#prepareSandbox = prepareSandbox
-        sandbox.onDidChange(event => environment.events.publish({
-          event: `sandbox.supervisor.${event.kind}`,
-          level: event.kind === 'cleanup_failed' ? 'warn' : 'info',
-          requestId: event.requestId,
-          sandboxProcess: { phase: event.kind, pid: event.pid, exitCode: event.exitCode },
-        }))
-        const stopAuthoring = registerExtensionAuthoringRpc(peer, (id) => {
-          if (!this.inspectExtension)
-            throw new Error('EXTENSION_SERVICE_UNAVAILABLE')
-          return this.inspectExtension(id)
-        }, () => this.#config?.desktop.pluginAuthor ?? '')
-        const disposers = [
-          peer.onRequest(imageRpc.preferences, async () => (await this.configStore.read()).desktop.images ?? {}),
-          peer.onRequest(ocrRpc.read, (raw, signal) => this.ocr.read(raw, signal ?? new AbortController().signal)),
-          peer.onRequest(HOST_SPEECH_MODELS, () => this.speechModels?.() ?? []),
-          registerExtensionImageReadingRpc(peer, () => this.extensionInference),
-          registerExtensionImageRpc(peer, () => this.extensionInference),
-          registerExtensionModelRpc(peer, () => this.extensionInference),
-          registerExtensionShellRpc(peer, () => this.extensionShells),
-          peer.onRequest(extensionAgentRpc.list, () => this.extensionAgent?.list() ?? []),
-          peer.onRequest(extensionSkillsRpc.list, () => this.extensionSkills?.list() ?? []),
-          peer.onRequest(extensionAgentRpc.resource, (input, signal) => {
-            if (!this.extensionAgent)
-              throw new Error('EXTENSION_AGENT_UNAVAILABLE')
-            return this.extensionAgent.readResource(extensionAgentResourceRequestSchema.parse(input), signal ?? new AbortController().signal)
-          }),
-          // Unlike skills, an empty answer here would read as "everything was uninstalled", so an unready service must fail instead.
-          peer.onRequest(extensionCapabilitiesRpc.list, () => {
-            if (!this.extensionCapabilities)
-              throw new Error('EXTENSION_SERVICE_UNAVAILABLE')
-            return this.extensionCapabilities.list()
-          }),
-          peer.onRequest(extensionAgentRpc.invoke, (input, signal) => {
-            if (!this.extensionAgent)
-              throw new Error('EXTENSION_AGENT_UNAVAILABLE')
-            return this.extensionAgent.invoke(extensionAgentInvocationSchema.parse(input), signal ?? new AbortController().signal)
-          }),
-          peer.onRequest(runtimePreferencesRpc.get, () => this.#config!.runtime),
-          peer.onRequest(networkPermissionsRpc.get, async () => (await this.configStore.read()).browser.networkPermissions),
-          peer.onRequest(networkPermissionsRpc.allow, async (params, signal) => {
-            const input = networkPermissionGrantSchema.parse(params)
-            await this.configStore.allowNetworkPermission(input.host, input.operation, () => signal?.throwIfAborted())
-            return {}
-          }),
-          peer.onRequest(contextPanelRpc.presentBrowser, (params) => {
-            const source = contextPanelSourceSchema.parse(params)
-            return this.contextPanel.execute({ action: 'open', target: { kind: 'browser', source } }, 'harness')
-          }),
-          registerWebHostRpc(peer, this.#webHost!),
-          registerBrowserHostRpc(peer, {
-            createAdapterLease: input => this.#browser.adapter.issueLease(input),
-            getHost: () => this.#browser.host,
-          }),
-          registerCredentialHostRpc(peer, credentials),
-          ...this.#features.map(feature => feature.bindPeer(peer)),
-        ]
-        return () => {
-          if (this.#prepareSandbox === prepareSandbox)
-            this.#prepareSandbox = undefined
-          const cleanup = Promise.allSettled([sandbox.dispose(), stopAuthoring()]).then((results) => {
-            const failures = results.filter(result => result.status === 'rejected').map(result => result.reason)
-            if (failures.length)
-              throw new AggregateError(failures, 'RUNTIME_CLEANUP_FAILED')
-          }).finally(() => this.#sandboxCleanup.delete(cleanup))
-          this.#sandboxCleanup.add(cleanup)
-          disposers.forEach(dispose => dispose())
-        }
-      },
+      bindPeer,
       diagnosticOutput: environment.diagnostics.createWritable('local-service', { event: 'runtime.supervisor', level: 'error' }),
       spawnService: (onFatalError, sourceId) => forkBuddyServiceProcess({
         env: {
@@ -314,20 +336,28 @@ export class DesktopRuntimeHost {
         onFatalError,
         captureStderr: output => environment.diagnostics.captureOutput('local-service', output, sourceId),
       }),
-    })
+    } satisfies ConstructorParameters<typeof BuddyServiceSupervisor>[0]
+    if (environment.platformHost) {
+      this.#subscriptions.push(bindPeer(environment.platformHost.peer))
+      this.#service = new RemoteServiceClient(environment.platformHost.bootstrap, environment.platformHost.peer)
+    }
+    else {
+      this.#service = new BuddyServiceSupervisor(supervisorOptions)
+    }
     this.#subscriptions.push(environment.startup.bindRuntime(this.#service))
     return config
   }
 
   async applyConfig(config: LexoraConfig): Promise<void> {
     await this.#network?.apply(config.proxy)
+    const previousLaunchAtLogin = this.#config?.desktop.launchAtLogin
     const previous = this.#config?.runtime
     this.#config = config
     if (previous?.cacheWarming !== config.runtime.cacheWarming || previous?.codemode !== config.runtime.codemode || previous?.modelRetryLimit !== config.runtime.modelRetryLimit || previous?.codemodeWorkerLimit !== config.runtime.codemodeWorkerLimit || previous?.codemodeOverflow !== config.runtime.codemodeOverflow)
       this.#service?.notify(runtimePreferencesRpc.changed, config.runtime)
-    const featureConfig = config.desktop.onboardingCompleted ? config : { ...config, pet: { ...config.pet, enabled: false } }
+    const featureConfig = this.#desktopAvailable && config.desktop.onboardingCompleted ? config : { ...config, pet: { ...config.pet, enabled: false } }
     await Promise.all(this.#features.map(feature => feature.applyConfig(featureConfig)))
-    if (app.isPackaged && this.#environment.paths.profile === 'stable')
+    if (app.isPackaged && this.#environment.paths.profile === 'stable' && previousLaunchAtLogin !== undefined && previousLaunchAtLogin !== config.desktop.launchAtLogin)
       await this.#environment.setAutostart(config.desktop.launchAtLogin)
   }
 
@@ -372,13 +402,26 @@ export class DesktopRuntimeHost {
     return this.#credentials.read('web', 'tavily')
   }
 
+  async setDesktopAvailable(value: boolean): Promise<void> {
+    this.#desktopAvailable = value
+    if (this.#config)
+      await this.applyConfig(this.#config)
+  }
+
+  async publishHostReady(): Promise<void> {
+    const host = this.#environment.platformHost
+    if (!host)
+      return
+    await host.peer.request('host.ready', { hostInstanceId: host.bootstrap.hostInstanceId, preferences: this.#config!.runtime, display: true, proxy: { httpProxy: this.network.proxyUrl, httpsProxy: this.network.proxyUrl, noProxy: '' } }, 120000)
+  }
+
   async stop(): Promise<void> {
     this.performance.stop()
     const failures: unknown[] = []
     for (const cleanup of [
       () => this.contextPanel.dispose(),
       () => this.configStore.dispose(),
-      () => this.#service?.stop(),
+      () => this.#service instanceof RemoteServiceClient ? this.#service.disconnect() : this.#service?.stop(),
       () => Promise.all(this.#sandboxCleanup),
       () => this.#webHost?.dispose(),
       () => this.#network?.stop(),

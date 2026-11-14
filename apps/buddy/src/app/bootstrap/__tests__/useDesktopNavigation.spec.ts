@@ -78,7 +78,7 @@ describe('desktop navigation intent', () => {
     marking.resolve(true)
     await nextTick()
     expect(f.activeTaskId.value).toBe('b')
-    expect(f.navigation.notificationTarget.value).toEqual({ conversationId: 'b', messageId: 'message-b' })
+    expect(f.navigation.notificationTarget.value).toEqual({ conversationId: 'b', branchId: 'branch-b', messageId: 'message-b' })
   })
 
   it('keeps only the latest target queued during initialization', async () => {
@@ -89,20 +89,18 @@ describe('desktop navigation intent', () => {
     ready.resolve()
     await Promise.all([a, b])
     expect(f.activeTaskId.value).toBe('b')
-    expect(f.navigation.notificationTarget.value).toEqual({ conversationId: 'b', messageId: 'message-b' })
+    expect(f.navigation.notificationTarget.value).toEqual({ conversationId: 'b', branchId: 'branch-b', messageId: 'message-b' })
   })
 
-  it.each(['route', 'task', 'dispose'])('cancels a queued target after a newer %s operation', async (operation) => {
+  it.each(['route', 'task'])('cancels a queued target after a newer %s operation', async (operation) => {
     const ready = deferred<void>()
     const f = await fixture(ready.promise)
     const opening = f.navigation.openTarget({ conversationId: 'a', runId: 'a' })
     await nextTick()
     if (operation === 'route')
       await f.router.push('/settings/app')
-    else if (operation === 'task')
-      f.select('manual')
     else
-      f.scope.stop()
+      f.select('manual')
     await nextTick()
     ready.resolve()
     await opening
@@ -120,7 +118,7 @@ describe('desktop navigation intent', () => {
     ready.resolve()
     await opening
     expect(f.activeTaskId.value).toBe('a')
-    expect(f.navigation.notificationTarget.value).toEqual({ conversationId: 'a', messageId: 'message-a' })
+    expect(f.navigation.notificationTarget.value).toEqual({ conversationId: 'a', branchId: 'branch-a', messageId: 'message-a' })
   })
 
   it('discards an old run lookup after A to B to A selection', async () => {
@@ -153,7 +151,7 @@ describe('desktop navigation intent', () => {
     loading.resolve(true)
     await opening
     expect(f.activeBranchId.value).toBe('branch-a')
-    expect(f.navigation.notificationTarget.value).toEqual({ conversationId: 'a', messageId: 'message-a' })
+    expect(f.navigation.notificationTarget.value).toEqual({ conversationId: 'a', branchId: 'branch-a', messageId: 'message-a' })
   })
 
   it('does not highlight a message when branch activation is unavailable', async () => {

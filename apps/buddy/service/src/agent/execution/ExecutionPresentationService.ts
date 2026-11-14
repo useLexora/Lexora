@@ -1,5 +1,5 @@
 import type { LocalExecutionInput, LocalExecutionInputsPage } from '../../../../shared/executions/executionInputReceipt'
-import type { ExecutionAnswer, ExecutionEventsRequest, ExecutionInputsRequest, ExecutionsChanged, ExecutionScope, ExecutionSend, ExecutionTarget, LocalExecution, LocalExecutionDetail, LocalExecutionEventsPage } from '../../../../shared/executions/executionPresentationApi'
+import type { ExecutionActivityRequest, ExecutionAnswer, ExecutionEventsRequest, ExecutionInputsRequest, ExecutionsChanged, ExecutionScope, ExecutionSend, ExecutionTarget, LocalExecution, LocalExecutionDetail, LocalExecutionEventsPage } from '../../../../shared/executions/executionPresentationApi'
 import type { LocalRunTokenUsage } from '../../../../shared/usage/runTokenUsage'
 import type { BuddiesService } from '../../buddies/BuddiesService'
 import type { ChangeCaptureService } from '../../changes/ChangeCaptureService'
@@ -18,7 +18,7 @@ import type { ExecutionCoordinator } from './ExecutionCoordinator'
 import { randomUUID } from 'node:crypto'
 import { Emitter } from '../../../../shared/events/Emitter'
 import { EXECUTION_INPUT_PAGE_SIZE } from '../../../../shared/executions/executionInputReceipt'
-import { executionAnswerSchema, executionEventsRequestSchema, executionInputsRequestSchema, executionScopeSchema, executionSendSchema, executionTargetSchema } from '../../../../shared/executions/executionPresentationApi'
+import { executionActivityRequestSchema, executionAnswerSchema, executionEventsRequestSchema, executionInputsRequestSchema, executionScopeSchema, executionSendSchema, executionTargetSchema } from '../../../../shared/executions/executionPresentationApi'
 import { toPublicRunEvent } from '../../../../shared/runs/publicRunEvent'
 import { buddyRunProgressSchema } from '../../../../shared/runs/runProgress'
 import { projectRunOutputs } from '../../conversations/projectRunOutputs'
@@ -31,7 +31,7 @@ export interface ExecutionPresentationOptions {
   approvals: Pick<ApprovalRepository, 'hasPending'>
   conversations: Pick<ConversationRepository, 'findById' | 'listBranches' | 'listBranchMessages'>
   runs: Pick<RunRepository, 'listForTimeline'>
-  executions: Pick<ExecutionRepository, 'find' | 'listTree' | 'isForwardedPublicInput'>
+  executions: Pick<ExecutionRepository, 'find' | 'listTree' | 'isForwardedPublicInput' | 'waitingRunIds'>
   mailbox: Pick<MailboxRepository, 'find' | 'findQuestion' | 'listQuestions' | 'listInputPage'>
   buddies: Pick<BuddiesService, 'get'>
   coordinator: Pick<ExecutionCoordinator, 'onDidChange' | 'answerQuestion' | 'send' | 'cancel'>
@@ -72,6 +72,14 @@ export class ExecutionPresentationService {
       options.coordinator.onDidChange(change => this.#publish(change.rootRunId)),
       options.mutations.onDidChange(change => this.#publish(options.executions.find(change.runId)?.run.rootRunId)),
     ]
+  }
+
+  activity(input: ExecutionActivityRequest) {
+    const { conversationId } = parse(executionActivityRequestSchema, input)
+    const conversation = this.#options.conversations.findById(conversationId)
+    if (!conversation || conversation.deletedAt)
+      throw new BuddyServiceError('VALIDATION_FAILED')
+    return { hasBlockingAnswer: this.#options.executions.waitingRunIds(conversationId).some(runId => this.#options.questions?.isWaiting(runId)) }
   }
 
   list(input: ExecutionScope): LocalExecution[] {
@@ -234,7 +242,7 @@ export class ExecutionPresentationService {
     const root = this.#options.executions.find(target.rootRunId)
     if (!root || root.phase === 'closed' || !isCancellable(record)
       || record.run.branchId !== target.branchId
-      || this.#options.conversations.findById(target.conversationId)?.activeBranchId !== target.branchId) {
+      || this.#options.conversations.findById(target.conversationId)?.deletedAt !== null) {
       throw new BuddyServiceError('VALIDATION_FAILED')
     }
     return record
@@ -245,7 +253,7 @@ export class ExecutionPresentationService {
     const root = this.#options.executions.find(target.rootRunId)
     if (!root || !isLive(record) || !isLive(root)
       || record.run.branchId !== target.branchId
-      || this.#options.conversations.findById(target.conversationId)?.activeBranchId !== target.branchId) {
+      || this.#options.conversations.findById(target.conversationId)?.deletedAt !== null) {
       throw new BuddyServiceError('VALIDATION_FAILED')
     }
     return record
@@ -267,7 +275,7 @@ export class ExecutionPresentationService {
     })
     const activeChildren = tree.filter(child => child.run.parentRunId === run.id && child.phase !== 'closed').length
     const mutable = isLive(record) && isLive(tree.find(member => member.run.id === run.rootRunId) ?? record)
-      && run.branchId === scope.branchId && this.#options.conversations.findById(scope.conversationId)?.activeBranchId === scope.branchId
+      && run.branchId === scope.branchId && this.#options.conversations.findById(scope.conversationId)?.deletedAt === null
     const affectedResources = mutations.hazards.flatMap(hazard => hazard.claims.map(claim => claim.kind === 'host'
       ? { kind: 'host' as const }
       : { kind: 'path' as const, path: claim.canonicalPath }))
@@ -293,7 +301,7 @@ export class ExecutionPresentationService {
       waitingFor: record.phase === 'waiting' && this.#options.questions?.isWaiting(run.id) ? 'user_answer' : questions.some(question => question.open) ? 'answer' : isLive(record) && this.#options.approvals.hasPending(run.id) ? 'approval' : mutations.pending ? 'resource' : record.phase === 'waiting' && activeChildren ? 'children' : null,
       activeChildren,
       canCancel: isCancellable(record) && tree.find(member => member.run.id === run.rootRunId)?.phase !== 'closed'
-        && run.branchId === scope.branchId && this.#options.conversations.findById(scope.conversationId)?.activeBranchId === scope.branchId,
+        && run.branchId === scope.branchId && this.#options.conversations.findById(scope.conversationId)?.deletedAt === null,
       canSend: mutable && (run.executionKind === 'actor_child' || run.executionKind === 'npc_child'),
       canAnswer: mutable && questions.some(question => question.open && question.audience === 'user'),
       cleanup: quarantined || mutations.hazards.length ? 'degraded' : record.cleanupState,

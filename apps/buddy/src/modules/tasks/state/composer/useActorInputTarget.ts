@@ -2,9 +2,9 @@ import type { BuddyUserContentV1 } from '@buddy-shared/conversation/buddyUserCon
 import type { BuddyInputDelivery } from '@buddy-shared/conversation/chatApi'
 import type { Ref } from 'vue'
 import type { TaskExecutionTree } from '../../contracts'
-import { getBuddyUserContentActorReferences } from '@buddy-shared/conversation/buddyUserContent'
 import { isExecutionTextInput } from '@buddy-shared/executions/executionComposerInput'
 import { computed } from 'vue'
+import { resolveInputActors } from '../../model/composer/actorInputTarget'
 
 export function useActorInputTarget(options: {
   content: Readonly<Ref<BuddyUserContentV1>>
@@ -13,8 +13,9 @@ export function useActorInputTarget(options: {
   followUpBehavior?: Readonly<Ref<'queue' | 'steer'>>
   tree: Pick<TaskExecutionTree, 'groups' | 'target'>
 }) {
-  const actors = computed(() => [...new Set(getBuddyUserContentActorReferences(options.content.value).map(actor => actor.actorId))])
-  const actorId = computed(() => actors.value.length === 1 ? actors.value[0]! : options.defaultActorId?.value ?? null)
+  const actors = computed(() => resolveInputActors(options.content.value, options.defaultActorId?.value ?? null))
+  const actorId = computed(() => actors.value.actorId)
+  const addressedActorId = computed(() => actors.value.addressedActorId)
   const execution = computed(() => {
     if (!options.scopeKey.value.startsWith('conversation:') || !actorId.value)
       return null
@@ -24,7 +25,7 @@ export function useActorInputTarget(options: {
     return candidates.length === 1 ? candidates[0]! : null
   })
   const target = computed(() => execution.value ? options.tree.target(execution.value) : null)
-  const answering = computed(() => actors.value.length <= 1 && !!execution.value?.canAnswer
+  const answering = computed(() => !actors.value.multiple && !!execution.value?.canAnswer
     && execution.value.questions.some(question => question.open && question.audience === 'user'))
   const delivery = computed<BuddyInputDelivery | undefined>(() => {
     if (!options.scopeKey.value.startsWith('conversation:') || !actorId.value)
@@ -37,14 +38,14 @@ export function useActorInputTarget(options: {
   })
   const mailboxTarget = computed(() => {
     const record = execution.value
-    if (!record || delivery.value?.mode !== 'current' || actors.value.length > 1 || record.stopping || record.phase === 'closing' || !isExecutionTextInput(options.content.value))
+    if (!record || delivery.value?.mode !== 'current' || actors.value.multiple || record.stopping || record.phase === 'closing' || !isExecutionTextInput(options.content.value))
       return null
     return (record.kind === 'actor_child' && record.canSend)
       || answering.value
       ? target.value
       : null
   })
-  return { actorId, execution, target, mailboxTarget, delivery }
+  return { actorId, addressedActorId, execution, target, mailboxTarget, delivery }
 }
 
 export type ActorInputTarget = ReturnType<typeof useActorInputTarget>

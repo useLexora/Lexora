@@ -12,8 +12,7 @@ import type { ChatBlockerKind } from '@/modules/tasks/model/status/typing'
 import type { createUserQuestionInteractionState } from '@/modules/tasks/state/runs/useUserQuestions'
 import type { RuntimeSupervisorStore } from '@/platform/runtime/useRuntimeSupervisorStore'
 import { DEFAULT_DESKTOP_CHAT_WELCOME_ITEMS } from '@buddy-electron/shared/desktopApi'
-import { actorThreadId } from '@buddy-shared/conversation/actorThread'
-import { getBuddyUserContentActorReferences } from '@buddy-shared/conversation/buddyUserContent'
+import { hasBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
 import { BUDDY_DEFAULT_PERMISSION_MODE } from '@buddy-shared/permissions/permissionMode'
 import { until } from '@vueuse/core'
 import { computed, readonly, shallowRef, watch } from 'vue'
@@ -30,10 +29,10 @@ import { useComposerContextOptions } from '@/modules/tasks/state/composer/useCom
 import { useComposerResources } from '@/modules/tasks/state/composer/useComposerResources'
 import { useChangeRecovery } from '@/modules/tasks/state/runs/useChangeRecovery'
 import { useChatApprovals } from '@/modules/tasks/state/runs/useChatApprovals'
-import { useChatContextUsage } from '@/modules/tasks/state/runs/useChatContextUsage'
 import { useChatExecution } from '@/modules/tasks/state/runs/useChatExecution'
 import { useChatExecutionTree } from '@/modules/tasks/state/runs/useChatExecutionTree'
 import { useChatRunSync } from '@/modules/tasks/state/runs/useChatRunSync'
+import { useTaskContextUsage } from '@/modules/tasks/state/runs/useTaskContextUsage'
 import { useUserQuestions } from '@/modules/tasks/state/runs/useUserQuestions'
 import { useTaskSpaces } from '@/modules/tasks/state/task-index/useTaskSpaces'
 import { resolveLocalChatErrorMessage } from '@/shared/lib/localChatError'
@@ -64,6 +63,7 @@ export interface UseTaskCapabilityOptions {
   modelProviders: ModelProvidersStore
   runtimeSupervisor: RuntimeSupervisorStore
   onDraftCommitted?: (draftId: string, conversationId: string) => void
+  openBranch?: (conversationId: string, branchId: string, options?: { editMessageId?: string, beside?: boolean }) => Promise<boolean>
 }
 
 export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapability {
@@ -173,28 +173,19 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     spaceId: spaceId.value,
   }))
   let persistDraftChanges = () => {}
+  let persistLocalDraftChanges = () => {}
   const defaultPermissionMode = computed(() => (
     applicationSettings.config.value?.desktop.chat.permissionMode ?? BUDDY_DEFAULT_PERMISSION_MODE
   ))
   const drafts = useChatDrafts({
     defaultPermissionMode,
     onChange: () => persistDraftChanges(),
+    onLocalChange: () => persistLocalDraftChanges(),
     targetKey: draftScopeKey,
     defaultActorId: getDefaultActorId,
   })
   const { composerContent, draft, draftId } = drafts
   const draftBuddyId = computed(() => drafts.participants.value?.leaderId ?? null)
-  const addressedActorId = computed(() => {
-    const actors = getBuddyUserContentActorReferences(drafts.load(drafts.targetKey.value).content)
-    return actors.length === 1 ? actors[0]!.actorId : null
-  })
-  const resolvedActorModel = shallowRef<{ conversationId: string | null, actorId: string | null, model: LocalConversation['modelSelection'] } | null>(null)
-  const draftModelBinding = useTaskDraftModelBinding({
-    drafts,
-    isModelCatalogReady: computed(() => !modelProviders.isLoadingModelCatalog.value && modelProviders.models.value.length > 0),
-    selection: taskModels,
-    conversationModel: getActiveConversationModel,
-  })
   const composerResources = useComposerResources({
     api: api.localChat.composerResources,
     draftId,
@@ -222,20 +213,38 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     clearError: () => errorMessage.value = null,
     onError: setError,
     persistWorkspaceState,
-    restoreConversationModelSelection: draftModelBinding.restoreScope,
+    restoreConversationModelSelection: restoreScopeModel,
     runSync,
-    selectDefaultModel: () => draftModelBinding.restoreScope(),
+    selectDefaultModel: restoreScopeModel,
     session: chatSession,
   })
   const actorInput = useActorInputTarget({
-    content: computed(() => drafts.load(drafts.targetKey.value).content),
+    content: drafts.content,
     scopeKey: drafts.targetKey,
     defaultActorId: computed(getDefaultActorId),
     followUpBehavior: computed(() => applicationSettings.config.value?.desktop.chat.followUpBehavior ?? 'steer'),
     tree: executionTree,
   })
+  const { addressedActorId } = actorInput
+  const actorModel = useTaskActorModel({
+    activeConversation,
+    api: api.localChat.conversations,
+    buddyCatalog: options.buddyCatalog,
+    actorId: actorInput.actorId,
+    restoreModel: (selection) => {
+      if (drafts.modelSelection.value === null)
+        taskModels.restoreConversationModelSelection(selection)
+    },
+    onError: setError,
+  })
+  const draftModelBinding = useTaskDraftModelBinding({
+    drafts,
+    isModelCatalogReady: computed(() => !modelProviders.isLoadingModelCatalog.value && modelProviders.models.value.length > 0),
+    selection: taskModels,
+    conversationModel: () => actorModel.modelSelection.value,
+  })
   const activeRun = computed(() => {
-    const actorId = addressedActorId.value ?? activeConversation.value?.buddyId ?? draftBuddyId.value
+    const actorId = actorInput.actorId.value
     const active = runs.value.filter(run => run.status === 'queued' || run.status === 'running')
     return actorId ? active.find(run => run.buddyId === actorId) ?? null : active.length === 1 ? active[0]! : null
   })
@@ -258,21 +267,18 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     session: chatSession,
   })
   persistDraftChanges = workspacePersistence.persistIfHydrated
+  persistLocalDraftChanges = workspacePersistence.persistLocalChanges
   watch(spaceId, () => persistDraftChanges())
   function persistWorkspaceState() {
     return workspacePersistence.persist()
   }
+  function restoreScopeModel(selection?: LocalConversation['modelSelection']) {
+    draftModelBinding.restoreScope(selection)
+  }
   function getDefaultActorId() {
     return activeConversation.value?.buddyId ?? draftBuddyId.value ?? options.buddyCatalog?.value?.defaultBuddyId ?? null
   }
-  function getActiveConversationModel() {
-    const catalog = options.buddyCatalog?.value
-    const id = addressedActorId.value ?? activeConversation.value?.buddyId ?? draftBuddyId.value ?? catalog?.defaultBuddyId
-    const resolved = resolvedActorModel.value
-    const memberModel = id === activeConversation.value?.buddyId ? activeConversation.value?.modelSelection : resolved?.conversationId === activeConversationId.value && resolved?.actorId === id ? resolved?.model : null
-    return memberModel ?? catalog?.buddies.find(buddy => buddy.id === id)?.settings.model ?? null
-  }
-  watch(addressedActorId, () => draftModelBinding.restoreScope(getActiveConversationModel()), { flush: 'sync' })
+  watch(addressedActorId, () => draftModelBinding.restoreScope(actorModel.modelSelection.value), { flush: 'sync' })
   watch(() => [activeConversation.value?.buddyId ?? draftBuddyId.value, draftId.value] as const, ([actorId, id], [previousActorId, previousId]) => {
     if (id === previousId && actorId !== previousActorId && !addressedActorId.value)
       drafts.setModelSelection(null)
@@ -284,7 +290,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     onError: setError,
     persistWorkspaceState,
     spaceId,
-    selectDefaultModel: () => draftModelBinding.restoreScope(),
+    selectDefaultModel: restoreScopeModel,
   })
   const {
     activeSpace,
@@ -335,18 +341,19 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
       drafts.setParticipants({ leaderId: buddyId, actorIds: [...taskMembers.memberIds.value] })
       if (!addressedActorId.value)
         drafts.setModelSelection(null)
-      draftModelBinding.restoreScope(getActiveConversationModel())
+      draftModelBinding.restoreScope(actorModel.modelSelection.value)
       return persistWorkspaceState()
     }
     isSelectingBuddy.value = true
     try {
-      const conversation = await api.localChat.conversations.setBuddy(conversationId, buddyId)
+      const expectedRevision = activeConversation.value?.metadataRevision
+      const conversation = await api.localChat.conversations.setBuddy(conversationId, buddyId, ...expectedRevision !== undefined ? [expectedRevision] as const : [])
       applyConversation(conversation)
       if (activeConversationId.value !== conversationId || drafts.draftId.value !== sourceDraftId)
         return true
       if (!addressedActorId.value)
         drafts.setModelSelection(null)
-      draftModelBinding.restoreScope(getActiveConversationModel())
+      draftModelBinding.restoreScope(actorModel.modelSelection.value)
       return true
     }
     catch (error) {
@@ -355,7 +362,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     }
     finally { isSelectingBuddy.value = false }
   }
-  watch(() => options.buddyCatalog?.value?.revision, () => draftModelBinding.restoreScope(getActiveConversationModel()))
+  watch(() => options.buddyCatalog?.value?.revision, () => draftModelBinding.restoreScope(actorModel.modelSelection.value))
   const currentTitle = computed(() => activeConversation.value?.title?.trim()
     || t('desktop.tasks.newTask'))
   const permissionSettingsState = useChatPermissionSettings({
@@ -379,39 +386,10 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     onError: setError,
     refresh: runSync.refreshActiveConversation,
   })
-  const inputActorId = computed(() => addressedActorId.value ?? activeConversation.value?.buddyId ?? draftBuddyId.value)
-  const inputContextRunId = computed(() => actorInput.delivery.value?.mode === 'current'
-    && actorInput.execution.value?.buddyId === inputActorId.value
-    ? actorInput.target.value?.runId ?? null
-    : null)
-  const inputContextThreadId = computed(() => inputContextRunId.value
-    ? actorInput.execution.value?.threadId ?? null
-    : activeConversationId.value && inputActorId.value
-      ? actorThreadId(activeConversationId.value, inputActorId.value)
-      : null)
-  const inputActorRunIds = computed(() => {
-    if (inputContextRunId.value)
-      return new Set([inputContextRunId.value])
-    const branchRootIds = new Set(runs.value.filter(run => run.conversationId === activeConversationId.value
-      && run.branchId === activeBranchId.value).map(run => run.id))
-    return new Set(executionTree.records.value.filter(run => run.buddyId === inputActorId.value
-      && run.threadId === inputContextThreadId.value && branchRootIds.has(run.rootRunId)).map(run => run.runId))
-  })
-  const inputMaintenanceRunIds = computed(() => new Set(runs.value
-    .filter(run => run.buddyId === inputActorId.value && run.purpose === 'conversation.compaction')
-    .map(run => run.id)))
-  const contextUsageTracker = useChatContextUsage({
-    actorId: inputActorId,
-    runId: inputContextRunId,
-    threadId: inputContextThreadId,
-    runRevision: computed(() => JSON.stringify([
-      inputContextRunId.value
-        ? executionTree.records.value.find(run => run.runId === inputContextRunId.value)?.updatedAt ?? null
-        : null,
-      runs.value.filter(run => inputMaintenanceRunIds.value.has(run.id)).map(run => [run.id, run.status, run.completedAt]),
-      runSignalEvents.value.filter(event => event.type === 'context.compaction.completed'
-        && inputMaintenanceRunIds.value.has(event.runId)).map(event => [event.runId, event.sequence]),
-    ])),
+  const contextUsageTracker = useTaskContextUsage({
+    actorInput,
+    executionTree,
+    runs,
     activeBranchId,
     activeConversationId,
     approvalPolicy: permissionSettingsState.approvalPolicy,
@@ -420,7 +398,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     executionProfile: permissionSettingsState.executionProfile,
     models: modelProviders.models,
     spaceId,
-    runSignalEvents: computed(() => runSignalEvents.value.filter(event => inputActorRunIds.value.has(event.runId))),
+    runSignalEvents,
     runtimeState: runtimeSupervisor.runtimeState,
     selectedEffort: taskModels.selectedEffort,
     selectedModel: taskModels.selectedModel,
@@ -434,19 +412,6 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     resources: composerResources.resources.value,
   }))
   const composerInteractions = useChatComposerInteractions({ runs })
-  const actorModel = useTaskActorModel({
-    activeConversation,
-    api: api.localChat.conversations,
-    buddyCatalog: options.buddyCatalog,
-    draftBuddyId,
-    addressedActorId,
-    restoreModel: (selection) => {
-      resolvedActorModel.value = { conversationId: activeConversationId.value, actorId: addressedActorId.value ?? activeConversation.value?.buddyId ?? draftBuddyId.value, model: selection }
-      if (drafts.modelSelection.value === null)
-        taskModels.restoreConversationModelSelection(selection)
-    },
-    onError: setError,
-  })
   const { selectChatModel, setChatEffort, setChatServiceTier, flushModelSelection, isUpdating: isUpdatingModel } = useTaskModelPersistence({
     target: actorModel.target,
     canUpdate: actorModel.canUpdate,
@@ -460,7 +425,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     selection: taskModels,
   })
   const execution = useChatExecution({
-    archived: computed(() => !!activeConversation.value?.archivedAt),
+    activeConversation,
     branchActiveRun: computed(() => runs.value.find(run => run.status === 'queued' || run.status === 'running') ?? null),
     actorInput,
     getNewBuddyId: () => activeConversationId.value ? undefined : draftBuddyId.value ?? undefined,
@@ -482,6 +447,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     modelSelection: taskModels,
     onActionCommandRunStarted: composerInteractions.trackActionCommand,
     onDraftCommitted: options.onDraftCommitted,
+    openBranch: options.openBranch,
     refreshBranches,
     selectComposerSource: composerResources.selectSource,
     runSync,
@@ -693,6 +659,8 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     },
     composer: {
       target: execution.composerTarget.current,
+      content: computed(() => structuredClone(drafts.content.value)),
+      hasUnsentContent: computed(() => hasBuddyUserContent(drafts.content.value) || composerResources.resources.value.length > 0),
       composerContent,
       contextUsage: readonly(contextUsage),
       dismissInteraction: composerInteractions.dismissInteraction,
@@ -777,6 +745,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     welcomeCompanionImage: readonly(welcomeCompanionImage),
     restoration: {
       state: workspacePersistence.restorationState,
+      localCopies: workspacePersistence.localCopies,
       conflict: workspacePersistence.restorationConflict,
       restore: lifecycle.refreshRuntimeDependentState,
       resolveRemote: workspacePersistence.resolveRemote,
@@ -795,6 +764,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     },
     transcript: {
       activateBranch,
+      refreshBranches,
       branches: readonly(branches),
       changeSets: readonly(changeSets),
       hasOlderMessages: readonly(hasOlderMessages),

@@ -35,17 +35,17 @@ const props = defineProps<{
   spaces: ReadonlyArray<LocalSpace>
   selectSpaceDirectory: () => Promise<string | null>
   createSpace: (input: TaskSpaceInput) => Promise<boolean>
-  moveTaskToSpace: (taskId: string, spaceId: string) => Promise<boolean>
+  moveTaskToSpace: (taskId: string, spaceId: string, expectedRevision?: number) => Promise<boolean>
   updateSpace: (input: TaskSpaceInput & { spaceId: string }) => Promise<boolean>
   tasks: ReadonlyArray<LocalConversationSummary>
 }>()
 const emit = defineEmits<{
   deleteSpace: [spaceId: string]
-  deleteTask: [conversationId: string, expectedRevision: number]
+  deleteTask: [conversationId: string, expectedRevision?: number]
   newTask: [spaceId: string | null]
   openSpaceDirectory: [spaceId: string]
   openTask: [conversationId: string]
-  renameTask: [conversationId: string, title: string]
+  renameTask: [conversationId: string, title: string, expectedTitleRevision?: number]
   updatePinnedItems: [items: DesktopTaskPinnedItem[]]
 }>()
 
@@ -81,7 +81,7 @@ const controller = useTaskIndexController({
   onDeleteSpace: spaceId => emit('deleteSpace', spaceId),
   onNewTask: spaceId => emit('newTask', spaceId),
   onOpenSpaceDirectory: spaceId => emit('openSpaceDirectory', spaceId),
-  onRenameTask: (conversationId, title) => emit('renameTask', conversationId, title),
+  onRenameTask: (conversationId, title, expectedTitleRevision) => emit('renameTask', conversationId, title, expectedTitleRevision),
   onUpdatePinnedItems: items => emit('updatePinnedItems', items),
   onUpdateSpace: input => props.updateSpace(input),
   pinnedItems: toRef(props, 'pinnedItems'),
@@ -287,7 +287,7 @@ function openSearchSpace(spaceId: string) {
         <NButton @click="taskDeleteTarget = null">
           {{ t('common.cancel') }}
         </NButton>
-        <NButton type="error" :disabled="!archive.ready.value || taskDeleteTarget?.metadataRevision === undefined" @click="confirmTaskDelete">
+        <NButton type="error" @click="confirmTaskDelete">
           {{ t('common.delete') }}
         </NButton>
       </template>

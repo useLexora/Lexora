@@ -49,11 +49,13 @@ export class ExtensionInstallations {
     return controller.signal
   }
 
-  identify(id: string, extensionId: string, version: string): void {
+  identify(id: string, extensionId: string, version: string, executionScope?: ExtensionInstallation['executionScope']): void {
     const record = this.#records.find(item => item.id === id)
     if (record) {
       record.extensionId = extensionId
       record.version = version
+      if (executionScope !== undefined)
+        record.executionScope = executionScope
       this.#save()
     }
   }

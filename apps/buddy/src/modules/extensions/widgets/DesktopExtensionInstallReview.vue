@@ -94,6 +94,20 @@ const source = computed(() => props.review.development ? (english.value ? 'Devel
       </NCheckbox>
     </NAlert>
 
+    <section class="mt-4" data-testid="extension-execution-scope">
+      <h3 class="m-0 text-[13px] font-semibold leading-[1.6] text-fg">
+        {{ english ? 'Execution lifetime' : '运行范围' }}
+        <NTag v-if="review.currentVersion && review.previousExecutionScope !== undefined && review.previousExecutionScope !== review.manifest.executionScope" size="small" :bordered="false" class="ml-2">
+          {{ english ? 'Changed' : '已变更' }}
+        </NTag>
+      </h3>
+      <p class="mt-1 mb-0 text-[13px] text-muted leading-[1.65]">
+        {{ review.manifest.executionScope === 'service'
+          ? (english ? 'May continue serving an active task after Desktop closes. Starts on demand and stops when no task or view is using it. Window and selection actions still require Desktop.' : '桌面关闭后，可继续为正在执行的任务提供能力。按需启动，无任务或界面使用时停止。窗口和选区操作仍需桌面。')
+          : (english ? 'Runs while Desktop is open. Closing Desktop cancels its active calls and timers.' : '在桌面打开期间运行，关闭桌面会取消其在途调用并停止定时器。') }}
+      </p>
+    </section>
+
     <DesktopExtensionReviewCapabilities
       :key="review.token"
       :review="review" :language="language" :busy="busy"

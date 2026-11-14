@@ -103,7 +103,7 @@ export function createExtensionReferenceRepository(database: DatabaseSync, linea
         JOIN run_session_reference_scopes scopes ON scopes.run_id = runs.id
         JOIN conversations ON conversations.id = runs.conversation_id
         WHERE runs.id = ? AND runs.conversation_id = ? AND runs.status = 'running'
-          AND conversations.deleted_at IS NULL AND conversations.active_branch_id = runs.branch_id`)
+          AND conversations.deleted_at IS NULL`)
         .get(runId, conversationId) as SessionReferenceScope | undefined ?? null
     },
     snapshots(scope: SessionReferenceScope, input: ReferenceSnapshotQuery) {

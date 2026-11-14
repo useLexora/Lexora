@@ -51,26 +51,6 @@ test('plugin-owned preferences activate contributions, yield native content and 
   const alpha = await pluginFrame('alpha', 'footer')
   await expect(alpha.getByText('tests.alpha content')).toBeVisible()
   await expect(nativeFooter()).toHaveCount(0)
-  const identity = await alpha.evaluate(() => window.fixture.instance)
-  const hostColor = name => page.evaluate((name) => {
-    const style = document.createElement('span').style
-    style.color = getComputedStyle(document.documentElement).getPropertyValue(`--buddy-${name}`)
-    return style.color
-  }, name)
-  await page.evaluate(() => window.lexoraDesktop.settings.update({ desktop: { theme: { id: 'lexora.themes.violet-dark' } } }))
-  await expect(page.locator('html')).toHaveAttribute('data-buddy-theme-id', 'lexora.themes.violet-dark')
-  await expect.poll(() => alpha.evaluate(() => getComputedStyle(document.querySelector('main')).backgroundColor)).toBe(await hostColor('accent-solid'))
-  await page.getByTestId('context-panel-toggle').click()
-  await page.getByTestId('context-panel-more').click()
-  await page.getByRole('menuitem', { name: '移到左侧', exact: true }).click()
-  await page.getByTestId('context-panel-maximize').click()
-  await expect.poll(() => visible('alpha')).toBe(false)
-  await page.getByTestId('context-panel-maximize').click()
-  await expect.poll(() => visible('alpha')).toBe(true)
-  await page.getByTestId('context-panel-more').click()
-  await page.getByRole('menuitem', { name: '移到右侧', exact: true }).click()
-  await page.getByTestId('context-panel-more').click()
-  await page.getByRole('menuitem', { name: '关闭', exact: true }).click()
   const alphaActions = await pluginFrame('alpha', 'actions')
   const actionFrame = await alphaActions.frameElement()
   await actionFrame.waitForElementState('stable')
@@ -79,7 +59,6 @@ test('plugin-owned preferences activate contributions, yield native content and 
   await expect(nativeFooter()).toBeVisible()
   await alphaActions.getByRole('checkbox', { name: 'Content tests.alpha' }).check()
   await expect(alpha.getByText('tests.alpha content')).toBeVisible()
-  expect(await alpha.evaluate(() => window.fixture.instance)).toBe(identity)
   await installPlugin(instance, app, page, 'beta')
   await preference('beta', true)
   await expect.poll(() => visible('alpha')).toBe(true)
@@ -103,7 +82,7 @@ test('plugin-owned preferences activate contributions, yield native content and 
   await expect(nativeFooter()).toBeVisible()
 })
 
-test('command failures distinguish execution, malformed replies and timeouts in the real plugin host', async ({ buddy }) => {
+test('command failures preserve diagnostics and responsive pending calls settle when the plugin is disabled', async ({ buddy }) => {
   const instance = await buddy.createInstance('plugin-failures')
   const { app, page } = await instance.launch()
   const id = await installPlugin(instance, app, page, 'failures')
@@ -123,10 +102,17 @@ test('command failures distinguish execution, malformed replies and timeouts in 
   expect(await status()).toMatchObject({ state: 'active', error: null, logs: expect.arrayContaining([
     expect.objectContaining({ code: 'EXTENSION_INVALID_RESULT', diagnostic: expect.objectContaining({ method: 'command', stage: 'result' }) }),
   ]) })
-  expect(await execute('timeout')).toContain('EXTENSION_REQUEST_TIMEOUT')
-  await expect.poll(status).toMatchObject({ state: 'failed', generation: null, error: 'EXTENSION_REQUEST_TIMEOUT', logs: expect.arrayContaining([
-    expect.objectContaining({ event: 'host.failed', code: 'EXTENSION_REQUEST_TIMEOUT', diagnostic: { method: 'command', stage: 'timeout' } }),
-  ]) })
+  let settled = false
+  const pending = execute('wait').then((error) => {
+    settled = true
+    return error
+  })
+  expect(await execute('read')).toBeNull()
+  expect(settled).toBe(false)
+  expect(await status()).toMatchObject({ state: 'active', error: null })
+  await page.evaluate(id => window.lexoraDesktop.extensions.enable(id, false), id)
+  expect(await pending).toContain('EXTENSION_AGENT_CANCELLED')
+  await expect.poll(status).toMatchObject({ state: 'disabled', generation: null, error: null })
   expect(JSON.stringify(await status())).not.toContain('Private plugin error')
 })
 

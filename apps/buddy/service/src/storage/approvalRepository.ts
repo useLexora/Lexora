@@ -1,4 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { ApprovalReview } from '../approvals/approvalReview'
+import { approvalReviewSchema } from '../approvals/approvalReview'
 
 export type ApprovalStatus = 'pending' | 'approved' | 'denied' | 'cancelled'
 
@@ -12,6 +14,10 @@ export interface ApprovalRecord {
   payload: unknown
   createdAt: string
   resolvedAt: string | null
+  review?: ApprovalReview
+  resolution?: string | null
+  decisionActorId?: string | null
+  cancellationReason?: string | null
 }
 
 export interface ApprovalRepository {
@@ -34,6 +40,19 @@ interface ApprovalRow {
 }
 
 export function createApprovalRepository(database: DatabaseSync): ApprovalRepository {
+  const hasReviews = Boolean(database.prepare('SELECT 1 FROM sqlite_master WHERE type = \'table\' AND name = \'approval_reviews\'').get())
+  const withReview = (row: ApprovalRow): ApprovalRecord => {
+    const approval = toApproval(row)
+    if (!hasReviews)
+      return approval
+    const review = database.prepare('SELECT review_json FROM approval_reviews WHERE approval_id = ?').get(row.id)
+    const decision = database.prepare('SELECT * FROM approval_decisions WHERE approval_id = ?').get(row.id)
+    return {
+      ...approval,
+      ...(review ? { review: approvalReviewSchema.parse(JSON.parse(String(review.review_json))) } : {}),
+      ...(decision ? { resolution: decision.resolution as string | null, decisionActorId: decision.actor_id as string | null, cancellationReason: decision.cancellation_reason as string | null } : {}),
+    }
+  }
   const pending = database.prepare('SELECT 1 FROM approvals WHERE run_id = ? AND status = \'pending\' LIMIT 1')
   const find = database.prepare('SELECT * FROM approvals WHERE id = ?')
   const listAllPending = database.prepare(`
@@ -64,11 +83,11 @@ export function createApprovalRepository(database: DatabaseSync): ApprovalReposi
     hasPending: runId => pending.get(runId) !== undefined,
     findById(id) {
       const row = find.get(id) as ApprovalRow | undefined
-      return row ? toApproval(row) : null
+      return row ? withReview(row) : null
     },
     listPending(runId) {
       const rows = runId ? listRunPending.all(runId) : listAllPending.all()
-      return (rows as unknown as ApprovalRow[]).map(toApproval)
+      return (rows as unknown as ApprovalRow[]).map(withReview)
     },
     list(options = {}) {
       const runId = options.runId ?? null
@@ -82,7 +101,7 @@ export function createApprovalRepository(database: DatabaseSync): ApprovalReposi
         options.conversationId ?? null,
         options.branchId ?? null,
         options.limit ?? 100,
-      ) as unknown as ApprovalRow[]).map(toApproval)
+      ) as unknown as ApprovalRow[]).map(withReview)
     },
   }
 }

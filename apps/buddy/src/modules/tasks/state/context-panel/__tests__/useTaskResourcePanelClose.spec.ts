@@ -1,8 +1,9 @@
 import type { DesktopBrowserState } from '@buddy-electron/shared/desktopApi'
 import type { LocalArtifact } from '@buddy-shared/artifacts/artifactApi'
 import { deferred } from '@buddy-tests/deferred'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import { nextTick, shallowRef } from 'vue'
+import { BrowserGuestCatalog } from '@/platform/browser/BrowserGuestCatalog'
 import { useTaskResourcePanel } from '../useTaskResourcePanel'
 import { contextPanelFixture } from './contextPanelFixture'
 
@@ -10,7 +11,7 @@ type PanelOptions = Parameters<typeof useTaskResourcePanel>[0]
 
 function fixture(overrides: Partial<PanelOptions> = {}) {
   const f = contextPanelFixture({ activeConversationId: shallowRef('task-a'), activeRunId: shallowRef('latest-run-a') })
-  const options: PanelOptions = {
+  const input: Omit<PanelOptions, 'guestCatalog'> = {
     ...f.options,
     autoCollapse: shallowRef(true),
     linkOpening: shallowRef('in-app'),
@@ -28,6 +29,9 @@ function fixture(overrides: Partial<PanelOptions> = {}) {
     },
     ...overrides,
   }
+  const guestCatalog = new BrowserGuestCatalog(input.browser)
+  onTestFinished(() => guestCatalog.dispose())
+  const options: PanelOptions = { ...input, guestCatalog }
   const panel = f.scope.run(() => useTaskResourcePanel(options))!
   return { ...f, options, panel }
 }

@@ -74,7 +74,7 @@ export function registerExtensionIpc(options: {
   record?: ApplicationDiagnosticReporter
   conditionRuntime?: (input: { models: boolean, task: boolean, taskId: string | null, runId: string | null }, signal: AbortSignal) => Promise<ExtensionConditionRuntime>
   agentRequest?: (input: { invocationId: string, method: string, params: JsonValue }, signal: AbortSignal) => Promise<JsonValue>
-}): { speech?: SpeechBackend, shells: { list: ExtensionService['shellContributions'] }, skills: { list: ExtensionService['skillContributions'] }, capabilities: { list: ExtensionService['capabilityContributions'] }, inference: { imageReaders: ExtensionService['inferenceImageReaders'], imageModels: ExtensionService['inferenceImageModels'], models: ExtensionService['inferenceModels'], list: ExtensionService['inferenceContributions'], prepare: ExtensionService['prepareInference'], invoke: (extensionId: string, revision: string, input: InferenceInvocation) => Promise<void>, reset: () => Promise<void> }, withStoppedStorage: ExtensionService['withStoppedStorage'], themesReady: Promise<void>, conditions: ExtensionService['conditions'], dispose: () => Promise<void>, reviewPackage: (path: string) => Promise<void>, inspect: (id: string) => Promise<ExtensionInspection>, agent: { readResource: ExtensionService['readAgentResource'], list: () => Promise<ExtensionAgentDescriptor[]>, invoke: (input: ExtensionAgentInvocation, signal: AbortSignal) => Promise<JsonValue> } } {
+}): { detachDesktop: () => Promise<void>, speech?: SpeechBackend, shells: { list: ExtensionService['shellContributions'] }, skills: { list: ExtensionService['skillContributions'] }, capabilities: { list: ExtensionService['capabilityContributions'] }, inference: { imageReaders: ExtensionService['inferenceImageReaders'], imageModels: ExtensionService['inferenceImageModels'], models: ExtensionService['inferenceModels'], list: ExtensionService['inferenceContributions'], prepare: ExtensionService['prepareInference'], invoke: (extensionId: string, revision: string, input: InferenceInvocation) => Promise<void>, reset: () => Promise<void> }, withStoppedStorage: ExtensionService['withStoppedStorage'], themesReady: Promise<void>, conditions: ExtensionService['conditions'], dispose: () => Promise<void>, reviewPackage: (path: string) => Promise<void>, inspect: (id: string) => Promise<ExtensionInspection>, agent: { releaseAllRuns: ExtensionService['releaseAllRuns'], releaseRun: ExtensionService['releaseRun'], readResource: ExtensionService['readAgentResource'], list: () => Promise<ExtensionAgentDescriptor[]>, invoke: (input: ExtensionAgentInvocation, signal: AbortSignal) => Promise<JsonValue> } } {
   const store = new ExtensionPackageStore(join(options.home, 'extensions'), options.version, processExtensionPackageInBackground)
   async function reviewResult(operation: () => Promise<ExtensionReview>): Promise<ExtensionReviewResult> {
     try {
@@ -90,7 +90,8 @@ export function registerExtensionIpc(options: {
   const stopProtocol = protocol.install(session.defaultSession, 'view')
   const hosts = new Set<SandboxedExtensionHost>()
   const replies = new Map<string, { kind: ExtensionWorkbenchEvent['kind'], finish: (result: ExtensionWorkbenchResult) => void }>()
-  const bound = new Set<BrowserWindow>()
+  const bound = new Map<BrowserWindow, { hide: () => void, reset: () => void, navigate: (event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>) => void }>()
+  let desktopOwner: BrowserWindow | null = null
   let resourcePickerOpen = false
   let initializing = true
   const vault = createCredentialVault({ buddyHome: options.home, reportDiagnostic: options.record })
@@ -105,6 +106,7 @@ export function registerExtensionIpc(options: {
   }
   const speechListeners = new Set<() => void>()
   const service = new ExtensionService(store, {
+    desktopAvailable: () => false,
     documents: options.documents,
     clipboard: createExtensionClipboard(options.getWindow),
     taskCleanup: options.conversationCleanup ? createExtensionTaskCleanup(options.conversationCleanup) : undefined,
@@ -255,27 +257,37 @@ export function registerExtensionIpc(options: {
     }),
     observeExtensionDiagnostics(service, event => options.record?.(event)),
   ]
-  const resetHosts = () => {
+  const resetHosts = (owner: BrowserWindow) => {
+    if (desktopOwner !== owner)
+      return
+    desktopOwner = null
     options.themes.releaseOwner('desktop')
-    void service.resetHosts().catch(() => {})
-  }
-  const cancelUnconfirmedTaskCleanup = () => service.cancelUnconfirmedTaskCleanup()
-  const resetOnNavigation = (event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>) => {
-    if (event.isMainFrame && !event.isSameDocument)
-      resetHosts()
+    void service.detachDesktop().catch(() => {})
   }
   function window(): BrowserWindow | null {
     const current = options.getWindow()
     if (current && !current.isDestroyed() && !bound.has(current)) {
-      bound.add(current)
-      current.on('hide', cancelUnconfirmedTaskCleanup)
-      current.webContents.on('will-frame-navigate', guardNavigation)
-      current.webContents.on('did-start-navigation', resetOnNavigation)
-      current.webContents.on('render-process-gone', resetHosts)
-      current.webContents.once('destroyed', () => {
+      const reset = () => resetHosts(current)
+      const navigate = (event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>) => {
+        if (event.isMainFrame && !event.isSameDocument)
+          reset()
+      }
+      const hide = () => {
+        if (desktopOwner === current)
+          service.cancelUnconfirmedTaskCleanup()
+      }
+      bound.set(current, { hide, reset, navigate })
+      current.on('hide', hide)
+      const contents = current.webContents
+      contents.on('will-frame-navigate', guardNavigation)
+      contents.on('did-start-navigation', navigate)
+      contents.on('render-process-gone', reset)
+      contents.once('destroyed', () => {
         bound.delete(current)
-        for (const reply of replies.values()) reply.finish(null)
-        resetHosts()
+        if (desktopOwner === current) {
+          for (const reply of replies.values()) reply.finish(null)
+          reset()
+        }
       })
     }
     return current
@@ -307,7 +319,10 @@ export function registerExtensionIpc(options: {
   powerMonitor.on('suspend', suspend)
   powerMonitor.on('resume', resume)
   ipcMain.handle(EXTENSION_IPC.request, async (event, raw: unknown) => {
-    assertTrustedSender(event, window())
+    const current = window()
+    assertTrustedSender(event, current)
+    desktopOwner = current
+    service.attachDesktop()
     try {
       const input = extensionManagementSchema.parse(raw)
       await prepared
@@ -406,13 +421,13 @@ export function registerExtensionIpc(options: {
     finally {
       for (const subscription of subscriptions) subscription.dispose()
       for (const reply of replies.values()) reply.finish(null)
-      for (const current of bound) {
+      for (const [current, binding] of bound) {
         if (current.isDestroyed())
           continue
-        current.off('hide', cancelUnconfirmedTaskCleanup)
+        current.off('hide', binding.hide)
         current.webContents.off('will-frame-navigate', guardNavigation)
-        current.webContents.off('did-start-navigation', resetOnNavigation)
-        current.webContents.off('render-process-gone', resetHosts)
+        current.webContents.off('did-start-navigation', binding.navigate)
+        current.webContents.off('render-process-gone', binding.reset)
       }
       stopProtocol()
       ipcMain.removeHandler(EXTENSION_IPC.request)
@@ -427,6 +442,11 @@ export function registerExtensionIpc(options: {
       owner.webContents.send(EXTENSION_IPC.conditionsChanged, event)
   }))
   return {
+    async detachDesktop() {
+      desktopOwner = null
+      options.themes.releaseOwner('desktop')
+      await service.detachDesktop()
+    },
     skills: { list: async () => {
       await prepared
       return service.skillContributions()
@@ -490,6 +510,8 @@ export function registerExtensionIpc(options: {
     conditions: service.conditions,
     dispose,
     agent: {
+      releaseAllRuns: () => service.releaseAllRuns(),
+      releaseRun: runId => service.releaseRun(runId),
       readResource: (input, signal) => service.readAgentResource(input, signal),
       list: async () => {
         await prepared

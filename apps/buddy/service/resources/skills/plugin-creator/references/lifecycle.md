@@ -38,6 +38,21 @@ context.subscriptions.add(context.commands.register(`${context.extension.id}.ope
 
 同步 CPU 密集任务应移到 Worker，或分块让出事件循环。二进制格式检查应使用有界的 `resources.readBytes` 范围读取和预读缓存，不把整个模型权重传过 RPC，也不以保持心跳代替格式、大小和授权检查。
 
+## 执行寿命
+
+执行范围见[清单契约](protocol.md#执行范围)。`context.extension.executionScope` 表示本次包声明的 desktop 或 service 寿命。service 后端只有一份私有数据，视图按需附着；关闭视图使旧选区、选择器和视图句柄失效。更新前会先停止旧调用和实例，再独占迁移私有数据；迁移失败保留原数据，不能由插件自行启动第二份写入者。
+
+API 5 的命令回调和 Agent 工具/动作上下文提供 `capabilities` 与 `signal`。service 插件把本次副作用通过 `invocation.capabilities` 发起；不要在 `activate` 的全局 `context` 上保存可继续执行的网络、存储写入或 UI 闭包。调用结束或取消后，这些 scoped 能力立即失效，已发出的操作不会自动重试。
+
+```ts
+context.subscriptions.add(context.commands.register(`${context.extension.id}.save`, async (invocation) => {
+  invocation.signal.throwIfAborted()
+  await invocation.capabilities.storage.set({ saved: true })
+}))
+```
+
+关闭 Desktop 会撤销所有视图与 UI 请求。service 后端中的有效任务调用可以继续；无工作台时 UI 方法拒绝为 `EXTENSION_DESKTOP_REQUIRED`。最后一个任务、调用和视图释放后，后端在闲置期限内停止。重开界面复用仍被任务使用的实例，不恢复旧视图 token。
+
 ## 状态与模块
 
 - `activate(context)` 管理命令、私有业务数据、通知和定时任务；`render(context, container)` 管理自己的隔离 UI。只需要视图时不创建空宿主；需要命令时必须同时声明宿主入口和命令 ID。

@@ -16,16 +16,20 @@ export const chatQueueItemSchema = z.object({
   content: buddyUserMessageContentV1Schema,
   attachments: z.array(z.object({ id: idSchema, name: z.string(), mimeType: z.string(), sizeBytes: z.number() }).strict()),
   createdAt: z.string(),
+  revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  steerTarget: z.object({ runId: idSchema, generation: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) }).strict().nullable().optional(),
 }).strict()
 const scope = z.object({ conversationId: idSchema, branchId: idSchema }).strict()
-const target = scope.extend({ id: idSchema }).strict()
+const target = scope.extend({ id: idSchema, expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional() }).strict()
+const steerTarget = target.extend({ targetRunId: idSchema.nullable().optional(), expectedRunGeneration: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional() }).strict()
 export const queueReceiptSchema = scope.extend({
   id: idSchema,
-  draftReceipt: z.object({ draftId: z.string(), sourceRevision: z.number(), committedRevision: z.number() }).strict(),
+  draftReceipt: z.object({ draftId: z.string(), sourceRevision: z.number(), committedRevision: z.number() }).strict().nullable(),
 }).strict()
 export type LocalChatQueueItem = DeepReadonly<z.infer<typeof chatQueueItemSchema>>
 export type LocalChatQueueScope = z.infer<typeof scope>
 export type LocalChatQueueTarget = z.infer<typeof target>
+export type LocalChatQueueSteerTarget = z.infer<typeof steerTarget>
 export type LocalChatQueueReceipt = z.infer<typeof queueReceiptSchema>
 const queueSteerResultSchema = z.enum(['accepted', 'incompatible', 'unavailable'])
 export type LocalChatQueueSteerResult = z.infer<typeof queueSteerResultSchema>
@@ -33,5 +37,5 @@ export const chatQueueRpc = {
   enqueue: { method: 'chat.queue.enqueue', input: buddyComposerDraftSendSchema.unwrap().extend({ delivery: buddyInputDeliverySchema.optional() }).strict(), response: queueReceiptSchema },
   list: { method: 'chat.queue.list', input: scope, response: z.array(chatQueueItemSchema) },
   cancel: { method: 'chat.queue.cancel', input: target, response: z.boolean() },
-  steer: { method: 'chat.queue.steer', input: target, response: queueSteerResultSchema },
+  steer: { method: 'chat.queue.steer', input: steerTarget, response: queueSteerResultSchema },
 } as const satisfies Record<string, RuntimeRequestContract>

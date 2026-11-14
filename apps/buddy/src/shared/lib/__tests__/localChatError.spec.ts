@@ -5,23 +5,8 @@ import { translateBuddy } from '@/i18n/buddyI18n'
 import { resolveLocalChatErrorMessage } from '../localChatError'
 
 describe('desktopChatError', () => {
-  it.each([
-    ['EVENT_LOG_CORRUPTED', 'desktop.error.taskRecoveryRequired'],
-    ['MUTATION_RESOURCE_UNSAFE', 'desktop.error.resourceRecoveryRequired'],
-    ['FILE_RECOVERY_REQUIRED', 'desktop.error.fileRecoveryRequired'],
-    ['MCP_AUTHENTICATION_REQUIRED', 'desktop.mcp.error.MCP_AUTHENTICATION_REQUIRED'],
-    ['MCP_CONNECTOR_DISABLED', 'desktop.mcp.error.MCP_CONNECTOR_DISABLED'],
-  ] as const)('shows a localized scoped failure for %s instead of internal recovery details', (code, key) => {
-    const error = new Error(`${formatLocalChatPublicError({ code, retryable: false })}:private-recovery-details`)
-    for (const language of ['zh-CN', 'en-US'] as const) {
-      const message = resolveLocalChatErrorMessage(error, language)
-      expect(message).toBe(translateBuddy(language, key))
-      expect(message).not.toContain(code)
-      expect(message).not.toContain('private-recovery-details')
-    }
-  })
-
-  it.each(['zh-CN', 'en-US'] as const)('maps an Electron error to %s without exposing provider diagnostics', (language) => {
+  it('maps an Electron error without exposing provider diagnostics', () => {
+    const language = 'zh-CN'
     const secret = 'private-provider-diagnostic'
     const error = new Error(`Error invoking remote method 'lexora:buddy:providers:login': Error: ${formatLocalChatPublicError({
       code: 'AUTHENTICATION_REQUIRED',

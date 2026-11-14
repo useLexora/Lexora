@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(any(windows, target_os = "linux", test))]
 mod policy;
 #[cfg(windows)]
@@ -151,7 +153,11 @@ pub fn run(input: impl Read, output: impl Write) -> Result<(), ProcessError> {
         let mut output = output;
         output.write_all(&bytes).map_err(|_| ProcessError::Failed)
     }
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    {
+        macos::request(&request, output)
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         let _ = (request, output);
         Err(ProcessError::Unavailable)

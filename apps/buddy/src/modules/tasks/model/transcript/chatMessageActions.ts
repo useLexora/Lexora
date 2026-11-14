@@ -12,8 +12,43 @@ export interface ChatMessageActions {
   showTime: boolean
 }
 
-export function getChatMessageFollowupSourceId(row: Pick<ChatTranscriptMessageRow, 'message' | 'turnResult'> & { ownsResultActions?: boolean }): string | null {
-  return row.turnResult?.finalMessageId ?? (row.ownsResultActions ? row.message.id : null)
+export interface ChatTranscriptResultTarget {
+  branchNavigatorId: string
+  branchId: string
+  followupMessageId: string | null
+  regenerateRunId: string | null
+  usageRunId: string | null
+}
+
+type ChatMessageResultSource = Pick<ChatTranscriptMessageRow, 'message' | 'turnResult' | 'resultRunId'> & { ownsResultActions?: boolean }
+
+export function getChatMessageResultTarget(row: ChatMessageResultSource): ChatTranscriptResultTarget {
+  return {
+    branchNavigatorId: row.turnResult?.runId ?? row.message.id,
+    branchId: row.turnResult?.branchId ?? row.message.branchId,
+    followupMessageId: row.turnResult?.finalMessageId ?? (row.ownsResultActions ? row.message.id : null),
+    regenerateRunId: row.turnResult?.runId ?? (row.ownsResultActions ? row.message.runId : null),
+    usageRunId: row.turnResult?.runId ?? (row.ownsResultActions ? row.resultRunId ?? null : null),
+  }
+}
+
+export function getChatTranscriptResultTarget(row: ChatTranscriptRow): ChatTranscriptResultTarget | null {
+  if (row.kind === 'message')
+    return getChatMessageResultTarget(row)
+  if (row.kind === 'agent-turn' || row.kind === 'turn-result') {
+    return {
+      branchNavigatorId: row.turn.runId,
+      branchId: row.turn.branchId,
+      followupMessageId: row.turn.finalMessageId,
+      regenerateRunId: row.turn.runId,
+      usageRunId: row.turn.runId,
+    }
+  }
+  return null
+}
+
+export function getChatMessageFollowupSourceId(row: ChatMessageResultSource): string | null {
+  return getChatMessageResultTarget(row).followupMessageId
 }
 
 export function projectChatFollowupMessageIds(

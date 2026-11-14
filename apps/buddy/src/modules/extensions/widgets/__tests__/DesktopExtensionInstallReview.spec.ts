@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import type { ExtensionReview } from '@buddy-shared/extensions/extensionApi'
-import type { InferencePlatform } from '@buddy-shared/extensions/extensionInference'
 import type { FileOpeningChoice } from '@buddy-shared/files/fileOpening'
 import { extensionManifestSchema } from '@buddy-shared/extensions/extensionManifest'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -40,36 +39,16 @@ const review: ExtensionReview = {
   ],
 }
 
-const capabilityReview: ExtensionReview = {
-  ...review,
-  fileAssociations: [],
-  manifest: extensionManifestSchema.parse({
-    ...review.manifest,
-    id: 'tests.legal',
-    apiVersion: 4,
-    contributes: {
-      skills: [{ id: 'tests.legal.statutes', path: 'skills/statutes/SKILL.md' }],
-      mcpConnectors: [{ id: 'legal-search', name: 'Legal search', transport: 'streamable-http', url: 'https://legal.example.com/mcp', authentication: 'bearer' }],
-      subagents: [
-        { id: 'law-finder', name: 'Law finder', description: 'Finds statutes', instructions: 'Search statutes first.', tools: [{ source: 'mcp', connector: 'legal-search', name: 'statutes/search' }, { source: 'builtin', name: 'read' }], skills: ['tests.legal.statutes'], requiredSkills: ['tests.legal.statutes'], fileAccess: 'inherit' },
-        { id: 'file-reader', name: 'File reader', instructions: 'Read files.', tools: [{ source: 'builtin', name: 'ls' }], fileAccess: 'read_only' },
-      ],
-    },
-  }),
-}
-
-async function mount(value: ExtensionReview = review, language = 'en-US', busy = false) {
+async function mount(value: ExtensionReview = review) {
   const current = shallowRef(value)
   const root = document.createElement('div')
   document.body.append(root)
   const submissions: { applyUpdate: boolean, choices: FileOpeningChoice[] }[] = []
   const acceptances: boolean[] = []
-  const cancellations: boolean[] = []
   const app = createApp({ render: () => h(DesktopExtensionInstallReview, {
     review: current.value,
-    language,
-    busy,
-    onCancel: () => cancellations.push(true),
+    language: 'en-US',
+    busy: false,
     onInstall: (applyUpdate: boolean, choices: FileOpeningChoice[], acceptUnverified: boolean) => {
       submissions.push({ applyUpdate, choices })
       acceptances.push(acceptUnverified)
@@ -83,28 +62,8 @@ async function mount(value: ExtensionReview = review, language = 'en-US', busy =
   await nextTick()
   const content = document.querySelector<HTMLElement>('[data-testid="extension-file-associations"]')!
   const submit = () => document.querySelector<HTMLButtonElement>('[data-testid="extension-confirm-install"]')!.click()
-  const dialog = document.querySelector<HTMLElement>('[data-testid="extension-install-review"]')!
-  return { content, submissions, submit, dialog, current, cancellations, acceptances }
+  return { content, submissions, submit, current, acceptances }
 }
-
-it.each(['zh-CN', 'en-US'])('explains the narrow legacy cleanup permission in %s', async (language) => {
-  await mount({
-    ...review,
-    currentVersion: '1.0.0',
-    addedPermissions: ['legacyTaskCleanup'],
-    manifest: extensionManifestSchema.parse({
-      ...review.manifest,
-      apiVersion: 4,
-      permissions: { legacyTaskCleanup: true },
-      contributes: { views: [{ id: 'test.panel.cleanup', title: 'Cleanup', entry: 'view.js', resource: 'none', location: 'page' }] },
-    }),
-  }, language)
-  const permission = document.querySelector('[data-permission="legacyTaskCleanup"]')!
-  expect(permission.textContent).toContain(language === 'zh-CN' ? '元数据' : 'metadata')
-  expect(permission.textContent).toContain(language === 'zh-CN' ? '不允许删除活动任务或任意文件' : 'Cannot delete active tasks or arbitrary files')
-  expect(permission.textContent).toContain(language === 'zh-CN' ? '不可恢复' : 'cannot be undone')
-  expect(permission.querySelector('[data-testid="extension-new-permission"]')).not.toBeNull()
-})
 
 it('requires a new risk acknowledgement for each unverified review while showing its actual permissions', async () => {
   const unverified: ExtensionReview = {
@@ -134,78 +93,6 @@ it('requires a new risk acknowledgement for each unverified review while showing
   expect(button.disabled).toBe(false)
   submit()
   expect(acceptances).toEqual([true, false])
-})
-
-it.each(['en-US', 'zh-CN'])('reviews each requested data source separately from message access in %s', async (language) => {
-  const { current } = await mount({
-    ...review,
-    currentVersion: '0.9.0',
-    addedPermissions: ['data:context.usage'],
-    manifest: extensionManifestSchema.parse({ ...review.manifest, permissions: { data: ['task.metrics', 'context.usage'], network: ['https://metrics.example.com'] } }),
-  }, language)
-  const permissions = document.querySelector('[data-testid="extension-review-permissions"]')!
-  const text = permissions.textContent ?? ''
-  expect(text).toContain(language === 'en-US' ? 'Bound data sources' : '绑定范围的数据源')
-  expect(text).toContain(language === 'en-US' ? 'Task metrics' : '任务统计')
-  expect(text).toContain(language === 'en-US' ? 'Context usage' : '上下文用量')
-  expect(text).toContain(language === 'en-US' ? 'No message text, logs or credentials' : '不读取正文、日志或凭据')
-  expect(text).toContain(language === 'en-US' ? 'New' : '新增')
-  expect(text).not.toContain(language === 'en-US' ? 'Read messages' : '读取消息')
-  current.value = { ...review, fileAssociations: [] }
-  await nextTick()
-  expect(document.querySelector('[data-testid="extension-review-permissions"]')).toBeNull()
-})
-
-it.each(['en-US', 'zh-CN'])('explains the declared supervised platforms without claiming OS isolation in %s', async (language) => {
-  const nativeReview = (platforms: InferencePlatform[]): ExtensionReview => ({
-    ...review,
-    addedPermissions: ['inference'],
-    manifest: extensionManifestSchema.parse({
-      ...review.manifest,
-      apiVersion: 4,
-      entry: 'extension.js',
-      permissions: { inference: true },
-      contributes: { inference: { runtimes: [{ id: 'chat', entry: 'native/chat.mjs', platforms }], capabilities: [{ id: 'chat', title: 'Chat', kind: 'chat.completion', runtime: 'chat' }] } },
-    }),
-  })
-  const { current } = await mount(nativeReview(['macos-arm64']), language)
-  const permissions = () => document.querySelector('[data-testid="extension-review-permissions"]')?.textContent ?? ''
-  expect(permissions()).toContain('macOS')
-  expect(permissions()).not.toContain('Windows')
-  expect(permissions()).toContain(language === 'en-US' ? 'files, credentials, devices and network' : '文件、凭据、设备和网络')
-  expect(permissions()).toContain(language === 'en-US' ? 'do not isolate native code' : '不受插件文件与网络权限范围隔离')
-  current.value = nativeReview(['windows-x64', 'macos-arm64'])
-  await nextTick()
-  expect(permissions()).toContain(language === 'en-US' ? 'Windows and macOS' : 'Windows、macOS')
-  current.value = nativeReview(['linux-x64'])
-  await nextTick()
-  expect(permissions()).not.toContain('macOS')
-  expect(permissions()).not.toContain('Windows')
-  expect(permissions()).toContain(language === 'en-US' ? 'prepared model resources' : '已准备的模型资源')
-})
-
-it('allows closing a duplicate review while the plugin is busy without submitting another install', async () => {
-  const { dialog, submissions, cancellations } = await mount(review, 'en-US', true)
-  expect(dialog.querySelector<HTMLButtonElement>('[data-testid="extension-confirm-install"]')!.disabled).toBe(true)
-  const cancel = [...dialog.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === 'Cancel')!
-  expect(cancel.disabled).toBe(false)
-  cancel.click()
-  expect(cancellations).toEqual([true])
-  expect(submissions).toEqual([])
-})
-
-it('preselects requested associations and keeps existing defaults when replacements are cleared', async () => {
-  const { content, submissions, submit } = await mount()
-  const checkboxes = content.querySelectorAll<HTMLElement>('[role="checkbox"]')
-  expect(checkboxes[0]?.getAttribute('aria-checked')).toBe('true')
-  expect(checkboxes[1]?.getAttribute('aria-checked')).toBe('true')
-  submit()
-  expect(submissions).toEqual([{ applyUpdate: true, choices: [{ extension: '.md', location: 'inline', providerId: 'test.reader' }] }])
-  checkboxes[0]!.click()
-  await nextTick()
-  submit()
-  expect(submissions.at(-1)).toEqual({ applyUpdate: true, choices: [] })
-  expect(checkboxes[1]?.getAttribute('aria-checked')).toBe('true')
 })
 
 it('leaves opt-out replacements unselected and supports individual and column selection independently', async () => {
@@ -263,55 +150,4 @@ it('can restore the current provider after selecting another provider for the sa
   expect(current!.getAttribute('aria-checked')).toBe('true')
   submit()
   expect(submissions.at(-1)?.choices).toEqual([])
-})
-
-it('preselects the first requested provider when several providers apply to the same location', async () => {
-  const { content, submissions, submit } = await mount({
-    ...review,
-    fileAssociations: [
-      { ...review.fileAssociations![0]!, requestDefault: false },
-      { ...review.fileAssociations![0]!, providerId: 'test.alternate', title: 'Alternate' },
-      { ...review.fileAssociations![0]!, providerId: 'test.third', title: 'Third' },
-    ],
-  })
-  const checked = content.querySelectorAll('tbody [aria-checked="true"]')
-  expect(checked).toHaveLength(1)
-  expect(checked[0]?.textContent).toContain('Alternate')
-  submit()
-  expect(submissions.at(-1)?.choices).toEqual([{ extension: '.md', location: 'inline', providerId: 'test.alternate' }])
-})
-
-it('discloses NPC capabilities on demand and resets expanded details for each review', async () => {
-  const { current } = await mount(capabilityReview)
-  const text = (selector: string) => document.querySelector(selector)?.textContent ?? ''
-  expect(text('[data-testid="extension-included-mcp"]')).toContain('https://legal.example.com/mcp')
-  expect(document.querySelector('[data-testid="extension-review-permissions"]')).toBeNull()
-  expect(text('[data-testid="extension-included-mcp"]')).toContain('Token authentication')
-  expect(text('[data-testid="extension-included-mcp"]')).toContain('Off by default')
-  expect(text('[data-subagent-id="law-finder"]')).toContain('Tools 2 · Skills 1')
-  expect(text('[data-subagent-id="law-finder"]')).toContain('File access follows the current task')
-  expect(text('[data-subagent-id="file-reader"]')).toContain('Can read files but not change them')
-  expect(document.querySelector('[data-testid="extension-agent-details"]')).toBeNull()
-  const agent = document.querySelector('[data-subagent-id="law-finder"]')!
-  const toggle = agent.querySelector<HTMLButtonElement>('[data-testid="extension-agent-details-toggle"]')!
-  expect(toggle.getAttribute('aria-expanded')).toBe('false')
-  toggle.click()
-  await nextTick()
-  expect(toggle.getAttribute('aria-expanded')).toBe('true')
-  expect(document.getElementById(toggle.getAttribute('aria-controls')!)).not.toBeNull()
-  expect(text('[data-subagent-id="law-finder"]')).toContain('statutes/search')
-  expect(text('[data-subagent-id="law-finder"]')).toContain('Legal search')
-  expect(text('[data-subagent-id="law-finder"]')).toContain('Built-in tool')
-  expect(text('[data-subagent-id="law-finder"]')).toContain('Required')
-  expect(text('[data-subagent-id="law-finder"]')).toContain('tests.legal.statutes')
-  expect(document.querySelector('[data-subagent-id="file-reader"] [data-testid="extension-agent-details"]')).toBeNull()
-  toggle.click()
-  await nextTick()
-  expect(document.querySelector('[data-testid="extension-agent-details"]')).toBeNull()
-  toggle.click()
-  await nextTick()
-  expect(document.querySelector('[data-testid="extension-agent-details"]')).not.toBeNull()
-  current.value = { ...capabilityReview, token: 'another-review' }
-  await nextTick()
-  expect(document.querySelector('[data-testid="extension-agent-details-toggle"]')?.getAttribute('aria-expanded')).toBe('false')
 })

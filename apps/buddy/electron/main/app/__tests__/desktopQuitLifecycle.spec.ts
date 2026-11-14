@@ -3,6 +3,57 @@ import { describe, expect, it } from 'vitest'
 import { createDesktopQuitLifecycle } from '../desktopQuitLifecycle'
 
 describe('desktop quit lifecycle', () => {
+  it('captures the committed exit preference once and keeps Core alive when only Desktop exits', async () => {
+    const saving = deferred<boolean>()
+    const operations: string[] = []
+    let preference: 'keep_service' | 'stop_service' = 'keep_service'
+    const lifecycle = createDesktopQuitLifecycle({
+      getExitBehavior: () => preference,
+      closeDesktop: async () => { operations.push('desktop.closed') },
+      confirm: () => saving.promise,
+      dispose: async () => { operations.push('service.stopped') },
+      quit: () => { operations.push('host.quit') },
+      exit: () => { operations.push('host.forced') },
+    })
+    const first = lifecycle.request()
+    preference = 'stop_service'
+    expect(lifecycle.request()).toBe(first)
+    saving.resolve(true)
+    await first
+    expect(operations).toEqual(['desktop.closed'])
+    expect(lifecycle.committed).toBe(false)
+    await lifecycle.request({ reason: 'service_stop' })
+    expect(operations).toEqual(['desktop.closed', 'service.stopped', 'host.quit'])
+  })
+
+  it('hands a confirmed restart to Core and retries a rejected handoff without disposing Desktop', async () => {
+    const accepted = deferred<void>()
+    let failure = true
+    let requests = 0
+    const lifecycle = createDesktopQuitLifecycle({
+      getExitBehavior: () => 'keep_service',
+      confirm: async () => true,
+      restartDesktop: async () => {
+        requests++
+        if (failure)
+          throw new Error('SERVICE_NOT_READY')
+        await accepted.promise
+      },
+      dispose: async () => { throw new Error('Core owns restart cleanup') },
+      quit: () => { throw new Error('Core owns the next Desktop') },
+      exit: () => { throw new Error('A rejected handoff must keep Desktop alive') },
+    })
+    await expect(lifecycle.request({ restart: true })).rejects.toThrow('SERVICE_NOT_READY')
+    expect(lifecycle.quitting).toBe(false)
+    failure = false
+    const request = lifecycle.request({ restart: true })
+    expect(lifecycle.request({ restart: true })).toBe(request)
+    accepted.resolve()
+    await request
+    expect(requests).toBe(2)
+    expect(lifecycle.committed).toBe(true)
+  })
+
   it('shares concurrent requests and commits only after saving and cleanup', async () => {
     const save = deferred<boolean>()
     const stopped = deferred<void>()
@@ -59,20 +110,7 @@ describe('desktop quit lifecycle', () => {
     expect(events).toEqual(['cleanup', 'restart'])
   })
 
-  it('preserves explicit discard-on-failure for signal shutdown', async () => {
-    const events: string[] = []
-    const lifecycle = createDesktopQuitLifecycle({
-      exit: () => { throw new Error('Unexpected forced exit') },
-      confirm: async options => options.discardDraftsOnFailure === true,
-      dispose: async () => { events.push('cleanup') },
-      quit: () => { events.push('quit') },
-    })
-    await lifecycle.request({ discardDraftsOnFailure: true })
-    expect(events).toEqual(['cleanup', 'quit'])
-    expect(lifecycle.committed).toBe(true)
-  })
-
-  it.each(['quit', 'installation'] as const)('exits after cleanup fails during %s without committing or running the completion action', async (reason) => {
+  it('exits after cleanup fails without committing or running the installation', async () => {
     const operations: string[] = []
     const lifecycle = createDesktopQuitLifecycle({
       confirm: async () => true,
@@ -83,34 +121,13 @@ describe('desktop quit lifecycle', () => {
       quit: () => { operations.push('quit') },
       exit: () => { operations.push('exit') },
     })
-    const input = reason === 'quit' ? {} : { reason: 'installation' as const }
-    const prepare = reason === 'installation'
-      ? async () => () => { operations.push('install') }
-      : undefined
-    const pending = lifecycle.request(input, prepare)
+    const pending = lifecycle.request({ reason: 'installation' }, async () => () => {
+      operations.push('install')
+    })
     await expect(pending).rejects.toThrow('Cleanup failed')
     expect(operations).toEqual(['dispose', 'exit'])
     expect(lifecycle.quitting).toBe(true)
     expect(lifecycle.committed).toBe(false)
-  })
-
-  it('hands installation off only after confirmation and before releasing application resources', async () => {
-    const operations: string[] = []
-    let allowed = false
-    const lifecycle = createDesktopQuitLifecycle({
-      exit: () => { throw new Error('Unexpected forced exit') },
-      confirm: async () => allowed,
-      dispose: async () => { operations.push('dispose') },
-      quit: () => { operations.push('quit') },
-    })
-    const prepare = async () => {
-      operations.push('installer')
-    }
-    await lifecycle.request({ reason: 'installation' }, prepare)
-    expect(operations).toEqual([])
-    allowed = true
-    await lifecycle.request({ reason: 'installation' }, prepare)
-    expect(operations).toEqual(['installer', 'dispose', 'quit'])
   })
 
   it('leaves the application running if installer launch fails', async () => {

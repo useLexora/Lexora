@@ -136,16 +136,16 @@ export function createComposerResourceRepository(database: DatabaseSync) {
       ))
     },
     finish(input: { attachmentId: string, contentHash: string, draftId: string, now: string, resourceId: string }) {
-      return Number(finish.run(input.attachmentId, input.contentHash, input.now, input.resourceId, input.draftId).changes) === 1
+      return withTransaction(database, () => Number(finish.run(input.attachmentId, input.contentHash, input.now, input.resourceId, input.draftId).changes) === 1)
     },
     fail(draftId: string, resourceId: string, errorCode: 'IMPORT_FAILED' | 'IMPORT_INTERRUPTED', now: string) {
-      return Number(fail.run(errorCode, now, resourceId, draftId).changes) === 1
+      return withTransaction(database, () => Number(fail.run(errorCode, now, resourceId, draftId).changes) === 1)
     },
     retry(draftId: string, resourceId: string, now: string) {
-      return Number(retry.run(now, resourceId, draftId).changes) === 1
+      return withTransaction(database, () => Number(retry.run(now, resourceId, draftId).changes) === 1)
     },
     interruptImports(now: string) {
-      return Number(interrupt.run(now).changes)
+      return withTransaction(database, () => Number(interrupt.run(now).changes))
     },
     failUnavailableAttachments(attachmentIds: readonly string[], now: string) {
       return withTransaction(database, () => attachmentIds.reduce(

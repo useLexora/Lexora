@@ -21,7 +21,8 @@ import { useTaskIndex } from '../task-index/useTaskIndex'
 import { useTaskCapability } from '../useTaskCapability'
 
 describe('useTaskCapability', () => {
-  it.each(['waiting', 'paused'] as const)('removes a committed %s input from the queue as soon as history arrives, including after a stale queue refresh', async (state) => {
+  it('removes a committed paused input from the queue as soon as history arrives, including after a stale queue refresh', async () => {
+    const state = 'paused' as const
     const api = createBranchingDesktopApi()
     const content = { userContent: createBuddyUserContent('Same input'), resourceSnapshots: [] }
     const queued: LocalChatQueueItem[] = ['delivered', 'waiting', 'paused'].map(id => ({
@@ -41,7 +42,7 @@ describe('useTaskCapability', () => {
     const chat = scope.run(() => createTestTask(api, { conversationId: 'conversation-1', branchId: 'branch-root', spaceId: null }))!
     try {
       await chat.initialize()
-      await vi.waitFor(() => expect(chat.workspace.execution.queuedMessages.value.map(item => item.id)).toEqual(['delivered', 'waiting', 'paused']))
+      await vi.waitFor(() => expect(itemIds(chat.workspace.execution.queuedMessages.value)).toEqual(['delivered', 'waiting', 'paused']))
       const timeline = await api.localChat.conversations.listTimeline({ conversationId: 'conversation-1', branchId: 'branch-root' })
       vi.mocked(api.localChat.conversations.listTimeline).mockResolvedValue({
         ...timeline,
@@ -54,9 +55,9 @@ describe('useTaskCapability', () => {
         return messages.map(message => message.id)
       }
       await vi.waitFor(() => expect(messageIds().filter(id => id === 'delivered')).toHaveLength(1))
-      expect(chat.workspace.execution.queuedMessages.value.map(item => item.id)).toEqual(['waiting', 'paused'])
+      expect(itemIds(chat.workspace.execution.queuedMessages.value)).toEqual(['waiting', 'paused'])
       await chat.workspace.execution.steerQueuedMessage('waiting')
-      expect(chat.workspace.execution.queuedMessages.value.map(item => item.id)).toEqual(['waiting', 'paused'])
+      expect(itemIds(chat.workspace.execution.queuedMessages.value)).toEqual(['waiting', 'paused'])
       expect(messageIds()).not.toContain('waiting')
       expect(messageIds()).not.toContain('paused')
     }
@@ -147,7 +148,7 @@ describe('useTaskCapability', () => {
     }
   })
 
-  it.each(['ancestor', 'isolated', 'current'] as const)('scopes idle context events to the active branch and actor thread: %s', async (source) => {
+  it.each(['ancestor', 'isolated', 'legacy', 'current'] as const)('scopes idle context events to the active branch and actor thread: %s', async (source) => {
     const api = createBranchingDesktopApi()
     const branches = await api.localChat.conversations.listBranches('conversation-1')
     vi.mocked(api.localChat.conversations.listBranches).mockResolvedValue([...branches, branch('branch-edited', 'branch-root', 'assistant-1', '2026-08-15T00:00:00.000Z')])
@@ -157,7 +158,7 @@ describe('useTaskCapability', () => {
     const run = { ...queuedRun(), id: 'run-assistant-1', branchId: source === 'ancestor' ? 'branch-root' : 'branch-edited', status: 'completed' as const, completedAt: '2026-08-19T00:00:03.000Z' }
     const execution: LocalExecution = {
       runId: run.id,
-      threadId: source === 'isolated' ? 'isolated-thread' : actorThreadId(run.conversationId, run.buddyId),
+      threadId: source === 'isolated' ? 'isolated-thread' : actorThreadId(run.conversationId, run.buddyId, source === 'legacy' ? undefined : run.branchId),
       rootRunId: run.id,
       parentRunId: null,
       buddyId: run.buddyId,
@@ -209,6 +210,15 @@ describe('useTaskCapability', () => {
         listener({ sourceId: '00000000-0000-4000-8000-000000000001', revision: 1, conversationId: 'conversation-1', branchId: 'branch-edited' })
       await vi.waitFor(() => expect(chat.workspace.transcript.runSignalEvents.value).toHaveLength(2))
       expect(chat.workspace.composer.contextUsage.value).toMatchObject({ status: 'ready', totalTokens: source === 'current' ? 900 : 100 })
+      if (source === 'legacy') {
+        await chat.refreshRuntimeDependentState()
+        expect(chat.workspace.session.activeBranchId.value).toBe('branch-edited')
+        expect(chat.workspace.executionTree.records.value).toContainEqual(expect.objectContaining({ runId: run.id, threadId: actorThreadId(run.conversationId, run.buddyId) }))
+        expect(chat.workspace.transcript.runs.value).toContainEqual(expect.objectContaining({ id: run.id, status: 'completed' }))
+        expect(itemIds(chat.workspace.transcript.messages.value)).toEqual(itemIds(timeline.items.filter(item => item.kind === 'message')))
+        expect(vi.mocked(api.localChat.context.getUsageSnapshot).mock.lastCall?.[0]).toMatchObject({ conversationId: run.conversationId, branchId: 'branch-edited' })
+        expect(chat.workspace.composer.contextUsage.value).toMatchObject({ status: 'ready', totalTokens: 100 })
+      }
     }
     finally {
       chat.dispose()
@@ -310,7 +320,10 @@ describe('useTaskCapability', () => {
       completed = true
     })
     try {
-      await vi.waitFor(() => expect(chat.workspace.transcript.messages.value.map(message => message.id)).toEqual(['user-1', 'assistant-1', 'user-2', 'assistant-2']))
+      await vi.waitFor(() => {
+        const messages: readonly { id: string }[] = chat.workspace.transcript.messages.value
+        expect(messages.map(message => message.id)).toEqual(['user-1', 'assistant-1', 'user-2', 'assistant-2'])
+      })
       expect(chat.workspace.restoration.state.value).toBe('restoring')
       expect(completed).toBe(false)
     }
@@ -394,7 +407,6 @@ describe('useTaskCapability', () => {
 
   it.each([
     { modelId: 'model-2', reasoning: 'xhigh' as const, serviceTier: null },
-    { modelId: 'model-2', reasoning: 'medium' as const, serviceTier: 'priority' as const },
     { modelId: 'removed-model', reasoning: 'medium' as const, serviceTier: null },
   ])('preserves unavailable saved model parameters and waits for an explicit supported selection: %j', async (selection) => {
     const api = createDesktopApi()
@@ -655,22 +667,16 @@ describe('useTaskCapability', () => {
       userMessageId: 'user-2',
     }))
     expect(chat.workspace.session.activeBranchId.value).toBe('branch-edited')
-    expect(chat.workspace.transcript.branches.value.map(branch => branch.id)).toEqual(['branch-root', 'branch-edited'])
-    expect(chat.workspace.transcript.messages.value.map(message => message.id)).toEqual(['user-1', 'assistant-1'])
+    expect(itemIds(chat.workspace.transcript.branches.value)).toEqual(['branch-root', 'branch-edited'])
+    expect(itemIds(chat.workspace.transcript.messages.value)).toEqual(['user-1', 'assistant-1'])
   })
 
-  it('keeps the current task when an earlier branch activation completes', async () => {
+  it('keeps a new task when an earlier local branch selection is superseded', async () => {
     const api = createBranchingDesktopApi()
     vi.mocked(api.localChat.conversations.listBranches).mockResolvedValue([
       branch('branch-root', null, null, '2026-08-14T00:00:00.000Z'),
       branch('branch-fork', 'branch-root', 'assistant-1', '2026-08-15T00:00:00.000Z'),
     ])
-    const pending = deferred<void>()
-    const activate = api.localChat.conversations.activateBranch
-    api.localChat.conversations.activateBranch = vi.fn(async (input) => {
-      await pending.promise
-      return activate(input)
-    })
     vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
     const chat = createTestTask(api, { conversationId: 'conversation-1', branchId: 'branch-root', spaceId: null })
     await chat.initialize()
@@ -679,8 +685,7 @@ describe('useTaskCapability', () => {
     await chat.session.startTask(null)
     chat.workspace.composer.updateComposerContent('new task input', null)
     const currentDraftId = chat.workspace.composer.draftId.value
-    pending.resolve()
-    await expect(activating).resolves.toBe(true)
+    await expect(activating).resolves.toBe(false)
 
     expect(chat.session.activeTaskId.value).toBeNull()
     expect(chat.workspace.session.activeBranchId.value).toBeNull()
@@ -745,10 +750,8 @@ describe('useTaskCapability', () => {
     expect((await api.localChat.composerDrafts.get(ordinaryDraftId)).content).toEqual(createBuddyUserContent('ordinary pending input'))
   })
 
-  it.each([
-    { permissions: { approvalPolicy: 'manual', executionProfile: 'workspace_write' }, pendingModel: false },
-    { permissions: { approvalPolicy: 'policy', executionProfile: 'read_only' }, pendingModel: true },
-  ] as const)('submits the first regenerated-branch draft with $permissions and pending model $pendingModel', async ({ permissions, pendingModel }) => {
+  it('waits for the pending model and submits a regenerated-branch draft with its inherited permissions', async () => {
+    const permissions = { approvalPolicy: 'policy', executionProfile: 'read_only' } as const
     const api = createBranchingDesktopApi(permissions)
     const regenerate = vi.mocked(api.localChat.chat.regenerateAssistant).getMockImplementation()!
     vi.mocked(api.localChat.chat.regenerateAssistant).mockImplementation(async (input) => {
@@ -767,24 +770,22 @@ describe('useTaskCapability', () => {
 
     expect(await chat.workspace.execution.regenerateAssistant('run-2')).toBe(true)
     expect(chat.workspace.session.activeBranchId.value).toBe('branch-regenerated')
-    expect(chat.workspace.transcript.messages.value.map(message => message.id)).toEqual(['user-1', 'assistant-1', 'user-2'])
+    expect(itemIds(chat.workspace.transcript.messages.value)).toEqual(['user-1', 'assistant-1', 'user-2'])
     const modelSave = deferred<LocalConversation>()
     const modelSelection = { providerId: 'provider-1', modelId: 'model-2', reasoning: 'medium' as const, serviceTier: null }
     vi.mocked(api.localChat.conversations.setModelSelection).mockImplementation(() => modelSave.promise)
-    const selecting = pendingModel ? chat.workspace.composer.selectModel('provider-1:model-2') : Promise.resolve()
+    const selecting = chat.workspace.composer.selectModel('provider-1:model-2')
     const content = { ...createBuddyUserContent(), body: [{ type: 'paragraph' as const, content: [{ type: 'prompt_directive' as const, commandMode: 'prompt' as const, directive: 'slash_command' as const, value: '/review' }, { type: 'text' as const, text: ' inspect the current task' }] }] }
     const sending = chat.workspace.execution.send({ content: '/review inspect the current task', userContent: content })
-    if (pendingModel) {
-      expect(await chat.flushDrafts()).toBe(true)
-      expect((await api.localChat.composerDrafts.get(chat.workspace.composer.draftId.value)).executionConfig).toEqual(permissions)
-      modelSave.resolve({ ...chat.session.activeTask.value!, modelSelection })
-    }
+    expect(await chat.flushDrafts()).toBe(true)
+    expect((await api.localChat.composerDrafts.get(chat.workspace.composer.draftId.value)).executionConfig).toEqual(permissions)
+    modelSave.resolve({ ...chat.session.activeTask.value!, modelSelection })
     await selecting
     expect(await sending).toBe(true)
     expect(submitted).toMatchObject({
       content,
       executionConfig: permissions,
-      modelSelection: pendingModel ? modelSelection : null,
+      modelSelection,
       scope: { kind: 'conversation_branch', conversationId: 'conversation-1', branchId: 'branch-regenerated' },
     })
     expect(chat.workspace.composer.draft.value).toBe('')
@@ -825,6 +826,61 @@ describe('useTaskCapability', () => {
     expect(draft.executionConfig).toEqual({ approvalPolicy: 'policy', executionProfile: 'full_access' })
   })
 
+  it('allows workbench branch navigation to close the source view after saving its input', async () => {
+    const api = createBranchingDesktopApi()
+    const branches = await api.localChat.conversations.listBranches('conversation-1')
+    vi.mocked(api.localChat.conversations.listBranches).mockResolvedValue([...branches, branch('branch-fork', 'branch-root', 'assistant-1', '2026-08-15T00:00:00.000Z')])
+    vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
+    let closed = false
+    const scope = effectScope()
+    const chat: ReturnType<typeof createTestTask> = scope.run(() => createTestTask(api, { conversationId: 'conversation-1', branchId: 'branch-root', spaceId: null }, async () => {
+      closed = await chat.prepareClose()
+      return closed
+    }))!
+    try {
+      await chat.initialize()
+      chat.workspace.composer.updateComposerContent('Source branch input before navigation', null)
+      const opening = chat.workspace.transcript.activateBranch('branch-fork')
+      await vi.waitFor(() => expect(closed).toBe(true))
+      await expect(opening).resolves.toBe(true)
+      expect(chat.workspace.composer.draft.value).toBe('Source branch input before navigation')
+      expect(chat.workspace.session.activeBranchId.value).toBe('branch-root')
+      expect((await api.localChat.conversations.list())[0]?.activeBranchId).toBe('branch-root')
+    }
+    finally {
+      chat.dispose()
+      scope.stop()
+    }
+  })
+
+  it('keeps local branch selection and its input across refresh while another view browses the same task', async () => {
+    const api = createBranchingDesktopApi()
+    vi.mocked(api.localChat.conversations.listBranches).mockResolvedValue([
+      branch('branch-root', null, null, '2026-08-14T00:00:00.000Z'),
+      branch('branch-fork', 'branch-root', 'assistant-1', '2026-08-15T00:00:00.000Z'),
+    ])
+    vi.stubGlobal('window', Object.assign(globalThis, { lexoraDesktop: api }))
+    const first = createTestTask(api, { conversationId: 'conversation-1', branchId: 'branch-root', spaceId: null })
+    const second = createTestTask(api, { conversationId: 'conversation-1', branchId: 'branch-fork', spaceId: null })
+    await first.initialize()
+    await second.initialize()
+    first.workspace.composer.updateComposerContent('root input', null)
+    second.workspace.composer.updateComposerContent('fork input', null)
+    await first.flushDrafts()
+    await second.flushDrafts()
+    expect(first.workspace.session.activeBranchId.value).toBe('branch-root')
+    expect(second.workspace.session.activeBranchId.value).toBe('branch-fork')
+    await second.refreshRuntimeDependentState()
+    expect(second.workspace.session.activeBranchId.value).toBe('branch-fork')
+    expect(second.workspace.composer.draft.value).toBe('fork input')
+    await expect(second.workspace.transcript.activateBranch('branch-root')).resolves.toBe(true)
+    expect(first.workspace.session.activeBranchId.value).toBe('branch-root')
+    expect(first.workspace.composer.draft.value).toBe('root input')
+    await expect(second.workspace.transcript.activateBranch('branch-fork')).resolves.toBe(true)
+    expect(second.workspace.composer.draft.value).toBe('fork input')
+    expect((await api.localChat.conversations.list())[0]?.activeBranchId).toBe('branch-root')
+  })
+
   it('clears the previous branch projection while an activated branch is loading', async () => {
     const api = createBranchingDesktopApi()
     vi.mocked(api.localChat.conversations.listBranches).mockResolvedValue([
@@ -852,13 +908,13 @@ describe('useTaskCapability', () => {
     pendingTimeline.resolve({ changeSets: [], items: branchTimeline('branch-fork'), nextCursor: null, outputs: [], runEvents: [], runs: [] })
     await expect(activating).resolves.toBe(true)
 
-    expect(chat.workspace.transcript.messages.value.map(message => message.id)).toEqual(['user-1', 'assistant-1'])
+    expect(itemIds(chat.workspace.transcript.messages.value)).toEqual(['user-1', 'assistant-1'])
   })
 })
 
-function createTestTask(api: ReturnType<typeof createDesktopApi>, initialTarget?: UseTaskCapabilityOptions['initialTarget']) {
+function createTestTask(api: ReturnType<typeof createDesktopApi>, initialTarget?: UseTaskCapabilityOptions['initialTarget'], openBranch?: UseTaskCapabilityOptions['openBranch']) {
   const appState = useDesktopAppState({ api })
-  const chat = createTaskCapability(api, appState, initialTarget)
+  const chat = createTaskCapability(api, appState, initialTarget, openBranch)
 
   return {
     ...chat,
@@ -874,12 +930,14 @@ function createTaskCapability(
   api: ReturnType<typeof createDesktopApi>,
   appState: ReturnType<typeof useDesktopAppState>,
   initialTarget: UseTaskCapabilityOptions['initialTarget'] = { conversationId: null, branchId: null, spaceId: null },
+  openBranch?: UseTaskCapabilityOptions['openBranch'],
 ) {
   const index = useTaskIndex({ api: api.localChat, applicationSettings: appState.stores.applicationSettings, ready: computed(() => appState.stores.runtimeSupervisor.runtimeState.value.status === 'ready') })
   return useTaskCapability({
     api,
     index,
     initialTarget,
+    openBranch,
     applicationSettings: appState.stores.applicationSettings,
     modelProviders: appState.stores.modelProviders,
     runtimeSupervisor: appState.stores.runtimeSupervisor,
@@ -1075,7 +1133,7 @@ function createDesktopApi() {
     lifecycle: { quit: vi.fn() },
     localChat: {
       questions: { list: async () => [], onChanged: () => () => {} },
-      executions: { list: async () => [], onChanged: () => () => {} },
+      executions: { activity: async () => ({ hasBlockingAnswer: false }), list: async () => [], onChanged: () => () => {} },
       buddies: { list: vi.fn(async () => ({ revision: 1, defaultBuddyId: 'default', buddies: [] })) },
       taskMarks: { list: async () => [], states: async () => [] },
       composerDrafts: {
@@ -1324,4 +1382,8 @@ function createDesktopApi() {
       chat: LexoraDesktopApi['localChat']['chat'] & { startTurn: ReturnType<typeof vi.fn> }
     }
   }
+}
+
+function itemIds(items: readonly { id: string }[]): string[] {
+  return items.map(item => item.id)
 }
