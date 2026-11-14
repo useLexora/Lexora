@@ -179,6 +179,7 @@ export default {
   'desktop.chat.command.review': '以只读方式审查当前工作，按严重程度给出风险与建议。',
   'desktop.chat.command.skills': '从当前任务可用的 Skills 中选择。',
   'desktop.chat.command.status': '打开当前对话的状态面板。',
+  'desktop.chat.command.update': '更新 AGENTS.md 或 README.md 文档；可附加更新重点。',
   'desktop.chat.status.title': '对话状态',
   'desktop.chat.status.loading': '正在读取…',
   'desktop.chat.status.current': '当前',

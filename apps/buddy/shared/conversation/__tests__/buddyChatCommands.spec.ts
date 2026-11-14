@@ -4,6 +4,7 @@ import { isExecutionProfileWithin } from '../../permissions/executionProfile'
 import {
   isBuddyReviewCommand,
   isBuddyRunChatCommand,
+  isBuddyUpdateCommand,
   isRetiredBuddyPromptCommand,
   parseBuddyChatCommand,
 } from '../buddyChatCommands'
@@ -21,6 +22,7 @@ describe('buddyChatCommands', () => {
     expect(parseBuddyChatCommand('/skills')).toEqual({ arguments: '', name: 'skills' })
     expect(parseBuddyChatCommand('/mcp')).toEqual({ arguments: '', name: 'mcp' })
     expect(parseBuddyChatCommand('/review 只看权限边界')).toEqual({ arguments: '只看权限边界', name: 'review' })
+    expect(parseBuddyChatCommand('/update 补充最新进展')).toEqual({ arguments: '补充最新进展', name: 'update' })
     expect(parseBuddyChatCommand('/plan')).toBeNull()
     expect(parseBuddyChatCommand('please /compact')).toBeNull()
     expect(parseBuddyChatCommand('/unknown')).toBeNull()
@@ -30,6 +32,7 @@ describe('buddyChatCommands', () => {
     expect(isBuddyRunChatCommand('compact')).toBe(true)
     expect(isBuddyRunChatCommand('skills')).toBe(false)
     expect(isBuddyRunChatCommand('review')).toBe(false)
+    expect(isBuddyRunChatCommand('update')).toBe(false)
     expect(isBuddyRunChatCommand('status')).toBe(false)
     expect(isBuddyRunChatCommand('mcp')).toBe(false)
     expect(isBuddyRunChatCommand('unknown')).toBe(false)
@@ -47,6 +50,13 @@ describe('buddyChatCommands', () => {
     expect(isBuddyReviewCommand('/review 只看权限边界')).toBe(true)
     expect(isBuddyReviewCommand('/reviews')).toBe(false)
     expect(isBuddyReviewCommand('/compact')).toBe(false)
+  })
+
+  it('recognizes the update prompt command', () => {
+    expect(isBuddyUpdateCommand('/update')).toBe(true)
+    expect(isBuddyUpdateCommand('/update 仅更新README')).toBe(true)
+    expect(isBuddyUpdateCommand('/updated')).toBe(false)
+    expect(isBuddyUpdateCommand('/review')).toBe(false)
   })
 
   it('keeps local actions available while retiring their former prompt directives', () => {

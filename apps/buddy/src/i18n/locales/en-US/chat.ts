@@ -181,6 +181,7 @@ export default {
   'desktop.chat.command.review': 'Review the current work read-only, ranked by severity.',
   'desktop.chat.command.skills': 'Pick from the Skills available for this task.',
   'desktop.chat.command.status': 'Open the status panel for this conversation.',
+  'desktop.chat.command.update': 'Update AGENTS.md or README.md; optional update focus.',
   'desktop.chat.status.title': 'Conversation status',
   'desktop.chat.status.loading': 'Loading…',
   'desktop.chat.status.current': 'current',
