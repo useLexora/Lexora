@@ -8,6 +8,7 @@ import { NButton, NDropdown, NEmpty, NPopover, NTooltip } from 'naive-ui'
 import { computed, h } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
+import DesktopRingSpinner from '@/shared/ui/loading/DesktopRingSpinner.vue'
 import DesktopSpaceIcon from '../space/DesktopSpaceIcon.vue'
 
 const props = defineProps<{
@@ -15,6 +16,7 @@ const props = defineProps<{
   spaces: readonly LocalSpace[]
   results: readonly ArchiveDeleteResult[]
   disabled: boolean
+  spaceActionBusy: { spaceId: string | null } | null
   language: BuddyLocale
 }>()
 const emit = defineEmits<{
@@ -73,8 +75,9 @@ const groups = computed(() => {
         <NDropdown v-if="!group.spaceId || group.space" trigger="click" placement="bottom-end" :options="spaceActions" @select="!disabled && emit('deleteSpace', group.spaceId, group.name)">
           <NTooltip>
             <template #trigger>
-              <NButton class="buddy-icon-button shrink-0" size="small" quaternary :disabled="disabled" :aria-label="t('desktop.archive.spaceActions', { space: group.name })" data-testid="task-archive-space-actions">
-                <DesktopIcon :component="MoreHorizontal20Regular" :size="18" />
+              <NButton class="buddy-icon-button shrink-0" size="small" quaternary :disabled="disabled" :aria-busy="spaceActionBusy?.spaceId === group.spaceId ? true : undefined" :aria-label="t('desktop.archive.spaceActions', { space: group.name })" data-testid="task-archive-space-actions">
+                <DesktopRingSpinner v-if="spaceActionBusy?.spaceId === group.spaceId" />
+                <DesktopIcon v-else :component="MoreHorizontal20Regular" :size="18" />
               </NButton>
             </template>
             {{ t('desktop.archive.spaceActions', { space: group.name }) }}
