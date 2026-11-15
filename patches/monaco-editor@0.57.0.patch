@@ -1,0 +1,72 @@
+diff --git a/esm/vs/editor/browser/widget/codeEditor/codeEditorWidget.js b/esm/vs/editor/browser/widget/codeEditor/codeEditorWidget.js
+index 2d5734447f64d9578e8d052d5db898900eaf3ea3..d4f290c1720226de6fc63c8b3dd07868dcfb2b9b 100644
+--- a/esm/vs/editor/browser/widget/codeEditor/codeEditorWidget.js
++++ b/esm/vs/editor/browser/widget/codeEditor/codeEditorWidget.js
+@@ -1875,27 +1875,27 @@ registerThemingParticipant((theme, collector) => {
+     const errorForeground = theme.getColor(editorErrorForeground);
+     if (errorForeground) {
+         collector.addRule(`.monaco-editor .${"squiggly-error" /* ClassName.EditorErrorDecoration */} { background: url("data:image/svg+xml,${getSquigglySVGData(errorForeground)}") repeat-x bottom left; }`);
+-        collector.addRule(`:root { --monaco-editor-error-decoration: url("data:image/svg+xml,${getSquigglySVGData(errorForeground)}"); }`);
++        collector.addRule(`.monaco-editor, .monaco-diff-editor, .monaco-component { --monaco-editor-error-decoration: url("data:image/svg+xml,${getSquigglySVGData(errorForeground)}"); }`);
+     }
+     const warningForeground = theme.getColor(editorWarningForeground);
+     if (warningForeground) {
+         collector.addRule(`.monaco-editor .${"squiggly-warning" /* ClassName.EditorWarningDecoration */} { background: url("data:image/svg+xml,${getSquigglySVGData(warningForeground)}") repeat-x bottom left; }`);
+-        collector.addRule(`:root { --monaco-editor-warning-decoration: url("data:image/svg+xml,${getSquigglySVGData(warningForeground)}"); }`);
++        collector.addRule(`.monaco-editor, .monaco-diff-editor, .monaco-component { --monaco-editor-warning-decoration: url("data:image/svg+xml,${getSquigglySVGData(warningForeground)}"); }`);
+     }
+     const infoForeground = theme.getColor(editorInfoForeground);
+     if (infoForeground) {
+         collector.addRule(`.monaco-editor .${"squiggly-info" /* ClassName.EditorInfoDecoration */} { background: url("data:image/svg+xml,${getSquigglySVGData(infoForeground)}") repeat-x bottom left; }`);
+-        collector.addRule(`:root { --monaco-editor-info-decoration: url("data:image/svg+xml,${getSquigglySVGData(infoForeground)}"); }`);
++        collector.addRule(`.monaco-editor, .monaco-diff-editor, .monaco-component { --monaco-editor-info-decoration: url("data:image/svg+xml,${getSquigglySVGData(infoForeground)}"); }`);
+     }
+     const hintForeground = theme.getColor(editorHintForeground);
+     if (hintForeground) {
+         collector.addRule(`.monaco-editor .${"squiggly-hint" /* ClassName.EditorHintDecoration */} { background: url("data:image/svg+xml,${getDotDotDotSVGData(hintForeground)}") no-repeat bottom left; }`);
+-        collector.addRule(`:root { --monaco-editor-hint-decoration: url("data:image/svg+xml,${getDotDotDotSVGData(hintForeground)}"); }`);
++        collector.addRule(`.monaco-editor, .monaco-diff-editor, .monaco-component { --monaco-editor-hint-decoration: url("data:image/svg+xml,${getDotDotDotSVGData(hintForeground)}"); }`);
+     }
+     const unnecessaryForeground = theme.getColor(editorUnnecessaryCodeOpacity);
+     if (unnecessaryForeground) {
+         collector.addRule(`.monaco-editor.showUnused .${"squiggly-inline-unnecessary" /* ClassName.EditorUnnecessaryInlineDecoration */} { opacity: ${unnecessaryForeground.rgba.a}; }`);
+-        collector.addRule(`:root { --monaco-editor-unnecessary-decoration-opacity: ${unnecessaryForeground.rgba.a}; }`);
++        collector.addRule(`.monaco-editor, .monaco-diff-editor, .monaco-component { --monaco-editor-unnecessary-decoration-opacity: ${unnecessaryForeground.rgba.a}; }`);
+     }
+ });
+ 
+diff --git a/esm/vs/editor/standalone/browser/standaloneThemeService.js b/esm/vs/editor/standalone/browser/standaloneThemeService.js
+index 83768fd7e74768c2b195459182ee9059c08cbedd..a9b100e8b5acaa7cc232a23ed8d6523b584e953b 100644
+--- a/esm/vs/editor/standalone/browser/standaloneThemeService.js
++++ b/esm/vs/editor/standalone/browser/standaloneThemeService.js
+@@ -201,7 +201,7 @@ class StandaloneThemeService extends Disposable {
+         this._knownThemes.set(VS_DARK_THEME_NAME, newBuiltInTheme(VS_DARK_THEME_NAME));
+         this._knownThemes.set(HC_BLACK_THEME_NAME, newBuiltInTheme(HC_BLACK_THEME_NAME));
+         this._knownThemes.set(HC_LIGHT_THEME_NAME, newBuiltInTheme(HC_LIGHT_THEME_NAME));
+-        const iconsStyleSheet = this._register(getIconsStyleSheet(this));
++        const iconsStyleSheet = this._register(getIconsStyleSheet(this, '.monaco-editor, .monaco-diff-editor, .monaco-component'));
+         this._codiconCSS = iconsStyleSheet.getCSS();
+         this._themeCSS = '';
+         this._allCSS = `${this._codiconCSS}\n${this._themeCSS}`;
+diff --git a/esm/vs/platform/theme/browser/iconsStyleSheet.js b/esm/vs/platform/theme/browser/iconsStyleSheet.js
+index 60a082a769df2f5e5b4405bf7c3491ed8936704a..fab383e8469fa5f18a9da984eba0ca58e7af6182 100644
+--- a/esm/vs/platform/theme/browser/iconsStyleSheet.js
++++ b/esm/vs/platform/theme/browser/iconsStyleSheet.js
+@@ -8,7 +8,7 @@ import { getIconRegistry } from '../common/iconRegistry.js';
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+-function getIconsStyleSheet(themeService) {
++function getIconsStyleSheet(themeService, scopeSelector = ':root') {
+     const disposable = new DisposableStore();
+     const onDidChangeEmmiter = disposable.add(new Emitter());
+     const iconRegistry = getIconRegistry();
+@@ -52,7 +52,7 @@ function getIconsStyleSheet(themeService) {
+                 }
+                 rules.push(inline `@font-face { src: ${src.join(', ')}; font-family: ${stringValue(id)};${fontWeight}${fontStyle} font-display: block; }`);
+             }
+-            rules.push(inline `:root { ${rootAttribs.join(' ')} }`);
++            rules.push(inline `${scopeSelector} { ${rootAttribs.join(' ')} }`);
+             return rules.join('\n');
+         }
+     };

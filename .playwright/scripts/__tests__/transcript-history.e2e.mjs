@@ -1,7 +1,10 @@
 import { once } from 'node:events'
+import fs from 'node:fs/promises'
 import { createServer } from 'node:http'
 import path from 'node:path'
+import process from 'node:process'
 import { test as base, expect, useSyntheticCredentialStorage } from '../fixtures/electron.mjs'
+import { startKeyboardProbe, stopRendererTrace } from '../fixtures/renderer-responsiveness.mjs'
 
 const messageCount = 420
 const contentTolerance = 3
@@ -561,6 +564,193 @@ async function waitForChunk(history, marker) {
 
 test.describe('long transcript reading', () => {
   test.use({ historyShape: 'long' })
+
+  test('keeps file opening responsive during long transcript streaming', async ({ history }, testInfo) => {
+    const stream = await localStream()
+    const { page, instance } = history
+    const samples = []
+    const diagnosticsEnabled = process.env.LEXORA_TEST_FILE_DIAGNOSTICS === '1'
+    let timer
+    let session
+    let stopInput
+    let cleanupFailure
+    try {
+      await configureProvider(history, stream.baseUrl)
+      const owner = await select(history)
+      const directory = path.join(instance.home, 'documents')
+      await fs.mkdir(directory, { recursive: true })
+      const names = ['sample-a.ts', 'sample-b.ts', 'sample-c.ts']
+      const text = Array.from({ length: 80 }, (_, index) => `export const entry${index} = { label: 'responsive editor ${index}', enabled: true }`).join('\n')
+      for (const name of names)
+        await fs.writeFile(path.join(directory, name), `// ${name}\n${text}`)
+      await history.app.evaluate(({ dialog }, directory) => {
+        dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [directory] })
+      }, directory)
+      await page.evaluate(async (id) => {
+        const api = window.lexoraDesktop.localChat
+        const root = await api.spaces.selectDirectory()
+        const space = await api.spaces.create({ name: 'Streaming files', memoryScope: 'space_only', primaryDirectory: { id: null, root } })
+        await api.conversations.moveToSpace(id, space.id)
+      }, history.data.id)
+      await owner.locator('.desktop-chat-composer__prosemirror').fill('请继续合成长篇说明。')
+      await owner.getByRole('button', { name: '发送消息', exact: true }).click()
+      await expect(owner).toContainText('ANCHOR-STREAM-S023-END', { timeout: 45000 })
+      await expect(owner.getByRole('button', { name: '停止运行', exact: true })).toBeVisible()
+      await owner.locator('.desktop-chat-composer__prosemirror').click()
+      await page.keyboard.press('Control+Shift+P')
+      await page.getByPlaceholder('输入命令名称').fill('文件')
+      await page.getByPlaceholder('输入命令名称').press('Enter')
+      const tree = page.getByTestId('context-file-tree')
+      await expect(tree.locator('[data-path="sample-a.ts"]')).toBeVisible()
+      await history.app.context().tracing.stop()
+      await history.app.context().tracing.start({ screenshots: false, snapshots: false })
+      await page.evaluate(() => {
+        window.__filePerformance = { tasks: [], frames: [], inputs: [], animationFrames: [], active: false, editors: new WeakSet(), editorInstances: 0 }
+        document.addEventListener('keydown', (event) => {
+          const state = window.__filePerformance
+          if (event.key !== 'F24' || !state.active)
+            return
+          event.preventDefault()
+          const input = { at: performance.now(), timestamp: event.timeStamp, trusted: event.isTrusted }
+          input.delayMs = input.at - input.timestamp
+          state.inputs.push(input)
+          requestAnimationFrame(() => input.nextFrameMs = performance.now() - input.timestamp)
+        }, true)
+        if (PerformanceObserver.supportedEntryTypes.includes('long-animation-frame')) {
+          new PerformanceObserver((list) => {
+            if (window.__filePerformance.active)
+              window.__filePerformance.animationFrames.push(...list.getEntries().map(entry => entry.toJSON()))
+          }).observe({ type: 'long-animation-frame' })
+        }
+        document.addEventListener('click', (event) => {
+          if (window.__filePerformance.active && event.target.closest('[data-path]'))
+            window.__filePerformance.clickedAt = performance.now()
+        }, true)
+        new MutationObserver(() => {
+          const state = window.__filePerformance
+          if (!state.active || !state.clickedAt || state.domReadyAt)
+            return
+          const created = [...document.querySelectorAll('.monaco-editor .view-lines')].find(element => !state.previous.has(element) && element.textContent.replace(/\s+/g, ' ').includes(state.name))
+          if (created) {
+            state.domReadyAt = performance.now()
+            requestAnimationFrame(() => requestAnimationFrame(() => state.paintedAt = performance.now()))
+          }
+        }).observe(document.body, { subtree: true, childList: true, characterData: true })
+        new PerformanceObserver((list) => {
+          if (window.__filePerformance.active)
+            window.__filePerformance.tasks.push(...list.getEntries().map(entry => ({ start: entry.startTime, duration: entry.duration })))
+        }).observe({ type: 'longtask' })
+        let previous = performance.now()
+        function frame(now) {
+          if (window.__filePerformance.active)
+            window.__filePerformance.frames.push(now - previous)
+          previous = now
+          requestAnimationFrame(frame)
+        }
+        requestAnimationFrame(frame)
+      })
+      session = await page.context().newCDPSession(page)
+      await session.send('Performance.enable')
+      if (diagnosticsEnabled) {
+        await session.send('Profiler.enable')
+        await session.send('Profiler.start')
+        await session.send('Tracing.start', { categories: 'toplevel,devtools.timeline,blink.user_timing,disabled-by-default-devtools.timeline,disabled-by-default-devtools.timeline.invalidationTracking', transferMode: 'ReturnAsStream' })
+      }
+      let chunks = 0
+      timer = setInterval(() => stream.append(`\n\nLIVE-${++chunks} ${'持续生成时文件编辑器应保持可操作。'.repeat(4)}\n\n`), 50)
+      for (const name of [...names, ...names, ...names]) {
+        await page.evaluate(name => Object.assign(window.__filePerformance, { name, startedAt: performance.now(), tasks: [], frames: [], inputs: [], animationFrames: [], active: true, clickedAt: null, domReadyAt: null, paintedAt: null, previous: new Set(document.querySelectorAll('.monaco-editor .view-lines')) }), name)
+        const before = (await session.send('Performance.getMetrics')).metrics
+        const started = performance.now()
+        stopInput = startKeyboardProbe(session)
+        await tree.locator(`[data-path="${name}"]`).click()
+        const editor = page.getByTestId('workbench-text-editor').filter({ visible: true })
+        await expect(editor.locator('.view-lines')).toContainText(name)
+        const readyMs = performance.now() - started
+        await page.waitForFunction(() => !!window.__filePerformance.paintedAt)
+        await stopInput()
+        stopInput = undefined
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+        const observation = await editor.evaluate((element) => {
+          const state = window.__filePerformance
+          state.active = false
+          state.endedAt = performance.now()
+          const editor = element.querySelector('.monaco-editor').parentElement
+          if (!state.editors.has(editor)) {
+            state.editors.add(editor)
+            state.editorInstances++
+          }
+          return state
+        })
+        const after = (await session.send('Performance.getMetrics')).metrics
+        const metrics = ['LayoutCount', 'LayoutDuration', 'RecalcStyleDuration', 'ScriptDuration', 'TaskDuration']
+        samples.push({ name, window: { start: observation.startedAt, click: observation.clickedAt, domReady: observation.domReadyAt, doubleRaf: observation.paintedAt, end: observation.endedAt }, inputs: observation.inputs, animationFrames: observation.animationFrames, editorInstances: observation.editorInstances, readyMs, domReadyMs: observation.domReadyAt - observation.clickedAt, paintedMs: observation.paintedAt - observation.clickedAt, maxFrameMs: Math.max(0, ...observation.frames), longTasks: observation.tasks, ...Object.fromEntries(metrics.map(key => [key, after.find(item => item.name === key).value - before.find(item => item.name === key).value])) })
+        if (diagnosticsEnabled && samples.length === 1) {
+          const { profile } = await session.send('Profiler.stop')
+          const profilePath = testInfo.outputPath('file-opening-cpu.json')
+          await fs.writeFile(profilePath, JSON.stringify(profile))
+          await testInfo.attach('file-opening-cpu', { path: profilePath, contentType: 'application/json' })
+          const tracePath = testInfo.outputPath('file-opening-trace.json')
+          await stopRendererTrace(session, tracePath)
+          await testInfo.attach('file-opening-trace', { path: tracePath, contentType: 'application/json' })
+        }
+      }
+      clearInterval(timer)
+      timer = undefined
+      await expect(owner.getByRole('button', { name: '停止运行', exact: true })).toBeVisible()
+      stream.append('\n\nFILE-STREAM-COMPLETED', true)
+      await expect(owner.getByRole('button', { name: '停止运行', exact: true })).toHaveCount(0, { timeout: 45000 })
+      await testInfo.attach('file-opening', { body: await page.screenshot(), contentType: 'image/png' })
+      const editor = page.getByTestId('workbench-text-editor').filter({ visible: true })
+      await page.getByTestId('document-mode-edit').filter({ visible: true }).click()
+      await editor.locator('.view-lines').click()
+      await page.keyboard.press('Control+End')
+      await page.keyboard.insertText('\n// Preserved edit\n')
+      await tree.locator('[data-path="sample-a.ts"]').click()
+      await expect(editor.locator('.view-lines')).toContainText('sample-a.ts')
+      await tree.locator('[data-path="sample-c.ts"]').click()
+      await expect(editor.locator('.view-lines')).toContainText('Preserved edit')
+      const readBackup = () => page.evaluate(async () => (await window.lexoraDesktop.workbench.read())?.backups.find(backup => backup.resource.data.path === 'sample-c.ts')?.text)
+      await expect.poll(readBackup).toContain('Preserved edit')
+      const edited = await readBackup()
+      await editor.locator('.view-lines').click()
+      await page.keyboard.press('Control+z')
+      await expect.poll(readBackup).not.toBe(edited)
+      await page.keyboard.press('Control+y')
+      await expect.poll(readBackup).toBe(edited)
+      await page.keyboard.press('Control+s')
+      await expect.poll(() => fs.readFile(path.join(directory, names.at(-1)), 'utf8')).toBe(edited)
+      for (const width of [1200, 1500]) {
+        await history.app.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0].setSize(width, 1000), width)
+        await expect.poll(() => editor.evaluate((element) => {
+          const surface = element.getBoundingClientRect()
+          const content = element.querySelector('.monaco-editor').getBoundingClientRect()
+          return Math.max(Math.abs(surface.width - content.width), Math.abs(surface.height - content.height))
+        })).toBeLessThan(2)
+      }
+      expect(samples.at(-1).editorInstances).toBe(1)
+      expect(samples.every(sample => sample.inputs.length > 0 && sample.inputs.every(input => input.trusted && input.delayMs >= -2))).toBe(true)
+      expect(samples.every(sample => sample.domReadyMs > 0 && sample.paintedMs >= sample.domReadyMs)).toBe(true)
+      expect(Math.max(...samples.flatMap(sample => sample.longTasks.map(task => task.duration)), 0)).toBeLessThan(1000)
+      expect(history.diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
+    }
+    finally {
+      clearInterval(timer)
+      const probe = await Promise.allSettled([stopInput?.()])
+      const cleanup = await Promise.allSettled([
+        (async () => {
+          const summaryPath = testInfo.outputPath('file-opening-performance.json')
+          await fs.writeFile(summaryPath, JSON.stringify({ messageCount: history.data.messages.length, diagnosticsEnabled, snapshotsEnabled: false, samples }, null, 2))
+          await testInfo.attach('file-opening-performance', { path: summaryPath, contentType: 'application/json' })
+        })(),
+        session?.detach(),
+        stream.close(),
+      ])
+      cleanupFailure = [...probe, ...cleanup].find(result => result.status === 'rejected')
+    }
+    if (cleanupFailure)
+      throw cleanupFailure.reason
+  })
 
   test('retains detached reading through streaming task switches, continuous upward wheels and completion', async ({ history }) => {
     const stream = await localStream()

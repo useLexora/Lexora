@@ -13,6 +13,7 @@ interface MonacoEnvironmentGlobal {
 let monacoPromise: Promise<typeof Monaco> | null = null
 let stopTheme: (() => void) | null = null
 let themeSubscribers = 0
+let appliedTheme: (typeof desktopThemeSnapshot.value)['active'] | null = null
 
 export function loadDesktopMonaco(): Promise<typeof Monaco> {
   if (!monacoPromise) {
@@ -49,7 +50,10 @@ export function loadDesktopMonaco(): Promise<typeof Monaco> {
       return monaco
     })
   }
-  return monacoPromise
+  return monacoPromise.then((monaco) => {
+    syncDesktopMonacoTheme(monaco)
+    return monaco
+  })
 }
 
 export function observeDesktopMonacoTheme(monaco: typeof Monaco, editor: Monaco.editor.IStandaloneCodeEditor | Monaco.editor.IStandaloneDiffEditor): () => void {
@@ -71,7 +75,10 @@ export function observeDesktopMonacoTheme(monaco: typeof Monaco, editor: Monaco.
 }
 
 function syncDesktopMonacoTheme(monaco: typeof Monaco): void {
-  const { colors: c, descriptor } = desktopThemeSnapshot.value.active
+  const theme = desktopThemeSnapshot.value.active
+  if (appliedTheme === theme)
+    return
+  const { colors: c, descriptor } = theme
   monaco.editor.defineTheme('buddy', {
     base: descriptor.appearance === 'dark' ? 'vs-dark' : 'vs',
     inherit: true,
@@ -98,4 +105,5 @@ function syncDesktopMonacoTheme(monaco: typeof Monaco): void {
     },
   })
   monaco.editor.setTheme('buddy')
+  appliedTheme = theme
 }

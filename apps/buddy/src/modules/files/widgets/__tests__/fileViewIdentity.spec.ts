@@ -8,6 +8,7 @@ import type { WorkingCopyProvider } from '@/workbench/services/WorkingCopyServic
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, provide, shallowRef } from 'vue'
 import DesktopFileLoading from '@/shared/ui/loading/DesktopFileLoading.vue'
+import { TextEditorPool } from '@/workbench/browser/TextEditorPool'
 import { workbenchKey } from '@/workbench/browser/workbenchContext'
 import { workbenchLabels } from '@/workbench/common/workbenchLabels'
 import { ContributionRegistry } from '@/workbench/services/ContributionRegistry'
@@ -20,6 +21,7 @@ vi.mock('naive-ui', () => ({ NButton: { render: () => null }, useMessage: () => 
 vi.mock('@/shared/ui/contributions/WorkbenchMenu.vue', () => ({ default: { render: () => null } }))
 vi.mock('@/shared/ui/files/DesktopDocumentToolbar.vue', () => ({ default: { render: () => null } }))
 vi.mock('@/shared/ui/monaco/desktopMonaco', () => ({ observeDesktopMonacoTheme: () => () => {} }))
+vi.mock('@/shared/ui/monaco/desktopMonacoLayout', () => ({ observeDesktopMonacoLayout: () => () => {} }))
 vi.mock('@/shared/ui/markdown/DesktopMarkdownContent.vue', async () => {
   const { defineComponent, h } = await import('vue')
   return { default: defineComponent({
@@ -44,9 +46,19 @@ class Editor {
     state.column = -1
   }
 
-  onDidChangeCursorPosition(callback: () => void) { this.cursor = callback }
-  onDidScrollChange() {}
+  onDidChangeCursorPosition(callback: () => void) {
+    this.cursor = callback
+    return { dispose: () => this.cursor = undefined }
+  }
+
+  onDidScrollChange() { return { dispose() {} } }
   updateOptions() {}
+  layout() {}
+  setModel(model: { text: string } | null) {
+    this.column = 1
+    this.node.value = model?.text ?? ''
+  }
+
   move(column: number) {
     this.column = column
     this.cursor?.()
@@ -77,6 +89,8 @@ async function mount(options: { deferredFirst?: boolean, preview?: boolean, read
   const subscription = controller.onDidChangeLayout(() => view.value = controller.layout.views[id]!)
   const copies = new WorkingCopyService({ read: options.readDocument ?? (async value => ({ text: String(value.data.path), etag: 'version' })), save: async (_, value) => ({ status: 'saved', document: value }) })
   const editors: Editor[] = []
+  const editorPool = new TextEditorPool()
+  const visible = shallowRef(true)
   const leases: Array<{ resource: ResourceRef, releases: number }> = []
   const resume = Promise.withResolvers<void>()
   const models = { acquire: async (resource: ResourceRef) => {
@@ -85,7 +99,7 @@ async function mount(options: { deferredFirst?: boolean, preview?: boolean, read
     if (options.deferredFirst && leases.length === 1)
       await resume.promise
     return {
-      model: {},
+      model: { text: String(resource.data.path) },
       release: () => held.releases++,
       monaco: { editor: { create: (element: HTMLElement) => {
         const editor = new Editor(element, String(resource.data.path))
@@ -102,19 +116,20 @@ async function mount(options: { deferredFirst?: boolean, preview?: boolean, read
     provide(workbenchKey, { controller, copies, labels: shallowRef(workbenchLabels('en-US')) } as WorkbenchContext)
     return () => options.preview
       ? h(DesktopFilePreview, { view: view.value, files, language: 'en-US', writeClipboardText: async () => {}, visible: false })
-      : h(DesktopFileEditor, { view: view.value, models, language: 'en-US', writeClipboardText: async () => {}, visible: false })
+      : h(DesktopFileEditor, { view: view.value, models, editors: editorPool, language: 'en-US', writeClipboardText: async () => {}, visible: visible.value })
   } })
   app.config.errorHandler = error => errors.push(error)
   app.mount(element)
   cleanups.push(async () => {
     app.unmount()
+    editorPool.dispose()
     subscription.dispose()
     await controller.dispose()
     await copies.dispose()
     element.remove()
     expect(errors).toEqual([])
   })
-  return { controller, copies, editors, leases, resume, element, id }
+  return { controller, copies, editors, leases, resume, element, id, visible }
 }
 
 describe('file view semantic identity', () => {
@@ -190,15 +205,33 @@ describe('file view semantic identity', () => {
     const old = f.editors[0]!
     old.move(55)
     f.controller.updateView(f.id, { resource: resource('second.md', 2), state: { mode: 'edit', editor: { column: 7 } } })
-    await vi.waitFor(() => expect(f.editors).toHaveLength(2))
-    const current = f.editors[1]!
+    await vi.waitFor(() => expect(f.element.querySelector('textarea')?.value).toBe('second.md'))
+    const current = f.editors[0]!
+    expect(current).toBe(old)
     expect(current.column).toBe(7)
-    expect(old.disposed).toBe(1)
+    expect(old.disposed).toBe(0)
     expect(f.leases[0]!.releases).toBe(1)
     await new Promise(resolve => setTimeout(resolve, 300))
     expect(f.controller.layout.views[f.id]!.state.editor).toEqual({ column: 7 })
     expect(current.node.isConnected).toBe(true)
     expect(current.disposed).toBe(0)
+  })
+
+  it('detaches hidden editors and restores independent view state on reuse', async () => {
+    const f = await mount()
+    await vi.waitFor(() => expect(f.editors).toHaveLength(1))
+    const editor = f.editors[0]!
+    editor.move(19)
+    f.visible.value = false
+    await nextTick()
+    expect(f.element.querySelector('textarea')).toBeNull()
+    expect(f.leases[0]!.releases).toBe(1)
+    expect(f.controller.layout.views[f.id]!.state.editor).toEqual({ column: 19 })
+    f.visible.value = true
+    await vi.waitFor(() => expect(f.element.querySelector('textarea')).toBe(editor.node))
+    expect(editor.column).toBe(19)
+    expect(f.editors).toHaveLength(1)
+    expect(f.leases.at(-1)!.releases).toBe(0)
   })
 
   it('releases a late model lease without removing the replacement editor', async () => {

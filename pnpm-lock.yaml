@@ -198,6 +198,7 @@ patchedDependencies:
   '@earendil-works/pi-ai@1.5.0': 14c3bc63582347263b539b3d60a6464645257ed80e53e2d3ba051fcde54a523f
   '@earendil-works/pi-codemode@1.5.0': 70f83bca18991308729d6313ee43a9e56d88a5255190aa0a16cadf8ff43ac42e
   '@earendil-works/pi-coding-agent@1.5.0': f41995d636e6f93dadc070df0a3225ce2ccd61e251181a60e12566987f9699a9
+  monaco-editor@0.57.0: bcd0298c87d774028c496d9a1de14409d8818e032abe84c96ca70a3e2f17aef2
 
 importers:
 
@@ -450,7 +451,7 @@ importers:
         version: 12.2.0
       monaco-editor:
         specifier: ^0.57.0
-        version: 0.57.0
+        version: 0.57.0(patch_hash=bcd0298c87d774028c496d9a1de14409d8818e032abe84c96ca70a3e2f17aef2)
       naive-ui:
         specifier: ^2.45.3
         version: 2.45.3(vue@3.5.43(typescript@6.0.3))
@@ -13805,7 +13806,7 @@ snapshots:
 
   module-replacements@3.4.0: {}
 
-  monaco-editor@0.57.0:
+  monaco-editor@0.57.0(patch_hash=bcd0298c87d774028c496d9a1de14409d8818e032abe84c96ca70a3e2f17aef2):
     dependencies:
       dompurify: 3.4.17
       marked: 14.0.0
