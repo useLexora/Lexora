@@ -22,6 +22,7 @@ function space(id: string, name: string, revokedAt: string | null = null): Local
 }
 async function mount(items = [item()], spaces: readonly LocalSpace[] = []) {
   const ready = shallowRef(true)
+  const currentSpaces = shallowRef(spaces)
   const list = vi.fn<TaskArchiveActions['list']>().mockResolvedValue({ items, nextCursor: null })
   const remove = vi.fn<TaskArchiveActions['delete']>().mockResolvedValue(true)
   const restore = vi.fn<TaskArchiveActions['restore']>().mockResolvedValue(true)
@@ -43,23 +44,17 @@ async function mount(items = [item()], spaces: readonly LocalSpace[] = []) {
   }
   const root = document.createElement('div')
   document.body.append(root)
-  const app = createApp({ render: () => h(DesktopTaskArchiveManager, { actions, spaces, language: 'zh-CN', onView }) })
+  const app = createApp({ render: () => h(DesktopTaskArchiveManager, { actions, spaces: currentSpaces.value, language: 'zh-CN', onView }) })
   app.mount(root)
   cleanups.push(() => app.unmount())
   await nextTick()
   await nextTick()
-  return { root, ready, list, remove, restore, onView, notify: () => listeners.forEach(listener => listener()) }
+  return { root, ready, spaces: currentSpaces, list, remove, restore, onView, notify: () => listeners.forEach(listener => listener()) }
 }
 function button(label: string, root: ParentNode = document) {
   const match = [...root.querySelectorAll<HTMLButtonElement>('button')].find(button => (button.getAttribute('aria-label') || button.textContent?.trim()) === label)
   expect(match, `button: ${label}`).toBeDefined()
   return match!
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>((resolvePromise) => { resolve = resolvePromise })
-  return { promise, resolve }
 }
 
 async function selectSpaceCleanup(name: string, root: ParentNode) {
@@ -126,57 +121,120 @@ it('keeps confirmed IDs and revisions fixed across refresh and reports each dele
   expect(f.root.querySelector('[data-delete-result="failed"]')?.textContent).toContain('历史任务 two')
 })
 
-it('shows snapshot progress only on its space action button, including the unbound space, and clears it before confirmation', async () => {
-  const unbound = item('unbound')
-  const bound = item('bound', { spaceId: 'space-a' })
-  const f = await mount([unbound, bound], [space('space-a', '设计空间')])
-  const snapshot = deferred<{ items: ConversationArchiveItem[], nextCursor: string | null }>()
-  f.list.mockImplementation(request => request.limit === 100 && request.spaceId === null
-    ? snapshot.promise
-    : Promise.resolve({ items: [unbound, bound], nextCursor: null }))
+it.each([
+  { spaceId: null, name: '未绑定空间', otherName: '设计空间' },
+  { spaceId: 'space-a', name: '设计空间', otherName: '未绑定空间' },
+])('shows snapshot progress only on $name and clears it before confirmation', async ({ spaceId, name, otherName }) => {
+  const target = item('target', { spaceId })
+  const other = item('other', { spaceId: spaceId === null ? 'space-a' : null })
+  const f = await mount([target, other], [space('space-a', '设计空间')])
+  const snapshot = Promise.withResolvers<{ items: ConversationArchiveItem[], nextCursor: string | null }>()
+  f.list.mockReturnValueOnce(snapshot.promise)
 
-  const unboundGroup = f.root.querySelector('[data-archive-space=""]')!
-  const boundGroup = f.root.querySelector('[data-archive-space="space-a"]')!
-  const unboundActions = button('空间操作：未绑定空间', unboundGroup)
-  const boundActions = button('空间操作：设计空间', boundGroup)
-  await selectSpaceCleanup('未绑定空间', f.root)
-  await vi.waitFor(() => expect(f.list).toHaveBeenLastCalledWith({ kind: 'managed', spaceId: null, limit: 100 }))
-
-  expect(unboundActions.getAttribute('aria-busy')).toBe('true')
-  expect(unboundActions.querySelector('.desktop-ring-spinner')).not.toBeNull()
-  expect(boundActions.getAttribute('aria-busy')).toBeNull()
-  expect(boundActions.querySelector('.desktop-ring-spinner')).toBeNull()
+  const actions = button(`空间操作：${name}`, f.root)
+  const otherActions = button(`空间操作：${otherName}`, f.root)
+  await selectSpaceCleanup(name, f.root)
+  await vi.waitFor(() => expect(actions.getAttribute('aria-busy')).toBe('true'))
+  expect(f.list).toHaveBeenLastCalledWith({ kind: 'managed', spaceId, limit: 100 })
+  expect(actions.querySelector('.desktop-ring-spinner')).not.toBeNull()
+  expect(otherActions.getAttribute('aria-busy')).toBeNull()
+  expect(otherActions.querySelector('.desktop-ring-spinner')).toBeNull()
   expect(f.root.querySelector('[data-testid="task-archive-toolbar"] .n-spin')).toBeNull()
 
-  snapshot.resolve({ items: [unbound], nextCursor: null })
-  await vi.waitFor(() => expect(document.querySelector('[data-testid="task-archive-delete-confirm"]')?.textContent).toContain('历史任务 unbound'))
+  snapshot.resolve({ items: [target], nextCursor: null })
+  await vi.waitFor(() => expect(document.querySelector('[data-testid="task-archive-delete-confirm"]')?.textContent).toContain('历史任务 target'))
   const confirmation = document.querySelector('[data-testid="task-archive-delete-confirm"]')!
-  expect(unboundActions.getAttribute('aria-busy')).toBeNull()
-  expect(unboundActions.querySelector('.desktop-ring-spinner')).toBeNull()
+  expect(actions.getAttribute('aria-busy')).toBeNull()
+  expect(actions.querySelector('.desktop-ring-spinner')).toBeNull()
   expect(f.root.querySelector('[data-testid="task-archive-toolbar"] .n-spin')).toBeNull()
 
   button('取消', confirmation).click()
-  expect(unboundActions.querySelector('.desktop-ring-spinner')).toBeNull()
+  await nextTick()
+  expect(f.root.querySelector('[data-testid="task-archive-manager"]')?.getAttribute('aria-busy')).toBe('false')
+  expect(actions.querySelector('.desktop-ring-spinner')).toBeNull()
   expect(f.remove).not.toHaveBeenCalled()
 })
 
-it('shows confirmed space deletion progress on the same action button until the batch finishes', async () => {
-  const archived = item('archived', { spaceId: 'space-a' })
-  const f = await mount([archived], [space('space-a', '设计空间')])
+it('keeps space progress through every deletion and the final refresh, including partial failure', async () => {
+  const first = item('first', { spaceId: 'space-a' })
+  const second = item('second', { spaceId: 'space-a', metadataRevision: 7 })
+  const f = await mount([first, second], [space('space-a', '设计空间')])
   await openSpaceCleanup('设计空间', f.root)
-  const actions = button('空间操作：设计空间', f.root.querySelector('[data-archive-space="space-a"]')!)
-  const deletion = deferred<boolean>()
-  f.remove.mockReturnValueOnce(deletion.promise)
+  const actions = button('空间操作：设计空间', f.root)
+  const firstDeletion = Promise.withResolvers<boolean>()
+  const secondDeletion = Promise.withResolvers<boolean>()
+  const refresh = Promise.withResolvers<{ items: ConversationArchiveItem[], nextCursor: string | null }>()
+  f.remove.mockReturnValueOnce(firstDeletion.promise).mockReturnValueOnce(secondDeletion.promise)
+  f.list.mockReturnValueOnce(refresh.promise)
 
   button('删除', document.querySelector('[data-testid="task-archive-delete-confirm"]')!).click()
-  await vi.waitFor(() => expect(f.remove).toHaveBeenCalledWith('archived', 3))
+  await vi.waitFor(() => expect(actions.getAttribute('aria-busy')).toBe('true'))
+  expect(f.remove.mock.calls).toEqual([['first', 3]])
+  expect(actions.querySelector('.desktop-ring-spinner')).not.toBeNull()
+  expect(f.root.querySelector('[data-testid="task-archive-toolbar"] .n-spin')).toBeNull()
+
+  firstDeletion.resolve(true)
+  await vi.waitFor(() => expect(f.remove.mock.calls).toEqual([['first', 3], ['second', 7]]))
+  expect(actions.getAttribute('aria-busy')).toBe('true')
+  expect(actions.querySelector('.desktop-ring-spinner')).not.toBeNull()
+
+  secondDeletion.resolve(false)
+  await vi.waitFor(() => expect(f.root.querySelector('[data-delete-result="failed"]')).not.toBeNull())
   expect(actions.getAttribute('aria-busy')).toBe('true')
   expect(actions.querySelector('.desktop-ring-spinner')).not.toBeNull()
   expect(f.root.querySelector('[data-testid="task-archive-toolbar"] .n-spin')).toBeNull()
 
+  refresh.resolve({ items: [second], nextCursor: null })
+  await vi.waitFor(() => expect(actions.getAttribute('aria-busy')).toBeNull())
+  expect(actions.querySelector('.desktop-ring-spinner')).toBeNull()
+  expect(actions.disabled).toBe(false)
+  expect(f.root.querySelector('[data-archive-id="first"]')).toBeNull()
+  expect(f.root.querySelector('[data-archive-id="second"] [data-delete-result="failed"]')).not.toBeNull()
+})
+
+it.each(['group removed', 'list empty', 'space unavailable'])('falls back to toolbar progress when confirmation outlives its action button: %s', async (change) => {
+  const target = item('target', { spaceId: 'space-a' })
+  const other = item('other')
+  const f = await mount([target, other], [space('space-a', '设计空间')])
+  f.list.mockResolvedValueOnce({ items: [target], nextCursor: null })
+  await openSpaceCleanup('设计空间', f.root)
+
+  if (change === 'space unavailable') {
+    f.spaces.value = []
+    await nextTick()
+  }
+  else {
+    f.list.mockResolvedValue({ items: change === 'list empty' ? [] : [other], nextCursor: null })
+    f.notify()
+    await vi.waitFor(() => expect(f.root.querySelector('[data-archive-space="space-a"]')).toBeNull())
+  }
+  expect(f.root.querySelector('[data-archive-space="space-a"] [data-testid="task-archive-space-actions"]')).toBeNull()
+
+  const deletion = Promise.withResolvers<boolean>()
+  f.remove.mockReturnValueOnce(deletion.promise)
+  button('删除', document.querySelector('[data-testid="task-archive-delete-confirm"]')!).click()
+  await vi.waitFor(() => expect(f.root.querySelector('[data-testid="task-archive-toolbar"] .n-spin')).not.toBeNull())
+  expect(f.root.querySelector('[data-testid="task-archive-manager"]')?.getAttribute('aria-busy')).toBe('true')
+  expect(f.root.querySelector('.desktop-ring-spinner')).toBeNull()
+  expect(f.remove.mock.calls).toEqual([['target', 3]])
+
   deletion.resolve(true)
-  await vi.waitFor(() => expect(actions.querySelector('.desktop-ring-spinner')).toBeNull())
-  expect(actions.getAttribute('aria-busy')).toBeNull()
+  await vi.waitFor(() => expect(f.root.querySelector('[data-testid="task-archive-manager"]')?.getAttribute('aria-busy')).toBe('false'))
+  expect(f.root.querySelector('[data-testid="task-archive-toolbar"] .n-spin')).toBeNull()
+})
+
+it('clears snapshot progress after failure and allows retry', async () => {
+  const f = await mount()
+  f.list.mockRejectedValueOnce(new Error('snapshot failed'))
+  await selectSpaceCleanup('未绑定空间', f.root)
+  await vi.waitFor(() => expect(f.root.textContent).toContain('本地任务操作失败'))
+  expect(f.root.querySelector('.desktop-ring-spinner')).toBeNull()
+  expect(f.root.querySelector('[data-testid="task-archive-toolbar"] .n-spin')).toBeNull()
+  expect(button('空间操作：未绑定空间', f.root).disabled).toBe(false)
+  expect(document.querySelector('[data-testid="task-archive-delete-confirm"]')).toBeNull()
+
+  await openSpaceCleanup('未绑定空间', f.root)
+  expect(document.querySelector('[data-testid="task-archive-delete-confirm"]')?.textContent).toContain('历史任务 task')
 })
 
 it('previews every archive page in a space and only submits the confirmed immutable targets', async () => {

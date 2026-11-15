@@ -23,6 +23,12 @@ const { query, spaceId, items, results, cursor, busy, loading, error, load, snap
 })
 const confirmation = shallowRef<{ items: readonly ConversationArchiveItem[], space?: { id: string | null, name: string } } | null>(null)
 const spaceActionBusy = shallowRef<{ spaceId: string | null } | null>(null)
+const spaceActionProgressVisible = computed(() => {
+  const action = spaceActionBusy.value
+  return action !== null
+    && items.value.some(item => item.spaceId === action.spaceId)
+    && (action.spaceId === null || props.spaces.some(space => space.id === action.spaceId))
+})
 const notice = shallowRef<string | null>(null)
 const detachedFailures = computed(() => results.value.filter(result => result.status === 'failed' && !items.value.some(item => item.id === result.item.id)))
 const disabled = computed(() => busy.value || !props.actions.ready.value)
@@ -65,7 +71,7 @@ async function confirmDelete() {
     <div class="relative flex flex-wrap items-start justify-between gap-x-6 gap-y-3" data-testid="task-archive-toolbar">
       <DesktopTaskArchiveFilters v-model:query="query" v-model:space-id="spaceId" class="w-full max-w-[28rem]" :spaces="spaces" :disabled="disabled" :language="language" />
       <DesktopTaskArchivePolicy class="ml-auto w-56 max-w-full" :actions="actions" :language="language" :disabled="busy" />
-      <NSpin v-if="!spaceActionBusy && (loading || busy)" class="absolute right-0 top-full mt-1" :size="16" />
+      <NSpin v-if="!spaceActionProgressVisible && (loading || busy)" class="absolute right-0 top-full mt-1" :size="16" />
     </div>
     <NAlert v-if="!actions.ready.value" type="warning" :show-icon="false">
       {{ t('desktop.archive.unavailable') }}
