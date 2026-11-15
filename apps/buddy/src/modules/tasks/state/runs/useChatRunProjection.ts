@@ -9,16 +9,14 @@ import {
   hasChatRunEventSequenceGap,
   mergeChatRunEventBuckets,
   mergeChatRunEvents,
-  replaceChatRunEventBuckets,
 } from '../../model/runs/chatRunEventBuckets'
 import {
-  flattenRunEventBuckets,
   isRunSignalEvent,
   mergeChangeSets,
   mergeOlderTimelineItems,
   mergeRunOutputs,
   mergeTailTimelineItems,
-  mergeTimelineEvents,
+  reconcileTimelineEventBuckets,
   timelineItemKey,
 } from '../../model/runs/chatTimelineMerge'
 
@@ -36,18 +34,21 @@ export function useChatRunProjection() {
   const timelineCursor = shallowRef<string | null>(null)
   const hasOlderMessages = shallowRef(false)
   const knownRunIds = new Set<string>()
+  const dirtyRunIds = new Set<string>()
   let hasLoadedTimelinePage = false
   let snapshotBoundaryKey: string | null = null
 
   function mergePage(page: LocalConversationTimelinePage) {
     upsertRuns(page.runs)
-    const events = mergeTimelineEvents(
-      flattenRunEventBuckets(runEventBuckets.value),
+    const reconciled = reconcileTimelineEventBuckets(
+      runEventBuckets.value,
       page.runEvents,
       page.runs,
+      dirtyRunIds,
     )
-    runSignalEvents.value = events.filter(isRunSignalEvent)
-    runEventBuckets.value = replaceChatRunEventBuckets(events, runEventBuckets.value)
+    runSignalEvents.value = reconciled.signals
+    runEventBuckets.value = reconciled.buckets
+    dirtyRunIds.clear()
     runOutputs.value = mergeRunOutputs(runOutputs.value, page.outputs)
     changeSets.value = mergeChangeSets(changeSets.value, page.changeSets)
   }
@@ -83,7 +84,12 @@ export function useChatRunProjection() {
     const signals = incoming.filter(isRunSignalEvent)
     if (signals.length)
       runSignalEvents.value = mergeChatRunEvents(runSignalEvents.value, signals)
-    runEventBuckets.value = mergeChatRunEventBuckets(runEventBuckets.value, incoming)
+    const previous = runEventBuckets.value
+    runEventBuckets.value = mergeChatRunEventBuckets(previous, incoming)
+    for (const event of incoming) {
+      if (runEventBuckets.value.get(event.runId) !== previous.get(event.runId))
+        dirtyRunIds.add(event.runId)
+    }
     return sequenceGapDetected
   }
 
@@ -120,6 +126,7 @@ export function useChatRunProjection() {
     changeSets.value = []
     approvals.value = []
     knownRunIds.clear()
+    dirtyRunIds.clear()
   }
 
   function replaceTurn(run: LocalRun, replacedMessageId: string, retainReplacedMessage: boolean) {
@@ -135,6 +142,10 @@ export function useChatRunProjection() {
     runs.value = runs.value.filter(run => retainedRunIds.has(run.id))
     runSignalEvents.value = runSignalEvents.value.filter(event => retainedRunIds.has(event.runId))
     runEventBuckets.value = new Map([...runEventBuckets.value].filter(([runId]) => retainedRunIds.has(runId)))
+    for (const runId of dirtyRunIds) {
+      if (!retainedRunIds.has(runId))
+        dirtyRunIds.delete(runId)
+    }
     runOutputs.value = runOutputs.value.filter(output => retainedRunIds.has(output.runId))
     changeSets.value = changeSets.value.filter(changeSet => retainedRunIds.has(changeSet.runId))
     approvals.value = []

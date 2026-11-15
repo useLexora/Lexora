@@ -51,6 +51,7 @@ patchedDependencies:
   '@earendil-works/pi-ai@1.5.0': patches/@earendil-works__pi-ai@1.5.0.patch
   '@earendil-works/pi-codemode@1.5.0': patches/@earendil-works__pi-codemode@1.5.0.patch
   '@earendil-works/pi-coding-agent@1.5.0': patches/@earendil-works__pi-coding-agent@1.5.0.patch
+  monaco-editor@0.57.0: patches/monaco-editor@0.57.0.patch
 catalog:
   '@types/node': ^26.6.5
   dotenv: ^17.4.2
