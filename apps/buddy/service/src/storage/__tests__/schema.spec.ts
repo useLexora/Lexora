@@ -353,7 +353,7 @@ describe('buddy schema', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
     `)
     const configs = previous.prepare('SELECT * FROM builtin_provider_configs ORDER BY id').all()
     const tables = ['runs', 'provider_states', 'provider_model_states', 'provider_configs', 'default_model_setting']
-    const before = tables.map(table => previous.prepare(`SELECT * FROM ${table}`).all())
+    const before = tables.map(table => previous.prepare(`SELECT * FROM ${table}`).all().map(row => table === 'provider_configs' ? { ...row, authentication: 'api_key' } : row))
     previous.close()
     const upgraded = openBuddyDatabase({ databasePath })
     expect(upgraded.prepare('SELECT * FROM builtin_provider_configs ORDER BY id').all()).toEqual(configs.map(config => ({
@@ -507,7 +507,7 @@ describe('buddy schema', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
 
     const upgraded = openBuddyDatabase({ databasePath })
     expect(upgraded.prepare('SELECT * FROM provider_states ORDER BY provider_id').all()).toEqual(states.map(state => ({ ...state, request_headers_json: '[]' })))
-    expect(upgraded.prepare('SELECT * FROM provider_configs').all()).toEqual(configs)
+    expect(upgraded.prepare('SELECT * FROM provider_configs').all()).toEqual(configs.map(config => ({ ...config, authentication: 'api_key' })))
     expect(upgraded.prepare('SELECT * FROM runs').all()).toEqual(runs.map(run => ({ ...run, buddy_id: 'default', actor_snapshot_json: null, model_override_json: null, root_run_id: run.id, parent_run_id: null, execution_kind: 'root', thread_id: 'actor:["conversation-1","default"]', generation: 0, scheduling_lane: 'conversation' })))
     expect(upgraded.prepare('SELECT id, builtin_provider_id, display_name FROM builtin_provider_configs').all()).toEqual([
       { id: 'anthropic', builtin_provider_id: 'anthropic', display_name: null },

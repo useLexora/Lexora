@@ -25,6 +25,7 @@ export const credentialSchema = z.union([
 ])
 
 export const buddyProviderSchema = z.object({
+  authentication: z.enum(['api_key', 'oauth', 'none']).default('api_key'),
   plugin: z.object({ id: z.string(), managementPage: z.boolean() }).strict().optional(),
   requestHeaders: providerRequestHeadersSchema.default([]),
   activeRunCount: z.number().int().nonnegative(),

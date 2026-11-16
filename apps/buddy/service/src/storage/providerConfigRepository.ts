@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 
 export interface ProviderConfigRecord {
+  authentication?: 'api_key' | 'none'
   id: string
   displayName: string
   description: string | null
@@ -21,6 +22,7 @@ export interface ProviderConfigRepository {
 }
 
 interface ProviderConfigRow {
+  authentication: 'api_key' | 'none'
   id: string
   display_name: string
   description: string | null
@@ -42,8 +44,8 @@ export function createProviderConfigRepository(
   const upsert = database.prepare(`
     INSERT INTO provider_configs (
       id, display_name, description, api, base_url, models_json,
-      credential_ref, enabled, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      credential_ref, enabled, created_at, updated_at, authentication
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (id) DO UPDATE SET
       display_name = excluded.display_name,
       description = excluded.description,
@@ -51,6 +53,7 @@ export function createProviderConfigRepository(
       base_url = excluded.base_url,
       models_json = excluded.models_json,
       credential_ref = excluded.credential_ref,
+      authentication = excluded.authentication,
       enabled = excluded.enabled,
       updated_at = excluded.updated_at
   `)
@@ -78,6 +81,7 @@ export function createProviderConfigRepository(
         Number(record.enabled),
         record.createdAt,
         record.updatedAt,
+        record.authentication ?? 'api_key',
       )
       return requireProviderConfig(find.get(record.id), record.id)
     },
@@ -97,6 +101,7 @@ function toProviderConfig(row: ProviderConfigRow): ProviderConfigRecord {
     throw new Error(`Lexora Buddy provider models are invalid: ${row.id}`)
 
   return {
+    authentication: row.authentication,
     id: row.id,
     displayName: row.display_name,
     description: row.description,

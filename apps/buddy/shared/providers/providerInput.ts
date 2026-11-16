@@ -14,6 +14,12 @@ export const providerDisplayNameSchema = z.string().trim().min(1).max(100)
 
 export const providerBaseUrlSchema = z.url().refine(isHttpEndpointUrl)
 
+export const customProviderAuthenticationSchema = z.enum(['api_key', 'none']).default('api_key')
+
+export function supportsUnauthenticatedProviderApi(api: string | null): boolean {
+  return api === 'openai-completions' || api === 'openai-responses'
+}
+
 const thinkingLevelMapSchema = z.partialRecord(
   z.enum(BUDDY_THINKING_LEVELS),
   z.string().nullable(),
@@ -72,6 +78,7 @@ export const storedCustomProviderModelSchema = customProviderModelBaseSchema.ext
 }).strict().transform(withCustomModelDefaults)
 
 export const customProviderInputSchema = z.object({
+  authentication: customProviderAuthenticationSchema,
   requestHeaders: providerRequestHeadersSchema.optional(),
   id: z.string().trim().min(1).max(100).regex(/^[a-z0-9][a-z0-9._-]*$/),
   displayName: providerDisplayNameSchema,
@@ -92,6 +99,8 @@ export const customProviderInputSchema = z.object({
   models: z.array(customProviderModelSchema).default([]),
   enabled: z.boolean().default(false),
 }).strict().superRefine((provider, context) => {
+  if (provider.authentication === 'none' && !supportsUnauthenticatedProviderApi(provider.api))
+    context.addIssue({ code: 'custom', message: 'This API requires authentication', path: ['authentication'] })
   const modelIds = new Set<string>()
   for (const [index, model] of provider.models.entries()) {
     if (modelIds.has(model.id)) {

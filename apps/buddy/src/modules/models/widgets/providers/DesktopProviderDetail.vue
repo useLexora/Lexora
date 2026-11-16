@@ -17,7 +17,7 @@ const props = defineProps<{
   providerId: string
 }>()
 const emit = defineEmits<{
-  continueSetup: [providerId: string]
+  continueSetup: [providerId: string, startAtConnection?: boolean]
   managePlugin: []
 }>()
 const language = computed(() => props.providerSettings.language.value)
@@ -79,11 +79,21 @@ function managePlugin() {
         <div class="desktop-provider-detail__row min-h-16 border-b-1 border-b-solid border-b-border py-[0.7rem] px-[0.9rem] last:border-b-0">
           <div class="desktop-provider-detail__row-copy grid min-w-0 flex-1 gap-[0.2rem]">
             <strong>{{ t('desktop.providers.authenticationStatus') }}</strong>
-            <small>{{ provider.storedCredentialType
-              ? (provider.storedCredentialType === 'api_key' ? 'API Key' : 'OAuth')
-              : t('desktop.providers.authenticationNotConfigured') }}</small>
+            <small>{{ provider.authentication === 'none'
+              ? t('desktop.providers.noAuthentication')
+              : provider.storedCredentialType
+                ? (provider.storedCredentialType === 'api_key' ? 'API Key' : 'OAuth')
+                : t('desktop.providers.authenticationNotConfigured') }}</small>
           </div>
-          <NSpace v-if="!provider.storedCredentialType">
+          <NButton
+            v-if="provider.custom"
+            size="small"
+            :disabled="provider.activeRunCount > 0 || providerSettings.isAuthenticating.value"
+            @click="emit('continueSetup', provider.id, true)"
+          >
+            {{ t('desktop.providers.changeAuthentication') }}
+          </NButton>
+          <NSpace v-else-if="!provider.storedCredentialType">
             <NButton
               v-for="authType in provider.authTypes"
               :key="authType"
@@ -96,7 +106,7 @@ function managePlugin() {
             </NButton>
           </NSpace>
           <NPopconfirm
-            v-else
+            v-if="provider.storedCredentialType && provider.authentication !== 'none'"
             :negative-text="t('common.cancel')"
             :positive-text="t('common.confirm')"
             @positive-click="providerSettings.clearProviderCredential(provider.id)"

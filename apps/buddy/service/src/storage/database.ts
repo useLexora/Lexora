@@ -9,6 +9,7 @@ import { MANAGED_FILES_INDEX_NAMES, MANAGED_FILES_TRIGGER_NAMES } from './migrat
 import { PRIVATE_NETWORK_TABLE_COLUMNS, PRIVATE_NETWORK_TRIGGER_NAMES } from './migrations/privateNetworkSchema'
 import { PRODUCT_CONTENT_REFERENCES_TRIGGER_NAMES } from './migrations/productContentReferencesSchema'
 import { SCOPED_QUERY_REVISION_SOURCES, SCOPED_QUERY_REVISION_TRIGGER_NAMES } from './migrations/productQueryRevisionsSchema'
+import { completeProviderAuthenticationSchema } from './migrations/providerAuthenticationSchema'
 import { REMOTE_FILES_INDEX_NAMES, REMOTE_FILES_TABLE_COLUMNS, REMOTE_FILES_TRIGGER_NAMES } from './migrations/remoteFilesSchema'
 import { RESOURCE_EXPORT_INDEX_NAMES, RESOURCE_EXPORT_TABLE_COLUMNS, RESOURCE_EXPORT_TRIGGER_NAMES } from './migrations/resourceExportsSchema'
 import { BUDDY_V15_CAPABILITY_OVERRIDES_SCHEMA_SQL, BUDDY_V15_CATALOG_MODEL_ID_SCHEMA_SQL, BUDDY_V15_CATALOG_SELECTION_SCHEMA_SQL, BUDDY_V15_PROVIDER_INSTANCES_SCHEMA_SQL, BUDDY_V15_REQUEST_HEADERS_SCHEMA_SQL } from './migrations/v15ModelServices'
@@ -240,6 +241,7 @@ function migrateBuddyDatabase(database: DatabaseSync, currentVersion: number, ta
       continue
     applyMigration(database, migration)
   }
+  completeProviderAuthenticationSchema(database)
   assertSchemaLineage(database, targetVersion === 42 ? BUDDY_SCHEMA_LINEAGE : BUDDY_PERSISTENCE_SCHEMA_LINEAGE)
   assertCurrentSchema(database)
   if (targetVersion >= BUDDY_MIGRATION_SCHEMA_VERSION) {

@@ -25,11 +25,18 @@ export function createProviderModelRuntime(runtime: ModelRuntime, headers: Provi
     refresh: runtime.refresh.bind(runtime),
     unregisterProvider: runtime.unregisterProvider.bind(runtime),
     registerNativeProvider: provider => runtime.registerNativeProvider(withProviderRequestHeaders(withProviderStream(provider, record), headers)),
-    registerProvider: (id, config) => {
+    registerProvider: (id, { authentication, ...config }) => {
       runtime.registerProvider(id, config)
       const provider = runtime.getProvider(id)
-      if (provider)
-        runtime.registerNativeProvider(withProviderRequestHeaders(withProviderStream(withProviderRequestContext(provider), record), headers))
+      if (provider) {
+        const configured = authentication === 'none'
+          ? {
+              ...provider,
+              auth: { apiKey: { ...provider.auth.apiKey, name: provider.name, check: undefined, resolve: async () => ({ auth: {}, source: 'explicitly unauthenticated' }) } },
+            }
+          : provider
+        runtime.registerNativeProvider(withProviderRequestHeaders(withProviderStream(withProviderRequestContext(configured), record), headers, authentication))
+      }
     },
   }
 }

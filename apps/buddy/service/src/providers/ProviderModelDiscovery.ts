@@ -28,6 +28,8 @@ export interface ProviderModelDiscoveryResult {
 
 export interface ProviderModelDiscoveryInput {
   readonly signal?: AbortSignal
+  readonly authentication?: 'api_key' | 'none'
+  readonly credentialRef?: string | null
   readonly api: string
   readonly baseUrl: string
   readonly providerId: string
@@ -71,8 +73,9 @@ export class OpenAiCompatibleModelDiscovery implements ProviderModelDiscovery {
   ): Promise<ProviderModelDiscoveryResult> {
     if (!this.supports(input.api))
       throw new ProviderModelSyncUnsupportedError()
-    const credential = await this.#credentials.read(input.providerId)
-    if (credential?.type !== 'api_key' || !credential.key)
+    const credential = input.authentication === 'none' || input.credentialRef === null ? undefined : await this.#credentials.read(input.credentialRef ?? input.providerId)
+    const apiKey = credential?.type === 'api_key' ? credential.key : undefined
+    if (input.authentication !== 'none' && !apiKey)
       throw new ProviderAuthenticationRequiredError()
 
     const context = { ...diagnosticContext.getStore(), providerId: input.providerId, requestId: crypto.randomUUID(), component: 'runtime.providers' }
@@ -81,8 +84,8 @@ export class OpenAiCompatibleModelDiscovery implements ProviderModelDiscovery {
     let failureStage: ProviderRequestDiagnostic['failureStage'] = 'request'
     this.#record({ ...context, event: 'provider.request.started', level: 'info' })
     try {
-      const defaults = { Authorization: `Bearer ${credential.key}` }
-      const resolved = await this.#requestHeaders?.resolve(input.providerId, defaults, credential.key) ?? defaults
+      const defaults: Record<string, string> = apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
+      const resolved = this.#requestHeaders?.resolve(input.providerId, defaults, apiKey) ?? defaults
       const headers = new Headers()
       for (const [name, value] of Object.entries(resolved)) {
         if (value !== null)

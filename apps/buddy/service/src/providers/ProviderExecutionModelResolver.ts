@@ -2,6 +2,7 @@ import type { Api, Model } from '@earendil-works/pi-ai'
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import type { BuddyServiceTierOption } from '../../../shared/conversation/modelSelection'
 import type { BuiltinProviderConfigRepository } from '../storage/builtinProviderConfigRepository'
+import type { ProviderConfigRepository } from '../storage/providerConfigRepository'
 import type { ProviderStateRepository } from '../storage/providerStateRepository'
 import type { ModelMetadataCatalog } from './ModelsDevCatalog'
 import type { ProviderCredentialStatus } from './ProviderCredentialStatus'
@@ -30,6 +31,7 @@ export interface ResolvedProviderSessionModel {
 export interface ProviderExecutionModelResolverOptions {
   isPluginAvailable?: (providerId: string) => boolean
   builtins: Pick<BuiltinProviderConfigRepository, 'findById'>
+  configs?: Pick<ProviderConfigRepository, 'findById'>
   credentialStatus: ProviderCredentialStatus
   metadata: Pick<ModelMetadataCatalog, 'getModels'>
   modelCatalog: Pick<
@@ -43,6 +45,7 @@ export interface ProviderExecutionModelResolverOptions {
 export class ProviderExecutionModelResolver {
   readonly #isPluginAvailable: NonNullable<ProviderExecutionModelResolverOptions['isPluginAvailable']>
   readonly #builtins: ProviderExecutionModelResolverOptions['builtins']
+  readonly #configs: ProviderExecutionModelResolverOptions['configs']
   readonly #credentialStatus: ProviderCredentialStatus
   readonly #metadata: ProviderExecutionModelResolverOptions['metadata']
   readonly #modelCatalog: ProviderExecutionModelResolverOptions['modelCatalog']
@@ -52,6 +55,7 @@ export class ProviderExecutionModelResolver {
   constructor(options: ProviderExecutionModelResolverOptions) {
     this.#isPluginAvailable = options.isPluginAvailable ?? (() => false)
     this.#builtins = options.builtins
+    this.#configs = options.configs
     this.#credentialStatus = options.credentialStatus
     this.#metadata = options.metadata
     this.#modelCatalog = options.modelCatalog
@@ -87,9 +91,9 @@ export class ProviderExecutionModelResolver {
       if (!this.#isPluginAvailable(input.providerId))
         throw new ProviderUnavailableError()
     }
-    else {
+    else if (this.#configs?.findById(input.providerId)?.authentication !== 'none') {
       const credentials = await this.#credentialStatus.list()
-      if (!credentials.some(credential => credential.providerId === input.providerId))
+      if (this.#configs?.findById(input.providerId)?.credentialRef === null || !credentials.some(credential => credential.providerId === input.providerId))
         throw new ProviderAuthenticationRequiredError()
     }
     if (!this.#states.findByProviderId(input.providerId)?.enabled || !this.#modelCatalog.isEnabledAvailable(input.providerId, input.modelId))
