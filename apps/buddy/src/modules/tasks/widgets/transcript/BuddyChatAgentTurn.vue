@@ -19,6 +19,7 @@ import BuddyChatAgentTurnFlow from './BuddyChatAgentTurnFlow.vue'
 
 const props = defineProps<{
   actionsDisabled?: boolean
+  branchNavigationDisabled?: boolean
   branchNavigator?: ChatMessageBranchNavigator | null
   language: BuddyLocale
   executionStatus?: ChatTranscriptExecutionStatus
@@ -104,6 +105,7 @@ const actionCopyText = computed(() => resultNoticeText.value ?? statusLabel.valu
     <BuddyChatActionToolbar
       v-if="showActions"
       :actions="actions"
+      :branch-navigation-disabled="branchNavigationDisabled"
       :branch-navigator="branchNavigator ?? null"
       class="buddy-chat-agent-turn__actions"
       :copy-text="actionCopyText"

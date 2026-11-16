@@ -18,6 +18,7 @@ import { useChatContent } from './chatContentContext'
 
 const props = defineProps<{
   actions: ChatMessageActions
+  branchNavigationDisabled?: boolean
   branchNavigator: ChatMessageBranchNavigator | null
   copyText: string
   createdAt: string
@@ -146,7 +147,7 @@ async function copyContent() {
       <NTooltip placement="bottom">
         <template #trigger>
           <NButton
-            :disabled="!branchNavigator.previousBranchId"
+            :disabled="branchNavigationDisabled || !branchNavigator.previousBranchId"
             class="buddy-icon-button buddy-chat-action-toolbar__branch-button"
             quaternary
             size="tiny"
@@ -164,7 +165,7 @@ async function copyContent() {
       <NTooltip placement="bottom">
         <template #trigger>
           <NButton
-            :disabled="!branchNavigator.nextBranchId"
+            :disabled="branchNavigationDisabled || !branchNavigator.nextBranchId"
             class="buddy-icon-button buddy-chat-action-toolbar__branch-button"
             quaternary
             size="tiny"

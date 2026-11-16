@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test } from '../fixtures/electron.mjs'
+import { prepareMobileDesktopProfile } from '../fixtures/mobile-desktop.mjs'
 
 test('working copies preserve drafts, veto unsaved closure and recover across restart', async ({ buddy }) => {
   const instance = await buddy.createInstance('working-copy')
@@ -157,9 +158,11 @@ test('task switching preserves drafts and ignores late loading results while fai
   expect(diagnostics.console.filter(item => item.type === 'pageerror')).toEqual([])
 })
 
-async function prepareNotificationNavigation(buddy, label) {
+async function prepareNotificationNavigation(buddy, label, profileOutput) {
   const instance = await buddy.createInstance(label)
-  const desktop = await instance.launch()
+  if (profileOutput)
+    await prepareMobileDesktopProfile(instance.home, profileOutput)
+  const desktop = await instance.launch({ storageAuthority: profileOutput ? 'sqlite' : 'legacy_jsonl' })
   const window = await desktop.app.browserWindow(desktop.page)
   await expect.poll(() => desktop.page.evaluate(async () => (await window.lexoraDesktop.localChat.runtime.getStatus()).status), { timeout: 45000 }).toBe('ready')
   await window.evaluate(window => window.setSize(1600, 1000))
@@ -221,6 +224,74 @@ async function expectNotificationMessage(page, pane) {
   await expectNotificationBranch(page, pane)
   await expect(pane.locator('[data-message-id="message-b"]')).toHaveCount(0)
 }
+
+test('history dragging moves the existing branch view and preserves both inputs across restart', async ({ buddy }, testInfo) => {
+  const desktop = await prepareNotificationNavigation(buddy, 'history-branch-drag', testInfo.outputPath('profile-preparation'))
+  let { page } = desktop
+  await notificationTask(page, 'a').click()
+  let first = notificationPane(page, 'a')
+  await first.locator('.desktop-chat-composer__prosemirror').fill('Draft A stays with its branch.')
+  await first.getByTestId('pane-layout-menu').click()
+  await page.locator('.n-dropdown-menu:visible').getByText('分屏', { exact: true }).hover()
+  await page.locator('.n-dropdown-menu:visible').getByText('向右分屏', { exact: true }).click()
+  const newPane = page.locator('.workbench-pane').filter({ has: page.getByRole('button', { name: '新任务', exact: true }) })
+  await expect(newPane.locator('.desktop-chat-composer__prosemirror')).toBeVisible()
+  await notificationTask(page, 'b').click()
+  let second = notificationPane(page, 'b')
+  await second.locator('.desktop-chat-composer__prosemirror').fill('Draft B stays independent.')
+  const firstViewId = await first.locator('.workbench__view[data-resource-id="a"]').getAttribute('data-view-id')
+  const secondViewId = await second.locator('.workbench__view[data-resource-id="b"]').getAttribute('data-view-id')
+  await expect.poll(() => page.evaluate(async () => {
+    const saved = await window.lexoraDesktop.localChat.draftRecovery.load()
+    return saved.records.filter(record => ['conversation:a:branch-a', 'conversation:b:branch-b'].includes(record.snapshot.targetKey)
+      && record.snapshot.content.body.some(paragraph => paragraph.content.some(node => node.type === 'text' && node.text.startsWith('Draft ')))).length
+  })).toBe(2)
+
+  const source = await notificationTask(page, 'a').boundingBox()
+  const target = await second.boundingBox()
+  expect(source).not.toBeNull()
+  expect(target).not.toBeNull()
+  await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(target.x + target.width - 12, target.y + target.height / 2, { steps: 20 })
+  await expect(second.locator('[data-drop-position="right"]')).toBeVisible()
+  await page.mouse.up()
+  await expect(page.locator('.workbench-pane')).toHaveCount(2)
+  await expect(first.locator('.workbench__view')).toHaveAttribute('data-view-id', firstViewId)
+  await expect(second.locator('.workbench__view')).toHaveAttribute('data-view-id', secondViewId)
+  await expect(first.locator('.desktop-chat-composer__prosemirror')).toHaveText('Draft A stays with its branch.')
+  await expect(second.locator('.desktop-chat-composer__prosemirror')).toHaveText('Draft B stays independent.')
+  expect((await first.boundingBox()).x).toBeGreaterThan((await second.boundingBox()).x)
+  await expect.poll(() => page.evaluate(async () => {
+    const layout = (await window.lexoraDesktop.workbench.read())?.layout
+    const ordered = node => node.kind === 'pane' ? [layout.views[node.view]?.resource.id] : [...ordered(node.first), ...ordered(node.second)]
+    return layout ? ordered(layout.root) : []
+  })).toEqual(['b', 'a'])
+
+  await desktop.instance.stop()
+  const restarted = await desktop.instance.launch({ storageAuthority: 'sqlite' })
+  page = restarted.page
+  first = notificationPane(page, 'a')
+  second = notificationPane(page, 'b')
+  await expect(page.locator('.workbench-pane')).toHaveCount(2)
+  await notificationTask(page, 'b').click()
+  await expect(second.locator('.desktop-chat-composer__prosemirror')).toHaveText('Draft B stays independent.')
+  await notificationTask(page, 'a').click()
+  await expect(first.locator('.desktop-chat-composer__prosemirror')).toHaveText('Draft A stays with its branch.')
+  await expect(page.locator('.desktop-draft-restoration:visible')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '对话分支', exact: true })).toHaveCount(0)
+  expect((await first.boundingBox()).x).toBeGreaterThan((await second.boundingBox()).x)
+  await page.screenshot({ path: testInfo.outputPath('history-branch-drag.png') })
+  await page.evaluate(() => window.lexoraDesktop.themes.request({ action: 'preference', preference: { id: 'lexora.themes.classic-dark' } }))
+  await expect(page.locator('html')).toHaveAttribute('data-buddy-theme', 'dark')
+  await page.screenshot({ path: testInfo.outputPath('history-branch-drag-dark.png') })
+  const browserWindow = await restarted.app.browserWindow(page)
+  await browserWindow.evaluate(window => window.setSize(...window.getMinimumSize()))
+  await expect(first.locator('.desktop-chat-composer__prosemirror')).toBeVisible()
+  await expect(second.locator('.desktop-chat-composer__prosemirror')).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('history-branch-drag-narrow.png') })
+  expect([...desktop.diagnostics.console, ...restarted.diagnostics.console].filter(item => item.type === 'pageerror')).toEqual([])
+})
 
 test('notification targets reuse split panes and restore the task from settings without losing the other draft', async ({ buddy }) => {
   const { page, window, diagnostics } = await prepareNotificationNavigation(buddy, 'notification-split')

@@ -9,6 +9,7 @@ import BuddyChatActionToolbar from './BuddyChatActionToolbar.vue'
 
 const props = defineProps<{
   actionsDisabled: boolean
+  branchNavigationDisabled?: boolean
   branchNavigator: ChatMessageBranchNavigator | null
   language: BuddyLocale
   followingUp?: boolean
@@ -31,6 +32,7 @@ const actions = computed(() => projectChatAgentTurnActions(props.turn, props.act
   >
     <BuddyChatActionToolbar
       :actions="actions"
+      :branch-navigation-disabled="branchNavigationDisabled"
       :branch-navigator="branchNavigator"
       copy-text=""
       :created-at="turn.completedAt ?? turn.startedAt"

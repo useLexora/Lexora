@@ -173,16 +173,7 @@ export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: s
   }
   function openTask(id: string, destination: { signal?: AbortSignal, direction?: SplitDirection, branchId?: string } = {}): Promise<void> {
     const { branchId, ...placement } = destination
-    const selectedViewId = controller.pane(controller.layout.activePane)?.view
-    const selected = selectedViewId ? controller.layout.views[selectedViewId]?.resource : undefined
-    const selectedResource = selected ? parseTaskResource(selected) : null
-    const previous = selectedResource?.scheme === 'task' && selectedResource.id === id
-      ? selectedResource
-      : Object.values(controller.layout.views).map(view => parseTaskResource(view.resource)).find(resource => resource?.scheme === 'task' && resource.id === id)
-    const rememberedBranch = localBranches()[id]
-    const localResource = taskResource(id, typeof rememberedBranch === 'string' ? rememberedBranch : undefined)
-    const resource = branchId ? taskResource(id, branchId) : previous ?? localResource
-    return activateTask(resource, options.taskIndex.index.tasks.value.find(task => task.id === id)?.title ?? labels().tasks, placement)
+    return activateTask(taskResource(id, branchId), options.taskIndex.index.tasks.value.find(task => task.id === id)?.title ?? labels().tasks, placement)
   }
   function openDraft(id: string): Promise<void> {
     return activateTask(draftResource(id), labels().newTask, { direction: 'right' })

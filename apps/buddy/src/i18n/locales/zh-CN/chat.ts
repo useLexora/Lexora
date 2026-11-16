@@ -621,11 +621,6 @@ export default {
   'desktop.chat.draftRestoration.resolveFailed': '恢复尚未完成，或等待期间输入又发生变化。当前输入仍保留，请检查后重试。',
   'desktop.chat.draftRestoration.keepLocal': '保留输入，稍后处理',
   'desktop.chat.draftRestoration.useSaved': '放弃此输入并恢复已保存内容',
-  'desktop.chat.openBranchBeside': '在旁边打开',
-  'desktop.chat.conversationBranches': '对话分支',
-  'desktop.chat.branchesLoading': '正在载入…',
-  'desktop.chat.branchesUnavailable': '分支暂时无法载入，请稍后重试',
   'desktop.chat.originalBranch': '原始分支',
   'desktop.chat.numberedBranch': '分支 {index}',
-  'desktop.chat.viewedBranch': '当前浏览',
 } as const

@@ -32,7 +32,6 @@ const resolvingApprovalActions = computed(() => props.execution.resolvingApprova
   <DesktopChangeRecoveryNotice :recovery="changeRecovery" :language="language" />
   <DesktopDraftRestorationNotice
     :conflict="restorationConflict"
-    :local-copies="restoration.localCopies?.value"
     :language="language"
     :resolve-remote="restoration.resolveRemote"
     :restore="restoration.restore"

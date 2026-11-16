@@ -1,5 +1,6 @@
 import type { LexoraDesktopApi } from '@buddy-electron/shared/desktopApi'
 import type { BuddyUserContentV1 } from '@buddy-shared/conversation/buddyUserContent'
+import type { ReadonlyJsonObject } from '@buddy-shared/workbench/workbenchState'
 import type { Router } from 'vue-router'
 import type { TaskWorkspaceResource } from './taskResource'
 import type { TaskWorkspacePool } from './TaskWorkspacePool'
@@ -47,9 +48,26 @@ export function useTaskNavigation(options: {
     }
   }
 
+  function resolveResource(resource: TaskWorkspaceResource): TaskWorkspaceResource {
+    if (resource.scheme !== 'task' || resource.data.branchId !== undefined)
+      return resource
+    const selectedViewId = controller.pane(controller.layout.activePane)?.view
+    const selected = selectedViewId ? controller.layout.views[selectedViewId]?.resource : undefined
+    const selectedResource = selected ? parseTaskResource(selected) : null
+    const previous = selectedResource?.scheme === 'task' && selectedResource.id === resource.id
+      ? selectedResource
+      : Object.values(controller.layout.views).map(view => parseTaskResource(view.resource)).find(target => target?.scheme === 'task' && target.id === resource.id)
+    if (previous)
+      return previous
+    const branches = controller.layout.auxiliary.taskBranches
+    const rememberedBranch = branches && typeof branches === 'object' && !Array.isArray(branches) ? (branches as ReadonlyJsonObject)[resource.id] : undefined
+    return typeof rememberedBranch === 'string' ? { ...resource, data: { ...resource.data, branchId: rememberedBranch } } : resource
+  }
+
   async function activateTask(resource: TaskWorkspaceResource, title: string, destination: { paneId?: string, direction?: SplitDirection, move?: boolean, signal?: AbortSignal, initialContent?: BuddyUserContentV1, prepareInput?: (viewId: string) => Promise<boolean> } = {}) {
     if (destination.signal?.aborted)
       return
+    resource = resolveResource(resource)
     const targetPaneId = destination.paneId ?? options.center()
     const targetPane = controller.pane(targetPaneId)
     const currentViewId = targetPane?.view
