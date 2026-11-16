@@ -25,6 +25,7 @@ import { useChatContent } from './chatContentContext'
 
 const props = defineProps<{
   actionsDisabled: boolean
+  branchNavigationDisabled?: boolean
   branchNavigator: ChatMessageBranchNavigator | null
   editing: boolean
   canFollowup?: boolean
@@ -122,6 +123,7 @@ const messageText = computed(() => (props.actionMessages ?? [props.message]).map
     <BuddyChatActionToolbar
       v-if="hasActions"
       :actions="actions"
+      :branch-navigation-disabled="branchNavigationDisabled"
       :branch-navigator="branchNavigator"
       class="buddy-chat-message__actions"
       :class="{ 'has-usage': turnUsage, 'has-turn-result': turnResult, 'has-branches': branchNavigator }"

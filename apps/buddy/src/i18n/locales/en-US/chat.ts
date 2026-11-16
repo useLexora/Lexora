@@ -623,11 +623,6 @@ export default {
   'desktop.chat.draftRestoration.resolveFailed': 'Restoration is incomplete, or the input changed while waiting. Your input is still available. Review it and retry.',
   'desktop.chat.draftRestoration.keepLocal': 'Keep input for now',
   'desktop.chat.draftRestoration.useSaved': 'Discard input and restore saved content',
-  'desktop.chat.openBranchBeside': 'Open to the side',
-  'desktop.chat.conversationBranches': 'Conversation branches',
-  'desktop.chat.branchesLoading': 'Loading…',
-  'desktop.chat.branchesUnavailable': 'Branches could not be loaded. Please try again.',
   'desktop.chat.originalBranch': 'Original branch',
   'desktop.chat.numberedBranch': 'Branch {index}',
-  'desktop.chat.viewedBranch': 'Viewing',
 } satisfies Record<keyof typeof zhCN, string>

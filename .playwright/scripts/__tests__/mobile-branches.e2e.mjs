@@ -202,10 +202,24 @@ test('Android and Desktop browse and run separate branches concurrently without 
     const branchB = fork.branchId
     await expect.poll(() => read(db => db.prepare('SELECT status FROM runs WHERE id = ?').get(fork.runId).status)).toBe('completed')
     expect(branchB).not.toBe(branchA)
-    await page.locator('[data-testid="conversation-branches"]:visible').click()
-    await page.getByTestId(`conversation-branch-${branchB}`).click()
-    const branchView = page.locator('[data-testid="conversation-branches"]:visible')
-    await expect(branchView).toHaveAttribute('data-branch-id', branchB)
+    await page.reload()
+    const branchView = page.locator(`.workbench__view[data-resource-id="${conversationId}"]:visible`)
+    const expectBranch = async (branchId) => {
+      await expect(branchView).toBeVisible()
+      const viewId = await branchView.getAttribute('data-view-id')
+      await expect.poll(() => page.evaluate(async id => (await window.lexoraDesktop.workbench.read())?.layout.views[id]?.resource, viewId)).toMatchObject({
+        scheme: 'task',
+        id: conversationId,
+        data: { branchId },
+      })
+    }
+    await expectBranch(branchA)
+    const originalMessage = branchView.locator('[data-message-id]').filter({ hasText: `Parallel baseline A ${token}` })
+    await originalMessage.hover()
+    await expect(originalMessage.getByRole('group')).toHaveText('1 / 2')
+    await originalMessage.getByRole('button', { name: '下一条分支', exact: true }).click()
+    await expectBranch(branchB)
+    await expect(branchView.getByText(`历史 B 原文 ${token}`, { exact: false })).toBeVisible()
     const listener = createServer()
     await new Promise(resolve => listener.listen(0, bindAddress, resolve))
     port = listener.address().port
@@ -225,7 +239,7 @@ test('Android and Desktop browse and run separate branches concurrently without 
       return value
     })
     const phone = await checkpoint('phone-started')
-    await expect(branchView).toHaveAttribute('data-branch-id', branchB)
+    await expectBranch(branchB)
     await composer.fill(`Parallel branch B main ${token}`)
     await page.getByRole('button', { name: '发送消息', exact: true }).click()
     await expect.poll(() => requests.filter(value => value.phase === 'initial').map(value => value.branch).sort(), { timeout: 45000 }).toEqual(['A', 'B'])
@@ -258,10 +272,10 @@ test('Android and Desktop browse and run separate branches concurrently without 
     await expect.poll(() => questions(branchB), { timeout: 45000 }).toMatchObject([{ status: 'pending', branchId: branchB }])
     await signal('questions-ready')
     expect(await checkpoint('views-isolated')).toMatchObject({ recreated: true })
-    await expect(branchView).toHaveAttribute('data-branch-id', branchB)
+    await expectBranch(branchB)
     await expect(composer).toHaveText(desktopDraft)
     await page.reload()
-    await expect(branchView).toHaveAttribute('data-branch-id', branchB)
+    await expectBranch(branchB)
     await expect(composer).toHaveText(desktopDraft)
     await signal('answer-a')
     await checkpoint('answered-a')
@@ -283,12 +297,12 @@ test('Android and Desktop browse and run separate branches concurrently without 
     expect(edited.branchId).not.toBe(branchB)
     expect(read(db => db.prepare('SELECT status FROM runs WHERE id = ?').get(runB).status)).toBe('running')
     expect(read(db => db.prepare(`SELECT id, content_json FROM messages WHERE id IN (${originalRecords.map(() => '?').join(',')}) ORDER BY rowid`).all(...originalRecords.map(value => value.id)))).toEqual(originalRecords)
-    await expect(branchView).toHaveAttribute('data-branch-id', branchB)
+    await expectBranch(branchB)
     await expect(composer).toHaveText(desktopDraft)
     await signal('restore-a')
     expect(await checkpoint('reconnected-a')).toMatchObject({ draft: `手机 A 独立草稿😀 ${token}` })
     await page.reload()
-    await expect(branchView).toHaveAttribute('data-branch-id', branchB)
+    await expectBranch(branchB)
     await expect(composer).toHaveText(desktopDraft)
     gates['B-result'].resolve()
     await expect.poll(() => read(db => db.prepare('SELECT status FROM runs WHERE id = ?').get(runB).status)).toBe('completed')

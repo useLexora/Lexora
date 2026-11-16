@@ -328,7 +328,6 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
     },
     restore,
     resolveRemote,
-    localCopies: recovery.copies,
     persistLocalChanges: recovery.schedule,
     restorationConflict: readonly(restorationConflict),
     restorationState: readonly(restorationState),

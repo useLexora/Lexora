@@ -26,6 +26,7 @@ import { useConversationOutline } from '../workspace/useConversationOutline'
 const props = defineProps<{
   activeBranchId: string
   actionsDisabled: boolean
+  branchNavigationDisabled?: boolean
   branches: ReadonlyArray<LocalConversationBranch>
   changeSets: ReadonlyArray<LocalChangeSetSummary>
   conversationId: string
@@ -165,6 +166,7 @@ defineExpose<BuddyChatMessageListHandle>({
     ref="messageList"
     :active-branch-id="activeBranchId"
     :actions-disabled="actionsDisabled"
+    :branch-navigation-disabled="branchNavigationDisabled"
     :branch-navigators="branchNavigators"
     :conversation-id="conversationId"
     :display-rows="displayRows"

@@ -745,7 +745,6 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
     welcomeCompanionImage: readonly(welcomeCompanionImage),
     restoration: {
       state: workspacePersistence.restorationState,
-      localCopies: workspacePersistence.localCopies,
       conflict: workspacePersistence.restorationConflict,
       restore: lifecycle.refreshRuntimeDependentState,
       resolveRemote: workspacePersistence.resolveRemote,

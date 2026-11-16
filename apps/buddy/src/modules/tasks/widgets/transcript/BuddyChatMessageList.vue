@@ -39,6 +39,7 @@ import { provideChatTranscriptPresentation } from './chatTranscriptPresentation'
 const props = defineProps<{
   activeBranchId: string
   actionsDisabled?: boolean
+  branchNavigationDisabled?: boolean
   branchNavigators: ReadonlyMap<string, ChatMessageBranchNavigator>
   conversationId: string
   displayRows: ReadonlyArray<ChatTranscriptDisplayRow>
@@ -247,6 +248,7 @@ onBeforeUnmount(clearOutlineHighlight)
 
         <BuddyChatMessageRow
           v-else-if="item.kind === 'message'"
+          :branch-navigation-disabled="branchNavigationDisabled"
           :data-chat-row-key="item.key"
           :actions-disabled="actionsDisabled ?? false"
           :branch-navigator="branchNavigators.get(bindings.resultTargets.get(item.key)!.branchNavigatorId) ?? null"
@@ -308,6 +310,7 @@ onBeforeUnmount(clearOutlineHighlight)
 
         <BuddyChatTurnResult
           v-else-if="item.kind === 'turn-result'"
+          :branch-navigation-disabled="branchNavigationDisabled"
           :data-chat-row-key="item.key"
           :data-message-id="item.turn.finalMessageId ?? undefined"
           :actions-disabled="actionsDisabled ?? false"
@@ -326,6 +329,7 @@ onBeforeUnmount(clearOutlineHighlight)
 
         <BuddyChatAgentTurn
           v-else-if="item.kind === 'agent-turn'"
+          :branch-navigation-disabled="branchNavigationDisabled"
           :data-chat-row-key="item.key"
           :actions-disabled="actionsDisabled ?? false"
           :branch-navigator="branchNavigators.get(bindings.resultTargets.get(item.key)!.branchNavigatorId) ?? null"

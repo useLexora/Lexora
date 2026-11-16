@@ -71,6 +71,7 @@ export function useChatWorkspace(
       activeBranchId,
       conversationId,
       actionsDisabled: !currentExecution.canMutateBranch.value,
+      branchNavigationDisabled: currentExecution.isSending.value || currentExecution.isMutatingBranch.value || currentExecution.editingMessageId.value !== null,
       editingMessageId: currentExecution.editingMessageId.value,
       branches: currentTranscript.branches.value,
       changeSets: currentTranscript.changeSets.value,

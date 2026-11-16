@@ -10,7 +10,6 @@ import type { LocalContextUsageSnapshotRequest } from '@buddy-shared/conversatio
 import type { LocalConversation, LocalConversationBranch, LocalConversationSummary, LocalConversationTimelineItem, LocalMessage } from '@buddy-shared/conversation/conversationApi'
 import type { LocalConversationHistoryPage } from '@buddy-shared/conversation/conversationHistoryApi'
 import type { LocalConversationTree } from '@buddy-shared/conversation/conversationTree'
-import type { DraftRecoveryRecord } from '@buddy-shared/conversation/draftRecovery'
 import type { BuddyServiceTier, BuddyThinkingLevel } from '@buddy-shared/conversation/modelSelection'
 import type { LocalTaskMark, LocalTaskMarkState, TaskMarkInput } from '@buddy-shared/conversation/taskMarkApi'
 import type { LocalExecutionInputReceipt } from '@buddy-shared/executions/executionInputReceipt'
@@ -251,7 +250,6 @@ export interface TaskStatus {
 }
 
 export interface TaskDraftRestoration {
-  localCopies?: State<readonly DraftRecoveryRecord[]>
   state: State<DraftRestorationState>
   conflict: State<DraftRestorationConflict | null>
   restore: () => Promise<void>
