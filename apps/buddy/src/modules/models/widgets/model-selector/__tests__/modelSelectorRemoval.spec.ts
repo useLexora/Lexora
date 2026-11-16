@@ -121,6 +121,7 @@ describe('model selector provider icon', () => {
 function provider(id: string, builtinProviderId: string | null): LocalProvider {
   return {
     activeRunCount: 0,
+    authentication: 'api_key',
     added: true,
     api: null,
     authTypes: ['api_key'],

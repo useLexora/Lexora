@@ -2,11 +2,16 @@ import type { Provider, ProviderRequestOptions } from '@earendil-works/pi-ai'
 import type { ProviderRequestHeaders } from './ProviderRequestHeaders'
 import { lazyStream } from '@earendil-works/pi-ai'
 
-export function withProviderRequestHeaders(provider: Provider, headers: ProviderRequestHeaders): Provider {
+export function withProviderRequestHeaders(provider: Provider, headers: ProviderRequestHeaders, authentication?: 'api_key' | 'none'): Provider {
   async function prepare<T extends Pick<ProviderRequestOptions, 'headers' | 'apiKey'>>(options?: T): Promise<T> {
+    const unauthenticated = authentication === 'none'
+    const apiKey = unauthenticated ? undefined : options?.apiKey
+    const defaults = unauthenticated ? { authorization: null, ...options?.headers } : options?.headers
+    const resolvedHeaders = headers.resolve(provider.id, defaults, apiKey)
     return {
       ...options,
-      headers: await headers.resolve(provider.id, options?.headers, options?.apiKey),
+      apiKey: unauthenticated ? 'unused' : apiKey,
+      headers: resolvedHeaders,
     } as T
   }
   return {

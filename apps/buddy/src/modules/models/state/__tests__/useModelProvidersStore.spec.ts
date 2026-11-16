@@ -351,6 +351,7 @@ function provider(
 ): LocalProvider {
   return {
     activeRunCount: 0,
+    authentication: 'api_key',
     requestHeaders: [],
     added: true,
     api: null,

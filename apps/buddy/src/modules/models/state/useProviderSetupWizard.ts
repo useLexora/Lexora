@@ -3,7 +3,7 @@ import type { ProviderRequestHeader } from '@buddy-shared/providers/providerHead
 import type { ModelProvidersStore } from '@/modules/models/state/typing'
 import { customProviderSchema } from '@buddy-shared/providers/providerApi'
 
-import { providerDisplayNameSchema } from '@buddy-shared/providers/providerInput'
+import { providerDisplayNameSchema, supportsUnauthenticatedProviderApi } from '@buddy-shared/providers/providerInput'
 import { computed, onScopeDispose, reactive, shallowRef, watch } from 'vue'
 import { desktopProviderApiOptions } from '@/modules/models/model/desktopProviderApiOptions'
 
@@ -19,6 +19,7 @@ interface UseProviderSetupWizardOptions {
   providerSettings: () => ModelProvidersStore
   resumeProviderId: ValueRef<string | null>
   show: WritableValueRef<boolean>
+  startAtConnection?: ValueRef<boolean | undefined>
 }
 
 export function useProviderSetupWizard(options: UseProviderSetupWizardOptions) {
@@ -34,6 +35,7 @@ export function useProviderSetupWizard(options: UseProviderSetupWizardOptions) {
   const showManualModelDialog = shallowRef(false)
   const savingManualModel = shallowRef(false)
   const creatingCustom = shallowRef(false)
+  const savingAuthentication = shallowRef(false)
   const customIdConflict = shallowRef<string | null>(null)
   const builtinDisplayName = shallowRef('')
   const builtinHeaders = reactive({ requestHeaders: [] as ProviderRequestHeader[] })
@@ -96,15 +98,25 @@ export function useProviderSetupWizard(options: UseProviderSetupWizardOptions) {
     models: [],
   }).success)
   const canLogin = computed(() => selectedProvider.value?.custom || providerDisplayNameSchema.safeParse(builtinDisplayName.value).success)
-  const canComplete = computed(() => (
-    selectedProvider.value?.storedCredentialType !== null
-    && enabledModels.value.length > 0
+  const canContinueWithoutAuthentication = computed(() => (
+    selectedProvider.value?.custom === true
+    && supportsUnauthenticatedProviderApi(selectedProvider.value.api)
   ))
+  const connectionBusy = computed(() => (
+    savingAuthentication.value
+    || providerSettings().isAuthenticating.value
+    || (selectedProvider.value !== null && providerSettings().mutatingProviderId.value === selectedProvider.value.id)
+  ))
+  const hasAuthentication = computed(() => (
+    selectedProvider.value?.authentication === 'none' || !!selectedProvider.value?.storedCredentialType
+  ))
+  const canComplete = computed(() => hasAuthentication.value && enabledModels.value.length > 0)
 
-  watch([show, providerSettings, () => resumeProviderId.value, resumeProviderAvailable], ([visible], [wasVisible]) => {
+  watch([show, providerSettings, () => resumeProviderId.value, resumeProviderAvailable, () => options.startAtConnection?.value], ([visible], [wasVisible]) => {
     generation += 1
     savingManualModel.value = false
     creatingCustom.value = false
+    savingAuthentication.value = false
     customIdConflict.value = null
     showManualModelDialog.value = false
     if (visible || wasVisible)
@@ -126,7 +138,9 @@ export function useProviderSetupWizard(options: UseProviderSetupWizardOptions) {
       builtinDisplayName.value = provider.displayName
       builtinHeaders.requestHeaders = (provider.requestHeaders ?? []).map(header => ({ ...header }))
     }
-    resetSteps(provider.storedCredentialType ? 3 : 2)
+    resetSteps(hasAuthentication.value ? 3 : 2)
+    if (options.startAtConnection?.value)
+      step.value = 2
   }, { flush: 'sync', immediate: true })
 
   watch(show, (visible, wasVisible) => {
@@ -186,6 +200,7 @@ export function useProviderSetupWizard(options: UseProviderSetupWizardOptions) {
     const requestGeneration = generation
     const input: LocalCustomProvider = {
       api: customForm.api as LocalCustomProvider['api'],
+      authentication: selectedProvider.value?.authentication === 'none' && supportsUnauthenticatedProviderApi(customForm.api) ? 'none' : 'api_key',
       baseUrl: customForm.baseUrl.trim(),
       description: customForm.description.trim() || undefined,
       displayName: customForm.displayName.trim(),
@@ -222,7 +237,7 @@ export function useProviderSetupWizard(options: UseProviderSetupWizardOptions) {
 
   async function login(authType: 'api_key' | 'oauth') {
     const provider = selectedProvider.value
-    if (!provider || !canLogin.value)
+    if (!provider || !canLogin.value || connectionBusy.value || provider.activeRunCount > 0)
       return
     const requestGeneration = generation
     if (!provider.custom) {
@@ -232,6 +247,33 @@ export function useProviderSetupWizard(options: UseProviderSetupWizardOptions) {
     const succeeded = await providerSettings().loginProvider(provider.id, authType)
     if (succeeded && requestGeneration === generation && selectedProviderId.value === provider.id)
       advanceToStep(3)
+  }
+
+  async function continueWithoutAuthentication() {
+    const provider = selectedProvider.value
+    if (!provider || !canContinueWithoutAuthentication.value || connectionBusy.value || provider.activeRunCount > 0)
+      return
+    const requestGeneration = generation
+    providerSettings().clearModelProviderError()
+    savingAuthentication.value = true
+    try {
+      const saved = await providerSettings().upsertCustomProvider({
+        id: provider.id,
+        api: provider.api as LocalCustomProvider['api'],
+        authentication: 'none',
+        baseUrl: provider.baseUrl ?? '',
+        displayName: provider.displayName,
+        description: provider.description ?? undefined,
+        enabled: provider.enabled,
+        requestHeaders: (provider.requestHeaders ?? []).map(header => ({ ...header })),
+      })
+      if (saved && requestGeneration === generation && selectedProviderId.value === provider.id)
+        advanceToStep(3)
+    }
+    finally {
+      if (requestGeneration === generation)
+        savingAuthentication.value = false
+    }
   }
 
   async function saveManualModel(model: LocalCustomProviderModel) {
@@ -304,7 +346,7 @@ export function useProviderSetupWizard(options: UseProviderSetupWizardOptions) {
   }
 
   function navigateToReachedStep(nextStep: number) {
-    if (nextStep < 1 || nextStep > Math.min(furthestStep.value, stepCount.value))
+    if (connectionBusy.value || nextStep < 1 || nextStep > Math.min(furthestStep.value, stepCount.value))
       return
     providerSettings().clearModelProviderError()
     if (nextStep === 1 && selectedProvider.value?.custom)
@@ -346,6 +388,10 @@ export function useProviderSetupWizard(options: UseProviderSetupWizardOptions) {
     builtinDisplayName,
     builtinHeaders,
     canLogin,
+    canContinueWithoutAuthentication,
+    connectionBusy,
+    continueWithoutAuthentication,
+    savingAuthentication,
     addBuiltin,
     canComplete,
     canContinueCustom,

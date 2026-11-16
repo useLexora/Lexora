@@ -4,7 +4,7 @@ import type { Ref } from 'vue'
 import type { ProviderConnectionActions } from './typing'
 import { customProviderSchema } from '@buddy-shared/providers/providerApi'
 import { providerRequestHeadersSchema } from '@buddy-shared/providers/providerHeaders'
-import { providerDisplayNameSchema } from '@buddy-shared/providers/providerInput'
+import { providerDisplayNameSchema, supportsUnauthenticatedProviderApi } from '@buddy-shared/providers/providerInput'
 import { computed, reactive, shallowRef, watch } from 'vue'
 
 interface ProviderConnectionInput {
@@ -15,8 +15,9 @@ interface ProviderConnectionInput {
 export function useProviderConnectionForm(props: ProviderConnectionInput, show: Ref<boolean>) {
   const saving = shallowRef(false)
   const form = reactive({ api: '', baseUrl: '', description: '', displayName: '', requestHeaders: [] as ProviderRequestHeader[] })
-  const customInput = computed(() => ({
+  const customInput = computed<LocalCustomProvider>(() => ({
     api: form.api as LocalCustomProvider['api'],
+    authentication: props.provider.authentication === 'none' && supportsUnauthenticatedProviderApi(form.api) ? 'none' : 'api_key',
     baseUrl: form.baseUrl.trim(),
     description: form.description.trim() || undefined,
     displayName: form.displayName.trim(),

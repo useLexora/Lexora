@@ -7,10 +7,11 @@ import { idSchema, timestampSchema, validationRequestSchemas, validationResponse
 import { modelCapabilitiesSchema, modelCapabilityOverridesSchema } from './providerCapabilities'
 import { modelCatalogReferenceSchema, modelCatalogResolutionSchema } from './providerCatalog'
 import { providerRequestHeadersSchema } from './providerHeaders'
-import { customProviderInputSchema, defaultModelSchema, providerBaseUrlSchema, providerDisplayNameSchema, providerModelInputSchema } from './providerInput'
+import { customProviderAuthenticationSchema, customProviderInputSchema, defaultModelSchema, providerBaseUrlSchema, providerDisplayNameSchema, providerModelInputSchema, supportsUnauthenticatedProviderApi } from './providerInput'
 import { providerModelTypeSchema } from './providerModelType'
 
 export const providerSchema = z.object({
+  authentication: z.enum(['api_key', 'oauth', 'none']).default('api_key'),
   plugin: z.object({ id: z.string(), managementPage: z.boolean() }).strict().optional(),
   requestHeaders: providerRequestHeadersSchema.default([]),
   activeRunCount: z.number().int().nonnegative(),
@@ -145,6 +146,7 @@ export const customProviderModelSchema = z.object({
 ))
 
 export const customProviderSchema = z.object({
+  authentication: customProviderAuthenticationSchema,
   requestHeaders: providerRequestHeadersSchema.optional(),
   api: z.enum([
     'anthropic-messages',
@@ -165,6 +167,8 @@ export const customProviderSchema = z.object({
   id: z.string().trim().regex(/^[a-z0-9][a-z0-9._-]{0,99}$/),
   models: z.array(customProviderModelSchema).default([]),
 }).strict().superRefine((provider, context) => {
+  if (provider.authentication === 'none' && !supportsUnauthenticatedProviderApi(provider.api))
+    context.addIssue({ code: 'custom', message: 'This API requires authentication', path: ['authentication'] })
   const ids = new Set<string>()
   for (const [index, model] of provider.models.entries()) {
     if (ids.has(model.id)) {

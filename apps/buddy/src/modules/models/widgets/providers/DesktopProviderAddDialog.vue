@@ -16,6 +16,7 @@ import DesktopProviderHeadersEditor from './DesktopProviderHeadersEditor.vue'
 const props = defineProps<{
   providerSettings: ModelProvidersStore
   resumeProviderId: string | null
+  startAtConnection?: boolean
 }>()
 const show = defineModel<boolean>('show', { required: true })
 const language = computed(() => props.providerSettings.language.value)
@@ -27,6 +28,10 @@ const {
   builtinHeaders,
   canComplete,
   canLogin,
+  canContinueWithoutAuthentication,
+  connectionBusy,
+  continueWithoutAuthentication,
+  savingAuthentication,
   canClearVisibleModels,
   canSelectVisibleModels,
   closeDialog,
@@ -61,6 +66,7 @@ const {
 } = useProviderSetupWizard({
   providerSettings: () => props.providerSettings,
   resumeProviderId: toRef(props, 'resumeProviderId'),
+  startAtConnection: toRef(props, 'startAtConnection'),
   show,
 })
 const connectionForm = useTemplateRef('connectionForm')
@@ -173,7 +179,7 @@ async function connect(authType: 'api_key' | 'oauth') {
               v-for="authType in selectedProvider?.authTypes ?? []"
               :key="authType"
               type="primary"
-              :disabled="!canLogin || providerSettings.isAuthenticating.value"
+              :disabled="!canLogin || connectionBusy || (selectedProvider?.activeRunCount ?? 0) > 0"
               :loading="providerSettings.isAuthenticating.value && !providerSettings.authChallenge.value"
               @click="connect(authType)"
             >
@@ -286,8 +292,16 @@ async function connect(authType: 'api_key' | 'oauth') {
       </div>
 
       <div v-if="step > 1" class="desktop-provider-add-dialog__footer flex items-center justify-between border-t-1 border-t-solid border-t-border mt-[0.8rem] pt-[0.8rem]">
-        <NButton @click="goToPreviousStep">
+        <NButton :disabled="connectionBusy" @click="goToPreviousStep">
           {{ t('desktop.providers.previous') }}
+        </NButton>
+        <NButton
+          v-if="step === 2 && canContinueWithoutAuthentication"
+          :disabled="connectionBusy || (selectedProvider?.activeRunCount ?? 0) > 0"
+          :loading="savingAuthentication"
+          @click="continueWithoutAuthentication"
+        >
+          {{ t('desktop.providers.continueWithoutAuthentication') }}
         </NButton>
         <NButton
           v-if="step === 3"

@@ -38,6 +38,7 @@ import { createSourceMetadata, emptyModelCost, nextSourceRevision, sourceMetadat
 import { buddyModelSchema, modelParametersOverrideSchema } from './providerSchemas'
 
 export interface ProviderRegistration {
+  authentication?: 'api_key' | 'none'
   api: string
   baseUrl: string
   models: Array<{
@@ -154,6 +155,7 @@ export class ProviderModelCatalog {
 
   registerCustomProvider(provider: ProviderConfigRecord): void {
     this.#modelRuntime.registerProvider(provider.id, {
+      authentication: provider.authentication ?? 'api_key',
       api: provider.api,
       baseUrl: provider.baseUrl,
       models: this.#models.list(provider.id).filter(model => effectiveType(model) === 'chat').map(model => this.#sourceModel(model)),

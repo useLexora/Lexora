@@ -17,6 +17,7 @@ const router = useRouter()
 const { providerSettings, ready, registry } = useSettingsContext()
 const { t } = useBuddyI18n(providerSettings.language)
 const showAddDialog = shallowRef(false)
+const startAtConnection = shallowRef(false)
 const provider = computed(() => providerSettings.providers.value.find(
   item => item.id === props.providerId,
 ) ?? null)
@@ -43,8 +44,9 @@ watch(
   { immediate: true },
 )
 
-function continueSetup() {
+function continueSetup(_providerId: string, connection = false) {
   providerSettings.clearModelProviderError()
+  startAtConnection.value = connection
   showAddDialog.value = true
 }
 
@@ -129,6 +131,7 @@ const { authChallenge, language } = providerSettings
       v-model:show="showAddDialog"
       :provider-settings="providerSettings"
       :resume-provider-id="providerId"
+      :start-at-connection="startAtConnection"
     />
     <DesktopProviderAuthDialog
       :challenge="authChallenge"

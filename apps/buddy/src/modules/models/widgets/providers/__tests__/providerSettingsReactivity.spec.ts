@@ -512,6 +512,84 @@ describe('provider settings prop reactivity', () => {
 })
 
 describe('provider wizard ownership', () => {
+  it('saves explicit no-auth before advancing, resumes it and preserves it when editing the service', async () => {
+    const store = createStore('Local')
+    store.builtinPresets.value = []
+    store.providers.value = [{ ...provider('Local'), custom: true, api: 'openai-completions', baseUrl: 'http://127.0.0.1:8000/v1', storedCredentialType: null }]
+    const show = shallowRef(true)
+    const scope = effectScope()
+    cleanups.push(() => scope.stop())
+    const wizard = scope.run(() => useProviderSetupWizard({ providerSettings: () => store, show, resumeProviderId: shallowRef('service') }))!
+    expect(wizard.step.value).toBe(2)
+    expect(wizard.canComplete.value).toBe(false)
+    expect(wizard.canContinueWithoutAuthentication.value).toBe(true)
+    const save = deferred<boolean>()
+    const persist = store.upsertCustomProvider
+    store.upsertCustomProvider = async (input) => {
+      if (!await save.promise)
+        return false
+      return persist(input)
+    }
+    const pending = wizard.continueWithoutAuthentication()
+    expect(wizard.connectionBusy.value).toBe(true)
+    wizard.goToPreviousStep()
+    expect(wizard.step.value).toBe(2)
+    save.resolve(true)
+    await pending
+    expect(wizard.step.value).toBe(3)
+    expect(wizard.selectedProvider.value?.authentication).toBe('none')
+    expect(wizard.canComplete.value).toBe(true)
+    show.value = false
+    show.value = true
+    expect(wizard.step.value).toBe(3)
+    wizard.navigateToReachedStep(1)
+    wizard.customForm.displayName = 'Renamed local'
+    await wizard.createCustom()
+    expect(wizard.selectedProvider.value?.authentication).toBe('none')
+    expect(wizard.selectedProvider.value?.displayName).toBe('Renamed local')
+  })
+
+  it('keeps failed and stale no-auth saves from advancing the wizard', async () => {
+    const store = createStore('Local')
+    store.providers.value = [{ ...provider('Local'), custom: true, api: 'openai-responses', baseUrl: 'http://127.0.0.1:8000/v1', storedCredentialType: null }]
+    const show = shallowRef(true)
+    const scope = effectScope()
+    cleanups.push(() => scope.stop())
+    const wizard = scope.run(() => useProviderSetupWizard({ providerSettings: () => store, show, resumeProviderId: shallowRef('service') }))!
+    store.upsertCustomProvider = async () => false
+    await wizard.continueWithoutAuthentication()
+    expect(wizard.step.value).toBe(2)
+    expect(wizard.connectionBusy.value).toBe(false)
+    const save = deferred<boolean>()
+    store.upsertCustomProvider = () => save.promise
+    const pending = wizard.continueWithoutAuthentication()
+    show.value = false
+    show.value = true
+    save.resolve(true)
+    await pending
+    expect(wizard.step.value).toBe(2)
+    expect(wizard.selectedProvider.value?.authentication).toBe('api_key')
+    expect(wizard.connectionBusy.value).toBe(false)
+  })
+
+  it('only offers no-auth on supported custom APIs and resumes authentication edits at connection', () => {
+    const store = createStore('Local')
+    const scope = effectScope()
+    cleanups.push(() => scope.stop())
+    const show = shallowRef(false)
+    const startAtConnection = shallowRef(false)
+    const wizard = scope.run(() => useProviderSetupWizard({ providerSettings: () => store, show, resumeProviderId: shallowRef('service'), startAtConnection }))!
+    show.value = true
+    startAtConnection.value = true
+    expect(wizard.step.value).toBe(2)
+    expect(wizard.canContinueWithoutAuthentication.value).toBe(false)
+    store.providers.value = [{ ...provider('Local'), custom: true, api: 'anthropic-messages' }]
+    expect(wizard.canContinueWithoutAuthentication.value).toBe(false)
+    store.providers.value = [{ ...provider('Local'), custom: true, api: 'openai-responses', authentication: 'none', storedCredentialType: null }]
+    expect(wizard.canContinueWithoutAuthentication.value).toBe(true)
+    expect(wizard.canComplete.value).toBe(true)
+  })
+
   it('creates another instance of an already added preset and resumes only its own setup', async () => {
     const store = createStore('DeepSeek')
     const show = shallowRef(true)
@@ -624,6 +702,7 @@ function manualModel(): LocalCustomProviderModel {
 function provider(displayName: string): LocalProvider {
   return {
     activeRunCount: 0,
+    authentication: 'api_key',
     requestHeaders: [],
     added: true,
     api: null,
@@ -747,8 +826,8 @@ function createStore(name: string, locale: BuddyLocale = 'zh-CN') {
       registeredModels.value = registeredModels.value.map(item => item.providerId === providerId && selected.has(item.modelId) ? { ...item, enabled } : item)
       return true
     },
-    upsertCustomProvider: async (input) => {
-      providers.value = providers.value.map(item => item.id === input.id ? { ...item, displayName: input.displayName } : item)
+    upsertCustomProvider: async (input): Promise<boolean> => {
+      providers.value = providers.value.map(item => item.id === input.id ? { ...item, displayName: input.displayName, authentication: input.authentication ?? 'api_key' } : item)
       return true
     },
   } satisfies ModelProvidersStore

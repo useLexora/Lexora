@@ -35,8 +35,10 @@ function manageProvider(providerId: string) {
   emit('manageProvider', providerId)
 }
 
-function providerAuthenticationLabel(type: NonNullable<LocalProvider['storedCredentialType']>) {
-  return type === 'api_key' ? 'API Key' : 'OAuth'
+function providerAuthenticationLabel(provider: LocalProvider) {
+  if (provider.authentication === 'none')
+    return t('desktop.providers.noAuthentication')
+  return provider.storedCredentialType === 'api_key' ? 'API Key' : 'OAuth'
 }
 </script>
 
@@ -68,10 +70,10 @@ function providerAuthenticationLabel(type: NonNullable<LocalProvider['storedCred
                 {{ provider.displayName }}
               </strong>
               <span
-                v-if="provider.storedCredentialType"
+                v-if="provider.authentication === 'none' || provider.storedCredentialType"
                 class="flex-none text-accent-text text-[0.66rem] font-600"
               >
-                {{ providerAuthenticationLabel(provider.storedCredentialType) }}
+                {{ providerAuthenticationLabel(provider) }}
               </span>
             </div>
             <div class="flex overflow-hidden min-w-0 items-center text-muted text-[0.68rem]">
