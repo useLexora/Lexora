@@ -214,12 +214,12 @@ export function createChatQueueRepository(database: DatabaseSync) {
         if (snapshot && input.actorSnapshot ? buddyExecutionFingerprint(snapshot) !== buddyExecutionFingerprint(input.actorSnapshot) : !!snapshot !== !!input.actorSnapshot)
           throw new BuddyServiceError('BUDDY_CONFLICT')
         if (input.modelOverride !== undefined) {
-          const now = new Date().toISOString()
           if (Number(database.prepare('UPDATE conversation_members SET model_selection_json = ?, model_selection_source = ? WHERE conversation_id = ? AND actor_id = ?').run(input.modelOverride ? JSON.stringify(input.modelOverride) : null, input.modelOverride ? 'explicit' : null, input.conversationId, input.buddyId!).changes) !== 1)
             throw new BuddyServiceError('BUDDY_CONFLICT')
-          database.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(now, input.conversationId)
         }
-        database.prepare('INSERT INTO messages (id, conversation_id, branch_id, run_id, role, content_json, created_at) VALUES (?, ?, ?, NULL, \'user\', ?, ?)').run(input.userMessageId, input.conversationId, input.branchId, JSON.stringify(input.userMessageContent), new Date().toISOString())
+        const now = new Date().toISOString()
+        database.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(now, input.conversationId)
+        database.prepare('INSERT INTO messages (id, conversation_id, branch_id, run_id, role, content_json, created_at) VALUES (?, ?, ?, NULL, \'user\', ?, ?)').run(input.userMessageId, input.conversationId, input.branchId, JSON.stringify(input.userMessageContent), now)
         for (const binding of input.attachmentBindings) {
           if (Number(database.prepare('UPDATE attachments SET draft_id = NULL, message_id = ? WHERE id = ? AND draft_id = ?').run(input.userMessageId, binding.id, input.queuedMessageId!).changes) !== 1)
             throw new TurnRequestAttachmentError()

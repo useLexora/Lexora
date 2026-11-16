@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { PrepareTurnRequestInput } from '../turnRequestRepository'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { buddySettingsSchema } from '../../../../shared/buddies/buddySettings'
 import { createBuddyUserContent } from '../../../../shared/conversation/buddyUserContent'
 import { buddyExecutionDefinitionSchema } from '../../buddies/BuddyExecutionDefinition'
@@ -8,13 +8,17 @@ import { createAttachmentRepository } from '../attachmentRepository'
 import { createBuddyRepository } from '../buddyRepository'
 import { createChatQueueRepository } from '../chatQueueRepository'
 import { createComposerDraftRepository } from '../composerDraftRepository'
+import { createConversationIndexRepository } from '../conversationIndexRepository'
 import { createConversationRepository } from '../conversationRepository'
 import { openBuddyDatabase } from '../database'
 import { createRunInputRepository } from '../runInputRepository'
 import { createTurnRequestRepository } from '../turnRequestRepository'
 
 const databases: DatabaseSync[] = []
-afterEach(() => databases.splice(0).forEach(database => database.close()))
+afterEach(() => {
+  vi.useRealTimers()
+  databases.splice(0).forEach(database => database.close())
+})
 
 function fixture() {
   const database = openBuddyDatabase({ databasePath: ':memory:' })
@@ -50,6 +54,52 @@ function fixture() {
 }
 
 describe('chat queue ownership and delivery', () => {
+  it.each([
+    undefined,
+    null,
+    { providerId: 'provider', modelId: 'model', reasoning: null, serviceTier: null },
+  ])('updates history time and ordering when accepting current input with model override %j', (modelOverride) => {
+    const f = fixture()
+    const history = createConversationIndexRepository(f.database)
+    f.turns.prepare({ ...f.input('other'), draft: null, conversationId: 'other', branchId: 'other-branch', createdAt: '2026-09-10T00:01:00.000Z' })
+    const list = () => history.listHistory({ kind: 'search', query: 'queue' }).items.map(item => item.conversation)
+    expect(list().map(item => item.id)).toEqual(['other', 'conversation'])
+    const originalTime = list()[1]!.updatedAt
+    const delivery = { mode: 'current' as const, actorId: 'default', target: { rootRunId: 'run-initial', runId: 'run-initial' } }
+    f.queue.enqueue({ ...f.input('current'), createdAt: '2026-09-10T00:02:00.000Z', delivery, modelOverride })
+    expect(list()[1]!.updatedAt).toBe(originalTime)
+    const pending = f.queue.pending(f.target('current'))!
+    const acceptedAt = '2026-09-10T00:03:00.000Z'
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(acceptedAt)
+    f.queue.commitInRun(pending, 'run-initial', undefined)
+    expect(list().map(item => item.id)).toEqual(['conversation', 'other'])
+    expect(list()[0]!.updatedAt).toBe(acceptedAt)
+    expect(f.database.prepare('SELECT created_at FROM messages WHERE id = ?').get('current')).toEqual({ created_at: acceptedAt })
+    vi.setSystemTime('2026-09-10T00:04:00.000Z')
+    expect(() => f.queue.commitInRun(pending, 'run-initial', undefined)).toThrow()
+    expect(list()[0]!.updatedAt).toBe(acceptedAt)
+  })
+
+  it('rolls back history time with the message when attachment delivery fails', () => {
+    const f = fixture()
+    const conversations = createConversationRepository(f.database)
+    const originalTime = conversations.findById('conversation')!.updatedAt
+    createAttachmentRepository(f.database).create({ id: 'image', conversationId: null, messageId: null, draftId: 'draft', storedPath: '/test/draft.png', name: 'image.png', mimeType: 'image/png', sizeBytes: 12, createdAt: f.input('current').createdAt })
+    const input = f.input('current')
+    input.attachmentBindings = [{ id: 'image', sourceAttachmentId: 'image', sourceDraftId: 'draft', messageId: input.userMessageId, storedPath: '/test/snapshot.png', createdAt: input.createdAt, mimeType: 'image/png' }]
+    input.runInput.attachmentIds = ['image']
+    f.queue.enqueue(input)
+    const pending = f.queue.pending(f.target('current'))!
+    f.database.prepare('DELETE FROM attachments WHERE id = ?').run('image')
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime('2026-09-10T00:03:00.000Z')
+    expect(() => f.queue.commitInRun(pending, 'run-initial', undefined)).toThrow()
+    expect(conversations.findById('conversation')!.updatedAt).toBe(originalTime)
+    expect(f.database.prepare('SELECT id FROM messages').all()).toEqual([{ id: 'initial' }])
+    expect(f.database.prepare('SELECT state FROM chat_queue WHERE id = ?').get('current')).toEqual({ state: 'waiting' })
+  })
+
   it('never commits next input into a running product run, including a forged pending envelope', () => {
     const f = fixture()
     f.queue.enqueue({ ...f.input('next'), delivery: { mode: 'next', actorId: 'default', target: { rootRunId: 'run-initial', runId: 'run-initial' } } })
