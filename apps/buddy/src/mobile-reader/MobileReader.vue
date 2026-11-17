@@ -11,14 +11,14 @@ import { useReaderResultRead } from './useReaderResultRead'
 import { useReaderTurns } from './useReaderTurns'
 import { useReaderViewport } from './useReaderViewport'
 
-const { entries: messages, runs, transcripts, topic, dark, fontScale, appearance, typography, language, resultRunId, send } = useReaderBridge()
+const { entries: messages, runs, transcripts, topic, dark, fontScale, appearance, typography, language, resultRunId, anchor, hasLaterMessages, send } = useReaderBridge()
 const labels = useReaderStrings(language)
-const entries = useReaderTurns(messages, runs, transcripts, topic)
+const entries = useReaderTurns(messages, runs, transcripts, topic, anchor)
 const runBuddyIds = computed(() => new Map(runs.value.map(run => [run.id, run.buddyId])))
 provideChatTranscriptPresentation(() => topic.value, () => entries.value.map(entry => entry.id))
 const viewport = useTemplateRef('viewport')
 useReaderResultRead(viewport, resultRunId, topic, send)
-const { rows, height, followsEnd, showLatest, latest, scroll, touch, measure } = useReaderViewport(viewport, entries, topic)
+const { rows, height, followsEnd, showLatest, anchorStatus, locatedMessageId, latest, scroll, touch, measure } = useReaderViewport(viewport, entries, topic, anchor, hasLaterMessages, () => send({ action: 'latest' }))
 const expanded = shallowRef(new Map<string, boolean>())
 const style = computed(() => ({
   ...appearance.value,
@@ -54,8 +54,11 @@ watch(topic, () => {
 </script>
 
 <template>
-  <main :class="{ dark }" :style="style">
-    <div ref="viewport" class="reader-viewport" :aria-label="labels.messages" @scroll.passive="scroll" @touchstart.passive="touch(true)" @touchend.passive="touch(false)" @touchcancel.passive="touch(false)" @wheel.passive="followsEnd = false">
+  <main :class="{ dark }" :style="style" :data-anchor-status="anchorStatus" :data-anchor-message-id="locatedMessageId">
+    <p v-if="anchorStatus === 'missing'" class="anchor-notice" role="status">
+      {{ labels.anchorMissing }}
+    </p>
+    <div ref="viewport" class="reader-viewport" :aria-label="labels.messages" @scroll.passive="scroll" @touchstart.passive="touch(true)" @touchend.passive="touch(false)" @touchcancel.passive="touch(false)" @wheel.passive="touch(true); followsEnd = false; touch(false)">
       <div class="reader-content" :style="{ height: `${height}px` }" :data-message-count="entries.length" @click.capture="click">
         <section v-for="row in rows" :key="row.entry.id" :ref="measure" class="reader-entry" :class="{ continuation: row.entry.continuation }" :data-entry-id="row.entry.id" :data-index="row.index" :style="{ transform: `translateY(${row.start}px)` }">
           <button v-if="row.entry.transcriptError" class="transcript-retry" @click="send({ action: 'transcript', runId: row.entry.turn?.runId ?? row.entry.messages[0]!.runId!, retry: 'true' })">
@@ -63,7 +66,7 @@ watch(topic, () => {
           </button>
           <ReaderTurn v-if="row.entry.turn" :turn="row.entry.turn" :buddy-id="runBuddyIds.get(row.entry.turn.runId)" :messages="row.entry.messages" :dark="dark" :language="language" :send="send" @interact="followsEnd = false" />
           <template v-for="message in row.entry.messages" :key="message.id">
-            <ReaderToolCall v-if="!row.entry.turn && message.role === 'tool'" :message="message" :language="language" :expanded="expanded.get(`message:${message.id}`) ?? message.toolError" :send="send" @toggle="toggle(`message:${message.id}`, message.toolError)" @interact="followsEnd = false" />
+            <ReaderToolCall v-if="!row.entry.turn && message.role === 'tool'" :message="message" :language="language" :expanded="expanded.get(`message:${message.id}`) ?? (anchor?.messageId === message.id || message.toolError)" :send="send" @toggle="toggle(`message:${message.id}`, message.toolError)" @interact="followsEnd = false" />
             <ReaderMessage v-else-if="!row.entry.turn" :message="message" :language="language" :dark="dark" :send="send" @interact="followsEnd = false" />
           </template>
         </section>
@@ -77,3 +80,17 @@ watch(topic, () => {
     </button>
   </main>
 </template>
+
+<style scoped lang="scss">
+.anchor-notice {
+  position: absolute;
+  z-index: 1;
+  inset: 8px 16px auto;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--reader-border);
+  border-radius: 6px;
+  background: var(--reader-panel);
+  color: var(--reader-muted);
+}
+</style>

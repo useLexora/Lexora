@@ -40,6 +40,10 @@ class SharedReaderInstrumentedTest {
     private var dark = false
     private var scale = 1f
     private var readTarget: String? = null
+    private var anchorMessageId: String? = null
+    private var anchorRequestId: String? = null
+    private var hasLaterMessages = false
+    private val latestRequests = java.util.concurrent.CopyOnWriteArrayList<String>()
     private val readResults = java.util.concurrent.CopyOnWriteArrayList<String>()
 
     @After fun disposeReader() {
@@ -59,7 +63,7 @@ class SharedReaderInstrumentedTest {
     }
     private fun update() {
         compose.runOnUiThread { host.update(messages, topic, details, runs.map(::completeRun), dark, scale,
-            { actions.add("message:${it.getString("id")}") }, { actions.add("resource:${it.getString("resourceId")}") }, { actions.add("detail:${it.getString("id")}") }, { message, action -> actions.add("$action:${message.getString("id")}") }, language = language, transcripts = transcripts, resultRunId = readTarget, onReadResult = { readResults.add(it) }) }
+            { actions.add("message:${it.getString("id")}") }, { actions.add("resource:${it.getString("resourceId")}") }, { actions.add("detail:${it.getString("id")}") }, { message, action -> actions.add("$action:${message.getString("id")}") }, language = language, transcripts = transcripts, resultRunId = readTarget, onReadResult = { readResults.add(it) }, anchorMessageId = anchorMessageId, anchorRequestId = anchorRequestId, hasLaterMessages = hasLaterMessages, onLatest = { latestRequests.add(topic) }) }
     }
     private fun js(script: String): String {
         val result = AtomicReference<String>()
@@ -268,6 +272,60 @@ class SharedReaderInstrumentedTest {
         topic = "other-topic"; messages = listOf(message("other", "另一分支独立内容")); update()
         until("document.body.innerText.includes('另一分支独立内容') && !document.body.innerText.includes('历史 1')")
     }
+    @Test fun anchorRequestsPreserveReadingThroughPrependAndStreamingUntilExplicitLatest() {
+        messages = (21..80).map { message("history-$it", "历史 $it。".repeat(30)) }
+        anchorMessageId = "history-40"; anchorRequestId = "search-1"; hasLaterMessages = true
+        show()
+        until("document.querySelector('main').dataset.anchorMessageId === 'history-40'")
+        until("(()=>{const v=document.querySelector('.reader-viewport'); const m=document.querySelector('[data-message-id=history-40]'); return m && Math.abs(m.getBoundingClientRect().top-v.getBoundingClientRect().top)<3})()")
+        js("document.querySelector('.reader-viewport').scrollTop += 140")
+        Thread.sleep(300)
+        js("window.readingOffset=document.querySelector('[data-message-id=history-40]').getBoundingClientRect().top")
+        messages = (1..20).map { message("history-$it", "更早的历史 $it。".repeat(30)) } + messages
+        update()
+        until("document.querySelector('.reader-content').dataset.messageCount === '80'")
+        until("Math.abs(document.querySelector('[data-message-id=history-40]').getBoundingClientRect().top-window.readingOffset)<3")
+        repeat(5) { index ->
+            messages = messages.dropLast(1) + message("history-80", "流式更新 $index。".repeat(40 + index))
+            update(); Thread.sleep(80)
+        }
+        Thread.sleep(300)
+        assertEquals("true", js("Math.abs(document.querySelector('[data-message-id=history-40]').getBoundingClientRect().top-window.readingOffset)<3"))
+        assertTrue(latestRequests.isEmpty())
+        anchorMessageId = "history-30"; anchorRequestId = "search-2"; update()
+        until("document.querySelector('main').dataset.anchorMessageId === 'history-30'")
+        js("document.querySelector('.latest-button').click()")
+        compose.waitUntil(5_000) { latestRequests.size == 1 }
+        assertEquals(listOf(topic), latestRequests.toList())
+        anchorMessageId = null; anchorRequestId = null; hasLaterMessages = false
+        messages = messages + message("latest", "真实最新消息")
+        update()
+        until("document.querySelector('[data-message-id=latest]') !== null && (()=>{const v=document.querySelector('.reader-viewport');return v.scrollHeight-v.scrollTop-v.clientHeight<30})()")
+    }
+
+    @Test fun missingAndCrossTopicAnchorsNeverSilentlyResolveToAnotherMessage() {
+        messages = (1..60).map { message("history-$it", "历史 $it。".repeat(30)) }
+        anchorMessageId = "history-20"; anchorRequestId = "search-1"
+        show()
+        until("document.querySelector('main').dataset.anchorMessageId === 'history-20'")
+        val before = js("document.querySelector('.reader-viewport').scrollTop").toDouble()
+        anchorMessageId = "missing"; anchorRequestId = "search-2"; update()
+        until("document.querySelector('main').dataset.anchorStatus === 'missing' && document.querySelector('[role=status]').textContent.includes('无法在当前对话中定位')")
+        assertEquals(before, js("document.querySelector('.reader-viewport').scrollTop").toDouble(), 3.0)
+        assertEquals("true", js("document.querySelector('.latest-button') !== null && !document.querySelector('main').dataset.anchorMessageId"))
+        topic = "other-topic"
+        messages = (1..30).map { message("other-$it", "其他任务 $it。".repeat(30)) }
+        update()
+        until("document.querySelector('[data-message-id=other-30]') !== null")
+        assertEquals("idle", js("document.querySelector('main').dataset.anchorStatus").trim('"'))
+        compose.runOnUiThread {
+            val receive = ReaderView::class.java.getDeclaredMethod("receive", JSONObject::class.java).apply { isAccessible = true }
+            receive.invoke(host, JSONObject().put("action", "latest").put("topic", "test-topic"))
+            receive.invoke(host, JSONObject().put("action", "message").put("topic", topic).put("id", "history-20"))
+        }
+        assertTrue(latestRequests.isEmpty()); assertTrue(actions.isEmpty())
+    }
+
     @Test fun onlyTheVisibleCompletedResultReportsRead() {
         messages = (1..80).map { message("history-$it", "历史阅读。".repeat(40)).put("runId", "history-run") } + message("result", "最新结果需要实际可见")
         runs = listOf(JSONObject().put("id", "stream-run").put("status", "completed"))

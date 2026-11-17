@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { ApprovalService } from '../approvals/ApprovalService'
+import type { ChatQueueService } from '../chat/ChatQueueService'
 import type { TrustedCommandPrincipal } from '../commands/CommandAdmissionService'
 import type { RemoteUploadService } from '../privateNetwork/RemoteUploadService'
 import type { UserQuestionService } from '../questions/UserQuestionService'
@@ -12,6 +13,7 @@ import { CommandAdmissionService } from '../commands/CommandAdmissionService'
 import { DesktopOpenCommandService } from '../commands/DesktopOpenCommandService'
 import { ConversationCommandService } from '../conversations/ConversationCommandService'
 import { ConversationCommandRepository } from '../storage/ConversationCommandRepository'
+import { ProductQueueControls } from './ProductQueueControls'
 
 export interface ProductActorCommands {
   identity: { dataGeneration: string, serviceInstanceId: string }
@@ -20,6 +22,7 @@ export interface ProductActorCommands {
   input: ChatInputCommandService
   drafts: ComposerDraftCommandService
   control: ChatControlCommandService
+  queueControls: Pick<ProductQueueControls, 'read'>
   metadata: ConversationCommandService
   uploads: ReturnType<RemoteUploadService['commands']>
   approvals: Pick<ApprovalService, 'resolveCommand' | 'getReview'>
@@ -36,7 +39,7 @@ interface ProductActorCommandDependencies {
   input: Pick<InputOptions, 'turns' | 'compact' | 'queue' | 'assertExecutionAvailable'>
   drafts: Pick<DraftOptions, 'prepareAttachments' | 'releaseResources'> & { access: DraftOptions['drafts'] & InputOptions['drafts'] }
   conversations: Pick<ConversationOptions, 'metadata' | 'lifecycle' | 'archive' | 'marks'>
-  control: Pick<ControlOptions, 'repository' | 'queue'> & { stopExecution: () => Promise<void> }
+  control: Pick<ControlOptions, 'repository'> & { queue: ControlOptions['queue'] & Pick<ChatQueueService, 'inspectControls'>, stopExecution: () => Promise<void> }
   uploads: Pick<RemoteUploadService, 'commands' | 'commitInput'>
   questions: Pick<UserQuestionService, 'executeCommand'>
   approvals: Pick<ApprovalService, 'getReview' | 'resolveCommand'>
@@ -88,6 +91,7 @@ export class ProductActorCommandScope {
       input,
       drafts,
       control,
+      queueControls: new ProductQueueControls(database, this.#identity.serviceInstanceId, dependencies.control.queue),
       metadata,
       uploads: dependencies.uploads.commands(principal, admission),
       questions: { execute: (method, input) => dependencies.questions.executeCommand(method, input, admission) },

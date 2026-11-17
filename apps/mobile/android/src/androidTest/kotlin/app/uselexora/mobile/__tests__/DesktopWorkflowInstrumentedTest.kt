@@ -38,6 +38,7 @@ class DesktopWorkflowInstrumentedTest {
         val client = connection.connect()!!
         val marker = File(context.filesDir, "desktop-$token-ready.json")
         val resume = File(context.filesDir, "desktop-$token-resume.json")
+        var primaryFailure: Throwable? = null
         try { LocalStore(context).use { store -> TransferStore(context).use { transfers ->
             val owner = client.identity!!.partition
             val firstId = store.newId(); val scope = "draft:$firstId"
@@ -77,7 +78,7 @@ class DesktopWorkflowInstrumentedTest {
                 }
                 fun input(): String { var value = ""; scenario.onActivity { value = it.findViewById<EditText>(MainActivity.INPUT_ID)?.text?.toString().orEmpty() }; return value }
                 MobileUiTestDriver.awaitConnected()
-                MobileUiTestDriver.openDrafts(); click("草稿 · $firstText"); click("继续编辑")
+                MobileUiTestDriver.openDrafts(); MobileUiTestDriver.clickContaining(firstText); click("继续编辑")
                 waitFor { input() == firstText }
                 scenario.recreate()
                 waitFor { input() == firstText }
@@ -106,7 +107,7 @@ class DesktopWorkflowInstrumentedTest {
                     MobileUiTestDriver.openTaskSettings()
                     MobileUiTestDriver.awaitConnected()
                     File(context.filesDir, "desktop-$token-network-ready.json").writeText("ready")
-                    waitFor(30000) { MobileUiTestDriver.exists("未连接") }
+                    waitFor(30000) { !MobileUiTestDriver.connected() && (MobileUiTestDriver.contains(app.uselexora.mobile.i18n.mobileText(R.string.connection_retrying)) || MobileUiTestDriver.exists("未连接")) }
                     MobileUiTestDriver.returnToConversation()
                     scenario.recreate()
                     waitFor { input() == "发送期间继续写的下一条😀" }
@@ -116,6 +117,19 @@ class DesktopWorkflowInstrumentedTest {
                     assertTrue(readCache.read(owner, "models")?.isNotEmpty() == true)
                     assertNull(readCache.read("different-device", "models"))
                     assertFalse(MobileUiTestDriver.enabled("发送"))
+                    val cachedScope = "conversation:${target.getString("conversationId")}:${target.getString("branchId")}"
+                    val cachedInput = store.draft(owner, cachedScope)!!
+                    val commandsBeforeQueue = store.outbox(owner).map { it.id }.toSet()
+                    MobileUiTestDriver.enqueueInput()
+                    waitFor {
+                        MobileUiTestDriver.contains(app.uselexora.mobile.i18n.mobileText(R.string.mobile_sync_required)) ||
+                            MobileUiTestDriver.contains(app.uselexora.mobile.i18n.mobileText(R.string.mobile_sync_failed_input))
+                    }
+                    assertFalse(MobileUiTestDriver.enabled("发送"))
+                    assertEquals(commandsBeforeQueue, store.outbox(owner).map { it.id }.toSet())
+                    assertEquals(cachedInput.editSequence, store.draft(owner, cachedScope)!!.editSequence)
+                    assertEquals(cachedInput.value.toString(), store.draft(owner, cachedScope)!!.value.toString())
+                    assertEquals("发送期间继续写的下一条😀", input())
                     waitFor { avatarVisible() }
                     File(context.filesDir, "desktop-$token-offline.json").writeText("ready")
                     MobileUiTestDriver.openTaskSettings()
@@ -133,9 +147,9 @@ class DesktopWorkflowInstrumentedTest {
                 }
                 instrumentation.uiAutomation.takeScreenshot()?.let { bitmap -> File(context.filesDir, "desktop-$token.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle() }
             }
-        } } } finally {
+        } } } catch (error: Throwable) { primaryFailure = error; throw error } finally {
             client.close()
-            connection.description()?.let { connection.logout(it) }
+            try { connection.description()?.let { connection.logout(it) } } catch (cleanup: Throwable) { if (primaryFailure != null) primaryFailure.addSuppressed(cleanup) else throw cleanup }
             marker.delete(); resume.delete()
         }
     }

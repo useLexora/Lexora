@@ -47,7 +47,14 @@ class HistoryInstrumentedTest {
                 fun input(value: String) { scenario.onActivity { it.findViewById<EditText>(MainActivity.INPUT_ID).setText(value) } }
                 fun inputIs(value: String): Boolean { var actual = ""; scenario.onActivity { actual = it.findViewById<EditText>(MainActivity.INPUT_ID)?.text?.toString().orEmpty() }; return actual == value }
                 waitFor { MobileUiTestDriver.connected() }
-                MobileUiTestDriver.openTask(task().getString("title"))
+                MobileUiTestDriver.clickTag("home-all-tasks")
+                MobileUiTestDriver.setTextTag("task-search", "历史回复 1")
+                waitFor { MobileUiTestDriver.existsTag("search-results") && text("历史回复 1") }
+                MobileUiTestDriver.clickContaining("历史回复 1 😀")
+                waitFor { text("回到最新") && text("历史回复 1") }
+                assertEquals(originalBranch, task().getString("activeBranchId"))
+                assertEquals(2, messages(originalBranch).count { it.optString("role") == "assistant" })
+                click("回到最新")
                 waitFor { text("历史回复 2") }
                 input("原分支保留输入")
                 val originalScope = "conversation:$conversationId:$originalBranch"
@@ -116,16 +123,24 @@ class HistoryInstrumentedTest {
                 longClickContaining("默认分支改变仍从原来源编辑"); click("编辑")
                 waitFor { inputIs("默认分支改变仍从原来源编辑") }
                 input("任务已删除时必须保留的编辑")
+                waitFor { store.drafts().any { it.partition == partition && MobileContentAdapter.text(it.value.getJSONObject("content")) == "任务已删除时必须保留的编辑" } }
+                val staleDraft = store.drafts().single { it.partition == partition && MobileContentAdapter.text(it.value.getJSONObject("content")) == "任务已删除时必须保留的编辑" }
+                val beforeDeletion = store.outbox(partition).size
                 signal("delete-ready", independentTarget)
                 awaitSignal("task-deleted")
-                click("发送")
+                waitFor { !MobileUiTestDriver.enabled("发送") }
+                assertEquals(beforeDeletion, store.outbox(partition).size)
+                assertTrue(inputIs("任务已删除时必须保留的编辑"))
+                assertTrue(runCatching {
+                    app.uselexora.mobile.protocol.MobileInputCommands(store).send(client, staleDraft, app.uselexora.mobile.protocol.DraftContext.target(staleDraft.scope), "chat.editUserMessage")
+                }.isFailure)
                 waitFor { store.outbox(partition).any { it.method == "chat.submitInput" && it.envelope.getJSONObject("intent").getString("operation") == "edit" && it.state == "rejected" } }
                 assertTrue(inputIs("任务已删除时必须保留的编辑"))
                 val rejection = store.outbox(partition).single { it.method == "chat.submitInput" && it.envelope.getJSONObject("intent").getString("operation") == "edit" && it.state == "rejected" }
                 assertEquals("SOURCE_CHANGED", rejection.receipt!!.getString("errorCode"))
                 assertEquals(rejection.receipt.toString(), CommandOutbox(store).retry(client, rejection).toString())
                 assertEquals("原分支保留输入", MobileContentAdapter.text(store.draft(partition, originalScope)!!.value.getJSONObject("content")))
-                signal("done", JSONObject().put("sourceMessageId", source.getString("id")).put("followup", followupTarget).put("edit", editTarget).put("regenerate", regeneratedTarget).put("independentEdit", independentTarget).put("deletedSourceRejection", rejection.receipt).put("originalInputPreserved", true).put("recreationPreservesTarget", true).put("independentBranchEditAccepted", true))
+                signal("done", JSONObject().put("sourceMessageId", source.getString("id")).put("followup", followupTarget).put("edit", editTarget).put("regenerate", regeneratedTarget).put("independentEdit", independentTarget).put("deletedSourceRejection", rejection.receipt).put("originalInputPreserved", true).put("recreationPreservesTarget", true).put("independentBranchEditAccepted", true).put("deletedSourceUiBlocked", true))
                 instrumentation.uiAutomation.waitForIdle(300, 5000)
                 instrumentation.uiAutomation.takeScreenshot()?.let { bitmap -> File(context.filesDir, "history-$token-branches.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle() }
             }

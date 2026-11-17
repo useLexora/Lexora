@@ -44,6 +44,12 @@ class PaperWorkbenchInstrumentedTest {
                 }
             }
         }
+        val service = compose.onNodeWithTag("service-selector").fetchSemanticsNode().boundsInRoot
+        val space = compose.onNodeWithTag("space-filter").assertHeightIsAtLeast(48.dp).fetchSemanticsNode().boundsInRoot
+        val settings = compose.onNodeWithTag("workbench-settings").assertWidthIsAtLeast(48.dp).fetchSemanticsNode().boundsInRoot
+        assertEquals(service.center.y, space.center.y, 1f)
+        assertTrue(settings.bottom <= service.top)
+        assertTrue(service.right <= space.left)
         capture("service-status-connected.png")
         compose.onNodeWithTag("space-filter").assertIsDisplayed().performClick()
         compose.onNodeWithTag("connection-detail").assertDoesNotExist()
@@ -58,7 +64,7 @@ class PaperWorkbenchInstrumentedTest {
         compose.onNodeWithTag("service-selector").assertHeightIsAtLeast(48.dp)
         val selector = compose.onNodeWithTag("service-selector").fetchSemanticsNode().boundsInRoot
         val detail = compose.onNodeWithTag("connection-detail").fetchSemanticsNode().boundsInRoot
-        assertTrue(selector.right < detail.left)
+        assertTrue(selector.bottom <= detail.top)
         capture("service-status-retrying.png")
         compose.onNodeWithTag("service-selector").performClick()
         compose.runOnIdle {
@@ -73,16 +79,17 @@ class PaperWorkbenchInstrumentedTest {
     }
 
     @Test fun darkServiceStatusSupportsLargeTextAndLongFailureDetails() {
+        val state = state().apply {
+            connected = false; devicePlatform = "win32"
+            deviceLabel = "工作室的长名称服务"
+            connectionPhase = app.uselexora.mobile.session.MobileConnectionPhase.Unavailable
+            connectionLabel = "设备授权已失效 · 本地输入保留，请重新配对"
+        }
         compose.setContent {
             androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(androidx.compose.ui.platform.LocalDensity.current.density, 1.5f)) {
                 LexoraTheme(darkTheme = true) {
                     Box(Modifier.width(320.dp).height(780.dp).background(MaterialTheme.colorScheme.background)) {
-                        PaperWorkbench(state().apply {
-                            connected = false; devicePlatform = "win32"
-                            deviceLabel = "工作室的长名称服务"
-                            connectionPhase = app.uselexora.mobile.session.MobileConnectionPhase.Unavailable
-                            connectionLabel = "设备授权已失效 · 本地输入保留，请重新配对"
-                        }, emptyList(), { _, _ -> }, {}, {})
+                        PaperWorkbench(state, state.tasks, { _, _ -> }, {}, {})
                     }
                 }
             }
@@ -92,6 +99,18 @@ class PaperWorkbenchInstrumentedTest {
         val detail = compose.onNodeWithTag("connection-detail").fetchSemanticsNode().boundsInRoot
         assertTrue(detail.right <= bar.right && detail.bottom <= bar.bottom)
         capture("service-status-dark-large.png")
+        compose.runOnIdle {
+            state.connected = true; state.connectionLabel = "已连接服务"
+            state.selectedSpaceId = "studio"; state.selectedSpaceLabel = "工作空间中的一个长名称"
+        }
+        val service = compose.onNodeWithTag("service-selector").assertHeightIsAtLeast(48.dp).fetchSemanticsNode().boundsInRoot
+        val space = compose.onNodeWithTag("space-filter").assertHeightIsAtLeast(48.dp).fetchSemanticsNode().boundsInRoot
+        val settings = compose.onNodeWithTag("workbench-settings").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertEquals(service.center.y, space.center.y, 1f)
+        assertTrue(settings.bottom <= service.top)
+        assertTrue(service.right <= space.left && space.right <= bar.right)
+        capture("home-compact-dark-large.png")
+        compose.onNodeWithTag("home-all-tasks").performScrollTo().assertIsDisplayed().assertHasClickAction()
     }
 
     @Test fun serviceSwitcherCentersItsEmptyMessageBelowTheHeader() {
@@ -209,9 +228,10 @@ class PaperWorkbenchInstrumentedTest {
                 }
             }
         }
+        capture("home-compact-light.png")
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         for ((target, surfaceTag) in listOf(
-            compose.onNodeWithContentDescription("工作台选项") to "workbench-avatar-surface",
+            compose.onNodeWithTag("workbench-settings") to "workbench-settings-surface",
             compose.onNodeWithTag("space-filter") to "space-filter-surface",
             compose.onNodeWithTag("service-selector") to "service-selector-surface",
         )) {

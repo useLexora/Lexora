@@ -2,15 +2,21 @@ import type { LocalRun } from '@buddy-shared/runs/runApi'
 import type { Ref } from 'vue'
 import type { ChatAgentTurn } from '../modules/tasks/contracts'
 import type { ReaderEntry, ReaderTranscript } from './readerBridge'
+import type { ReaderAnchor } from './readerProjection'
 import { computed, watch } from 'vue'
 import { createChatAgentTurnReducer } from '../modules/tasks/reader'
 
-export function useReaderTurns(entries: Ref<ReaderEntry[]>, runs: Ref<LocalRun[]>, transcripts: Ref<Record<string, ReaderTranscript>>, topic: Ref<string>) {
+export function useReaderTurns(entries: Ref<ReaderEntry[]>, runs: Ref<LocalRun[]>, transcripts: Ref<Record<string, ReaderTranscript>>, topic: Ref<string>, anchor?: Ref<ReaderAnchor | null>) {
   const cache = new Map<string, { count: number, state: string, reducer: ReturnType<typeof createChatAgentTurnReducer> }>()
   watch(topic, () => cache.clear())
   return computed(() => {
     const turns = new Map<string, ChatAgentTurn>()
+    const anchoredRun = anchor?.value?.topic === topic.value
+      ? entries.value.flatMap(entry => entry.messages).find(message => message.id === anchor.value?.messageId)?.runId
+      : undefined
     for (const run of runs.value) {
+      if (run.id === anchoredRun)
+        continue
       const source = transcripts.value[run.id]
       if (!source?.loaded || !source.events.length)
         continue

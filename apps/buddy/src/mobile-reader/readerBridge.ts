@@ -1,5 +1,6 @@
 import type { LocalRun, LocalRunEvent } from '@buddy-shared/runs/runApi'
 import type { ChatAgentTurn } from '../modules/tasks/contracts'
+import type { ReaderAnchor } from './readerProjection'
 import type { ReaderActionInput, ReaderWireEntry } from './readerProtocol'
 import { useTimeoutFn } from '@vueuse/core'
 import { onMounted, onUnmounted, provide, shallowRef } from 'vue'
@@ -31,6 +32,8 @@ export function useReaderBridge() {
   const language = shallowRef('zh')
   provide(readerLanguageKey, language)
   const resultRunId = shallowRef<string | null>(null)
+  const anchor = shallowRef<ReaderAnchor | null>(null)
+  const hasLaterMessages = shallowRef(false)
   let port: MessagePort | undefined
   const projection = new ReaderProjection()
 
@@ -62,6 +65,8 @@ export function useReaderBridge() {
         }
         return
       }
+      if (!update.reset && topic.value && update.topic !== topic.value)
+        return
       if (update.appearance)
         appearance.value = update.appearance.variables
       if (update.typography)
@@ -77,6 +82,8 @@ export function useReaderBridge() {
       runs.value = (update.runs ?? []).map(run => ({ ...run, generation: Number(run.generation) }))
       transcripts.value = next.transcripts
       topic.value = update.topic
+      anchor.value = next.anchor
+      hasLaterMessages.value = update.hasLaterMessages ?? false
       resultRunId.value = update.resultRunId ?? null
       dark.value = update.dark
       fontScale.value = update.fontScale
@@ -95,5 +102,5 @@ export function useReaderBridge() {
     window.removeEventListener('message', connect)
     port?.close()
   })
-  return { entries, runs, transcripts, topic, dark, fontScale, appearance, typography, language, resultRunId, send }
+  return { entries, runs, transcripts, topic, dark, fontScale, appearance, typography, language, resultRunId, anchor, hasLaterMessages, send }
 }

@@ -52,7 +52,7 @@ class ContentInstrumentedTest {
             val opaque = store.edit(owner, "draft:$opaqueId", JSONObject().put("content", large.getJSONObject("content")))
             ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java)).use { scenario ->
                 MobileUiTestDriver.awaitConnected()
-                MobileUiTestDriver.openDrafts(); click("草稿 · 跨端中文😀", prefix = true); click("查看内容")
+                MobileUiTestDriver.openDrafts(); MobileUiTestDriver.clickContaining("跨端中文😀"); click("查看内容")
                 waitFor { var restored = false; scenario.onActivity { restored = it.findViewById<EditText>(MainActivity.INPUT_ID)?.text?.toString().orEmpty().contains("引用原文😀") }; restored }
                 assertEquals(sourceContent.toString(), store.draft(owner, local.scope)!!.value.getJSONObject("content").toString())
                 val commandCount = store.outbox(owner).size
@@ -69,7 +69,7 @@ class ContentInstrumentedTest {
                 instrumentation.uiAutomation.waitForIdle(700, 5000)
                 instrumentation.uiAutomation.takeScreenshot()?.let { bitmap -> File(context.filesDir, "content-$token.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle() }
                 val opaqueCount = store.outbox(owner).size
-                MobileUiTestDriver.openDrafts(); click("草稿 · 请在桌面端查看此内容"); click("查看内容")
+                MobileUiTestDriver.openDrafts(); MobileUiTestDriver.clickContaining("请在桌面端查看此内容"); click("查看内容")
                 waitFor { var restored = false; scenario.onActivity { restored = it.findViewById<EditText>(MainActivity.INPUT_ID)?.text?.toString().orEmpty() == "请在桌面端查看此内容" }; restored }
                 assertTrue(MobileUiTestDriver.exists("发送"))
                 assertFalse(MobileUiTestDriver.enabled("发送"))

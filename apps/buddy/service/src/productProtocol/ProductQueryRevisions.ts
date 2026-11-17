@@ -15,6 +15,9 @@ export function productQueryRevision(database: DatabaseSync, method: string, inp
     case 'spaces.list':
       add('', 'spaces')
       break
+    case 'conversations.search':
+      add('', 'conversations', 'messages', 'conversation_publications', 'run_history')
+      break
     case 'conversations.list':
       add('', 'conversations', 'approvals', 'run_summaries', 'automation_occurrences', 'user_questions', 'task_attention', 'publication_summaries', 'message_summaries')
       break

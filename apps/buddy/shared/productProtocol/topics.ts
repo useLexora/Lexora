@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { productPhaseSchema } from './identity'
-import { productDraftSchema, productQuestionSchema, productRunSchema, productTaskSchema, productTaskSummarySchema } from './queries'
+import { productDraftSchema, productQuestionSchema, productRecentWindowSchema, productRunSchema, productTaskSchema, productTaskSummarySchema } from './queries'
 import { productIdSchema } from './scalars'
 import { productApprovalSchema, productMessageSchema, productQueueItemSchema, productRunEventSchema } from './views'
 
@@ -16,6 +16,10 @@ export const productConversationItemSchema = z.discriminatedUnion('entity', [
   z.object({ entity: z.literal('queue'), value: productQueueItemSchema }).strict(),
   z.object({ entity: z.literal('approval'), value: productApprovalSchema }).strict(),
 ])
+export const productConversationWindowItemSchema = z.union([
+  productConversationItemSchema,
+  z.object({ entity: z.literal('historyWindow'), value: productRecentWindowSchema.omit({ items: true }) }).strict(),
+])
 export const productConversationChangeSchema = z.union([
   z.object({ kind: z.literal('upsert'), item: productConversationItemSchema }).strict(),
   z.object({ kind: z.literal('remove'), entity: z.enum(['task', 'message', 'run', 'queue', 'approval']), id: productIdSchema }).strict(),
@@ -27,15 +31,16 @@ export const PRODUCT_TOPIC_SCHEMAS = {
   draftIndex: { item: productDraftSchema, change: productDraftIndexChangeSchema },
   draft: { item: productDraftSchema, change: productDraftIndexChangeSchema },
   conversation: { item: productConversationItemSchema, change: productConversationChangeSchema },
+  conversationWindow: { item: productConversationWindowItemSchema, change: productConversationChangeSchema },
   questions: { item: productQuestionSchema, change: productQuestionChangeSchema },
   approvalInbox: { item: productApprovalSchema, change: productApprovalInboxChangeSchema },
   serviceState: { item: productServiceStateSchema, change: productServiceStateSchema },
 } as const
-export type ProductTopic = { kind: 'taskIndex' | 'draftIndex' | 'approvalInbox' | 'serviceState' } | { kind: 'draft', draftId: string } | { kind: 'conversation' | 'questions', conversationId: string, branchId: string }
+export type ProductTopic = { kind: 'taskIndex' | 'draftIndex' | 'approvalInbox' | 'serviceState' } | { kind: 'draft', draftId: string } | { kind: 'conversation' | 'conversationWindow' | 'questions', conversationId: string, branchId: string }
 export function formatProductTopic(topic: ProductTopic): string {
   if (topic.kind === 'draft')
     return `draft:${encodeURIComponent(productIdSchema.parse(topic.draftId))}`
-  if (topic.kind === 'conversation' || topic.kind === 'questions')
+  if (topic.kind === 'conversation' || topic.kind === 'conversationWindow' || topic.kind === 'questions')
     return `${topic.kind}:${encodeURIComponent(productIdSchema.parse(topic.conversationId))}:${encodeURIComponent(productIdSchema.parse(topic.branchId))}`
   return topic.kind
 }
@@ -46,7 +51,7 @@ export function parseProductTopic(value: string): ProductTopic {
     topic = { kind: value as 'taskIndex' | 'draftIndex' | 'approvalInbox' | 'serviceState' }
   else if (parts.length === 2 && parts[0] === 'draft')
     topic = { kind: 'draft', draftId: productIdSchema.parse(decodeURIComponent(parts[1]!)) }
-  else if (parts.length === 3 && (parts[0] === 'conversation' || parts[0] === 'questions'))
+  else if (parts.length === 3 && (parts[0] === 'conversation' || parts[0] === 'conversationWindow' || parts[0] === 'questions'))
     topic = { kind: parts[0], conversationId: productIdSchema.parse(decodeURIComponent(parts[1]!)), branchId: productIdSchema.parse(decodeURIComponent(parts[2]!)) }
   else
     throw new Error('Unknown product topic')

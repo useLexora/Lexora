@@ -28,7 +28,7 @@ import androidx.compose.ui.unit.dp
 import org.json.JSONObject
 
 @Composable
-internal fun ComposerToolbar(state: MobileUiState, onAction: (MobileAction, JSONObject?) -> Unit, attachments: () -> Unit, stop: Boolean, stopping: Boolean, active: List<JSONObject>, runs: () -> Unit) {
+internal fun ComposerToolbar(state: MobileUiState, onAction: (MobileAction, JSONObject?) -> Unit, attachments: () -> Unit, stopping: Boolean, active: List<JSONObject>, runs: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val muted = colors.onSurfaceVariant
     val fullAccess = state.executionSelection.optString("executionProfile") == "full_access"
@@ -56,14 +56,22 @@ internal fun ComposerToolbar(state: MobileUiState, onAction: (MobileAction, JSON
                 Icon(Icons.Outlined.ExpandMore, null, Modifier.size(14.dp), tint = muted)
             }
         }
-        val enabled = if (stop) state.connected && !stopping else state.sendEnabled
-        ComposerButton((if (stop) mobileText(R.string.label_stop_reply) else mobileText(R.string.label_send)), if (stop) "stop-run" else "send", enabled, {
-            if (stop) { if (active.size == 1) onAction(MobileAction.StopRun, active.first()) else runs() }
-            else onAction(MobileAction.Send, null)
-        }, surfaceSize = 32.dp) {
-            Box(Modifier.size(32.dp).clip(RoundedCornerShape(6.dp)).background(if (stop || state.sendEnabled) colors.primary else colors.surfaceVariant), contentAlignment = Alignment.Center) {
-                if (stopping) CircularProgressIndicator(Modifier.size(16.dp), color = colors.onPrimary, strokeWidth = 1.5.dp)
-                else Icon(if (stop) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, null, Modifier.size(18.dp), tint = if (stop || state.sendEnabled) colors.onPrimary else muted)
+        if (active.isNotEmpty()) {
+            val target = active.singleOrNull()
+            androidx.compose.runtime.key(active.map { it.optString("id") to it.opt("generation") }) {
+                ComposerButton(if (stopping) mobileText(R.string.label_stopping) else mobileText(R.string.label_stop_reply), "stop-run", state.connected && !stopping, {
+                    if (target != null) onAction(MobileAction.StopRun, target) else runs()
+                }, surfaceSize = 32.dp) {
+                    Box(Modifier.size(32.dp).clip(RoundedCornerShape(6.dp)).background(colors.secondaryContainer), contentAlignment = Alignment.Center) {
+                        if (stopping) CircularProgressIndicator(Modifier.size(16.dp), color = colors.onSecondaryContainer, strokeWidth = 1.5.dp)
+                        else Icon(Icons.Outlined.Stop, null, Modifier.size(18.dp), tint = colors.onSecondaryContainer)
+                    }
+                }
+            }
+        }
+        ComposerButton(mobileText(R.string.label_send), "send", state.sendEnabled, { onAction(MobileAction.Send, null) }, surfaceSize = 32.dp) {
+            Box(Modifier.size(32.dp).clip(RoundedCornerShape(6.dp)).background(if (state.sendEnabled) colors.primary else colors.surfaceVariant), contentAlignment = Alignment.Center) {
+                Icon(Icons.Outlined.ArrowUpward, null, Modifier.size(18.dp), tint = if (state.sendEnabled) colors.onPrimary else muted)
             }
         }
     }
@@ -73,7 +81,7 @@ internal fun ComposerToolbar(state: MobileUiState, onAction: (MobileAction, JSON
 private fun ComposerButton(label: String, tag: String, enabled: Boolean, action: () -> Unit, surfaceSize: Dp = 40.dp, content: @Composable () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     Box(
-        Modifier.width(40.dp).height(48.dp).alpha(if (enabled) 1f else .38f).testTag(tag)
+        Modifier.width(48.dp).height(48.dp).alpha(if (enabled) 1f else .38f).testTag(tag)
             .semantics(mergeDescendants = true) { contentDescription = label }
             .clickable(interactionSource = interaction, indication = null, enabled = enabled, role = Role.Button, onClick = action),
         contentAlignment = Alignment.Center,

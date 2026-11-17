@@ -75,7 +75,7 @@ class AttachmentComposerInstrumentedTest {
                         return text
                     }
                     MobileUiTestDriver.openDrafts()
-                    MobileUiTestDriver.click("草稿 · $body")
+                    MobileUiTestDriver.clickContaining(body)
                     MobileUiTestDriver.click("继续编辑")
                     MobileUiTestDriver.waitUntil { input() == body && MobileUiTestDriver.exists("要移除的资料.txt") }
                     assertTrue(MobileUiTestDriver.enabled("移除附件 要移除的资料.txt"))

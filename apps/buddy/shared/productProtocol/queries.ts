@@ -1,6 +1,7 @@
 import type { ZodType } from 'zod'
 import { z } from 'zod'
-import { buddyComposerDraftSchema, buddyComposerDraftScopeSchema } from '../conversation/composerDraft'
+import { buddyInputDeliverySchema } from '../conversation/chatApi'
+import { buddyComposerDraftModelSelectionSchema, buddyComposerDraftSchema, buddyComposerDraftScopeSchema } from '../conversation/composerDraft'
 import { conversationBranchSchema, conversationSchema, conversationSummarySchema, modelSelectionSchema } from '../conversation/conversationApi'
 import { conversationArchiveItemSchema, conversationArchivePolicySchema, conversationArchiveQuerySchema } from '../conversation/conversationArchiveApi'
 import { taskMarkSchema, taskMarkStateSchema } from '../conversation/taskMarkApi'
@@ -31,7 +32,42 @@ export const productTaskMarkStateSchema = taskMarkStateSchema.extend({ assignmen
 const query = (input: ZodType, output: ZodType) => ({ input, output, role: 'reader', command: false, ready: false } as const)
 export const productConversationArchiveItemSchema = conversationArchiveItemSchema.omit({ metadataRevision: true }).extend({ revision }).strict()
 export const productConversationArchivePageSchema = productPageSchema(productConversationArchiveItemSchema)
+export const productBuddyProfileSchema = z.object({ id, name: z.string().max(80), description: z.string(), enabled: z.boolean(), deleted: z.boolean(), revision }).strict()
+export const productBuddyPageSchema = productPageSchema(productBuddyProfileSchema).extend({ catalogRevision: revision, defaultBuddyId: id })
+export const productMemberPageSchema = productPageSchema(z.object({ actorId: id, profile: productBuddyProfileSchema, modelSelection: buddyComposerDraftModelSelectionSchema.nullable(), modelSelectionSource: z.enum(['legacy', 'explicit', 'snapshot']).nullable(), joinedAt: z.string() }).strict()).extend({ conversationId: id, buddyId: id, revision })
+const searchIdentity = { conversationId: id, branchId: id, title: z.string().nullable(), spaceId: id.nullable() }
+export const productSearchHitSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('task'), ...searchIdentity }).strict(),
+  z.object({ kind: z.literal('message'), ...searchIdentity, messageId: id, role: z.enum(['user', 'assistant']), createdAt: z.string(), snippet: z.string().max(320) }).strict(),
+])
+export const productSearchInputSchema = productPageInputSchema.extend({ query: z.string().trim().min(1).max(200), spaceId: id.nullable().optional(), conversationId: id.optional(), scope: z.enum(['active', 'archived']).default('active') })
+export const productSearchPageSchema = productPageSchema(productSearchHitSchema).extend({ partial: z.boolean(), skippedOversized: z.number().int().nonnegative() })
+export const productQueueControlSchema = z.object({
+  id,
+  revision,
+  delivery: buddyInputDeliverySchema.nullable(),
+  allowedActions: z.array(z.enum(['cancel', 'continue', 'steer'])).max(3),
+  steerTarget: z.object({ runId: id, generation: revision }).strict().nullable(),
+  blockedReason: z.enum(['target_unavailable', 'input_incompatible', 'busy', 'service_unavailable', 'input_unavailable', 'archived']).nullable(),
+}).strict()
+export const productQueueControlsInputSchema = productPageInputSchema.extend({ conversationId: id, branchId: id })
+export const productQueueControlsPageSchema = productPageSchema(productQueueControlSchema)
+export type ProductQueueControl = z.infer<typeof productQueueControlSchema>
+export type ProductQueueControlsInput = z.infer<typeof productQueueControlsInputSchema>
+export const productRecentWindowSchema = productPageSchema(productMessageSchema).extend({ conversationId: id, branchId: id, hasMore: z.boolean() })
+export const productMessageWindowSchema = productPageSchema(productMessageSchema).extend({ conversationId: id, branchId: id, anchorMessageId: id, hasLater: z.boolean() })
+export type ProductSearchInput = z.infer<typeof productSearchInputSchema>
+export type ProductSearchPage = z.infer<typeof productSearchPageSchema>
+export type ProductBuddyProfile = z.infer<typeof productBuddyProfileSchema>
+export type ProductMemberPage = z.infer<typeof productMemberPageSchema>
+export type ProductMessageWindow = z.infer<typeof productMessageWindowSchema>
 export const PRODUCT_QUERY_METHODS = {
+  'conversations.getQueueControls': query(productQueueControlsInputSchema, productQueueControlsPageSchema),
+  'buddies.list': query(productPageInputSchema, productBuddyPageSchema),
+  'conversations.listMembers': query(productPageInputSchema.extend({ conversationId: id }), productMemberPageSchema),
+  'conversations.search': query(productSearchInputSchema, productSearchPageSchema),
+  'conversations.getRecentWindow': query(z.object({ conversationId: id, branchId: id }).strict(), productRecentWindowSchema),
+  'conversations.getMessageWindow': query(z.object({ conversationId: id, branchId: id, messageId: id, limit: z.number().int().min(2).max(PRODUCT_LIMITS.pageItems).default(50) }).strict(), productMessageWindowSchema),
   'buddies.getAvatars': query(z.object({ buddyIds: z.array(id).min(1).max(PRODUCT_LIMITS.pageItems) }).strict(), z.object({ items: z.array(productBuddyAvatarSchema).max(PRODUCT_LIMITS.pageItems) }).strict()),
   'service.host': query(z.object({}).strict(), z.object({ platform: z.enum(['darwin', 'win32', 'linux', 'other']) }).strict()),
   'service.info': query(z.object({}).strict(), z.object({ name: z.string().min(1).max(253) }).strict()),

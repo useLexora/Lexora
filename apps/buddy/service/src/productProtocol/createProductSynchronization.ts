@@ -71,9 +71,13 @@ export function createProductSynchronization(options: {
       return changes().map(change => schema.parse(change))
     })
   }
+  const branchTopics = (conversationId: string, branchId: string) => (['conversation', 'conversationWindow'] as const).map(kind => formatProductTopic({ kind, conversationId, branchId }))
+  const publishConversation = (conversationId: string, branchId: string, changes: () => unknown[]) => {
+    for (const name of branchTopics(conversationId, branchId)) publish(name, changes)
+  }
   const conversationTopics = (conversationId: string) => [...dynamic.keys()].filter((name) => {
     const topic = parseProductTopic(name)
-    return topic.kind === 'conversation' && topic.conversationId === conversationId
+    return (topic.kind === 'conversation' || topic.kind === 'conversationWindow') && topic.conversationId === conversationId
   })
   const publishTask = (id: string) => {
     publish('taskIndex', () => {
@@ -116,8 +120,7 @@ export function createProductSynchronization(options: {
       const branchId = String(row.branch_id)
       if (['run.queued', 'run.started', 'run.completed', 'run.failed', 'run.cancelled', 'message.created', 'message.completed', 'message.block.completed', 'approval.requested', 'approval.resolved'].includes(type))
         publishTask(conversationId)
-      const name = formatProductTopic({ kind: 'conversation', conversationId, branchId })
-      publish(name, () => {
+      publishConversation(conversationId, branchId, () => {
         const event = queries.views.event(runId, encodeProductRevision(sequence))
         const changes: unknown[] = event ? [{ kind: 'event', event }] : []
         if (type === 'message.started' && payload && typeof payload === 'object' && 'role' in payload && payload.role === 'assistant' && 'messageId' in payload && typeof payload.messageId === 'string') {
@@ -180,12 +183,11 @@ export function createProductSynchronization(options: {
   }
   if (options.queue) {
     subscriptions.push(options.queue.onDidChange(({ scope, committed }) => {
-      const name = formatProductTopic({ kind: 'conversation', conversationId: scope.conversationId, branchId: scope.branchId })
       if (!committed?.queueId) {
-        publisher.invalidate(name)
+        for (const name of branchTopics(scope.conversationId, scope.branchId)) publisher.invalidate(name)
         return
       }
-      publish(name, () => {
+      publishConversation(scope.conversationId, scope.branchId, () => {
         const value = queries.views.queue(committed.queueId)
         return value && ['waiting', 'paused'].includes(value.state)
           ? [{ kind: 'upsert', item: { entity: 'queue', value } }]

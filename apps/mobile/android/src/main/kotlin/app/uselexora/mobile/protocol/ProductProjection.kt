@@ -58,6 +58,10 @@ class ProductProjection {
     }
     @Synchronized fun items(): List<JSONObject> = records.values.map { JSONObject(it.toString()) }
     @Synchronized fun view(): List<JSONObject> = records.values.toList()
-    private fun key(topic: String, value: JSONObject): String = if (topic.startsWith("conversation:")) "${value.getString("entity")}:${value.getJSONObject("value").getString("id")}" else value.getString("id")
+    private fun key(topic: String, value: JSONObject): String {
+        if (!topic.startsWith("conversation:")) return value.getString("id")
+        val entity = value.getString("entity")
+        return if (entity == "historyWindow") "$entity:$topic" else "$entity:${value.getJSONObject("value").getString("id")}"
+    }
     private fun bound(count: Int, bytes: Long) { if (count > 10000 || bytes > 8_388_608) throw ProtocolFailure("LIMIT_EXCEEDED") }
 }

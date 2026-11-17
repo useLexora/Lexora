@@ -71,6 +71,17 @@ object MobileUiTestDriver {
     fun clickContaining(value: String) = clickNode(value, substring = true)
     fun clickTag(value: String) = clickNode(value, tag = true)
     fun existsTag(value: String) = byId(value)?.isVisibleToUser == true
+    fun composerText(): String? = visit { it.isVisibleToUser && it.className?.toString() == "android.widget.EditText" }?.let { if (it.isShowingHintText) "" else it.text?.toString() }
+    fun setComposerText(value: String) = waitUntil {
+        visit { it.isVisibleToUser && it.className?.toString() == "android.widget.EditText" }
+            ?.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, android.os.Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value) }) == true
+    }
+
+    fun setTextTag(tag: String, value: String) {
+        waitUntil {
+            byId(tag)?.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, android.os.Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value) }) == true
+        }
+    }
 
     private fun clickNode(value: String, prefix: Boolean = false, substring: Boolean = false, tag: Boolean = false) {
         var forward = true
@@ -114,7 +125,7 @@ object MobileUiTestDriver {
         fun surface(): String? = when {
             exists("任务设置") -> null
             existsTag("task-list") -> "tasks"
-            exists("工作台选项") -> "workbench"
+            existsTag("workbench-list") -> "workbench"
             else -> null
         }
         fun layout(): String {
@@ -146,9 +157,9 @@ object MobileUiTestDriver {
             click("返回")
             awaitStableSurface()
         }
-        if (!exists(title) && exists("工作台选项")) {
-            click("搜索任务")
-            waitUntil { existsTag("task-list") && !exists("工作台选项") }
+        if (!exists(title) && existsTag("workbench-list")) {
+            clickTag("home-all-tasks")
+            waitUntil { existsTag("task-list") && !existsTag("workbench-list") }
         }
         awaitStableSurface()
         click(title)
@@ -156,8 +167,11 @@ object MobileUiTestDriver {
     }
 
     fun openFiles() {
-        if (!exists("任务设置")) click("新任务")
-        click("添加附件"); click("任务文件")
+        waitUntil { existsTag("workbench-list") || existsTag("task-information") || existsTag("conversation-settings") }
+        if (existsTag("conversation-settings")) returnToConversation()
+        if (existsTag("workbench-list")) click("新任务")
+        waitUntil { existsTag("task-information") }
+        click("添加附件"); click("浏览任务文件")
     }
 
     fun openTaskSettings() {
@@ -199,8 +213,8 @@ object MobileUiTestDriver {
     }
 
     fun openDrafts() {
-        if (exists("任务设置")) { click("任务设置") }
-        else click("工作台选项")
+        if (existsTag("workbench-list")) click("新任务")
+        if (!existsTag("conversation-settings")) click("任务设置")
         click("本地草稿")
         waitUntil { exists("手机草稿") }
     }

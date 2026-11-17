@@ -18,6 +18,7 @@ const serviceMode = process.env.LEXORA_TEST_MOBILE_SERVICE_MODE ?? 'utility'
 const bindAddress = process.env.LEXORA_TEST_MOBILE_BIND_ADDRESS ?? '127.0.0.1'
 const useAdbReverse = bindAddress === '127.0.0.1'
 const networkRecovery = process.env.LEXORA_TEST_MOBILE_NETWORK_RECOVERY === '1'
+const serviceInterruption = process.env.LEXORA_TEST_MOBILE_SERVICE_INTERRUPTION === '1'
 
 test('real Desktop and Android keep independent local input and submit one immutable input with attachments', async ({ buddy }) => {
   test.skip(!serial, 'Requires an isolated Android device with the debug and instrumentation APKs installed')
@@ -103,16 +104,21 @@ test('real Desktop and Android keep independent local input and submit one immut
   await new Promise(resolve => listener.close(resolve))
   const configuration = test.info().outputPath('pairing.json')
   let instrument
+  let instrumentOutcome
   try {
     await page.evaluate(({ bindAddress, port }) => window.lexoraDesktop.localChat.privateNetwork.configure({ enabled: true, bindAddress, port }), { bindAddress, port })
     const pairing = await page.evaluate(() => window.lexoraDesktop.localChat.privateNetwork.issuePairing({}))
-    await fs.writeFile(configuration, JSON.stringify({ pairing, networkRecovery, avatarHash, draftId: draft.draftId, originalText }), { mode: 0o600 })
+    await fs.writeFile(configuration, JSON.stringify({ pairing, networkRecovery: networkRecovery || serviceInterruption, avatarHash, draftId: draft.draftId, originalText }), { mode: 0o600 })
     if (useAdbReverse)
       await adb('reverse', `tcp:${port}`, `tcp:${port}`)
     await adb('push', configuration, remoteConfig)
     await fs.rm(configuration)
     instrument = adb('shell', 'am', 'instrument', '-w', '-r', '-e', 'class', 'app.uselexora.mobile.DesktopWorkflowInstrumentedTest', '-e', 'desktopWorkflowToken', token, `${appPackage}.test/androidx.test.runner.AndroidJUnitRunner`)
       .then(result => ({ result }), error => ({ error }))
+      .then((value) => {
+        instrumentOutcome = value
+        return value
+      })
     let checkpoint
     await expect.poll(async () => {
       try {
@@ -138,20 +144,33 @@ test('real Desktop and Android keep independent local input and submit one immut
     await fs.writeFile(continuation, JSON.stringify({ text: updatedText }))
     await adb('push', continuation, `/data/local/tmp/lexora-desktop-${token}-resume.json`)
     await adb('shell', 'run-as', appPackage, 'cp', `/data/local/tmp/lexora-desktop-${token}-resume.json`, resume)
-    if (networkRecovery) {
+    if (networkRecovery || serviceInterruption) {
       const waitMarker = stage => expect.poll(async () => {
         try {
           return (await adb('shell', 'run-as', appPackage, 'cat', `files/desktop-${token}-${stage}.json`)).stdout.trim() === 'ready'
         }
-        catch { return false }
+        catch {
+          if (instrumentOutcome)
+            throw new Error(instrumentOutcome.result?.stdout ?? String(instrumentOutcome.error))
+          return false
+        }
       }, { timeout: 45000 }).toBe(true)
-      expect((await adb('shell', 'settings', 'get', 'global', 'wifi_on')).stdout.trim()).toBe('1')
+      if (networkRecovery)
+        expect((await adb('shell', 'settings', 'get', 'global', 'wifi_on')).stdout.trim()).toBe('1')
       await waitMarker('network-ready')
-      await adb('shell', 'svc', 'wifi', 'disable')
+      if (serviceInterruption)
+        await page.evaluate(() => window.lexoraDesktop.localChat.privateNetwork.configure({ enabled: false }))
+      else
+        await adb('shell', 'svc', 'wifi', 'disable')
       try {
         await waitMarker('offline')
       }
-      finally { await adb('shell', 'svc', 'wifi', 'enable') }
+      finally {
+        if (serviceInterruption)
+          await page.evaluate(({ bindAddress, port }) => window.lexoraDesktop.localChat.privateNetwork.configure({ enabled: true, bindAddress, port }), { bindAddress, port })
+        else
+          await adb('shell', 'svc', 'wifi', 'enable')
+      }
     }
     const outcome = await instrument
     await fs.writeFile(test.info().outputPath('android-instrumentation.txt'), outcome.result?.stdout ?? String(outcome.error))
@@ -174,7 +193,7 @@ test('real Desktop and Android keep independent local input and submit one immut
     await expect(page.locator('.desktop-workbench-area__tasks img').filter({ visible: true }).and(page.locator(`img[src="${avatar}"]`)).first()).toBeVisible()
     await page.screenshot({ path: test.info().outputPath('desktop-conversation.png') })
 
-    await fs.writeFile(test.info().outputPath('workflow.json'), JSON.stringify({ ...checkpoint, localDrafts: true, immutableInput: true, nativeAndroidUi: true, electronUi: true, coreAdapter: serviceMode, wifiInterruptionRecovery: networkRecovery, customAvatar: true, avatarHash, offlineAvatar: networkRecovery, transport: useAdbReverse ? 'adb-reverse' : 'private-network', serverAddress: bindAddress }, null, 2))
+    await fs.writeFile(test.info().outputPath('workflow.json'), JSON.stringify({ ...checkpoint, localDrafts: true, immutableInput: true, nativeAndroidUi: true, electronUi: true, coreAdapter: serviceMode, wifiInterruptionRecovery: networkRecovery, serviceInterruptionRecovery: serviceInterruption, customAvatar: true, avatarHash, offlineAvatar: networkRecovery || serviceInterruption, transport: useAdbReverse ? 'adb-reverse' : 'private-network', serverAddress: bindAddress }, null, 2))
   }
   finally {
     if (networkRecovery)

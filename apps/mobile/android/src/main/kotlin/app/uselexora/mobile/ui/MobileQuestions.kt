@@ -24,6 +24,8 @@ import app.uselexora.mobile.protocol.ProductSubscription
 import app.uselexora.mobile.protocol.ProtocolFailure
 import app.uselexora.mobile.protocol.ProtocolSchemas
 import app.uselexora.mobile.storage.LocalStore
+import app.uselexora.mobile.storage.OutboxItem
+import app.uselexora.mobile.session.MobileOperationFailure
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -41,6 +43,7 @@ class MobileQuestions(
     private var subscription: ProductSubscription? = null
     private var dialog: AlertDialog? = null
     private var openId: String? = null
+    private var panelFailure: ((String) -> Unit)? = null
     private val drafts = activity.getSharedPreferences("question-inputs", Activity.MODE_PRIVATE)
 
     fun bind(client: ProductClient?, conversationId: String?, branchId: String?) {
@@ -66,14 +69,19 @@ class MobileQuestions(
         subscription = ProductSubscription(next.client, schemas,
             snapshot = { received, items -> projection.snapshot(received, items); publish() },
             changes = { received, changes -> projection.apply(received, changes); publish() },
-            state = { state -> if (state !in setOf("SYNCING", "SYNCHRONIZED")) ui { if (current(next)) { dialog?.dismiss(); dialog = null; openId = null; notice(mobileText(R.string.question_sync_failed)) } } })
+            state = { state -> if (state !in setOf("SYNCING", "SYNCHRONIZED")) ui {
+                if (owner === next) {
+                    val message = mobileText(R.string.question_sync_failed)
+                    panelFailure?.invoke(message) ?: notice(message)
+                }
+            } })
         subscription!!.subscribe(topic)
     }
 
     fun close() {
         owner = null
         subscription?.close(); subscription = null
-        dialog?.dismiss(); dialog = null; openId = null
+        dialog?.dismiss(); dialog = null; openId = null; panelFailure = null
     }
 
     fun show(question: JSONObject) {
@@ -105,8 +113,28 @@ class MobileQuestions(
             val content = TextView(activity).apply { text = "$stateLabel\n\n$transcript"; textSize = 16f; setPadding(dp(24), dp(12), dp(24), dp(16)); setTextIsSelectable(true) }
             val builder = AlertDialog.Builder(activity).setTitle(mobileText(R.string.label_questions_answers)).setView(ScrollView(activity).apply { addView(content) })
                 .setNegativeButton(mobileText(R.string.review_close), null)
-            if (failed && expected.client.supports("questions.retry")) builder.setPositiveButton(mobileText(R.string.question_retry)) { _, _ -> submit(expected, snapshot, "questions.retry", null) }
-            dialog = builder.show().also { it.expandForMobileReview() }
+            if (failed && expected.client.supports("questions.retry")) builder.setPositiveButton(mobileText(R.string.question_retry), null)
+            dialog = builder.create().also { shown ->
+                shown.setOnDismissListener { if (dialog === shown) { dialog = null; panelFailure = null } }
+                shown.show(); shown.expandForMobileReview()
+                panelFailure = { message -> content.text = "$message\n\n$stateLabel\n\n$transcript" }
+                if (failed && expected.client.supports("questions.retry")) shown.getButton(AlertDialog.BUTTON_POSITIVE).apply {
+                    setOnClickListener {
+                        isEnabled = false
+                        content.text = "${mobileText(R.string.question_submitting)}\n\n$transcript"
+                        submit(expected, snapshot, "questions.retry", null) { error ->
+                            if (dialog === shown && shown.isShowing) {
+                                if (error == null) shown.dismiss()
+                                else {
+                                    isEnabled = true
+                                    text = if (error.code == "COMMAND_RESULT_UNKNOWN") mobileText(R.string.question_check_status) else mobileText(R.string.question_retry)
+                                    panelFailure?.invoke(MobileFailurePresentation.message(error))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             return
         }
         dialog?.dismiss()
@@ -116,14 +144,26 @@ class MobileQuestions(
         val questions = snapshot.getJSONArray("questions")
         val answers = JSONArray()
         val controls = mutableListOf<View>()
+        var busy = false
+        var checkingOriginal = false
         val layout = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(8), dp(24), dp(12)) }
+        val feedback = TextView(activity).apply { textSize = 14f; visibility = View.GONE; accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
+        layout.addView(feedback)
         fun valid(): Boolean = (0 until answers.length()).all { index ->
             val answer = answers.getJSONObject(index)
             answer.getJSONArray("selectedOptionIds").length() > 0 || answer.optString("text").isNotBlank()
         }
+        fun updateControls() {
+            controls.forEach { it.isEnabled = !busy && !checkingOriginal }
+            dialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.apply {
+                isEnabled = !busy && (checkingOriginal || valid())
+                text = mobileText(if (checkingOriginal) R.string.question_check_status else R.string.question_submit)
+            }
+            dialog?.getButton(AlertDialog.BUTTON_NEUTRAL)?.isEnabled = !busy && !checkingOriginal
+        }
         fun persist() {
             drafts.edit().putString(key, JSONObject().put("answers", answers).toString()).apply()
-            dialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = valid()
+            updateControls()
         }
         for (index in 0 until questions.length()) {
             val item = questions.getJSONObject(index)
@@ -172,14 +212,35 @@ class MobileQuestions(
         val scroll = ScrollView(activity).apply { isFillViewport = false; addView(layout) }
         val builder = AlertDialog.Builder(activity).setTitle(mobileText(R.string.confirm_question, snapshot.optString("buddyName").takeIf { it.isNotBlank() } ?: "Lexora"))
             .setView(scroll).setNegativeButton(mobileText(R.string.question_later), null).setPositiveButton(mobileText(R.string.question_submit), null)
-        if (expected.client.supports("questions.cancel")) builder.setNeutralButton(mobileText(R.string.question_decline)) { _, _ ->
-            AlertDialog.Builder(activity).setTitle(mobileText(R.string.question_skip_title)).setMessage(mobileText(R.string.question_skip_explanation))
-                .setNegativeButton(mobileText(R.string.label_back), null).setPositiveButton(mobileText(R.string.question_skip)) { _, _ -> submit(expected, snapshot, "questions.cancel", null) }.show()
-        }
+        if (expected.client.supports("questions.cancel")) builder.setNeutralButton(mobileText(R.string.question_decline), null)
         dialog = builder.create().also { shown ->
-            shown.setOnDismissListener { if (dialog === shown) { dialog = null; openId = null } }
+            var confirmation: AlertDialog? = null
+            shown.setOnDismissListener { confirmation?.dismiss(); if (dialog === shown) { dialog = null; openId = null; panelFailure = null } }
             shown.show()
             shown.expandForMobileReview()
+            panelFailure = { message -> feedback.text = message; feedback.visibility = View.VISIBLE; scroll.smoothScrollTo(0, 0) }
+            fun send(method: String, response: JSONObject?) {
+                if (busy) return
+                busy = true
+                panelFailure?.invoke(mobileText(R.string.question_submitting))
+                updateControls()
+                submit(expected, snapshot, method, response) { error ->
+                    if (dialog === shown && shown.isShowing) {
+                        busy = false
+                        if (error == null) shown.dismiss()
+                        else {
+                            checkingOriginal = error.code in setOf("COMMAND_RESULT_UNKNOWN", "SERVICE_INSTANCE_CHANGED", "DATA_GENERATION_CHANGED")
+                            panelFailure?.invoke(MobileFailurePresentation.message(error))
+                            updateControls()
+                        }
+                    }
+                }
+            }
+            if (expected.client.supports("questions.cancel")) shown.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                if (busy || checkingOriginal) return@setOnClickListener
+                confirmation = AlertDialog.Builder(activity).setTitle(mobileText(R.string.question_skip_title)).setMessage(mobileText(R.string.question_skip_explanation))
+                    .setNegativeButton(mobileText(R.string.label_back), null).setPositiveButton(mobileText(R.string.question_skip)) { _, _ -> send("questions.cancel", null) }.show()
+            }
             shown.getButton(AlertDialog.BUTTON_POSITIVE).apply {
                 val dark = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
                 val accent = Color.parseColor(if (dark) "#91ABCC" else "#567993")
@@ -190,30 +251,53 @@ class MobileQuestions(
                 setPadding(dp(16), dp(8), dp(16), dp(8))
                 isEnabled = valid()
                 setOnClickListener {
-                    if (!valid() || !current(expected)) return@setOnClickListener
-                    controls.forEach { it.isEnabled = false }; isEnabled = false
-                    val response = JSONObject().put("answers", JSONArray(answers.toString()))
-                    submit(expected, snapshot, "questions.answer", response)
-                    shown.dismiss()
+                    if (!valid() && !checkingOriginal) return@setOnClickListener
+                    send("questions.answer", JSONObject().put("answers", JSONArray(answers.toString())))
                 }
             }
         }
     }
 
-    private fun submit(expected: Owner, question: JSONObject, method: String, response: JSONObject?) {
+    private fun submit(expected: Owner, question: JSONObject, method: String, response: JSONObject?, complete: (MobileOperationFailure?) -> Unit) {
         val captured = response?.let { JSONObject(it.toString()) }
         work {
-            requireCurrent(expected)
-            val intent = JSONObject().put("conversationId", expected.conversationId).put("branchId", expected.branchId).put("requestId", question.getString("id"))
-            captured?.let { intent.put("answers", it.getJSONArray("answers")) }
-            val receipt = CommandOutbox(store).submit(expected.client, method, intent)
-            if (receipt.optString("decision") != "accepted") throw ProtocolFailure(receipt.optString("errorCode", "COMMAND_REJECTED"))
-            val key = "${expected.partition}:${question.getString("id")}"
-            if (captured != null && drafts.getString(key, null) == captured.toString()) drafts.edit().remove(key).apply()
-            ui { if (current(expected)) notice(if (method == "questions.cancel") mobileText(R.string.mobile_skip_choice_submitted) else mobileText(R.string.mobile_answer_submitted)) }
+            try {
+                requireCurrent(expected)
+                val requestId = question.getString("id")
+                val pending = MobileQuestionCommands.pending(store.outbox(expected.partition), expected.partition, expected.conversationId, expected.branchId, requestId)
+                val actualMethod = pending?.method ?: method
+                val actualResponse = if (pending == null) captured else pending.envelope.getJSONObject("intent").optJSONArray("answers")?.let { JSONObject().put("answers", JSONArray(it.toString())) }
+                val outbox = CommandOutbox(store)
+                val receipt = if (pending != null) outbox.retry(expected.client, pending) else {
+                    val intent = JSONObject().put("conversationId", expected.conversationId).put("branchId", expected.branchId).put("requestId", requestId)
+                    captured?.let { intent.put("answers", it.getJSONArray("answers")) }
+                    outbox.submit(expected.client, method, intent)
+                }
+                if (receipt.optString("decision") != "accepted") throw ProtocolFailure(receipt.optString("errorCode", "COMMAND_REJECTED"))
+                val key = "${expected.partition}:$requestId"
+                if (actualResponse != null && drafts.getString(key, null) == actualResponse.toString()) drafts.edit().remove(key).apply()
+                ui {
+                    if (owner === expected) {
+                        complete(null)
+                        if (current(expected)) notice(if (actualMethod == "questions.cancel") mobileText(R.string.mobile_skip_choice_submitted) else mobileText(R.string.mobile_answer_submitted))
+                    }
+                }
+            } catch (error: Exception) {
+                val failure = MobileOperationFailure.from(error)
+                ui { if (owner === expected) complete(failure) }
+            }
         }
     }
     private fun current(expected: Owner) = owner === expected && expected.client.isConnected && expected.client.identity?.partition == expected.partition
     private fun requireCurrent(expected: Owner) { if (!current(expected)) throw ProtocolFailure("SOURCE_CHANGED") }
     private fun dp(value: Int) = (activity.resources.displayMetrics.density * value).toInt()
+}
+
+internal object MobileQuestionCommands {
+    fun pending(items: List<OutboxItem>, partition: String, conversationId: String, branchId: String, requestId: String): OutboxItem? = items.firstOrNull { item ->
+        item.partition == partition && item.state !in setOf("accepted", "rejected") && item.method in setOf("questions.answer", "questions.cancel", "questions.retry") &&
+            item.envelope.optJSONObject("intent")?.let { intent ->
+                intent.optString("conversationId") == conversationId && intent.optString("branchId") == branchId && intent.optString("requestId") == requestId
+            } == true
+    }
 }

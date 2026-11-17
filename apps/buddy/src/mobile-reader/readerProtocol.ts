@@ -42,6 +42,9 @@ export const readerUpdateSchema = schema.object({
   typography: schema.object({ bodySize: schema.number().positive(), bodyLineHeight: schema.number().positive() }).strict().optional(),
   avatars: schema.record(schema.string(), schema.string()).optional(),
   resultRunId: id.nullable().optional(),
+  anchorMessageId: id.nullable().optional(),
+  anchorRequestId: id.nullable().optional(),
+  hasLaterMessages: schema.boolean().optional(),
   topic: schema.string(),
   reset: schema.boolean(),
   dark: schema.boolean(),
@@ -56,6 +59,7 @@ export const readerCopiedSchema = schema.object({ type: schema.literal('copied')
 const action = <T extends string, S extends schema.ZodRawShape>(name: T, fields: S) => schema.object({ action: schema.literal(name), topic: schema.string(), ...fields }).strict()
 export const readerActionSchema = schema.discriminatedUnion('action', [
   action('ready', {}),
+  action('latest', {}),
   action('read-result', { runId: id }),
   action('transcript', { runId: id, retry: schema.literal('true').optional() }),
   action('message', { id }),

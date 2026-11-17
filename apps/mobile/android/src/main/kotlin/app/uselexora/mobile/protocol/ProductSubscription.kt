@@ -9,13 +9,22 @@ import java.util.concurrent.atomic.AtomicLong
 class ProductSubscription(private val client: ProductClient, private val schemas: ProtocolSchemas,
     private val snapshot: (String, List<JSONObject>) -> Unit,
     private val changes: (String, List<JSONObject>) -> Unit,
-    private val state: (String) -> Unit) {
+    private val state: (String) -> Unit,
+    private val failure: (Exception) -> Unit) {
+    constructor(client: ProductClient, schemas: ProtocolSchemas,
+        snapshot: (String, List<JSONObject>) -> Unit,
+        changes: (String, List<JSONObject>) -> Unit,
+        state: (String) -> Unit) : this(client, schemas, snapshot, changes, state, {})
+
     private val worker = Executors.newSingleThreadExecutor()
     private val queuedBytes = AtomicLong(0)
     @Volatile private var closed = false
     @Volatile private var id = UUID.randomUUID().toString()
     @Volatile private var topic = ""
+    private var wireTopic = ""
     @Volatile private var recovering = false
+    @Volatile private var synchronizedSelection: Long? = null
+    val isSynchronized: Boolean get() = !closed && synchronizedSelection == selection.get()
     private var cursor: JSONObject? = null
     private var acknowledging = false
     private val selection = AtomicLong(0)
@@ -26,9 +35,10 @@ class ProductSubscription(private val client: ProductClient, private val schemas
                 queuedBytes.addAndGet(-size)
                 close()
                 state("RESYNC_REQUIRED")
+                failure(ProtocolFailure("LIMIT_EXCEEDED"))
                 client.close()
             } else worker.execute {
-                try { apply(frame) } catch (_: Exception) { if (!closed) { cursor = null; close(); state("RESYNC_REQUIRED"); client.close() } }
+                try { apply(frame) } catch (error: Exception) { if (!closed) { fail(error, "RESYNC_REQUIRED"); close(); client.close() } }
                 finally { queuedBytes.addAndGet(-size) }
             }
         }
@@ -37,13 +47,16 @@ class ProductSubscription(private val client: ProductClient, private val schemas
     fun subscribe(name: String) = enqueue {
         if (recovering && topic == name) return@enqueue
         val requested = selection.incrementAndGet()
+        synchronizedSelection = null
         worker.execute {
             if (closed || selection.get() != requested) return@execute
             try {
                 if (topic.isNotEmpty()) client.exchangeAsync("sync.unsubscribe", JSONObject().put("subscriptionId", id))
-                id = UUID.randomUUID().toString(); topic = name; cursor = null; acknowledging = false
+                id = UUID.randomUUID().toString(); topic = name; cursor = null; acknowledging = false; recovering = false
+                wireTopic = if (name.startsWith("conversation:") && client.supports("conversations.getRecentWindow"))
+                    "conversationWindow:${name.removePrefix("conversation:")}" else name
                 loadSafely()
-            } catch (_: Exception) { if (!closed) state("UNSYNCHRONIZED") }
+            } catch (error: Exception) { if (!closed) fail(error) }
         }
     }
     private fun loadSafely() {
@@ -51,12 +64,21 @@ class ProductSubscription(private val client: ProductClient, private val schemas
         try { load() } catch (error: Exception) {
             if (!closed) {
                 if (error is ProtocolFailure && error.code == "RESYNC_REQUIRED") resynchronize()
-                else state("UNSYNCHRONIZED")
+                else fail(error)
             }
         }
     }
+    private fun fail(error: Throwable, nextState: String = "UNSYNCHRONIZED") {
+        synchronizedSelection = null
+        val previous = id
+        id = UUID.randomUUID().toString(); cursor = null; acknowledging = false; recovering = false
+        runCatching { client.exchangeAsync("sync.unsubscribe", JSONObject().put("subscriptionId", previous)) }
+        state(nextState)
+        failure(generateSequence(error) { it.cause }.filterIsInstance<ProtocolFailure>().firstOrNull() ?: error as? Exception ?: ProtocolFailure("SYNC_INVALID", error))
+    }
     private fun resynchronize() {
         if (closed) return
+        synchronizedSelection = null
         client.exchangeAsync("sync.unsubscribe", JSONObject().put("subscriptionId", id))
         val nextId = UUID.randomUUID().toString()
         id = nextId; cursor = null; acknowledging = false; recovering = true
@@ -66,7 +88,7 @@ class ProductSubscription(private val client: ProductClient, private val schemas
     private fun load() {
         state("SYNCING")
         val requested = selection.get()
-        var page = client.exchange("sync.subscribe", JSONObject().put("subscriptionId", id).put("topic", topic))
+        var page = client.exchange("sync.subscribe", JSONObject().put("subscriptionId", id).put("topic", wireTopic))
         val schema = schemas.document.getJSONObject("sync").getJSONObject("productSyncSnapshotSchema")
         val itemSchema = topicSchema("item")
         val items = mutableListOf<JSONObject>()
@@ -92,7 +114,7 @@ class ProductSubscription(private val client: ProductClient, private val schemas
             }
             page = client.exchange("sync.snapshotPage", JSONObject().put("subscriptionId", id).put("cursor", page.getString("nextCursor")))
         }
-        if (closed) return
+        if (closed || selection.get() != requested) return
         snapshot(topic, items)
         cursor = page.getJSONObject("cursor")
         acknowledge()
@@ -118,23 +140,25 @@ class ProductSubscription(private val client: ProductClient, private val schemas
         cursor = JSONObject().put("syncEpoch", params.getString("syncEpoch")).put("seq", params.getString("toSeq"))
         acknowledge()
     }
-    private fun topicSchema(kind: String): JSONObject = schemas.document.getJSONObject("topics").getJSONObject(topic.substringBefore(':')).getJSONObject(kind)
+    private fun topicSchema(kind: String): JSONObject = schemas.document.getJSONObject("topics").getJSONObject(wireTopic.substringBefore(':')).getJSONObject(kind)
     private fun acknowledge() {
         val position = cursor ?: return
         if (acknowledging || closed) return
         val subscription = id
+        val requested = selection.get()
         val captured = position.toString()
         acknowledging = true
         client.exchangeAsync("sync.ack", JSONObject(captured).put("subscriptionId", subscription)).whenComplete { _, error ->
             enqueue { worker.execute {
-                if (closed || id != subscription) return@execute
+                if (closed || id != subscription || selection.get() != requested) return@execute
                 acknowledging = false
                 if (error != null) {
                     val failure = generateSequence(error) { it.cause }.filterIsInstance<ProtocolFailure>().firstOrNull()
                     if (failure?.code == "RESYNC_REQUIRED") resynchronize()
-                    else { state("UNSYNCHRONIZED"); client.close() }
+                    else { fail(failure ?: error); client.close() }
                 } else {
                     recovering = false
+                    synchronizedSelection = requested
                     state("SYNCHRONIZED")
                     if (cursor?.toString() != captured) acknowledge()
                 }
@@ -144,6 +168,7 @@ class ProductSubscription(private val client: ProductClient, private val schemas
     @Synchronized fun close() {
         if (closed) return
         closed = true
+        synchronizedSelection = null
         removeListener()
         worker.execute { if (topic.isNotEmpty() && client.isConnected) runCatching { client.exchangeAsync("sync.unsubscribe", JSONObject().put("subscriptionId", id)) } }
         worker.shutdown()

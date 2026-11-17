@@ -120,6 +120,34 @@ class PreviewInstrumentedTest {
             }
         } finally { source.delete() }
     }
+    @Test fun failedPreviewCanRetryLocallyAndEmptyTextIsNotAFailure() {
+        val source = file("txt")
+        source.writeBytes(byteArrayOf(0xC3.toByte(), 0x28))
+        val intent = Intent(context, PreviewActivity::class.java).putExtra("path", source.absolutePath).putExtra("name", "notes.txt").putExtra("mime", "text/plain")
+        try {
+            ActivityScenario.launch<PreviewActivity>(intent).use { scenario ->
+                waitFor {
+                    var visible = false
+                    scenario.onActivity { visible = it.findViewById<Button>(PreviewActivity.RETRY_ID).visibility == android.view.View.VISIBLE }
+                    visible
+                }
+                assertArrayEquals(byteArrayOf(0xC3.toByte(), 0x28), source.readBytes())
+                scenario.onActivity { assertNull(it.findViewById<Button>(PreviewActivity.FOLLOWUP_ID)) }
+                source.writeText("")
+                scenario.onActivity { it.findViewById<Button>(PreviewActivity.RETRY_ID).performClick() }
+                waitFor {
+                    var empty = false
+                    scenario.onActivity {
+                        empty = it.findViewById<TextView>(PreviewActivity.STATUS_ID).text == it.getString(R.string.preview_empty_text) &&
+                            it.findViewById<Button>(PreviewActivity.RETRY_ID).visibility == android.view.View.GONE &&
+                            it.findViewById<TextView>(PreviewActivity.TEXT_ID)?.text?.isEmpty() == true
+                    }
+                    empty
+                }
+                assertEquals(0L, source.length())
+            }
+        } finally { source.delete() }
+    }
     private fun capture(name: String) {
         if (InstrumentationRegistry.getArguments().getString("captureScreenshots") != "true") return
         InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()?.let { bitmap ->

@@ -24,7 +24,8 @@ class LocalizationInstrumentedTest {
         }
     }
     private fun resumeDraft(scenario: ActivityScenario<MainActivity>, text: String) {
-        MobileUiTestDriver.click(mobileText(R.string.label_workspace_options))
+        MobileUiTestDriver.click(mobileText(R.string.label_new_task))
+        MobileUiTestDriver.click(mobileText(R.string.label_task_settings))
         MobileUiTestDriver.click(mobileText(R.string.label_local_drafts))
         MobileUiTestDriver.clickContaining(text)
         MobileUiTestDriver.click(mobileText(R.string.mobile_continue_editing).uppercase(app.uselexora.mobile.i18n.MobileStrings.locale))
@@ -37,6 +38,38 @@ class LocalizationInstrumentedTest {
             assertEquals(mobileText(R.string.label_what_would_you_like_lexora_to_do), it.findViewById<EditText>(MainActivity.INPUT_ID).hint.toString())
         }
     }
+    @Test fun languageChangeFromTaskSettingsReturnsToTheSameInput() {
+        val original = MobileAppearance.language
+        instrumentation.runOnMainSync { MobileAppearance.selectLanguage(context, "zh") }
+        try {
+            ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).putExtra("fixture", true)).use { scenario ->
+                MobileUiTestDriver.click("新任务")
+                val text = "${UUID.randomUUID()} 同一个任务中的未发送输入"
+                MobileUiTestDriver.waitUntil {
+                    var enabled = false
+                    scenario.onActivity { enabled = it.findViewById<EditText>(MainActivity.INPUT_ID)?.isEnabled == true }
+                    enabled
+                }
+                scenario.onActivity { it.findViewById<EditText>(MainActivity.INPUT_ID).setText(text) }
+                MobileUiTestDriver.clickTag("task-information")
+                MobileUiTestDriver.click(mobileText(R.string.label_appearance_language))
+                MobileUiTestDriver.clickTag("language-selector")
+                MobileUiTestDriver.click("English")
+                MobileUiTestDriver.waitUntil { MobileUiTestDriver.exists("Phone settings") }
+                MobileUiTestDriver.click(mobileText(R.string.label_close_settings))
+                MobileUiTestDriver.waitUntil { MobileUiTestDriver.existsTag("conversation-settings") }
+                MobileUiTestDriver.click(mobileText(R.string.back_conversation))
+                MobileUiTestDriver.waitUntil {
+                    var restored = false
+                    scenario.onActivity { restored = it.findViewById<EditText>(MainActivity.INPUT_ID)?.text?.toString() == text }
+                    restored
+                }
+                MobileUiTestDriver.click(mobileText(R.string.label_back))
+                MobileUiTestDriver.waitUntil { MobileUiTestDriver.exists("New task") }
+            }
+        } finally { instrumentation.runOnMainSync { MobileAppearance.selectLanguage(context, original) } }
+    }
+
     @Test fun actualLanguageSelectorRecreatesNativeContextAndPreservesDraft() {
         val original = MobileAppearance.language
         instrumentation.runOnMainSync { MobileAppearance.selectLanguage(context, "zh") }
@@ -52,8 +85,12 @@ class LocalizationInstrumentedTest {
                 }
                 scenario.onActivity { it.findViewById<EditText>(MainActivity.INPUT_ID).setText(text) }
                 MobileUiTestDriver.click(mobileText(R.string.label_back))
-                MobileUiTestDriver.click(mobileText(R.string.label_appearance_language))
+                MobileUiTestDriver.clickTag("workbench-settings")
+                MobileUiTestDriver.clickTag("language-selector")
                 MobileUiTestDriver.click("English")
+                MobileUiTestDriver.waitUntil { MobileUiTestDriver.exists("Phone settings") }
+                assertTrue(MobileUiTestDriver.exists("English"))
+                MobileUiTestDriver.click(mobileText(R.string.label_close_settings))
                 MobileUiTestDriver.waitUntil { MobileUiTestDriver.exists("New task") }
                 scenario.onActivity { assertEquals("en", it.resources.configuration.locales[0].language) }
                 assertTrue(MobileUiTestDriver.exists("All spaces"))
@@ -61,10 +98,13 @@ class LocalizationInstrumentedTest {
                 resumeDraft(scenario, text)
                 capture("i18n-draft-en.png")
                 MobileUiTestDriver.click(mobileText(R.string.label_back))
-                MobileUiTestDriver.click(mobileText(R.string.label_appearance_language))
+                MobileUiTestDriver.clickTag("workbench-settings")
                 MobileUiTestDriver.waitUntil { MobileUiTestDriver.exists("English") }
                 capture("i18n-settings-en.png")
+                MobileUiTestDriver.clickTag("language-selector")
                 MobileUiTestDriver.click("简体中文")
+                MobileUiTestDriver.waitUntil { MobileUiTestDriver.exists("手机设置") }
+                MobileUiTestDriver.click(mobileText(R.string.label_close_settings))
                 MobileUiTestDriver.waitUntil { MobileUiTestDriver.exists("新任务") }
                 scenario.onActivity { assertEquals("zh", it.resources.configuration.locales[0].language) }
                 assertTrue(MobileUiTestDriver.exists("全部空间"))

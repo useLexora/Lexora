@@ -1,13 +1,21 @@
 import type { ComponentPublicInstance, Ref } from 'vue'
 import type { ReaderEntry } from './readerBridge'
+import type { ReaderAnchor } from './readerProjection'
 import { defaultRangeExtractor, elementScroll, useVirtualizer } from '@tanstack/vue-virtual'
-import { computed, onMounted, onUnmounted, shallowRef, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, shallowRef, watch } from 'vue'
 
-export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Ref<ReaderEntry[]>, topic: Ref<string>) {
+export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Ref<ReaderEntry[]>, topic: Ref<string>, anchor: Ref<ReaderAnchor | null>, hasLaterMessages: Ref<boolean>, onLatest: () => void) {
   const followsEnd = shallowRef(true)
   const hasMoreBelow = shallowRef(false)
-  const showLatest = computed(() => !followsEnd.value && hasMoreBelow.value)
+  const readingHistory = shallowRef(false)
+  const anchorStatus = shallowRef<'idle' | 'locating' | 'located' | 'missing'>('idle')
+  const locatedMessageId = shallowRef<string | null>(null)
+  const showLatest = computed(() => hasLaterMessages.value || readingHistory.value || (!followsEnd.value && hasMoreBelow.value))
   const selected = shallowRef<number[]>([])
+  const locatingIndex = shallowRef<number | null>(null)
+  let anchorFrame = 0
+  let navigation = 0
+  let lastAnchorRequest: string | null = null
   let frame = 0
   let touching = false
   let lastTop = 0
@@ -30,7 +38,7 @@ export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Re
       anchorTo: 'end' as const,
       followOnAppend: followsEnd.value,
       scrollEndThreshold: followsEnd.value ? 24 : 0,
-      rangeExtractor: (range: Parameters<typeof defaultRangeExtractor>[0]) => [...new Set([...defaultRangeExtractor(range), ...selected.value])].sort((a, b) => a - b),
+      rangeExtractor: (range: Parameters<typeof defaultRangeExtractor>[0]) => [...new Set([...defaultRangeExtractor(range), ...selected.value, ...(locatingIndex.value === null ? [] : [locatingIndex.value])])].sort((a, b) => a - b),
       onChange: () => {
         report()
         follow()
@@ -62,9 +70,68 @@ export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Re
         virtualizer.value.scrollToEnd()
     })
   }
-  function latest() {
+  function cancelAnchor() {
+    navigation++
+    cancelAnimationFrame(anchorFrame)
+    locatingIndex.value = null
+  }
+  function resumeLatest() {
+    cancelAnchor()
+    anchorStatus.value = 'idle'
+    locatedMessageId.value = null
+    readingHistory.value = false
     followsEnd.value = true
     follow()
+  }
+  function latest() {
+    onLatest()
+    if (!hasLaterMessages.value)
+      resumeLatest()
+  }
+  async function locate(request: ReaderAnchor) {
+    cancelAnchor()
+    const current = navigation
+    followsEnd.value = false
+    readingHistory.value = true
+    cancelAnimationFrame(frame)
+    locatedMessageId.value = null
+    anchorStatus.value = 'locating'
+    const index = entries.value.findIndex(entry => entry.messages.some(message => message.id === request.messageId))
+    if (request.topic !== topic.value || index < 0) {
+      anchorStatus.value = 'missing'
+      return
+    }
+    locatingIndex.value = index
+    await nextTick()
+    if (current !== navigation)
+      return
+    virtualizer.value.scrollToIndex(index, { align: 'start' })
+    let attempts = 0
+    const align = () => {
+      if (current !== navigation || request.topic !== topic.value)
+        return
+      const element = viewport.value
+      const message = [...element?.querySelectorAll<HTMLElement>('[data-message-id]') ?? []].find(element => element.dataset.messageId === request.messageId)
+      if (element && message) {
+        const offset = message.getBoundingClientRect().top - element.getBoundingClientRect().top
+        const target = Math.max(0, Math.min(element.scrollHeight - element.clientHeight, element.scrollTop + offset))
+        if (Math.abs(element.scrollTop - target) <= 2) {
+          anchorStatus.value = 'located'
+          locatedMessageId.value = request.messageId
+          locatingIndex.value = null
+          return
+        }
+        virtualizer.value.scrollToOffset(target)
+      }
+      if (++attempts < 12) {
+        anchorFrame = requestAnimationFrame(align)
+      }
+      else {
+        anchorStatus.value = 'missing'
+        locatingIndex.value = null
+      }
+    }
+    anchorFrame = requestAnimationFrame(align)
   }
   function scroll() {
     const element = viewport.value
@@ -74,14 +141,16 @@ export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Re
     const atEnd = element.scrollHeight - element.clientHeight - element.scrollTop < 24
     const automatic = programmaticTop !== null && Math.abs(element.scrollTop - programmaticTop) < 2
     if (!automatic && (touching || element.scrollTop < lastTop - 2))
-      followsEnd.value = atEnd
-    else if (atEnd)
+      followsEnd.value = atEnd && !readingHistory.value && !hasLaterMessages.value
+    else if (atEnd && !readingHistory.value && !hasLaterMessages.value)
       followsEnd.value = true
     programmaticTop = null
     lastTop = element.scrollTop
   }
   function touch(active: boolean) {
     touching = active
+    if (active)
+      cancelAnchor()
     if (!active)
       follow()
   }
@@ -102,16 +171,42 @@ export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Re
     selected.value = indexes
   }
   watch(topic, () => {
-    followsEnd.value = true
+    cancelAnchor()
+    anchorStatus.value = 'idle'
+    locatedMessageId.value = null
+    readingHistory.value = Boolean(anchor.value) || hasLaterMessages.value
+    followsEnd.value = !readingHistory.value
     selected.value = []
     virtualizer.value.measure()
     follow()
+  })
+  watch(entries, (next, previous) => {
+    if (previous[0] && next.findIndex(entry => entry.id === previous[0]!.id) > 0) {
+      followsEnd.value = false
+      cancelAnimationFrame(frame)
+    }
+  })
+  watch(() => anchor.value ? JSON.stringify([anchor.value.topic, anchor.value.requestId]) : null, (request) => {
+    if (anchor.value && request !== lastAnchorRequest) {
+      lastAnchorRequest = request
+      void locate(anchor.value)
+    }
+    else if (!anchor.value) {
+      cancelAnchor()
+      anchorStatus.value = 'idle'
+      locatedMessageId.value = null
+    }
+  })
+  watch(hasLaterMessages, (current, previous) => {
+    if (!current && previous && !anchor.value)
+      resumeLatest()
   })
   watch(entries, follow, { flush: 'post' })
   onMounted(() => document.addEventListener('selectionchange', retainSelection))
   onUnmounted(() => {
     document.removeEventListener('selectionchange', retainSelection)
     cancelAnimationFrame(frame)
+    cancelAnchor()
   })
-  return { rows, height, followsEnd, showLatest, latest, scroll, touch, measure }
+  return { rows, height, followsEnd, showLatest, anchorStatus, locatedMessageId, latest, scroll, touch, measure }
 }

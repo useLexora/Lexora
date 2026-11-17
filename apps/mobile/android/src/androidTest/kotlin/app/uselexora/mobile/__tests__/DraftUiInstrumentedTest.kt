@@ -26,10 +26,10 @@ class DraftUiInstrumentedTest {
             store.edit(partition, scope, JSONObject().put("content", MobileContentAdapter.textContent(body)))
             val outbox = store.outbox(partition).map { it.id }.toSet()
             ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).putExtra("fixture", true)).use { scenario ->
-                MobileUiTestDriver.openDrafts(); clickText("草稿 · $body"); clickText("继续编辑")
+                MobileUiTestDriver.openDrafts(); MobileUiTestDriver.clickContaining(body); clickText("继续编辑")
                 waitFor { var ready = false; scenario.onActivity { ready = it.findViewById<EditText>(MainActivity.INPUT_ID)?.text?.toString() == body }; ready }
                 clickText("返回")
-                waitFor { MobileUiTestDriver.exists("工作台选项") && !MobileUiTestDriver.exists("任务设置") }
+                waitFor { MobileUiTestDriver.existsTag("workbench-list") && !MobileUiTestDriver.exists("任务设置") }
                 MobileUiTestDriver.clickTag("new-task")
                 fun blankConversation(): Boolean {
                     var ready = false
@@ -79,7 +79,7 @@ class DraftUiInstrumentedTest {
                 .put("executionConfig", JSONObject().put("executionProfile", "read_only").put("approvalPolicy", "policy")))
         }
         ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).putExtra("fixture", true)).use { scenario ->
-            MobileUiTestDriver.openDrafts(); clickText("草稿 · 保留这份输入"); clickText("继续编辑")
+            MobileUiTestDriver.openDrafts(); MobileUiTestDriver.clickContaining("保留这份输入"); clickText("继续编辑")
             fun mode(): String = LocalStore(context).use { store ->
                 app.uselexora.mobile.protocol.ExecutionSettings.label(store.draft(partition, "global")!!.value.getJSONObject("executionConfig"))
             }
@@ -95,7 +95,7 @@ class DraftUiInstrumentedTest {
             open()
             clickText("完全访问")
             clickText("取消")
-            clickText("返回任务设置")
+            clickText("关闭")
             waitFor { mode() == "人工审批" }
             LocalStore(context).use { store ->
                 assertEquals("manual", store.draft(partition, "global")!!.value.getJSONObject("executionConfig").getString("approvalPolicy"))
@@ -126,7 +126,7 @@ class DraftUiInstrumentedTest {
             store.edit(foreign, "global", JSONObject().put("content", MobileContentAdapter.textContent("旧连接输入-$token").apply { getJSONArray("panelResourceIds").put("foreign-attachment") }))
         }
         ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).putExtra("fixture", true)).use { scenario ->
-            MobileUiTestDriver.openDrafts(); clickText("草稿 · 仅附件草稿"); clickText("继续编辑")
+            MobileUiTestDriver.openDrafts(); MobileUiTestDriver.clickContaining("当前连接 · 新任务草稿\n1 个附件"); clickText("继续编辑")
             clickText("任务设置")
             waitFor { MobileUiTestDriver.exists("本机只读") }
             clickText("返回对话")
@@ -136,7 +136,7 @@ class DraftUiInstrumentedTest {
             waitFor { MobileUiTestDriver.exists("本机只读") }
             clickText("返回对话")
             waitFor { !MobileUiTestDriver.existsTag("conversation-settings") }
-            MobileUiTestDriver.openDrafts(); clickText("以前的连接 · 旧连接输入-$token")
+            MobileUiTestDriver.openDrafts(); MobileUiTestDriver.clickContaining("旧连接输入-$token")
             assertFalse(MobileUiTestDriver.exists("继续编辑"))
             clickText("复制文字")
             waitFor { var ready = false; scenario.onActivity { ready = it.findViewById<EditText>(MainActivity.INPUT_ID)?.text?.toString() == "旧连接输入-$token" }; ready }

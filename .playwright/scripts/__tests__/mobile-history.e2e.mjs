@@ -156,7 +156,7 @@ test('Android historical followup, edit and regeneration preserve branches, rest
     }, original.conversation_id)
     await signal('task-deleted')
     const evidence = await checkpoint('done')
-    expect(evidence).toMatchObject({ independentBranchEditAccepted: true, deletedSourceRejection: { decision: 'rejected', errorCode: 'SOURCE_CHANGED' } })
+    expect(evidence).toMatchObject({ independentBranchEditAccepted: true, deletedSourceUiBlocked: true, deletedSourceRejection: { decision: 'rejected', errorCode: 'SOURCE_CHANGED' } })
     const result = await instrument
     expect(result.error).toBeUndefined()
     expect(result.result.stdout).toMatch(/OK \(1 test\)/)

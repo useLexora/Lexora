@@ -2,6 +2,7 @@ import type { BuddyResourceQuote } from '../../../shared/conversation/buddyUserC
 import type { BuddyComposerDraft } from '../../../shared/conversation/composerDraft'
 import type { ProductMethod } from '../../../shared/productProtocol/methods'
 import type { ProductTopic } from '../../../shared/productProtocol/topics'
+import type { MessageRecord } from '../storage/conversationHistoryRepository'
 import type { ProductRequestHandler } from './ProductConnection'
 import { createHash } from 'node:crypto'
 import { hostname, platform } from 'node:os'
@@ -19,8 +20,10 @@ import { createRunRepository } from '../storage/runRepository'
 import { createTaskMarkRepository } from '../storage/taskMarkRepository'
 import { assertCommittedRead, withTransaction } from '../storage/transaction'
 import { ProductBuddyAvatars } from './ProductBuddyAvatars'
+import { ProductBuddyDirectory } from './ProductBuddyDirectory'
 import { ProductContentReferences } from './ProductContentReferences'
 import { ProductDraftReadModel } from './ProductDraftReadModel'
+import { ProductHistorySearch } from './ProductHistorySearch'
 import { ProductPageReader } from './ProductPageReader'
 import { productQueryRevision } from './ProductQueryRevisions'
 import { ProductReadViews } from './ProductReadViews'
@@ -116,7 +119,7 @@ export class ProductQueries {
   assertTopic(topic: ProductTopic): void {
     if (topic.kind === 'draft' && !this.draft(topic.draftId))
       throw new ProductProtocolError('OBJECT_DELETED')
-    if ((topic.kind === 'conversation' || topic.kind === 'questions') && (!this.task(topic.conversationId) || !this.#database.prepare('SELECT 1 FROM conversation_branches WHERE id = ? AND conversation_id = ?').get(topic.branchId, topic.conversationId)))
+    if ((topic.kind === 'conversation' || topic.kind === 'conversationWindow' || topic.kind === 'questions') && (!this.task(topic.conversationId) || !this.#database.prepare('SELECT 1 FROM conversation_branches WHERE id = ? AND conversation_id = ?').get(topic.branchId, topic.conversationId)))
       throw new ProductProtocolError('OBJECT_DELETED')
   }
 
@@ -129,6 +132,8 @@ export class ProductQueries {
       return { items: [{ phase: 'ready' }], nextCursor: null }
     if (topic.kind === 'questions')
       return this.#read('questions.list', { conversationId: topic.conversationId, branchId: topic.branchId, limit: PRODUCT_LIMITS.pageItems, cursor }) as { items: unknown[], nextCursor: string | null }
+    if (topic.kind === 'conversationWindow')
+      return this.#windowTopicPage(topic.conversationId, topic.branchId, cursor)
     if (topic.kind !== 'conversation') {
       const method = topic.kind === 'taskIndex' ? 'conversations.list' : topic.kind === 'draftIndex' ? 'composerDrafts.list' : 'approvals.list'
       return this.#read(method, { limit: PRODUCT_LIMITS.pageItems, cursor, ...(topic.kind === 'approvalInbox' ? { status: 'pending' } : {}) }) as { items: unknown[], nextCursor: string | null }
@@ -155,8 +160,10 @@ export class ProductQueries {
 
   handlers(): Partial<Record<ProductMethod, ProductRequestHandler>> {
     const handlers: Partial<Record<ProductMethod, ProductRequestHandler>> = {}
-    for (const method of Object.keys(PRODUCT_QUERY_METHODS).filter(method => !method.startsWith('providers.') && method !== 'conversations.listArchived' && method !== 'conversations.getArchivePolicy') as (keyof typeof PRODUCT_QUERY_METHODS)[]) {
-      handlers[method] = { handle: (input) => {
+    for (const method of Object.keys(PRODUCT_QUERY_METHODS).filter(method => !method.startsWith('providers.') && method !== 'conversations.listArchived' && method !== 'conversations.getArchivePolicy' && method !== 'conversations.getQueueControls') as (keyof typeof PRODUCT_QUERY_METHODS)[]) {
+      handlers[method] = { handle: (input, context) => {
+        if (method === 'conversations.search' && (input as { scope: string }).scope === 'archived' && context.role !== 'owner')
+          throw new ProductProtocolError('NOT_AUTHORIZED')
         assertCommittedRead(this.#database)
         return withTransaction(this.#database, () => this.#read(method, input as Record<string, unknown>))
       } }
@@ -168,6 +175,11 @@ export class ProductQueries {
     switch (method) {
       case 'service.host': return { platform: ['darwin', 'win32', 'linux'].includes(platform()) ? platform() : 'other' }
       case 'service.info': return { name: hostname() || 'Lexora' }
+      case 'buddies.list': return new ProductBuddyDirectory(this.#database, this.#instance).list(input)
+      case 'conversations.listMembers': return new ProductBuddyDirectory(this.#database, this.#instance).members(input)
+      case 'conversations.search': return new ProductHistorySearch(this.#database, this.#instance, this.views).search(input)
+      case 'conversations.getMessageWindow': return this.#messageWindow(input)
+      case 'conversations.getRecentWindow': return this.#recentWindow(input)
       case 'buddies.getAvatars': return new ProductBuddyAvatars(this.#database).metadata(input.buddyIds as string[])
       case 'questions.list': return this.#pages.read(`${method}:${input.conversationId}:${input.branchId}`, input, 'user_questions', 'EXISTS (SELECT 1 FROM runs r JOIN conversations c ON c.id = r.conversation_id WHERE r.id = user_questions.run_id AND r.conversation_id = ? AND r.branch_id = ? AND c.deleted_at IS NULL)', [String(input.conversationId), String(input.branchId)], id => this.views.question(id))
       case 'spaces.list': return this.#pages.read(method, input, 'spaces', 'revoked_at IS NULL', [], id => this.#database.prepare('SELECT id, name, memory_scope AS memoryScope FROM spaces WHERE id = ?').get(id))
@@ -210,6 +222,45 @@ export class ProductQueries {
     }
   }
 
+  #windowTopicPage(conversationId: string, branchId: string, cursor: string | null): { items: unknown[], nextCursor: string | null } {
+    const match = cursor === null ? null : /^([0-6])\.(.*)$/.exec(cursor)
+    if (cursor !== null && !match)
+      throw new ProductProtocolError('CURSOR_EXPIRED')
+    const phase = match ? Number(match[1]) : 0
+    const nested = match?.[2] ? decodeURIComponent(match[2]) : null
+    const input = { conversationId, branchId, limit: PRODUCT_LIMITS.pageItems, cursor: nested }
+    const entities = ['task', 'run', 'queue', 'approval', 'message', 'historyWindow', 'message'] as const
+    let page: { items: unknown[], nextCursor: string | null }
+    if (phase === 0) {
+      this.assertTopic({ kind: 'conversationWindow', conversationId, branchId })
+      page = { items: [this.task(conversationId)], nextCursor: null }
+    }
+    else if (phase === 1) {
+      const active = this.#database.prepare('SELECT COUNT(*) AS count FROM runs WHERE conversation_id = ? AND branch_id = ? AND execution_kind IN (\'root\',\'actor_child\',\'maintenance\') AND status IN (\'queued\',\'running\')').get(conversationId, branchId)!
+      if (Number(active.count) > PRODUCT_LIMITS.pageItems)
+        throw new ProductProtocolError('PAGE_TOO_LARGE')
+      const table = `(SELECT rowid, id FROM runs WHERE conversation_id = ? AND branch_id = ? AND execution_kind IN ('root','actor_child','maintenance') ORDER BY (status IN ('queued','running')) DESC, rowid DESC LIMIT ${PRODUCT_LIMITS.pageItems})`
+      const rows = this.#database.prepare(`SELECT id FROM ${table}`).all(conversationId, branchId)
+      page = this.#pages.read(`runs.list:recent:${conversationId}:${branchId}`, input, 'runs', 'id IN (SELECT value FROM json_each(?))', [JSON.stringify(rows.map(row => row.id))], id => this.#run(id))
+    }
+    else if (phase === 2 || phase === 3) {
+      const method = phase === 2 ? 'chat.queue.list' : 'approvals.list'
+      page = this.#read(method, { ...input, ...(phase === 3 ? { status: 'pending' } : {}) }) as typeof page
+      if (page.nextCursor)
+        throw new ProductProtocolError('PAGE_TOO_LARGE')
+    }
+    else if (phase === 4 || phase === 5) {
+      const { items, ...window } = this.#recentWindow(input)
+      page = { items: phase === 4 ? items : [window], nextCursor: null }
+    }
+    else {
+      page = this.streaming.page(conversationId, branchId, null)
+      if (page.nextCursor)
+        throw new ProductProtocolError('PAGE_TOO_LARGE')
+    }
+    return { items: page.items.map(value => ({ entity: entities[phase]!, value })), nextCursor: page.nextCursor ? `${phase}.${encodeURIComponent(page.nextCursor)}` : phase < 6 ? `${phase + 1}.` : null }
+  }
+
   #run(id: string) {
     const run = createRunRepository(this.#database).findById(id)
     if (!run || run.executionKind === 'npc_child' || !this.task(run.conversationId))
@@ -219,11 +270,37 @@ export class ProductQueries {
     return productRunSchema.parse({ ...toPublicRun(run, input?.reasoning ?? null), executionKind: run.executionKind, generation: encodeProductRevision(run.generation), lastEventSequence: encodeProductRevision(Number(this.#database.prepare('SELECT next_event_sequence FROM runs WHERE id = ?').get(id)?.next_event_sequence ?? 1) - 1), errorCode: run.errorCode ? code.success ? code.data : 'INTERNAL_ERROR' : null })
   }
 
-  #messagePage(input: Record<string, unknown>) {
+  #recentWindow(input: Record<string, unknown>) {
+    const page = this.#messagePage({ ...input, limit: 50, cursor: null })
+    return { ...page, conversationId: String(input.conversationId), branchId: String(input.branchId), hasMore: page.nextCursor !== null }
+  }
+
+  #messageWindow(input: Record<string, unknown>) {
+    const conversationId = String(input.conversationId)
+    const branchId = String(input.branchId)
+    const messageId = String(input.messageId)
+    const conversations = createConversationRepository(this.#database)
+    const message = conversations.findMessageById(messageId)
+    if (!message || message.conversationId !== conversationId || (message.runId && !this.#run(message.runId)))
+      throw new ProductProtocolError('OBJECT_DELETED')
+    let page
+    try {
+      page = this.#messagePage({ ...input, cursor: null }, message)
+    }
+    catch (error) {
+      if (error instanceof ProductProtocolError)
+        throw error
+      throw new ProductProtocolError('OBJECT_DELETED')
+    }
+    const latest = conversations.listMessagePage(conversationId, branchId, { limit: 1 })
+    return { ...page, conversationId, branchId, anchorMessageId: messageId, hasLater: latest.items[0]?.id !== messageId }
+  }
+
+  #messagePage(input: Record<string, unknown>, anchor?: MessageRecord) {
     const conversationId = String(input.conversationId)
     const branchId = String(input.branchId)
     const conversations = createConversationRepository(this.#database)
-    if (!this.task(conversationId))
+    if (!this.task(conversationId) || !this.#database.prepare('SELECT 1 FROM conversation_branches WHERE id = ? AND conversation_id = ?').get(branchId, conversationId))
       throw new ProductProtocolError('OBJECT_DELETED')
     const revision = productQueryRevision(this.#database, 'conversations.listMessages', input)
     const scope = digestScope(['messages', this.#instance, conversationId, branchId])
@@ -239,7 +316,9 @@ export class ProductQueries {
       }
       catch { throw new ProductProtocolError('CURSOR_EXPIRED') }
     }
-    const source = conversations.listMessagePage(conversationId, branchId, { limit: Number(input.limit), beforeMessageId })
+    const source = conversations.listMessagePage(conversationId, branchId, { limit: Number(input.limit) - (anchor ? 1 : 0), beforeMessageId: anchor?.id ?? beforeMessageId })
+    if (anchor)
+      source.items.push(anchor)
     const items: ReturnType<ProductReadViews['message']>[] = []
     for (const message of [...source.items].reverse()) {
       const item = this.views.message(message)
