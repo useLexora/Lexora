@@ -59,6 +59,36 @@ class LocalFilesInstrumentedTest {
             } finally { for (entry in listOf(download, pending, adopted)) File(entry.getString("path")).delete(); link.delete(); outside.delete() }
         } }
     }
+    @Test fun offlineTaskCopiesRequireTheOriginalIdentityVersionAndCompleteVerifiedBytes() {
+        val partition = "offline-copy-${UUID.randomUUID()}"
+        LocalStore(context).use { store -> TransferStore(context).use { transfers ->
+            val download = record(partition, "download", "ready")
+            val file = File(download.getString("path"))
+            val original = file.readBytes()
+            val version = app.uselexora.mobile.network.MobileFiles.hash(original)
+            download.put("resourceId", "resource").put("expectedVersion", "7").put("contentVersion", version)
+            download.getJSONObject("prepared").put("sizeBytes", original.size.toString())
+            val resource = JSONObject().put("resourceId", "resource").put("revision", "7")
+            val copies = app.uselexora.mobile.ui.TaskFileCopies(context, transfers, store)
+            try {
+                transfers.save(download)
+                assertEquals(file.canonicalFile, copies.find(partition, resource)?.canonicalFile)
+                assertNull(copies.find("another-partition", resource))
+                assertNull(copies.find(partition, JSONObject(resource.toString()).put("revision", "8")))
+                transfers.save(JSONObject(download.toString()).put("state", "receiving"))
+                assertNull(copies.find(partition, resource))
+                transfers.save(download)
+                file.writeBytes(ByteArray(original.size) { 1 })
+                assertNull(copies.find(partition, resource))
+                assertTrue(file.exists())
+                file.writeBytes(original)
+                assertEquals(setOf("resource"), copies.confirmed(partition, listOf(resource)))
+            } finally {
+                file.delete()
+                transfers.writableDatabase.delete("transfers", "partition=?", arrayOf(partition))
+            }
+        } }
+    }
     @Test fun unwritableStagingIsReportedAsLocalFailureAndDoesNotEraseInput() {
         val partition = "storage-failure-${UUID.randomUUID()}"
         val source = File(File(context.filesDir, "exports").apply { mkdirs() }, "${UUID.randomUUID()}.txt").apply { writeText("attachment") }

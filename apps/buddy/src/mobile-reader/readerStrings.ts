@@ -26,6 +26,7 @@ const en = {
   previewSaveShare: 'Preview, save or share',
   messages: 'Conversation messages',
   latest: 'Jump to latest',
+  anchorMissing: 'This message could not be located in the current conversation.',
   retryTranscript: 'Execution details unavailable · Retry',
   empty: 'Messages will appear here',
 }
@@ -52,6 +53,7 @@ const zh: Record<keyof typeof en, string> = {
   previewSaveShare: '预览、保存或分享',
   messages: '对话消息',
   latest: '回到最新',
+  anchorMissing: '无法在当前对话中定位这条消息。',
   retryTranscript: '执行过程暂未载入 · 重试',
   empty: '消息将在这里显示',
 }

@@ -33,6 +33,25 @@ class ReaderProjectionTest {
         val other = encode(projection, snapshot("two", listOf(first)))
         assertTrue(other.getBoolean("reset")); assertEquals(1, other.getJSONArray("order").length())
     }
+    @Test fun anchorRequestRemainsScopedToItsTopicAndDoesNotNeedMessageChanges() {
+        val projection = ReaderProjection()
+        val first = snapshot("one", listOf(message("target", "old message")))
+        encode(projection, first)
+        val anchored = first.copy(anchorMessageId = "target", anchorRequestId = "search-1", hasLaterMessages = true)
+        val update = encode(projection, anchored)
+        assertEquals("target", update.getString("anchorMessageId"))
+        assertEquals("search-1", update.getString("anchorRequestId"))
+        assertTrue(update.getBoolean("hasLaterMessages"))
+        assertEquals(0, update.getJSONArray("entries").length())
+        val other = encode(projection, anchored.copy(topic = "two"))
+        assertTrue(other.isNull("anchorMessageId")); assertTrue(other.isNull("anchorRequestId"))
+        val next = encode(projection, anchored.copy(topic = "two", anchorRequestId = "search-2"))
+        assertEquals("target", next.getString("anchorMessageId"))
+        val missing = encode(projection, anchored.copy(topic = "two", anchorMessageId = "absent", anchorRequestId = "search-3"))
+        assertEquals("absent", missing.getString("anchorMessageId"))
+        val latest = encode(projection, first.copy(topic = "two"))
+        assertTrue(latest.isNull("anchorMessageId")); assertFalse(latest.getBoolean("hasLaterMessages"))
+    }
     @Test fun transcriptAppendRequiresUnchangedPrefixAndTopic() {
         val projection = ReaderProjection()
         fun event(sequence: Int) = JSONObject().put("runId", "run").put("sequence", sequence).put("type", "run.started").put("createdAt", "2026-11-11T05:00:00Z").put("payload", JSONObject())

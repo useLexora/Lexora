@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ReaderProjection } from '../readerProjection'
-import { readerUpdateSchema } from '../readerProtocol'
+import { readerActionSchema, readerUpdateSchema } from '../readerProtocol'
 
 const update = (topic: string, extra: Record<string, unknown> = {}) => readerUpdateSchema.parse({ topic, reset: false, dark: false, fontScale: 1, entries: [], ...extra })
 const event = (sequence: number) => ({ runId: 'run', sequence, type: 'run.started', createdAt: '2026-11-11T05:00:00Z', payload: {} })
@@ -14,6 +14,22 @@ describe('reader projection', () => {
     expect(projection.apply(update('one', { order: ['b'] })).entries).toEqual([b])
     expect(projection.apply(update('two', { order: ['a'], entries: [a] })).entries).toEqual([a])
     expect(projection.apply(update('two', { reset: true })).entries).toEqual([])
+  })
+  it('binds an anchor request to its original topic and message until a new request arrives', () => {
+    const projection = new ReaderProjection()
+    const first = projection.apply(update('one', { anchorMessageId: 'old', anchorRequestId: 'search-1' })).anchor
+    expect(first).toEqual({ topic: 'one', messageId: 'old', requestId: 'search-1' })
+    expect(projection.apply(update('one', { anchorMessageId: 'changed', anchorRequestId: 'search-1' })).anchor).toBe(first)
+    expect(projection.apply(update('one')).anchor).toBeNull()
+    expect(projection.apply(update('two', { anchorMessageId: 'old', anchorRequestId: 'search-1' })).anchor).toBeNull()
+    expect(projection.apply(update('two', { anchorMessageId: 'old', anchorRequestId: 'search-2' })).anchor).toEqual({ topic: 'two', messageId: 'old', requestId: 'search-2' })
+  })
+  it('keeps legacy updates valid and validates navigation without granting other capabilities', () => {
+    expect(update('legacy').anchorMessageId).toBeUndefined()
+    expect(readerUpdateSchema.safeParse({ ...update('one'), anchorRequestId: '' }).success).toBe(false)
+    expect(readerUpdateSchema.safeParse({ ...update('one'), anchorMessageId: '' }).success).toBe(false)
+    expect(readerActionSchema.parse({ action: 'latest', topic: 'one' })).toEqual({ action: 'latest', topic: 'one' })
+    expect(readerActionSchema.safeParse({ action: 'latest', topic: 'one', url: 'https://example.invalid' }).success).toBe(false)
   })
   it('appends transcript deltas and replaces the stream on reset', () => {
     const projection = new ReaderProjection()

@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -50,7 +51,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import org.json.JSONObject
 import java.time.Instant
 
-private enum class MobileSheet { Workbench, Task, TaskMore, Queue, Attachments, InputSettings, Devices, Questions, Approvals, Runs, Branches }
+private enum class MobileSheet { Task, TaskMore, Queue, Attachments, InputSettings, Devices, Questions, Approvals, Runs, Branches }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
@@ -61,27 +62,27 @@ fun MobileShell(
     timeline: @Composable (Modifier) -> Unit,
 ) {
     var sheet by remember { mutableStateOf<MobileSheet?>(null) }
-    var appearanceSettings by remember { mutableStateOf(false) }
-    var taskSettings by remember { mutableStateOf(false) }
+    val deviceId = state.devices.firstOrNull { it.selected }?.id.orEmpty()
+    var appearanceSettings by rememberSaveable(deviceId) { mutableStateOf(false) }
+    var taskSettings by rememberSaveable(deviceId, state.screen, state.topic) { mutableStateOf(false) }
     val savedPages = rememberSaveableStateHolder()
     val conversation = state.screen == MobileScreen.Conversation
-    val deviceId = state.devices.firstOrNull { it.selected }?.id.orEmpty()
     val act: (MobileAction) -> Unit = { if (it == MobileAction.TaskBranches) sheet = MobileSheet.Branches; onAction(it, null) }
     val tasks = remember(state.tasks, state.selectedSpaceId) { scopedTasks(state.tasks, state.selectedSpaceId) }
-    LaunchedEffect(state.screen, deviceId, state.topic) { sheet = null; taskSettings = false; state.modelPickerOpen = false; state.executionPickerOpen = false; state.messageMenu = null }
-    BackHandler(state.screen != MobileScreen.Workbench && sheet == null && !taskSettings && !state.modelPickerOpen) { act(MobileAction.Back) }
+    LaunchedEffect(state.screen, deviceId, state.topic) { sheet = null; state.modelPickerOpen = false; state.executionPickerOpen = false; state.messageMenu = null }
+    BackHandler(state.screen != MobileScreen.Workbench && sheet == null && !taskSettings && !appearanceSettings && !state.modelPickerOpen) { act(MobileAction.Back) }
     BoxWithConstraints(
         Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }
             .background(MaterialTheme.colorScheme.background).safeDrawingPadding().imePadding(),
     ) {
         val tightInput = conversation && maxHeight < 240.dp
         val inputMaxHeight = if (tightInput) (maxHeight - 100.dp).coerceIn(44.dp, 168.dp) else (maxHeight * 0.24f).coerceIn(48.dp, 168.dp)
-        Column(Modifier.fillMaxSize()) {
-            if (!tightInput && state.screen != MobileScreen.Workbench) ShellHeader(state, act, devices = { sheet = MobileSheet.Devices }) {
+        Column(Modifier.fillMaxSize().then(if (taskSettings || appearanceSettings) Modifier.clearAndSetSemantics {} else Modifier)) {
+            if (!tightInput && state.screen != MobileScreen.Workbench) ShellHeader(state, act) {
                 if (conversation) {
                     taskSettings = true
                     (composer.context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(composer.windowToken, 0)
-                } else sheet = MobileSheet.Workbench
+                } else appearanceSettings = true
             }
             val connectionNotice = !state.connected && state.notice == MobileFailurePresentation.NETWORK_UNAVAILABLE_NOTICE
             if (!tightInput && state.notice.isNotBlank() && !connectionNotice) Notice(state.notice) { act(MobileAction.DismissNotice) }
@@ -90,21 +91,33 @@ fun MobileShell(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
             )
-            if (!tightInput && conversation && state.readingCached) Text(
-                if (state.connected) mobileText(R.string.mobile_showing_phone_content_updating) else mobileText(R.string.mobile_phone_content_connect_to_update),
-                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-            )
+            if (conversation && state.selectedTask != null && (state.viewingArchived || !state.conversationReady || state.readingCached)) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(when {
+                    state.viewingArchived -> mobileText(R.string.mobile_archived_read_only)
+                    state.syncFailure.isNotBlank() -> state.syncFailure
+                    !state.connected -> mobileText(R.string.mobile_phone_content_connect_to_update)
+                    else -> mobileText(R.string.mobile_sync_required)
+                }, Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = if (tightInput) 1 else 3, overflow = TextOverflow.Ellipsis)
+                if (!state.viewingArchived && state.syncFailure.isNotBlank()) TextButton(onClick = { act(MobileAction.Refresh) }) { Text(mobileText(R.string.label_retry)) }
+            }
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 if (conversation) {
                     if (state.selectedTask == null && state.messages.isEmpty()) NewTaskIntro(state, act)
-                    else timeline(Modifier.fillMaxSize())
+                    else Column(Modifier.fillMaxSize()) {
+                        if (!tightInput && (state.historyHasMore || state.historyLoading || state.historyError.isNotBlank() || state.historyPinned)) Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            if (state.historyLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            else if (state.historyHasMore) TextButton(onClick = { act(MobileAction.MoreHistory) }, enabled = state.connected) { Text(mobileText(if (state.historyError.isNotBlank()) R.string.label_retry else R.string.mobile_load_earlier)) }
+                            if (state.historyPinned) TextButton(onClick = { act(MobileAction.ReturnLatest) }) { Text(mobileText(R.string.mobile_return_latest)) }
+                        }
+                        if (!tightInput && state.historyError.isNotBlank()) Text(state.historyError, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                        timeline(Modifier.weight(1f).fillMaxWidth())
+                    }
                 } else {
                     savedPages.SaveableStateProvider("$deviceId:${state.screen}:${state.selectedSpaceId ?: "all"}:${state.taskFilter}") {
                         when (state.screen) {
-                            MobileScreen.Workbench -> PaperWorkbench(state, tasks, onAction, devices = { sheet = MobileSheet.Devices }, settings = { appearanceSettings = true }, tools = { sheet = MobileSheet.Workbench })
+                            MobileScreen.Workbench -> PaperWorkbench(state, tasks, onAction, devices = { sheet = MobileSheet.Devices }, settings = { appearanceSettings = true })
                             MobileScreen.Spaces -> SpaceList(state, onAction)
-                            MobileScreen.Tasks -> TaskList(state, tasks, onAction)
+                            MobileScreen.Tasks -> TaskDiscoveryPage(state, tasks, onAction)
                             MobileScreen.Devices -> DeviceList(state, onAction)
                             MobileScreen.Conversation -> Unit
                         }
@@ -112,18 +125,27 @@ fun MobileShell(
                 }
             }
             if (conversation) {
+                if (state.historyInput) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(mobileText(R.string.mobile_history_input), Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
+                    TextButton(onClick = { act(MobileAction.ExitHistoryInput) }) { Text(mobileText(R.string.mobile_exit_history_input)) }
+                }
                 if (tightInput) CompactConversationActions(state, onAction, { sheet = MobileSheet.Attachments }, { sheet = MobileSheet.Questions }, { sheet = MobileSheet.Approvals })
                 else ConversationActions(state, onAction, { sheet = MobileSheet.Questions }, { sheet = MobileSheet.Approvals })
                 ComposerBar(state, composer, onAction, inputMaxHeight, tightInput, { sheet = MobileSheet.Attachments }, { sheet = MobileSheet.Runs })
             }
         }
-        if (taskSettings) ConversationSettings(state, { action, payload -> if (action == MobileAction.Files) taskSettings = false; onAction(action, payload) }, { taskSettings = false },
-            branches = { sheet = MobileSheet.Branches; act(MobileAction.TaskBranches) },
-            questions = { sheet = MobileSheet.Questions }, approvals = { sheet = MobileSheet.Approvals }, runs = { sheet = MobileSheet.Runs })
+        if (taskSettings) Box(Modifier.fillMaxSize().then(if (appearanceSettings) Modifier.clearAndSetSemantics {} else Modifier)) {
+            ConversationSettings(state, { action, payload -> if (action == MobileAction.Files) taskSettings = false; onAction(action, payload) }, { taskSettings = false },
+                branches = { sheet = MobileSheet.Branches; act(MobileAction.TaskBranches) },
+                questions = { sheet = MobileSheet.Questions }, approvals = { sheet = MobileSheet.Approvals }, runs = { sheet = MobileSheet.Runs },
+                phoneSettings = { appearanceSettings = true }, members = { act(MobileAction.ShowMembers) })
+        }
+        if (appearanceSettings) AppearanceSettings { appearanceSettings = false }
     }
     state.taskFiles?.let { TaskFilesPanel(it, onAction) { state.taskFiles = null } }
-    if (appearanceSettings) AppearanceSettings { appearanceSettings = false }
-    if (state.executionPickerOpen && !taskSettings) ConversationPermissionPicker(state, onAction)
+    if (state.pairingPhase != null) PairingStatusPanel(state, act)
+    if (state.membersOpen) TaskMembersPanel(state, onAction)
+    if (state.executionPickerOpen) ConversationPermissionPicker(state, onAction)
     if (state.modelPickerOpen) ConversationModelPicker(state, onAction)
     state.messageMenu?.let { ConversationMessageMenu(it, state.connected, onAction) { state.messageMenu = null } }
     if (sheet == MobileSheet.Devices) ServiceSwitcher(state, onAction) { sheet = null }
@@ -137,7 +159,6 @@ fun MobileShell(
                 item {
                     Text(
                         when (current) {
-                            MobileSheet.Workbench -> mobileText(R.string.label_workspace_options)
                             MobileSheet.Task -> mobileText(R.string.mobile_task_options)
                             MobileSheet.TaskMore -> mobileText(R.string.more_options)
                             MobileSheet.Queue -> mobileText(R.string.label_queued_messages)
@@ -244,50 +265,61 @@ fun MobileShell(
 }
 
 @Composable
-private fun ShellHeader(state: MobileUiState, act: (MobileAction) -> Unit, devices: () -> Unit, more: () -> Unit) {
-    val root = state.screen == MobileScreen.Workbench
+private fun ShellHeader(state: MobileUiState, act: (MobileAction) -> Unit, more: () -> Unit) {
     val conversation = state.screen == MobileScreen.Conversation
+    val title = when (state.screen) {
+        MobileScreen.Workbench -> mobileText(R.string.label_workspace)
+        MobileScreen.Spaces -> mobileText(R.string.label_spaces)
+        MobileScreen.Tasks -> if (state.discovery.archived) mobileText(R.string.mobile_archived_tasks) else taskFilterTitle(state.taskFilter)
+        MobileScreen.Devices -> mobileText(R.string.label_my_services)
+        MobileScreen.Conversation -> state.selectedTask?.let(::taskTitle) ?: mobileText(R.string.label_new_task)
+    }
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(start = if (root) 20.dp else 4.dp, end = 4.dp),
+        Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 4.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (!root) IconButton(onClick = { act(MobileAction.Back) }, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.AutoMirrored.Outlined.ArrowBack, mobileText(R.string.label_back))
-        }
-        Column(Modifier.weight(1f).padding(vertical = 5.dp)) {
-            Box {
-                if (root) BrushMark(Modifier.align(Alignment.BottomStart).width(58.dp).height(7.dp))
-                Text(
-                    when (state.screen) {
-                        MobileScreen.Workbench -> mobileText(R.string.label_workspace)
-                        MobileScreen.Spaces -> mobileText(R.string.label_spaces)
-                        MobileScreen.Tasks -> taskFilterTitle(state.taskFilter)
-                        MobileScreen.Devices -> mobileText(R.string.label_my_services)
-                        MobileScreen.Conversation -> state.selectedTask?.let(::taskTitle) ?: mobileText(R.string.label_new_task)
-                    },
-                    style = if (root) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleMedium,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        if (conversation && state.selectedTask != null) TextButton(
-            onClick = { act(MobileAction.TaskBranches) }, shape = RoundedCornerShape(6.dp),
-            contentPadding = PaddingValues(horizontal = 8.dp),
-            modifier = Modifier.widthIn(min = 48.dp).heightIn(min = 48.dp).testTag("branch-switcher").semantics { contentDescription = mobileText(R.string.label_branches) },
+        HeaderAction(mobileText(R.string.label_back), Icons.AutoMirrored.Outlined.ArrowBack) { act(MobileAction.Back) }
+        if (conversation) Row(
+            Modifier.weight(1f).heightIn(min = 48.dp).clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                .testTag("task-information").clickable(role = Role.Button, onClickLabel = mobileText(R.string.label_task_settings), onClick = more)
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Icon(Icons.Outlined.ForkRight, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (state.branches.size > 1) {
-                Spacer(Modifier.width(4.dp))
-                Text(state.branches.size.toString(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (state.branches.size > 1) Text(branchLabel(state, state.viewBranchId.orEmpty()), style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-        }
-        if (conversation && state.selectedTask != null) IconButton(onClick = { act(MobileAction.Files) }, modifier = Modifier.size(48.dp).testTag("task-results")) {
-            Icon(Icons.Outlined.FolderOpen, mobileText(R.string.label_task_files))
+            Icon(Icons.Outlined.KeyboardArrowDown, mobileText(R.string.label_task_settings), Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else Text(title, Modifier.weight(1f).padding(horizontal = 8.dp), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (conversation && state.selectedTask != null) {
+            HeaderAction(mobileText(R.string.label_branches), Icons.Outlined.ForkRight, Modifier.testTag("branch-switcher")) { act(MobileAction.TaskBranches) }
+            HeaderAction(mobileText(R.string.label_task_files), Icons.Outlined.FolderOpen, Modifier.testTag("task-results")) { act(MobileAction.Files) }
         }
         when (state.screen) {
-            MobileScreen.Devices -> IconButton(onClick = { act(MobileAction.ScanDevice) }, modifier = Modifier.size(48.dp)) { Icon(Icons.Outlined.QrCodeScanner, mobileText(R.string.label_scan_to_add_service)) }
-            MobileScreen.Tasks -> IconButton(onClick = { act(MobileAction.NewTask) }, modifier = Modifier.size(48.dp)) { Icon(Icons.Outlined.Add, mobileText(R.string.label_new_task)) }
-            else -> IconButton(onClick = more, modifier = Modifier.size(48.dp)) { Icon(Icons.Outlined.Tune, if (conversation) mobileText(R.string.label_task_settings) else mobileText(R.string.label_workspace_options), Modifier.size(22.dp)) }
+            MobileScreen.Devices -> HeaderAction(mobileText(R.string.label_scan_to_add_service), Icons.Outlined.QrCodeScanner) { act(MobileAction.ScanDevice) }
+            MobileScreen.Tasks -> {
+                TextButton(
+                    onClick = { act(MobileAction.ChooseSpaceFilter) },
+                    modifier = Modifier.heightIn(min = 48.dp).widthIn(max = 104.dp).testTag("space-filter")
+                        .semantics { contentDescription = mobileText(R.string.mobile_filter_by_space, state.selectedSpaceLabel) },
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                ) {
+                    Text(state.selectedSpaceLabel, Modifier.weight(1f, fill = false), style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.width(4.dp))
+                    Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp))
+                }
+                if (state.discovery.archiveSupported || state.discovery.archived) IconToggleButton(
+                    checked = state.discovery.archived, onCheckedChange = { act(MobileAction.ToggleArchives) },
+                    modifier = Modifier.size(48.dp).testTag("archive-filter"),
+                    colors = IconButtonDefaults.iconToggleButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
+                ) {
+                    Icon(Icons.Outlined.Inventory2, mobileText(if (state.discovery.archived) R.string.mobile_show_active_tasks else R.string.mobile_show_archived_tasks), Modifier.size(20.dp))
+                }
+            }
+            MobileScreen.Conversation -> Unit
+            else -> HeaderAction(mobileText(R.string.mobile_phone_settings), Icons.Outlined.Tune, action = more)
         }
     }
 }
@@ -304,52 +336,6 @@ private fun DeviceChip(state: MobileUiState, open: () -> Unit) {
         Spacer(Modifier.width(7.dp))
         Text(state.deviceLabel, Modifier.weight(1f, fill = false), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
-private fun TaskList(state: MobileUiState, tasks: List<JSONObject>, onAction: (MobileAction, JSONObject?) -> Unit) {
-    var query by rememberSaveable { mutableStateOf("") }
-    val filtered = remember(tasks, state.taskFilter, state.markedTaskIds) { tasks.filter { matchesTaskFilter(it, state.taskFilter, state.markedTaskIds) } }
-    val matches = remember(filtered, query) { filtered.filter { query.isBlank() || taskTitle(it).contains(query.trim(), ignoreCase = true) || it.optString("previewText").contains(query.trim(), ignoreCase = true) } }
-    val count = taskFilterCount(tasks, state.taskFilter, state.tasksLoaded, state.markedTaskIds, state.marksLoaded)
-    Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = { onAction(MobileAction.ChooseSpaceFilter, null) }, modifier = Modifier.heightIn(min = 48.dp).testTag("space-filter")) {
-                Text(state.selectedSpaceLabel, style = MaterialTheme.typography.labelMedium)
-                Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp))
-            }
-            Spacer(Modifier.weight(1f))
-            if (count != null) Text(mobileQuantity(R.plurals.mobile_tasks, count), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        if (state.taskFilter == MobileTaskFilter.Marked && state.marksFailed) Text(mobileText(R.string.mobile_mark_sync_failed_previously_loaded_results_are_retained), Modifier.padding(horizontal = 20.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (filtered.isNotEmpty() || query.isNotEmpty() || state.taskFilter == MobileTaskFilter.All) {
-            OutlinedTextField(
-                value = query, onValueChange = { query = it }, singleLine = true,
-                placeholder = { Text(mobileText(R.string.label_search_tasks)) }, leadingIcon = { Icon(Icons.Outlined.Search, null, Modifier.size(20.dp)) },
-                trailingIcon = if (query.isNotEmpty()) ({ IconButton(onClick = { query = "" }) { Icon(Icons.Outlined.Close, mobileText(R.string.label_clear_search), Modifier.size(18.dp)) } }) else null,
-                textStyle = MaterialTheme.typography.bodyMedium, shape = MaterialTheme.shapes.medium,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 12.dp),
-                colors = OutlinedTextFieldDefaults.colors(unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant),
-            )
-        }
-        if (matches.isEmpty()) {
-            if (query.isNotEmpty()) EmptyPane(mobileText(R.string.label_task_not_found), mobileText(R.string.label_try_another_part_of_the_title_or_message))
-            else if (!state.tasksLoaded || state.taskFilter == MobileTaskFilter.All) TaskEmptyState(state, onAction)
-            else if (count == null) EmptyPane(mobileText(R.string.mobile_not_loaded, taskFilterTitle(state.taskFilter)), mobileText(R.string.mobile_connect_to_the_service_and_sync_to_view_this), mobileText(R.string.label_refresh)) { onAction(MobileAction.Refresh, null) }
-            else EmptyPane(mobileText(R.string.mobile_no_yet, taskFilterTitle(state.taskFilter)), mobileText(R.string.mobile_new_content_will_appear_here_you_can_also_switch))
-        } else LazyColumn(state = rememberLazyListState(), modifier = Modifier.fillMaxSize().testTag("task-list"), contentPadding = PaddingValues(bottom = 24.dp)) {
-            items(matches, key = { it.getString("id") }) { task ->
-                when (state.taskFilter) {
-                    MobileTaskFilter.Approvals -> TaskRow(task, state.spaces, onClick = { onAction(MobileAction.OpenTask, task) }, confirmLabel = mobileText(R.string.label_review), confirm = { onAction(MobileAction.ReviewTaskApproval, task) })
-                    MobileTaskFilter.Questions -> TaskRow(task, state.spaces, onClick = { onAction(MobileAction.OpenTaskQuestions, task) }, confirmLabel = mobileText(R.string.question_answers), confirm = { onAction(MobileAction.OpenTaskQuestions, task) })
-                    MobileTaskFilter.Unread -> if ((task.opt("resultBranchId") as? String)?.isNotBlank() == true) {
-                        TaskRow(task, state.spaces, onClick = { onAction(MobileAction.OpenTask, task) }, confirmLabel = mobileText(R.string.label_view_result), confirm = { onAction(MobileAction.OpenTaskResult, task) })
-                    } else TaskRow(task, state.spaces, onClick = { onAction(MobileAction.OpenTask, task) })
-                    else -> TaskRow(task, state.spaces, onClick = { onAction(MobileAction.OpenTask, task) })
-                }
-            }
-        }
     }
 }
 
@@ -391,7 +377,7 @@ private fun SpaceRow(name: String, count: Int?, icon: ImageVector, open: () -> U
 }
 
 @Composable
-private fun TaskRow(task: JSONObject, spaces: List<JSONObject>, onClick: () -> Unit, confirmLabel: String = mobileText(R.string.label_confirm), confirm: (() -> Unit)? = null) {
+internal fun TaskRow(task: JSONObject, spaces: List<JSONObject>, onClick: () -> Unit, confirmLabel: String = mobileText(R.string.label_confirm), confirm: (() -> Unit)? = null) {
     val activity = task.optString("activity")
     val status = when (activity) {
         "running" -> mobileText(R.string.label_in_progress)
@@ -583,20 +569,7 @@ private fun AttachmentStrip(state: MobileUiState, onAction: (MobileAction, JSONO
 @Composable
 private fun ComposerBar(state: MobileUiState, composer: EditText, onAction: (MobileAction, JSONObject?) -> Unit, inputMaxHeight: Dp, tight: Boolean, attachments: () -> Unit, runs: () -> Unit) {
     val focused = remember(composer) { mutableStateOf(composer.hasFocus()) }
-    DisposableEffect(composer) {
-        val previous = composer.onFocusChangeListener
-        val listener = android.view.View.OnFocusChangeListener { _, value -> focused.value = value }
-        composer.onFocusChangeListener = listener
-        onDispose { if (composer.onFocusChangeListener === listener) composer.onFocusChangeListener = previous }
-    }
-    val density = androidx.compose.ui.platform.LocalDensity.current
-    val body = MaterialTheme.typography.bodyLarge
-    val textSize = with(density) { body.fontSize.toPx() }
-    val lineHeight = with(density) { body.lineHeight.toPx().toInt() }
-    val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
-    val hintColor = MaterialTheme.colorScheme.onSurfaceVariant.toArgb()
     val active = activeRuns(state)
-    val stop = active.isNotEmpty() && !state.hasInput
     val stopping = active.any { it.optString("id") == state.stoppingRunId }
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(top = if (tight) 2.dp else 4.dp, bottom = if (tight) 2.dp else 8.dp)) {
         if (!tight && active.isNotEmpty()) Row(Modifier.fillMaxWidth().height(28.dp).testTag("streaming-status"), verticalAlignment = Alignment.CenterVertically) {
@@ -613,25 +586,11 @@ private fun ComposerBar(state: MobileUiState, composer: EditText, onAction: (Mob
         Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainer, border = BorderStroke(1.dp, if (focused.value) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline), shadowElevation = 1.dp) {
             Column(Modifier.fillMaxWidth().padding(if (tight) 0.dp else 6.dp)) {
                 if (!tight) AttachmentStrip(state, onAction)
-                AndroidView(
-                    factory = { (composer.parent as? ViewGroup)?.removeView(composer); composer },
-                    update = { input ->
-                        input.setTextColor(textColor); input.setHintTextColor(hintColor)
-                        input.includeFontPadding = false
-                        input.typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.NORMAL)
-                        if (input.textSize != textSize) input.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, textSize)
-                        androidx.core.widget.TextViewCompat.setLineHeight(input, lineHeight)
-                        input.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                        input.hint = mobileText(R.string.label_what_would_you_like_lexora_to_do)
-                        input.isEnabled = state.inputEnabled; input.minLines = 1; input.maxLines = 6
-                        input.gravity = Gravity.TOP or Gravity.START
-                    },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp, max = inputMaxHeight).padding(horizontal = 10.dp).testTag("input"),
-                )
-                ComposerToolbar(state, onAction, attachments, stop, stopping, active, runs)
+                NativeComposerInput(composer, state.inputEnabled, state.attachmentCount > 0, inputMaxHeight, tight) { focused.value = it }
+                ComposerToolbar(state, onAction, attachments, stopping, active, runs)
             }
         }
-        if (!tight && state.inputFeedback.isNotBlank() && state.inputFeedback != mobileText(R.string.mobile_saved_on_phone)) Text(state.inputFeedback, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+        if (state.inputFeedback.isNotBlank() && state.inputFeedback != mobileText(R.string.mobile_saved_on_phone)) Text(state.inputFeedback, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
     }
 }
 
@@ -670,15 +629,7 @@ private fun RowDivider() = HorizontalDivider(Modifier.padding(horizontal = 20.dp
 private data class SheetEntry(val title: String, val icon: ImageVector, val action: MobileAction? = null, val next: MobileSheet? = null)
 
 private fun sheetEntries(sheet: MobileSheet, state: MobileUiState): List<SheetEntry> = when (sheet) {
-    MobileSheet.Attachments -> listOf(SheetEntry(mobileText(R.string.label_choose_file), Icons.Outlined.AttachFile, MobileAction.AttachFile), SheetEntry(mobileText(R.string.label_take_photo), Icons.Outlined.PhotoCamera, MobileAction.TakePhoto), SheetEntry(mobileText(R.string.label_task_files), Icons.Outlined.FolderOpen, MobileAction.Files))
-    MobileSheet.Workbench -> buildList {
-        add(SheetEntry(mobileText(R.string.label_all_tasks), Icons.Outlined.Search, MobileAction.ShowTasks))
-        add(SheetEntry(mobileText(R.string.label_spaces), Icons.Outlined.FolderOpen, MobileAction.ShowSpaces))
-        add(SheetEntry(mobileText(R.string.label_send_history), Icons.Outlined.Send, MobileAction.Outbox))
-        add(SheetEntry(mobileText(R.string.label_local_drafts), Icons.Outlined.EditNote, MobileAction.Recovery))
-        add(SheetEntry(mobileText(R.string.label_refresh), Icons.Outlined.Refresh, MobileAction.Refresh))
-        if (!state.connected && state.devices.isNotEmpty()) add(SheetEntry(mobileText(R.string.label_reconnect), Icons.Outlined.Wifi, MobileAction.Reconnect))
-    }
+    MobileSheet.Attachments -> listOf(SheetEntry(mobileText(R.string.label_choose_file), Icons.Outlined.AttachFile, MobileAction.AttachFile), SheetEntry(mobileText(R.string.label_take_photo), Icons.Outlined.PhotoCamera, MobileAction.TakePhoto), SheetEntry(mobileText(R.string.mobile_browse_task_files), Icons.Outlined.FolderOpen, MobileAction.Files))
     MobileSheet.Task -> buildList {
         add(SheetEntry(mobileText(R.string.label_task_files), Icons.Outlined.FolderOpen, MobileAction.Files))
         if (state.selectedTask != null) {

@@ -37,11 +37,13 @@ class MobileConnectionSession(
     private val synchronization: (String) -> Unit,
     private val projection: (String, List<JSONObject>) -> Unit,
     private val recoverable: (Exception) -> Boolean,
+    private val synchronizationFailure: (Exception) -> Unit = {},
 ) {
     var client: ProductClient? = null
         private set
     var subscription: ProductSubscription? = null
         private set
+    val isSynchronized: Boolean get() = client?.isConnected == true && subscription?.isSynchronized == true
     @Volatile var generation = 0L
         private set
     @Volatile var foreground = false
@@ -127,7 +129,8 @@ class MobileConnectionSession(
                 val fresh = ProductSubscription(candidate, schemas,
                     snapshot = { topic, items -> view.snapshot(topic, items); publish(topic) },
                     changes = { topic, changes -> view.apply(topic, changes); publish(topic) },
-                    state = { state -> onUi { if (client === candidate && generation == requestedGeneration && candidate.isConnected) synchronization(state) } })
+                    state = { state -> onUi { if (client === candidate && generation == requestedGeneration) synchronization(if (state == "RESYNC_REQUIRED") "UNSYNCHRONIZED" else state) } },
+                    failure = { error -> onUi { if (client === candidate && generation == requestedGeneration) synchronizationFailure(error) } })
                 candidate.onDisconnected = { onUi {
                     if (client === candidate && generation == requestedGeneration) {
                         released(); status(mobileText(R.string.connection_reconnecting), MobileConnectionPhase.Connecting); requestReconnect()

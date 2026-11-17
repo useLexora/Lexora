@@ -3,6 +3,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { BuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
 import type { BuddyInputReferenceV1 } from '../../agent/context/BuddyInputReference'
 import type { ExecutionSettled } from '../../agent/execution/ActiveRunRegistry'
+import type { BuddyServiceCommands } from '../../BuddyService'
 import type { BuddyRunEvent } from '../../events/BuddyRunEvent'
 import type { RunEventObservation } from '../../events/RunEventPorts'
 import type { RuntimeModelProvider } from '../../providers/resolveInteractiveModelSelection'
@@ -15,10 +16,14 @@ import { buddySettingsSchema } from '../../../../shared/buddies/buddySettings'
 import { createBuddyUserContent } from '../../../../shared/conversation/buddyUserContent'
 import { Emitter } from '../../../../shared/events/Emitter'
 import { resolveBuddyPermissionSettings } from '../../../../shared/permissions/permissionMode'
+import { productQueueControlsInputSchema, productQueueControlsPageSchema } from '../../../../shared/productProtocol/queries'
 import { BuddyDefinitionResolver } from '../../buddies/BuddyDefinitionResolver'
 import { CommandAdmissionService, createLocalCommandPrincipal } from '../../commands/CommandAdmissionService'
 import { ConversationMetadataService } from '../../conversations/ConversationMetadataService'
 import { RunEventCorruptionError } from '../../events/RunEventFailure'
+import { createProductCommandHandlers } from '../../productProtocol/createProductCommandHandlers'
+import { ProductConnection } from '../../productProtocol/ProductConnection'
+import { ProductQueueControls } from '../../productProtocol/ProductQueueControls'
 import { resolveInteractiveModelSelection } from '../../providers/resolveInteractiveModelSelection'
 import { toPublicRun } from '../../runs/publicRun'
 import { createAttachmentRepository } from '../../storage/attachmentRepository'
@@ -1055,6 +1060,143 @@ describe('conditional queue and stop commands', () => {
     await expect(f.commands.execute('chat.queue.cancel', f.command('late-input', { ...f.target('A'), expectedRevision: 1 }))).rejects.toMatchObject({ code: 'SERVICE_STOPPING' })
     expect(await f.commands.execute('runtime.stop', request)).toEqual({ created: false, receipt: stopped.receipt })
     expect(() => f.control!.assertAccepting()).toThrow('SERVICE_STOPPING')
+  })
+})
+
+describe('public queue control availability', () => {
+  const read = async (f: ReturnType<typeof commandFixture>, extra: Record<string, unknown> = {}) => productQueueControlsPageSchema.parse(await new ProductQueueControls(f.database, 'instance', f.service).read(productQueueControlsInputSchema.parse({ ...f.scope, ...extra })))
+  const delivery = (mode: 'current' | 'next') => ({ mode, actorId: 'default', target: { rootRunId: 'run-initial', runId: 'run-initial' } })
+  const closeSource = (f: ReturnType<typeof commandFixture>) => {
+    f.database.exec('UPDATE runs SET status = \'completed\'; UPDATE execution_state SET phase = \'closed\', cleanup_state = \'clean\'')
+  }
+
+  it('offers exact compatible live steering without mutating a next intent or accepting a command', async () => {
+    const f = commandFixture()
+    await f.enableDefinitions()
+    f.queue.enqueue({ ...f.input('next'), buddyId: 'default', delivery: delivery('next') })
+    const before = f.database.prepare('SELECT total_changes() AS count').get()!.count
+    const page = await read(f)
+    expect(page.items).toMatchObject([{ id: 'next', revision: '0', delivery: delivery('next'), allowedActions: ['cancel', 'steer'], steerTarget: { runId: 'run-initial', generation: '0' }, blockedReason: null }])
+    expect(f.database.prepare('SELECT total_changes() AS count').get()!.count).toBe(before)
+    expect(f.delivered).toEqual([])
+    expect(f.launched).toEqual([])
+    expect(f.database.prepare('SELECT count(*) AS count FROM command_receipts').get()!.count).toBe(0)
+    expect(JSON.stringify(page)).not.toMatch(/prepared_json|runInput|attachmentBindings|actorSnapshot/)
+  })
+
+  it('allows next continuation only after the bound source closes cleanly and its runtime slot releases', async () => {
+    const f = commandFixture()
+    f.queue.enqueue({ ...f.input('next'), buddyId: 'default', delivery: delivery('next') })
+    f.queue.pauseItem(f.target('next'))
+    closeSource(f)
+    expect((await read(f)).items[0]).toMatchObject({ allowedActions: ['cancel'], blockedReason: 'busy' })
+    f.releaseSlot()
+    expect((await read(f)).items[0]).toMatchObject({ allowedActions: ['cancel', 'continue'], steerTarget: null, blockedReason: null })
+    f.database.exec('UPDATE execution_state SET cleanup_state = \'degraded\'')
+    expect((await read(f)).items[0]?.allowedActions).toEqual(['cancel'])
+    expect(f.launched).toEqual([])
+  })
+
+  it.each(['closed', 'missing'] as const)('never offers fixed-current continue or steer when its source is %s', async (state) => {
+    const f = commandFixture()
+    f.queue.enqueue({ ...f.input('current'), buddyId: 'default', delivery: delivery('current') })
+    f.queue.pauseItem(f.target('current'))
+    closeSource(f)
+    f.releaseSlot()
+    if (state === 'missing')
+      f.database.exec('UPDATE chat_queue SET prepared_json = json_set(prepared_json, \'$.delivery.target.runId\', \'missing-run\') WHERE id = \'current\'')
+    const item = (await read(f)).items[0]!
+    expect(item).toMatchObject({ allowedActions: ['cancel'], steerTarget: null, blockedReason: 'target_unavailable' })
+    const rejected = await f.commands.execute('chat.queue.continue', f.command('continue-invalid', { ...f.target('current'), expectedRevision: Number(item.revision) }))
+    expect(rejected.receipt).toMatchObject({ decision: 'rejected', errorCode: 'INPUT_DELIVERY_TARGET_UNAVAILABLE' })
+    expect(f.runs.findById('run-current')).toBeNull()
+    expect(f.queue.list(f.scope)).toMatchObject([{ id: 'current', state: 'paused' }])
+  })
+
+  it('distinguishes a current idle intent from a fixed source and keeps archived tasks cancel-only', async () => {
+    const f = commandFixture()
+    closeSource(f)
+    f.releaseSlot()
+    f.queue.enqueue({ ...f.input('idle'), buddyId: 'default', delivery: { mode: 'current', actorId: 'default', target: null } })
+    expect((await read(f)).items[0]).toMatchObject({ delivery: { target: null }, allowedActions: ['cancel', 'continue'] })
+    f.database.prepare('UPDATE conversations SET archived_at = ? WHERE id = ?').run('2026-11-01T00:00:00.000Z', 'conversation')
+    expect((await read(f)).items[0]).toMatchObject({ allowedActions: ['cancel'], blockedReason: 'archived' })
+  })
+
+  it('withholds private delivery identities and still allows cancelling an unusable pending input', async () => {
+    const f = commandFixture()
+    f.queue.enqueue({ ...f.input('invalid'), buddyId: 'default', delivery: delivery('current') })
+    f.database.exec('UPDATE runs SET execution_kind = \'npc_child\' WHERE id = \'run-initial\'')
+    expect((await read(f)).items[0]).toMatchObject({ delivery: null, allowedActions: ['cancel'], steerTarget: null, blockedReason: 'target_unavailable' })
+    const rejectedScope = new ProductQueueControls(f.database, 'instance', f.service).read(productQueueControlsInputSchema.parse({ conversationId: 'conversation', branchId: 'not-owned' }))
+    await expect(rejectedScope).rejects.toMatchObject({ code: 'OBJECT_DELETED' })
+  })
+
+  it('keeps cancel available when input execution is unavailable but command admission is still open', async () => {
+    const f = commandFixture()
+    f.queue.enqueue(f.input('cancel-only'))
+    f.runner.isStopping = true
+    expect((await read(f)).items[0]).toMatchObject({ allowedActions: ['cancel'], blockedReason: 'service_unavailable' })
+  })
+
+  it('rechecks run generation, service gates and queue revision after asynchronous input validation', async () => {
+    const f = commandFixture()
+    f.queue.enqueue({ ...f.input('next'), buddyId: 'default', delivery: delivery('next') })
+    f.validate.mockImplementationOnce(async () => {
+      f.database.exec('UPDATE runs SET generation = generation + 1 WHERE id = \'run-initial\'')
+    })
+    expect((await read(f)).items[0]).toMatchObject({ allowedActions: ['cancel'], steerTarget: null, blockedReason: 'target_unavailable' })
+    f.validate.mockImplementationOnce(async () => {
+      f.queue.cancel(f.target('next'))
+    })
+    await expect(read(f)).rejects.toMatchObject({ code: 'QUEUE_CHANGED' })
+    f.queue.enqueue({ ...f.input('stopped'), buddyId: 'default', delivery: delivery('next') })
+    f.database.exec('INSERT INTO service_admission_gates(source_instance_id, stopped_at, command_id) VALUES (\'instance\',\'2026-11-01T00:00:00.000Z\',\'stop\')')
+    expect((await read(f)).items[0]).toMatchObject({ allowedActions: [], blockedReason: 'service_unavailable' })
+  })
+
+  it('keeps control pagination independent and exposes the read handler to readers without write authority', async () => {
+    const f = commandFixture()
+    f.queue.enqueue({ ...f.input('first'), buddyId: 'default', delivery: delivery('next') })
+    f.queue.enqueue({ ...f.input('second'), buddyId: 'default', delivery: delivery('next') })
+    const first = await read(f, { limit: 1 })
+    expect(first.items.map(item => item.id)).toEqual(['first'])
+    expect(first.nextCursor).toBeTypeOf('string')
+    expect((await read(f, { limit: 1, cursor: first.nextCursor })).items.map(item => item.id)).toEqual(['second'])
+    const frames: Array<{ result?: unknown, error?: { code: string } }> = []
+    const unexpectedDependency = (): never => {
+      throw new Error('Queue control reads must not access unrelated command dependencies')
+    }
+    const commands: BuddyServiceCommands = {
+      identity: { dataGeneration: String(f.database.prepare('SELECT data_generation FROM storage_profile').get()!.data_generation), serviceInstanceId: 'instance' },
+      admission: f.admission,
+      control: f.commands,
+      queueControls: new ProductQueueControls(f.database, 'instance', f.service),
+      get desktop() { return unexpectedDependency() },
+      get input() { return unexpectedDependency() },
+      get drafts() { return unexpectedDependency() },
+      get metadata() { return unexpectedDependency() },
+      get uploads() { return unexpectedDependency() },
+      get approvals() { return unexpectedDependency() },
+      get questions() { return unexpectedDependency() },
+    }
+    const handlers = createProductCommandHandlers({ commands, assertOwner: () => {
+      throw new Error('Unexpected owner-only access')
+    }, allowedActions: new Set(), resolveQuote: () => {
+      throw new Error('Unexpected quote')
+    } })
+    const connection = new ProductConnection({ context: { serviceId: 'service', profileId: 'profile', dataGeneration: 'generation', serviceInstanceId: 'instance', connectionId: 'reader', clientSessionId: 'session', deviceId: 'device', ownerPrincipalId: 'owner', credentialId: 'credential', grantGeneration: '1', role: 'reader' }, assertCurrent: () => {}, phase: () => 'ready', handlers, send: (frame) => {
+      frames.push(JSON.parse(frame))
+      return true
+    }, close: () => {} })
+    try {
+      await connection.receive(JSON.stringify({ jsonrpc: '2.0', id: 'init', method: 'initialize', params: { protocol: { major: 1, minMinor: 0, maxMinor: 0 }, client: { kind: 'mobile', version: '1' }, supportedContentKinds: [], supportedReviewKinds: [] } }))
+      await connection.receive(JSON.stringify({ jsonrpc: '2.0', id: 'controls', method: 'conversations.getQueueControls', params: f.scope }))
+      expect(frames.at(-1)?.result).toMatchObject({ items: [{ id: 'first' }, { id: 'second' }] })
+      await connection.receive(JSON.stringify({ jsonrpc: '2.0', id: 'cancel', method: 'chat.queue.cancel', params: {} }))
+      expect(frames.at(-1)?.error?.code).toBe('NOT_AUTHORIZED')
+    }
+    finally { connection.close() }
   })
 })
 

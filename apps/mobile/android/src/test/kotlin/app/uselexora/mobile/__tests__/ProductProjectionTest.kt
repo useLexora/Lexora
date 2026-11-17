@@ -1,6 +1,7 @@
 package app.uselexora.mobile
 
 import app.uselexora.mobile.protocol.ProductProjection
+import app.uselexora.mobile.protocol.ProtocolFailure
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
@@ -39,4 +40,34 @@ class ProductProjectionTest {
         assertEquals("原文新增", projection.items().first().getJSONObject("value").getJSONObject("body").getString("text"))
     }
 
+    @Test fun historyWindowWithoutIdRetainsOneTopicScopedMetadataRecord() {
+        val projection = ProductProjection()
+        val topic = "conversation:task:branch"
+        fun metadata(cursor: Any, hasMore: Boolean) = JSONObject().put("entity", "historyWindow").put("value",
+            JSONObject().put("conversationId", "task").put("branchId", "branch").put("nextCursor", cursor).put("hasMore", hasMore))
+        val message = JSONObject("""{"entity":"message","value":{"id":"message","body":{"kind":"text","text":"原文"}}}""")
+        projection.snapshot(topic, listOf(message, metadata("older-page", true), metadata(JSONObject.NULL, false)))
+        assertEquals(2, projection.items().size)
+        val previous = projection.view()
+        projection.apply(topic, listOf(JSONObject("""{"kind":"upsert","item":{"entity":"message","value":{"id":"message","body":{"kind":"text","text":"更新"}}}}""")))
+        val history = projection.items().single { it.getString("entity") == "historyWindow" }.getJSONObject("value")
+        assertTrue(history.isNull("nextCursor"))
+        assertFalse(history.getBoolean("hasMore"))
+        assertFalse(history.has("id"))
+        assertEquals("原文", previous.first().getJSONObject("value").getJSONObject("body").getString("text"))
+    }
+
+    @Test fun snapshotCapacityFailurePreservesExistingProjectionAndCanBeRetried() {
+        val projection = ProductProjection()
+        val topic = "conversation:task:branch"
+        val previous = JSONObject("""{"entity":"message","value":{"id":"original"}}""")
+        projection.snapshot(topic, listOf(previous))
+        val failure = runCatching {
+            projection.snapshot(topic, (0..10000).map { JSONObject().put("entity", "message").put("value", JSONObject().put("id", "message-$it")) })
+        }.exceptionOrNull()
+        assertEquals("LIMIT_EXCEEDED", (failure as ProtocolFailure).code)
+        assertEquals("original", projection.items().single().getJSONObject("value").getString("id"))
+        projection.snapshot(topic, listOf(JSONObject("""{"entity":"message","value":{"id":"refreshed"}}""")))
+        assertEquals("refreshed", projection.items().single().getJSONObject("value").getString("id"))
+    }
 }

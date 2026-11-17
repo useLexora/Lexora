@@ -12,6 +12,8 @@ enum class MobileScreen { Workbench, Spaces, Tasks, Devices, Conversation }
 enum class MobileTaskFilter { All, Approvals, Questions, Unread, Marked }
 
 enum class MobileAction {
+    SearchTasks, OpenSearchHit, ToggleArchives, LoadArchives, OpenArchivedTask, RestoreArchivedTask,
+    ShowMembers, AddMember, RemoveMember, SelectBuddy, ReturnLatest, ExitHistoryInput, ClosePairing,
     NewTask, OpenTask, OpenTaskQuestions, OpenRunningTask, OpenTaskResult, ShowTasks, ShowPending, ShowDevices,
     ShowWorkbench, ShowSpaces, OpenSpace, ChooseSpaceFilter, ShowTaskFilter, Back, ReviewTaskApproval,
     ScanDevice, SelectDevice, ManageDevice,
@@ -59,9 +61,34 @@ data class MobileTaskFiles(
     val loading: Boolean = true,
     val error: String? = null,
     val nextCursor: String? = null,
+    val transfers: Map<String, TaskFileTransferState> = emptyMap(),
 )
 
 class MobileUiState {
+    var discovery by mutableStateOf(TaskDiscoveryState())
+    var readerTopic by mutableStateOf("")
+    var membersOpen by mutableStateOf(false)
+    var membersLoading by mutableStateOf(false)
+    var membersError by mutableStateOf("")
+    var members by mutableStateOf<JSONObject?>(null)
+    var buddyCatalog by mutableStateOf<List<JSONObject>>(emptyList())
+    var membersSupported by mutableStateOf(false)
+    var memberActions by mutableStateOf<Set<MobileAction>>(emptySet())
+    var membersChanging by mutableStateOf(false)
+    var synchronization by mutableStateOf("SYNCING")
+    var syncFailure by mutableStateOf("")
+    var conversationReady by mutableStateOf(false)
+    var viewingArchived by mutableStateOf(false)
+    var historyLoading by mutableStateOf(false)
+    var historyError by mutableStateOf("")
+    var historyCursor by mutableStateOf<String?>(null)
+    var historyHasMore by mutableStateOf(true)
+    var historyPinned by mutableStateOf(false)
+    var historyInput by mutableStateOf(false)
+    var anchorMessageId by mutableStateOf<String?>(null)
+    var anchorRequestId by mutableStateOf<String?>(null)
+    var pairingPhase by mutableStateOf<String?>(null)
+    var pairingError by mutableStateOf("")
     var incomingMaterial by mutableStateOf<IncomingMaterial?>(null)
     var importingMaterial by mutableStateOf(false)
     var materialError by mutableStateOf("")

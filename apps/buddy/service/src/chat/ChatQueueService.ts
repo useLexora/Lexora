@@ -1,6 +1,7 @@
 import type { LocalChatQueueReceipt, LocalChatQueueScope, LocalChatQueueSteerResult, LocalChatQueueTarget } from '../../../shared/conversation/chatQueueApi'
 import type { EventSnapshot } from '../../../shared/events/eventTypes'
 import type { BuddyExecutionProfile } from '../../../shared/permissions/executionProfile'
+import type { ProductQueueControl } from '../../../shared/productProtocol/queries'
 import type { LocalRun } from '../../../shared/runs/runApi'
 import type { BuddyAgentRunner } from '../agent/execution/BuddyAgentRunner'
 import type { BuddyTurnLauncher } from '../agent/execution/BuddyTurnLauncher'
@@ -101,6 +102,78 @@ export class ChatQueueService {
       const run = active ? this.#options.runs.findById(active.id) : null
       return { ...item, ...(condition ? { revision: condition.expectedRevision } : {}), steerTarget: run ? { runId: run.id, generation: run.generation } : null }
     })
+  }
+
+  async inspectControls(target: LocalChatQueueTarget): Promise<Pick<ProductQueueControl, 'allowedActions' | 'blockedReason'> & { steerTarget: { runId: string, generation: number } | null }> {
+    const result: Pick<ProductQueueControl, 'allowedActions' | 'blockedReason'> & { steerTarget: { runId: string, generation: number } | null } = { allowedActions: [], steerTarget: null, blockedReason: 'service_unavailable' }
+    const accepting = () => {
+      this.#options.control?.assertAccepting()
+      return !this.#disposed
+    }
+    try {
+      if (!accepting())
+        return result
+    }
+    catch { return result }
+    const condition = this.#options.control?.queueTarget(target)
+    if (!condition)
+      return { ...result, blockedReason: 'target_unavailable' }
+    result.allowedActions.push('cancel')
+    if (this.#options.runner.isStopping || this.#options.eventLog.state !== 'open')
+      return result
+    const reason = (error: unknown): ProductQueueControl['blockedReason'] => {
+      const code = error && typeof error === 'object' && 'code' in error ? error.code : null
+      return code === 'INPUT_DELIVERY_TARGET_UNAVAILABLE' || code === 'SOURCE_CHANGED'
+        ? 'target_unavailable'
+        : code === 'INPUT_DELIVERY_INCOMPATIBLE' || code === 'BUDDY_CONFLICT'
+          ? 'input_incompatible'
+          : code === 'SERVICE_STOPPING' ? 'service_unavailable' : 'input_unavailable'
+    }
+    try {
+      const pending = this.#options.queue.pending(target)
+      if (!pending)
+        return { ...result, allowedActions: [], blockedReason: 'target_unavailable' }
+      result.blockedReason = 'busy'
+      if (this.#canDispatch(pending)) {
+        try {
+          this.#options.queue.validateDelivery(pending)
+          const prepared = await this.prepareContinue(target)
+          this.#assertContinueReady(prepared)
+          result.allowedActions.push('continue')
+        }
+        catch (error) { result.blockedReason = reason(error) }
+      }
+      const active = this.#options.queue.activeRun(target, pending.buddyId)
+      if (active) {
+        try {
+          const run = this.#options.runs.findById(active.id)!
+          this.#options.control?.assertRun({ runId: run.id, expectedRunGeneration: run.generation }, true)
+          const prepared = await this.prepareSteer(target, run.id)
+          this.#options.control?.assertRun({ runId: run.id, expectedRunGeneration: run.generation }, true)
+          this.#assertSteerReady(prepared.input, run.id)
+          this.#options.queue.validateDelivery(prepared.input)
+          result.allowedActions.push('steer')
+          result.steerTarget = { runId: run.id, generation: run.generation }
+        }
+        catch (error) { result.blockedReason = reason(error) }
+      }
+      else if (pending.delivery?.mode === 'current' && pending.delivery.target) {
+        result.blockedReason = 'target_unavailable'
+      }
+      this.#options.control?.assertQueue(condition)
+      if (!accepting())
+        return { allowedActions: [], steerTarget: null, blockedReason: 'service_unavailable' }
+      if (this.#options.runner.isStopping || this.#options.eventLog.state !== 'open')
+        return { allowedActions: ['cancel'], steerTarget: null, blockedReason: 'service_unavailable' }
+    }
+    catch (error) {
+      result.blockedReason = reason(error)
+      result.allowedActions = result.blockedReason === 'service_unavailable' ? [] : result.allowedActions.filter(action => action === 'cancel')
+      result.steerTarget = null
+    }
+    if (result.allowedActions.some(action => action !== 'cancel'))
+      result.blockedReason = null
+    return result
   }
 
   cancelRun(runId: string): Promise<LocalRun> {
@@ -248,8 +321,7 @@ export class ChatQueueService {
     return { input, runId, promoteNext }
   }
 
-  commitSteer(prepared: Awaited<ReturnType<ChatQueueService['prepareSteer']>>) {
-    const { input, runId, promoteNext } = prepared
+  #assertSteerReady(input: QueuedTurnRequestInput, runId: string) {
     const current = this.#options.runs.findById(runId)
     if (this.#disposed || this.#options.eventLog.state !== 'open' || this.#isCancelling(input, input.buddyId)
       || !current || !this.#canFollowUp(current, input) || !this.#options.queue.isCurrentInput(input)
@@ -257,6 +329,13 @@ export class ChatQueueService {
       throw new BuddyServiceError('INPUT_DELIVERY_TARGET_UNAVAILABLE')
     }
     this.#options.availability?.assertRunExecutable(runId)
+    if (current.purpose !== 'chat' || !['root', 'actor_child'].includes(current.executionKind))
+      throw new BuddyServiceError('INPUT_DELIVERY_TARGET_UNAVAILABLE')
+  }
+
+  commitSteer(prepared: Awaited<ReturnType<ChatQueueService['prepareSteer']>>) {
+    const { input, runId, promoteNext } = prepared
+    this.#assertSteerReady(input, runId)
     const reference = this.#inputReference(input)
     this.#options.queue.commitInRun(input, runId, this.#options.getRunPermissionCeiling(runId), promoteNext)
     return () => {
@@ -275,13 +354,18 @@ export class ChatQueueService {
     return { input, sourceRunId: latest?.id ?? null, sourceGeneration: latest ? this.#options.runs.findById(latest.id)?.generation ?? null : null }
   }
 
-  commitContinue(prepared: Awaited<ReturnType<ChatQueueService['prepareContinue']>>) {
+  #assertContinueReady(prepared: Awaited<ReturnType<ChatQueueService['prepareContinue']>>) {
     const { input } = prepared
     const latest = this.#options.queue.latestRun(input, input.buddyId)
     if (!this.#canDispatch(input) || !this.#options.queue.isCurrentInput(input)
       || (latest?.id ?? null) !== prepared.sourceRunId || (latest ? this.#options.runs.findById(latest.id)?.generation ?? null : null) !== prepared.sourceGeneration) {
       throw new BuddyServiceError('INPUT_DELIVERY_TARGET_UNAVAILABLE')
     }
+  }
+
+  commitContinue(prepared: Awaited<ReturnType<ChatQueueService['prepareContinue']>>) {
+    this.#assertContinueReady(prepared)
+    const { input } = prepared
     const request = this.#options.requests.prepare({ ...input, createdAt: new Date().toISOString() })
     return { request, notify: async () => {
       this.#changed('dispatched', input)

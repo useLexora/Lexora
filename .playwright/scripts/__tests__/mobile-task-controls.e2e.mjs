@@ -195,6 +195,14 @@ test('Android direct stop, queue, branch switching and read state preserve exact
       }
       catch (error) { cleanupErrors.push(error) }
     }
+    if (started && failure) {
+      await cleanup(async () => {
+        const log = await adb('logcat', '-d', '-t', '1000', '-v', 'threadtime')
+        await fs.writeFile(testInfo.outputPath('android-failure-logcat.txt'), log.stdout)
+        const capture = await execute(process.env.ADB ?? 'adb', ['-s', serial, 'exec-out', 'screencap', '-p'], { encoding: 'buffer', maxBuffer: 8 * 1024 * 1024 })
+        await fs.writeFile(testInfo.outputPath('android-failure.png'), capture.stdout)
+      })
+    }
     if (started)
       await cleanup(() => adb('shell', 'am', 'force-stop', appPackage))
     const result = await instrument

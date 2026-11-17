@@ -2,63 +2,139 @@ package app.uselexora.mobile.ui
 
 import app.uselexora.mobile.i18n.mobileText
 import app.uselexora.mobile.R
-
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.unit.dp
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun AppearanceSettings(close: () -> Unit) {
     val context = LocalContext.current
-    ModalBottomSheet(onDismissRequest = close, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)) {
-        Column(Modifier.fillMaxWidth().testTag("appearance-settings")) {
-            Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(mobileText(R.string.label_appearance_language), Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-                IconButton(onClick = close) { Icon(Icons.Outlined.Close, mobileText(R.string.label_close_settings)) }
-            }
-            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text(mobileText(R.string.label_theme), style = MaterialTheme.typography.titleMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                    AppearanceOption(mobileText(R.string.label_light), Icons.Outlined.LightMode, MobileAppearance.theme == "light", Modifier.weight(1f).heightIn(min = 88.dp).testTag("theme-light")) { MobileAppearance.selectTheme(context, "light") }
-                    AppearanceOption(mobileText(R.string.label_dark), Icons.Outlined.DarkMode, MobileAppearance.theme == "dark", Modifier.weight(1f).heightIn(min = 88.dp).testTag("theme-dark")) { MobileAppearance.selectTheme(context, "dark") }
-                    AppearanceOption(mobileText(R.string.label_system), Icons.Outlined.DesktopWindows, MobileAppearance.theme == "system", Modifier.weight(1f).heightIn(min = 88.dp).testTag("theme-system")) { MobileAppearance.selectTheme(context, "system") }
+    var languagePicker by remember { mutableStateOf(false) }
+    var aboutOpen by rememberSaveable { mutableStateOf(false) }
+    if (aboutOpen) {
+        AboutSettings { aboutOpen = false }
+        return
+    }
+    BackHandler { close() }
+    Surface(Modifier.fillMaxSize().testTag("appearance-settings"), color = MaterialTheme.colorScheme.background) {
+        Column {
+            SettingsHeader(mobileText(R.string.mobile_phone_settings), mobileText(R.string.label_close_settings), close)
+            Column(
+                Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(24.dp),
+            ) {
+                SettingsSection(mobileText(R.string.label_theme)) {
+                    Row(Modifier.fillMaxWidth().padding(12.dp).height(IntrinsicSize.Min).selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("light" to R.string.label_light, "dark" to R.string.label_dark, "system" to R.string.label_system).forEach { (mode, label) ->
+                            ThemeOption(mode, mobileText(label), Modifier.weight(1f).fillMaxHeight()) { MobileAppearance.selectTheme(context, mode) }
+                        }
+                    }
                 }
-                Text((if (MobileAppearance.theme == "system") mobileText(R.string.label_following_your_system_theme) else mobileText(R.string.label_using_a_fixed_theme)), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(4.dp))
-                Text(mobileText(R.string.label_language), style = MaterialTheme.typography.titleMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                    AppearanceOption(mobileText(R.string.mobile_language_chinese), null, MobileAppearance.language == "zh", Modifier.weight(1f).heightIn(min = 56.dp).testTag("language-zh")) { MobileAppearance.selectLanguage(context, "zh"); (context as? android.app.Activity)?.recreate() }
-                    AppearanceOption(mobileText(R.string.language_english), null, MobileAppearance.language == "en", Modifier.weight(1f).heightIn(min = 56.dp).testTag("language-en")) { MobileAppearance.selectLanguage(context, "en"); (context as? android.app.Activity)?.recreate() }
+                SettingsSection(mobileText(R.string.label_language)) {
+                    SettingsRow(mobileText(R.string.label_language), Icons.Outlined.Language,
+                        mobileText(if (MobileAppearance.language == "zh") R.string.mobile_language_chinese else R.string.language_english),
+                        kind = SettingsRowKind.Selection, tag = "language-selector", divider = false) { languagePicker = true }
                 }
-                Spacer(Modifier.height(24.dp))
+                Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                    SettingsRow(mobileText(R.string.mobile_about_lexora), Icons.Outlined.Info, tag = "about-lexora", divider = false) { aboutOpen = true }
+                }
             }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .6f))
-            Button(onClick = close, Modifier.fillMaxWidth().padding(24.dp).height(50.dp), shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomEnd = 6.dp, bottomStart = 16.dp)) { Text(mobileText(R.string.label_done)) }
+        }
+    }
+    if (languagePicker) ModalBottomSheet(
+        onDismissRequest = { languagePicker = false },
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+    ) {
+        Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 24.dp).selectableGroup()) {
+            Text(mobileText(R.string.label_language), Modifier.padding(12.dp), style = MaterialTheme.typography.titleLarge)
+            listOf("zh" to R.string.mobile_language_chinese, "en" to R.string.language_english).forEach { (language, label) ->
+                ActionRow(mobileText(label), Icons.Outlined.Language, checked = MobileAppearance.language == language,
+                    tag = "language-$language", modifier = Modifier.semantics { selected = MobileAppearance.language == language; role = Role.RadioButton }) {
+                    languagePicker = false
+                    if (MobileAppearance.language != language) {
+                        MobileAppearance.selectLanguage(context, language)
+                        (context as? android.app.Activity)?.recreate()
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun AppearanceOption(label: String, icon: ImageVector?, selected: Boolean, modifier: Modifier, click: () -> Unit) {
-    val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-    Surface(onClick = click, selected = selected, modifier = modifier, shape = RoundedCornerShape(15.dp), color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.background,
-        border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) color else MaterialTheme.colorScheme.outlineVariant)) {
-        Column(Modifier.padding(horizontal = 4.dp, vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(9.dp, Alignment.CenterVertically)) {
-            if (icon != null) Icon(icon, null, Modifier.size(23.dp), tint = color)
-            Text(label, style = MaterialTheme.typography.labelLarge, color = color)
+private fun ThemeOption(mode: String, label: String, modifier: Modifier, click: () -> Unit) {
+    val selected = MobileAppearance.theme == mode
+    Surface(
+        onClick = click, selected = selected,
+        modifier = modifier.testTag("theme-$mode").semantics { role = Role.RadioButton },
+        shape = RoundedCornerShape(12.dp),
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+        border = BorderStroke(2.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Column(Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box {
+                key(MobileAppearance.theme) {
+                    ThemePreview(mode, Modifier.fillMaxWidth().height(70.dp).clip(RoundedCornerShape(7.dp)).testTag("theme-preview-$mode"))
+                }
+                if (selected) Surface(Modifier.align(Alignment.TopEnd).padding(3.dp), shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.primary) {
+                    Icon(Icons.Outlined.Check, mobileText(R.string.label_selected), Modifier.padding(2.dp).size(16.dp), tint = MaterialTheme.colorScheme.onPrimary)
+                }
+            }
+            Text(label, Modifier.padding(bottom = 4.dp), style = MaterialTheme.typography.labelLarge,
+                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface)
         }
+    }
+}
+
+@Composable
+private fun ThemePreview(mode: String, modifier: Modifier) {
+    val context = LocalContext.current
+    val light = remember { MobileTheme.palette(context, false) }
+    val dark = remember { MobileTheme.palette(context, true) }
+    Canvas(modifier) {
+        fun drawPreview(darkMode: Boolean) {
+            val palette = if (darkMode) dark else light
+            fun c(key: String) = MobileTheme.color(palette, key)
+            val w = size.width
+            val h = size.height
+            drawRect(c("canvas"))
+            drawRoundRect(c("raised"), Offset(w * .08f, h * .1f), Size(w * .84f, h * .2f), CornerRadius(4.dp.toPx()))
+            drawRoundRect(c("muted"), Offset(w * .18f, h * .18f), Size(w * .45f, h * .035f), CornerRadius(1.dp.toPx()))
+            drawRoundRect(c("accent"), Offset(w * .12f, h * .42f), Size(w * .55f, h * .055f), CornerRadius(2.dp.toPx()))
+            drawRoundRect(c("muted"), Offset(w * .12f, h * .55f), Size(w * .7f, h * .035f), CornerRadius(1.dp.toPx()))
+            drawRoundRect(c("muted"), Offset(w * .12f, h * .65f), Size(w * .45f, h * .035f), CornerRadius(1.dp.toPx()))
+            drawRoundRect(c("border"), Offset(w * .08f, h * .8f), Size(w * .84f, h * .14f), CornerRadius(4.dp.toPx()), style = androidx.compose.ui.graphics.drawscope.Stroke(1.dp.toPx()))
+        }
+        drawPreview(mode == "dark")
+        if (mode == "system") clipPath(Path().apply {
+            moveTo(size.width * .7f, 0f); lineTo(size.width, 0f); lineTo(size.width, size.height); lineTo(size.width * .3f, size.height); close()
+        }) { drawPreview(true) }
     }
 }

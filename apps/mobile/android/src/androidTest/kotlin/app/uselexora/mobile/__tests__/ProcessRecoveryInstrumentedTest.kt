@@ -108,11 +108,11 @@ class ProcessRecoveryInstrumentedTest {
                 ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java)).use { scenario ->
                     fun input() : String { var value = ""; scenario.onActivity { value = it.findViewById<EditText>(MainActivity.INPUT_ID)?.text?.toString().orEmpty() }; return value }
                     MobileUiTestDriver.openDrafts()
-                    click("草稿 · 重启后当前输入保留😀")
+                    MobileUiTestDriver.clickContaining("重启后当前输入保留😀")
                     click("继续编辑")
                     waitFor { input() == "重启后当前输入保留😀" }
                     MobileUiTestDriver.openDrafts()
-                    click("草稿 · 终止后仍保留😀")
+                    MobileUiTestDriver.clickContaining("终止后仍保留😀")
                     click("继续编辑")
                     waitFor { input() == "终止后仍保留😀" }
                     waitFor { MobileUiTestDriver.exists("权限：本机只读") }

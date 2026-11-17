@@ -54,11 +54,15 @@ export class ProductReadViews {
     return productQuestionSchema.parse(Object.fromEntries(Object.keys(productQuestionSchema.shape).map(key => [key, source[key]])))
   }
 
-  messagePreview(message: Pick<MessageRecord, 'role' | 'content'>): string {
+  messageText(message: Pick<MessageRecord, 'role' | 'content'>): string | null {
     if (message.role !== 'user' && message.role !== 'assistant')
-      return ''
+      return null
     const user = message.role === 'user' ? buddyUserMessageContentV1Schema.safeParse(message.content) : null
-    const text = user?.success ? buddyUserContentToText(user.data.userContent) : publicMessageText(message.content)
+    return user?.success ? buddyUserContentToText(user.data.userContent) : publicMessageText(message.content)
+  }
+
+  messagePreview(message: Pick<MessageRecord, 'role' | 'content'>): string {
+    const text = this.messageText(message)
     return text === null ? '' : truncateText(text.replace(/\s+/g, ' ').trim(), 240)
   }
 

@@ -1,0 +1,113 @@
+package app.uselexora.mobile
+
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.*
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.unit.dp
+import app.uselexora.mobile.i18n.mobileText
+import app.uselexora.mobile.ui.*
+import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.Assert.*
+import org.junit.Rule
+import org.junit.Test
+
+class TaskDiscoveryInstrumentedTest {
+    @get:Rule val compose = createComposeRule()
+
+    private fun capture(name: String) {
+        compose.waitForIdle()
+        val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+        val bitmap = instrumentation.uiAutomation.takeScreenshot()
+        try { java.io.File(instrumentation.targetContext.filesDir, name).outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) } }
+        finally { bitmap.recycle() }
+    }
+
+    @Test fun cachedHomeOpensTaskDiscoveryWithoutExposingTaskDetails() {
+        val state = MobileUiState().apply {
+            tasksLoaded = true; connected = false; deviceLabel = "Fixture service"
+            tasks = listOf(JSONObject().put("id", "task").put("title", "Private task title").put("activity", "idle"))
+        }
+        val actions = mutableListOf<MobileAction>()
+        compose.setContent { LexoraTheme { Box(Modifier.safeDrawingPadding().width(360.dp).height(740.dp)) { PaperWorkbench(state, state.tasks, { action, _ -> actions.add(action) }, {}, {}) } } }
+        compose.onNodeWithText("Private task title").assertDoesNotExist()
+        compose.onNodeWithTag("home-all-tasks").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(listOf(MobileAction.ShowTaskFilter), actions) }
+        compose.onNodeWithTag("connection-detail").assertIsDisplayed()
+    }
+
+    @Test fun partialEmptySearchKeepsContinuationAndOfflineSearchDeclaresItsScope() {
+        val state = MobileUiState().apply { connected = true; tasksLoaded = true; discovery.supported = true; deviceLabel = "Fixture service" }
+        var continued = false
+        compose.setContent {
+            LexoraTheme { Box(Modifier.safeDrawingPadding().width(360.dp).height(740.dp)) {
+                TaskDiscoveryPage(state, emptyList()) { action, payload ->
+                    if (action == MobileAction.SearchTasks) {
+                        state.discovery.query = payload!!.getString("query")
+                        state.discovery.resultScope = "false:null"
+                        state.discovery.partial = true
+                        state.discovery.cursor = "next-page"
+                        state.discovery.loading = false
+                        if (payload.optBoolean("more")) continued = true
+                    }
+                }
+            } }
+        }
+        compose.onNodeWithTag("task-search").performTextInput("needle")
+        compose.mainClock.advanceTimeBy(400)
+        compose.waitForIdle()
+        compose.onNodeWithText(mobileText(R.string.mobile_search_partial)).assertIsDisplayed()
+        capture("discovery-partial-search.png")
+        compose.onNodeWithText(mobileText(R.string.label_task_not_found)).assertDoesNotExist()
+        compose.onNodeWithText(mobileText(R.string.mobile_load_more_results)).performClick()
+        compose.runOnIdle { assertTrue(continued); state.connected = false }
+        compose.onNodeWithText(mobileText(R.string.mobile_search_cached_summaries)).assertIsDisplayed()
+    }
+
+    @Test fun archivedReadAndRestoreRemainSeparateActions() {
+        val state = MobileUiState().apply {
+            connected = true; tasksLoaded = true; discovery.archiveSupported = true; discovery.archived = true; discovery.archiveLoaded = true
+            discovery.archiveItems = listOf(JSONObject().put("id", "archived-task").put("title", "Archived fixture").put("revision", "7"))
+        }
+        val actions = mutableListOf<MobileAction>()
+        compose.setContent { LexoraTheme { Box(Modifier.safeDrawingPadding().width(360.dp).height(740.dp)) { TaskDiscoveryPage(state, emptyList()) { action, _ -> actions.add(action) } } } }
+        capture("discovery-archived.png")
+        compose.onNodeWithText("Archived fixture").performClick()
+        compose.runOnIdle { assertEquals(listOf(MobileAction.OpenArchivedTask), actions) }
+        compose.onNodeWithText(mobileText(R.string.mobile_restore_task)).performClick()
+        compose.runOnIdle { assertEquals(listOf(MobileAction.OpenArchivedTask, MobileAction.RestoreArchivedTask), actions) }
+    }
+
+    @Test fun disabledPartnerCannotBecomeLeadButCanBeRemoved() {
+        val state = MobileUiState().apply {
+            connected = true; conversationReady = true; membersOpen = true
+            memberActions = setOf(MobileAction.AddMember, MobileAction.RemoveMember, MobileAction.SelectBuddy)
+            members = JSONObject().put("buddyId", "lead").put("revision", "3").put("items", JSONArray().put(
+                JSONObject().put("actorId", "disabled").put("profile", JSONObject().put("id", "disabled").put("name", "Disabled fixture").put("enabled", false).put("deleted", false))
+            ))
+        }
+        compose.setContent { LexoraTheme { TaskMembersPanel(state) { _, _ -> } } }
+        compose.onNodeWithText("Disabled fixture").assertIsDisplayed()
+        compose.onNodeWithText(mobileText(R.string.mobile_partner_disabled)).assertIsDisplayed()
+        compose.onNodeWithText(mobileText(R.string.mobile_make_lead)).assertIsNotEnabled()
+        compose.onNodeWithText(mobileText(R.string.mobile_remove_partner)).assertIsEnabled()
+        capture("discovery-members.png")
+    }
+
+    @Test fun pairedButUnsynchronizedServiceRetriesDataWithoutAnotherScan() {
+        val state = MobileUiState().apply { pairingPhase = "syncing"; connected = true; syncFailure = "Fixture sync failed" }
+        val actions = mutableListOf<MobileAction>()
+        compose.setContent { LexoraTheme { PairingStatusPanel(state) { actions.add(it) } } }
+        compose.onNodeWithText(mobileText(R.string.mobile_pairing_sync)).assertIsDisplayed()
+        compose.onNodeWithText("Fixture sync failed").assertIsDisplayed()
+        capture("pairing-sync-failed.png")
+        compose.onNodeWithText(mobileText(R.string.label_scan_to_connect)).assertDoesNotExist()
+        compose.onNodeWithText(mobileText(R.string.label_retry)).performClick()
+        compose.runOnIdle { assertEquals(listOf(MobileAction.Refresh), actions); state.pairingPhase = "ready"; state.syncFailure = "" }
+        compose.onNodeWithText(mobileText(R.string.mobile_pairing_done)).assertIsDisplayed()
+    }
+}

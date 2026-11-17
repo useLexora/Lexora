@@ -51,7 +51,16 @@ private fun ServiceConnectButton(device: MobileDeviceItem, onClick: () -> Unit) 
 @Composable
 internal fun ServiceSwitcher(state: MobileUiState, onAction: (MobileAction, JSONObject?) -> Unit, close: () -> Unit) {
     val hasCurrentService = state.devices.any { it.selected }
-    ModalBottomSheet(onDismissRequest = close, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = MaterialTheme.colorScheme.background) {
+    ModalBottomSheet(
+        onDismissRequest = close,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MaterialTheme.colorScheme.background,
+        dragHandle = {
+            Box(Modifier.padding(top = 12.dp, bottom = 4.dp), contentAlignment = Alignment.Center) {
+                Surface(Modifier.size(width = 32.dp, height = 4.dp), shape = RoundedCornerShape(2.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) {}
+            }
+        },
+    ) {
         Column(Modifier.fillMaxWidth().testTag("service-switcher")) {
             Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(mobileText(R.string.label_connect_service), Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
@@ -59,7 +68,7 @@ internal fun ServiceSwitcher(state: MobileUiState, onAction: (MobileAction, JSON
                 IconButton(onClick = { close(); onAction(MobileAction.ScanDevice, null) }, modifier = Modifier.testTag("scan-service")) { Icon(Icons.Outlined.QrCodeScanner, mobileText(R.string.label_scan_to_connect_alternate), Modifier.size(21.dp)) }
             }
             if (state.devices.isEmpty()) {
-                Box(Modifier.fillMaxWidth().weight(1f, fill = false).height(240.dp).testTag("service-empty-area"), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxWidth().padding(vertical = 32.dp).testTag("service-empty-area"), contentAlignment = Alignment.Center) {
                     Column(Modifier.padding(horizontal = 24.dp).testTag("service-empty-message"), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(mobileText(R.string.label_no_saved_services), style = MaterialTheme.typography.titleSmall, textAlign = TextAlign.Center)
                         Text(mobileText(R.string.label_scan_a_qr_code_to_connect_to_lexora), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
@@ -81,7 +90,15 @@ internal fun ServiceSwitcher(state: MobileUiState, onAction: (MobileAction, JSON
                                 Box(Modifier.size(40.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.background.copy(alpha = .7f)), contentAlignment = Alignment.Center) {
                                     ServiceIcon(Modifier.size(21.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                                Text(device.label, Modifier.weight(1f).testTag("service-name-${device.id}"), style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        if (device.selected) Icon(Icons.Outlined.Check, mobileText(R.string.mobile_current_connection), Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                                        Text(device.label, Modifier.weight(1f).testTag("service-name-${device.id}"), style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    }
+                                    if (state.devices.count { it.label == device.label } > 1) {
+                                        Text(device.address, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    }
+                                }
                                 when {
                                     device.connected -> Row(Modifier.testTag("service-status-${device.id}"), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         Icon(Icons.Outlined.CheckCircle, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.secondary)

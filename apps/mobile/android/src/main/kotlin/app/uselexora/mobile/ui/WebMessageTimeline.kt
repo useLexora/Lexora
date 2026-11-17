@@ -44,6 +44,10 @@ fun WebMessageTimeline(
     resultRunId: String? = null,
     onReadResult: (String) -> Unit = {},
     avatarContext: ReaderAvatarContext? = null,
+    anchorMessageId: String? = null,
+    anchorRequestId: String? = null,
+    hasLaterMessages: Boolean = false,
+    onLatest: () -> Unit = {},
 ) {
     val dark = MobileAppearance.isDark(isSystemInDarkTheme())
     val fontScale = LocalConfiguration.current.fontScale
@@ -51,7 +55,7 @@ fun WebMessageTimeline(
     AndroidView(
         factory = { ReaderView(it) }, modifier = modifier.testTag("message-list"),
         onRelease = { it.dispose() },
-        update = { it.update(messages, topic, details, runs, dark, fontScale, onMessageAction, onResource, onLoadDetail, onQuickAction, language, transcripts, onLoadTranscript, resultRunId, onReadResult, avatarContext) },
+        update = { it.update(messages, topic, details, runs, dark, fontScale, onMessageAction, onResource, onLoadDetail, onQuickAction, language, transcripts, onLoadTranscript, resultRunId, onReadResult, avatarContext, anchorMessageId, anchorRequestId, hasLaterMessages, onLatest) },
     )
 }
 
@@ -87,6 +91,10 @@ class ReaderView(context: Context) : FrameLayout(context) {
     private var recoveryAttempts = 0
     private var resultRunId: String? = null
     private var readResult: (String) -> Unit = {}
+    private var anchorMessageId: String? = null
+    private var anchorRequestId: String? = null
+    private var hasLaterMessages = false
+    private var latest: () -> Unit = {}
     @Volatile private var avatars: ReaderAvatars? = null
     private var avatarAuthors = emptySet<String>()
 
@@ -181,6 +189,10 @@ class ReaderView(context: Context) : FrameLayout(context) {
         resultRunId: String? = null,
         onReadResult: (String) -> Unit = {},
         avatarContext: ReaderAvatarContext? = null,
+        anchorMessageId: String? = null,
+        anchorRequestId: String? = null,
+        hasLaterMessages: Boolean = false,
+        onLatest: () -> Unit = {},
     ) {
         if (avatarContext != null) {
             val created = avatars == null
@@ -192,9 +204,13 @@ class ReaderView(context: Context) : FrameLayout(context) {
         } else if (avatars != null) { avatars?.close(); avatars = null; schedulePublish() }
         loadTranscript = onLoadTranscript
         readResult = onReadResult
+        latest = onLatest
         quickAction = onQuickAction
         messageAction = onMessageAction; resourceAction = onResource; detailAction = onLoadDetail
-        if (this.messages === messages && this.topic == topic && this.details === details && this.runs === runs && this.dark == dark && this.fontScale == fontScale && this.language == language && this.transcripts === transcripts && this.resultRunId == resultRunId) return
+        if (this.messages === messages && this.topic == topic && this.details === details && this.runs === runs && this.dark == dark && this.fontScale == fontScale && this.language == language && this.transcripts === transcripts && this.resultRunId == resultRunId && this.anchorMessageId == anchorMessageId && this.anchorRequestId == anchorRequestId && this.hasLaterMessages == hasLaterMessages) return
+        this.anchorMessageId = anchorMessageId
+        this.anchorRequestId = anchorRequestId
+        this.hasLaterMessages = hasLaterMessages
         this.resultRunId = resultRunId
         this.transcripts = transcripts
         this.messages = messages; this.topic = topic; this.details = details; this.runs = runs
@@ -212,7 +228,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
     private fun publish() {
         if (!ready || disposed) return
         val snapshot = ReaderSnapshot(messages, topic, details, runs, transcripts, dark, fontScale, language,
-            resultRunId?.takeIf { hasWindowFocus() && isShown }, avatars?.sources ?: emptyMap())
+            resultRunId?.takeIf { hasWindowFocus() && isShown }, avatars?.sources ?: emptyMap(), anchorMessageId, anchorRequestId, hasLaterMessages)
         val update = projection.encode(snapshot, { MobileTheme.palette(context, dark) }, { MobileTheme.typography(context) })
         port?.postMessage(WebMessage(update.toString()))
     }
@@ -234,6 +250,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
         if (!protocol.valid(data, protocol.document.getJSONObject("action"))) return
         if (data.optString("action") == "ready") { ready = true; handler.removeCallbacks(loadTimeout); status.visibility = View.GONE; publish(); return }
         if (data.optString("topic") != topic) return
+        if (data.optString("action") == "latest") { latest(); return }
         if (data.optString("action") == "read-result") {
             val id = data.optString("runId")
             if (id == resultRunId && isShown && hasWindowFocus() && runs.any { it.optString("id") == id && it.optString("status") in setOf("completed", "failed", "cancelled") }) readResult(id)

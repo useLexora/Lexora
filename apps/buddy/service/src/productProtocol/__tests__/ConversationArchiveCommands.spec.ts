@@ -97,6 +97,28 @@ function fixture(prepare: () => Promise<number> = async () => 0) {
 }
 
 describe('archive product commands', () => {
+  it('uses the public member read revision for existing durable member commands', async () => {
+    const f = fixture()
+    const buddy = createBuddyRepository(f.database).create({ kind: 'actor', name: 'New member' })
+    const client = await f.connect()
+    const original = (await client.send('conversations.listMembers', { conversationId: 'task' })).result!
+    const joined = await client.send('conversations.addMember', f.envelope('join', { conversationId: 'task', buddyId: buddy.id, expectedRevision: original.revision }))
+    expect(joined.result?.receipt).toMatchObject({ decision: 'accepted' })
+    const members = (await client.send('conversations.listMembers', { conversationId: 'task' })).result!
+    expect(members.items).toContainEqual(expect.objectContaining({ actorId: buddy.id, profile: expect.objectContaining({ id: buddy.id, name: 'New member' }) }))
+    expect(members.revision).toBe(joined.result?.receipt.result.revision)
+    const stale = await client.send('conversations.setBuddy', f.envelope('stale', { conversationId: 'task', buddyId: buddy.id, expectedRevision: original.revision }))
+    expect(stale.result?.receipt).toMatchObject({ decision: 'rejected', errorCode: 'SOURCE_CHANGED' })
+    const selected = await client.send('conversations.setBuddy', f.envelope('select', { conversationId: 'task', buddyId: buddy.id, expectedRevision: members.revision }))
+    expect(selected.result?.receipt).toMatchObject({ decision: 'accepted' })
+    const current = (await client.send('conversations.listMembers', { conversationId: 'task' })).result!
+    expect(current).toMatchObject({ buddyId: buddy.id, revision: selected.result?.receipt.result.revision })
+    const removed = await client.send('conversations.removeMember', f.envelope('remove', { conversationId: 'task', buddyId: original.buddyId, expectedRevision: current.revision }))
+    expect(removed.result?.receipt).toMatchObject({ decision: 'accepted' })
+    expect((await client.send('conversations.listMembers', { conversationId: 'task' })).result?.items).not.toContainEqual(expect.objectContaining({ actorId: original.buddyId }))
+    expect(f.effects).toEqual([])
+  })
+
   it('keeps asynchronous preparation outside the receipt transaction and publishes only committed archive facts', async () => {
     const started = Promise.withResolvers<void>()
     const release = Promise.withResolvers<number>()

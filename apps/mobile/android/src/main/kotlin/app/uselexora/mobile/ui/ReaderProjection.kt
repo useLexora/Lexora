@@ -13,10 +13,13 @@ internal data class ReaderSnapshot(
     val messages: List<JSONObject>, val topic: String, val details: Map<String, MobileMessageDetail>,
     val runs: List<JSONObject>, val transcripts: Map<String, JSONObject>, val dark: Boolean,
     val fontScale: Float, val language: String, val resultRunId: String?, val avatars: Map<String, String>,
+    val anchorMessageId: String? = null, val anchorRequestId: String? = null, val hasLaterMessages: Boolean = false,
 )
 
 internal class ReaderProjection {
     private var sentTopic: String? = null
+    private var anchorRequest: String? = null
+    private var anchorTopic: String? = null
     private var sentLanguage: String? = null
     private var sentAppearance: Boolean? = null
     private var sentTranscripts: Map<String, JSONObject>? = null
@@ -83,8 +86,15 @@ internal class ReaderProjection {
         val next = entries.associate { it.getString("id") to encodedEntries.getValue(it.getString("id")).encoded }
         encodedEntries.keys.retainAll(next.keys)
         val changed = entries.filter { reset || sent[it.getString("id")] != next[it.getString("id")] }
+        if (anchorRequestId != null && anchorRequestId != anchorRequest) {
+            anchorRequest = anchorRequestId
+            anchorTopic = topic
+        }
+        val anchor = anchorRequestId?.takeIf { it.isNotBlank() && anchorTopic == topic && !anchorMessageId.isNullOrBlank() }
         val update = JSONObject().put("topic", topic).put("reset", reset).put("dark", dark).put("fontScale", fontScale).put("language", language)
             .put("resultRunId", resultRunId ?: JSONObject.NULL)
+            .put("anchorMessageId", if (anchor != null) anchorMessageId else JSONObject.NULL)
+            .put("anchorRequestId", anchor ?: JSONObject.NULL).put("hasLaterMessages", hasLaterMessages)
             .put("entries", JSONArray(changed)).put("runs", JSONArray(runs))
         if (reset || sentAppearance != dark) {
             update.put("appearance", appearance()).put("typography", typography())

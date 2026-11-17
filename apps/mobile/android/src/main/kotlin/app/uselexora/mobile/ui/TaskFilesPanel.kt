@@ -17,6 +17,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.json.JSONObject
 
+data class TaskFileTransferState(
+    val loading: Boolean = false,
+    val error: String? = null,
+    val localCopy: Boolean = false,
+    val retryAction: Int? = null,
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun TaskFilesPanel(files: MobileTaskFiles, onAction: (MobileAction, JSONObject?) -> Unit, close: () -> Unit) {
@@ -25,30 +32,51 @@ internal fun TaskFilesPanel(files: MobileTaskFiles, onAction: (MobileAction, JSO
             item {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text(mobileText(R.string.label_task_files), Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-                    IconButton(onClick = { close(); onAction(MobileAction.ManageFiles, null) }) { Icon(Icons.Outlined.MoreHoriz, mobileText(R.string.more_options)) }
+                    IconButton(onClick = close, modifier = Modifier.testTag("close-task-files")) { Icon(Icons.Outlined.Close, mobileText(R.string.review_close)) }
                 }
-                Text(mobileText(R.string.task_files_hint), Modifier.padding(top = 4.dp, bottom = 12.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(mobileText(R.string.task_files_hint), Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick = { close(); onAction(MobileAction.ManageFiles, null) }, modifier = Modifier.testTag("manage-phone-copies")) {
+                    Icon(Icons.Outlined.PhoneAndroid, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(mobileText(R.string.phone_copies))
+                }
             }
             items(files.items, key = { it.getString("resourceId") }) { resource ->
+                val resourceId = resource.getString("resourceId")
+                val transfer = files.transfers[resourceId]
                 Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainer) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Row(Modifier.weight(1f).clickable { onAction(MobileAction.OpenResource, resource) }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                            val mime = resource.optString("mimeType")
-                            Icon(when { mime.startsWith("image/") -> Icons.Outlined.Image; mime == "application/pdf" -> Icons.Outlined.PictureAsPdf; else -> Icons.Outlined.Description }, null)
-                            Column(Modifier.padding(start = 12.dp)) {
-                                Text(resource.getString("name"), maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
-                                val size = resource.optLong("sizeBytes")
-                                Text(if (size > 0) android.text.format.Formatter.formatShortFileSize(androidx.compose.ui.platform.LocalContext.current, size) else mobileText(R.string.file_label), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(Modifier.weight(1f).clickable(enabled = transfer?.loading != true) { onAction(MobileAction.OpenResource, resource) }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                val mime = resource.optString("mimeType")
+                                Icon(when { mime.startsWith("image/") -> Icons.Outlined.Image; mime == "application/pdf" -> Icons.Outlined.PictureAsPdf; else -> Icons.Outlined.Description }, null)
+                                Column(Modifier.padding(start = 12.dp)) {
+                                    Text(resource.getString("name"), maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
+                                    val size = resource.optLong("sizeBytes")
+                                    Text(if (resource.has("sizeBytes") && !resource.isNull("sizeBytes") && size >= 0) android.text.format.Formatter.formatShortFileSize(androidx.compose.ui.platform.LocalContext.current, size) else mobileText(R.string.file_label), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                             }
+                            IconButton(onClick = { onAction(MobileAction.ResourceActions, resource) }, enabled = transfer?.loading != true) { Icon(Icons.Outlined.MoreHoriz, mobileText(R.string.file_more_actions, resource.getString("name"))) }
                         }
-                        IconButton(onClick = { onAction(MobileAction.ResourceActions, resource) }) { Icon(Icons.Outlined.MoreHoriz, mobileText(R.string.file_more_actions, resource.getString("name"))) }
+                        if (transfer?.loading == true) {
+                            Text(mobileText(R.string.file_preparing_copy), Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
+                            LinearProgressIndicator(Modifier.fillMaxWidth().padding(16.dp).testTag("file-progress-$resourceId"))
+                        } else if (transfer?.error != null) {
+                            Text(transfer.error, Modifier.padding(horizontal = 16.dp).testTag("file-error-$resourceId"), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                            TextButton(onClick = {
+                                val action = transfer.retryAction
+                                onAction(MobileAction.OpenResource, if (action == null) resource else JSONObject().put("resource", resource).put("fileAction", action))
+                            }, modifier = Modifier.padding(horizontal = 8.dp).testTag("file-retry-$resourceId")) { Text(mobileText(R.string.label_retry)) }
+                        } else if (transfer?.localCopy == true) {
+                            Text(mobileText(R.string.file_copy_available), Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 }
             }
             if (files.loading) item { LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 16.dp)) }
             else if (files.error != null) item {
                 Text(files.error, color = MaterialTheme.colorScheme.error)
-                TextButton(onClick = { onAction(MobileAction.MoreFiles, null) }) { Text(mobileText(R.string.reload_files)) }
+                TextButton(onClick = { onAction(MobileAction.MoreFiles, null) }, modifier = Modifier.testTag("retry-task-files")) { Text(mobileText(R.string.reload_files)) }
             }
             else if (files.items.isEmpty()) item { Text(mobileText(R.string.no_task_files), Modifier.padding(vertical = 32.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
             else if (files.nextCursor != null) item { TextButton(onClick = { onAction(MobileAction.MoreFiles, null) }, modifier = Modifier.fillMaxWidth()) { Text(mobileText(R.string.load_more_files)) } }

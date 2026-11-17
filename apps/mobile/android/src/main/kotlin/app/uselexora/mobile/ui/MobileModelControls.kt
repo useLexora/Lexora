@@ -18,6 +18,15 @@ internal object MobileModelControls {
         return resolved.put("reasoning", reasoning ?: JSONObject.NULL)
     }
 
+    fun parameters(model: JSONObject, reasoning: String?, tier: String?): JSONObject {
+        val reasons = model.optJSONArray("reasoningOptions")
+        val tiers = model.optJSONArray("serviceTiers")
+        val supportedReasoning = reasoning?.takeIf { value -> reasons != null && (0 until reasons.length()).any { reasons.optString(it) == value } }
+        val supportedTier = tier?.takeIf { value -> tiers != null && (0 until tiers.length()).any { tiers.optJSONObject(it)?.optString("id") == value } }
+        return JSONObject().put("providerId", model.getString("providerId")).put("modelId", model.getString("modelId"))
+            .put("reasoning", supportedReasoning ?: JSONObject.NULL).put("serviceTier", supportedTier ?: JSONObject.NULL)
+    }
+
     fun supportsFast(selection: JSONObject?, models: List<JSONObject>): Boolean {
         val tiers = model(selection, models)?.optJSONArray("serviceTiers") ?: return false
         return (0 until tiers.length()).any { tiers.getJSONObject(it).optString("id") == "priority" }

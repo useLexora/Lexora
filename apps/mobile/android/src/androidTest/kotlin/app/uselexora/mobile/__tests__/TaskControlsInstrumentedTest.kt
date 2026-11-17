@@ -1,11 +1,11 @@
 package app.uselexora.mobile
 
 import app.uselexora.mobile.protocol.MobileContentAdapter
+import app.uselexora.mobile.i18n.mobileText
 import android.content.Intent
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
-import android.widget.EditText
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -41,55 +41,89 @@ class TaskControlsInstrumentedTest {
         val task = client.call("conversations.get", JSONObject().put("conversationId", config.getString("conversationId")))
         val target = JSONObject().put("conversationId", task.getString("id")).put("branchId", task.getString("activeBranchId"))
         fun queue() = client.call("chat.queue.list", target).getJSONArray("items").let { items -> (0 until items.length()).map { items.getJSONObject(it) } }
+        fun controls(id: String) = client.call("conversations.getQueueControls", JSONObject(target.toString()).put("limit", 100)).getJSONArray("items")
+            .let { items -> (0 until items.length()).map { items.getJSONObject(it) }.single { it.getString("id") == id } }
         fun execution(id: String) = client.call("runs.getExecutionState", JSONObject().put("runId", id))
         fun marks() = (client.callValue("taskMarks.states", JSONObject().put("conversationIds", org.json.JSONArray().put(task.getString("id")))) as org.json.JSONArray).getJSONObject(0)
         try { LocalStore(context).use { store ->
             ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java)).use { scenario ->
                 MobileUiTestDriver.awaitConnected()
                 MobileUiTestDriver.openTask(task.getString("title"))
+                fun checkpoint(value: String) { instrumentation.sendStatus(2, android.os.Bundle().apply { putString("stream", "\nQueue checkpoint: $value\n") }) }
                 fun enqueue(value: String): JSONObject {
+                    checkpoint("return to input: $value")
                     MobileUiTestDriver.returnToConversation()
-                    scenario.onActivity { it.findViewById<EditText>(MainActivity.INPUT_ID).setText(value) }
+                    checkpoint("write input: $value")
+                    MobileUiTestDriver.setComposerText(value)
+                    checkpoint("submit input: $value")
                     MobileUiTestDriver.enqueueInput()
+                    checkpoint("await queue: $value")
                     waitFor { queue().any { MobileContentAdapter.text(it.getJSONObject("content")) == value } }
-                    return queue().single { MobileContentAdapter.text(it.getJSONObject("content")) == value }
+                    val queued = queue().single { MobileContentAdapter.text(it.getJSONObject("content")) == value }
+                    waitFor { store.outbox(partition).any { it.method == "chat.submitInput" && it.receipt?.optString("decision") == "accepted" && it.receipt?.optJSONObject("target")?.optString("queueId") == queued.getString("id") } }
+                    val accepted = store.outbox(partition).single { it.method == "chat.submitInput" && it.receipt?.optJSONObject("target")?.optString("queueId") == queued.getString("id") }
+                    assertEquals("enqueue", accepted.envelope.getJSONObject("intent").getString("operation"))
+                    assertEquals(value, MobileContentAdapter.text(accepted.envelope.getJSONObject("intent").getJSONObject("input").getJSONObject("content")))
+                    return queued
                 }
                 fun openQueue(value: String) { MobileUiTestDriver.openTaskSettings(); click("待发送队列"); clickContaining(" · $value") }
                 val removable = enqueue("手机撤回输入 😀")
                 openQueue("手机撤回输入 😀"); click("移除此条输入")
                 waitFor { queue().none { it.getString("id") == removable.getString("id") } }
+                waitFor { MobileUiTestDriver.existsTag("conversation-settings") }
+                assertFalse(MobileUiTestDriver.exists(mobileText(R.string.mobile_input_waiting_to_send)))
+                val removal = store.outbox(partition).single { it.method == "chat.queue.cancel" && it.envelope.getJSONObject("intent").getString("id") == removable.getString("id") }
+                assertEquals("accepted", removal.receipt!!.getString("decision"))
+                assertEquals(removable.getString("revision"), removal.envelope.getJSONObject("intent").getString("expectedRevision"))
                 val stale = enqueue("双方竞争撤回")
                 openQueue("双方竞争撤回")
+                waitFor { MobileUiTestDriver.enabled("移除此条输入") }
                 signal("stale-ready", stale)
                 awaitSignal("stale-removed")
                 click("移除此条输入")
-                MobileUiTestDriver.returnToConversation()
                 waitFor { text("队列已变化") }
+                assertTrue(MobileUiTestDriver.exists(mobileText(R.string.mobile_handle_loaded_input)))
+                assertFalse(MobileUiTestDriver.enabled("移除此条输入"))
+                assertTrue(store.outbox(partition).none { it.method == "chat.queue.cancel" && it.envelope.getJSONObject("intent").getString("id") == stale.getString("id") })
+                assertTrue(queue().none { it.getString("id") == stale.getString("id") })
+                click("关闭")
+                MobileUiTestDriver.returnToConversation()
+                val staleReceipt = CommandOutbox(store).submit(client, "chat.queue.cancel", JSONObject()
+                    .put("conversationId", stale.getString("conversationId")).put("branchId", stale.getString("branchId"))
+                    .put("id", stale.getString("id")).put("expectedRevision", stale.getString("revision")))
+                assertEquals("rejected", staleReceipt.getString("decision"))
+                assertEquals("QUEUE_CHANGED", staleReceipt.getString("errorCode"))
                 scenario.moveToState(Lifecycle.State.CREATED)
                 scenario.moveToState(Lifecycle.State.RESUMED)
                 MobileUiTestDriver.openTaskSettings(); MobileUiTestDriver.awaitConnected(); MobileUiTestDriver.returnToConversation()
-                assertTrue(text("队列已变化"))
-                val rejection = store.outbox(partition).single { it.method == "chat.queue.cancel" && it.envelope.getJSONObject("intent").getString("id") == stale.getString("id") }
-                assertEquals("QUEUE_CHANGED", rejection.receipt!!.getString("errorCode"))
+                val rejection = store.outbox(partition).single { it.id == staleReceipt.getString("commandId") }
+                assertEquals(staleReceipt.toString(), rejection.receipt!!.toString())
+                assertEquals(stale.getString("revision"), rejection.envelope.getJSONObject("intent").getString("expectedRevision"))
                 assertEquals(rejection.receipt.toString(), CommandOutbox(store).retry(client, rejection).toString())
                 val steering = enqueue("手机补充当前执行")
-                val originalRun = steering.getJSONObject("steerTarget").getString("runId")
+                val steeringControls = controls(steering.getString("id"))
+                assertEquals(steering.getString("revision"), steeringControls.getString("revision"))
+                val steeringTarget = steeringControls.getJSONObject("steerTarget")
+                val originalRun = steeringTarget.getString("runId")
                 openQueue("手机补充当前执行"); click("发送给此时的运行")
                 waitFor { text("补充请求已受理") }; click("关闭")
                 waitFor { queue().none { it.getString("id") == steering.getString("id") } }
+                waitFor { MobileUiTestDriver.existsTag("conversation-settings") }
+                val steered = store.outbox(partition).single { it.method == "chat.queue.steer" && it.envelope.getJSONObject("intent").getString("id") == steering.getString("id") }
+                assertEquals("accepted", steered.receipt!!.getString("decision"))
+                val steerIntent = steered.envelope.getJSONObject("intent")
+                assertEquals(steering.getString("revision"), steerIntent.getString("expectedRevision"))
+                assertEquals(originalRun, steerIntent.getString("targetRunId"))
+                assertEquals(steeringTarget.getString("generation"), steerIntent.getString("expectedRunGeneration"))
                 signal("steered", JSONObject().put("runId", originalRun))
                 awaitSignal("steer-delivered")
                 assertEquals("running", client.call("runs.get", JSONObject().put("runId", originalRun)).getString("status"))
                 val paused = enqueue("明确继续后才执行")
                 val retainedInput = "停止时保留当前输入😀 $token"
                 val originalScope = "conversation:${task.getString("id")}:${task.getString("activeBranchId")}"
-                fun input(): String {
-                    var value = ""
-                    scenario.onActivity { value = it.findViewById<EditText>(MainActivity.INPUT_ID)?.text?.toString().orEmpty() }
-                    return value
-                }
+                fun input(): String = MobileUiTestDriver.composerText().orEmpty()
                 fun write(value: String, scope: String) {
-                    scenario.onActivity { it.findViewById<EditText>(MainActivity.INPUT_ID).setText(value) }
+                    MobileUiTestDriver.setComposerText(value)
                     waitFor { store.draft(partition, scope)?.value?.optJSONObject("content")?.let(MobileContentAdapter::text) == value }
                 }
                 write(retainedInput, originalScope)
@@ -102,9 +136,12 @@ class TaskControlsInstrumentedTest {
                 waitFor { queue().any { it.getString("id") == paused.getString("id") && it.getString("state") == "paused" } }
                 signal("paused", JSONObject().put("runId", originalRun).put("queueId", paused.getString("id")))
                 awaitSignal("continue")
+                val pausedControls = controls(paused.getString("id"))
                 openQueue("明确继续后才执行"); click("继续此条输入")
                 waitFor { store.outbox(partition).any { it.method == "chat.queue.continue" && it.receipt?.optString("decision") == "accepted" } }
+                waitFor { MobileUiTestDriver.existsTag("conversation-settings") }
                 val continuation = store.outbox(partition).single { it.method == "chat.queue.continue" }
+                assertEquals(pausedControls.getString("revision"), continuation.envelope.getJSONObject("intent").getString("expectedRevision"))
                 val nextRun = continuation.receipt!!.getJSONObject("target").getString("runId")
                 assertNotEquals(originalRun, nextRun)
                 awaitSignal("next-running")
@@ -175,7 +212,7 @@ class TaskControlsInstrumentedTest {
                 assertEquals(forkInput, MobileContentAdapter.text(store.draft(partition, forkScope)!!.value.getJSONObject("content")))
                 assertEquals(submittedInputs, store.outbox(partition).filter { it.method == "chat.submitInput" }.map { it.id }.toSet())
                 assertEquals(0, store.outbox(partition).count { it.method == "conversations.activateBranch" })
-                signal("done", JSONObject().put("directStopRetainedInput", true).put("branchDraftIsolation", true).put("forkBranchId", forkId).put("originalBranchId", task.getString("activeBranchId")).put("originalRunId", originalRun).put("nextRunId", nextRun).put("staleQueueRejected", true).put("oldStopReplayed", true).put("automaticVisibleRead", true).put("manualUnreadPreserved", true).put("readState", marks()).put("stopReceipt", stop.receipt))
+                signal("done", JSONObject().put("directStopRetainedInput", true).put("branchDraftIsolation", true).put("forkBranchId", forkId).put("originalBranchId", task.getString("activeBranchId")).put("originalRunId", originalRun).put("nextRunId", nextRun).put("staleQueueRejected", true).put("staleQueueBlockedBeforeSubmit", true).put("staleQueueRejectionSource", "explicit-cas-probe").put("oldStopReplayed", true).put("automaticVisibleRead", true).put("manualUnreadPreserved", true).put("readState", marks()).put("stopReceipt", stop.receipt))
                 capture("controls-$token-final.png")
             }
         } } finally { client.close(); connection.description()?.let { connection.logout(it) } }

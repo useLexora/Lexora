@@ -214,14 +214,14 @@ class DeviceSwitchInstrumentedTest {
                 } finally { automation.serviceInfo = automation.serviceInfo.apply { flags = previousFlags } }
             }
             fun awaitComputer(name: String, config: JSONObject) {
-                waitUntil(30000) { MobileUiTestDriver.contains("$name，已连接服务") }
-                click("搜索任务")
+                waitUntil(30000) { MobileUiTestDriver.contains("$name · 已连接服务") }
+                MobileUiTestDriver.clickTag("home-all-tasks")
                 waitUntil { MobileUiTestDriver.contains(config.getString("assignedTitle")) }
                 MobileUiTestDriver.openWorkbench()
             }
             fun switchComputer(current: String, next: String, config: JSONObject, captureSheet: Boolean = false) {
                 MobileUiTestDriver.openWorkbench()
-                MobileUiTestDriver.clickContaining("$current，")
+                MobileUiTestDriver.clickContaining("$current ·")
                 waitUntil { MobileUiTestDriver.exists("连接服务") && MobileUiTestDriver.exists(next) }
                 if (captureSheet) capture("computer-switch", dialog = true) { MobileUiTestDriver.exists("连接服务") && MobileUiTestDriver.exists(next) }
                 click("切换到 $next")
@@ -229,21 +229,22 @@ class DeviceSwitchInstrumentedTest {
             }
             fun resume(text: String) {
                 MobileUiTestDriver.openWorkbench()
-                click("工作台选项"); click("本地草稿")
-                click("草稿 · $text"); click("继续编辑")
+                MobileUiTestDriver.openDrafts()
+                MobileUiTestDriver.clickContaining(text); click("继续编辑")
                 waitUntil { input() == text }
             }
 
             awaitComputer("验收服务 B", second)
             assertFalse(MobileUiTestDriver.contains(first.getString("assignedTitle")))
             switchComputer("验收服务 B", "验收服务 A", first, captureSheet = true)
-            capture("workbench") { MobileUiTestDriver.exists("工作台选项") && MobileUiTestDriver.contains("验收服务 A，已连接服务") }
+            capture("workbench") { MobileUiTestDriver.existsTag("workbench-list") && MobileUiTestDriver.contains("验收服务 A · 已连接服务") }
             assertFalse(MobileUiTestDriver.contains(second.getString("assignedTitle")))
-            click("工作台选项"); click("空间")
+            clickId("space-filter")
             waitUntil { MobileUiTestDriver.exists(first.getString("spaceName")) }
             assertFalse(MobileUiTestDriver.contains(second.getString("spaceName")))
-            capture("spaces") { MobileUiTestDriver.exists(first.getString("spaceName")) && MobileUiTestDriver.exists("全部任务") }
-            click("全部任务")
+            capture("spaces", dialog = true) { MobileUiTestDriver.exists(first.getString("spaceName")) && MobileUiTestDriver.exists("全部空间") }
+            click("全部空间")
+            clickId("home-all-tasks")
             waitUntil { MobileUiTestDriver.contains(first.getString("assignedTitle")) && MobileUiTestDriver.contains(first.getString("unassignedTitle")) }
             clickId("space-filter"); click("未分配空间")
             waitUntil { MobileUiTestDriver.contains(first.getString("unassignedTitle")) && !MobileUiTestDriver.contains(first.getString("assignedTitle")) }
@@ -260,7 +261,7 @@ class DeviceSwitchInstrumentedTest {
             capture("new-space-task") { input() == firstText && MobileUiTestDriver.exists("任务设置") }
 
             switchComputer("验收服务 A", "验收服务 B", second)
-            click("工作台选项"); click("空间"); click(second.getString("spaceName"))
+            clickId("space-filter"); click(second.getString("spaceName")); clickId("home-all-tasks")
             waitUntil { MobileUiTestDriver.contains(second.getString("assignedTitle")) && !MobileUiTestDriver.contains(second.getString("unassignedTitle")) }
             click("新任务"); waitInput()
             assertEquals("", input())

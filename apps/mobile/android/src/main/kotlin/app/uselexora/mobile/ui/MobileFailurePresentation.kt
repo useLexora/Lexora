@@ -24,7 +24,9 @@ object MobileFailurePresentation {
         "INPUT_DELIVERY_TARGET_UNAVAILABLE", "INPUT_DELIVERY_INCOMPATIBLE" -> mobileText(R.string.error_input_delivery_target_unavailable)
         "SERVICE_INSTANCE_CHANGED" -> mobileText(R.string.error_service_instance_changed)
         "LOCAL_DRAFT_DIRTY" -> mobileText(R.string.error_local_draft_dirty)
-        "DRAFT_CONFLICT", "SOURCE_CHANGED" -> mobileText(R.string.error_draft_conflict)
+        "DRAFT_CONFLICT" -> mobileText(R.string.error_draft_conflict)
+        "SOURCE_CHANGED" -> mobileText(R.string.error_source_changed)
+        "LOCAL_COPY_UNAVAILABLE" -> mobileText(R.string.error_local_copy_unavailable)
         "SERVICE_UNREACHABLE" -> NETWORK_UNAVAILABLE_NOTICE
         "FILE_TOO_LARGE" -> mobileText(R.string.error_file_too_large)
         "LOCAL_CACHE_FULL" -> mobileText(R.string.error_local_cache_full)
@@ -39,6 +41,8 @@ object MobileFailurePresentation {
         "METHOD_NOT_AVAILABLE" -> mobileText(R.string.error_method_not_available)
         "DESKTOP_UNAVAILABLE" -> mobileText(R.string.error_desktop_unavailable)
         "CONTENT_UNSUPPORTED" -> mobileText(R.string.error_content_unsupported)
+        "LIMIT_EXCEEDED", "PAGE_TOO_LARGE" -> mobileText(R.string.error_sync_capacity)
+        "SYNC_INVALID", "RESYNC_REQUIRED" -> mobileText(R.string.error_sync_interrupted)
         else -> mobileText(R.string.error_unknown)
     }
 }

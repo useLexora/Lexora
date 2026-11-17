@@ -9,6 +9,7 @@ import { assertProductContentActions, productEditableContentSchema, restoreProdu
 import { ProductProtocolError } from '../../../shared/productProtocol/errors'
 import { productByteLength } from '../../../shared/productProtocol/limits'
 import { productCommandIntents } from '../../../shared/productProtocol/methods'
+import { productQueueControlsInputSchema } from '../../../shared/productProtocol/queries'
 import { decodeSafeProductRevision, encodeProductRevision } from '../../../shared/productProtocol/scalars'
 import { CommandAdmissionError } from '../commands/CommandAdmissionError'
 import { COMMAND_FINGERPRINT_VERSION, fingerprintCommandIntent, fingerprintProductCommandIntent, PRODUCT_COMMAND_FINGERPRINT_VERSION, productCommandFingerprint } from '../commands/commandIntent'
@@ -26,6 +27,7 @@ export function createProductCommandHandlers(options: {
 }): Partial<Record<ProductMethod, ProductRequestHandler>> {
   const { commands } = options
   const handlers: Partial<Record<ProductMethod, ProductRequestHandler>> = {
+    'conversations.getQueueControls': { handle: input => commands.queueControls.read(productQueueControlsInputSchema.parse(input)) },
     'conversations.listArchived': { handle: (input, context) => {
       options.assertOwner(context)
       const page = commands.metadata.listArchived(conversationArchiveQuerySchema.parse({ ...input as Record<string, unknown>, cursor: (input as { cursor?: string | null }).cursor ?? undefined }))
