@@ -18,7 +18,7 @@ enum class MobileAction {
     ShowWorkbench, ShowSpaces, OpenSpace, ChooseSpaceFilter, ShowTaskFilter, Back, ReviewTaskApproval,
     ScanDevice, SelectDevice, ManageDevice,
     Approvals, Outbox, Recovery, Files, ManageFiles, AttachFile, TakePhoto, OpenResource, ResourceActions, MoreFiles,
-    ChooseModel, ChooseReasoning, ToggleFast, ApplyModel, ChooseExecution, ApplyExecution, ChooseSpace, Send,
+    ChooseModel, ToggleFast, ApplyModel, ChooseExecution, ApplyExecution, ChooseSpace, Send,
     MoreHistory, Refresh, Reconnect, TaskControls, TaskQueue, TaskBranches, SelectBranch,
     QueueInput, OpenOnDesktop, ReadState, Disconnect, MessageActions, DismissNotice,
     CopyMessage, EditMessage, ContinueMessage, RegenerateMessage, ShowMessageRun, OpenMessageDetail,
@@ -52,6 +52,8 @@ data class MobileMessageMenu(
     val run: JSONObject? = null,
     val canRegenerate: Boolean = false,
     val loading: Boolean = false,
+    val anchor: androidx.compose.ui.unit.IntRect? = null,
+    val contextual: Boolean = false,
 )
 
 data class MobileTaskFiles(
@@ -130,11 +132,11 @@ class MobileUiState {
     var topic by mutableStateOf("taskIndex")
     var devices by mutableStateOf<List<MobileDeviceItem>>(emptyList())
     var hasInput by mutableStateOf(false)
-    var modelPickerShowList by mutableStateOf(false)
     var modelPickerOpen by mutableStateOf(false)
     var modelsLoading by mutableStateOf(false)
     var modelsError by mutableStateOf("")
     var models by mutableStateOf<List<JSONObject>>(emptyList())
+    var modelProviders by mutableStateOf<List<JSONObject>>(emptyList())
     var modelSelection by mutableStateOf<JSONObject?>(null)
     var executionSelection by mutableStateOf(JSONObject())
     var executionPickerOpen by mutableStateOf(false)

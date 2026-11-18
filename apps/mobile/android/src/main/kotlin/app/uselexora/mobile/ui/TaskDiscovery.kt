@@ -63,8 +63,8 @@ internal fun TaskDiscoveryPage(state: MobileUiState, tasks: List<JSONObject>, on
             trailingIcon = if (query.isNotEmpty()) ({ IconButton(onClick = { query = "" }) { Icon(Icons.Outlined.Close, mobileText(R.string.label_clear_search)) } }) else null,
             shape = MaterialTheme.shapes.medium, textStyle = MaterialTheme.typography.bodyMedium)
         if (query.isNotBlank()) Text(mobileText(if (remoteSearch) R.string.mobile_search_public_history else R.string.mobile_search_cached_summaries), Modifier.padding(horizontal = 20.dp, vertical = 4.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (state.taskSyncFailed && !discovery.archived) DiscoveryNotice(state.syncFailure.ifBlank { mobileText(R.string.label_sync_failed_showing_previously_loaded_tasks) }) { onAction(MobileAction.Refresh, null) }
-        if (!state.connected && state.tasksLoaded) Text(mobileText(R.string.label_service_offline_showing_previously_synced_tasks), Modifier.padding(horizontal = 20.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall)
+        if (state.connected && state.taskSyncFailed && !discovery.archived) DiscoveryNotice(state.syncFailure.ifBlank { mobileText(R.string.mobile_task_update_failed) }) { onAction(MobileAction.Refresh, null) }
+        if (!state.connected && !discovery.archived && state.tasksLoaded && query.isBlank()) Text(mobileText(R.string.mobile_previously_synced_tasks), Modifier.padding(horizontal = 20.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall)
         if (discovery.archived && discovery.archiveError.isNotBlank()) DiscoveryNotice(discovery.archiveError) { onAction(MobileAction.LoadArchives, null) }
         if (remoteSearch) {
             if (discovery.loading || discovery.query != query.trim()) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -91,11 +91,17 @@ internal fun TaskDiscoveryPage(state: MobileUiState, tasks: List<JSONObject>, on
             }
         } else {
             if (discovery.archiveLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
+            val tasksLoaded = if (discovery.archived) discovery.archiveLoaded else state.tasksLoaded
             val centerEmptyState = local.isEmpty() && (!discovery.archived || discovery.archiveCursor == null)
             LazyColumn(state = rememberLazyListState(), modifier = Modifier.weight(1f).fillMaxWidth().testTag("task-list"), contentPadding = if (centerEmptyState) PaddingValues(0.dp) else PaddingValues(bottom = 24.dp)) {
                 if (local.isEmpty()) item {
                     DiscoveryEmptyState(
-                        mobileText(when { query.isNotBlank() -> R.string.label_task_not_found; discovery.archived && !discovery.archiveLoaded -> R.string.label_syncing_tasks; !discovery.archived && !state.tasksLoaded -> R.string.label_syncing_tasks; else -> R.string.mobile_no_tasks_in_scope }),
+                        mobileText(when {
+                            !state.connected && !tasksLoaded -> R.string.mobile_connect_to_view_tasks
+                            query.isNotBlank() -> R.string.label_task_not_found
+                            !tasksLoaded -> R.string.label_syncing_tasks
+                            else -> R.string.mobile_no_tasks_in_scope
+                        }),
                         if (centerEmptyState) Modifier.fillParentMaxSize() else Modifier.fillMaxWidth(),
                     )
                 }

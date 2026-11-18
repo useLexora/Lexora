@@ -1,27 +1,33 @@
 <script setup lang="ts">
 import type { ReaderMessage } from './readerBridge'
-import type { ReaderActionInput, ReaderSend } from './readerProtocol'
+import type { ReaderActionInput, ReaderOutput, ReaderSend } from './readerProtocol'
 import { Document20Regular } from '@vicons/fluent'
 import ChatMarkdownBody from '../shared/ui/markdown/ChatMarkdownBody.vue'
 import MessageAvatar from './MessageAvatar.vue'
+import ReaderArtifacts from './ReaderArtifacts.vue'
 import ReaderMessageActions from './ReaderMessageActions.vue'
 import { useReaderStrings } from './readerStrings'
 
 const props = defineProps<{
   message: ReaderMessage
+  output?: ReaderOutput
   dark: boolean
   language?: string
   send: ReaderSend
 }>()
 const emit = defineEmits<{ interact: [] }>()
 const labels = useReaderStrings()
-function action(value: Extract<ReaderActionInput, { action: 'message' | 'detail' | 'followup' | 'copy' | 'resource' }>) {
+function action(value: Extract<ReaderActionInput, { action: 'message' | 'detail' | 'followup' | 'copy' | 'resource' | 'regenerate' | 'edit' | 'branch' }>) {
   emit('interact')
   props.send(value)
 }
-function openActions() {
+function openActions(event: MouseEvent) {
   window.getSelection()?.removeAllRanges()
-  action({ action: 'message', id: props.message.id })
+  const rect = event.type === 'contextmenu'
+    ? { x: event.clientX, y: event.clientY, width: 0, height: 0 }
+    : (event.currentTarget as HTMLElement).getBoundingClientRect()
+  const clamp = (value: number) => Math.min(1, Math.max(0, value))
+  action({ action: 'message', id: props.message.id, ...(event.type === 'contextmenu' ? { contextual: true } : {}), anchor: { x: clamp(rect.x / innerWidth), y: clamp(rect.y / innerHeight), width: clamp(rect.width / innerWidth), height: clamp(rect.height / innerHeight) } })
 }
 async function copy(text: string) {
   action({ action: 'copy', id: props.message.id, text })
@@ -68,10 +74,11 @@ async function copy(text: string) {
         {{ labels.previewSaveShare }}
       </button>
     </div>
+    <ReaderArtifacts v-if="message.runId" :run-id="message.runId" :output="output" :send="send" @interact="emit('interact')" />
     <ReaderMessageActions
       v-if="message.role === 'user' || (message.role === 'assistant' && message.final && message.actionsVisible)"
       :message="message" :language="language"
-      @copy="action({ action: 'copy', id: message.id, text: message.text, feedback: 'message' })" @more="openActions" @followup="action({ action: 'followup', id: message.id })"
+      @copy="action({ action: 'copy', id: message.id, text: message.text, feedback: 'message' })" @more="openActions" @regenerate="action({ action: 'regenerate', id: message.id })" @edit="action({ action: 'edit', id: message.id })" @branch="branchId => action({ action: 'branch', branchId })" @followup="action({ action: 'followup', id: message.id })"
     />
   </article>
 </template>

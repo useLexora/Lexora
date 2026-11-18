@@ -4,35 +4,89 @@ import app.uselexora.mobile.i18n.MobileStrings
 import app.uselexora.mobile.i18n.mobileText
 import app.uselexora.mobile.R
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.*
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import org.json.JSONObject
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-@OptIn(ExperimentalMaterial3Api::class)
+internal class MessageMenuPosition(private val anchor: IntRect?, private val margin: Int) : PopupPositionProvider {
+    override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
+        val target = anchor ?: anchorBounds
+        val x = if (layoutDirection == LayoutDirection.Rtl) target.right - popupContentSize.width else target.left
+        val below = target.bottom + margin
+        val y = if (below + popupContentSize.height <= windowSize.height - margin) below else target.top - popupContentSize.height - margin
+        return IntOffset(
+            x.coerceIn(margin, (windowSize.width - popupContentSize.width - margin).coerceAtLeast(margin)),
+            y.coerceIn(margin, (windowSize.height - popupContentSize.height - margin).coerceAtLeast(margin)),
+        )
+    }
+}
+
 @Composable
 internal fun ConversationMessageMenu(menu: MobileMessageMenu, connected: Boolean, onAction: (MobileAction, JSONObject?) -> Unit, close: () -> Unit) {
-    val assistant = menu.message.optString("role") == "assistant"
     val time = runCatching { Instant.parse(menu.message.optString("createdAt")).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofLocalizedDateTime(java.time.format.FormatStyle.MEDIUM).withLocale(MobileStrings.locale)) }.getOrNull()
-    ModalBottomSheet(onDismissRequest = close, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = MaterialTheme.colorScheme.background) {
-        Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 24.dp).testTag("message-menu")) {
-            Text(if (assistant) mobileText(R.string.label_reply) else if (menu.message.optString("role") == "user") mobileText(R.string.label_your_message) else mobileText(R.string.label_tool_record), Modifier.padding(horizontal = 12.dp), style = MaterialTheme.typography.titleMedium)
-            if (time != null) Text(time, Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(8.dp))
-            if (menu.canCopy) ActionRow(mobileText(R.string.label_copy), Icons.Outlined.ContentCopy) { onAction(MobileAction.CopyMessage, null) }
-            if (menu.needsDetail) ActionRow(mobileText(R.string.label_load_full_content), Icons.Outlined.Article, enabled = connected) { onAction(MobileAction.OpenMessageDetail, null) }
-            if (menu.canEdit) ActionRow(mobileText(R.string.label_edit), Icons.Outlined.Edit, mobileText(R.string.label_sending_your_edit_creates_a_new_branch), enabled = connected) { onAction(MobileAction.EditMessage, null) }
-            if (assistant && menu.canRegenerate) ActionRow(mobileText(R.string.label_regenerate), Icons.Outlined.Refresh, mobileText(R.string.label_keep_the_original_reply_and_start_a_new_branch), enabled = connected, tag = "regenerate-message") { onAction(MobileAction.RegenerateMessage, null) }
-            if (assistant && menu.run?.optString("status") == "completed") ActionRow(mobileText(R.string.label_continue_from_here), Icons.Outlined.ForkRight, enabled = connected) { onAction(MobileAction.ContinueMessage, null) }
-            if (menu.run != null) ActionRow(mobileText(R.string.label_run_details), Icons.Outlined.Info, enabled = connected) { onAction(MobileAction.ShowMessageRun, null) }
-            if (menu.loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(12.dp))
+    val margin = with(LocalDensity.current) { 8.dp.roundToPx() }
+    val position = remember(menu.anchor, margin) { MessageMenuPosition(menu.anchor, margin) }
+    Popup(popupPositionProvider = position, onDismissRequest = close, properties = PopupProperties(focusable = true)) {
+        Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp, shadowElevation = 6.dp) {
+            Column(Modifier.width(224.dp).padding(vertical = 6.dp).testTag("message-menu")) {
+                if ((menu.contextual || menu.message.optString("role") == "tool") && menu.canCopy) DropdownMenuItem(
+                    text = { Text(mobileText(R.string.label_copy), style = MaterialTheme.typography.bodyMedium) },
+                    leadingIcon = { Icon(Icons.Outlined.ContentCopy, null, Modifier.size(18.dp)) },
+                    onClick = { onAction(MobileAction.CopyMessage, null) },
+                    modifier = Modifier.height(40.dp),
+                )
+                if (menu.contextual && menu.canEdit) DropdownMenuItem(
+                    text = { Text(mobileText(R.string.label_edit), style = MaterialTheme.typography.bodyMedium) },
+                    leadingIcon = { Icon(Icons.Outlined.Edit, null, Modifier.size(18.dp)) },
+                    enabled = connected,
+                    onClick = { onAction(MobileAction.EditMessage, null) },
+                    modifier = Modifier.height(40.dp),
+                )
+                if (menu.contextual && menu.canRegenerate) DropdownMenuItem(
+                    text = { Text(mobileText(R.string.label_regenerate), style = MaterialTheme.typography.bodyMedium) },
+                    leadingIcon = { Icon(Icons.Outlined.Refresh, null, Modifier.size(18.dp)) },
+                    enabled = connected,
+                    onClick = { onAction(MobileAction.RegenerateMessage, null) },
+                    modifier = Modifier.height(40.dp),
+                )
+                if (menu.contextual && menu.message.optString("role") == "assistant" && menu.run?.optString("status") == "completed") DropdownMenuItem(
+                    text = { Text(mobileText(R.string.label_continue_from_here), style = MaterialTheme.typography.bodyMedium) },
+                    leadingIcon = { Icon(Icons.Outlined.ForkRight, null, Modifier.size(18.dp)) },
+                    enabled = connected,
+                    onClick = { onAction(MobileAction.ContinueMessage, null) },
+                    modifier = Modifier.height(40.dp),
+                )
+                if (menu.needsDetail) DropdownMenuItem(
+                    text = { Text(mobileText(R.string.label_load_full_content), style = MaterialTheme.typography.bodyMedium) },
+                    leadingIcon = { Icon(Icons.Outlined.Article, null, Modifier.size(18.dp)) },
+                    enabled = connected,
+                    onClick = { onAction(MobileAction.OpenMessageDetail, null) },
+                    modifier = Modifier.height(40.dp),
+                )
+                if (menu.run != null) DropdownMenuItem(
+                    text = { Text(mobileText(R.string.label_run_details), style = MaterialTheme.typography.bodyMedium) },
+                    leadingIcon = { Icon(Icons.Outlined.Info, null, Modifier.size(18.dp)) },
+                    enabled = connected,
+                    onClick = { onAction(MobileAction.ShowMessageRun, null) },
+                    modifier = Modifier.height(40.dp),
+                )
+                if (menu.loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp))
+                if (time != null) Text(time, Modifier.padding(horizontal = 16.dp, vertical = 6.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }

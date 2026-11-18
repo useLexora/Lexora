@@ -3,13 +3,16 @@ import type { BuddyToolPresentation } from '@buddy-shared/runs/runEventPresentat
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { computed } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import { tryUseChatContent } from './chatContentContext'
 
 const props = defineProps<{
   language: BuddyLocale
   presentation: Extract<BuddyToolPresentation, { card: 'image' }>
+  toolCallId?: string
 }>()
 
 const { t } = useBuddyI18n(() => props.language)
+const imageRenderer = tryUseChatContent()?.toolImageRenderer
 const failureText = computed(() => {
   const { status, failure } = props.presentation
   if (status === 'running' || status === 'completed')
@@ -45,6 +48,10 @@ const referenceLabel = computed(() => {
       <header>{{ t('desktop.chat.processToolInput') }}</header>
       <p>{{ presentation.prompt }}</p>
       <small v-if="referenceLabel">{{ referenceLabel }}</small>
+      <component
+        :is="imageRenderer" v-if="imageRenderer && presentation.reference?.mode === 'resources'"
+        :ids="presentation.reference.resourceIds" :tool-call-id="toolCallId" kind="reference"
+      />
       <small v-if="presentation.source">
         {{ t('desktop.chat.processToolImageModel', { model: `${presentation.source.title} · ${presentation.source.owner}` }) }}
       </small>
@@ -52,23 +59,26 @@ const referenceLabel = computed(() => {
     <section v-if="failureText || outputs.length" class="buddy-chat-image-tool-details__section is-output min-w-0 overflow-hidden border-1 border-solid border-border rounded-micro bg-raised">
       <header>{{ t('desktop.chat.processToolOutput') }}</header>
       <pre v-if="failureText" role="status"><code>{{ failureText }}</code></pre>
-      <figure
-        v-for="output in outputs"
-        :key="output.artifactId"
-        class="buddy-chat-image-tool-details__output grid min-w-0 grid-cols-[5rem_minmax(0,_1fr)] items-center gap-3 m-0 py-[0.625rem] px-3"
-      >
-        <img
-          :alt="t('desktop.chat.processToolImageOutput')"
-          height="112"
-          loading="lazy"
-          :src="output.url"
-          width="160"
+      <component :is="imageRenderer" v-if="imageRenderer" :ids="presentation.artifactIds" :tool-call-id="toolCallId" kind="artifact" />
+      <template v-else>
+        <figure
+          v-for="output in outputs"
+          :key="output.artifactId"
+          class="buddy-chat-image-tool-details__output grid min-w-0 grid-cols-[5rem_minmax(0,_1fr)] items-center gap-3 m-0 py-[0.625rem] px-3"
         >
-        <figcaption>
-          <span>{{ t('desktop.chat.processToolImageAddress') }}</span>
-          <code>{{ output.url }}</code>
-        </figcaption>
-      </figure>
+          <img
+            :alt="t('desktop.chat.processToolImageOutput')"
+            height="112"
+            loading="lazy"
+            :src="output.url"
+            width="160"
+          >
+          <figcaption>
+            <span>{{ t('desktop.chat.processToolImageAddress') }}</span>
+            <code>{{ output.url }}</code>
+          </figcaption>
+        </figure>
+      </template>
     </section>
   </div>
 </template>

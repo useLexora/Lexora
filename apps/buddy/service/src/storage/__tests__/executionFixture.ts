@@ -10,8 +10,7 @@ import { createThreadBindingRepository } from '../threadBindingRepository'
 
 export const executionNow = '2026-10-12T00:00:00.000Z'
 
-export function createExecutionStorageFixture(databasePath = ':memory:') {
-  const database = openBuddyDatabase({ databasePath })
+export function createExecutionStorageFixture(databasePath = ':memory:', database = openBuddyDatabase({ databasePath })) {
   const buddies = createBuddyRepository(database)
   const conversations = createConversationRepository(database)
   const runs = createRunRepository(database)

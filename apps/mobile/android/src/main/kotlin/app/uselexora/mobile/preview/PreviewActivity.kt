@@ -3,7 +3,6 @@ package app.uselexora.mobile.preview
 import app.uselexora.mobile.i18n.MobileStrings
 import app.uselexora.mobile.R
 import app.uselexora.mobile.i18n.mobileText
-import android.app.Activity
 import android.content.Intent
 import android.content.ClipData
 import android.content.res.Configuration
@@ -14,31 +13,35 @@ import app.uselexora.mobile.ui.MobileTheme
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Bundle
-import android.text.TextUtils
-import android.view.Gravity
-import android.view.View
 import android.widget.*
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.core.content.FileProvider
+import app.uselexora.mobile.ui.LexoraTheme
 import java.io.File
 import java.util.concurrent.Executors
 
-class PreviewActivity : Activity() {
+class PreviewActivity : ComponentActivity() {
     private lateinit var file: File
     private lateinit var kind: PreviewKind
-    private lateinit var status: TextView
     private lateinit var content: FrameLayout
-    private lateinit var pages: TextView
-    private lateinit var previous: Button
-    private lateinit var next: Button
-    private lateinit var retry: Button
+    private var loading by mutableStateOf(true)
+    private var error by mutableStateOf<String?>(null)
+    private var notice by mutableStateOf<String?>(null)
+    private var feedback by mutableStateOf<String?>(null)
+    private var empty by mutableStateOf(false)
+    private var chromeVisible by mutableStateOf(true)
     private var retryPage = 0
     private var foregroundColor = Color.BLACK
     private var name = ""
     private var mime = ""
-    private var page = 0
-    private var pageCount = 1
+    private var page by mutableIntStateOf(0)
+    private var pageCount by mutableIntStateOf(1)
     private var image: Bitmap? = null
-    private var imageView: ZoomImageView? = null
     private var client: PreviewClient? = null
     private var documentView: PreviewDocumentView? = null
     private var generation = 0L
@@ -59,49 +62,21 @@ class PreviewActivity : Activity() {
         MobileAppearance.load(this)
         val palette = MobileTheme.palette(this, MobileAppearance.isDark(resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES))
         foregroundColor = MobileTheme.color(palette, "fg").toArgb()
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(MobileTheme.color(palette, "canvas").toArgb()) }
-        root.setOnApplyWindowInsetsListener { view, insets -> view.setPadding(dp(12), insets.systemWindowInsetTop, dp(12), insets.systemWindowInsetBottom); insets }
-        val toolbar = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        toolbar.addView(button(mobileText(R.string.label_back)) { finish() })
-        toolbar.addView(TextView(this).apply {
-            text = name; textSize = 18f; setTextColor(foregroundColor); maxLines = 2; ellipsize = TextUtils.TruncateAt.END
-            setOnClickListener { android.app.AlertDialog.Builder(this@PreviewActivity).setMessage(name).setPositiveButton(mobileText(R.string.review_close), null).show() }
-        }, LinearLayout.LayoutParams(0, -2, 1f))
-        root.addView(toolbar)
-        status = TextView(this).apply { id = STATUS_ID; textSize = 13f; setTextColor(foregroundColor); setPadding(dp(8), dp(8), dp(8), dp(8)); accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
-        root.addView(status)
-        retry = button(mobileText(R.string.label_retry)) { render(retryPage) }.apply { id = RETRY_ID; visibility = View.GONE }
-        root.addView(retry)
-        content = FrameLayout(this).apply { setBackgroundColor(MobileTheme.color(palette, "surface").toArgb()) }
-        root.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
-        val navigation = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        previous = button(mobileText(R.string.previous_page)) { render(page - 1) }.apply { id = PREVIOUS_ID }
-        next = button(mobileText(R.string.next_page)) { render(page + 1) }.apply { id = NEXT_ID }
-        pages = TextView(this).apply { id = PAGE_ID; gravity = Gravity.CENTER; textSize = 14f; setTextColor(foregroundColor) }
-        navigation.addView(previous); navigation.addView(pages, LinearLayout.LayoutParams(0, -2, 1f)); navigation.addView(next)
-        navigation.visibility = if (kind == PreviewKind.PDF) View.VISIBLE else View.GONE
-        root.addView(navigation)
-        val actions = LinearLayout(this)
-        if (kind != PreviewKind.TEXT) {
-            actions.addView(button(mobileText(R.string.zoom_out)) { imageView?.zoomBy(0.75f) }, LinearLayout.LayoutParams(0, -2, 1f))
-            actions.addView(button(mobileText(R.string.zoom_in)) { imageView?.zoomBy(1.5f) }, LinearLayout.LayoutParams(0, -2, 1f))
+        content = FrameLayout(this)
+        val size = file.length()
+        setContent {
+            LexoraTheme {
+                PreviewScreen(
+                    name = name, mime = mime, size = size, kind = kind, content = content,
+                    loading = loading, error = error, notice = notice, empty = empty,
+                    page = page, pageCount = pageCount, chromeVisible = chromeVisible,
+                    canFollowup = intent.getBooleanExtra("canFollowup", false),
+                    feedback = feedback, feedbackShown = { if (feedback == it) feedback = null },
+                    back = ::finish, retry = { render(retryPage) }, navigate = ::render,
+                    save = ::save, share = ::share, openWith = ::openWith, followup = { followup("") },
+                )
+            }
         }
-        actions.addView(button(mobileText(R.string.more_options)) { anchor ->
-            PopupMenu(this, anchor).apply {
-                menu.add(0, R.string.save_file, 0, mobileText(R.string.save_file))
-                menu.add(0, R.string.share_file, 1, mobileText(R.string.share_file))
-                setOnMenuItemClickListener { item ->
-                    if (item.itemId == R.string.save_file) save() else share()
-                    true
-                }
-            }.show()
-        }, LinearLayout.LayoutParams(0, -2, 1f))
-        root.addView(actions)
-        if (intent.getBooleanExtra("canFollowup", false)) {
-            root.addView(TextView(this).apply { text = mobileText(R.string.preview_followup_hint); textSize = 13f; setTextColor(foregroundColor); setPadding(dp(8), dp(4), dp(8), 0) })
-            root.addView(button(mobileText(R.string.file_followup)) { followup("") }.apply { id = FOLLOWUP_ID }, LinearLayout.LayoutParams(-1, -2))
-        }
-        setContentView(root)
     }
     override fun onStart() {
         super.onStart()
@@ -114,17 +89,15 @@ class PreviewActivity : Activity() {
         if (!active || index < 0) return
         val renderer = client ?: return
         val request = ++generation
-        previous.isEnabled = false; next.isEnabled = false
-        retry.visibility = View.GONE
+        loading = true; error = null; notice = null; empty = false; chromeVisible = true
         retryPage = index
-        status.text = mobileText(R.string.opening_file)
         io.execute {
             try {
                 val rendered = renderer.render(file, kind, index)
                 runOnUiThread {
                     if (!active || request != generation) { rendered.bitmap?.recycle(); return@runOnUiThread }
                     page = index; pageCount = rendered.pageCount
-                    content.removeAllViews(); imageView = null; image?.recycle(); image = rendered.bitmap
+                    content.removeAllViews(); image?.recycle(); image = rendered.bitmap
                     documentView?.release(); documentView = null
                     if (rendered.text != null && (mime.substringBefore(';') == "text/markdown" || name.endsWith(".md", true) || name.endsWith(".markdown", true))) {
                         documentView = PreviewDocumentView(this, rendered.text, intent.getBooleanExtra("canFollowup", false), ::followup).also { content.addView(it, FrameLayout.LayoutParams(-1, -1)) }
@@ -138,7 +111,7 @@ class PreviewActivity : Activity() {
                                     val begin = minOf(selectionStart, selectionEnd).coerceAtLeast(0)
                                     val end = maxOf(selectionStart, selectionEnd).coerceAtMost(text.length)
                                     if (end > begin && end - begin <= 8000) followup(text.subSequence(begin, end).toString())
-                                    else status.text = mobileText(R.string.quote_limit)
+                                    else feedback = mobileText(R.string.quote_limit)
                                     return true
                                 }
                                 override fun onDestroyActionMode(mode: android.view.ActionMode) {}
@@ -146,22 +119,26 @@ class PreviewActivity : Activity() {
                         }
                         content.addView(ScrollView(this).apply { addView(text) })
                     } else {
-                        imageView = ZoomImageView(this).apply { contentDescription = mobileText(R.string.preview_page_description, name, page + 1); display(rendered.bitmap) }
+                        val imageView = ZoomImageView(this).apply {
+                            id = IMAGE_ID
+                            contentDescription = if (kind == PreviewKind.PDF) mobileText(R.string.preview_page_description, name, page + 1) else name
+                            display(rendered.bitmap)
+                            if (kind == PreviewKind.IMAGE) setOnClickListener { chromeVisible = !chromeVisible }
+                        }
                         content.addView(imageView, FrameLayout.LayoutParams(-1, -1))
                     }
-                    status.text = if (rendered.truncated) mobileText(R.string.preview_truncated, PreviewPolicy.MAX_TEXT_CHARS) else if (rendered.text?.isEmpty() == true) mobileText(R.string.preview_empty_text) else if (kind == PreviewKind.TEXT) mobileText(R.string.readonly_text) else mobileText(R.string.readonly_preview)
-                    pages.text = "${page + 1} / $pageCount"
-                    previous.isEnabled = page > 0; next.isEnabled = page + 1 < pageCount
+                    notice = if (rendered.truncated) mobileText(R.string.preview_truncated, PreviewPolicy.MAX_TEXT_CHARS) else null
+                    empty = rendered.text?.isEmpty() == true
+                    loading = false
                 }
             } catch (error: Exception) { runOnUiThread {
                 if (active && request == generation) {
-                    status.text = when ((error as? PreviewFailure)?.reason) {
+                    this.error = when ((error as? PreviewFailure)?.reason) {
                         "protected" -> mobileText(R.string.protected_file)
                         "timeout" -> mobileText(R.string.preview_timeout)
                         else -> mobileText(R.string.preview_failed)
                     }
-                    retry.visibility = View.VISIBLE
-                    previous.isEnabled = page > 0; next.isEnabled = page + 1 < pageCount
+                    loading = false
                 }
             } }
         }
@@ -171,16 +148,16 @@ class PreviewActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != SAVE_REQUEST) return
         val uri = data?.data
-        if (resultCode != RESULT_OK || uri == null) { status.text = mobileText(R.string.save_cancelled); return }
+        if (resultCode != RESULT_OK || uri == null) return
         io.execute {
             val saved = runCatching { DocumentExport(this).save(file, uri) }.isSuccess
-            runOnUiThread { if (!isDestroyed) status.text = if (saved) mobileText(R.string.file_saved) else mobileText(R.string.error_document_save_failed) }
+            runOnUiThread { if (!isDestroyed) feedback = if (saved) mobileText(R.string.file_saved) else mobileText(R.string.error_document_save_failed) }
         }
     }
     private fun save() {
         try { startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).setType(mime).addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_TITLE, name), SAVE_REQUEST) }
-        catch (_: android.content.ActivityNotFoundException) { status.text = mobileText(R.string.mobile_no_file_saver_available_the_phone_copy_is_retained) }
-        catch (_: SecurityException) { status.text = mobileText(R.string.mobile_could_not_open_the_save_location_the_phone_copy) }
+        catch (_: android.content.ActivityNotFoundException) { feedback = mobileText(R.string.mobile_no_file_saver_available_the_phone_copy_is_retained) }
+        catch (_: SecurityException) { feedback = mobileText(R.string.mobile_could_not_open_the_save_location_the_phone_copy) }
     }
     private fun share() {
         try {
@@ -188,8 +165,17 @@ class PreviewActivity : Activity() {
             val intent = Intent(Intent.ACTION_SEND).setType(mime).putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             intent.clipData = ClipData.newRawUri(name, uri)
             startActivity(Intent.createChooser(intent, mobileText(R.string.share_file_title)))
-        } catch (_: android.content.ActivityNotFoundException) { status.text = mobileText(R.string.no_share_app) }
-        catch (_: SecurityException) { status.text = mobileText(R.string.mobile_could_not_grant_another_app_read_access_the_phone) }
+        } catch (_: android.content.ActivityNotFoundException) { feedback = mobileText(R.string.no_share_app) }
+        catch (_: SecurityException) { feedback = mobileText(R.string.mobile_could_not_grant_another_app_read_access_the_phone) }
+    }
+    private fun openWith() {
+        try {
+            val uri = FileProvider.getUriForFile(this, "$packageName.files", file, name)
+            val open = Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            open.clipData = ClipData.newRawUri(name, uri)
+            startActivity(Intent.createChooser(open, mobileText(R.string.open_other_app)))
+        } catch (_: android.content.ActivityNotFoundException) { feedback = mobileText(R.string.preview_no_viewer) }
+        catch (_: SecurityException) { feedback = mobileText(R.string.mobile_could_not_grant_another_app_read_access_the_phone) }
     }
     override fun onSaveInstanceState(state: Bundle) { state.putInt("page", page); super.onSaveInstanceState(state) }
     private fun followup(quote: String) {
@@ -200,11 +186,10 @@ class PreviewActivity : Activity() {
         documentView?.release(); documentView = null
         active = false; generation++; client?.close(); client = null
         if (::content.isInitialized) content.removeAllViews()
-        imageView = null; image?.recycle(); image = null
+        image?.recycle(); image = null
         super.onStop()
     }
     override fun onDestroy() { io.shutdownNow(); super.onDestroy() }
-    private fun button(label: String, action: (View) -> Unit) = Button(this).apply { text = label; textSize = 14f; isAllCaps = false; minWidth = dp(48); minHeight = dp(48); setPadding(dp(12), 0, dp(12), 0); setOnClickListener { action(it) } }
     private fun dp(value: Int) = (resources.displayMetrics.density * value).toInt()
-    companion object { const val RETRY_ID = 0x2208; const val FOLLOWUP_ID = 0x2206; const val QUOTE_ID = 0x2207; const val STATUS_ID = 0x2201; const val TEXT_ID = 0x2202; const val PAGE_ID = 0x2203; const val NEXT_ID = 0x2204; const val PREVIOUS_ID = 0x2205; private const val SAVE_REQUEST = 4101 }
+    companion object { const val QUOTE_ID = 0x2207; const val TEXT_ID = 0x2202; const val IMAGE_ID = 0x2209; private const val SAVE_REQUEST = 4101 }
 }

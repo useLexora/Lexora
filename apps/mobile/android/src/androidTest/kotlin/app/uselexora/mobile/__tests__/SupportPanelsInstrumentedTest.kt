@@ -32,8 +32,6 @@ class SupportPanelsInstrumentedTest {
         assertEquals(MobileAction.MoreFiles, action)
         compose.onNodeWithText("report.md").assertIsDisplayed()
         assertEquals("page-2", panel.nextCursor)
-        compose.onNodeWithTag("manage-phone-copies").assertIsDisplayed().performClick()
-        assertEquals(MobileAction.ManageFiles, action)
     }
 
     @Test fun fileProgressAndRetryStayWithTheFailedFileAndOriginalDeliveryAction() {
@@ -73,6 +71,7 @@ class SupportPanelsInstrumentedTest {
                         targetLabel = { if (it.partition == partition) "Pending task" else null },
                         attachmentSummary = { if (it.partition == partition && it.scope == target && it.value.optString("inputId") == draft.value.optString("inputId")) "$fileName · Upload incomplete" else null }).local()
                 }
+                MobileUiTestDriver.waitUntil { MobileUiTestDriver.contains(fileName) }
                 MobileUiTestDriver.clickContaining(fileName)
                 MobileUiTestDriver.waitUntil { MobileUiTestDriver.contains("Upload incomplete") }
                 MobileUiTestDriver.click("CONTINUE EDITING")

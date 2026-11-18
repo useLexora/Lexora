@@ -34,12 +34,7 @@ internal fun TaskFilesPanel(files: MobileTaskFiles, onAction: (MobileAction, JSO
                     Text(mobileText(R.string.label_task_files), Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
                     IconButton(onClick = close, modifier = Modifier.testTag("close-task-files")) { Icon(Icons.Outlined.Close, mobileText(R.string.review_close)) }
                 }
-                Text(mobileText(R.string.task_files_hint), Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                TextButton(onClick = { close(); onAction(MobileAction.ManageFiles, null) }, modifier = Modifier.testTag("manage-phone-copies")) {
-                    Icon(Icons.Outlined.PhoneAndroid, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(mobileText(R.string.phone_copies))
-                }
+
             }
             items(files.items, key = { it.getString("resourceId") }) { resource ->
                 val resourceId = resource.getString("resourceId")
@@ -67,8 +62,6 @@ internal fun TaskFilesPanel(files: MobileTaskFiles, onAction: (MobileAction, JSO
                                 val action = transfer.retryAction
                                 onAction(MobileAction.OpenResource, if (action == null) resource else JSONObject().put("resource", resource).put("fileAction", action))
                             }, modifier = Modifier.padding(horizontal = 8.dp).testTag("file-retry-$resourceId")) { Text(mobileText(R.string.label_retry)) }
-                        } else if (transfer?.localCopy == true) {
-                            Text(mobileText(R.string.file_copy_available), Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }

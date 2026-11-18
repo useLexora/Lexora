@@ -40,6 +40,28 @@ class TaskDiscoveryInstrumentedTest {
         compose.onNodeWithTag("connection-detail").assertIsDisplayed()
     }
 
+    @Test fun offlineConversationShowsCachedContentOrOneConnectionHint() {
+        val state = MobileUiState().apply {
+            screen = MobileScreen.Conversation
+            selectedTask = JSONObject().put("title", "Offline task")
+            notice = mobileText(R.string.error_not_connected)
+            historyHasMore = true
+        }
+        compose.setContent {
+            val context = androidx.compose.ui.platform.LocalContext.current
+            val input = androidx.compose.runtime.remember { android.widget.EditText(context) }
+            LexoraTheme { MobileShell(state, input, { _, _ -> }) { modifier ->
+                androidx.compose.material3.Text("Cached message", modifier)
+            } }
+        }
+        compose.onNodeWithText(mobileText(R.string.mobile_connect_to_view_conversation)).assertIsDisplayed()
+        compose.onNodeWithText(mobileText(R.string.error_not_connected)).assertDoesNotExist()
+        compose.onNodeWithText(mobileText(R.string.mobile_load_earlier)).assertDoesNotExist()
+        compose.runOnIdle { state.messages = listOf(JSONObject().put("id", "cached")) }
+        compose.onNodeWithText("Cached message").assertIsDisplayed()
+        compose.onNodeWithText(mobileText(R.string.mobile_connect_to_view_conversation)).assertDoesNotExist()
+    }
+
     @Test fun partialEmptySearchKeepsContinuationAndOfflineSearchDeclaresItsScope() {
         val state = MobileUiState().apply { connected = true; tasksLoaded = true; discovery.supported = true; deviceLabel = "Fixture service" }
         var continued = false
@@ -93,9 +115,30 @@ class TaskDiscoveryInstrumentedTest {
         compose.setContent { LexoraTheme { TaskMembersPanel(state) { _, _ -> } } }
         compose.onNodeWithText("Disabled fixture").assertIsDisplayed()
         compose.onNodeWithText(mobileText(R.string.mobile_partner_disabled)).assertIsDisplayed()
+        compose.onNodeWithTag("partner-actions-disabled").performClick()
         compose.onNodeWithText(mobileText(R.string.mobile_make_lead)).assertIsNotEnabled()
         compose.onNodeWithText(mobileText(R.string.mobile_remove_partner)).assertIsEnabled()
         capture("discovery-members.png")
+    }
+
+    @Test fun partnersShowAvatarsAndReadableModelNames() {
+        val state = MobileUiState().apply {
+            connected = true; conversationReady = true; membersOpen = true
+            memberActions = setOf(MobileAction.AddMember)
+            models = listOf(JSONObject().put("providerId", "provider").put("modelId", "custom-opaque-id").put("displayName", "Readable model"))
+            members = JSONObject().put("buddyId", "default").put("items", JSONArray().put(
+                JSONObject().put("actorId", "default").put("profile", JSONObject().put("id", "default").put("name", "Lexora").put("enabled", true))
+                    .put("modelSelection", JSONObject().put("providerId", "provider").put("modelId", "custom-opaque-id"))))
+            buddyCatalog = listOf(JSONObject().put("id", "candidate").put("name", "New partner").put("enabled", true))
+        }
+        var added: String? = null
+        compose.setContent { LexoraTheme { TaskMembersPanel(state) { action, value -> if (action == MobileAction.AddMember) added = value?.getString("id") } } }
+        compose.waitUntil(5_000) { compose.onAllNodesWithTag("partner-image-default", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Readable model").assertIsDisplayed()
+        compose.onNodeWithText("custom-opaque-id").assertDoesNotExist()
+        compose.onNodeWithTag("partner-avatar-candidate", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithTag("add-partner-candidate").performClick()
+        assertEquals("candidate", added)
     }
 
     @Test fun pairedButUnsynchronizedServiceRetriesDataWithoutAnotherScan() {

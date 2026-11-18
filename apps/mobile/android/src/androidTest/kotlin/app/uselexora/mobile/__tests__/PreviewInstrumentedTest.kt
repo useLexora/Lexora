@@ -3,21 +3,29 @@ package app.uselexora.mobile
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Matrix
+import android.view.Choreographer
+import android.view.InputDevice
+import android.view.MotionEvent
+import android.view.ViewConfiguration
 import android.graphics.pdf.PdfDocument
 import android.media.ExifInterface
 import android.os.Process
 import android.os.SystemClock
-import android.widget.Button
 import android.widget.TextView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import app.uselexora.mobile.preview.*
+import app.uselexora.mobile.i18n.mobileText
+import app.uselexora.mobile.ui.MobileAppearance
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 @RunWith(AndroidJUnit4::class)
 class PreviewInstrumentedTest {
@@ -85,15 +93,14 @@ class PreviewInstrumentedTest {
         try {
             val intent = Intent(context, PreviewActivity::class.java).putExtra("path", source.absolutePath).putExtra("name", "报告.pdf").putExtra("mime", "application/pdf")
             ActivityScenario.launch<PreviewActivity>(intent).use { scenario ->
-                fun label(): String { var value = ""; scenario.onActivity { value = it.findViewById<TextView>(PreviewActivity.PAGE_ID).text.toString() }; return value }
-                waitFor { label() == "1 / 2" }
-                scenario.onActivity { it.findViewById<Button>(PreviewActivity.NEXT_ID).performClick() }
-                waitFor { label() == "2 / 2" }
+                MobileUiTestDriver.waitUntil { MobileUiTestDriver.exists("1 / 2") }
+                MobileUiTestDriver.clickTag("preview-next")
+                MobileUiTestDriver.waitUntil { MobileUiTestDriver.exists("2 / 2") }
                 capture("pdf-preview.png")
                 scenario.recreate()
-                waitFor { label() == "2 / 2" }
-                scenario.onActivity { it.findViewById<Button>(PreviewActivity.PREVIOUS_ID).performClick() }
-                waitFor { label() == "1 / 2" }
+                MobileUiTestDriver.waitUntil { MobileUiTestDriver.exists("2 / 2") }
+                MobileUiTestDriver.clickTag("preview-previous")
+                MobileUiTestDriver.waitUntil { MobileUiTestDriver.exists("1 / 2") }
             }
             source.writeText("<script>不会执行</script>\n中文 😀")
             intent.putExtra("name", "notes.txt").putExtra("mime", "text/plain")
@@ -113,7 +120,7 @@ class PreviewInstrumentedTest {
             ActivityScenario.launchActivityForResult<PreviewActivity>(intent).use { scenario ->
                 MobileUiTestDriver.waitUntil { MobileUiTestDriver.contains("Markdown 验收") }
                 capture("markdown-preview.png")
-                scenario.onActivity { it.findViewById<Button>(PreviewActivity.FOLLOWUP_ID).performClick() }
+                MobileUiTestDriver.clickTag("preview-followup")
                 assertEquals(android.app.Activity.RESULT_OK, scenario.result.resultCode)
                 assertEquals("", scenario.result.resultData.getStringExtra("quote"))
                 assertEquals("# Markdown 验收\n\n这是预览文件的正文。", source.readText())
@@ -126,32 +133,130 @@ class PreviewInstrumentedTest {
         val intent = Intent(context, PreviewActivity::class.java).putExtra("path", source.absolutePath).putExtra("name", "notes.txt").putExtra("mime", "text/plain")
         try {
             ActivityScenario.launch<PreviewActivity>(intent).use { scenario ->
-                waitFor {
-                    var visible = false
-                    scenario.onActivity { visible = it.findViewById<Button>(PreviewActivity.RETRY_ID).visibility == android.view.View.VISIBLE }
-                    visible
-                }
+                MobileUiTestDriver.waitUntil { MobileUiTestDriver.existsTag("preview-retry") }
                 assertArrayEquals(byteArrayOf(0xC3.toByte(), 0x28), source.readBytes())
-                scenario.onActivity { assertNull(it.findViewById<Button>(PreviewActivity.FOLLOWUP_ID)) }
+                assertFalse(MobileUiTestDriver.existsTag("preview-followup"))
                 source.writeText("")
-                scenario.onActivity { it.findViewById<Button>(PreviewActivity.RETRY_ID).performClick() }
+                MobileUiTestDriver.clickTag("preview-retry")
                 waitFor {
                     var empty = false
                     scenario.onActivity {
-                        empty = it.findViewById<TextView>(PreviewActivity.STATUS_ID).text == it.getString(R.string.preview_empty_text) &&
-                            it.findViewById<Button>(PreviewActivity.RETRY_ID).visibility == android.view.View.GONE &&
-                            it.findViewById<TextView>(PreviewActivity.TEXT_ID)?.text?.isEmpty() == true
+                        empty = it.findViewById<TextView>(PreviewActivity.TEXT_ID)?.text?.isEmpty() == true
                     }
                     empty
                 }
+                MobileUiTestDriver.waitUntil { MobileUiTestDriver.exists(mobileText(R.string.preview_empty_text)) && !MobileUiTestDriver.existsTag("preview-retry") }
                 assertEquals(0L, source.length())
             }
         } finally { source.delete() }
     }
+    @Test fun imageGesturesKeepControlsStableAndFileActionsUseTheCurrentFile() {
+        val source = file("png")
+        context.resources.openRawResource(R.mipmap.ic_lexora).use { input -> source.outputStream().use { input.copyTo(it) } }
+        val original = source.readBytes()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        var theme = "system"
+        var language = "zh"
+        instrumentation.runOnMainSync {
+            MobileAppearance.load(context)
+            theme = MobileAppearance.theme; language = MobileAppearance.language
+            MobileAppearance.selectTheme(context, "light"); MobileAppearance.selectLanguage(context, "zh")
+        }
+        val name = "小猫插画的完整文件名称，需要在有限宽度内显示并且保留完整扩展名.png"
+        val intent = Intent(context, PreviewActivity::class.java).putExtra("path", source.absolutePath).putExtra("name", name).putExtra("mime", "image/png").putExtra("canFollowup", true)
+        try {
+            ActivityScenario.launchActivityForResult<PreviewActivity>(intent).use { scenario ->
+                MobileUiTestDriver.waitUntil { MobileUiTestDriver.existsTag("preview-ready") }
+                val title = requireNotNull(MobileUiTestDriver.bounds(name))
+                assertTrue(title.right <= requireNotNull(MobileUiTestDriver.bounds("更多选项")).left)
+                assertTrue(title.left >= requireNotNull(MobileUiTestDriver.bounds("返回")).right)
+                fun scale(): Float {
+                    var value = 0f
+                    scenario.onActivity {
+                        val matrix = FloatArray(9)
+                        it.findViewById<ZoomImageView>(PreviewActivity.IMAGE_ID).imageMatrix.getValues(matrix)
+                        value = matrix[Matrix.MSCALE_X]
+                    }
+                    return value
+                }
+                waitFor { var focused = false; scenario.onActivity { focused = it.hasWindowFocus() }; focused }
+                val originalScale = scale()
+                var x = 0f; var y = 0f
+                scenario.onActivity {
+                    val image = it.findViewById<ZoomImageView>(PreviewActivity.IMAGE_ID)
+                    val location = IntArray(2); image.getLocationOnScreen(location)
+                    x = location[0] + image.width / 2f; y = location[1] + image.height / 2f
+                    val bounds = android.graphics.RectF(0f, 0f, image.drawable.intrinsicWidth.toFloat(), image.drawable.intrinsicHeight.toFloat())
+                    image.imageMatrix.mapRect(bounds)
+                    assertEquals(image.width / 2f, bounds.centerX(), 1f)
+                    assertEquals(image.height / 2f, bounds.centerY(), 1f)
+                    assertTrue(bounds.left >= -1f && bounds.top >= -1f && bounds.right <= image.width + 1f && bounds.bottom <= image.height + 1f)
+                }
+                fun tap() {
+                    val down = SystemClock.uptimeMillis()
+                    for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
+                        val event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, x, y, 0).apply { setSource(InputDevice.SOURCE_TOUCHSCREEN) }
+                        try { instrumentation.sendPointerSync(event) } finally { event.recycle() }
+                        if (action == MotionEvent.ACTION_DOWN) SystemClock.sleep(20)
+                    }
+                }
+                tap(); SystemClock.sleep(60); tap()
+                waitFor { scale() > originalScale * 1.9f }
+                SystemClock.sleep(ViewConfiguration.getDoubleTapTimeout() + 50L)
+                assertTrue(MobileUiTestDriver.existsTag("preview-more"))
+                tap()
+                MobileUiTestDriver.waitUntil { !MobileUiTestDriver.existsTag("preview-more") }
+                tap()
+                MobileUiTestDriver.waitUntil { MobileUiTestDriver.existsTag("preview-more") }
+                scenario.onActivity {
+                    val image = it.findViewById<ZoomImageView>(PreviewActivity.IMAGE_ID)
+                    val action = image.createAccessibilityNodeInfo().actionList.first { it.label == mobileText(R.string.zoom_out) }
+                    assertTrue(image.performAccessibilityAction(action.id, null))
+                }
+                assertEquals(originalScale * 1.5f, scale(), 0.01f)
+                scenario.recreate()
+                MobileUiTestDriver.waitUntil { MobileUiTestDriver.existsTag("preview-ready") }
+                capture("image-preview-light.png")
+                MobileUiTestDriver.clickTag("preview-more")
+                MobileUiTestDriver.waitUntil { listOf("保存", "分享", "用其他应用打开", "文件信息").all { MobileUiTestDriver.exists(it) } }
+                capture("image-preview-menu.png")
+                MobileUiTestDriver.click("文件信息")
+                MobileUiTestDriver.waitUntil { MobileUiTestDriver.exists("image/png") }
+                assertTrue(MobileUiTestDriver.exists(name))
+                MobileUiTestDriver.click("关闭")
+                instrumentation.runOnMainSync { MobileAppearance.selectTheme(context, "dark"); MobileAppearance.selectLanguage(context, "en") }
+                scenario.recreate()
+                MobileUiTestDriver.waitUntil { MobileUiTestDriver.existsTag("preview-ready") && MobileUiTestDriver.exists("Continue editing") }
+                capture("image-preview-dark.png")
+                MobileUiTestDriver.clickTag("preview-more")
+                MobileUiTestDriver.waitUntil { MobileUiTestDriver.exists("File info") }
+                assertTrue(MobileUiTestDriver.exists("Open in another app"))
+                instrumentation.uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+                MobileUiTestDriver.clickTag("preview-followup")
+                assertEquals(android.app.Activity.RESULT_OK, scenario.result.resultCode)
+                assertEquals("", scenario.result.resultData.getStringExtra("quote"))
+                assertArrayEquals(original, source.readBytes())
+            }
+        } finally {
+            source.delete()
+            instrumentation.runOnMainSync { MobileAppearance.selectTheme(context, theme); MobileAppearance.selectLanguage(context, language) }
+        }
+    }
     private fun capture(name: String) {
         if (InstrumentationRegistry.getArguments().getString("captureScreenshots") != "true") return
-        InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()?.let { bitmap ->
-            File(context.externalCacheDir, name).outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val frames = CountDownLatch(3)
+        instrumentation.runOnMainSync {
+            Choreographer.getInstance().postFrameCallback(object : Choreographer.FrameCallback {
+                override fun doFrame(time: Long) {
+                    frames.countDown()
+                    if (frames.count > 0) Choreographer.getInstance().postFrameCallback(this)
+                }
+            })
+        }
+        assertTrue(frames.await(5, TimeUnit.SECONDS))
+        instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
+            File(context.filesDir, name).outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
         }
     }
     private fun waitFor(condition: () -> Boolean) {

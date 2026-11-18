@@ -25,18 +25,20 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
 
 @Composable
-internal fun HeaderAction(label: String, icon: ImageVector, modifier: Modifier = Modifier, action: () -> Unit) {
+internal fun HeaderAction(label: String, icon: ImageVector, modifier: Modifier = Modifier, plain: Boolean = false, action: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     Box(
         modifier.size(48.dp).semantics { contentDescription = label }
             .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClick = action),
         contentAlignment = Alignment.Center,
     ) {
-        Box(Modifier.size(36.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceContainerHigh)
+        Box(Modifier.size(if (plain) 32.dp else 36.dp).clip(if (plain) RoundedCornerShape(6.dp) else CircleShape)
+            .then(if (plain) Modifier else Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh))
             .indication(interaction, ripple()), contentAlignment = Alignment.Center) {
-            Icon(icon, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(icon, null, Modifier.size(if (plain) 18.dp else 20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -70,6 +72,7 @@ internal fun SettingsRow(
     enabled: Boolean = true,
     tag: String? = null,
     divider: Boolean = true,
+    value: String? = null,
     action: () -> Unit = {},
 ) {
     val interactive = kind != SettingsRowKind.ReadOnly
@@ -88,6 +91,7 @@ internal fun SettingsRow(
                 Text(title, style = MaterialTheme.typography.bodyLarge, color = color)
                 if (!subtitle.isNullOrBlank()) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            if (!value.isNullOrBlank()) Text(value, Modifier.widthIn(max = 104.dp), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             when (kind) {
                 SettingsRowKind.Navigation -> Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 SettingsRowKind.Selection -> Icon(Icons.Outlined.KeyboardArrowDown, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)

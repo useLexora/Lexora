@@ -7,13 +7,16 @@ import ReaderMessage from './ReaderMessage.vue'
 import { useReaderStrings } from './readerStrings'
 import ReaderToolCall from './ReaderToolCall.vue'
 import ReaderTurn from './ReaderTurn.vue'
+import { provideReaderBranches } from './useReaderBranches'
 import { useReaderResultRead } from './useReaderResultRead'
 import { useReaderTurns } from './useReaderTurns'
 import { useReaderViewport } from './useReaderViewport'
 
-const { entries: messages, runs, transcripts, topic, dark, fontScale, appearance, typography, language, resultRunId, anchor, hasLaterMessages, send } = useReaderBridge()
+const { entries: messages, runs, transcripts, outputs, branches, selectedBranchId, topic, dark, fontScale, appearance, typography, language, resultRunId, anchor, hasLaterMessages, send } = useReaderBridge()
+provideReaderBranches(messages, runs, branches, selectedBranchId)
 const labels = useReaderStrings(language)
 const entries = useReaderTurns(messages, runs, transcripts, topic, anchor)
+const lastAssistantIds = computed(() => new Map(messages.value.flatMap(entry => entry.messages).filter(message => message.role === 'assistant' && message.runId).map(message => [message.runId, message.id])))
 const runBuddyIds = computed(() => new Map(runs.value.map(run => [run.id, run.buddyId])))
 provideChatTranscriptPresentation(() => topic.value, () => entries.value.map(entry => entry.id))
 const viewport = useTemplateRef('viewport')
@@ -40,7 +43,10 @@ function click(event: MouseEvent) {
   send({ action: 'link', href: link.getAttribute('href') ?? '' })
 }
 watch(rows, (current) => {
-  for (const id of new Set(current.flatMap(row => row.entry.messages.map(message => message.runId).filter((id): id is string => !!id)))) send({ action: 'transcript', runId: id })
+  for (const id of new Set(current.flatMap(row => [row.entry.turn?.runId, ...row.entry.messages.map(message => message.runId)]).filter((id): id is string => !!id))) {
+    send({ action: 'transcript', runId: id })
+    send({ action: 'outputs', runId: id })
+  }
 }, { flush: 'post' })
 watch(runs, (current) => {
   for (const run of current) {
@@ -64,10 +70,10 @@ watch(topic, () => {
           <button v-if="row.entry.transcriptError" class="transcript-retry" @click="send({ action: 'transcript', runId: row.entry.turn?.runId ?? row.entry.messages[0]!.runId!, retry: 'true' })">
             {{ labels.retryTranscript }}
           </button>
-          <ReaderTurn v-if="row.entry.turn" :turn="row.entry.turn" :buddy-id="runBuddyIds.get(row.entry.turn.runId)" :messages="row.entry.messages" :dark="dark" :language="language" :send="send" @interact="followsEnd = false" />
+          <ReaderTurn v-if="row.entry.turn" :turn="row.entry.turn" :output="outputs[row.entry.turn.runId]" :buddy-id="runBuddyIds.get(row.entry.turn.runId)" :messages="row.entry.messages" :dark="dark" :language="language" :send="send" @interact="followsEnd = false" />
           <template v-for="message in row.entry.messages" :key="message.id">
             <ReaderToolCall v-if="!row.entry.turn && message.role === 'tool'" :message="message" :language="language" :expanded="expanded.get(`message:${message.id}`) ?? (anchor?.messageId === message.id || message.toolError)" :send="send" @toggle="toggle(`message:${message.id}`, message.toolError)" @interact="followsEnd = false" />
-            <ReaderMessage v-else-if="!row.entry.turn" :message="message" :language="language" :dark="dark" :send="send" @interact="followsEnd = false" />
+            <ReaderMessage v-else-if="!row.entry.turn" :message="message" :output="message.runId && lastAssistantIds.get(message.runId) === message.id ? outputs[message.runId] : undefined" :language="language" :dark="dark" :send="send" @interact="followsEnd = false" />
           </template>
         </section>
         <p v-if="!entries.length" class="reader-empty">

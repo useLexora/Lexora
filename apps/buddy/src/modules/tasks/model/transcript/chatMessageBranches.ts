@@ -15,6 +15,9 @@ export interface ChatMessageBranchNavigator {
   previousBranchId: string | null
 }
 
+type BranchMessage = Pick<LocalMessage, 'id' | 'branchId' | 'role'>
+type BranchTurn = Pick<ChatAgentTurn, 'runId' | 'branchId' | 'triggeringMessageId' | 'status'>
+
 interface BranchGroup {
   baseBranchId: string | null
   branchIds: string[]
@@ -76,11 +79,6 @@ export function projectChatMessageBranchNavigators(
   branches: ReadonlyArray<LocalConversationBranch>,
   activeBranchId: string,
 ): ReadonlyMap<string, ChatMessageBranchNavigator> {
-  const branchById = new Map(branches.map(branch => [branch.id, branch]))
-  const activePath = collectActiveBranchPath(activeBranchId, branchById)
-  if (!activePath.length)
-    return new Map()
-
   const messages = rows.flatMap(row => row.kind === 'message' ? [row.message] : [])
   const actionMessageIds = new Set(rows.flatMap(row => row.kind === 'message'
     && (row.message.role === 'user' || row.ownsResultActions || (row.message.role === 'assistant' && !row.message.runId))
@@ -93,6 +91,21 @@ export function projectChatMessageBranchNavigators(
       return [row.turn]
     return []
   })
+  return projectMessageBranchNavigators(messages, actionTurns, actionMessageIds, branches, activeBranchId)
+}
+
+export function projectMessageBranchNavigators(
+  messages: ReadonlyArray<BranchMessage>,
+  actionTurns: ReadonlyArray<BranchTurn>,
+  actionMessageIds: ReadonlySet<string>,
+  branches: ReadonlyArray<LocalConversationBranch>,
+  activeBranchId: string,
+): ReadonlyMap<string, ChatMessageBranchNavigator> {
+  const branchById = new Map(branches.map(branch => [branch.id, branch]))
+  const activePath = collectActiveBranchPath(activeBranchId, branchById)
+  if (!activePath.length)
+    return new Map()
+
   const activePathIds = new Set(activePath.map(branch => branch.id))
   const navigators = new Map<string, ChatMessageBranchNavigator>()
 
@@ -171,7 +184,7 @@ function collectActiveBranchPath(
 
 function collectBranchGroups(
   branches: ReadonlyArray<LocalConversationBranch>,
-  messages: ReadonlyArray<LocalMessage>,
+  messages: ReadonlyArray<BranchMessage>,
 ): BranchGroup[] {
   const ordered = [...branches].sort((left, right) =>
     left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
@@ -220,8 +233,8 @@ function resolveActiveGroupBranchId(
 function resolveNavigatorTargetId(
   group: BranchGroup,
   activeGroupBranchId: string,
-  messages: ReadonlyArray<LocalMessage>,
-  actionTurns: ReadonlyArray<ChatAgentTurn>,
+  messages: ReadonlyArray<BranchMessage>,
+  actionTurns: ReadonlyArray<BranchTurn>,
   actionMessageIds: ReadonlySet<string>,
 ): string | null {
   if (group.baseBranchId === null)
@@ -244,7 +257,7 @@ function resolveNavigatorTargetId(
 function resolveTerminalTurnTarget(
   branchId: string,
   triggeringMessageId: string,
-  actionTurns: ReadonlyArray<ChatAgentTurn>,
+  actionTurns: ReadonlyArray<BranchTurn>,
 ): string | null {
   return actionTurns.find(turn => (
     turn.branchId === branchId

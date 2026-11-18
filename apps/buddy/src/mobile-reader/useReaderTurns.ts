@@ -11,25 +11,6 @@ export function useReaderTurns(entries: Ref<ReaderEntry[]>, runs: Ref<LocalRun[]
   watch(topic, () => cache.clear())
   return computed(() => {
     const turns = new Map<string, ChatAgentTurn>()
-    const anchoredRun = anchor?.value?.topic === topic.value
-      ? entries.value.flatMap(entry => entry.messages).find(message => message.id === anchor.value?.messageId)?.runId
-      : undefined
-    for (const run of runs.value) {
-      if (run.id === anchoredRun)
-        continue
-      const source = transcripts.value[run.id]
-      if (!source?.loaded || !source.events.length)
-        continue
-      const state = `${run.status}:${run.completedAt}:${run.errorCode}`
-      let cached = cache.get(run.id)
-      if (!cached || cached.state !== state || source.events.length < cached.count) {
-        cached = { count: 0, state, reducer: createChatAgentTurnReducer(run) }
-        cache.set(run.id, cached)
-      }
-      cached.reducer.append(source.events.slice(cached.count))
-      cached.count = source.events.length
-      turns.set(run.id, cached.reducer.project())
-    }
     const messagesByRun = new Map<string, ReaderEntry['messages']>()
     for (const entry of entries.value) {
       for (const message of entry.messages) {
@@ -39,6 +20,26 @@ export function useReaderTurns(entries: Ref<ReaderEntry[]>, runs: Ref<LocalRun[]
         messages.push(message)
         messagesByRun.set(message.runId, messages)
       }
+    }
+    const anchoredRun = anchor?.value?.topic === topic.value
+      ? entries.value.flatMap(entry => entry.messages).find(message => message.id === anchor.value?.messageId)?.runId
+      : undefined
+    for (const run of runs.value) {
+      if (run.id === anchoredRun)
+        continue
+      const source = transcripts.value[run.id]
+      const events = source?.loaded ? source.events : []
+      if (!events.length && messagesByRun.has(run.id))
+        continue
+      const state = `${run.status}:${run.completedAt}:${run.errorCode}`
+      let cached = cache.get(run.id)
+      if (!cached || cached.state !== state || events.length < cached.count) {
+        cached = { count: 0, state, reducer: createChatAgentTurnReducer(run) }
+        cache.set(run.id, cached)
+      }
+      cached.reducer.append(events.slice(cached.count))
+      cached.count = events.length
+      turns.set(run.id, cached.reducer.project())
     }
     const emitted = new Set<string>()
     const errors = new Set<string>()

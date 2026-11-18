@@ -1,17 +1,33 @@
 <script setup lang="ts">
 import type { ChatAgentTurn } from '../modules/tasks/contracts'
 import type { ReaderMessage as Message } from './readerBridge'
-import type { ReaderSend } from './readerProtocol'
-import { computed } from 'vue'
+import type { ReaderOutput, ReaderSend } from './readerProtocol'
+import { computed, provide } from 'vue'
 import { BuddyChatActivityGroup, BuddyChatCompactionRow, BuddyChatPanelGroup, BuddyChatRunActivity, createChatAgentActivityProjector, useChatTranscriptValue, useProvideChatContent } from '../modules/tasks/reader'
 import ChatMarkdownBody from '../shared/ui/markdown/ChatMarkdownBody.vue'
 import MessageAvatar from './MessageAvatar.vue'
+import ReaderArtifacts from './ReaderArtifacts.vue'
+import ReaderBranchNavigation from './ReaderBranchNavigation.vue'
 import ReaderMessage from './ReaderMessage.vue'
+import { useReaderStrings } from './readerStrings'
 import ReaderTerminal from './ReaderTerminal.vue'
+import { readerToolImageHostKey } from './readerToolImages'
+import ReaderToolImages from './ReaderToolImages.vue'
+import { useReaderTurnBranch } from './useReaderBranches'
 
-const props = defineProps<{ turn: ChatAgentTurn, buddyId?: string, messages: Message[], dark: boolean, language: string, send: ReaderSend }>()
+const props = defineProps<{ turn: ChatAgentTurn, buddyId?: string, messages: Message[], dark: boolean, language: string, output?: ReaderOutput, send: ReaderSend }>()
 const emit = defineEmits<{ interact: [] }>()
 const locale = computed(() => props.language === 'en' ? 'en-US' : 'zh-CN')
+const labels = useReaderStrings()
+const navigator = useReaderTurnBranch(() => props.turn.runId)
+const emptyResultStatus = computed(() => {
+  switch (props.turn.status) {
+    case 'cancelled': return labels.value.stopped
+    case 'failed': return labels.value.failed
+    case 'completed': return labels.value.noReply
+    default: return ''
+  }
+})
 const projector = createChatAgentActivityProjector()
 const rows = computed(() => projector.project(props.turn.nodes))
 const openEntries = useChatTranscriptValue('agent-turn:open-entries', new Map<string, boolean>())
@@ -28,7 +44,8 @@ async function copy(text: string) {
   const message = props.messages.find(message => message.role === 'assistant' || message.role === 'tool')
   props.send({ action: 'copy', id: message?.id ?? '', runId: props.turn.runId, text })
 }
-useProvideChatContent({ terminalRenderer: ReaderTerminal, canPreviewFile: () => false, previewFile: () => {}, openWebLink: href => props.send({ action: 'link', href }), writeClipboardText: copy })
+provide(readerToolImageHostKey, { runId: computed(() => props.turn.runId), send: action => props.send(action) })
+useProvideChatContent({ terminalRenderer: ReaderTerminal, toolImageRenderer: ReaderToolImages, canPreviewFile: () => false, previewFile: () => {}, openWebLink: href => props.send({ action: 'link', href }), writeClipboardText: copy })
 </script>
 
 <template>
@@ -48,6 +65,58 @@ useProvideChatContent({ terminalRenderer: ReaderTerminal, canPreviewFile: () => 
       </template>
     </div>
     <BuddyChatRunActivity v-if="turn.status === 'running' || turn.status === 'queued'" :turn="turn" :language="locale" />
-    <ReaderMessage v-for="message in results" :key="message.id" :message="{ ...message, showIdentity: false }" :dark="dark" :language="language" :send="send" @interact="emit('interact')" />
+    <ReaderMessage v-for="(message, index) in results" :key="message.id" :message="{ ...message, showIdentity: false }" :output="index === results.length - 1 ? output : undefined" :dark="dark" :language="language" :send="send" @interact="emit('interact')" />
+    <template v-if="!results.length">
+      <p v-if="emptyResultStatus" class="reader-turn-status" role="status">
+        {{ emptyResultStatus }}
+      </p>
+      <ReaderArtifacts :run-id="turn.runId" :output="output" :send="send" @interact="emit('interact')" />
+      <ReaderBranchNavigation v-if="navigator" :navigator="navigator" @branch="send({ action: 'branch', branchId: $event })" />
+    </template>
   </article>
 </template>
+
+<style scoped lang="scss">
+.reader-turn-status {
+  margin: 4px 0;
+  color: var(--reader-muted);
+  font-size: 13px;
+}
+
+.reader-turn {
+  :deep(.buddy-chat-activity-row) {
+    display: flex;
+    width: fit-content;
+    max-width: 100%;
+    min-height: var(--buddy-chat-activity-row-height);
+    padding: 2px 4px;
+    line-height: 20px;
+  }
+
+  :deep(.buddy-chat-activity-group__content) {
+    margin-block: 0;
+  }
+
+  :deep(.buddy-chat-tool-details) {
+    max-width: 100%;
+    margin: 0 0 4px;
+  }
+
+  :deep(.buddy-chat-image-tool-details__section > header) {
+    min-height: 0;
+    padding: 3px 8px;
+    line-height: 18px;
+  }
+
+  :deep(.buddy-chat-image-tool-details__section > p) {
+    padding: 6px 8px 4px;
+    line-height: 1.45;
+  }
+
+  :deep(.buddy-chat-image-tool-details__section > small) {
+    padding: 0 8px 6px;
+    font-size: 11px;
+    line-height: 1.45;
+  }
+}
+</style>

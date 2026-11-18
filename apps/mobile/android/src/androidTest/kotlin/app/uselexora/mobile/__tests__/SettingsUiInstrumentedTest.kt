@@ -81,6 +81,20 @@ class SettingsUiInstrumentedTest {
         compose.runOnIdle { assertEquals("zh", MobileAppearance.language) }
     }
 
+    @Test fun phoneSettingsOwnLocalDataAndKeepAboutNavigation() {
+        val actions = mutableListOf<MobileAction>()
+        compose.setContent { LexoraTheme { AppearanceSettings(onAction = { actions.add(it) }) {} } }
+        for ((label, expected) in listOf(R.string.label_send_history to MobileAction.Outbox, R.string.label_local_drafts to MobileAction.Recovery, R.string.phone_copies to MobileAction.ManageFiles)) {
+            compose.onNodeWithText(mobileText(label)).performScrollTo().performClick()
+            assertEquals(expected, actions.last())
+        }
+        compose.onNodeWithTag("about-lexora").performScrollTo().performClick()
+        compose.onNodeWithTag("app-version").assertTextEquals(mobileText(R.string.mobile_about_version, BuildConfig.VERSION_NAME))
+        compose.onNodeWithTag("about-license").performScrollTo().assertIsDisplayed().assertHasClickAction()
+        compose.onNodeWithContentDescription(mobileText(R.string.label_back)).performClick()
+        compose.onNodeWithTag("appearance-settings").assertIsDisplayed()
+    }
+
     @Test fun narrowLargeTextKeepsTaskIdentityReadOnlySpaceAndReturnPath() = taskSettingsFlow(true, 1.5f, 320.dp)
 
     @Test fun normalTextKeepsTaskIdentityReadOnlySpaceAndReturnPath() = taskSettingsFlow(false, 1f, 360.dp)
@@ -93,10 +107,12 @@ class SettingsUiInstrumentedTest {
             connectionLabel = "已连接服务"
             deviceLabel = "设计工作室"
             selectedTask = JSONObject().put("id", "task").put("title", "整理移动端体验与接续方案：完整任务标题")
-            selectedTaskSpaceLabel = "移动产品工作空间"
+            selectedTaskSpaceLabel = "移动产品体验与日常创作工作空间：长名称保持单行显示"
             viewBranchId = "main"
             branches = listOf(JSONObject().put("id", "main"), JSONObject().put("id", "alternate").put("parentBranchId", "main"))
             topic = "conversation:task:main"
+            membersSupported = true
+            executionEnabled = false
         }
         lateinit var input: EditText
         compose.runOnUiThread { input = EditText(context).apply { setText("保留这段尚未发送的输入") } }
@@ -104,34 +120,26 @@ class SettingsUiInstrumentedTest {
             CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale)) {
                 LexoraTheme(darkTheme = dark) {
                     Box(Modifier.width(width).height(740.dp)) {
-                        MobileShell(state, input, { _, _ -> }) { modifier -> Text("已完成的回复正文", modifier) }
+                        MobileShell(state, input, { action, _ -> if (action == MobileAction.ChooseExecution) state.executionPickerOpen = true }) { modifier -> Text("已完成的回复正文", modifier) }
                     }
                 }
             }
         }
-        compose.onNodeWithTag("branch-switcher").assertIsDisplayed().assertWidthIsAtLeast(48.dp).assertHeightIsAtLeast(48.dp)
-        compose.onNodeWithTag("task-results").assertIsDisplayed().assertWidthIsAtLeast(48.dp)
+        compose.onNodeWithTag("task-information").assertIsDisplayed().assertWidthIsAtLeast(48.dp).assertHeightIsAtLeast(48.dp)
+        compose.onNodeWithContentDescription(mobileText(R.string.label_back)).assertIsDisplayed().assertWidthIsAtLeast(48.dp).assertHeightIsAtLeast(48.dp)
         capture("settings-task-header-$variant.png")
         compose.onNodeWithTag("task-information").performClick()
         compose.onNodeWithText("整理移动端体验与接续方案：完整任务标题").assertIsDisplayed()
-        compose.onNodeWithText(mobileText(R.string.label_task_space)).assertHasNoClickAction()
-        compose.onNodeWithTag("current-branch").assertIsDisplayed()
+        compose.onNodeWithTag("task-space").assertIsDisplayed().assertHasNoClickAction()
+        compose.onNodeWithText("设计工作室").assertDoesNotExist()
+        compose.onNodeWithTag("execution").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("permission-picker").assertIsDisplayed()
+        compose.onNodeWithTag("permission-read_only-policy").assertIsNotEnabled()
+        compose.runOnIdle { state.executionEnabled = true }
+        compose.onNodeWithTag("permission-read_only-policy").assertIsEnabled()
+        compose.onNodeWithTag("close-permission-picker").performClick()
+        compose.onNodeWithTag("task-partners").assertIsDisplayed()
         capture("settings-task-$variant.png")
-        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(mobileText(R.string.label_appearance_language)))
-        compose.onNodeWithText(mobileText(R.string.label_appearance_language)).performClick()
-        compose.onNodeWithTag("appearance-settings").assertIsDisplayed()
-        compose.onNodeWithTag("theme-system").assertIsDisplayed().performClick().assertIsSelected()
-        assertEquals(compose.onNodeWithTag("theme-light").fetchSemanticsNode().boundsInRoot.height,
-            compose.onNodeWithTag("theme-system").fetchSemanticsNode().boundsInRoot.height)
-        capture("settings-phone-return-$variant.png")
-        compose.onNodeWithTag("about-lexora").performScrollTo().performClick()
-        compose.onNodeWithTag("app-version").assertTextEquals(mobileText(R.string.mobile_about_version, BuildConfig.VERSION_NAME))
-        compose.onNodeWithTag("about-license").performScrollTo().assertIsDisplayed().assertHasClickAction()
-        capture("settings-about-$variant.png")
-        compose.onNodeWithContentDescription(mobileText(R.string.label_back)).performClick()
-        compose.onNodeWithTag("appearance-settings").assertIsDisplayed()
-        compose.onNodeWithContentDescription(mobileText(R.string.label_close_settings)).performClick()
-        compose.onNodeWithTag("conversation-settings").assertIsDisplayed()
         compose.onNodeWithContentDescription(mobileText(R.string.back_conversation)).performClick()
         compose.onNodeWithTag("task-information").assertIsDisplayed()
         compose.runOnIdle {
@@ -139,7 +147,5 @@ class SettingsUiInstrumentedTest {
             assertEquals("main", state.viewBranchId)
             assertEquals("task", state.selectedTask?.getString("id"))
         }
-        compose.onNodeWithTag("branch-switcher").performClick()
-        compose.onNodeWithTag("branch:main").assertIsDisplayed()
     }
 }

@@ -7,6 +7,7 @@ import classicLight from './extensions/bundled/lexora.themes/themes/classic-ligh
 import { resolveTheme } from './shared/theme/resolveTheme'
 import { themeDocumentSchema } from './shared/theme/themeDocument'
 import { themeFonts } from './shared/theme/themeTokens'
+import { nativeIcons } from './src/mobile-reader/nativeIcons'
 import { markdownThemeVariables } from './src/theme/markdownTheme'
 import unoConfig from './uno.config'
 
@@ -26,8 +27,16 @@ export default defineConfig({
   base: './',
   plugins: [vue(), UnoCSS(unoConfig), {
     name: 'mobile-appearance',
-    generateBundle() {
+    async generateBundle(_, bundle) {
       this.emitFile({ type: 'asset', fileName: 'appearance.json', source: JSON.stringify(appearance) })
+      this.emitFile({ type: 'asset', fileName: 'icons.json', source: JSON.stringify(await nativeIcons()) })
+      const avatars = Object.fromEntries(Object.values(bundle).flatMap((asset) => {
+        if (asset.type !== 'asset')
+          return []
+        const name = asset.names.find(name => /^(?:actor|npc)-[a-z]+\.webp$/.test(name))
+        return name ? [[name.slice(0, -5), asset.fileName]] : []
+      }))
+      this.emitFile({ type: 'asset', fileName: 'avatar-presets.json', source: JSON.stringify(avatars) })
     },
   }],
   resolve: {

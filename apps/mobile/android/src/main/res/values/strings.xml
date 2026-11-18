@@ -40,16 +40,14 @@
         <item quantity="other">%1$d attachments</item>
     </plurals>
     <string name="mobile_permissions_apply_immediately">Selections apply immediately. Closing does not undo applied changes; full access requires confirmation.</string>
-    <string name="mobile_model_apply_explicit">Changes are saved only when you apply them. Closing discards this selection.</string>
     <string name="mobile_clear_model_search">Clear search</string>
-    <string name="mobile_collapse_editor">Collapse editor</string>
-    <string name="mobile_expand_editor">Expand editor</string>
+    <string name="mobile_exit_fullscreen_editor">Exit full screen input</string>
+    <string name="mobile_fullscreen_editor">Full screen input</string>
     <string name="mobile_permissions_unavailable">Permissions cannot be changed now. Restore the connection and wait for any pending operation to finish.</string>
     <string name="phone_copies">Phone copies</string>
     <string name="phone_drafts_hint">Inputs kept on this phone. Accepted queued input and operation receipts are kept separately; unconfirmed operations are not resent automatically.</string>
     <string name="phone_drafts_empty">No drafts saved on this phone</string>
     <string name="preview_empty_text">This text file is empty.</string>
-    <string name="preview_followup_hint">Adds a copy and any selected text to the original input. Existing content is kept; nothing is sent.</string>
     <string name="mobile_archived_tasks">Archived</string>
     <string name="mobile_filter_by_space">Filter by space: %1$s</string>
     <string name="mobile_show_archived_tasks">Show archived tasks</string>
@@ -97,7 +95,6 @@
     <string name="label_ask_for_approval">Ask for approval</string>
     <string name="label_start_with_a_task">Start with a task</string>
     <string name="label_continue_from_here">Continue from here</string>
-    <string name="label_sync_failed_showing_previously_loaded_tasks">Sync failed. Showing previously loaded tasks.</string>
     <string name="label_task_files">Task files</string>
     <string name="label_tasks_are_temporarily_unavailable">Tasks are temporarily unavailable</string>
     <string name="label_task_marks_could_not_sync_please_retry">Task marks could not sync. Please retry.</string>
@@ -105,7 +102,6 @@
     <string name="label_task_settings">Task settings</string>
     <string name="label_priority_processing">Priority processing</string>
     <string name="label_your_message">Your message</string>
-    <string name="label_use_this_model">Use this model</string>
     <string name="label_keep_the_original_reply_and_start_a_new_branch">Keep the original reply and start a new branch</string>
     <string name="label_sending_your_edit_creates_a_new_branch">Sending your edit creates a new branch</string>
     <string name="label_stop_reply">Stop reply</string>
@@ -185,14 +181,12 @@
     <string name="label_smart_approval">Smart approval</string>
     <string name="label_no_saved_services">No saved services</string>
     <string name="label_earlier_messages">Earlier messages</string>
-    <string name="label_change_model">Change model</string>
     <string name="service_connect">Connect</string>
     <string name="service_connect_named">Connect to %1$s</string>
     <string name="service_switch">Switch</string>
     <string name="service_switch_named">Switch to %1$s</string>
     <string name="service_connecting">Connecting</string>
     <string name="label_spaces_on_your_service">Spaces on your service</string>
-    <string name="label_service_offline_showing_previously_synced_tasks">Service offline. Showing previously synced tasks.</string>
     <string name="label_service_disconnected">Service disconnected</string>
     <string name="label_no_space">No space</string>
     <string name="label_untitled_task">Untitled task</string>
@@ -245,7 +239,6 @@
     <string name="label_back">Back</string>
     <string name="label_back_to_task_settings">Back to task settings</string>
     <string name="label_back_to_chat">Back to chat</string>
-    <string name="label_back_to_models">Back to models</string>
     <string name="label_no_tasks_in_this_space_yet">No tasks in this space yet</string>
     <string name="label_progress_history">Progress &amp; history</string>
     <string name="label_in_progress">In progress</string>
@@ -318,15 +311,15 @@
     <string name="share_file">Share</string>
     <string name="share_file_title">Share file</string>
     <string name="no_share_app">No sharing app available. Save the file instead.</string>
-    <string name="file_followup">Continue refining this file</string>
+    <string name="file_followup">Continue editing</string>
+    <string name="preview_file_info">File info</string>
+    <string name="preview_no_viewer">No app can open this file. You can save or share it.</string>
     <string name="opening_file">Opening file…</string>
     <string name="quote_selection">Continue with selected text</string>
     <string name="quote_action">Quote and continue</string>
     <string name="quote_limit">Select up to 8,000 characters</string>
     <string name="preview_page_description">%1$s, page %2$d</string>
     <string name="preview_truncated">Showing the first %1$d characters. Save the file to view all content.</string>
-    <string name="readonly_text">Read-only text</string>
-    <string name="readonly_preview">Read-only preview · Pinch to zoom or drag to pan</string>
     <string name="protected_file">Password-protected file. Save it and open it in a compatible app.</string>
     <string name="preview_timeout">Preview timed out. The original file is retained for saving or sharing.</string>
     <string name="preview_failed">Preview unavailable. The original file is retained for saving or sharing.</string>
@@ -427,15 +420,6 @@
     <string name="review_system_interaction">System interaction</string>
     <string name="review_browser_interaction">Browser interaction</string>
     <string name="review_mcp_call">MCP call</string>
-    <string name="reasoning_off">Off</string>
-    <string name="reasoning_minimal">Minimal</string>
-    <string name="reasoning_low">Low</string>
-    <string name="reasoning_medium">Medium</string>
-    <string name="reasoning_high">High</string>
-    <string name="reasoning_xhigh">Extra high</string>
-    <string name="reasoning_max">Maximum</string>
-    <string name="reasoning_auto">Auto</string>
-    <string name="reasoning_adaptive">Adaptive</string>
     <string name="execution_inherited">Keep service permissions</string>
     <string name="models_load_failed">Models could not load. Tap to retry.</string>
     <string name="models_cached">Showing the previous model list; refresh unavailable.</string>
@@ -449,7 +433,12 @@
     <string name="more_options">More options</string>
     <string name="error_command_result_unknown">Sending is not yet confirmed. Check send history for the result.</string>
     <string name="error_data_generation_changed">Service data has changed. Your input is retained; pair again.</string>
-    <string name="error_not_connected">No service connected. Your input is saved on this phone.</string>
+    <string name="mobile_reconnecting_cached_tasks">Reconnecting · Showing previously synced tasks</string>
+    <string name="mobile_task_update_failed">Task update failed</string>
+    <string name="mobile_previously_synced_tasks">Previously synced tasks</string>
+    <string name="mobile_connect_to_view_tasks">Connect to view tasks</string>
+    <string name="mobile_connect_to_view_conversation">Connect to view this conversation</string>
+    <string name="error_not_connected">No service connected</string>
     <string name="error_invalid_endpoint">Enter a valid HTTPS service address and port.</string>
     <string name="error_invalid_pairing_code">This QR code does not contain valid Lexora pairing information.</string>
     <string name="error_pairing_expired">Pairing has expired. Generate a new QR code on the service.</string>
@@ -588,7 +577,6 @@
     <string name="mobile_could_not_open_the_draft_please_retry">Could not open the draft. Please retry.</string>
     <string name="mobile_input_is_being_restored_or_requires_desktop_editing_the">Input is being restored or requires desktop editing. The original is retained.</string>
     <string name="mobile_demo_accepted_no_service_task_will_run">Demo accepted. No service task will run.</string>
-    <string name="mobile_no_service_connected_your_input_is_retained">No service connected. Your input is retained.</string>
     <string name="mobile_added_to_the_send_queue">Added to the send queue</string>
     <string name="mobile_choose_an_existing_service_space">Choose an existing service space</string>
     <string name="mobile_the_service_restarted_and_has_no_receipt_for_this">The service restarted and has no receipt for this operation. Review the original task before confirming again. The previous operation will not be resent automatically.</string>
@@ -752,7 +740,6 @@
     <string name="mobile_execution_history_is_too_long_to_load_completely">Execution history is too long to load completely</string>
     <string name="mobile_execution_history_unavailable_tap_to_retry">Execution history unavailable. Tap to retry.</string>
     <string name="mobile_showing_phone_content_updating">Showing phone content. Updating…</string>
-    <string name="mobile_phone_content_connect_to_update">Phone content. Connect to update.</string>
     <string name="mobile_task_options">Task options</string>
     <plurals name="mobile_runs">
         <item quantity="one">%1$d run</item>
@@ -879,4 +866,6 @@
     <string name="mobile_about_source">Source code</string>
     <string name="mobile_about_feedback">Report an issue</string>
     <string name="mobile_about_license">License</string>
+    <string name="mobile_local_data">Local data</string>
+    <string name="mobile_other_models">Other models</string>
 </resources>

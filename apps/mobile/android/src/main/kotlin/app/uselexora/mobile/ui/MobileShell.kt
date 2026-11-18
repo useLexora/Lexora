@@ -34,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -53,64 +54,65 @@ import java.time.Instant
 
 private enum class MobileSheet { Task, TaskMore, Queue, Attachments, InputSettings, Devices, Questions, Approvals, Runs, Branches }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun MobileShell(
     state: MobileUiState,
     composer: EditText,
     onAction: (MobileAction, JSONObject?) -> Unit,
+    avatarContext: ReaderAvatarContext? = null,
     timeline: @Composable (Modifier) -> Unit,
 ) {
     var sheet by remember { mutableStateOf<MobileSheet?>(null) }
     val deviceId = state.devices.firstOrNull { it.selected }?.id.orEmpty()
     var appearanceSettings by rememberSaveable(deviceId) { mutableStateOf(false) }
     var taskSettings by rememberSaveable(deviceId, state.screen, state.topic) { mutableStateOf(false) }
+    var fullscreenInput by rememberSaveable(deviceId, state.screen, state.topic) { mutableStateOf(false) }
     val savedPages = rememberSaveableStateHolder()
     val conversation = state.screen == MobileScreen.Conversation
     val act: (MobileAction) -> Unit = { if (it == MobileAction.TaskBranches) sheet = MobileSheet.Branches; onAction(it, null) }
     val tasks = remember(state.tasks, state.selectedSpaceId) { scopedTasks(state.tasks, state.selectedSpaceId) }
     LaunchedEffect(state.screen, deviceId, state.topic) { sheet = null; state.modelPickerOpen = false; state.executionPickerOpen = false; state.messageMenu = null }
-    BackHandler(state.screen != MobileScreen.Workbench && sheet == null && !taskSettings && !appearanceSettings && !state.modelPickerOpen) { act(MobileAction.Back) }
+    BackHandler(state.screen != MobileScreen.Workbench && sheet == null && !taskSettings && !appearanceSettings && !state.modelPickerOpen && !fullscreenInput) { act(MobileAction.Back) }
+    BackHandler(fullscreenInput && !WindowInsets.isImeVisible) { fullscreenInput = false }
     BoxWithConstraints(
         Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }
             .background(MaterialTheme.colorScheme.background).safeDrawingPadding().imePadding(),
     ) {
         val tightInput = conversation && maxHeight < 240.dp
-        val inputMaxHeight = if (tightInput) (maxHeight - 100.dp).coerceIn(44.dp, 168.dp) else (maxHeight * 0.24f).coerceIn(48.dp, 168.dp)
+        val inputMaxHeight = if (tightInput) (maxHeight - 100.dp).coerceIn(44.dp, 132.dp) else (maxHeight * 0.24f).coerceIn(48.dp, 132.dp)
         Column(Modifier.fillMaxSize().then(if (taskSettings || appearanceSettings) Modifier.clearAndSetSemantics {} else Modifier)) {
-            if (!tightInput && state.screen != MobileScreen.Workbench) ShellHeader(state, act) {
+            if (!tightInput && !fullscreenInput && state.screen != MobileScreen.Workbench) ShellHeader(state, act) {
                 if (conversation) {
                     taskSettings = true
                     (composer.context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(composer.windowToken, 0)
                 } else appearanceSettings = true
             }
-            val connectionNotice = !state.connected && state.notice == MobileFailurePresentation.NETWORK_UNAVAILABLE_NOTICE
-            if (!tightInput && state.notice.isNotBlank() && !connectionNotice) Notice(state.notice) { act(MobileAction.DismissNotice) }
-            if (!tightInput && !state.connected && state.screen != MobileScreen.Workbench) Text(
-                (state.connectionLabel), style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
-            )
-            if (conversation && state.selectedTask != null && (state.viewingArchived || !state.conversationReady || state.readingCached)) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            val connectionNotice = !state.connected && (state.notice == mobileText(R.string.error_not_connected) || state.notice == MobileFailurePresentation.NETWORK_UNAVAILABLE_NOTICE)
+            if (!tightInput && !fullscreenInput && state.notice.isNotBlank() && !connectionNotice) Notice(state.notice) { act(MobileAction.DismissNotice) }
+            if (conversation && state.selectedTask != null && (state.viewingArchived || (state.connected && (!state.conversationReady || state.readingCached)))) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(when {
                     state.viewingArchived -> mobileText(R.string.mobile_archived_read_only)
                     state.syncFailure.isNotBlank() -> state.syncFailure
-                    !state.connected -> mobileText(R.string.mobile_phone_content_connect_to_update)
                     else -> mobileText(R.string.mobile_sync_required)
                 }, Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = if (tightInput) 1 else 3, overflow = TextOverflow.Ellipsis)
                 if (!state.viewingArchived && state.syncFailure.isNotBlank()) TextButton(onClick = { act(MobileAction.Refresh) }) { Text(mobileText(R.string.label_retry)) }
             }
-            Box(Modifier.weight(1f).fillMaxWidth()) {
+            Box(Modifier.fillMaxWidth().then(if (fullscreenInput) Modifier.height(0.dp).clipToBounds().clearAndSetSemantics {} else Modifier.weight(1f))) {
                 if (conversation) {
                     if (state.selectedTask == null && state.messages.isEmpty()) NewTaskIntro(state, act)
                     else Column(Modifier.fillMaxSize()) {
-                        if (!tightInput && (state.historyHasMore || state.historyLoading || state.historyError.isNotBlank() || state.historyPinned)) Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (!tightInput && (state.historyPinned || (state.connected && (state.historyHasMore || state.historyLoading || state.historyError.isNotBlank())))) Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                             if (state.historyLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                            else if (state.historyHasMore) TextButton(onClick = { act(MobileAction.MoreHistory) }, enabled = state.connected) { Text(mobileText(if (state.historyError.isNotBlank()) R.string.label_retry else R.string.mobile_load_earlier)) }
+                            else if (state.connected && state.historyHasMore) TextButton(onClick = { act(MobileAction.MoreHistory) }) { Text(mobileText(if (state.historyError.isNotBlank()) R.string.label_retry else R.string.mobile_load_earlier)) }
                             if (state.historyPinned) TextButton(onClick = { act(MobileAction.ReturnLatest) }) { Text(mobileText(R.string.mobile_return_latest)) }
                         }
-                        if (!tightInput && state.historyError.isNotBlank()) Text(state.historyError, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                        timeline(Modifier.weight(1f).fillMaxWidth())
+                        if (state.connected && !tightInput && state.historyError.isNotBlank()) Text(state.historyError, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                        if (!state.connected && state.selectedTask != null && state.messages.isEmpty() && state.runs.isEmpty()) {
+                            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                Text(mobileText(R.string.mobile_connect_to_view_conversation), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        } else timeline(Modifier.weight(1f).fillMaxWidth())
                     }
                 } else {
                     savedPages.SaveableStateProvider("$deviceId:${state.screen}:${state.selectedSpaceId ?: "all"}:${state.taskFilter}") {
@@ -129,22 +131,27 @@ fun MobileShell(
                     Text(mobileText(R.string.mobile_history_input), Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
                     TextButton(onClick = { act(MobileAction.ExitHistoryInput) }) { Text(mobileText(R.string.mobile_exit_history_input)) }
                 }
-                if (tightInput) CompactConversationActions(state, onAction, { sheet = MobileSheet.Attachments }, { sheet = MobileSheet.Questions }, { sheet = MobileSheet.Approvals })
-                else ConversationActions(state, onAction, { sheet = MobileSheet.Questions }, { sheet = MobileSheet.Approvals })
-                ComposerBar(state, composer, onAction, inputMaxHeight, tightInput, { sheet = MobileSheet.Attachments }, { sheet = MobileSheet.Runs })
+                if (!fullscreenInput) {
+                    if (tightInput) CompactConversationActions(state, onAction, { sheet = MobileSheet.Attachments }, { sheet = MobileSheet.Questions }, { sheet = MobileSheet.Approvals })
+                    else ConversationActions(state, onAction, { sheet = MobileSheet.Questions }, { sheet = MobileSheet.Approvals })
+                }
+                ComposerBar(state, composer, { action, payload ->
+                    if (action == MobileAction.Send) fullscreenInput = false
+                    onAction(action, payload)
+                }, inputMaxHeight, tightInput, { sheet = MobileSheet.Attachments }, { sheet = MobileSheet.Runs },
+                    fullscreen = fullscreenInput, onToggleFullscreen = { fullscreenInput = !fullscreenInput },
+                    modifier = if (fullscreenInput) Modifier.weight(1f) else Modifier)
             }
         }
-        if (taskSettings) Box(Modifier.fillMaxSize().then(if (appearanceSettings) Modifier.clearAndSetSemantics {} else Modifier)) {
-            ConversationSettings(state, { action, payload -> if (action == MobileAction.Files) taskSettings = false; onAction(action, payload) }, { taskSettings = false },
-                branches = { sheet = MobileSheet.Branches; act(MobileAction.TaskBranches) },
-                questions = { sheet = MobileSheet.Questions }, approvals = { sheet = MobileSheet.Approvals }, runs = { sheet = MobileSheet.Runs },
-                phoneSettings = { appearanceSettings = true }, members = { act(MobileAction.ShowMembers) })
-        }
-        if (appearanceSettings) AppearanceSettings { appearanceSettings = false }
+        if (taskSettings) ConversationSettings(state, onAction) { taskSettings = false }
+        if (appearanceSettings) AppearanceSettings(onAction = { action ->
+            if (action == MobileAction.Recovery) appearanceSettings = false
+            act(action)
+        }) { appearanceSettings = false }
     }
     state.taskFiles?.let { TaskFilesPanel(it, onAction) { state.taskFiles = null } }
     if (state.pairingPhase != null) PairingStatusPanel(state, act)
-    if (state.membersOpen) TaskMembersPanel(state, onAction)
+    if (state.membersOpen) TaskMembersPanel(state, avatarContext, onAction)
     if (state.executionPickerOpen) ConversationPermissionPicker(state, onAction)
     if (state.modelPickerOpen) ConversationModelPicker(state, onAction)
     state.messageMenu?.let { ConversationMessageMenu(it, state.connected, onAction) { state.messageMenu = null } }
@@ -266,7 +273,6 @@ fun MobileShell(
 
 @Composable
 private fun ShellHeader(state: MobileUiState, act: (MobileAction) -> Unit, more: () -> Unit) {
-    val conversation = state.screen == MobileScreen.Conversation
     val title = when (state.screen) {
         MobileScreen.Workbench -> mobileText(R.string.label_workspace)
         MobileScreen.Spaces -> mobileText(R.string.label_spaces)
@@ -278,25 +284,9 @@ private fun ShellHeader(state: MobileUiState, act: (MobileAction) -> Unit, more:
         Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 4.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        HeaderAction(mobileText(R.string.label_back), Icons.AutoMirrored.Outlined.ArrowBack) { act(MobileAction.Back) }
-        if (conversation) Row(
-            Modifier.weight(1f).heightIn(min = 48.dp).clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                .testTag("task-information").clickable(role = Role.Button, onClickLabel = mobileText(R.string.label_task_settings), onClick = more)
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (state.branches.size > 1) Text(branchLabel(state, state.viewBranchId.orEmpty()), style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            Icon(Icons.Outlined.KeyboardArrowDown, mobileText(R.string.label_task_settings), Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        } else Text(title, Modifier.weight(1f).padding(horizontal = 8.dp), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        if (conversation && state.selectedTask != null) {
-            HeaderAction(mobileText(R.string.label_branches), Icons.Outlined.ForkRight, Modifier.testTag("branch-switcher")) { act(MobileAction.TaskBranches) }
-            HeaderAction(mobileText(R.string.label_task_files), Icons.Outlined.FolderOpen, Modifier.testTag("task-results")) { act(MobileAction.Files) }
-        }
+        val conversation = state.screen == MobileScreen.Conversation
+        HeaderAction(mobileText(R.string.label_back), if (conversation) desktopSymbol(DesktopSymbol.Back) else Icons.AutoMirrored.Outlined.ArrowBack, plain = conversation) { act(MobileAction.Back) }
+        Text(title, Modifier.weight(1f).padding(horizontal = 8.dp), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
         when (state.screen) {
             MobileScreen.Devices -> HeaderAction(mobileText(R.string.label_scan_to_add_service), Icons.Outlined.QrCodeScanner) { act(MobileAction.ScanDevice) }
             MobileScreen.Tasks -> {
@@ -318,7 +308,7 @@ private fun ShellHeader(state: MobileUiState, act: (MobileAction) -> Unit, more:
                     Icon(Icons.Outlined.Inventory2, mobileText(if (state.discovery.archived) R.string.mobile_show_active_tasks else R.string.mobile_show_archived_tasks), Modifier.size(20.dp))
                 }
             }
-            MobileScreen.Conversation -> Unit
+            MobileScreen.Conversation -> HeaderAction(mobileText(R.string.label_task_settings), desktopSymbol(DesktopSymbol.More), Modifier.testTag("task-information"), plain = true, action = more)
             else -> HeaderAction(mobileText(R.string.mobile_phone_settings), Icons.Outlined.Tune, action = more)
         }
     }
@@ -567,11 +557,11 @@ private fun AttachmentStrip(state: MobileUiState, onAction: (MobileAction, JSONO
 }
 
 @Composable
-private fun ComposerBar(state: MobileUiState, composer: EditText, onAction: (MobileAction, JSONObject?) -> Unit, inputMaxHeight: Dp, tight: Boolean, attachments: () -> Unit, runs: () -> Unit) {
+private fun ComposerBar(state: MobileUiState, composer: EditText, onAction: (MobileAction, JSONObject?) -> Unit, inputMaxHeight: Dp, tight: Boolean, attachments: () -> Unit, runs: () -> Unit, fullscreen: Boolean, onToggleFullscreen: () -> Unit, modifier: Modifier = Modifier) {
     val focused = remember(composer) { mutableStateOf(composer.hasFocus()) }
     val active = activeRuns(state)
     val stopping = active.any { it.optString("id") == state.stoppingRunId }
-    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(top = if (tight) 2.dp else 4.dp, bottom = if (tight) 2.dp else 8.dp)) {
+    Column(modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(top = if (tight) 2.dp else 4.dp, bottom = if (tight) 2.dp else 8.dp)) {
         if (!tight && active.isNotEmpty()) Row(Modifier.fillMaxWidth().height(28.dp).testTag("streaming-status"), verticalAlignment = Alignment.CenterVertically) {
             CircularProgressIndicator(Modifier.size(12.dp), color = MaterialTheme.colorScheme.primary, strokeWidth = 1.5.dp)
             Spacer(Modifier.width(8.dp))
@@ -583,10 +573,12 @@ private fun ComposerBar(state: MobileUiState, composer: EditText, onAction: (Mob
                 mobileText(R.string.label_the_reply_did_not_complete_try_another_model_and_resend),
                 Modifier.padding(horizontal = 8.dp, vertical = 6.dp).testTag("reply-failed"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
         }
-        Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainer, border = BorderStroke(1.dp, if (focused.value) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline), shadowElevation = 1.dp) {
-            Column(Modifier.fillMaxWidth().padding(if (tight) 0.dp else 6.dp)) {
+        Surface(modifier = if (fullscreen) Modifier.weight(1f) else Modifier, shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainer,
+            border = BorderStroke(1.dp, if (focused.value) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else MaterialTheme.colorScheme.outlineVariant)) {
+            Column(Modifier.fillMaxWidth().then(if (fullscreen) Modifier.fillMaxHeight() else Modifier).padding(if (tight) 0.dp else 6.dp)) {
                 if (!tight) AttachmentStrip(state, onAction)
-                NativeComposerInput(composer, state.inputEnabled, state.attachmentCount > 0, inputMaxHeight, tight) { focused.value = it }
+                NativeComposerInput(composer, state.inputEnabled, inputMaxHeight, fullscreen, onToggleFullscreen,
+                    modifier = if (fullscreen) Modifier.weight(1f) else Modifier) { focused.value = it }
                 ComposerToolbar(state, onAction, attachments, stopping, active, runs)
             }
         }
@@ -644,7 +636,7 @@ private fun sheetEntries(sheet: MobileSheet, state: MobileUiState): List<SheetEn
     MobileSheet.Queue -> listOf(SheetEntry(mobileText(R.string.label_view_queue), Icons.AutoMirrored.Outlined.ListAlt, MobileAction.TaskQueue), SheetEntry(mobileText(R.string.label_queue_current_input), Icons.Outlined.PlaylistAdd, MobileAction.QueueInput))
     MobileSheet.TaskMore -> buildList {
         if (state.selectedTask != null) {
-            add(SheetEntry(mobileText(R.string.label_earlier_messages), Icons.Outlined.History, MobileAction.MoreHistory))
+            if (state.connected) add(SheetEntry(mobileText(R.string.label_earlier_messages), Icons.Outlined.History, MobileAction.MoreHistory))
             add(SheetEntry(mobileText(R.string.label_open_on_desktop), Icons.Outlined.OpenInNew, MobileAction.OpenOnDesktop))
             add(SheetEntry(mobileText(R.string.label_read_status), Icons.Outlined.DoneAll, MobileAction.ReadState))
         }

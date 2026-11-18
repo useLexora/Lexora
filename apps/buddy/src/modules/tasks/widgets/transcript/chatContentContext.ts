@@ -6,6 +6,7 @@ import { createInjectionState } from '@vueuse/core'
 
 interface ChatContentContext {
   terminalRenderer?: Component
+  toolImageRenderer?: Component
   openWebLink: (url: string) => void
   canPreviewFile: (path: string) => boolean
   previewFile: (path: string, source?: ContextPanelSource) => void

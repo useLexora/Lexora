@@ -24,7 +24,7 @@ class MobileTaskReadModel(
     private val cachedConversation: (List<JSONObject>?, List<JSONObject>?) -> Unit,
 ) {
     data class Context(val partition: String, val topic: String, val client: ProductClient?, val generation: Long)
-    data class Catalog(val items: List<JSONObject> = emptyList(), val loading: Boolean = false, val error: String = "")
+    data class Catalog(val items: List<JSONObject> = emptyList(), val providers: List<JSONObject> = emptyList(), val loading: Boolean = false, val error: String = "")
     data class Marks(val ids: Set<String> = emptySet(), val loaded: Boolean = false, val failed: Boolean = false)
     private data class MarksRequest(val context: Context, val generation: Long, val taskIds: List<String>)
     var tasks = emptyList<JSONObject>()
@@ -98,21 +98,30 @@ class MobileTaskReadModel(
         publishCatalog(catalog.copy(loading = catalog.items.isEmpty(), error = ""))
         catalogWorker.execute {
             try {
-                val values = mutableListOf<JSONObject>()
-                var cursor: String? = null
-                val seen = mutableSetOf<String>()
-                do {
-                    val page = client.call("providers.listModels", JSONObject().put("cursor", cursor ?: JSONObject.NULL))
-                    values.addAll(objects(page.getJSONArray("items")).filter { it.optBoolean("available") && it.optBoolean("enabled") && it.optString("type") == "chat" })
-                    cursor = page.opt("nextCursor") as? String
-                    if (cursor != null && !seen.add(cursor)) throw ProtocolFailure("PROTOCOL_INCOMPATIBLE")
-                } while (cursor != null)
-                cacheWorker.execute { runCatching { cache.write(captured.partition, "models", values) } }
-                onUi { if (sameConnection(captured)) { catalogClient = client; publishCatalog(Catalog(values)) } }
+                val providers = catalogItems(client, "providers.list")
+                val values = catalogItems(client, "providers.listModels")
+                    .filter { it.optBoolean("available") && it.optBoolean("enabled") && it.optString("type") == "chat" }
+                cacheWorker.execute { runCatching {
+                    cache.write(captured.partition, "models", values)
+                    cache.write(captured.partition, "providers", providers)
+                } }
+                onUi { if (sameConnection(captured)) { catalogClient = client; publishCatalog(Catalog(values, providers)) } }
             } catch (_: Exception) {
                 onUi { if (sameConnection(captured)) publishCatalog(catalog.copy(loading = false, error = if (catalog.items.isEmpty()) mobileText(R.string.models_load_failed) else mobileText(R.string.models_cached))) }
             } finally { onUi { if (catalogLoading === client) catalogLoading = null } }
         }
+    }
+    private fun catalogItems(client: ProductClient, method: String): List<JSONObject> {
+        val values = mutableListOf<JSONObject>()
+        val seen = mutableSetOf<String>()
+        var cursor: String? = null
+        do {
+            val page = client.call(method, JSONObject().put("cursor", cursor ?: JSONObject.NULL))
+            values.addAll(objects(page.getJSONArray("items")))
+            cursor = page.opt("nextCursor") as? String
+            if (cursor != null && !seen.add(cursor)) throw ProtocolFailure("PROTOCOL_INCOMPATIBLE")
+        } while (cursor != null)
+        return values
     }
     fun restoreCatalogs() {
         val captured = context()
@@ -120,10 +129,11 @@ class MobileTaskReadModel(
         val revision = projectionRevision
         cacheWorker.execute {
             val models = cache.read(captured.partition, "models")?.takeIf { values -> values.chunked(100).all { schemas.response("providers.listModels", JSONObject().put("items", JSONArray(it)).put("nextCursor", JSONObject.NULL)) } }
+            val providers = cache.read(captured.partition, "providers")?.takeIf { values -> values.chunked(100).all { schemas.response("providers.list", JSONObject().put("items", JSONArray(it)).put("nextCursor", JSONObject.NULL)) } }
             val tasks = cache.read(captured.partition, "taskIndex")?.takeIf { values -> values.all { schemas.valid(it, schemas.document.getJSONObject("topics").getJSONObject("taskIndex").getJSONObject("item")) } }
             onUi {
                 if (closed || context().partition != captured.partition) return@onUi
-                if ((catalogClient !== context().client || context().client == null) && catalog.items.isEmpty() && models != null) publishCatalog(catalog.copy(items = models))
+                if ((catalogClient !== context().client || context().client == null) && catalog.items.isEmpty() && models != null) publishCatalog(catalog.copy(items = models, providers = providers.orEmpty()))
                 if (projectionRevision == revision && this.tasks.isEmpty() && tasks != null) { this.tasks = tasks; cachedTasks() }
             }
         }

@@ -39,16 +39,14 @@
         <item quantity="other">附件：%1$d 项</item>
     </plurals>
     <string name="mobile_permissions_apply_immediately">选择后立即应用。关闭不会撤销已应用的更改；全访问需要另行确认。</string>
-    <string name="mobile_model_apply_explicit">仅在点按应用后保存；关闭不应用当前选择。</string>
     <string name="mobile_clear_model_search">清除搜索</string>
-    <string name="mobile_collapse_editor">收起编辑</string>
-    <string name="mobile_expand_editor">展开编辑</string>
+    <string name="mobile_exit_fullscreen_editor">退出全屏输入</string>
+    <string name="mobile_fullscreen_editor">全屏输入</string>
     <string name="mobile_permissions_unavailable">当前无法更改权限，请先恢复连接并等待进行中的操作完成。</string>
     <string name="phone_copies">手机副本</string>
     <string name="phone_drafts_hint">本机保留的输入。服务已接受的排队输入与操作回执分别保留；待确认操作不会自动重发。</string>
     <string name="phone_drafts_empty">手机上没有已保存的草稿</string>
     <string name="preview_empty_text">此文本文件为空。</string>
-    <string name="preview_followup_hint">将副本和选中文字添加到原输入，保留已有内容，不会发送。</string>
     <string name="mobile_archived_tasks">已归档</string>
     <string name="mobile_filter_by_space">空间筛选：%1$s</string>
     <string name="mobile_show_archived_tasks">查看已归档任务</string>
@@ -96,7 +94,6 @@
     <string name="label_ask_for_approval">人工审批</string>
     <string name="label_start_with_a_task">从一个任务开始</string>
     <string name="label_continue_from_here">从这里继续</string>
-    <string name="label_sync_failed_showing_previously_loaded_tasks">任务同步失败，当前显示上次取得的内容。</string>
     <string name="label_task_files">任务文件</string>
     <string name="label_tasks_are_temporarily_unavailable">任务暂时无法获取</string>
     <string name="label_task_marks_could_not_sync_please_retry">任务标记暂未同步，请重试。</string>
@@ -104,7 +101,6 @@
     <string name="label_task_settings">任务设置</string>
     <string name="label_priority_processing">优先处理请求</string>
     <string name="label_your_message">你的消息</string>
-    <string name="label_use_this_model">使用这个模型</string>
     <string name="label_keep_the_original_reply_and_start_a_new_branch">保留原回复，生成新分支</string>
     <string name="label_sending_your_edit_creates_a_new_branch">修改后发送将创建新分支</string>
     <string name="label_stop_reply">停止回复</string>
@@ -184,14 +180,12 @@
     <string name="label_smart_approval">智能审批</string>
     <string name="label_no_saved_services">暂无已保存的服务</string>
     <string name="label_earlier_messages">更多历史</string>
-    <string name="label_change_model">更换模型</string>
     <string name="service_connect">连接</string>
     <string name="service_connect_named">连接 %1$s</string>
     <string name="service_switch">切换</string>
     <string name="service_switch_named">切换到 %1$s</string>
     <string name="service_connecting">连接中</string>
     <string name="label_spaces_on_your_service">服务上的空间</string>
-    <string name="label_service_offline_showing_previously_synced_tasks">服务当前离线，显示上次同步的任务。</string>
     <string name="label_service_disconnected">服务暂未连接</string>
     <string name="label_no_space">未分配空间</string>
     <string name="label_untitled_task">未命名任务</string>
@@ -244,7 +238,6 @@
     <string name="label_back">返回</string>
     <string name="label_back_to_task_settings">返回任务设置</string>
     <string name="label_back_to_chat">返回对话</string>
-    <string name="label_back_to_models">返回模型列表</string>
     <string name="label_no_tasks_in_this_space_yet">这个空间还没有任务</string>
     <string name="label_progress_history">进展与历史</string>
     <string name="label_in_progress">进行中</string>
@@ -317,15 +310,15 @@
     <string name="share_file">分享</string>
     <string name="share_file_title">分享文件</string>
     <string name="no_share_app">没有可用的分享应用 · 可以保存到文件</string>
-    <string name="file_followup">针对这个文件继续修改</string>
+    <string name="file_followup">继续修改</string>
+    <string name="preview_file_info">文件信息</string>
+    <string name="preview_no_viewer">没有可以打开此文件的应用，可以保存或分享文件。</string>
     <string name="opening_file">正在打开文件…</string>
     <string name="quote_selection">引用选中内容继续修改</string>
     <string name="quote_action">引用并继续修改</string>
     <string name="quote_limit">请选择不超过 8000 字的片段</string>
     <string name="preview_page_description">%1$s，第 %2$d 页</string>
     <string name="preview_truncated">仅显示前 %1$d 个字符 · 完整内容可保存查看</string>
-    <string name="readonly_text">只读文本</string>
-    <string name="readonly_preview">只读预览 · 可双指缩放或拖动查看</string>
     <string name="protected_file">文件受密码保护 · 请保存后用支持的应用打开</string>
     <string name="preview_timeout">预览超时 · 原文件保留，可以保存或分享</string>
     <string name="preview_failed">暂时无法预览此文件 · 原文件保留，可以保存或分享</string>
@@ -426,15 +419,6 @@
     <string name="review_system_interaction">系统交互</string>
     <string name="review_browser_interaction">浏览器交互</string>
     <string name="review_mcp_call">MCP 调用</string>
-    <string name="reasoning_off">关闭</string>
-    <string name="reasoning_minimal">极低</string>
-    <string name="reasoning_low">低</string>
-    <string name="reasoning_medium">中</string>
-    <string name="reasoning_high">高</string>
-    <string name="reasoning_xhigh">极高</string>
-    <string name="reasoning_max">最高</string>
-    <string name="reasoning_auto">自动</string>
-    <string name="reasoning_adaptive">自适应</string>
     <string name="execution_inherited">保留服务执行设置</string>
     <string name="models_load_failed">模型暂未载入，点按重试</string>
     <string name="models_cached">显示上次的模型列表，暂未更新</string>
@@ -448,7 +432,12 @@
     <string name="more_options">更多选项</string>
     <string name="error_command_result_unknown">还无法确认是否发送成功，请到发送记录查看结果</string>
     <string name="error_data_generation_changed">服务数据版本已变化 · 原输入保留，请重新配对</string>
-    <string name="error_not_connected">尚未连接服务 · 本地输入已保留</string>
+    <string name="mobile_reconnecting_cached_tasks">正在重连 · 显示上次同步的任务</string>
+    <string name="mobile_task_update_failed">任务更新失败</string>
+    <string name="mobile_previously_synced_tasks">上次同步的任务</string>
+    <string name="mobile_connect_to_view_tasks">连接后可查看任务</string>
+    <string name="mobile_connect_to_view_conversation">连接后可查看对话</string>
+    <string name="error_not_connected">尚未连接服务</string>
     <string name="error_invalid_endpoint">地址格式不正确 · 请填写服务的 HTTPS 地址和端口</string>
     <string name="error_invalid_pairing_code">二维码不是有效的 Lexora 配对信息</string>
     <string name="error_pairing_expired">配对已过期 · 请在服务重新生成二维码</string>
@@ -585,7 +574,6 @@
     <string name="mobile_could_not_open_the_draft_please_retry">草稿未能打开，请重试</string>
     <string name="mobile_input_is_being_restored_or_requires_desktop_editing_the">输入正在恢复或需要在桌面端编辑 · 原稿保留</string>
     <string name="mobile_demo_accepted_no_service_task_will_run">示例已受理 · 无服务任务执行</string>
-    <string name="mobile_no_service_connected_your_input_is_retained">尚未连接服务，输入已保留</string>
     <string name="mobile_added_to_the_send_queue">已加入待发送队列</string>
     <string name="mobile_choose_an_existing_service_space">选择服务已有空间</string>
     <string name="mobile_the_service_restarted_and_has_no_receipt_for_this">服务已重启，且没有这次操作的回执。请查看原任务后重新确认，旧操作不会自动重发。</string>
@@ -749,7 +737,6 @@
     <string name="mobile_execution_history_is_too_long_to_load_completely">执行过程过长，暂时无法完整载入</string>
     <string name="mobile_execution_history_unavailable_tap_to_retry">执行过程暂未载入，点按重试</string>
     <string name="mobile_showing_phone_content_updating">已显示手机保存的内容 · 正在更新</string>
-    <string name="mobile_phone_content_connect_to_update">手机保存的内容 · 连接后更新</string>
     <string name="mobile_task_options">任务选项</string>
     <plurals name="mobile_runs">
         <item quantity="other">%1$d 项运行</item>
@@ -864,4 +851,6 @@
     <string name="mobile_about_source">源代码</string>
     <string name="mobile_about_feedback">问题反馈</string>
     <string name="mobile_about_license">开源许可</string>
+    <string name="mobile_local_data">本机数据</string>
+    <string name="mobile_other_models">其他模型</string>
 </resources>

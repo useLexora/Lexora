@@ -129,6 +129,7 @@ function collapseFromBottom() {
             <BuddyChatToolDetails
               v-if="openEntries.get(entry.node.id) && canExpandChatTool(entry.node, actions.canPreviewFile)"
               :data-tool-detail-id="entry.node.toolCallId"
+              :tool-call-id="entry.node.toolCallId"
               :data-action-detail-id="entry.node.invocation?.id"
               :error-code="entry.node.errorCode"
               :language="language" :presentation="entry.node.presentation"

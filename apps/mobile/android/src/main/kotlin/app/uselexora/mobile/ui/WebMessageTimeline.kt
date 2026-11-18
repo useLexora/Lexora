@@ -19,12 +19,14 @@ import android.view.View
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.viewinterop.AndroidView
 import app.uselexora.mobile.BuildConfig
 import app.uselexora.mobile.protocol.MobileMessageDetail
 import app.uselexora.mobile.protocol.MobileMessagePresentation
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 
@@ -48,6 +50,12 @@ fun WebMessageTimeline(
     anchorRequestId: String? = null,
     hasLaterMessages: Boolean = false,
     onLatest: () -> Unit = {},
+    artifactContext: ReaderArtifactContext? = null,
+    onResourceActions: (JSONObject) -> Unit = onResource,
+    branches: List<JSONObject> = emptyList(),
+    selectedBranchId: String? = null,
+    onBranch: (JSONObject) -> Unit = {},
+    onMessageMenu: ((JSONObject, IntRect?, Boolean) -> Unit)? = null,
 ) {
     val dark = MobileAppearance.isDark(isSystemInDarkTheme())
     val fontScale = LocalConfiguration.current.fontScale
@@ -55,7 +63,7 @@ fun WebMessageTimeline(
     AndroidView(
         factory = { ReaderView(it) }, modifier = modifier.testTag("message-list"),
         onRelease = { it.dispose() },
-        update = { it.update(messages, topic, details, runs, dark, fontScale, onMessageAction, onResource, onLoadDetail, onQuickAction, language, transcripts, onLoadTranscript, resultRunId, onReadResult, avatarContext, anchorMessageId, anchorRequestId, hasLaterMessages, onLatest) },
+        update = { it.update(messages, topic, details, runs, dark, fontScale, onMessageAction, onResource, onLoadDetail, onQuickAction, language, transcripts, onLoadTranscript, resultRunId, onReadResult, avatarContext, anchorMessageId, anchorRequestId, hasLaterMessages, onLatest, artifactContext, onResourceActions, branches, selectedBranchId, onBranch, onMessageMenu) },
     )
 }
 
@@ -77,6 +85,12 @@ class ReaderView(context: Context) : FrameLayout(context) {
     private var dark = false
     private var fontScale = 1f
     private var messageAction: (JSONObject) -> Unit = {}
+    private var messageMenu: ((JSONObject, IntRect?, Boolean) -> Unit)? = null
+    private var branches = emptyList<JSONObject>()
+    private var selectedBranchId: String? = null
+    private var sentBranches: List<JSONObject>? = null
+    private var sentSelectedBranchId: String? = null
+    private var selectBranch: (JSONObject) -> Unit = {}
     private var resourceAction: (JSONObject) -> Unit = {}
     private var detailAction: (JSONObject) -> Unit = {}
     private var scheduled = false
@@ -97,6 +111,11 @@ class ReaderView(context: Context) : FrameLayout(context) {
     private var latest: () -> Unit = {}
     @Volatile private var avatars: ReaderAvatars? = null
     private var avatarAuthors = emptySet<String>()
+    @Volatile private var artifacts: ReaderArtifacts? = null
+    private var sentOutputs: JSONObject? = null
+    private var toolImages: ReaderToolImages? = null
+    private var sentToolImages: JSONArray? = null
+    private var resourceOptions: (JSONObject) -> Unit = {}
 
     init { createBrowser() }
 
@@ -164,6 +183,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
 
     private fun localAsset(uri: Uri): WebResourceResponse {
         avatars?.asset(uri)?.let { return it }
+        artifacts?.asset(uri)?.let { return it }
         val path = uri.path.orEmpty()
         val valid = uri.scheme == "https" && uri.host == "appassets.androidplatform.net" && uri.port == -1 &&
             path.startsWith("/reader/") && path.split('/').none { it == ".." || it == "." } && !path.contains('\\')
@@ -193,6 +213,12 @@ class ReaderView(context: Context) : FrameLayout(context) {
         anchorRequestId: String? = null,
         hasLaterMessages: Boolean = false,
         onLatest: () -> Unit = {},
+        artifactContext: ReaderArtifactContext? = null,
+        onResourceActions: (JSONObject) -> Unit = onResource,
+        branches: List<JSONObject> = emptyList(),
+        selectedBranchId: String? = null,
+        onBranch: (JSONObject) -> Unit = {},
+        onMessageMenu: ((JSONObject, IntRect?, Boolean) -> Unit)? = null,
     ) {
         if (avatarContext != null) {
             val created = avatars == null
@@ -202,12 +228,27 @@ class ReaderView(context: Context) : FrameLayout(context) {
                     runs.mapNotNull { it.optString("buddyId").takeIf(String::isNotBlank) }).toSet()
             avatars?.update(avatarContext.partition, topic, avatarContext.client, avatarAuthors)
         } else if (avatars != null) { avatars?.close(); avatars = null; schedulePublish() }
+        if (artifactContext != null) {
+            if (artifacts == null) {
+                artifacts = ReaderArtifacts(context) { toolImages?.invalidateImages(); schedulePublish() }
+                toolImages = ReaderToolImages(artifacts!!) { schedulePublish() }
+            }
+            artifacts?.update(topic, artifactContext, runs)
+            toolImages?.update(topic, artifactContext, runs, transcripts)
+        } else if (artifacts != null) {
+            toolImages?.close(); toolImages = null; artifacts?.close(); artifacts = null; schedulePublish()
+        }
+        selectBranch = onBranch
+        messageMenu = onMessageMenu
+        resourceOptions = onResourceActions
         loadTranscript = onLoadTranscript
         readResult = onReadResult
         latest = onLatest
         quickAction = onQuickAction
         messageAction = onMessageAction; resourceAction = onResource; detailAction = onLoadDetail
-        if (this.messages === messages && this.topic == topic && this.details === details && this.runs === runs && this.dark == dark && this.fontScale == fontScale && this.language == language && this.transcripts === transcripts && this.resultRunId == resultRunId && this.anchorMessageId == anchorMessageId && this.anchorRequestId == anchorRequestId && this.hasLaterMessages == hasLaterMessages) return
+        if (this.messages === messages && this.topic == topic && this.details === details && this.runs === runs && this.dark == dark && this.fontScale == fontScale && this.language == language && this.transcripts === transcripts && this.resultRunId == resultRunId && this.anchorMessageId == anchorMessageId && this.anchorRequestId == anchorRequestId && this.hasLaterMessages == hasLaterMessages && this.branches === branches && this.selectedBranchId == selectedBranchId) return
+        this.branches = branches
+        this.selectedBranchId = selectedBranchId
         this.anchorMessageId = anchorMessageId
         this.anchorRequestId = anchorRequestId
         this.hasLaterMessages = hasLaterMessages
@@ -230,6 +271,14 @@ class ReaderView(context: Context) : FrameLayout(context) {
         val snapshot = ReaderSnapshot(messages, topic, details, runs, transcripts, dark, fontScale, language,
             resultRunId?.takeIf { hasWindowFocus() && isShown }, avatars?.sources ?: emptyMap(), anchorMessageId, anchorRequestId, hasLaterMessages)
         val update = projection.encode(snapshot, { MobileTheme.palette(context, dark) }, { MobileTheme.typography(context) })
+        if (update.optBoolean("reset") || branches !== sentBranches || selectedBranchId != sentSelectedBranchId) {
+            update.put("branches", JSONArray(branches)).put("selectedBranchId", selectedBranchId ?: JSONObject.NULL)
+            sentBranches = branches; sentSelectedBranchId = selectedBranchId
+        }
+        val outputs = artifacts?.wire()
+        if (update.optBoolean("reset") || outputs !== sentOutputs) { update.put("outputs", outputs ?: JSONObject()); sentOutputs = outputs }
+        val imageState = toolImages?.wire()
+        if (update.optBoolean("reset") || imageState !== sentToolImages) { update.put("toolImages", imageState ?: JSONArray()); sentToolImages = imageState }
         port?.postMessage(WebMessage(update.toString()))
     }
 
@@ -250,10 +299,30 @@ class ReaderView(context: Context) : FrameLayout(context) {
         if (!protocol.valid(data, protocol.document.getJSONObject("action"))) return
         if (data.optString("action") == "ready") { ready = true; handler.removeCallbacks(loadTimeout); status.visibility = View.GONE; publish(); return }
         if (data.optString("topic") != topic) return
+        if (data.optString("action") == "branch") {
+            branches.firstOrNull { it.optString("id") == data.optString("branchId") }?.let(selectBranch)
+            return
+        }
         if (data.optString("action") == "latest") { latest(); return }
         if (data.optString("action") == "read-result") {
             val id = data.optString("runId")
             if (id == resultRunId && isShown && hasWindowFocus() && runs.any { it.optString("id") == id && it.optString("status") in setOf("completed", "failed", "cancelled") }) readResult(id)
+            return
+        }
+        if (data.optString("action") in setOf("outputs", "artifact", "artifact-actions", "artifact-thumbnail")) {
+            val runId = data.optString("runId")
+            if (runs.none { it.optString("id") == runId }) return
+            when (data.getString("action")) {
+                "outputs" -> artifacts?.request(runId, data.optString("retry") == "true")
+                "artifact-thumbnail" -> artifacts?.thumbnail(runId, data.optString("resourceId"))
+                else -> artifacts?.resource(runId, data.optString("resourceId"))?.let { if (data.getString("action") == "artifact") resourceAction(it) else resourceOptions(it) }
+            }
+            return
+        }
+        if (data.optString("action") in setOf("tool-image", "tool-image-preview")) {
+            val id = ReaderToolImageId.from(data)
+            if (data.getString("action") == "tool-image") toolImages?.request(id, data.optString("retry") == "true")
+            else toolImages?.resource(id)?.let(resourceAction)
             return
         }
         val message = messages.firstOrNull { it.optString("id") == data.optString("id") }
@@ -263,7 +332,16 @@ class ReaderView(context: Context) : FrameLayout(context) {
             return
         }
         when (data.optString("action")) {
-            "message" -> message?.let(messageAction)
+            "message" -> message?.let { source ->
+                val anchor = data.optJSONObject("anchor")?.let { rect ->
+                    val location = IntArray(2)
+                    getLocationInWindow(location)
+                    val left = location[0] + (rect.getDouble("x") * width).toInt()
+                    val top = location[1] + (rect.getDouble("y") * height).toInt()
+                    IntRect(left, top, left + (rect.getDouble("width") * width).toInt(), top + (rect.getDouble("height") * height).toInt())
+                }
+                messageMenu?.invoke(source, anchor, data.optBoolean("contextual")) ?: messageAction(source)
+            }
             "edit", "regenerate", "followup" -> message?.let { quickAction(it, data.getString("action")) }
             "detail" -> message?.let(detailAction)
             "resource" -> {
@@ -293,6 +371,8 @@ class ReaderView(context: Context) : FrameLayout(context) {
     fun dispose() {
         disposed = true; ready = false
         avatars?.close(); avatars = null
+        toolImages?.close(); toolImages = null
+        artifacts?.close(); artifacts = null
         handler.removeCallbacks(flush); handler.removeCallbacks(loadTimeout); port?.close(); port = null
         browser?.let { removeView(it); it.destroy() }; browser = null
     }

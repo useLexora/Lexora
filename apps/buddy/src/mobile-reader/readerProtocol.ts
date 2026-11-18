@@ -1,12 +1,13 @@
 import type { z } from 'zod'
 import { z as schema } from 'zod'
-import { productRunSchema } from '../../shared/productProtocol/queries'
+import { productBranchSchema, productRunSchema } from '../../shared/productProtocol/queries'
 import { publicRunEventSchema } from '../../shared/runs/publicRunEvent'
 
 const id = schema.string().min(1)
 export const readerMessageSchema = schema.object({
   id,
   runId: id.nullable(),
+  branchId: id.optional(),
   role: schema.enum(['user', 'assistant', 'tool']),
   authorId: id.nullable(),
   author: schema.string(),
@@ -37,10 +38,27 @@ export const readerMessageSchema = schema.object({
 }).strict()
 export const readerEntrySchema = schema.object({ id, continuation: schema.boolean(), messages: schema.array(readerMessageSchema) }).strict()
 export const readerTranscriptSchema = schema.object({ events: schema.array(publicRunEventSchema), loaded: schema.boolean().optional(), error: schema.string().nullable().optional(), append: schema.boolean().optional() }).strict()
+export const readerOutputSchema = schema.object({
+  failed: schema.boolean(),
+  items: schema.array(schema.object({ id, revision: schema.string(), name: schema.string(), description: schema.string(), available: schema.boolean(), image: schema.boolean(), thumbnail: schema.string().nullable() }).strict()),
+}).strict()
+const toolImageIdentity = { runId: id, toolCallId: id, kind: schema.enum(['reference', 'artifact']), id }
+export const readerToolImageSchema = schema.object({
+  ...toolImageIdentity,
+  name: schema.string(),
+  thumbnail: schema.string().nullable(),
+  loading: schema.boolean(),
+  failed: schema.boolean(),
+  available: schema.boolean(),
+}).strict()
 export const readerUpdateSchema = schema.object({
   appearance: schema.object({ variables: schema.record(schema.string(), schema.string()), colors: schema.record(schema.string(), schema.string()).optional() }).strict().optional(),
   typography: schema.object({ bodySize: schema.number().positive(), bodyLineHeight: schema.number().positive() }).strict().optional(),
   avatars: schema.record(schema.string(), schema.string()).optional(),
+  branches: schema.array(productBranchSchema).optional(),
+  selectedBranchId: id.nullable().optional(),
+  outputs: schema.record(schema.string(), readerOutputSchema).optional(),
+  toolImages: schema.array(readerToolImageSchema).optional(),
   resultRunId: id.nullable().optional(),
   anchorMessageId: id.nullable().optional(),
   anchorRequestId: id.nullable().optional(),
@@ -62,7 +80,14 @@ export const readerActionSchema = schema.discriminatedUnion('action', [
   action('latest', {}),
   action('read-result', { runId: id }),
   action('transcript', { runId: id, retry: schema.literal('true').optional() }),
-  action('message', { id }),
+  action('outputs', { runId: id, retry: schema.literal('true').optional() }),
+  action('artifact', { runId: id, resourceId: id }),
+  action('artifact-actions', { runId: id, resourceId: id }),
+  action('artifact-thumbnail', { runId: id, resourceId: id }),
+  action('tool-image', { ...toolImageIdentity, retry: schema.literal('true').optional() }),
+  action('tool-image-preview', toolImageIdentity),
+  action('branch', { branchId: id }),
+  action('message', { id, contextual: schema.literal(true).optional(), anchor: schema.object({ x: schema.number().min(0).max(1), y: schema.number().min(0).max(1), width: schema.number().min(0).max(1), height: schema.number().min(0).max(1) }).strict().optional() }),
   action('edit', { id }),
   action('regenerate', { id }),
   action('followup', { id }),
@@ -78,3 +103,6 @@ export type ReaderUpdate = z.infer<typeof readerUpdateSchema>
 export type ReaderAction = z.infer<typeof readerActionSchema>
 export type ReaderActionInput = ReaderAction extends infer A ? A extends ReaderAction ? Omit<A, 'topic'> : never : never
 export type ReaderSend = (action: ReaderActionInput) => void
+
+export type ReaderOutput = z.infer<typeof readerOutputSchema>
+export type ReaderToolImage = z.infer<typeof readerToolImageSchema>

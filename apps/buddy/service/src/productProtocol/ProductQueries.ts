@@ -27,6 +27,7 @@ import { ProductHistorySearch } from './ProductHistorySearch'
 import { ProductPageReader } from './ProductPageReader'
 import { productQueryRevision } from './ProductQueryRevisions'
 import { ProductReadViews } from './ProductReadViews'
+import { ProductRunOutputs } from './ProductRunOutputs'
 import { ProductStreamingMessages } from './ProductStreamingMessages'
 import { ProductTaskReadModel } from './ProductTaskReadModel'
 
@@ -187,6 +188,7 @@ export class ProductQueries {
       case 'runs.listTranscriptEvents': return this.#run(String(input.runId))?.executionKind === 'root'
         ? this.#pages.read(`${method}:${input.runId}`, input, '(SELECT rowid, CAST(sequence AS TEXT) AS id, run_id, sequence FROM run_events)', 'run_id = ? AND sequence > ? AND sequence <= ?', [String(input.runId), BigInt(String(input.afterSequence)), BigInt(String(input.throughSequence))], sequence => this.views.transcriptEvent(String(input.runId), sequence), String(input.throughSequence))
         : { items: [], nextCursor: null }
+      case 'runs.listOutputs': return new ProductRunOutputs(this.#database, this.#pages, this.views).read(input)
       case 'runs.listEvents': return this.#run(String(input.runId)) ? this.#pages.read(`${method}:${input.runId}`, input, `(SELECT rowid, CAST(sequence AS TEXT) AS id, run_id, sequence FROM run_events)`, 'run_id = ? AND (? IS NULL OR sequence <= ?)', [String(input.runId), input.throughSequence ? BigInt(String(input.throughSequence)) : null, input.throughSequence ? BigInt(String(input.throughSequence)) : null], sequence => this.views.event(String(input.runId), sequence)) : { items: [], nextCursor: null }
       case 'chat.queue.list': return this.#pages.read(`${method}:${input.conversationId}:${input.branchId}`, input, 'chat_queue', 'conversation_id = ? AND branch_id = ? AND state IN (\'waiting\',\'paused\')', [String(input.conversationId), String(input.branchId)], id => this.views.queue(id))
       case 'approvals.getDecision': return this.views.approvalDecision(String(input.approvalId))
