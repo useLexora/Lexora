@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -74,40 +75,116 @@ class ComposerControlsInstrumentedTest {
         compose.runOnIdle { assertEquals(listOf(MobileAction.StopRun), actions) }
     }
 
-    @Test fun compactEditorKeepsTheNativeInstanceTextAndSelection() {
+    private fun capture(name: String, tag: String? = null) {
+        val bitmap = (if (tag == null) compose.onRoot() else compose.onNodeWithTag(tag)).captureToImage().asAndroidBitmap()
+        try { java.io.File(context.filesDir, name).outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) } }
+        finally { bitmap.recycle() }
+    }
+
+    @Test fun fullscreenKeepsTheNativeEditorSelectionAndComposingSession() {
         lateinit var input: EditText
-        compose.runOnUiThread { input = EditText(context).apply { showSoftInputOnFocus = false } }
-        val attachment = mutableStateOf(false)
-        compose.setContent { LexoraTheme { NativeComposerInput(input, true, attachment.value, 160.dp, false) {} } }
-        compose.onNodeWithTag("composer-compact").assertIsDisplayed()
-        compose.runOnIdle { attachment.value = true }
-        compose.onNodeWithTag("composer-editing").assertIsDisplayed()
+        compose.runOnUiThread {
+            input = EditText(context).apply {
+                showSoftInputOnFocus = false
+                inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            }
+        }
+        val state = MobileUiState().apply {
+            screen = MobileScreen.Conversation
+            selectedTask = JSONObject().put("title", "Draft")
+            connected = true
+            conversationReady = true
+            historyHasMore = false
+            inputEnabled = true
+            modelLabel = "Qwen"
+        }
+        val actions = mutableListOf<MobileAction>()
+        val viewportHeight = mutableStateOf(640.dp)
+        compose.setContent { LexoraTheme { Box(Modifier.width(360.dp).height(viewportHeight.value)) {
+            MobileShell(state, input, { action, _ -> actions.add(action) }) { Box(it) }
+        } } }
+        capture("composer-resting.png")
+        val restingHeight = compose.onNodeWithTag("input").fetchSemanticsNode().boundsInRoot.height
+        assertTrue(restingHeight <= 56 * context.resources.displayMetrics.density)
+        compose.runOnIdle { input.requestFocus() }
+        assertEquals(restingHeight, compose.onNodeWithTag("input").fetchSemanticsNode().boundsInRoot.height)
+        lateinit var connection: android.view.inputmethod.InputConnection
+        lateinit var parent: android.view.ViewParent
+        var draft = ""
+        var selection = 0
+        var composingStart = 0
+        var composingEnd = 0
         compose.runOnIdle {
             input.setText("A preserved local draft\nwith another line")
             input.setSelection(3, 9)
         }
-        compose.onNodeWithTag("collapse-editor").performClick()
-        compose.onNodeWithTag("composer-compact").assertIsDisplayed()
-        compose.runOnIdle {
-            assertEquals("A preserved local draft\nwith another line", input.text.toString())
-            assertEquals(3, input.selectionStart)
-            assertEquals(9, input.selectionEnd)
-            assertEquals(1, input.maxLines)
-            assertNotNull(input.parent)
+        compose.waitUntil(5_000) {
+            var active = false
+            compose.runOnUiThread { active = (input.context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).isActive(input) }
+            active
         }
-        compose.onNodeWithTag("expand-editor").performClick()
-        compose.onNodeWithTag("composer-editing").assertIsDisplayed()
+        capture("composer-multiline.png")
         compose.runOnIdle {
-            assertEquals(6, input.maxLines)
-            assertEquals(3, input.selectionStart)
-            assertEquals(9, input.selectionEnd)
+            connection = input.onCreateInputConnection(android.view.inputmethod.EditorInfo())!!
+            connection.setComposingText("中文输入", 1)
+            draft = input.text.toString()
+            selection = input.selectionStart
+            composingStart = android.view.inputmethod.BaseInputConnection.getComposingSpanStart(input.text)
+            composingEnd = android.view.inputmethod.BaseInputConnection.getComposingSpanEnd(input.text)
+            parent = input.parent
         }
+        val multilineHeight = compose.onNodeWithTag("input").fetchSemanticsNode().boundsInRoot.height
+        assertTrue(multilineHeight > restingHeight)
+        fun assertDraft() = compose.runOnIdle {
+            assertSame(parent, input.parent)
+            assertEquals(draft, input.text.toString())
+            assertEquals(selection, input.selectionStart)
+            assertEquals(selection, input.selectionEnd)
+            assertEquals(composingStart, android.view.inputmethod.BaseInputConnection.getComposingSpanStart(input.text))
+            assertEquals(composingEnd, android.view.inputmethod.BaseInputConnection.getComposingSpanEnd(input.text))
+        }
+        assertDraft()
+        compose.onNodeWithTag("fullscreen-editor").performClick()
+        compose.onNodeWithTag("input").assertHeightIsAtLeast(300.dp)
+        compose.onNodeWithTag("send").assertIsDisplayed()
+        capture("composer-fullscreen.png")
+        assertDraft()
+        compose.runOnIdle { viewportHeight.value = 220.dp }
+        for (tag in listOf("composer-attach", "composer-permission", "send", "exit-fullscreen-editor")) {
+            compose.onNodeWithTag(tag).assertIsDisplayed().assertWidthIsAtLeast(48.dp).assertHeightIsAtLeast(48.dp)
+        }
+        compose.onNodeWithTag("input").assertHeightIsAtLeast(44.dp)
+        assertDraft()
+        capture("composer-fullscreen-short.png")
+        compose.runOnIdle { viewportHeight.value = 640.dp }
+        compose.onNodeWithTag("exit-fullscreen-editor").performClick()
+        assertEquals(multilineHeight, compose.onNodeWithTag("input").fetchSemanticsNode().boundsInRoot.height)
+        assertDraft()
+        compose.runOnIdle {
+            connection.commitText("完成输入", 1)
+            draft = draft.replaceRange(composingStart, composingEnd, "完成输入")
+            assertEquals(draft, input.text.toString())
+            input.clearFocus()
+        }
+        compose.onNodeWithTag("fullscreen-editor").performClick()
+        compose.onNodeWithTag("composer-fullscreen").assertIsDisplayed()
+        compose.waitForIdle()
+        InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+        compose.waitUntil(5_000) { compose.onAllNodesWithTag("composer-fullscreen").fetchSemanticsNodes().isEmpty() }
+        compose.runOnIdle {
+            assertTrue(actions.isEmpty())
+            assertSame(parent, input.parent)
+            assertEquals(draft, input.text.toString())
+            input.setText((1..20).joinToString("\n") { "Long draft line $it" })
+        }
+        assertTrue(compose.onNodeWithTag("input").fetchSemanticsNode().boundsInRoot.height <= kotlin.math.ceil(132 * context.resources.displayMetrics.density))
+        compose.onNodeWithTag("send").assertIsDisplayed()
     }
 
-    @Test fun longModelListIsBoundedAndShortParametersRequireExplicitApply() {
+    @Test fun modelListSearchesProviderNamesAndRequiresOneConfirmation() {
         val state = MobileUiState().apply {
             modelPickerOpen = true
-            modelPickerShowList = true
+            modelProviders = (0 until 80).map { JSONObject().put("id", "provider-$it").put("displayName", "Provider $it") }
             models = (0 until 80).map { index -> JSONObject().put("providerId", "provider-$index").put("modelId", "model-$index")
                 .put("displayName", "Same model name").put("reasoningOptions", JSONArray()).put("serviceTiers", JSONArray()) }
         }
@@ -120,10 +197,11 @@ class ComposerControlsInstrumentedTest {
             }
         }
         val longHeight = compose.onNodeWithTag("model-picker").fetchSemanticsNode().boundsInRoot.height
-        compose.onNodeWithTag("model-list").performScrollToNode(hasTestTag("model-option:provider-79:model-79"))
+        assertTrue(longHeight <= context.resources.configuration.screenHeightDp * context.resources.displayMetrics.density * .8f + 1)
+        compose.onNodeWithTag("model-search").performTextInput("Provider 79")
         compose.onNodeWithTag("model-option:provider-79:model-79").performClick()
         compose.onNodeWithTag("apply-model").assertIsDisplayed()
-        assertTrue(compose.onNodeWithTag("model-picker").fetchSemanticsNode().boundsInRoot.height < longHeight)
+        compose.onNodeWithTag("model-provider:provider-79").assertTextEquals("Provider 79")
         compose.runOnIdle { assertTrue(selections.isEmpty()) }
         compose.onNodeWithTag("close-model-picker").performClick()
         compose.runOnIdle { assertNull(state.modelSelection); assertTrue(selections.isEmpty()); state.modelPickerOpen = true }
@@ -135,6 +213,87 @@ class ComposerControlsInstrumentedTest {
             assertTrue(selections.single().isNull("reasoning"))
             assertTrue(selections.single().isNull("serviceTier"))
         }
+    }
+
+    @Test fun reasoningUsesRawCatalogValuesAndDropsUnsupportedParameters() {
+        fun candidate(id: String, reasons: List<String>, fast: Boolean = false) = JSONObject().put("providerId", "local")
+            .put("modelId", id).put("displayName", "Model $id").put("reasoningOptions", JSONArray(reasons))
+            .put("serviceTiers", if (fast) JSONArray().put(JSONObject().put("id", "priority")) else JSONArray())
+        val first = candidate("first", listOf("off", "medium", "high"), true)
+        val second = candidate("second", listOf("off", "medium"))
+        val state = MobileUiState().apply {
+            modelPickerOpen = true
+            modelProviders = listOf(JSONObject().put("id", "local").put("displayName", "Local models"))
+            models = listOf(first, second)
+            modelSelection = MobileModelControls.parameters(first, "high", "priority")
+        }
+        val selections = mutableListOf<JSONObject>()
+        compose.setContent { LexoraTheme {
+            ConversationModelPicker(state) { action, value -> if (action == MobileAction.ApplyModel) selections.add(value!!) }
+        } }
+        compose.onNodeWithTag("reasoning:high").assertIsSelected()
+        compose.onNodeWithText("off").assertIsDisplayed()
+        compose.onNodeWithText("medium").assertIsDisplayed()
+        compose.onNodeWithTag("reasoning:medium").performClick()
+        compose.onNodeWithTag("fast-mode").assertIsOn()
+        capture("models-parameters.png", "model-picker")
+        compose.onNodeWithTag("model-list").performScrollToNode(hasTestTag("model-option:local:second"))
+        compose.onNodeWithTag("model-option:local:second").performClick()
+        compose.onNodeWithTag("reasoning:medium").assertIsSelected()
+        compose.onNodeWithTag("fast-mode").assertDoesNotExist()
+        compose.runOnIdle {
+            assertTrue(selections.isEmpty())
+            state.models = listOf(first, candidate("second", listOf("off")))
+        }
+        compose.onNodeWithTag("reasoning:off").assertIsSelected()
+        compose.onNodeWithTag("apply-model").performClick()
+        compose.runOnIdle {
+            assertEquals("second", selections.single().getString("modelId"))
+            assertEquals("off", selections.single().getString("reasoning"))
+            assertTrue(selections.single().isNull("serviceTier"))
+        }
+    }
+
+    @Test fun providerTabsOnlyBrowseAndSearchFindsModelsAcrossProviders() {
+        fun candidate(provider: String) = JSONObject().put("providerId", provider).put("modelId", "shared")
+            .put("displayName", "Shared model").put("reasoningOptions", JSONArray()).put("serviceTiers", JSONArray())
+        val first = candidate("first")
+        val second = candidate("second")
+        val state = MobileUiState().apply {
+            modelPickerOpen = true
+            modelProviders = listOf(JSONObject().put("id", "first").put("displayName", "Local models for writing and coding"),
+                JSONObject().put("id", "second").put("displayName", "Cloud models"))
+            models = listOf(first, second, candidate("second").put("modelId", "another").put("displayName", "Another model"))
+            modelSelection = MobileModelControls.parameters(first, null, null)
+        }
+        val selections = mutableListOf<JSONObject>()
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density * 1.25f, 1.5f)) {
+                LexoraTheme(darkTheme = true) {
+                    ConversationModelPicker(state) { action, value -> if (action == MobileAction.ApplyModel) selections.add(value!!) }
+                }
+            }
+        }
+        compose.onNodeWithTag("model-provider-tab:first").assertIsSelected()
+        compose.onNodeWithTag("model-option:first:shared").assertIsSelected()
+        compose.onNodeWithTag("model-option:second:shared").assertDoesNotExist()
+        val providerBounds = compose.onNodeWithTag("model-providers").fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithTag("model-providers").performScrollToNode(hasTestTag("model-provider-tab:second"))
+        compose.onNodeWithTag("model-provider-tab:second").performClick()
+        compose.onNodeWithTag("model-option:second:shared").assertIsDisplayed().assertIsNotSelected()
+        compose.onNodeWithTag("apply-model").assertIsNotEnabled()
+        assertEquals(providerBounds, compose.onNodeWithTag("model-providers").fetchSemanticsNode().boundsInRoot)
+        compose.runOnIdle { assertTrue(selections.isEmpty()); assertEquals("first", state.modelSelection!!.getString("providerId")) }
+        compose.onNodeWithTag("model-search").performTextInput("Shared")
+        compose.onNodeWithTag("model-providers-all").assertIsSelected()
+        compose.onNodeWithTag("model-list").performScrollToNode(hasTestTag("model-option:first:shared"))
+        compose.onNodeWithTag("model-option:first:shared").assertIsDisplayed()
+        compose.onNodeWithTag("model-list").performScrollToNode(hasTestTag("model-option:second:shared"))
+        compose.onNodeWithTag("model-option:second:shared").performClick()
+        compose.onNodeWithTag("apply-model").assertIsDisplayed().assertIsEnabled()
+        capture("model-provider-tabs-dark-large.png", "model-picker")
+        compose.onNodeWithTag("apply-model").performClick()
+        compose.runOnIdle { assertEquals("second", selections.single().getString("providerId")) }
     }
 
     @Test fun ordinaryPermissionAppliesImmediatelyButFullAccessRequiresConfirmation() {

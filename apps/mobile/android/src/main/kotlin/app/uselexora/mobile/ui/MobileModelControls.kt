@@ -1,8 +1,6 @@
 package app.uselexora.mobile.ui
 
-import app.uselexora.mobile.i18n.mobileText
 import org.json.JSONObject
-import app.uselexora.mobile.R
 
 internal object MobileModelControls {
     fun model(selection: JSONObject?, models: List<JSONObject>): JSONObject? = selection?.let { selected ->
@@ -32,16 +30,4 @@ internal object MobileModelControls {
         return (0 until tiers.length()).any { tiers.getJSONObject(it).optString("id") == "priority" }
     }
 
-    fun reasoningLabel(value: String): String = when (value) {
-        "off", "none" -> mobileText(R.string.reasoning_off)
-        "minimal" -> mobileText(R.string.reasoning_minimal)
-        "low" -> mobileText(R.string.reasoning_low)
-        "medium" -> mobileText(R.string.reasoning_medium)
-        "high" -> mobileText(R.string.reasoning_high)
-        "xhigh" -> mobileText(R.string.reasoning_xhigh)
-        "max" -> mobileText(R.string.reasoning_max)
-        "auto" -> mobileText(R.string.reasoning_auto)
-        "adaptive" -> mobileText(R.string.reasoning_adaptive)
-        else -> value
-    }
 }

@@ -7,6 +7,9 @@ import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.widget.ImageView
+import androidx.core.view.ViewCompat
+import app.uselexora.mobile.R
+import app.uselexora.mobile.i18n.mobileText
 
 class ZoomImageView(context: Context) : ImageView(context) {
     private var zoom = 1f
@@ -24,13 +27,17 @@ class ZoomImageView(context: Context) : ImageView(context) {
     })
     private val gestures = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
         override fun onDown(event: MotionEvent) = true
-        override fun onSingleTapUp(event: MotionEvent): Boolean { performClick(); return true }
+        override fun onSingleTapConfirmed(event: MotionEvent): Boolean { performClick(); return true }
         override fun onDoubleTap(event: MotionEvent): Boolean { zoom = if (zoom > 1f) 1f else 2f; offsetX = 0f; offsetY = 0f; updateTransform(); return true }
         override fun onScroll(first: MotionEvent?, current: MotionEvent, dx: Float, dy: Float): Boolean {
             if (!scale.isInProgress) { offsetX -= dx; offsetY -= dy; updateTransform() }; return true
         }
     })
-    init { scaleType = ScaleType.MATRIX; isFocusable = true; isClickable = true }
+    init {
+        scaleType = ScaleType.MATRIX; isFocusable = true; isClickable = true
+        ViewCompat.addAccessibilityAction(this, mobileText(R.string.zoom_in)) { _, _ -> zoomBy(1.5f); true }
+        ViewCompat.addAccessibilityAction(this, mobileText(R.string.zoom_out)) { _, _ -> zoomBy(0.75f); true }
+    }
     fun display(bitmap: Bitmap?) { setImageBitmap(bitmap); zoom = 1f; offsetX = 0f; offsetY = 0f; updateTransform() }
     fun zoomBy(factor: Float) { zoom = (zoom * factor).coerceIn(1f, 4f); updateTransform() }
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) { super.onSizeChanged(w, h, oldw, oldh); updateTransform() }

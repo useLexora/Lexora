@@ -19,6 +19,7 @@ const props = defineProps<{
   presentation: BuddyToolPresentation
   status: ChatAgentToolNode['status']
   toolName: string
+  toolCallId?: string
 }>()
 
 const DesktopTerminalTranscript = defineAsyncComponent(() => import('./DesktopTerminalTranscript.vue'))
@@ -84,6 +85,7 @@ const output = computed(() => {
       v-if="image"
       :language="language"
       :presentation="image"
+      :tool-call-id="toolCallId"
     />
     <section
       v-if="directoryAuthorization"

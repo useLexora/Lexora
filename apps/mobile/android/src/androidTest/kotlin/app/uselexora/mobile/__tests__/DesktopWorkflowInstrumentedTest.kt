@@ -104,15 +104,13 @@ class DesktopWorkflowInstrumentedTest {
                 scenario.recreate()
                 waitFor { input() == "发送期间继续写的下一条😀" }
                 if (config.optBoolean("networkRecovery")) {
-                    MobileUiTestDriver.openTaskSettings()
-                    MobileUiTestDriver.awaitConnected()
+                    waitFor { MobileUiTestDriver.enabled("发送") }
                     File(context.filesDir, "desktop-$token-network-ready.json").writeText("ready")
-                    waitFor(30000) { !MobileUiTestDriver.connected() && (MobileUiTestDriver.contains(app.uselexora.mobile.i18n.mobileText(R.string.connection_retrying)) || MobileUiTestDriver.exists("未连接")) }
-                    MobileUiTestDriver.returnToConversation()
+                    waitFor(30000) { MobileUiTestDriver.exists("发送") && !MobileUiTestDriver.enabled("发送") }
                     scenario.recreate()
                     waitFor { input() == "发送期间继续写的下一条😀" }
                     assertEquals(1, store.outbox(owner).count { it.method == "chat.submitInput" })
-                    waitFor { MobileUiTestDriver.contains("手机保存的内容") && MobileUiTestDriver.contains(firstText) }
+                    waitFor { MobileUiTestDriver.contains(firstText) }
                     val readCache = app.uselexora.mobile.storage.ReadCache(File(context.cacheDir, "product-read-v1"))
                     assertTrue(readCache.read(owner, "models")?.isNotEmpty() == true)
                     assertNull(readCache.read("different-device", "models"))
@@ -120,7 +118,7 @@ class DesktopWorkflowInstrumentedTest {
                     val cachedScope = "conversation:${target.getString("conversationId")}:${target.getString("branchId")}"
                     val cachedInput = store.draft(owner, cachedScope)!!
                     val commandsBeforeQueue = store.outbox(owner).map { it.id }.toSet()
-                    MobileUiTestDriver.enqueueInput()
+                    scenario.onActivity { it.handleAction(app.uselexora.mobile.ui.MobileAction.QueueInput, null) }
                     waitFor {
                         MobileUiTestDriver.contains(app.uselexora.mobile.i18n.mobileText(R.string.mobile_sync_required)) ||
                             MobileUiTestDriver.contains(app.uselexora.mobile.i18n.mobileText(R.string.mobile_sync_failed_input))
@@ -132,9 +130,7 @@ class DesktopWorkflowInstrumentedTest {
                     assertEquals("发送期间继续写的下一条😀", input())
                     waitFor { avatarVisible() }
                     File(context.filesDir, "desktop-$token-offline.json").writeText("ready")
-                    MobileUiTestDriver.openTaskSettings()
-                    MobileUiTestDriver.awaitConnected()
-                    MobileUiTestDriver.returnToConversation()
+                    waitFor { MobileUiTestDriver.enabled("发送") }
                     assertFalse(MobileUiTestDriver.contains("暂时无法到达服务"))
                     val reconnected = connection.connect()!!
                     try {

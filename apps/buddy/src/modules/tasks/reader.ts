@@ -1,5 +1,7 @@
 export { createChatAgentActivityProjector } from './model/transcript/chatAgentActivities'
 export { createChatAgentTurnReducer } from './model/transcript/chatAgentTurn'
+export type { ChatMessageBranchNavigator } from './model/transcript/chatMessageBranches'
+export { projectMessageBranchNavigators } from './model/transcript/chatMessageBranches'
 export { projectDesktopTerminalTranscript } from './model/transcript/terminalTranscript'
 export { default as BuddyChatActivityGroup } from './widgets/transcript/BuddyChatActivityGroup.vue'
 export { default as BuddyChatCompactionRow } from './widgets/transcript/BuddyChatCompactionRow.vue'

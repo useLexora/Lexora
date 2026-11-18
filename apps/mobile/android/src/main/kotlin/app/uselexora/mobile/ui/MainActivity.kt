@@ -187,9 +187,9 @@ class MainActivity : ComponentActivity() {
         questions = MobileQuestions(this, store, schemas, ::work, ::onUi, { ui.questions = it }, ::showNotice)
         readModel = MobileTaskReadModel(ReadCache(File(cacheDir, "product-read-v1")), schemas, streamHandler,
             context = { MobileTaskReadModel.Context(partition, activeTopic, client, connectionGeneration) }, work = ::work, onUi = ::onUi,
-            catalogChanged = { ui.models = it.items; ui.modelsLoading = it.loading; ui.modelsError = it.error },
+            catalogChanged = { ui.models = it.items; ui.modelProviders = it.providers; ui.modelsLoading = it.loading; ui.modelsError = it.error },
             marksChanged = { ui.markedTaskIds = it.ids; ui.marksLoaded = it.loaded; ui.marksFailed = it.failed },
-            cachedTasks = { ui.tasksLoaded = true; ui.taskSyncFailed = client?.isConnected != true },
+            cachedTasks = { ui.tasksLoaded = true },
             cachedConversation = { messages, branches ->
                 branches?.let { if (ui.branches.isEmpty()) ui.branches = it }
                 if (messages != null && !ui.historyPinned && readyContext != liveContext()) { messageItems = visibleMessages(messages); ui.readingCached = true }
@@ -201,7 +201,7 @@ class MainActivity : ComponentActivity() {
                 ui.connectionPhase = app.uselexora.mobile.session.MobileConnectionPhase.Idle
                 if (partition != identity.partition) restoreNavigation(identity.partition)
                 partition = identity.partition; restoreInput(); restoreCachedCatalogs(); refreshDevices(); refreshSpaces(); refreshPendingOperations(); ui.connectionLabel = mobileText(R.string.connection_loading_tasks)
-                if (ui.notice == MobileFailurePresentation.NETWORK_UNAVAILABLE_NOTICE) ui.notice = ""
+                if (ui.notice == MobileFailurePresentation.NETWORK_UNAVAILABLE_NOTICE || ui.notice == mobileText(R.string.error_not_connected)) ui.notice = ""
                 subscription?.subscribe(activeTopic); bindQuestions(); if (selectedTask != null) loadBranches()
                 if (activeTopic != "taskIndex") refreshTaskMarks()
                 if (incomingMaterials.isNotEmpty() && !ui.importingMaterial) ui.incomingMaterial = incomingMaterials.first()
@@ -219,7 +219,7 @@ class MainActivity : ComponentActivity() {
                 if (state != "SYNCHRONIZED") { readyContext = null; ui.conversationReady = false }
                 if (state == "SYNCING") ui.syncFailure = ""
                 if (activeTopic == "taskIndex") ui.taskSyncFailed = state == "UNSYNCHRONIZED"
-                if (state == "UNSYNCHRONIZED" && ui.syncFailure.isBlank()) ui.syncFailure = mobileText(R.string.mobile_sync_failed_input)
+                if (state == "UNSYNCHRONIZED" && ui.syncFailure.isBlank()) ui.syncFailure = mobileText(if (activeTopic == "taskIndex") R.string.mobile_task_update_failed else R.string.mobile_sync_failed_input)
                 if (state == "SYNCHRONIZED" && ui.pairingPhase == "syncing") ui.pairingPhase = "ready"
                 syncUi()
             },
@@ -284,12 +284,19 @@ class MainActivity : ComponentActivity() {
         refreshDevices()
         setContent {
             LexoraTheme {
+                val connectedClient = if (ui.connected) client else null
                 ui.incomingMaterial?.let { IncomingMaterialPanel(it, ui, ::chooseMaterialDestination, ::dismissMaterial) }
-                MobileShell(ui, composer, ::handleAction) { modifier ->
+                MobileShell(ui, composer, ::handleAction, ReaderAvatarContext(partition, connectedClient, schemas)) { modifier ->
                     WebMessageTimeline(ui.messages, ui.readerTopic, modifier, details, ui.runs,
                         anchorMessageId = ui.anchorMessageId, anchorRequestId = ui.anchorRequestId,
                         hasLaterMessages = ui.historyPinned, onLatest = ::returnLatest,
-                        avatarContext = ReaderAvatarContext(partition, client?.takeIf { ui.connected }, schemas),
+                        avatarContext = ReaderAvatarContext(partition, connectedClient, schemas),
+                        artifactContext = ui.viewBranchId?.let { branchId -> ReaderArtifactContext(partition, branchId, connectedClient, schemas) { connection, resource ->
+                            val owner = connection.identity?.partition ?: throw ProtocolFailure("NOT_CONNECTED")
+                            taskFileCopies.find(owner, resource) ?: files.download(connection, resource)
+                        } }, onResourceActions = ::resourceActions,
+                        branches = ui.branches, selectedBranchId = ui.viewBranchId, onBranch = ::selectBranch,
+                        onMessageMenu = { message, anchor, contextual -> prepareMessageAction(message, null, anchor, contextual) },
                         transcripts = transcriptRecords, onLoadTranscript = runTranscripts::request,
                         resultRunId = ui.resultRunId, onReadResult = ::readVisibleResult, onMessageAction = ::messageActions, onQuickAction = ::messageQuickAction, onResource = ::openResource, onLoadDetail = ::loadMessageDetail)
                 }
@@ -298,7 +305,7 @@ class MainActivity : ComponentActivity() {
         syncUi()
     }
 
-    private fun handleAction(action: MobileAction, payload: JSONObject?) {
+    internal fun handleAction(action: MobileAction, payload: JSONObject?) {
         when (action) {
             MobileAction.SearchTasks -> payload?.let { discoveryController.search(it.optString("query"), it.optBoolean("more")) }
             MobileAction.ToggleArchives -> { ui.discovery.archived = !ui.discovery.archived; ui.discovery.results = emptyList(); if (ui.discovery.archived) discoveryController.archives() }
@@ -343,8 +350,7 @@ class MainActivity : ComponentActivity() {
             MobileAction.MoreFiles -> ui.taskFiles?.let { loadTaskFiles(it) }
             MobileAction.AttachFile -> selectFile()
             MobileAction.TakePhoto -> capturePhoto()
-            MobileAction.ChooseModel -> chooseModel(true)
-            MobileAction.ChooseReasoning -> chooseModel(false)
+            MobileAction.ChooseModel -> chooseModel()
             MobileAction.ToggleFast -> {
                 if (MobileModelControls.supportsFast(ui.modelSelection, ui.models)) ui.modelSelection?.let { selection ->
                     modelPickerOwner = partition; modelPickerTarget = scope
@@ -404,6 +410,8 @@ class MainActivity : ComponentActivity() {
         ui.topic = "$partition:$activeTopic:$scope"
         ui.readerTopic = if (conversationTarget == null) "$partition:$scope" else "$partition:$activeTopic"
         runTranscripts.update("$partition:$activeTopic", client, ui.runs)
+        renderExecution()
+        renderSpace()
         ui.inputEnabled = composer.isEnabled
         ui.sendEnabled = composer.isEnabled && (composer.text.isNotBlank() || ui.attachmentCount > 0) && !input.isSubmitting && ui.conversationReady && !ui.viewingArchived
         ui.hasInput = composer.text.isNotBlank() || ui.attachmentCount > 0
@@ -871,12 +879,13 @@ class MainActivity : ComponentActivity() {
         bindQuestions()
         ui.branches = knownBranches
         if (knownBranches.none { it.optString("id") == target.branchId }) loadBranches()
-        subscription?.let { it.subscribe(activeTopic); return }
         if (demo) { messageItems = fixtureMessages(); renderRows(); return }
+        val current = client?.takeIf { it.isConnected } ?: return
+        subscription?.let { it.subscribe(activeTopic); return }
         work {
-            val result = connected().call("conversations.listMessages", target.params())
+            val result = current.call("conversations.listMessages", target.params())
             val messages = visibleMessages(objects(result.getJSONArray("items")))
-            onUi { if (generation != navigation) return@onUi; messageItems = messages; renderRows(); ui.notice = "" }
+            onUi { if (generation != navigation || client !== current) return@onUi; messageItems = messages; renderRows(); ui.notice = "" }
         }
     }
     private fun renderProjection(topic: String, items: List<JSONObject>) {
@@ -950,7 +959,7 @@ class MainActivity : ComponentActivity() {
             ui.notice = mobileText(if (ui.viewingArchived) R.string.mobile_archived_read_only else if (ui.syncFailure.isNotBlank()) R.string.mobile_sync_failed_input else R.string.mobile_sync_required); return
         }
         if (demo) { val text = composer.text.toString(); if (text.isBlank()) return; input.pendingWrite?.get(); messageItems = messageItems + JSONObject().put("id", store.newId()).put("role", "user").put("body", JSONObject().put("kind", "text").put("text", text)); syncUi(); ui.notice = mobileText(R.string.mobile_demo_accepted_no_service_task_will_run); streamFixture(); return }
-        val sendingClient = client ?: run { ui.notice = mobileText(R.string.mobile_no_service_connected_your_input_is_retained); return }
+        val sendingClient = client ?: run { saveFeedback(mobileText(R.string.error_not_connected)); return }
         input.submit(sendingClient, method, extra, ::work, accepted = { result ->
             if (partition == result.scope.partition && client === sendingClient) {
                 if (result.method == "chat.queue.enqueue") showNotice(mobileText(R.string.mobile_added_to_the_send_queue)) else ui.notice = ""
@@ -1072,9 +1081,8 @@ class MainActivity : ComponentActivity() {
         ui.readingCached = false
         if (!demo) selectedTask?.getString("id")?.let(readModel::restoreConversation)
     }
-    private fun chooseModel(showList: Boolean = true) {
+    private fun chooseModel() {
         hideKeyboard()
-        ui.modelPickerShowList = showList
         modelPickerOwner = partition; modelPickerTarget = scope
         ui.modelPickerOpen = true
         if (demo) {
@@ -1195,7 +1203,7 @@ class MainActivity : ComponentActivity() {
     }
     private var messageMenuOwner = ""
     private var messageActionRequest = 0L
-    private fun messageActions(message: JSONObject) = prepareMessageAction(message, null)
+    private fun messageActions(message: JSONObject) = prepareMessageAction(message, null, contextual = true)
     private fun messageQuickAction(message: JSONObject, action: String) {
         val selected = when (action) {
             "edit" -> MobileAction.EditMessage
@@ -1205,7 +1213,7 @@ class MainActivity : ComponentActivity() {
         }
         prepareMessageAction(message, selected)
     }
-    private fun prepareMessageAction(message: JSONObject, quick: MobileAction?) {
+    private fun prepareMessageAction(message: JSONObject, quick: MobileAction?, anchor: androidx.compose.ui.unit.IntRect? = null, contextual: Boolean = false) {
         hideKeyboard()
         val presentation = MobileMessagePresentation.message(message)
         val detail = MobileMessagePresentation.matchingDetail(message, details[presentation.id])
@@ -1217,7 +1225,7 @@ class MainActivity : ComponentActivity() {
         messageMenuOwner = owner
         val request = ++messageActionRequest
         val menu = MobileMessageMenu(message, text, text.isNotBlank() && MobileMessagePresentation.canCopy(text) && (!presentation.needsDetail || detail?.text != null), editable,
-            presentation.needsDetail && detail?.text == null, loading = runId != null && !demo)
+            presentation.needsDetail && detail?.text == null, loading = runId != null && !demo, anchor = anchor, contextual = contextual)
         fun deliver(value: MobileMessageMenu) {
             if (request != messageActionRequest || "$partition:$activeTopic" != owner) return
             if (quick == null) ui.messageMenu = value else applyMessageAction(quick, value)

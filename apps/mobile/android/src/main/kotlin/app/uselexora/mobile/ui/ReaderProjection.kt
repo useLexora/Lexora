@@ -54,7 +54,7 @@ internal class ReaderProjection {
                 val runId = message.runId
                 val runActive = runId != null && runId in active
                 val finalAssistant = message.role == "assistant" && runId != null && finalMessages[runId] == message.id
-                JSONObject().put("id", message.id).put("createdAt", message.source.opt("createdAt") ?: JSONObject.NULL).put("role", message.role).put("runId", message.runId ?: JSONObject.NULL)
+                JSONObject().put("id", message.id).apply { message.source.optString("branchId").takeIf { it.isNotBlank() }?.let { put("branchId", it) } }.put("createdAt", message.source.opt("createdAt") ?: JSONObject.NULL).put("role", message.role).put("runId", message.runId ?: JSONObject.NULL)
                     .put("authorId", message.source.optJSONObject("author")?.optString("id") ?: JSONObject.NULL)
                     .put("author", message.source.optJSONObject("author")?.optString("name")?.takeIf { it.isNotBlank() } ?: mobileText(R.string.mobile_assistant))
                     .put("text", text).put("final", message.id !in streaming || message.interrupted || message.truncated)

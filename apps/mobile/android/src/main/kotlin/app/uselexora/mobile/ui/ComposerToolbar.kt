@@ -34,26 +34,20 @@ internal fun ComposerToolbar(state: MobileUiState, onAction: (MobileAction, JSON
     val fullAccess = state.executionSelection.optString("executionProfile") == "full_access"
     Row(Modifier.fillMaxWidth().testTag("composer-toolbar"), verticalAlignment = Alignment.CenterVertically) {
         ComposerButton(mobileText(R.string.label_add_attachment), "composer-attach", state.inputEnabled, attachments) {
-            Icon(Icons.Outlined.Add, null, Modifier.size(20.dp), tint = muted)
+            Icon(desktopSymbol(DesktopSymbol.Add), null, Modifier.size(20.dp), tint = muted)
         }
         ComposerButton(mobileText(R.string.permissions_summary, state.executionLabel), "composer-permission", state.executionEnabled, { onAction(MobileAction.ChooseExecution, null) }) {
-            val icon = when {
-                fullAccess -> Icons.Outlined.LockOpen
-                state.executionSelection.optString("executionProfile") == "read_only" -> Icons.Outlined.Lock
-                state.executionSelection.optString("approvalPolicy") == "manual" -> Icons.Outlined.VerifiedUser
-                else -> Icons.Outlined.Shield
-            }
-            Icon(icon, null, Modifier.size(18.dp), tint = if (fullAccess) colors.tertiary else muted)
+            Icon(desktopSymbol(executionSymbol(state.executionSelection)), null, Modifier.size(18.dp), tint = if (fullAccess) colors.tertiary else muted)
         }
-        Box(Modifier.weight(1f)) {
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
             TextButton(
-                onClick = { onAction(MobileAction.ChooseReasoning, null) }, enabled = state.configEnabled && state.inputEnabled,
+                onClick = { onAction(MobileAction.ChooseModel, null) }, enabled = state.configEnabled && state.inputEnabled,
                 shape = RoundedCornerShape(6.dp), contentPadding = PaddingValues(horizontal = 8.dp),
                 modifier = Modifier.heightIn(min = 48.dp).testTag("model"),
             ) {
                 Text(state.modelLabel, Modifier.weight(1f, fill = false), style = MaterialTheme.typography.labelMedium, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.width(4.dp))
-                Icon(Icons.Outlined.ExpandMore, null, Modifier.size(14.dp), tint = muted)
+                Icon(desktopSymbol(DesktopSymbol.ChevronDown), null, Modifier.size(14.dp), tint = muted)
             }
         }
         if (active.isNotEmpty()) {
@@ -71,7 +65,7 @@ internal fun ComposerToolbar(state: MobileUiState, onAction: (MobileAction, JSON
         }
         ComposerButton(mobileText(R.string.label_send), "send", state.sendEnabled, { onAction(MobileAction.Send, null) }, surfaceSize = 32.dp) {
             Box(Modifier.size(32.dp).clip(RoundedCornerShape(6.dp)).background(if (state.sendEnabled) colors.primary else colors.surfaceVariant), contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.ArrowUpward, null, Modifier.size(18.dp), tint = if (state.sendEnabled) colors.onPrimary else muted)
+                Icon(desktopSymbol(DesktopSymbol.ArrowUp), null, Modifier.size(18.dp), tint = if (state.sendEnabled) colors.onPrimary else muted)
             }
         }
     }

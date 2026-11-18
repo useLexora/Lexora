@@ -41,6 +41,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.uselexora.mobile.session.MobileConnectionPhase
 import app.uselexora.mobile.R
 import org.json.JSONObject
 
@@ -80,7 +81,7 @@ internal fun PaperWorkbench(
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp),
     ) {
         item {
-            PaperWorkbenchHeader(state, palette, devices, { onAction(MobileAction.ChooseSpaceFilter, null) }, settings)
+            PaperWorkbenchHeader(state, palette, devices, settings) { onAction(it, null) }
             Spacer(Modifier.height(12.dp))
         }
         item { NewTaskPaper { connectedAction(MobileAction.NewTask) } }
@@ -105,19 +106,13 @@ internal fun PaperWorkbench(
             }
         }
         item {
-            when {
-                state.taskSyncFailed -> HomeStatus(mobileText(R.string.label_sync_failed_showing_previously_loaded_tasks), mobileText(R.string.label_retry)) { onAction(MobileAction.Refresh, null) }
-                !state.tasksLoaded && state.connected -> HomeStatus(mobileText(R.string.label_syncing_tasks), null) { onAction(MobileAction.Reconnect, null) }
-                !state.connected && state.tasksLoaded -> HomeStatus(mobileText(R.string.label_service_offline_showing_previously_synced_tasks), mobileText(R.string.label_reconnect)) { onAction(MobileAction.Reconnect, null) }
-                state.marksFailed -> HomeStatus(mobileText(R.string.label_task_marks_could_not_sync_please_retry), mobileText(R.string.label_retry)) { onAction(MobileAction.Refresh, null) }
-            }
             if ((state.outboxCount ?: 0) > 0) HomeStatus(mobileQuantity(R.plurals.mobile_send_records_awaiting_confirmation, state.outboxCount ?: 0), mobileText(R.string.label_view_history)) { onAction(MobileAction.Outbox, null) }
         }
     }
 }
 
 @Composable
-private fun PaperWorkbenchHeader(state: MobileUiState, palette: PaperPalette, devices: () -> Unit, spaces: () -> Unit, settings: () -> Unit) {
+private fun PaperWorkbenchHeader(state: MobileUiState, palette: PaperPalette, devices: () -> Unit, settings: () -> Unit, act: (MobileAction) -> Unit) {
     BoxWithConstraints(Modifier.fillMaxWidth().testTag("service-status-bar")) {
         val spaceWidth = maxWidth * .48f
         Column(Modifier.fillMaxWidth()) {
@@ -129,12 +124,18 @@ private fun PaperWorkbenchHeader(state: MobileUiState, palette: PaperPalette, de
             Spacer(Modifier.height(4.dp))
             Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 PaperServiceSelector(state, Modifier.weight(1f), devices)
-                if (state.connected) PaperSpaceFilter(state, palette, Modifier.widthIn(max = spaceWidth), spaces)
+                if (state.connected) PaperSpaceFilter(state, palette, Modifier.widthIn(max = spaceWidth)) { act(MobileAction.ChooseSpaceFilter) }
             }
-            if (!state.connected) {
-                Text(state.connectionLabel, Modifier.fillMaxWidth().padding(start = 4.dp, top = 4.dp, end = 4.dp).testTag("connection-detail")
-                    .semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
-                    style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            when {
+                !state.connected -> {
+                    val reconnecting = state.connectionPhase == MobileConnectionPhase.Connecting || state.connectionPhase == MobileConnectionPhase.Retrying
+                    val message = if (reconnecting && state.tasksLoaded) mobileText(R.string.mobile_reconnecting_cached_tasks) else state.connectionLabel
+                    val canReconnect = !reconnecting && state.devices.any { it.selected }
+                    HomeStatus(message, if (canReconnect) mobileText(R.string.label_reconnect) else null, Modifier.testTag("connection-detail")) { act(MobileAction.Reconnect) }
+                }
+                state.taskSyncFailed -> HomeStatus(mobileText(R.string.mobile_task_update_failed), mobileText(R.string.label_retry)) { act(MobileAction.Refresh) }
+                !state.tasksLoaded -> HomeStatus(mobileText(R.string.label_syncing_tasks))
+                state.marksFailed -> HomeStatus(mobileText(R.string.label_task_marks_could_not_sync_please_retry), mobileText(R.string.label_retry)) { act(MobileAction.Refresh) }
             }
         }
     }
@@ -145,7 +146,7 @@ private fun PaperServiceSelector(state: MobileUiState, modifier: Modifier, onCli
     val interaction = remember { MutableInteractionSource() }
     val statusColor = when {
         state.connected -> MaterialTheme.colorScheme.secondary
-        state.connectionPhase != app.uselexora.mobile.session.MobileConnectionPhase.Idle -> MaterialTheme.colorScheme.tertiary
+        state.connectionPhase != MobileConnectionPhase.Idle -> MaterialTheme.colorScheme.tertiary
         else -> MaterialTheme.colorScheme.outline
     }
     Box(modifier.heightIn(min = 48.dp).testTag("service-selector")
@@ -275,9 +276,9 @@ private fun PaperShortcut(label: String, count: Int?, meaning: Int, tag: String,
 }
 
 @Composable
-private fun HomeStatus(text: String, action: String?, onClick: () -> Unit) {
+private fun HomeStatus(text: String, action: String? = null, modifier: Modifier = Modifier, onClick: () -> Unit = {}) {
     Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(text, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(text, modifier.weight(1f).semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (action != null) TextButton(onClick = onClick, modifier = Modifier.heightIn(min = 48.dp)) { Text(action) }
     }
 }

@@ -36,6 +36,8 @@ class SharedReaderInstrumentedTest {
     private var details = emptyMap<String, app.uselexora.mobile.protocol.MobileMessageDetail>()
     private val actions = java.util.concurrent.CopyOnWriteArrayList<String>()
     private var transcripts = emptyMap<String, JSONObject>()
+    private var branches = emptyList<JSONObject>()
+    private var selectedBranchId: String? = null
     private var language = "zh"
     private var dark = false
     private var scale = 1f
@@ -63,7 +65,7 @@ class SharedReaderInstrumentedTest {
     }
     private fun update() {
         compose.runOnUiThread { host.update(messages, topic, details, runs.map(::completeRun), dark, scale,
-            { actions.add("message:${it.getString("id")}") }, { actions.add("resource:${it.getString("resourceId")}") }, { actions.add("detail:${it.getString("id")}") }, { message, action -> actions.add("$action:${message.getString("id")}") }, language = language, transcripts = transcripts, resultRunId = readTarget, onReadResult = { readResults.add(it) }, anchorMessageId = anchorMessageId, anchorRequestId = anchorRequestId, hasLaterMessages = hasLaterMessages, onLatest = { latestRequests.add(topic) }) }
+            { actions.add("message:${it.getString("id")}") }, { actions.add("resource:${it.getString("resourceId")}") }, { actions.add("detail:${it.getString("id")}") }, { message, action -> actions.add("$action:${message.getString("id")}") }, language = language, transcripts = transcripts, resultRunId = readTarget, onReadResult = { readResults.add(it) }, anchorMessageId = anchorMessageId, anchorRequestId = anchorRequestId, hasLaterMessages = hasLaterMessages, onLatest = { latestRequests.add(topic) }, branches = branches, selectedBranchId = selectedBranchId, onBranch = { actions.add("branch:${it.getString("id")}") }) }
     }
     private fun js(script: String): String {
         val result = AtomicReference<String>()
@@ -153,6 +155,81 @@ class SharedReaderInstrumentedTest {
         js("document.querySelector('.assistant [aria-label=更多消息操作]').click()")
         compose.waitUntil(5_000) { actions.contains("message:reply") }
         until("document.querySelector('.assistant [aria-label=复制消息]') !== null")
+    }
+
+    @Test fun compactFooterNavigatesExistingBranchesAndKeepsQuickActions() {
+        fun branch(id: String, parent: String?, fork: String?, time: String) = JSONObject()
+            .put("id", id).put("conversationId", "conversation").put("parentBranchId", parent ?: JSONObject.NULL)
+            .put("forkedFromMessageId", fork ?: JSONObject.NULL).put("createdAt", time)
+        branches = listOf(branch("branch", null, null, "2026-11-11T05:00:00Z"), branch("retry", "branch", "user", "2026-11-11T05:01:00Z"))
+        selectedBranchId = "retry"
+        val user = message("user", "输入", "user").put("branchId", "branch")
+        messages = listOf(user, message("reply", "回复").put("branchId", "retry"))
+        runs = listOf(JSONObject().put("id", "stream-run").put("branchId", "retry").put("status", "completed"))
+        show()
+        until("document.querySelector('.message-branches')?.textContent.includes('2/2') === true")
+        assertEquals("true", js("document.querySelector('.assistant .message-actions').getBoundingClientRect().height===28 && document.documentElement.scrollWidth<=innerWidth"))
+        assertEquals("true", js("document.querySelector('[aria-label=下一个分支]').disabled && !document.querySelector('[aria-label=上一个分支]').disabled"))
+        js("document.querySelector('[aria-label=上一个分支]').click()")
+        compose.waitUntil(5_000) { actions.contains("branch:branch") }
+        selectedBranchId = "branch"
+        messages = listOf(user, message("original", "原回复").put("branchId", "branch"))
+        runs = listOf(JSONObject().put("id", "stream-run").put("status", "completed"))
+        update()
+        until("document.querySelector('.message-branches')?.textContent.includes('1/2') === true")
+        js("document.querySelector('[aria-label=下一个分支]').click(); document.querySelector('[aria-label=重新生成]').click()")
+        compose.waitUntil(5_000) { actions.containsAll(listOf("branch:retry", "regenerate:original")) }
+        dark = true; scale = 1.5f; update()
+        until("document.querySelector('main.dark') !== null")
+        assertEquals("true", js("document.documentElement.scrollWidth<=innerWidth && document.querySelector('.message-branches').getBoundingClientRect().width>0"))
+    }
+
+    @Test fun emptyReplyBranchesKeepNavigationAndTheirTerminalStatus() {
+        fun branch(id: String, parent: String?, minute: Int) = JSONObject()
+            .put("id", id).put("conversationId", "conversation").put("parentBranchId", parent ?: JSONObject.NULL)
+            .put("forkedFromMessageId", if (parent == null) JSONObject.NULL else "user").put("createdAt", "2026-11-11T05:0$minute:00Z")
+        branches = listOf(branch("branch", null, 0), branch("retry", "branch", 1), branch("stopped", "retry", 2), branch("last", "retry", 3))
+        val user = message("user", "输入", "user").put("branchId", "branch")
+        fun select(id: String, status: String = "completed", text: String = "回复 $id") {
+            selectedBranchId = id
+            topic = "branch-$id"
+            messages = listOf(user, message("reply-$id", text).put("branchId", id).put("runId", "run-$id"))
+            runs = listOf(JSONObject().put("id", "run-$id").put("branchId", id).put("status", status))
+        }
+        fun navigate(label: String, id: String) {
+            actions.clear()
+            js("document.querySelector('[aria-label=\"$label\"]').click()")
+            compose.waitUntil(5_000) { actions.contains("branch:$id") }
+        }
+        select("retry")
+        show()
+        until("document.querySelector('.message-branches')?.textContent.includes('2/4') === true")
+        navigate("下一个分支", "stopped")
+        select("stopped", "cancelled", "")
+        update()
+        until("document.querySelector('.message-branches')?.textContent.includes('3/4') === true && document.querySelector('.reader-turn-status')?.textContent.includes('已停止') === true")
+        assertEquals("true", js("document.querySelector('[aria-label=重新生成]') === null && document.querySelectorAll('.message-branches').length===1 && document.querySelector('.message-branches').getBoundingClientRect().height===28"))
+        navigate("下一个分支", "last")
+        select("last")
+        update()
+        until("document.querySelector('.message-branches')?.textContent.includes('4/4') === true && document.body.innerText.includes('回复 last')")
+        navigate("上一个分支", "stopped")
+        select("stopped", "cancelled", "")
+        transcripts = mapOf("run-stopped" to JSONObject().put("events", JSONArray()).put("loaded", true))
+        update()
+        until("document.querySelector('.message-branches')?.textContent.includes('3/4') === true")
+        language = "en"; dark = true; scale = 1.5f; update()
+        until("document.querySelector('.reader-turn-status')?.textContent.includes('Stopped') === true")
+        assertEquals("true", js("document.documentElement.scrollWidth<=innerWidth && document.querySelector('[aria-label=\"Previous branch\"]').getBoundingClientRect().height===28"))
+        for ((status, label) in listOf("failed" to "Failed", "completed" to "No reply generated")) {
+            select("stopped", status, "")
+            update()
+            until("document.querySelector('.reader-turn-status')?.textContent.includes('$label') === true && document.querySelector('.message-branches')?.textContent.includes('3/4') === true")
+        }
+        navigate("Previous branch", "retry")
+        select("retry")
+        update()
+        until("document.querySelector('.message-branches')?.textContent.includes('2/4') === true && document.body.innerText.includes('回复 retry')")
     }
 
     @Test fun aTurnSharesIdentityAndShowsEveryToolWithExpandableInputAndOutput() {

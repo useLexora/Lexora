@@ -1,13 +1,14 @@
 import type { LocalRun, LocalRunEvent } from '@buddy-shared/runs/runApi'
 import type { ChatAgentTurn } from '../modules/tasks/contracts'
 import type { ReaderAnchor } from './readerProjection'
-import type { ReaderActionInput, ReaderWireEntry } from './readerProtocol'
+import type { ReaderActionInput, ReaderOutput, ReaderToolImage, ReaderUpdate, ReaderWireEntry } from './readerProtocol'
 import { useTimeoutFn } from '@vueuse/core'
 import { onMounted, onUnmounted, provide, shallowRef } from 'vue'
 import { setMarkdownLanguage } from './markdownStrings'
 import { ReaderProjection } from './readerProjection'
 import { readerActionSchema, readerCopiedSchema, readerUpdateSchema } from './readerProtocol'
 import { readerLanguageKey } from './readerStrings'
+import { readerToolImagesKey } from './readerToolImages'
 import { readerAvatarsKey } from './useReaderAvatars'
 import { readerCopyFeedbackKey } from './useReaderCopyFeedback'
 
@@ -26,6 +27,11 @@ export function useReaderBridge() {
   const entries = shallowRef<ReaderEntry[]>([])
   const runs = shallowRef<LocalRun[]>([])
   const transcripts = shallowRef<Record<string, ReaderTranscript>>({})
+  const outputs = shallowRef<Record<string, ReaderOutput>>({})
+  const toolImages = shallowRef<ReaderToolImage[]>([])
+  provide(readerToolImagesKey, toolImages)
+  const branches = shallowRef<NonNullable<ReaderUpdate['branches']>>([])
+  const selectedBranchId = shallowRef<string | null>(null)
   const topic = shallowRef('')
   const dark = shallowRef(false)
   const fontScale = shallowRef(1)
@@ -79,6 +85,14 @@ export function useReaderBridge() {
       }
       if (update.avatars)
         avatars.value = update.avatars
+      if (update.branches || next.reset)
+        branches.value = update.branches ?? []
+      if (update.selectedBranchId !== undefined || next.reset)
+        selectedBranchId.value = update.selectedBranchId ?? null
+      if (update.outputs || next.reset)
+        outputs.value = update.outputs ?? {}
+      if (update.toolImages || next.reset)
+        toolImages.value = update.toolImages ?? []
       runs.value = (update.runs ?? []).map(run => ({ ...run, generation: Number(run.generation) }))
       transcripts.value = next.transcripts
       topic.value = update.topic
@@ -102,5 +116,5 @@ export function useReaderBridge() {
     window.removeEventListener('message', connect)
     port?.close()
   })
-  return { entries, runs, transcripts, topic, dark, fontScale, appearance, typography, language, resultRunId, anchor, hasLaterMessages, send }
+  return { entries, runs, transcripts, outputs, branches, selectedBranchId, topic, dark, fontScale, appearance, typography, language, resultRunId, anchor, hasLaterMessages, send }
 }

@@ -21,6 +21,18 @@ class ReadCacheTest {
             assertNull(reopened.read("service:profile:generation:device", "conversation:task:branch"))
         } finally { directory.deleteRecursively() }
     }
+    @Test fun oversizedConversationRetainsNewestWholeMessagesWithinUtf8Budget() {
+        val directory = Files.createTempDirectory("recent-messages").toFile()
+        try {
+            val cache = ReadCache(directory, 650)
+            val key = "conversation:task:branch"
+            fun message(index: Int) = JSONObject().put("entity", "message").put("value", JSONObject()
+                .put("id", "m$index").put("createdAt", "2026-11-18T00:00:0${index}Z").put("text", "好".repeat(48)))
+            cache.write("device", key, listOf(message(3), message(1), message(2)))
+            assertEquals(listOf("m2", "m3"), cache.read("device", key)!!.map { it.getJSONObject("value").getString("id") })
+            assertTrue(directory.listFiles()!!.single().length() <= 650)
+        } finally { directory.deleteRecursively() }
+    }
     @Test fun evictionAndInterruptedTemporaryFilesNeverExposePartialOrUnboundedData() {
         val directory = Files.createTempDirectory("reader-cache-budget").toFile()
         try {

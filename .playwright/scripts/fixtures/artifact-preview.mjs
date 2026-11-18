@@ -6,6 +6,7 @@ import { expect, useSyntheticCredentialStorage } from './electron.mjs'
 
 export async function withArtifactPreview(buddy, options, verify) {
   const instance = await buddy.createInstance(options.label)
+  await options.prepareInstance?.(instance)
   const directory = path.join(instance.home, 'documents')
   await fs.mkdir(directory)
   const names = await options.prepare(directory)
@@ -27,7 +28,7 @@ export async function withArtifactPreview(buddy, options, verify) {
   })
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   try {
-    const launch = await instance.launch()
+    const launch = await instance.launch(options.launchOptions)
     const { app, page, diagnostics } = launch
     await useSyntheticCredentialStorage(launch)
     await page.evaluate(async (baseUrl) => {

@@ -77,6 +77,7 @@ export const PRODUCT_QUERY_METHODS = {
   'spaces.list': query(productPageInputSchema, productPageSchema(z.object({ id, name: z.string().min(1), memoryScope: z.enum(['personal_and_space', 'space_only']) }).strict())),
   'conversations.listMessages': query(productPageInputSchema.extend({ conversationId: id, branchId: id }), productPageSchema(productMessageSchema)),
   'runs.listTranscriptEvents': query(productPageInputSchema.extend({ runId: id, afterSequence: revision, throughSequence: revision }), productPageSchema(publicRunEventSchema)),
+  'runs.listOutputs': query(productPageInputSchema.extend({ runId: id, branchId: id }), productPageSchema(productResourceSchema)),
   'runs.listEvents': query(productPageInputSchema.extend({ runId: id, throughSequence: revision.optional() }), productPageSchema(productRunEventSchema)),
   'chat.queue.list': query(productPageInputSchema.extend({ conversationId: id, branchId: id }), productPageSchema(productQueueItemSchema)),
   'approvals.get': query(z.object({ approvalId: id }).strict(), productApprovalSchema.nullable()),

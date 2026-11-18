@@ -189,8 +189,9 @@ object MobileUiTestDriver {
     }
 
     fun selectBranch(id: String) {
-        clickTag("branch-switcher"); clickTag("branch:$id")
+        openTaskSettings(); clickTag("current-branch"); clickTag("branch:$id")
         waitUntil { !existsTag("branch:$id") }
+        returnToConversation()
     }
 
     fun enqueueInput() {
@@ -213,20 +214,22 @@ object MobileUiTestDriver {
     }
 
     fun openDrafts() {
-        if (existsTag("workbench-list")) click("新任务")
-        if (!existsTag("conversation-settings")) click("任务设置")
+        openWorkbench()
+        clickTag("workbench-settings")
         click("本地草稿")
         waitUntil { exists("手机草稿") }
     }
 
     fun openExecution() { if (!existsTag("conversation-settings")) click("任务设置"); click("执行方式") }
 
-    fun awaitConnected() = waitUntil {
-        if (connected()) true
-        else {
-            if (existsTag("conversation-settings")) scrollable()?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
-            false
-        }
+    fun awaitConnected() {
+        if (existsTag("conversation-settings") || existsTag("task-information")) {
+            val settingsOpen = existsTag("conversation-settings")
+            openExecution()
+            waitUntil { byId("permission-workspace_write-policy")?.isEnabled == true }
+            clickTag("close-permission-picker")
+            if (!settingsOpen) returnToConversation()
+        } else waitUntil { connected() }
     }
 
     fun openWorkbench() {
@@ -276,7 +279,8 @@ object MobileUiTestDriver {
         }
     }
     private fun byId(id: String) = visit { it.viewIdResourceName == id || it.viewIdResourceName?.endsWith(":id/$id") == true }
-    private fun scrollable() = visit { it.isVisibleToUser && it.isScrollable }
+    private fun scrollable() = visit { it.isVisibleToUser && it.isScrollable && it.className?.toString() == "android.widget.ListView" }
+        ?: visit { it.isVisibleToUser && it.isScrollable && it.viewIdResourceName != "android:id/buttonPanel" }
     private fun visit(predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
         val pending = ArrayDeque<AccessibilityNodeInfo>()
         automation.rootInActiveWindow?.let(pending::addLast)

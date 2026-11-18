@@ -60,7 +60,7 @@ class PaperWorkbenchInstrumentedTest {
             state.connectionLabel = "暂时无法连接，正在重试"
         }
         compose.onNodeWithTag("space-filter").assertDoesNotExist()
-        compose.onNodeWithTag("connection-detail").assertTextEquals("暂时无法连接，正在重试").assertIsDisplayed()
+        compose.onNodeWithTag("connection-detail").assertTextEquals(app.uselexora.mobile.i18n.mobileText(R.string.mobile_reconnecting_cached_tasks)).assertIsDisplayed()
         compose.onNodeWithTag("service-selector").assertHeightIsAtLeast(48.dp)
         val selector = compose.onNodeWithTag("service-selector").fetchSemanticsNode().boundsInRoot
         val detail = compose.onNodeWithTag("connection-detail").fetchSemanticsNode().boundsInRoot
@@ -71,11 +71,28 @@ class PaperWorkbenchInstrumentedTest {
             assertEquals(1, switches)
             state.connectionPhase = app.uselexora.mobile.session.MobileConnectionPhase.Connecting
             state.connectionLabel = "正在连接…"
+            state.tasksLoaded = false
         }
         compose.onNodeWithTag("connection-detail").assertTextEquals("正在连接…")
-        compose.runOnIdle { state.connected = true; state.connectionLabel = "已连接服务"; state.selectedSpaceId = "studio"; state.selectedSpaceLabel = "工作空间" }
+        compose.runOnIdle { state.connected = true; state.tasksLoaded = true; state.connectionLabel = "已连接服务"; state.selectedSpaceId = "studio"; state.selectedSpaceLabel = "工作空间" }
         compose.onNodeWithTag("connection-detail").assertDoesNotExist()
         compose.onNodeWithText("工作空间").assertIsDisplayed()
+    }
+
+    @Test fun stoppedConnectionRetriesConnectionAndOnlineFailureRefreshesTasks() {
+        val state = state().apply {
+            connected = false
+            taskSyncFailed = true
+            connectionLabel = app.uselexora.mobile.i18n.mobileText(R.string.connection_disconnected)
+        }
+        val actions = mutableListOf<MobileAction>()
+        compose.setContent { LexoraTheme { PaperWorkbench(state, state.tasks, { action, _ -> actions.add(action) }, {}, {}) } }
+        compose.onNodeWithText(app.uselexora.mobile.i18n.mobileText(R.string.label_reconnect)).performClick()
+        compose.onNodeWithText(app.uselexora.mobile.i18n.mobileText(R.string.mobile_task_update_failed)).assertDoesNotExist()
+        compose.runOnIdle { state.connected = true }
+        compose.onNodeWithText(app.uselexora.mobile.i18n.mobileText(R.string.mobile_task_update_failed)).assertIsDisplayed()
+        compose.onNodeWithText(app.uselexora.mobile.i18n.mobileText(R.string.label_retry)).performClick()
+        compose.runOnIdle { assertEquals(listOf(MobileAction.Reconnect, MobileAction.Refresh), actions) }
     }
 
     @Test fun darkServiceStatusSupportsLargeTextAndLongFailureDetails() {

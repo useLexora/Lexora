@@ -56,11 +56,14 @@ export function productQueryRevision(database: DatabaseSync, method: string, inp
       addVisibility(input.conversationId)
       add(branch(input.conversationId, input.branchId), ...method === 'questions.list' ? ['user_questions', 'run_history'] : method === 'runs.list' ? ['runs', 'run_inputs'] : ['chat_queue', 'run_summaries'])
       break
+    case 'runs.listOutputs':
     case 'runs.listEvents': {
       const owner = database.prepare('SELECT conversation_id FROM runs WHERE id = ?').get(String(input.runId))
       if (owner)
         addVisibility(owner.conversation_id)
       add(run(input.runId), 'run_events', 'run_history')
+      if (method === 'runs.listOutputs' && owner)
+        add(task(owner.conversation_id), 'artifacts', 'conversation_publications', 'conversation_branches')
       break
     }
     case 'approvals.list': {

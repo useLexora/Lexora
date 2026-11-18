@@ -289,44 +289,6 @@ button:active {
 
 }
 
-.message-actions {
-  display: flex;
-  align-items: center;
-  min-height: 48px;
-  gap: 0;
-  margin-top: 4px;
-  color: var(--reader-muted);
-}
-.user .message-actions {
-  order: 2;
-  justify-content: flex-end;
-  width: 100%;
-}
-.message-actions button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  flex: 0 0 40px;
-  min-height: 48px;
-  padding: 14px 10px;
-  color: inherit;
-  border-radius: 6px;
-}
-.message-actions button:active {
-  background: var(--reader-user);
-}
-.message-actions .is-copied {
-  color: var(--buddy-status-success-text);
-}
-.message-actions .reader-icon {
-  width: 18px;
-  height: 18px;
-}
-.message-actions .message-time {
-  padding: 0 6px;
-  font-variant-numeric: tabular-nums;
-}
 
 .reader-entry.continuation {
   padding-top: 2px;
@@ -455,12 +417,12 @@ main {
   --buddy-text-secondary: var(--reader-muted);
   --buddy-chat-gap-turn: 10px;
   --buddy-radius-micro: 6px;
-  --buddy-chat-gap-block: 8px;
-  --buddy-chat-gap-section: 12px;
-  --buddy-chat-activity-row-height: 40px;
+  --buddy-chat-gap-block: 4px;
+  --buddy-chat-gap-section: 8px;
+  --buddy-chat-activity-row-height: 28px;
   --buddy-chat-activity-icon-size: 15px;
-  --buddy-chat-activity-row-gap: 6px;
-  --buddy-chat-activity-indent: 21px;
+  --buddy-chat-activity-row-gap: 0px;
+  --buddy-chat-activity-indent: 14px;
   --buddy-chat-process-font-size: 13px;
   --buddy-chat-process-color: var(--reader-muted);
   --buddy-chat-meta-color: var(--reader-muted);
@@ -477,7 +439,7 @@ main {
 }
 .reader-turn-flow {
   display: grid;
-  gap: 6px;
+  gap: 2px;
   min-width: 0;
 }
 .reader-turn-flow + .reader-message {
@@ -499,9 +461,6 @@ main {
 }
 .reader-turn .buddy-chat-tool__summary {
   font-size: 12px;
-}
-.reader-turn .buddy-chat-tool-details {
-  max-width: 100%;
 }
 
 .reader-turn .buddy-chat-activity-row,
