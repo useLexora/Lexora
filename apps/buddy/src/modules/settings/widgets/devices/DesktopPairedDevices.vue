@@ -4,17 +4,17 @@ import { NButton, NEmpty, NPopconfirm, NScrollbar, NSpin, NTag } from 'naive-ui'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { useSettingsContext } from '../../settingsContext'
 
-defineProps<{ devices: PairedDevice[], loading: boolean, unavailable: boolean, enabled: boolean, busy: boolean }>()
+defineProps<{ devices: PairedDevice[], loading: boolean, enabled: boolean, busy: boolean }>()
 defineEmits<{ revoke: [deviceId: string] }>()
 const { applicationSettings: { language } } = useSettingsContext()
 const { t } = useBuddyI18n(language)
 </script>
 
 <template>
-  <div v-if="loading || unavailable || !devices.length" class="flex min-h-48 flex-1 items-center justify-center p-4" data-testid="paired-devices-empty-area">
+  <div v-if="loading || !devices.length" class="flex min-h-48 flex-1 items-center justify-center p-4" data-testid="paired-devices-empty-area">
     <NSpin v-if="loading" size="small" />
-    <NEmpty v-else :description="t(unavailable ? 'desktop.settings.devices.unavailable' : 'desktop.settings.devices.empty')" data-testid="paired-devices-empty">
-      <template v-if="!unavailable" #extra>
+    <NEmpty v-else :description="t('desktop.settings.devices.empty')" data-testid="paired-devices-empty">
+      <template #extra>
         <p class="m-0 text-xs text-muted">
           {{ t(enabled ? 'desktop.settings.devices.emptyReady' : 'desktop.settings.devices.emptyDisabled') }}
         </p>

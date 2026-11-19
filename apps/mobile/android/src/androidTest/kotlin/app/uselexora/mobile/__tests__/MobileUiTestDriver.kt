@@ -236,11 +236,11 @@ object MobileUiTestDriver {
         if (existsTag("conversation-settings")) returnToConversation()
         waitUntil {
             if (existsTag("workbench-list")) true
-            else {
+            else if (exists("返回")) {
                 click("返回")
                 automation.waitForIdle(200, 5000)
                 false
-            }
+            } else false
         }
     }
 

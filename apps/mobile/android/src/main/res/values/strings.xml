@@ -114,7 +114,6 @@
     <string name="label_close_model_picker">Close model picker</string>
     <string name="label_close_settings">Close settings</string>
     <string name="label_what_would_you_like_lexora_to_do">What would you like Lexora to do?</string>
-    <string name="label_ask_a_question_or_attach_a_file">Ask a question, or attach a file.</string>
     <string name="label_ask_before_writing_files_executing_commands_or_accessing_the_network">Ask before writing files, executing commands or accessing the network.</string>
     <string name="label_could_not_load_branches_tap_to_retry">Could not load branches. Tap to retry.</string>
     <string name="label_switch_service">Switch service</string>
@@ -162,7 +161,6 @@
     <string name="label_tasks_awaiting_approval">Tasks awaiting approval</string>
     <string name="label_reasoning_effort">Reasoning effort</string>
     <string name="label_reconnect">Reconnect</string>
-    <string name="label_what_would_you_like_to_do">What would you like to do?</string>
     <string name="label_my_services">My services</string>
     <string name="label_permissions">Permissions</string>
     <string name="label_scan_a_qr_code_to_connect_to_lexora">Scan a QR code to connect to Lexora</string>
@@ -297,7 +295,6 @@
     <string name="compact_questions">Questions %1$d</string>
     <string name="compact_approvals">Approvals %1$d</string>
     <string name="compact_queued">Queued</string>
-    <string name="compact_new_draft">New task · Draft saved on this phone</string>
     <plurals name="queued_inputs">
         <item quantity="one">%1$d message waiting to send</item>
         <item quantity="other">%1$d messages waiting to send</item>

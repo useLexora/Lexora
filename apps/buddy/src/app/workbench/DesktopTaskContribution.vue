@@ -88,18 +88,7 @@ async function load() {
   }
 }
 watch(() => resourceKey(props.view.resource), load, { immediate: true })
-watch(() => {
-  const current = task.value
-  const title = current?.session.currentTitle.value
-  if (!current || !title)
-    return title
-  const branches = [...current.workspace.transcript.branches.value].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
-  const index = branches.findIndex(branch => branch.id === current.workspace.session.activeBranchId.value)
-  if (branches.length < 2 || index < 0)
-    return title
-  const label = translateBuddy(workbench.language.value, index === 0 ? 'desktop.chat.originalBranch' : 'desktop.chat.numberedBranch', { index: index + 1 })
-  return `${title} · ${label}`
-}, (title) => {
+watch(() => task.value?.session.currentTitle.value, (title) => {
   if (title)
     workbench.controller.updateView(props.view.id, { title })
 })

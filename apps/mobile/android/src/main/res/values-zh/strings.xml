@@ -113,7 +113,6 @@
     <string name="label_close_model_picker">关闭模型选择</string>
     <string name="label_close_settings">关闭设置</string>
     <string name="label_what_would_you_like_lexora_to_do">写下想让 Lexora 做的事…</string>
-    <string name="label_ask_a_question_or_attach_a_file">写下问题，或带上一份文件。</string>
     <string name="label_ask_before_writing_files_executing_commands_or_accessing_the_network">写入、执行和联网等操作需要你批准。</string>
     <string name="label_could_not_load_branches_tap_to_retry">分支暂未载入，点按重试</string>
     <string name="label_switch_service">切换服务</string>
@@ -161,7 +160,6 @@
     <string name="label_tasks_awaiting_approval">待审批任务</string>
     <string name="label_reasoning_effort">思考强度</string>
     <string name="label_reconnect">恢复连接</string>
-    <string name="label_what_would_you_like_to_do">想做点什么？</string>
     <string name="label_my_services">我的服务</string>
     <string name="label_permissions">执行方式</string>
     <string name="label_scan_a_qr_code_to_connect_to_lexora">扫描二维码连接 Lexora 服务</string>
@@ -296,7 +294,6 @@
     <string name="compact_questions">待回答 %1$d</string>
     <string name="compact_approvals">待确认 %1$d</string>
     <string name="compact_queued">待发送</string>
-    <string name="compact_new_draft">新任务 · 草稿保存在手机</string>
     <plurals name="queued_inputs">
         <item quantity="one">%1$d 条输入等待发送</item>
         <item quantity="other">%1$d 条输入等待发送</item>

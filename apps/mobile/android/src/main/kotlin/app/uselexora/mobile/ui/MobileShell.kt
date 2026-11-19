@@ -462,10 +462,6 @@ private fun NewTaskIntro(state: MobileUiState, act: (MobileAction) -> Unit) {
         PaperSurface(PaperFoldShape(18.dp), Modifier.size(64.dp), listOf(MaterialTheme.colorScheme.surfaceContainer, MaterialTheme.colorScheme.primaryContainer), 2.dp) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.EditNote, null, Modifier.size(30.dp), tint = MaterialTheme.colorScheme.primary) }
         }
-        Spacer(Modifier.height(24.dp))
-        Text(mobileText(R.string.label_what_would_you_like_to_do), style = MaterialTheme.typography.headlineMedium)
-        Spacer(Modifier.height(10.dp))
-        Text(mobileText(R.string.label_ask_a_question_or_attach_a_file), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (state.spaceVisible) {
             Spacer(Modifier.height(14.dp))
             TextButton(onClick = { act(MobileAction.ChooseSpace) }, enabled = state.spaceEnabled, contentPadding = PaddingValues(0.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("space")) {
@@ -517,13 +513,12 @@ private fun ConversationPrompt(title: String, summary: String, actionLabel: Stri
 private fun CompactConversationActions(state: MobileUiState, onAction: (MobileAction, JSONObject?) -> Unit, attachments: () -> Unit, questions: () -> Unit, approvals: () -> Unit) {
     val pendingQuestions = if (state.questionsSupported) state.questions.filter { it.optString("status") == "pending" || it.optJSONObject("delivery")?.optString("state") == "failed" } else emptyList()
     val pendingApprovals = state.approvalItems.filter { it.optString("status") == "pending" }
-    Row(Modifier.fillMaxWidth().height(48.dp).horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp).testTag("compact-context"), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp).testTag("compact-context"), verticalAlignment = Alignment.CenterVertically) {
         if (state.attachments.isNotEmpty() || state.attachmentCount > 0) TextButton(onClick = attachments) { Text(mobileText(R.string.compact_attachments, maxOf(state.attachments.size, state.attachmentCount))) }
         if (pendingQuestions.isNotEmpty()) TextButton(onClick = { if (pendingQuestions.size == 1) onAction(MobileAction.AnswerQuestion, pendingQuestions.first()) else questions() }, enabled = state.connected) { Text(mobileText(R.string.compact_questions, pendingQuestions.size)) }
         if (pendingApprovals.isNotEmpty()) TextButton(onClick = { if (pendingApprovals.size == 1) onAction(MobileAction.ReviewApproval, pendingApprovals.first()) else approvals() }, enabled = state.connected) { Text(mobileText(R.string.compact_approvals, pendingApprovals.size)) }
         if (state.queueItems.any { it.optString("status") == "queued" }) TextButton(onClick = { onAction(MobileAction.TaskQueue, null) }) { Text(mobileText(R.string.compact_queued)) }
         if (state.selectedTask != null) TextButton(onClick = { onAction(MobileAction.Files, null) }) { Text(mobileText(R.string.label_task_files)) }
-        if (state.attachments.isEmpty() && pendingQuestions.isEmpty() && pendingApprovals.isEmpty() && state.selectedTask == null) Text(mobileText(R.string.compact_new_draft), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

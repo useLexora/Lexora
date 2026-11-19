@@ -237,7 +237,7 @@ class MainActivity : ComponentActivity() {
         recovery = DraftRecoveryPanel(this, store, { partition }, ::localWork, ::onUi, ::resumeDraft,
             targetLabel = { draft ->
                 if (draft.partition != partition) null
-                else runCatching { DraftContext.conversation(draft.scope) }.getOrNull()?.let { recoveryTargetLabel(draft.partition, it.conversationId, it.branchId) }
+                else runCatching { DraftContext.conversation(draft.scope) }.getOrNull()?.let { recoveryTargetLabel(draft.partition, it.conversationId) }
             },
             attachmentSummary = { draft -> draftAttachments(draft).filter { it.id.startsWith("transfer:") }
                 .takeIf { it.isNotEmpty() }?.joinToString("\n") { mobileText(R.string.recovery_pending_attachment, it.name, it.stateLabel) } })
@@ -997,17 +997,14 @@ class MainActivity : ComponentActivity() {
         }
     }
     private fun showOutbox() { commandHistory.show() }
-    private fun recoveryTargetLabel(owner: String, taskId: String, branchId: String?): String? {
+    private fun recoveryTargetLabel(owner: String, taskId: String): String? {
         if (partition != owner) return null
         val task = taskItems.firstOrNull { it.optString("id") == taskId } ?: selectedTask?.takeIf { it.optString("id") == taskId }
-        val title = task?.optString("title")?.takeUnless { it.isBlank() || it == "null" } ?: return null
-        val branch = branchId?.takeIf { selectedTask?.optString("id") == taskId && ui.branches.any { item -> item.optString("id") == it } }
-            ?.let { branchLabel(ui, it) }
-        return listOfNotNull(title, branch).joinToString(" · ")
+        return task?.optString("title")?.takeUnless { it.isBlank() || it == "null" }
     }
     private fun commandTargetLabel(item: OutboxItem): String {
         val target = CommandHistoryTarget.target(item)
-        if (target != null) return recoveryTargetLabel(item.partition, target.conversationId, target.branchId) ?: mobileText(R.string.command_original_task)
+        if (target != null) return recoveryTargetLabel(item.partition, target.conversationId) ?: mobileText(R.string.command_original_task)
         return if (item.envelope.optJSONObject("intent")?.optJSONObject("input")?.optJSONObject("scope")?.optString("kind") == "task") mobileText(R.string.incoming_new_draft)
         else mobileText(R.string.command_original_target)
     }

@@ -192,17 +192,17 @@ function renderScopeLabel(option: DropdownOption) {
     <p v-if="persistentNotice" class="text-muted text-[length:var(--buddy-chat-caption-font-size)] leading-[var(--buddy-chat-caption-line-height)]">
       {{ persistentNotice }}
     </p>
-    <DesktopApprovalDetails :review="review" :language="language" :browser-effect="browserEffect" :system-effect="systemEffect" />
-    <p v-if="approval.review === null" class="text-muted text-[length:var(--buddy-chat-caption-font-size)]">
+    <DesktopApprovalDetails v-if="review" :review="review" :language="language" :browser-effect="browserEffect" :system-effect="systemEffect" />
+    <p v-if="!review || approval.review === null" class="text-muted text-[length:var(--buddy-chat-caption-font-size)]">
       {{ t('desktop.approval.unsupported') }}
     </p>
     <p v-if="reviewExpired" class="text-muted text-[length:var(--buddy-chat-caption-font-size)]">
       {{ t('desktop.approval.expired') }}
     </p>
-    <section v-if="approval.review" class="grid gap-2">
-      <p v-if="!approval.review.complete" class="text-muted text-[length:var(--buddy-chat-caption-font-size)]">
-        {{ t('desktop.approval.incomplete') }}
-      </p>
+    <p v-if="approval.review && !approval.review.complete" class="text-muted text-[length:var(--buddy-chat-caption-font-size)]">
+      {{ t('desktop.approval.incomplete') }}
+    </p>
+    <section v-else-if="approval.review" class="grid gap-2">
       <NButton size="small" secondary :aria-expanded="showFullOperation" @click="showFullOperation = !showFullOperation">
         {{ t('desktop.approval.fullOperation') }}
       </NButton>
