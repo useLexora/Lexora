@@ -1,4 +1,4 @@
-import type { ContextPanelSource } from '../../../shared/context-panel/contextPanel'
+import type { BrowserPresentationSource } from '../../../shared/context-panel/contextPanel'
 import type { ExtensionCapabilityDescriptor, ExtensionCapabilityImpact } from '../../../shared/extensions/extensionCapabilities'
 import type { ExtensionSkillDescriptor } from '../../../shared/extensions/extensionSkills'
 import type { ImagePreferences } from '../../../shared/images/imagePreferences'
@@ -64,7 +64,7 @@ export interface RuntimePlatform {
   authoring: PluginAuthoringHost
   preferences: RuntimePreferenceSource
   openExternal: (url: string) => Promise<void>
-  presentBrowser?: (source: ContextPanelSource) => Promise<void>
+  presentBrowser?: (source: BrowserPresentationSource) => Promise<void>
   executePetSequence: (input: PetExecuteSequenceParams) => Promise<PetExecuteSequenceResult>
   subscribeWake: (wake: () => void) => () => void
   bindInternal: (services: {

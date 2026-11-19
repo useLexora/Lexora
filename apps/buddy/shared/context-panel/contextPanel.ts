@@ -5,6 +5,11 @@ export const contextPanelSourceSchema = z.object({
   runId: z.string().regex(/^[A-Z0-9][\w-]{0,127}$/i),
 }).strict()
 
+export const browserPresentationSourceSchema = contextPanelSourceSchema.extend({
+  buddyId: z.string().min(1).max(128),
+})
+export type BrowserPresentationSource = z.infer<typeof browserPresentationSourceSchema>
+
 export const contextPanelTargetSchema = z.object({
   kind: z.literal('browser'),
   source: contextPanelSourceSchema,

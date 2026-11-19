@@ -146,6 +146,37 @@ describe('browserExtension', () => {
     expect(operations.map(operation => operation.action)).toEqual(['open', 'close'])
   })
 
+  it('keeps a panel closed by the user while the foreground document is loading', async () => {
+    const host = new ContextPanelHost(async () => {})
+    const source = { conversationId: 'conversation-1', runId: 'run-1' }
+    const fixture = createFixture(async () => {
+      await host.execute({ action: 'open', target: { kind: 'browser', source } }, 'harness')
+    })
+    const loading = Promise.withResolvers<void>()
+    const document = Promise.withResolvers<unknown>()
+    fixture.service.open.mockImplementation(() => {
+      loading.resolve()
+      return document.promise
+    })
+    fixture.service.observe.mockResolvedValue({ ok: true, observation: OBSERVATION })
+    const result = execute(requireTool(fixture.tools, 'lexora_browser_open'), { kind: 'url', url: READY_STATE.url, background: false })
+    await loading.promise
+    expect(host.getState()).toMatchObject({ open: true, target: { kind: 'browser', source } })
+    await host.execute({ action: 'close', source })
+    document.resolve({ ok: true, state: READY_STATE })
+    expect((await result).isError).toBe(false)
+    expect(host.getState().open).toBe(false)
+  })
+
+  it('reports unavailable foreground presentation to the caller', async () => {
+    const fixture = createFixture(async () => {
+      throw new Error('lost desktop connection')
+    })
+    const result = await execute(requireTool(fixture.tools, 'lexora_browser_open'), { kind: 'url', url: READY_STATE.url, background: false })
+    expect(result.isError).toBe(true)
+    expect(readContent(result)).toMatchObject({ code: 'CONTEXT_PANEL_UNAVAILABLE' })
+  })
+
   it('validates browser tool inputs at the model boundary', () => {
     const { tools } = createFixture()
     const act = requireTool(tools, 'lexora_browser_act')

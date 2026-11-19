@@ -1,4 +1,4 @@
-import type { ContextPanelSource } from '../../shared/context-panel/contextPanel'
+import type { BrowserPresentationSource } from '../../shared/context-panel/contextPanel'
 import type { ApplicationDiagnosticReporter } from '../../shared/diagnostics/applicationDiagnostic'
 import type { BuddyFeatureId, BuddyPlatform } from '../../shared/platform'
 import type { BuddyCapability, BuddyCapabilityContext, BuddyCapabilityFactory } from './agent/extensions/BuddyCapability'
@@ -54,7 +54,7 @@ export interface BuddyCapabilityServices {
   attachmentService: ImageGenerationServiceOptions['attachmentService'] & SessionReferenceServices['attachments'] & Pick<AttachmentService, 'getInputMetadata' | 'readText'>
   automationService: CreateAutomationToolOptions['service']
   browserHost: BrowserCapabilityHost
-  presentBrowser: (source: ContextPanelSource) => Promise<void>
+  presentBrowser: (source: BrowserPresentationSource) => Promise<void>
   connectorService: Pick<McpConnectorService, 'getTools'>
   imageRequests?: ImageRequestStore
   imageGenerationGateway: ImageGenerationGateway
@@ -105,6 +105,13 @@ export function createBuddyCapabilityFactory(
       attachments: services.attachmentService,
       artifacts: services.artifactService,
     })
+    const getBrowserOwner = () => {
+      const runId = context.getRunId()
+      const buddyId = context.getActorId?.()
+      if (!runId || !buddyId)
+        throw new Error('RUN_CONTEXT_UNAVAILABLE')
+      return { runId, buddyId }
+    }
     const capabilities = [
       createMcpCapability(mcp, context.isCodemodeEnabled ?? (() => false)),
       createBrowserCapability({
@@ -114,19 +121,9 @@ export function createBuddyCapabilityFactory(
         getGrants: () => context.grants,
         getExecutionGrants: context.getExecutionGrants,
         host: services.browserHost,
-        getOwner: () => {
-          const runId = context.getRunId()
-          const buddyId = context.getActorId?.()
-          if (!runId || !buddyId)
-            throw new Error('RUN_CONTEXT_UNAVAILABLE')
-          return { runId, buddyId }
-        },
+        getOwner: getBrowserOwner,
         onOpening: context.sessionMode === 'interactive'
-          ? async () => {
-            const runId = context.getRunId()
-            if (runId)
-              await services.presentBrowser({ conversationId: context.conversationId, runId })
-          }
+          ? () => services.presentBrowser({ conversationId: context.conversationId, ...getBrowserOwner() })
           : undefined,
       }),
       createWebCapability({ authorizeNetwork: context.authorizeNetwork, service: services.webService, conversationId: context.conversationId }),

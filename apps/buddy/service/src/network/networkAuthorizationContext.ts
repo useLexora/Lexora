@@ -35,7 +35,8 @@ export async function withNetworkAuthorization<T>(
       requestSignal.throwIfAborted()
     }
     catch (error) {
-      failure ??= error
+      if (!parent?.aborted || error !== parent.reason)
+        failure ??= error
       throw error
     }
   }
@@ -84,7 +85,8 @@ export function beginNetworkRequest(peer: Peer, parent?: AbortSignal) {
       signal.throwIfAborted()
     }
     catch (error) {
-      failure ??= error
+      if (!hostSignal?.aborted || error !== hostSignal.reason)
+        failure ??= error
       throw error
     }
   })

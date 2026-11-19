@@ -23,6 +23,7 @@ import { Check } from 'typebox/value'
 import {
   BROWSER_ACTION_KINDS,
   BROWSER_ACTION_TEXT_MAX_LENGTH,
+  BROWSER_ERROR_CODES,
   BROWSER_MAX_OBSERVATION_ELEMENT_LIMIT,
   BROWSER_MAX_WAIT_TIMEOUT_MS,
   BROWSER_PRESS_KEYS,
@@ -35,7 +36,7 @@ import {
 import { toPiToolGroup } from '../agent/extensions/piToolGroup'
 import { createToolClassificationFailure } from '../approvals/toolClassification'
 
-export const BROWSER_TOOLS = toPiToolGroup({ name: 'lexora_browser', description: 'Open browser pages, read their content, inspect their state, and interact with page elements.', tools: [{ name: 'open' }, { name: 'snapshot' }, { name: 'read' }, { name: 'act' }] })
+export const BROWSER_TOOLS = toPiToolGroup({ name: 'lexora_browser', description: 'Open pages in the background or show them in Lexora’s context panel. Read pages, inspect their state, and interact with elements.', tools: [{ name: 'open' }, { name: 'snapshot' }, { name: 'read' }, { name: 'act' }] })
 
 export const BROWSER_ACT_TOOL_NAME = BROWSER_TOOLS.act.name
 export const BROWSER_OPEN_TOOL_NAME = BROWSER_TOOLS.open.name
@@ -91,14 +92,14 @@ const browserOpenWaitSpec = Type.Union([
 export const browserOpenToolParameters = Type.Union([
   Type.Object({
     kind: Type.Literal('url'),
-    background: Type.Optional(Type.Boolean({ description: 'Defaults to true. Set false only when the user needs to view or take over this execution\'s page; opening in the background does not change the visible page.' })),
+    background: Type.Optional(Type.Boolean({ description: 'Defaults to true. Set false to show this page in the context panel; Lexora opens the panel automatically.' })),
     until: Type.Optional(browserOpenWaitSpec),
     url: browserUrl,
   }, { additionalProperties: false }),
   Type.Object({
     entryPath: browserEntryPath,
     kind: Type.Literal('local-file'),
-    background: Type.Optional(Type.Boolean({ description: 'Defaults to true; false presents this execution\'s page to the user.' })),
+    background: Type.Optional(Type.Boolean({ description: 'Defaults to true. Set false to show this page in the context panel; Lexora opens the panel automatically.' })),
     until: Type.Optional(browserOpenWaitSpec),
   }, { additionalProperties: false }),
 ], { type: 'object' })
@@ -168,7 +169,18 @@ export type BrowserToolFailureCode
   = BrowserErrorCode
     | GrantedPathError['code']
     | 'BROWSER_CAPABILITY_FAILED'
+    | 'CONTEXT_PANEL_UNAVAILABLE'
     | 'VALIDATION_FAILED'
+
+export const browserToolFailureCodes = new Set<string>([
+  ...BROWSER_ERROR_CODES,
+  'BROWSER_CAPABILITY_FAILED',
+  'CONTEXT_PANEL_UNAVAILABLE',
+  'INVALID_PATH',
+  'PATH_NOT_FOUND',
+  'PATH_OUTSIDE_GRANTED_DIRECTORY',
+  'VALIDATION_FAILED',
+] satisfies readonly BrowserToolFailureCode[])
 
 export interface BrowserToolDetails {
   actionKind?: BrowserAction['kind']

@@ -21,7 +21,7 @@ import { setupWindowsSandbox } from '../../../platform/process/windowsSandbox'
 import { currentTarget } from '../../../platform/target'
 import { resolveWindowsPowerShell } from '../../../platform/windows/powerShell'
 import { automationNotifications } from '../../../shared/automation/automationApi'
-import { contextPanelRpc, contextPanelSourceSchema } from '../../../shared/context-panel/contextPanel'
+import { browserPresentationSourceSchema, contextPanelRpc } from '../../../shared/context-panel/contextPanel'
 import { extensionAgentInvocationSchema, extensionAgentRpc } from '../../../shared/extensions/extensionAgent'
 import { extensionAgentResourceRequestSchema } from '../../../shared/extensions/extensionAgentResources'
 import { extensionCapabilitiesRpc } from '../../../shared/extensions/extensionCapabilities'
@@ -295,7 +295,11 @@ export class DesktopRuntimeHost {
           return {}
         }),
         peer.onRequest(contextPanelRpc.presentBrowser, (params) => {
-          const source = contextPanelSourceSchema.parse(params)
+          const { buddyId, ...source } = browserPresentationSourceSchema.parse(params)
+          const host = this.#browser.host
+          if (!host)
+            throw new Error('BROWSER_HOST_UNAVAILABLE')
+          host.ensureAgentSession(source.conversationId, { runId: source.runId, buddyId })
           return this.contextPanel.execute({ action: 'open', target: { kind: 'browser', source } }, 'harness')
         }),
         registerWebHostRpc(peer, this.#webHost!),
