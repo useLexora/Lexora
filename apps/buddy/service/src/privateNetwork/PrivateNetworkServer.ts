@@ -9,7 +9,7 @@ import { createServer } from 'node:https'
 import { WebSocket, WebSocketServer } from 'ws'
 import { z } from 'zod'
 import { PRIVATE_NETWORK_LIMITS as limits } from '../../../shared/privateNetwork/limits'
-import { pairingConfirmSchema, PrivateNetworkError, privateNetworkErrorSchema } from '../../../shared/privateNetwork/pairing'
+import { pairingConfirmSchema, privateNetworkEndpointsSchema, PrivateNetworkError, privateNetworkErrorSchema } from '../../../shared/privateNetwork/pairing'
 import { PRODUCT_PROTOCOL_VERSION } from '../../../shared/productProtocol/identity'
 import { PRODUCT_LIMITS } from '../../../shared/productProtocol/limits'
 import { isPrivateNetworkAddress } from './PrivateNetworkTlsIdentity'
@@ -22,17 +22,19 @@ export interface PrivateNetworkServerOptions {
   auth: DeviceAuthorizationService
   identity: { serviceId: string, profileId: string }
   tls: PrivateNetworkTlsIdentity
+  endpoints?: () => string[]
   connect: (identity: AuthenticatedDevice, transport: ConnectionTransport) => ProductConnection
   bytes?: (request: IncomingMessage, response: ServerResponse, identity: AuthenticatedDevice) => Promise<boolean>
 }
 
 export class PrivateNetworkServer {
   readonly #options: PrivateNetworkServerOptions
-  readonly #server: Server
+  readonly #listeners = new Map<string, { server: Server, endpoint: string }>()
+  readonly #sockets = new Map<Socket, string>()
+  #tls: PrivateNetworkTlsIdentity
   readonly #websocket = new WebSocketServer({ noServer: true, maxPayload: PRODUCT_LIMITS.frameBytes, perMessageDeflate: false, clientTracking: false })
   readonly #connections = new Map<WebSocket, { identity: AuthenticatedDevice, product: ProductConnection }>()
   readonly #requests = new Map<ServerResponse, string>()
-  readonly #sockets = new Set<Socket>()
   readonly #rates = new Map<string, { start: number, requests: number, pairing: number }>()
   readonly #unsubscribe: { dispose: () => void }
   readonly #expiration: ReturnType<typeof setInterval>
@@ -41,31 +43,7 @@ export class PrivateNetworkServer {
 
   constructor(options: PrivateNetworkServerOptions) {
     this.#options = options
-    this.#server = createServer({ key: options.tls.privateKey, cert: options.tls.certificate, minVersion: 'TLSv1.2', maxHeaderSize: limits.requestBytes, requestTimeout: limits.requestTimeoutMs, headersTimeout: limits.requestTimeoutMs, keepAliveTimeout: 5000 }, (request, response) => {
-      response.setHeader('Cache-Control', 'no-store')
-      response.setHeader('X-Content-Type-Options', 'nosniff')
-      response.setHeader('Content-Security-Policy', 'default-src \'none\'; sandbox')
-      void this.#handle(request, response).catch(error => this.#failure(response, error))
-    })
-    this.#server.maxConnections = limits.httpRequests + limits.connections
-    this.#server.on('connection', (socket) => {
-      this.#sockets.add(socket)
-      socket.once('close', () => this.#sockets.delete(socket))
-    })
-    this.#server.on('upgrade', (request, socket, head) => {
-      try {
-        this.#rate(request, false)
-        if (this.#closed || request.url !== '/v1/rpc' || request.method !== 'GET')
-          throw new PrivateNetworkError('INVALID_REQUEST')
-        const identity = options.auth.authenticate(bearer(request))
-        if (this.#connections.size >= limits.connections || [...this.#connections.values()].filter(item => item.identity.deviceId === identity.deviceId).length >= limits.connectionsPerDevice)
-          throw new PrivateNetworkError('LIMIT_EXCEEDED')
-        this.#websocket.handleUpgrade(request, socket, head, websocket => this.#connected(websocket, identity))
-      }
-      catch {
-        socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
-      }
-    })
+    this.#tls = options.tls
     this.#unsubscribe = options.auth.onDidInvalidate(({ deviceId }) => {
       for (const [socket, connection] of this.#connections) {
         if (connection.identity.deviceId === deviceId)
@@ -88,20 +66,77 @@ export class PrivateNetworkServer {
     this.#expiration.unref()
   }
 
+  updateTls(tls: PrivateNetworkTlsIdentity): void {
+    if (this.#tls === tls)
+      return
+    for (const { server } of this.#listeners.values())
+      server.setSecureContext({ key: tls.privateKey, cert: tls.certificate, minVersion: 'TLSv1.2' })
+    this.#tls = tls
+  }
+
+  endpoint(address: string): string | undefined {
+    return this.#listeners.get(address)?.endpoint
+  }
+
   async listen(address: string, port: number): Promise<string> {
-    if (!isPrivateNetworkAddress(address) || !Number.isInteger(port) || port < 0 || port > 65535 || this.#closed)
+    if (!isPrivateNetworkAddress(address) || !Number.isInteger(port) || port < 0 || port > 65535 || this.#closed || this.#listeners.has(address))
       throw new PrivateNetworkError('INVALID_REQUEST')
+    const options = this.#options
+    const server = createServer({ key: this.#tls.privateKey, cert: this.#tls.certificate, minVersion: 'TLSv1.2', maxHeaderSize: limits.requestBytes, requestTimeout: limits.requestTimeoutMs, headersTimeout: limits.requestTimeoutMs, keepAliveTimeout: 5000 }, (request, response) => {
+      response.setHeader('Cache-Control', 'no-store')
+      response.setHeader('X-Content-Type-Options', 'nosniff')
+      response.setHeader('Content-Security-Policy', 'default-src \'none\'; sandbox')
+      void this.#handle(request, response).catch(error => this.#failure(response, error))
+    })
+    server.maxConnections = limits.httpRequests + limits.connections
+    server.on('connection', (socket) => {
+      if (this.#sockets.size >= limits.httpRequests + limits.connections) {
+        socket.destroy()
+        return
+      }
+      this.#sockets.set(socket, address)
+      socket.once('close', () => this.#sockets.delete(socket))
+    })
+    server.on('upgrade', (request, socket, head) => {
+      try {
+        this.#rate(request, false)
+        if (this.#closed || request.url !== '/v1/rpc' || request.method !== 'GET')
+          throw new PrivateNetworkError('INVALID_REQUEST')
+        const identity = options.auth.authenticate(bearer(request))
+        if (this.#connections.size >= limits.connections || [...this.#connections.values()].filter(item => item.identity.deviceId === identity.deviceId).length >= limits.connectionsPerDevice)
+          throw new PrivateNetworkError('LIMIT_EXCEEDED')
+        this.#websocket.handleUpgrade(request, socket, head, websocket => this.#connected(websocket, identity))
+      }
+      catch {
+        socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
+      }
+    })
     await new Promise<void>((resolve, reject) => {
-      this.#server.once('error', reject)
-      this.#server.listen(port, address, () => {
-        this.#server.off('error', reject)
+      server.once('error', reject)
+      server.listen(port, address, () => {
+        server.off('error', reject)
         resolve()
       })
     })
-    const actual = this.#server.address()
+    const actual = server.address()
     if (!actual || typeof actual === 'string')
       throw new PrivateNetworkError('INVALID_REQUEST')
-    return `https://${actual.family === 'IPv6' ? `[${actual.address}]` : actual.address}:${actual.port}`
+    const endpoint = new URL(`https://${actual.family === 'IPv6' ? `[${actual.address}]` : actual.address}:${actual.port}`).origin
+    this.#listeners.set(address, { server, endpoint })
+    return endpoint
+  }
+
+  async unlisten(address: string): Promise<void> {
+    const listener = this.#listeners.get(address)
+    if (!listener)
+      return
+    this.#listeners.delete(address)
+    const finished = new Promise<void>(resolve => listener.server.close(() => resolve()))
+    for (const [socket, host] of this.#sockets) {
+      if (host === address)
+        socket.destroy()
+    }
+    await finished
   }
 
   async close(): Promise<void> {
@@ -116,9 +151,7 @@ export class PrivateNetworkServer {
     }
     for (const response of this.#requests.keys()) response.destroy()
     this.#websocket.close()
-    const finished = new Promise<void>(resolve => this.#server.close(() => resolve()))
-    for (const socket of this.#sockets) socket.destroy()
-    await finished
+    await Promise.all([...this.#listeners.keys()].map(address => this.unlisten(address)))
   }
 
   #connected(socket: WebSocket, identity: AuthenticatedDevice) {
@@ -204,6 +237,9 @@ export class PrivateNetworkServer {
       this.#requests.set(response, identity.deviceId)
       if (route === '/v1/device' && request.method === 'GET') {
         this.#json(response, this.#options.auth.state(token))
+      }
+      else if (route === '/v1/device/endpoints' && request.method === 'GET' && this.#options.endpoints) {
+        this.#json(response, privateNetworkEndpointsSchema.parse({ endpoints: this.#options.endpoints() }))
       }
       else if (['/v1/device/renew', '/v1/device/logout'].includes(route) && request.method === 'POST') {
         pairingConfirmSchema.parse(await readJson(request))

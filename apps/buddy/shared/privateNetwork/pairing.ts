@@ -11,7 +11,12 @@ export const privateNetworkEndpointSchema = z.string().max(2048).refine((value) 
   catch { return false }
 })
 export const pairingContextSchema = z.object({ serviceId: id, profileId: id, issuerInstanceId: id, ticketId: id, ticketSecret: privateNetworkSecretSchema }).strict()
-export const pairingQrSchema = pairingContextSchema.extend({ format: z.literal('lexora-pairing'), version: z.literal(1), endpoint: privateNetworkEndpointSchema, spkiPin: privateNetworkPinSchema, expiresAt: z.iso.datetime() }).strict()
+const pairingQrBase = pairingContextSchema.extend({ format: z.literal('lexora-pairing'), endpoint: privateNetworkEndpointSchema, spkiPin: privateNetworkPinSchema, expiresAt: z.iso.datetime() })
+export const privateNetworkEndpointsSchema = z.object({ endpoints: z.array(privateNetworkEndpointSchema).min(1).max(2) }).strict()
+export const pairingQrSchema = z.discriminatedUnion('version', [
+  pairingQrBase.extend({ version: z.literal(1) }).strict(),
+  pairingQrBase.extend({ version: z.literal(2), alternateEndpoint: privateNetworkEndpointSchema }).strict(),
+])
 export const pairingPrepareSchema = pairingContextSchema.extend({ deviceName: z.string().trim().min(1).max(80) }).strict()
 export const pairingPrepareResultSchema = z.object({ attemptId: id, recoverySecret: privateNetworkSecretSchema, expiresAt: z.iso.datetime() }).strict()
 export const pairingRecoverySchema = z.object({ serviceId: id, profileId: id, attemptId: id, recoverySecret: privateNetworkSecretSchema }).strict()

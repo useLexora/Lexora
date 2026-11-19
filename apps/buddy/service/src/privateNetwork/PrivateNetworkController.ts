@@ -9,7 +9,7 @@ import { PrivateNetworkError } from '../../../shared/privateNetwork/pairing'
 import { registerRuntimeRequest } from '../rpc/runtimeRequest'
 import { withTransaction } from '../storage/transaction'
 import { DeviceAuthorizationService } from './DeviceAuthorizationService'
-import { selectPrivateNetworkAddress } from './privateNetworkAddress'
+import { selectPrivateNetworkAddresses } from './privateNetworkAddress'
 import { PrivateNetworkServer } from './PrivateNetworkServer'
 import { isPrivateNetworkAddress, loadPrivateNetworkTlsIdentity } from './PrivateNetworkTlsIdentity'
 
@@ -26,42 +26,49 @@ export class PrivateNetworkController {
   readonly auth: DeviceAuthorizationService
   readonly #options: PrivateNetworkControllerOptions
   #server: PrivateNetworkServer | null = null
-  #endpoint: string | null = null
+  #addresses: string[] = []
+  readonly #preferredAddress: string | null
+  #bindAddress: string | null = null
+  #refreshTimer: ReturnType<typeof setTimeout> | undefined
   #error: z.infer<typeof privateNetworkStatusSchema>['errorCode'] = null
   #pending = Promise.resolve()
   #closed = false
 
   constructor(options: PrivateNetworkControllerOptions) {
     this.#options = options
+    this.#preferredAddress = options.database.prepare('SELECT bind_address FROM private_network_state WHERE id = 1').get()!.bind_address as string | null
     this.auth = new DeviceAuthorizationService(options)
   }
 
   status() {
     const stored = this.#options.database.prepare('SELECT * FROM private_network_state WHERE id = 1').get()!
     const enabled = stored.enabled === 1
-    return privateNetworkStatusSchema.parse({ enabled, state: this.#server ? 'listening' : enabled ? 'unavailable' : 'disabled', bindAddress: stored.bind_address, port: stored.port, endpoint: this.#endpoint, spkiPin: stored.tls_pin, errorCode: this.#error })
+    const endpoint = this.#endpoints()[0] ?? null
+    return privateNetworkStatusSchema.parse({ enabled, state: endpoint ? 'listening' : enabled ? 'unavailable' : 'disabled', bindAddress: this.#bindAddress, port: stored.port, endpoint, spkiPin: stored.tls_pin, errorCode: this.#error })
   }
 
   async restore(): Promise<void> {
     await this.#serialize(async () => {
-      if (this.status().enabled)
-        await this.#listen()
+      const status = this.status()
+      if (status.enabled)
+        await this.#listen(status)
     })
   }
 
   configure(input: z.infer<typeof privateNetworkManagement.configure.input>) {
     return this.#serialize(async () => {
       const previous = this.status()
-      const configuredAddress = input.bindAddress === '' ? null : input.bindAddress ?? previous.bindAddress
-      const address = configuredAddress ?? (input.enabled ? selectPrivateNetworkAddress() : null)
+      const address = input.bindAddress === '' ? null : input.bindAddress ?? previous.bindAddress
       const port = input.port ?? previous.port ?? 19443
       if (address !== null && !isPrivateNetworkAddress(address))
         throw new PrivateNetworkError('INVALID_REQUEST')
-      withTransaction(this.#options.database, () => this.#options.database.prepare('UPDATE private_network_state SET enabled = ?, bind_address = ?, port = ? WHERE id = 1').run(Number(input.enabled), address, port))
+      withTransaction(this.#options.database, () => this.#options.database.prepare('UPDATE private_network_state SET enabled = ?, port = ? WHERE id = 1').run(Number(input.enabled), port))
+      this.#bindAddress = address
       this.auth.cancelTicket()
-      await this.#stopListener()
+      if (!input.enabled || port !== previous.port)
+        await this.#stopListener()
       if (input.enabled)
-        await this.#listen()
+        await this.#listen(this.status())
       return this.status()
     })
   }
@@ -71,7 +78,7 @@ export class PrivateNetworkController {
       this.auth.revokeAll()
       await this.#stopListener()
       if (this.status().enabled) {
-        await this.#listen(true)
+        await this.#listen(this.status(), true)
       }
       else {
         const { database, profileId, secrets } = this.#options
@@ -90,7 +97,7 @@ export class PrivateNetworkController {
       const status = this.status()
       if (!status.endpoint || !status.spkiPin)
         throw new PrivateNetworkError('PAIRING_UNAVAILABLE')
-      return this.auth.issue(status.endpoint, status.spkiPin)
+      return this.auth.issue(status.endpoint, status.spkiPin, this.#endpoints()[1])
     })
     registerRuntimeRequest(rpc, privateNetworkManagement.cancelPairing, (input) => {
       this.auth.cancelTicket(input.ticketId)
@@ -110,36 +117,58 @@ export class PrivateNetworkController {
     await this.#stopListener()
   }
 
-  async #listen(reset = false) {
+  #endpoints(): string[] {
+    return this.#addresses.map(address => this.#server?.endpoint(address)).filter((endpoint): endpoint is string => !!endpoint)
+  }
+
+  async #listen(status: ReturnType<PrivateNetworkController['status']>, reset = false) {
     const { database, profileId, serviceId, secrets, connect, bytes } = this.#options
-    const status = this.status()
     if (!secrets) {
       this.#error = 'CREDENTIAL_STORE_UNAVAILABLE'
       return
     }
-    if (!status.bindAddress) {
-      this.#error = 'ADDRESS_UNAVAILABLE'
-      return
+    clearTimeout(this.#refreshTimer)
+    if (!status.bindAddress && !this.#closed) {
+      this.#refreshTimer = setTimeout(() => {
+        void this.#serialize(async () => {
+          const current = this.status()
+          if (current.enabled && !current.bindAddress)
+            await this.#listen(current)
+        }).catch(() => {})
+      }, 5000).unref()
     }
-    let server: PrivateNetworkServer | null = null
+    const addresses = status.bindAddress ? [status.bindAddress] : selectPrivateNetworkAddresses(undefined, this.#preferredAddress)
     try {
-      const tls = await loadPrivateNetworkTlsIdentity({ database, profileId, secrets, addresses: [status.bindAddress!], reset })
-      server = new PrivateNetworkServer({ tls, auth: this.auth, identity: { serviceId, profileId }, connect, bytes })
-      this.#endpoint = await server.listen(status.bindAddress!, status.port!)
-      this.#server = server
-      this.#error = null
+      const removed = this.#addresses.filter(address => !addresses.includes(address))
+      this.#addresses = addresses
+      await Promise.all(removed.map(address => this.#server?.unlisten(address)))
+      if (!addresses.length) {
+        this.#error = 'ADDRESS_UNAVAILABLE'
+        if (reset)
+          await loadPrivateNetworkTlsIdentity({ database, profileId, secrets, addresses: ['127.0.0.1'], reset })
+        return
+      }
+      const missing = addresses.filter(address => !this.#server?.endpoint(address))
+      if (!missing.length) {
+        this.#error = null
+        return
+      }
+      const tls = await loadPrivateNetworkTlsIdentity({ database, profileId, secrets, addresses, reset })
+      this.#server ??= new PrivateNetworkServer({ tls, auth: this.auth, identity: { serviceId, profileId }, connect, bytes, endpoints: () => this.#endpoints() })
+      this.#server.updateTls(tls)
+      const results = await Promise.allSettled(missing.map(address => this.#server!.listen(address, status.port ?? 19443)))
+      this.#error = this.#endpoints().length ? null : listenerError(results.find(result => result.status === 'rejected')?.reason)
     }
     catch (error) {
-      await server?.close()
-      const code = (error as { code?: string }).code
-      this.#error = code === 'EADDRINUSE' ? 'ADDRESS_IN_USE' : code === 'EADDRNOTAVAIL' ? 'ADDRESS_UNAVAILABLE' : code?.startsWith('CREDENTIAL_') ? 'CREDENTIAL_STORE_UNAVAILABLE' : code === 'TLS_IDENTITY_UNAVAILABLE' ? 'TLS_IDENTITY_UNAVAILABLE' : 'LISTEN_FAILED'
+      this.#error = listenerError(error)
     }
   }
 
   async #stopListener() {
+    clearTimeout(this.#refreshTimer)
     const server = this.#server
     this.#server = null
-    this.#endpoint = null
+    this.#addresses = []
     this.#error = null
     await server?.close()
   }
@@ -154,3 +183,14 @@ export class PrivateNetworkController {
 }
 
 export type PrivateNetworkConnectionFactory = (identity: AuthenticatedDevice, transport: Parameters<PrivateNetworkServerOptions['connect']>[1]) => ReturnType<PrivateNetworkServerOptions['connect']>
+
+function listenerError(error: unknown): NonNullable<ReturnType<PrivateNetworkController['status']>['errorCode']> {
+  const code = (error as { code?: string } | undefined)?.code
+  if (code === 'EADDRINUSE')
+    return 'ADDRESS_IN_USE'
+  if (code === 'EADDRNOTAVAIL')
+    return 'ADDRESS_UNAVAILABLE'
+  if (code?.startsWith('CREDENTIAL_'))
+    return 'CREDENTIAL_STORE_UNAVAILABLE'
+  return code === 'TLS_IDENTITY_UNAVAILABLE' ? code : 'LISTEN_FAILED'
+}

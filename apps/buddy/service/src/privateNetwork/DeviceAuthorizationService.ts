@@ -38,13 +38,14 @@ export class DeviceAuthorizationService {
     withTransaction(this.#database, () => this.#database.prepare('UPDATE pairing_tickets SET state = \'cancelled\' WHERE state = \'pending\' AND issuer_instance_id != ?').run(options.serviceInstanceId))
   }
 
-  issue(endpoint: string, spkiPin: string) {
+  issue(endpoint: string, spkiPin: string, alternateEndpoint?: string) {
     this.sweep()
     return withTransaction(this.#database, () => {
       const now = this.#now()
       const ticketId = randomUUID()
       const ticketSecret = secret()
-      const result = pairingQrSchema.parse({ format: 'lexora-pairing', version: 1, serviceId: this.#identity.serviceId, profileId: this.#identity.profileId, issuerInstanceId: this.#identity.serviceInstanceId, endpoint, spkiPin, ticketId, ticketSecret, expiresAt: iso(now + limits.ticketLifetimeMs) })
+      const version = alternateEndpoint ? { version: 2, alternateEndpoint } : { version: 1 }
+      const result = pairingQrSchema.parse({ ...version, format: 'lexora-pairing', serviceId: this.#identity.serviceId, profileId: this.#identity.profileId, issuerInstanceId: this.#identity.serviceInstanceId, endpoint, spkiPin, ticketId, ticketSecret, expiresAt: iso(now + limits.ticketLifetimeMs) })
       this.#database.prepare('UPDATE pairing_tickets SET state = \'cancelled\' WHERE state = \'pending\'').run()
       this.#database.prepare('INSERT INTO pairing_tickets(id,secret_hash,issuer_instance_id,state,expires_ms) VALUES (?,?,?,\'pending\',?)').run(ticketId, hash(ticketSecret), this.#identity.serviceInstanceId, now + limits.ticketLifetimeMs)
       return result

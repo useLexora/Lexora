@@ -3,6 +3,7 @@ import { createHash, X509Certificate } from 'node:crypto'
 import { once } from 'node:events'
 import { request } from 'node:https'
 import { createServer } from 'node:net'
+import process from 'node:process'
 import { connect } from 'node:tls'
 import { expect, test, useSyntheticCredentialStorage } from '../fixtures/electron.mjs'
 
@@ -47,9 +48,11 @@ test('mobile connections start without manual addressing and show centered empty
   await page.evaluate(() => window.lexoraDesktop.themes.request({ action: 'preference', preference: { id: 'lexora.themes.classic-light' } }))
   await toggle.click()
   await expect(toggle).toBeChecked()
-  await expect.poll(() => page.evaluate(() => window.lexoraDesktop.localChat.privateNetwork.status({}))).toMatchObject({ state: 'listening', port })
+  await expect.poll(() => page.evaluate(() => window.lexoraDesktop.localChat.privateNetwork.status({}))).toMatchObject({ state: 'listening', bindAddress: null, port })
   await settings.getByRole('button', { name: '配对新设备', exact: true }).click()
-  await expect(page.getByTestId('device-pairing-code').locator('canvas')).toBeVisible()
+  const pairingCode = page.getByTestId('device-pairing-code')
+  await expect(pairingCode.locator('canvas')).toBeVisible()
+  const tailscaleAddress = process.env.LEXORA_TEST_TAILSCALE_IPV4
   await page.screenshot({ path: testInfo.outputPath('connections-pairing.png') })
   await page.keyboard.press('Escape')
   await expect(page.getByTestId('device-pairing-code')).toBeHidden()
@@ -59,7 +62,15 @@ test('mobile connections start without manual addressing and show centered empty
   const call = await pairedTransport(qr)
   const prepared = await call('/v1/pairing/prepare', { ...context, deviceName: '测试手机' })
   const credentials = await call('/v1/pairing/redeem', { ...context, attemptId: prepared.attemptId, recoverySecret: prepared.recoverySecret })
-  await call('/v1/pairing/confirm', {}, `${credentials.credentialId}.${credentials.credentialSecret}`)
+  const bearer = `${credentials.credentialId}.${credentials.credentialSecret}`
+  await call('/v1/pairing/confirm', {}, bearer)
+  if (tailscaleAddress) {
+    const endpoints = [qr.endpoint, qr.alternateEndpoint]
+    expect(qr.version).toBe(2)
+    expect(endpoints).toContain(`https://${tailscaleAddress}:${port}`)
+    const alternateCall = await pairedTransport({ ...qr, endpoint: qr.alternateEndpoint })
+    expect(await alternateCall('/v1/device/endpoints', undefined, bearer)).toEqual({ endpoints })
+  }
   const list = page.getByTestId('paired-devices-list')
   await expect(list.getByText('测试手机', { exact: true })).toBeVisible({ timeout: 15000 })
   await expect(list).toContainText('已授权')
@@ -83,8 +94,11 @@ async function pairedTransport(qr) {
   const pin = `sha256/${createHash('sha256').update(certificate.publicKey.export({ type: 'spki', format: 'der' })).digest('base64')}`
   expect(pin).toBe(qr.spkiPin)
   return (path, body, bearer) => new Promise((resolve, reject) => {
-    const payload = JSON.stringify(body)
-    const req = request(`${qr.endpoint}${path}`, { method: 'POST', ca: certificate.toString(), headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) } }, (response) => {
+    const payload = body === undefined ? undefined : JSON.stringify(body)
+    const headers = bearer ? { Authorization: `Bearer ${bearer}` } : {}
+    if (payload !== undefined)
+      Object.assign(headers, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) })
+    const req = request(`${qr.endpoint}${path}`, { method: payload === undefined ? 'GET' : 'POST', ca: certificate.toString(), headers }, (response) => {
       const chunks = []
       response.on('data', chunk => chunks.push(chunk))
       response.on('end', () => {
