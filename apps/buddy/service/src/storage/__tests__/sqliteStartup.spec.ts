@@ -48,6 +48,23 @@ it('refuses a legacy profile before changing its schema or bytes', () => {
   finally { reopened.close() }
 })
 
+it('enforces foreign keys on reopen and checks existing rows during full verification', () => {
+  const databasePath = path()
+  const database = openBuddySqliteDatabase({ databasePath })
+  try {
+    database.exec('CREATE TABLE foreign_key_fixture (owner TEXT REFERENCES conversations(id))')
+    expect(() => database.exec('INSERT INTO foreign_key_fixture VALUES (\'unknown\')')).toThrow('FOREIGN KEY constraint failed')
+    database.exec('PRAGMA foreign_keys = OFF; INSERT INTO foreign_key_fixture VALUES (\'unknown\')')
+  }
+  finally { database.close() }
+  const reopened = openBuddySqliteDatabase({ databasePath })
+  try {
+    expect(reopened.prepare('PRAGMA foreign_keys').get()?.foreign_keys).toBe(1)
+  }
+  finally { reopened.close() }
+  expect(() => openBuddySqliteDatabase({ databasePath, verifyForeignKeys: true })).toThrow('inconsistent schema')
+})
+
 it('does not activate an unfinished candidate even when it contains no tasks', () => {
   const databasePath = path()
   const pending = openBuddyMigrationCandidate({ databasePath })

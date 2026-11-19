@@ -132,8 +132,8 @@ export function openBuddyMigrationCandidate(options: OpenBuddyDatabaseOptions): 
   return openDatabase(options, BUDDY_MIGRATION_SCHEMA_VERSION, 'FULL')
 }
 
-export function openBuddySqliteDatabase(options: OpenBuddyDatabaseOptions): DatabaseSync {
-  return openDatabase(options, BUDDY_MIGRATION_SCHEMA_VERSION, 'FULL', true)
+export function openBuddySqliteDatabase(options: OpenBuddyDatabaseOptions & { verifyForeignKeys?: boolean }): DatabaseSync {
+  return openDatabase(options, BUDDY_MIGRATION_SCHEMA_VERSION, 'FULL', true, options?.verifyForeignKeys === true)
 }
 
 function validateDatabaseOptions(options: OpenBuddyDatabaseOptions): string {
@@ -145,7 +145,7 @@ function validateDatabaseOptions(options: OpenBuddyDatabaseOptions): string {
   return databasePath
 }
 
-function openDatabase(options: OpenBuddyDatabaseOptions, targetVersion: number, synchronous: 'NORMAL' | 'FULL', sqliteAuthority = false): DatabaseSync {
+function openDatabase(options: OpenBuddyDatabaseOptions, targetVersion: number, synchronous: 'NORMAL' | 'FULL', sqliteAuthority = false, verifyExistingForeignKeys = true): DatabaseSync {
   const databasePath = validateDatabaseOptions(options)
   if (databasePath !== ':memory:' && existsSync(databasePath)) {
     const existing = new NodeDatabaseSync(databasePath, { readOnly: true })
@@ -185,7 +185,7 @@ function openDatabase(options: OpenBuddyDatabaseOptions, targetVersion: number, 
       finally { database.exec('PRAGMA foreign_keys = ON') }
     }
     else {
-      migrateBuddyDatabase(database, currentVersion, targetVersion)
+      migrateBuddyDatabase(database, currentVersion, targetVersion, verifyExistingForeignKeys)
     }
     return database
   }
@@ -206,7 +206,9 @@ function validateRecoverableDatabase(databasePath: string, targetVersion: number
       copyFileSync(`${databasePath}-wal`, `${copy}-wal`)
     const recovered = new NodeDatabaseSync(copy)
     try {
-      validateDatabaseVersion(recovered, targetVersion, sqliteAuthority)
+      const version = validateDatabaseVersion(recovered, targetVersion, sqliteAuthority)
+      if (version >= BUDDY_MIGRATION_SCHEMA_VERSION)
+        assertForeignKeysIntact(recovered)
     }
     finally { recovered.close() }
   }
@@ -233,7 +235,7 @@ function validateDatabaseVersion(database: DatabaseSync, targetVersion: number, 
   return currentVersion
 }
 
-function migrateBuddyDatabase(database: DatabaseSync, currentVersion: number, targetVersion: number): void {
+function migrateBuddyDatabase(database: DatabaseSync, currentVersion: number, targetVersion: number, verifyExistingForeignKeys = true): void {
   if (currentVersion === 15)
     completeModelServicesMigration(database)
   for (const migration of BUDDY_SCHEMA_MIGRATIONS) {
@@ -246,7 +248,8 @@ function migrateBuddyDatabase(database: DatabaseSync, currentVersion: number, ta
   assertCurrentSchema(database)
   if (targetVersion >= BUDDY_MIGRATION_SCHEMA_VERSION) {
     assertMigrationSchema(database)
-    assertForeignKeysIntact(database)
+    if (currentVersion < targetVersion || verifyExistingForeignKeys)
+      assertForeignKeysIntact(database)
   }
 }
 

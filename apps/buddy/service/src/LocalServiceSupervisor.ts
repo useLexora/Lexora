@@ -30,12 +30,11 @@ export function startLocalServiceSupervisor(path: string) {
       throw new Error('SERVICE_STORAGE_MAINTENANCE_PENDING')
     await assertStorageIdentity(state)
     const profileRoot = await realpath(state.activeRoot)
-    await writePrivateServiceJson(path, { ...config, profileRoot, defaultRoot })
-    active = await startLocalServiceDaemon(path, { restartDesktop })
+    const activeConfig = { ...config, profileRoot, defaultRoot }
+    await writePrivateServiceJson(path, activeConfig)
+    active = await startLocalServiceDaemon(activeConfig, { restartDesktop, foreground: openDesktop })
     if (stopping)
       await active.stop()
-    else if (openDesktop)
-      await active.openDesktop()
   }
   async function migrate(config: ServiceLaunch, defaultRoot: string) {
     const native = { appPath: config.resourcesRoot, resourcesPath: config.resourcesRoot, isPackaged: true }

@@ -52,11 +52,26 @@ describe('sqlite run event queries', () => {
     expect(await events.compactTerminalRuns()).toBe(19)
     expect(database.prepare('SELECT count(*) AS count FROM run_event_maintenance WHERE recovery_pending != 0 OR compaction_pending != 0').get()).toEqual({ count: 0 })
     const before = database.prepare('SELECT * FROM run_events ORDER BY run_id, sequence').all()
-    expect(await events.recoverAll()).toMatchObject({ scanned: 19, rebuilt: 0, events: 57, failed: 0 })
+    expect(await events.recoverAll()).toMatchObject({ scanned: 0, rebuilt: 0, events: 0, failed: 0 })
+    expect(await events.recoverAll({ force: true })).toMatchObject({ scanned: 19, rebuilt: 0, events: 57, failed: 0 })
     expect(database.prepare('SELECT * FROM run_events ORDER BY run_id, sequence').all()).toEqual(before)
     expect(events.listToolCounts(['run-1', 'run-2'])).toEqual(new Map([['run-1', 1], ['run-2', 1]]))
     expect(await events.findLatest('run-1', ['run.completed'])).toMatchObject({ sequence: 4 })
     expect(events.listForRuns(['run-1'], { latestActivityOnly: true })).toMatchObject([{ sequence: 4 }])
+  })
+
+  it('validates incomplete and pending histories at startup and completed histories on access', async () => {
+    const database = fixture()
+    const events = log(database)
+    for (const runId of ['active', 'pending', 'history']) {
+      seedSqliteRun(database, runId)
+      await events.append({ runId, type: runId === 'active' ? 'future.fact' : 'run.completed', payload: {}, createdAt: now })
+    }
+    database.exec('UPDATE runs SET status = \'completed\' WHERE id IN (\'pending\', \'history\')')
+    database.exec('UPDATE run_events SET format_version = 2 WHERE run_id = \'history\'')
+    database.exec('UPDATE run_event_maintenance SET recovery_pending = 0 WHERE run_id = \'history\'')
+    await expect(events.recoverAll()).resolves.toMatchObject({ scanned: 2, events: 2 })
+    await expect(events.read('history')).rejects.toMatchObject({ code: 'EVENT_STORAGE_FAILED', cause: { message: 'Run event format is not supported' } })
   })
 
   it('reads the full authority in sequence order and pages across compaction gaps without a time cursor', async () => {
@@ -144,7 +159,8 @@ describe('sqlite run event queries', () => {
       database.prepare('INSERT INTO run_events (run_id, sequence, event_type, payload_json, created_at) VALUES (?, 1, ?, ?, ?)').run('run-1', 'future.fact', '{}', now)
     if (kind === 'overflow')
       database.exec('UPDATE runs SET next_event_sequence = 9223372036854775807')
-    await expect(log(database).read('run-1')).rejects.toMatchObject({ code: 'EVENT_STORAGE_FAILED', operation: 'read' })
+    database.exec('UPDATE runs SET status = \'completed\'')
+    await expect(log(database).recoverAll()).rejects.toMatchObject({ code: 'EVENT_STORAGE_FAILED', operation: 'read' })
   })
 
   it('does not expose same-connection uncommitted events as durable history', async () => {

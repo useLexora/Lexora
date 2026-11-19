@@ -119,6 +119,7 @@ else {
       builtinSkillsDirectories,
       proxy: config.proxy,
       storageAuthority: config.storageAuthority,
+      forceEventRecovery: process.env.LEXORA_BUDDY_EVENT_RECOVERY === 'full',
       platform: createRpcRuntimePlatform(host, { display: config.display, preferences: { get: async () => structuredClone(preferences), subscribe: () => () => {} } }),
       notify: (method, params) => host.notify(method, params),
       onFatalFailure: fail,
