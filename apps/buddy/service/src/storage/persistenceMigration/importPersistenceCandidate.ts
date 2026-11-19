@@ -8,13 +8,16 @@ import { DatabaseSync as ReadonlyDatabase } from 'node:sqlite'
 import { containsStoragePath } from '../../../../platform/storage/storageFiles'
 import { acquireStorageRootLease, assertStorageRootLease } from '../../../../platform/storage/StorageRootLease'
 import { hashStorageFile } from '../../../../platform/storage/storageTree'
-import { RUN_EVENT_PROJECTION_VERSION } from '../../events/RunEventRecovery'
 import { createAttachmentPersistenceRepository } from '../attachmentPersistenceRepository'
 import { openBuddyMigrationCandidate } from '../database'
-import { relocateDatabaseReferences, relocateProfileJournals, relocateStructuredPaths } from '../relocateProfileReferences'
+import { relocateDatabaseReferences, relocateProfileJournals, relocateStructuredPaths, verifyProfileReferences } from '../relocateProfileReferences'
 import { withTransaction } from '../transaction'
+import { checkpointEvidence, legacyEventPath, readLegacyCheckpoints, verifySparseCheckpoints } from './legacyRunCheckpoints'
 import { importLegacyRunHistory, PERSISTENCE_MIGRATION_ID, PersistenceMigrationError } from './legacyRunHistory'
+import { MigrationReferences } from './migrationReferences'
 import { preparePersistenceSources, preparePersistenceWorkingCopy, readPersistenceSource, verifyPersistenceSources } from './persistenceSources'
+
+import { countedUpgradeItems, reportUpgradeStep } from './upgradeProgress'
 
 export interface PersistenceCandidateInput {
   sourceRoot: string
@@ -44,14 +47,24 @@ export async function importPersistenceCandidate(input: PersistenceCandidateInpu
 
 async function importCandidate(input: PersistenceCandidateInput): Promise<{ profileRoot: string, sourceFingerprint: string, runs: number, files: number }> {
   const manifest = await preparePersistenceSources(input)
-  const profileRoot = await preparePersistenceWorkingCopy(manifest, input.signal, input.report)
-  await input.checkpoint?.('copied')
   const original = new ReadonlyDatabase(join(manifest.candidateRoot, 'source/buddy/buddy.sqlite3'), { readOnly: true })
   let database: DatabaseSync | undefined
   try {
+    const references = new MigrationReferences(manifest)
+    const report = references.inPlace ? input.report : undefined
+    reportUpgradeStep(report, 'checkpoints')
+    const checkpoints = readLegacyCheckpoints(original)
+    await verifySparseCheckpoints(original, checkpoints, references, input.signal, report)
+    reportUpgradeStep(report, 'databaseCopy')
+    const resumingUpgrade = references.inPlace && manifest.workingCopyReady
+    const profileRoot = await preparePersistenceWorkingCopy(manifest, input.signal, input.report)
+    await input.checkpoint?.('copied')
+    reportUpgradeStep(report, 'schema')
     const sourceSchema = Number(original.prepare('PRAGMA user_version').get()!.user_version)
     database = openBuddyMigrationCandidate({ databasePath: join(profileRoot, 'buddy/buddy.sqlite3') })
     const previous = database.prepare('SELECT * FROM persistence_migrations WHERE id = ?').get(PERSISTENCE_MIGRATION_ID)
+    if (resumingUpgrade && !previous)
+      throw new PersistenceMigrationError('MIGRATION_CANDIDATE_CHANGED')
     if (previous && previous.source_fingerprint !== manifest.fingerprint)
       throw new PersistenceMigrationError('MIGRATION_SOURCE_CHANGED')
     if (previous?.state === 'activated')
@@ -62,36 +75,39 @@ async function importCandidate(input: PersistenceCandidateInput): Promise<{ prof
           VALUES (?, ?, ?, 'importing', ?)`).run(PERSISTENCE_MIGRATION_ID, manifest.fingerprint, sourceSchema, new Date().toISOString())
       })
     }
-    relocateDatabaseReferences(database, manifest.sourceRoot, profileRoot)
+    if (!references.inPlace)
+      relocateDatabaseReferences(database, manifest.sourceRoot, profileRoot)
     const runs = database.prepare('SELECT id, conversation_id FROM runs ORDER BY rowid').all() as { id: string, conversation_id: string }[]
-    const hasCheckpoints = !!original.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'run_event_checkpoints'`).get()
-    for (const run of runs) {
+    for (const run of countedUpgradeItems(runs, 'runs', report)) {
       input.signal.throwIfAborted()
-      const path = `buddy/conversations/${run.conversation_id}/events/${run.id}.jsonl`
-      const entry = manifest.entries.find(item => item.path === path)
-      const checkpoint = hasCheckpoints ? original.prepare('SELECT * FROM run_event_checkpoints WHERE run_id = ?').get(run.id) : undefined
-      const content = await readPersistenceSource(manifest, path)
-      const mapped = content === null ? null : mapEventContent(content, manifest.sourceRoot, profileRoot)
-      const projectedLast = original.prepare('SELECT COALESCE(MAX(sequence), 0) AS value FROM run_events WHERE run_id = ?').get(run.id)?.value
+      const journal = await references.readJournal(legacyEventPath(run.conversation_id, run.id))
       importLegacyRunHistory(database, {
         runId: run.id,
-        content: mapped,
-        sourceFingerprint: entry?.digest ?? 'missing',
-        certifiedThrough: entry && checkpoint?.file_fingerprint === entry.identity
-          && checkpoint.projection_version === RUN_EVENT_PROJECTION_VERSION && checkpoint.last_sequence === projectedLast
-          ? Number(checkpoint.last_sequence)
-          : null,
+        content: journal && (references.inPlace ? journal.content : mapEventContent(journal.content, manifest.sourceRoot, profileRoot)),
+        sourceFingerprint: journal?.digest ?? 'missing',
+        ...checkpointEvidence(checkpoints.get(run.id), journal?.identity),
       })
       await input.checkpoint?.('run')
     }
+    reportUpgradeStep(report, 'aliases')
     importAliases(database)
-    const files = await importFiles(database, profileRoot, manifest, input.signal)
-    await verifyPiReferences(database, profileRoot, manifest, input.signal)
-    await relocateProfileJournals(profileRoot, manifest.sourceRoot, profileRoot, input.signal)
-    await verifyCandidateFiles(manifest, profileRoot, input.signal)
-    verifyDrafts(database, original, manifest.sourceRoot, profileRoot)
+    const files = await importFiles(database, references, input.signal, report)
+    await verifyPiReferences(database, references, manifest.sourceRoot, input.signal, report)
+    if (references.inPlace) {
+      reportUpgradeStep(report, 'references')
+      await verifyProfileReferences(database, references.root, references.root)
+      reportUpgradeStep(report, 'integrity')
+      if (database.prepare('PRAGMA integrity_check').get()?.integrity_check !== 'ok')
+        throw new PersistenceMigrationError('MIGRATION_VERIFICATION_FAILED')
+    }
+    else {
+      await relocateProfileJournals(profileRoot, manifest.sourceRoot, profileRoot, input.signal)
+      await verifyCandidateFiles(manifest, profileRoot, input.signal)
+    }
+    verifyDrafts(database, original, manifest.sourceRoot, references.root)
     await input.checkpoint?.('files')
     await verifyPersistenceSources(manifest, input.signal, input.report)
+    await references.verify(input.signal, report)
     if (database.prepare('PRAGMA foreign_key_check').all().length
       || database.prepare('SELECT 1 FROM runs WHERE next_event_sequence IS NULL').get()) {
       throw new PersistenceMigrationError('MIGRATION_VERIFICATION_FAILED')
@@ -139,37 +155,60 @@ function importAliases(database: DatabaseSync): void {
   })
 }
 
-async function importFiles(database: DatabaseSync, root: string, manifest: PersistenceSourceManifest, signal: AbortSignal): Promise<number> {
+async function importFiles(database: DatabaseSync, references: MigrationReferences, signal: AbortSignal, report?: StorageReporter): Promise<number> {
+  const root = references.root
   const catalog = createAttachmentPersistenceRepository(database)
   const records = database.prepare('SELECT id, stored_path, size_bytes FROM attachments ORDER BY id').all() as { id: string, stored_path: string, size_bytes: number }[]
-  for (const record of records) {
+  if (!records.length)
+    return 0
+  const verified: { id: string, path: string, sizeBytes: number, digest: string }[] = []
+  for (const record of countedUpgradeItems(records, 'attachments', report)) {
     signal.throwIfAborted()
     const path = await requireOwnedFile(root, record.stored_path)
-    const source = manifest.entries.find(entry => entry.path === relative(root, path).replaceAll('\\', '/'))
-    if (!source?.digest || source.size !== record.size_bytes || await hashStorageFile(path, signal) !== source.digest)
-      throw new PersistenceMigrationError('MIGRATION_ATTACHMENT_MISMATCH')
-    withTransaction(database, () => {
-      catalog.adopt({ path, sizeBytes: record.size_bytes, sha256: source.digest })
-      recordEvidence(database, 'file', record.id, source.digest!, { sizeBytes: record.size_bytes })
-    })
+    const digest = await references.attachmentDigest(path, relative(root, path).replaceAll('\\', '/'), record.size_bytes, signal)
+    verified.push({ id: record.id, path, sizeBytes: record.size_bytes, digest })
   }
+  signal.throwIfAborted()
+  withTransaction(database, () => {
+    // No client observes this candidate. Keep ownership and integrity triggers active during backfill.
+    const revisions = database.prepare(`SELECT name, sql FROM sqlite_schema WHERE type = 'trigger'
+      AND name IN ('product_query_revision_managed_files_insert', 'product_query_revision_attachments_update')`).all()
+    if (revisions.length !== 2)
+      throw new PersistenceMigrationError('MIGRATION_CANDIDATE_CHANGED')
+    for (const trigger of revisions)
+      database.exec(`DROP TRIGGER "${trigger.name}"`)
+    for (const file of verified) {
+      catalog.adopt({ path: file.path, sizeBytes: file.sizeBytes, sha256: file.digest })
+      recordEvidence(database, 'file', file.id, file.digest, { sizeBytes: file.sizeBytes })
+    }
+    const unbound = database.prepare(`SELECT 1 FROM attachments a
+      WHERE NOT EXISTS (SELECT 1 FROM managed_files f JOIN file_references r ON r.file_id = f.id
+        WHERE f.path = a.stored_path AND f.state = 'ready' AND f.size_bytes = a.size_bytes AND r.binding_id = a.id
+          AND r.owner_id = COALESCE(a.message_id, a.draft_id)
+          AND r.kind = CASE WHEN a.message_id IS NOT NULL THEN 'message'
+            WHEN EXISTS (SELECT 1 FROM chat_queue WHERE id = a.draft_id) THEN 'queue' ELSE 'draft' END)
+      LIMIT 1`).get()
+    if (unbound)
+      throw new PersistenceMigrationError('MIGRATION_VERIFICATION_FAILED')
+    for (const trigger of revisions)
+      database.exec(String(trigger.sql))
+  })
   return records.length
 }
 
-async function verifyPiReferences(database: DatabaseSync, root: string, manifest: PersistenceSourceManifest, signal: AbortSignal): Promise<void> {
+async function verifyPiReferences(database: DatabaseSync, files: MigrationReferences, sourceRoot: string, signal: AbortSignal, report?: StorageReporter): Promise<void> {
+  const root = files.root
   const references = database.prepare(`SELECT pi_session_file AS path FROM runs WHERE pi_session_file IS NOT NULL
     UNION SELECT session_file FROM execution_thread_bindings
     UNION SELECT session_file FROM conversation_pi_trees`).all() as { path: string }[]
-  for (const reference of references) {
+  for (const reference of countedUpgradeItems(references, 'sessions', report)) {
     signal.throwIfAborted()
     const path = await requireOwnedFile(root, reference.path)
     const sourcePath = relative(root, path).replaceAll('\\', '/')
-    const source = manifest.entries.find(entry => entry.path === sourcePath)
-    if (!source?.digest)
+    const journal = await files.readJournal(sourcePath)
+    if (!journal)
       throw new PersistenceMigrationError('MIGRATION_PI_SOURCE_MISSING')
-    const content = await readPersistenceSource(manifest, sourcePath)
-    if (content === null)
-      throw new PersistenceMigrationError('MIGRATION_PI_SOURCE_MISSING')
+    const { content } = journal
     const ids = new Set<string>()
     try {
       const entries = content.split('\n').filter(line => line.trim()).map(line => JSON.parse(line) as { id?: unknown, parentId?: unknown, type?: unknown })
@@ -186,15 +225,17 @@ async function verifyPiReferences(database: DatabaseSync, root: string, manifest
     catch (cause) {
       throw new PersistenceMigrationError('MIGRATION_PI_CORRUPTED', { cause })
     }
-    const current = await readFile(path, 'utf8')
-    const expected = mapEventContent(content, manifest.sourceRoot, root)
-    if (current !== content && current !== `${expected.trimEnd()}\n` && current !== expected)
-      throw new PersistenceMigrationError('MIGRATION_PI_CHANGED')
+    if (!files.inPlace) {
+      const current = await readFile(path, 'utf8')
+      const expected = mapEventContent(content, sourceRoot, root)
+      if (current !== content && current !== `${expected.trimEnd()}\n` && current !== expected)
+        throw new PersistenceMigrationError('MIGRATION_PI_CHANGED')
+    }
     const bindings = database.prepare(`SELECT root_entry_id AS id FROM execution_thread_bindings WHERE session_file = ?
       UNION SELECT root_entry_id FROM conversation_pi_trees WHERE session_file = ?`).all(path, path)
     if (bindings.some(binding => binding.id !== null && !ids.has(String(binding.id))))
       throw new PersistenceMigrationError('MIGRATION_PI_BINDING_MISSING')
-    withTransaction(database, () => recordEvidence(database, 'pi', sourcePath, source.digest!, { entries: ids.size }))
+    withTransaction(database, () => recordEvidence(database, 'pi', sourcePath, journal.digest, { entries: ids.size }))
   }
 }
 
@@ -250,7 +291,7 @@ function verifyDrafts(database: DatabaseSync, original: DatabaseSync, source: st
         continue
       const value = row[key]
       const expected = key.endsWith('_json') && typeof value === 'string'
-        ? JSON.stringify(relocateStructuredPaths(JSON.parse(value), source, target))
+        ? JSON.stringify(source === target ? JSON.parse(value) : relocateStructuredPaths(JSON.parse(value), source, target))
         : value
       const actual = key.endsWith('_json') && typeof current[key] === 'string' ? JSON.stringify(JSON.parse(current[key])) : current[key]
       if (expected !== actual)

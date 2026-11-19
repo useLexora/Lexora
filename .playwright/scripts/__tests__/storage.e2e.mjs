@@ -24,6 +24,55 @@ test('stopping initial consolidation exits with source data intact and offers re
   expect(await recovery.app.evaluate(({ app }) => app.getAppMetrics().some(metric => metric.name === 'Buddy Service'))).toBe(false)
 })
 
+test('an in-place upgrade shows run counts and clears the percentage during database checks', async ({ buddy }) => {
+  const { createHash, randomUUID } = await import('node:crypto')
+  const { readFile, writeFile } = await import('node:fs/promises')
+  const { dirname, join } = await import('node:path')
+  const { DatabaseSync } = await import('node:sqlite')
+  const instance = await buddy.createInstance('upgrade-progress')
+  await instance.launch({ storageAuthority: 'legacy_jsonl' })
+  await instance.stop()
+
+  const database = new DatabaseSync(join(instance.home, 'buddy/buddy.sqlite3'))
+  try {
+    database.exec(`
+      INSERT INTO conversations (id, created_at, updated_at) VALUES ('progress-task', '2026-01-01', '2026-01-01');
+      INSERT INTO conversation_branches (id, conversation_id, created_at) VALUES ('progress-branch', 'progress-task', '2026-01-01');
+      INSERT INTO messages (id, conversation_id, branch_id, role, content_json, created_at)
+        VALUES ('progress-input', 'progress-task', 'progress-branch', 'user', '{}', '2026-01-01');
+      INSERT INTO runs (id, conversation_id, branch_id, triggering_message_id, provider, model, purpose, status, started_at)
+        VALUES ('progress-run', 'progress-task', 'progress-branch', 'progress-input', 'fixture', 'fixture', 'chat', 'queued', '2026-01-01');
+    `)
+  }
+  finally { database.close() }
+
+  const locator = join(dirname(instance.home), '.lexora-locations', createHash('sha256').update(instance.home).digest('hex').slice(0, 24), 'location.json')
+  const state = JSON.parse(await readFile(locator, 'utf8'))
+  state.pending = { id: randomUUID(), kind: 'upgrade', source: instance.home, target: instance.home, phase: 'failed', createdAt: new Date().toISOString(), error: 'STORAGE_WORKER_INTERRUPTED' }
+  await writeFile(locator, JSON.stringify(state))
+  const { page } = await instance.launch({ storageAuthority: 'legacy_jsonl', maintenance: true })
+  const seen = []
+  await page.exposeFunction('observeStorageProgress', value => seen.push(value))
+  await page.evaluate(() => {
+    const track = document.querySelector('[role="progressbar"]')
+    new MutationObserver(() => {
+      window.observeStorageProgress({
+        label: document.querySelector('#phase').textContent,
+        detail: document.querySelector('#detail').textContent,
+        percent: track.getAttribute('aria-valuenow'),
+        animation: getComputedStyle(track.firstElementChild).animationName,
+      })
+    }).observe(track, { attributes: true })
+  })
+  await page.getByRole('link', { name: '重试', exact: true }).click()
+  await expect.poll(() => seen).toEqual(expect.arrayContaining([
+    expect.objectContaining({ label: '正在导入任务运行记录', detail: '已完成 0 / 1 项', percent: '0', animation: 'none' }),
+    expect.objectContaining({ label: '正在导入任务运行记录', detail: '已完成 1 / 1 项', percent: '100', animation: 'none' }),
+    expect.objectContaining({ label: '正在检查数据库完整性', percent: null }),
+  ]))
+  await expect.poll(async () => JSON.parse(await readFile(locator, 'utf8')).pending).toBeNull()
+})
+
 test('initial consolidation failure exports safe diagnostics and opens a prefilled issue without changing source data', async ({ buddy }) => {
   const { mkdir, readFile, writeFile } = await import('node:fs/promises')
   const { dirname, join } = await import('node:path')

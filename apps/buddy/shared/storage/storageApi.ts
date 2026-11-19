@@ -40,6 +40,8 @@ export interface StorageProgress {
   completedBytes: number
   totalBytes: number | null
   files: number
+  upgradeStep?: 'checkpoints' | 'databaseCopy' | 'schema' | 'runs' | 'aliases' | 'attachments' | 'sessions' | 'references' | 'integrity' | 'sourceFiles'
+  items?: { completed: number, total: number }
   error: string | null
   category?: 'browser' | 'preferences' | 'data'
 }

@@ -40,6 +40,35 @@ describe('workspace hydration', () => {
     expect(fixture.lifecycle.state.value.generation).toBe('runtime-2')
   })
 
+  it('uncovers the workspace when the same runtime reconnects after startup', async () => {
+    const fixture = createFixture()
+    fixture.connect('runtime-1')
+    await fixture.lifecycle.ready
+    fixture.connect('runtime-1', 'starting')
+    expect(fixture.lifecycle.loading.value).toBe(true)
+    fixture.connect('runtime-1')
+    await vi.waitFor(() => expect(fixture.lifecycle.loading.value).toBe(false))
+    expect(fixture.lifecycle.dataReady.value).toBe(true)
+  })
+
+  it('keeps the workspace covered until the current connection finishes restoring', async () => {
+    const first = deferred<void>()
+    const second = deferred<void>()
+    let attempts = 0
+    const fixture = createFixture({ restore: () => (++attempts === 1 ? first : second).promise })
+    fixture.connect('runtime-1')
+    await vi.waitFor(() => expect(attempts).toBe(1))
+    fixture.connect('runtime-1', 'offline')
+    fixture.connect('runtime-1')
+    first.resolve()
+    await vi.waitFor(() => expect(attempts).toBe(2))
+    expect(fixture.lifecycle.loading.value).toBe(true)
+    expect(fixture.lifecycle.failed.value).toBe(false)
+    second.resolve()
+    await fixture.lifecycle.ready
+    expect(fixture.lifecycle.dataReady.value).toBe(true)
+  })
+
   it('does not expose an old generation when a restart arrives during restoration', async () => {
     const gate = deferred<void>()
     const fixture = createFixture({ restore: () => gate.promise })

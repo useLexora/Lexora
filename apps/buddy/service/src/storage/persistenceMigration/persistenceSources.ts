@@ -1,7 +1,8 @@
 import type { BigIntStats } from 'node:fs'
 import type { StorageCopyPlan, StorageEntry, StorageReporter } from '../../../../platform/storage/storageTree'
 import { createHash } from 'node:crypto'
-import { lstat, mkdir, readFile, realpath } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { copyFile, lstat, mkdir, readFile, realpath } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { z } from 'zod'
 import { containsStoragePath, isMissing, readStorageJson, writeStorageJson } from '../../../../platform/storage/storageFiles'
@@ -37,20 +38,33 @@ export const persistenceUpgradePaths = [
   'buddy/buddy.sqlite3-wal',
   'buddy/buddy.sqlite3-shm',
   'buddy/buddy.sqlite3-journal',
-  'buddy/conversations',
-  'buddy/drafts',
-  'buddy/spaces',
-  'buddy/agent',
-  'buddy/skills',
 ] as const
 
-export function persistenceUpgradeIncludes(path: string): boolean {
-  return path === 'buddy' || persistenceUpgradePaths.some(root => path === root || path.startsWith(`${root}/`))
-}
+const upgradePathSet = new Set<string>(persistenceUpgradePaths)
 
 function sourceExcluded(path: string, scope: PersistenceSourceManifest['scope']): boolean {
   return path === '.runtime' || path === 'buddy/buddy.sqlite3-shm'
-    || (scope === 'upgrade' && !persistenceUpgradeIncludes(path))
+    || (scope === 'upgrade' && path !== 'buddy' && !upgradePathSet.has(path))
+}
+
+export async function assertUpgradeDatabaseCopy(root: string): Promise<void> {
+  const directory = join(root, 'buddy')
+  const resolved = await realpath(directory).catch((error) => {
+    if (isMissing(error))
+      return null
+    throw error
+  })
+  if (resolved !== directory)
+    throw new PersistenceMigrationError('MIGRATION_CANDIDATE_CHANGED')
+  for (const relativePath of persistenceUpgradePaths) {
+    const info = await lstat(join(root, relativePath)).catch((error) => {
+      if (isMissing(error))
+        return null
+      throw error
+    })
+    if (info ? !info.isFile() || info.nlink !== 1 : relativePath === 'buddy/buddy.sqlite3')
+      throw new PersistenceMigrationError('MIGRATION_CANDIDATE_CHANGED')
+  }
 }
 
 export async function readPersistenceSourceManifest(candidateRoot: string): Promise<PersistenceSourceManifest | null> {
@@ -99,6 +113,8 @@ export async function preparePersistenceSources(input: {
   if (plan.entries.some(entry => entry.path === MANIFEST_NAME))
     throw new PersistenceMigrationError('MIGRATION_SOURCE_ALREADY_CANDIDATE')
   const entries = await fingerprintEntries(sourceRoot, plan, signal, report, 'preparing')
+  if (scope === 'upgrade' && entries.some(entry => entry.link !== null || entry.directory !== (entry.path === 'buddy')))
+    throw new PersistenceMigrationError('MIGRATION_SOURCE_NOT_REGULAR')
   if (!entries.some(entry => entry.path === 'buddy/buddy.sqlite3' && entry.digest))
     throw new PersistenceMigrationError('MIGRATION_DATABASE_MISSING')
   const fingerprint = sourceDigest(entries)
@@ -109,8 +125,18 @@ export async function preparePersistenceSources(input: {
       || manifest.fingerprint !== fingerprint || sourceDigest(manifest.entries) !== fingerprint) {
       throw new PersistenceMigrationError('MIGRATION_SOURCE_CHANGED')
     }
-    if (manifest.copied)
+    if (manifest.copied) {
+      if (scope === 'upgrade') {
+        const snapshot = join(candidateRoot, 'source')
+        await assertUpgradeDatabaseCopy(snapshot)
+        for (const entry of manifest.entries.filter(entry => !entry.directory)) {
+          const path = join(snapshot, entry.path)
+          if (await realpath(path) !== path || await hashStorageFile(path, signal) !== entry.digest)
+            throw new PersistenceMigrationError('MIGRATION_SNAPSHOT_CHANGED')
+        }
+      }
       return manifest
+    }
   }
   else {
     await mkdir(candidateRoot, { mode: 0o700 })
@@ -126,6 +152,23 @@ export async function preparePersistenceSources(input: {
 export async function preparePersistenceWorkingCopy(manifest: PersistenceSourceManifest, signal: AbortSignal, report: StorageReporter = () => {}): Promise<string> {
   const profile = join(manifest.candidateRoot, 'profile')
   const source = join(manifest.candidateRoot, 'source')
+  if (manifest.scope === 'upgrade') {
+    if (manifest.workingCopyReady) {
+      await assertUpgradeDatabaseCopy(profile)
+      return profile
+    }
+    await mkdir(join(profile, 'buddy'), { recursive: true, mode: 0o700 })
+    for (const entry of manifest.entries.filter(entry => !entry.directory)) {
+      signal.throwIfAborted()
+      const destination = join(profile, entry.path)
+      await copyFile(join(source, entry.path), destination, constants.COPYFILE_FICLONE)
+      if (await hashStorageFile(destination, signal) !== entry.digest)
+        throw new PersistenceMigrationError('MIGRATION_SNAPSHOT_CHANGED')
+    }
+    manifest.workingCopyReady = true
+    await writeStorageJson(join(manifest.candidateRoot, MANIFEST_NAME), manifest)
+    return profile
+  }
   const plan = await planStorageCopy(source, { signal, report, exclude: path => path === 'buddy/buddy.sqlite3-shm' })
   const snapshot = await fingerprintEntries(source, plan, signal, report, 'verifying')
   const digests = new Map(snapshot.map(entry => [entry.path, entry.digest]))
@@ -168,9 +211,9 @@ async function fingerprintEntries(root: string, plan: StorageCopyPlan, signal: A
     const before = await lstat(join(root, entry.path), { bigint: true })
     const digest = entry.directory || entry.link !== null ? null : await hashStorageFile(join(root, entry.path), signal)
     const after = await lstat(join(root, entry.path), { bigint: true })
-    if (identity(before) !== identity(after))
+    if (persistenceFileIdentity(before) !== persistenceFileIdentity(after))
       throw new PersistenceMigrationError('MIGRATION_SOURCE_CHANGED')
-    entries.push({ ...entry, digest, identity: identity(after) })
+    entries.push({ ...entry, digest, identity: persistenceFileIdentity(after) })
     completedBytes += entry.size
     if (Date.now() - lastReport >= 100) {
       report({ phase, completedBytes, totalBytes: plan.totalBytes, files: entries.length, error: null })
@@ -181,7 +224,7 @@ async function fingerprintEntries(root: string, plan: StorageCopyPlan, signal: A
   return entries
 }
 
-function identity(metadata: BigIntStats): string {
+export function persistenceFileIdentity(metadata: BigIntStats): string {
   return [metadata.dev, metadata.ino, metadata.size, metadata.mtimeNs, metadata.ctimeNs, metadata.birthtimeNs].join(':')
 }
 

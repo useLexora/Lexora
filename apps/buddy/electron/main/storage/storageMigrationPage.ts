@@ -16,6 +16,8 @@ function failureMessage(code: string | null): string {
   switch (code) {
     case 'STORAGE_WORKER_INTERRUPTED': return '上次整理被中断，原数据仍在。点击重试可继续完成整理。'
     case 'SNAPSHOT_DEPENDENCY_CONFLICT': return '备份中的关联记录与当前数据冲突，原数据未被替换。请取消恢复后选择其他备份。'
+    case 'MIGRATION_EVENT_GAP_UNVERIFIED': return '部分历史运行的事件序号不连续，无法确认旧版压缩记录。原数据仍在，请导出诊断日志反馈问题。'
+    case 'MIGRATION_EVENT_CONFLICT': return '同一次运行的历史文件和数据库记录不一致。原数据仍在，请导出诊断日志反馈问题。'
     case 'STORAGE_NO_SPACE': return '目标磁盘空间不足。原数据仍在，请腾出空间后重试。'
     case 'STORAGE_REFERENCE_OUTSIDE':
     case 'STORAGE_REFERENCE_MISSING': return '部分附件或会话文件缺失。请检查原目录，或使用完整备份。'
@@ -34,11 +36,29 @@ function size(bytes: number): string {
   return `${Math.ceil(bytes / 1024)} KB`
 }
 
+const upgradeSteps = {
+  checkpoints: '核对旧运行记录',
+  databaseCopy: '准备数据库副本',
+  schema: '升级数据库结构',
+  runs: '导入任务运行记录',
+  aliases: '核对历史请求和草稿',
+  attachments: '核验附件',
+  sessions: '核验会话历史',
+  references: '核验数据库中的文件引用',
+  integrity: '检查数据库完整性',
+  sourceFiles: '复核源文件',
+} satisfies Record<NonNullable<StorageProgress['upgradeStep']>, string>
+
 function presentation(kind: StorageOperation['kind'], progress: StorageProgress, committing: boolean) {
   const requiredUpgrade = kind === 'consolidate' || kind === 'upgrade'
   const failure = progress.phase === 'failed' || progress.phase === 'cancelled'
   const copying = progress.phase === 'copying'
-  const percent = copying && progress.totalBytes !== null ? Math.min(100, Math.floor(progress.completedBytes / Math.max(1, progress.totalBytes) * 100)) : null
+  const upgradeStep = !failure && kind === 'upgrade' && progress.upgradeStep ? upgradeSteps[progress.upgradeStep] : null
+  const items = upgradeStep ? progress.items : undefined
+  const measured = items ?? (progress.totalBytes !== null && (copying || progress.phase === 'verifying')
+    ? { completed: progress.completedBytes, total: progress.totalBytes }
+    : null)
+  const percent = measured && measured.total > 0 ? Math.min(100, Math.floor(measured.completed / measured.total * 100)) : null
   const category = progress.category === 'browser' ? '浏览器资料' : progress.category === 'preferences' ? '窗口与桌宠偏好' : '本机资料'
   const phases: Record<StorageProgress['phase'], string> = {
     preparing: '正在检查需要保留的资料',
@@ -50,14 +70,29 @@ function presentation(kind: StorageOperation['kind'], progress: StorageProgress,
     failed: '整理暂未完成',
     cancelled: '整理已停止',
   }
+  function detail() {
+    if (failure)
+      return failureMessage(progress.error)
+    if (items)
+      return `已完成 ${items.completed.toLocaleString('zh-CN')} / ${items.total.toLocaleString('zh-CN')} 项`
+    if (upgradeStep)
+      return '此项完成后将自动继续。'
+    if (copying)
+      return `${percent === null ? '' : `复制进度 ${percent}% · `}已复制 ${progress.files.toLocaleString('zh-CN')} 个文件`
+    if (progress.phase === 'preparing')
+      return `已检查 ${progress.files.toLocaleString('zh-CN')} 项资料，正在确认文件与可用空间。`
+    if (progress.phase === 'verifying')
+      return `已校验 ${progress.files.toLocaleString('zh-CN')} 项资料。`
+    return '完成后会自动重新启动 Lexora，请稍候。'
+  }
   return {
     phase: progress.phase,
     step: failure ? -1 : progress.phase === 'preparing' ? 0 : copying ? 1 : 2,
     percent,
     text: {
-      'phase': phases[progress.phase],
-      'amount': progress.totalBytes === null ? '' : `${size(progress.completedBytes)} / ${size(progress.totalBytes!)}`,
-      'detail': failure ? failureMessage(progress.error) : copying ? `${percent === null ? '' : `复制进度 ${percent}% · `}已复制 ${progress.files.toLocaleString('zh-CN')} 个文件` : progress.phase === 'preparing' ? `已检查 ${progress.files.toLocaleString('zh-CN')} 项资料，正在确认文件与可用空间。` : progress.phase === 'verifying' ? `已校验 ${progress.files.toLocaleString('zh-CN')} 项资料。` : '完成后会自动重新启动 Lexora，请稍候。',
+      'phase': upgradeStep ? `正在${upgradeStep}` : phases[progress.phase],
+      'amount': items && percent !== null ? `${percent}%` : measured && progress.totalBytes !== null ? `${size(progress.completedBytes)} / ${size(progress.totalBytes)}` : '',
+      'detail': detail(),
       'cancel': requiredUpgrade ? '停止整理并退出' : failure ? '使用原目录' : '取消并使用原目录',
       'error-code': failure ? storageMigrationErrorCode(progress.error) : '',
     },
@@ -77,7 +112,7 @@ export function storageMigrationProgressScript(kind: StorageOperation['kind'], p
     const track = document.getElementById('track');
     if (state.percent === null) track.removeAttribute('aria-valuenow');
     else track.setAttribute('aria-valuenow', state.percent);
-    track.setAttribute('aria-valuetext', state.text.phase);
+    track.setAttribute('aria-valuetext', [state.text.phase, state.text.amount, state.text.detail].filter(Boolean).join('，'));
     document.querySelectorAll('[data-step]').forEach((step, index) => step.dataset.state = index < state.step ? 'done' : index === state.step ? 'active' : 'waiting');
   })()`
 }
@@ -86,7 +121,7 @@ export function storageMigrationPage(operation: Pick<StorageOperation, 'kind' | 
   const state = presentation(operation.kind, progress, committing)
   const title = operation.kind === 'upgrade' ? '正在升级本地数据' : operation.kind === 'consolidate' ? '统一数据目录' : operation.kind === 'restore' ? '正在恢复数据' : '正在搬迁数据'
   const explanation = operation.kind === 'upgrade'
-    ? '正在升级本机的任务与对话记录。验证完成后将启用新格式，原始数据会保留为恢复副本。'
+    ? '正在升级本机的任务与对话记录。验证完成后将启用新数据库，附件和工作区文件保留在原处。'
     : operation.kind === 'consolidate'
       ? '本次升级将分散的本机资料整理到同一目录，便于管理和备份。仅首次启动时需要整理。'
       : operation.kind === 'restore' ? '正在把所选备份内容恢复到当前数据目录，未选择的内容保持原样。完成后会重新启动。' : '正在将资料复制到你选择的目录。验证完成后，Lexora 会从新目录启动。'
@@ -313,7 +348,7 @@ export function storageMigrationPage(operation: Pick<StorageOperation, 'kind' | 
     body:is([data-phase=failed], [data-phase=cancelled], [data-phase=completed]) .symbol svg {
       animation: none;
     }
-    body:not([data-phase=copying]):not([data-phase=failed]):not([data-phase=cancelled]) #bar {
+    #track:not([aria-valuenow]) #bar {
       animation: travel 1.8s ease-in-out infinite;
     }
     @keyframes breathe { 50% { transform: translateY(-2px); opacity: .55; } }
@@ -334,7 +369,7 @@ export function storageMigrationPage(operation: Pick<StorageOperation, 'kind' | 
     <h1>${title}</h1><p class="intro">${explanation}</p><p class="safety"><svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m10 2 6 3v5c0 4-6 7-6 7s-6-3-6-7V5Z"/><path d="m7 9 2 2 4-4"/></svg>原数据会保留 · 本次操作仅在本机进行</p>
     <div class="location"><span>整理到</span><code>${escape(operation.target)}</code></div>
     <ol aria-label="整理步骤">${['检查资料', '复制资料', '完成准备'].map((label, index) => `<li data-step="${index}" data-state="${index < state.step ? 'done' : index === state.step ? 'active' : 'waiting'}"><b aria-hidden="true">${index + 1}</b>${label}</li>`).join('')}</ol>
-    <div class="status-row"><p id="phase" role="status" aria-live="polite">${state.text.phase}</p><span id="amount">${state.text.amount}</span></div><div id="track" class="track" role="progressbar" aria-label="资料复制进度" aria-valuemin="0" aria-valuemax="100" ${state.percent === null ? '' : `aria-valuenow="${state.percent}"`} aria-valuetext="${state.text.phase}"><div id="bar" style="width:${state.percent ?? 35}%"></div></div><p id="detail">${escape(state.text.detail)}</p>
+    <div class="status-row"><p id="phase" role="status" aria-live="polite">${state.text.phase}</p><span id="amount">${state.text.amount}</span></div><div id="track" class="track" role="progressbar" aria-label="当前步骤进度" aria-valuemin="0" aria-valuemax="100" ${state.percent === null ? '' : `aria-valuenow="${state.percent}"`} aria-valuetext="${escape([state.text.phase, state.text.amount, state.text.detail].filter(Boolean).join('，'))}"><div id="bar" style="width:${state.percent ?? 35}%"></div></div><p id="detail">${escape(state.text.detail)}</p>
     <section id="support" aria-label="问题反馈" ${state.hidden.support ? 'hidden' : ''}>
       <p class="diagnostic-field"><span>错误码</span><code id="error-code">${escape(state.text['error-code'])}</code></p>
       <p class="diagnostic-field" ${diagnosticReference ? '' : 'hidden'}><span>诊断编号</span><code>${escape(diagnosticReference)}</code></p>
@@ -342,5 +377,5 @@ export function storageMigrationPage(operation: Pick<StorageOperation, 'kind' | 
       <div class="support-actions"><a id="export" href="https://storage.lexora.invalid/export">导出诊断日志</a><a id="issue" href="https://storage.lexora.invalid/issue">提交 Issue</a></div>
       <div id="support-status" role="status" aria-live="polite"></div>
     </section>
-    <p class="note">${operation.kind === 'upgrade' ? '升级前的数据将保留在当前目录的 recovery 文件夹中。' : operation.kind === 'restore' ? '恢复前的数据将保留为副本，浏览器资料与缓存不受影响。' : '缓存、旧日志与崩溃报告留在原位置，无需搬迁。'}<br>完成后会自动重新启动 Lexora。</p><nav aria-label="整理操作">${(['cancel', 'retry', 'exit'] as const).map(id => `<a id="${id}" href="https://storage.lexora.invalid/${id}" ${state.hidden[id] ? 'hidden' : ''}>${id === 'cancel' ? state.text.cancel : id === 'retry' ? '重试' : '退出'}</a>`).join('')}</nav></body></html>`
+    <p class="note">${operation.kind === 'upgrade' ? '升级前的数据库将保留在当前目录的 recovery 文件夹中。' : operation.kind === 'restore' ? '恢复前的数据将保留为副本，浏览器资料与缓存不受影响。' : '缓存、旧日志与崩溃报告留在原位置，无需搬迁。'}<br>完成后会自动重新启动 Lexora。</p><nav aria-label="整理操作">${(['cancel', 'retry', 'exit'] as const).map(id => `<a id="${id}" href="https://storage.lexora.invalid/${id}" ${state.hidden[id] ? 'hidden' : ''}>${id === 'cancel' ? state.text.cancel : id === 'retry' ? '重试' : '退出'}</a>`).join('')}</nav></body></html>`
 }

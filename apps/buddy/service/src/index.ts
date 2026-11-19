@@ -20,7 +20,10 @@ const incomingSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('rpc'), channel: z.string().min(1).max(128), message: z.unknown() }).strict(),
 ])
 
-if (process.argv[2] === '--config' && process.argv.length === 4) {
+if (process.argv[2] === '--check-runtime' && process.argv.length === 3) {
+  process.stdout.write('Lexora Server runtime ready\n')
+}
+else if (process.argv[2] === '--config' && process.argv.length === 4) {
   const supervisor = startLocalServiceSupervisor(process.argv[3]!)
   const stop = () => {
     void supervisor.stop().catch(() => {

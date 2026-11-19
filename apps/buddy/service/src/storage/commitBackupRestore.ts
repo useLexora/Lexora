@@ -7,7 +7,8 @@ import { storageOperationStage } from '../../../platform/storage/storageOperatio
 import { persistenceUpgradePaths } from './persistenceMigration/persistenceSources'
 
 const paths = ['buddy', 'config.toml', 'device/sync.json'] as const
-const entryPath = z.enum([...paths, ...persistenceUpgradePaths])
+// Older ready journals may still contain whole-directory replacements.
+const entryPath = z.enum([...paths, ...persistenceUpgradePaths, 'buddy/conversations', 'buddy/drafts', 'buddy/spaces', 'buddy/agent', 'buddy/skills'])
 const journalSchema = z.object({ id: z.uuid(), entries: z.array(z.object({ path: entryPath, original: z.boolean(), replacement: z.boolean().default(true) }).strict()).min(1) }).strict()
 export const restoreStage = storageOperationStage
 export const restoreRetained = (operation: StorageOperation) => join(operation.target, 'recovery', `${operation.kind}-${operation.id}`)
