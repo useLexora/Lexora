@@ -26,6 +26,18 @@ test('混合变更不因路径顺序或无关文档而丢失必需检查', () =>
   }
 })
 
+test('Buddy 共享契约选择集成检查，共享平台定义另选原生矩阵', () => {
+  const shared = 'apps/buddy/shared/context-panel/contextPanel.ts'
+  assert.deepEqual(classifyCiScope([shared]), {
+    workspace: true,
+    integration: true,
+    native: false,
+    website: false,
+    repository: false,
+  })
+  assert.equal(classifyCiScope([shared, 'apps/buddy/shared/platform/definitions.json']).native, true)
+})
+
 test('缺少路径证据、未知路径和近似 Renderer 前缀不能误入快速分支', () => {
   for (const files of [[], ['new-capability/config.json'], ['apps/buddy/src-other/index.ts']])
     assert.ok(Object.values(classifyCiScope(files)).every(Boolean))
@@ -61,7 +73,7 @@ test('文件移出原生目录后仍按旧路径执行原生检查', (context) =
 })
 
 test('保留删除、文件类型变更及包含中文和换行的路径', (context) => {
-  const files = ['.cargo/config.toml', 'apps/buddy/shared/deleted.ts', 'apps/buddy/native/中文\n name.rs']
+  const files = ['.cargo/config.toml', 'new-capability/deleted.ts', 'apps/buddy/native/中文\n name.rs']
   const { cwd, git, base } = repositoryFixture(context, files)
   rmSync(join(cwd, files[1]))
   writeFileSync(join(cwd, files[2]), 'changed\n')

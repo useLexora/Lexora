@@ -55,6 +55,7 @@ const websitePrefixes = [
 const integrationPrefixes = [
   '.playwright/scripts/',
   'apps/buddy/service/',
+  'apps/buddy/shared/',
   'apps/buddy/electron/',
   'apps/buddy/platform/',
   'packaging/buddy/',
