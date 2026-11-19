@@ -396,7 +396,12 @@ jobs:
 
       - name: Install Linux native dependencies
         if: runner.os == 'Linux' && (github.event_name == 'pull_request' || steps.cache.outputs.cache-hit != 'true')
-        run: sudo apt-get update && sudo apt-get install -y build-essential libgtk-3-dev libgtk-layer-shell-dev libxdo-dev
+        run: |
+          if [[ -f /etc/apt/apt-mirrors.txt ]]; then
+            sudo sed -i '/us-east-2\.ec2\.archive\.ubuntu\.com/s/priority:1$/priority:4/' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential libgtk-3-dev pkg-config
 
       - name: Check Rust formatting
         if: github.event_name == 'pull_request' && matrix.target == 'linux-x64'

@@ -4,7 +4,6 @@ import type { CreateBuddyToolPresentationInput } from '../events/toolPresentatio
 import type { BrowserToolFailureCode, BrowserToolOperation } from './browserToolContract'
 import {
   BROWSER_ACTION_KINDS,
-  BROWSER_ERROR_CODES,
   BROWSER_MAX_OBSERVATION_ELEMENT_LIMIT,
 } from '../../../shared/browser'
 import {
@@ -19,6 +18,7 @@ import {
   BROWSER_OPEN_TOOL_NAME,
   BROWSER_READ_TOOL_NAME,
   BROWSER_SNAPSHOT_TOOL_NAME,
+  browserToolFailureCodes,
   isBrowserActToolInput,
 } from './browserToolContract'
 
@@ -32,14 +32,6 @@ const browserPageStatuses = new Set<BrowserPageStatus>([
   'ready',
 ])
 
-const browserToolFailureCodes = new Set<string>([
-  ...BROWSER_ERROR_CODES,
-  'BROWSER_CAPABILITY_FAILED',
-  'INVALID_PATH',
-  'PATH_NOT_FOUND',
-  'PATH_OUTSIDE_GRANTED_DIRECTORY',
-  'VALIDATION_FAILED',
-] satisfies readonly BrowserToolFailureCode[])
 const browserActionKinds = new Set<BrowserAction['kind']>(BROWSER_ACTION_KINDS)
 
 export function createBrowserToolPresentation(

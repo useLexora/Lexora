@@ -78,6 +78,35 @@ describe('private network authorization callbacks', () => {
     expect(transferred).toBe(false)
   })
 
+  it('keeps a completed navigation when the host withdraws an outstanding resource request', async () => {
+    const { service, host } = pair()
+    const checkingResource = Promise.withResolvers<void>()
+    let resourceAuthorized = false
+    host.onRequest('host.test', async (_params, signal, requestId) => {
+      const authorize = createHostNetworkAuthorizer(host, requestId, signal)
+      await authorize('https://example.com/')
+      const resource = new AbortController()
+      const pending = authorize('https://example.com/image', 'access', resource.signal)
+        .then(() => { resourceAuthorized = true }, () => {})
+      await checkingResource.promise
+      resource.abort()
+      await pending
+      return 'document-ready'
+    })
+    const result = await withNetworkAuthorization({
+      toolCallId: 'call',
+      toolName: 'lexora_browser_open',
+      authorizeNetwork: async ({ url, signal }) => {
+        if (url.endsWith('/image')) {
+          checkingResource.resolve()
+          await new Promise<void>((_resolve, reject) => signal!.addEventListener('abort', () => reject(signal!.reason), { once: true }))
+        }
+      },
+    }, () => requestWithNetworkAuthorization(service, 'host.test', {}))
+    expect(result).toBe('document-ready')
+    expect(resourceAuthorized).toBe(false)
+  })
+
   it('cancels a waiting decision even when the authorization implementation never settles', async () => {
     const { service, host } = pair()
     const started = Promise.withResolvers<void>()

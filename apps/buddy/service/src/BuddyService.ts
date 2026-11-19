@@ -1154,10 +1154,13 @@ export async function startBuddyService(
         browserHost,
         presentBrowser: async (source) => {
           try {
-            await options.platform.presentBrowser?.(source)
+            if (!options.platform.presentBrowser)
+              throw new Error('CONTEXT_PANEL_UNAVAILABLE')
+            await options.platform.presentBrowser(source)
           }
-          catch {
+          catch (error) {
             record({ event: 'context_panel.presentation.failed', level: 'warn', errorCode: 'CONTEXT_PANEL_UNAVAILABLE' })
+            throw error
           }
         },
         connectorService,
