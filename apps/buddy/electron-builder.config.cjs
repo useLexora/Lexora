@@ -12,7 +12,6 @@ const { OPERATING_SYSTEM } = require('./shared/platform/identifiers.ts')
 const target = resolveBuildTarget()
 const resources = [
   ...platformResources(target),
-  { from: '.output/build/service', to: 'lexora-service' },
   { from: `.output/resources/node-runtime/${target.id}`, to: 'lexora-runtime' },
 ]
 const packageFormat = process.env.LEXORA_BUDDY_PACKAGE_FORMAT ?? target.packageFormats[0]
@@ -33,7 +32,7 @@ const signedMacos = macosSigningMode() === 'developer-id'
 
 module.exports = withDesktopNativeVersion({
   appId: desktopName,
-  afterPack: async context => (await import('../../packaging/buddy/release/product-release-set.mjs')).writePackagedReleaseSet(context),
+  afterPack: async context => (await import('../../packaging/buddy/release/product-release-set.mjs')).packageDesktopService(context),
   afterSign: async (context) => {
     if (target.platform === OPERATING_SYSTEM.Windows)
       await (await import('../../packaging/buddy/release/product-release-set.mjs')).writePackagedReleaseSet(context)

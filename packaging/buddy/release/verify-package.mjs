@@ -13,6 +13,7 @@ import { desktopNativeVersions } from './native-version.mjs'
 import { excludedPlatformResources, platformResources } from './platform-definition.mjs'
 import { readBuddyProductMetadata } from './release-metadata.mjs'
 import { verifySearchToolFiles } from './search-tools.mjs'
+import { checkServiceFileModes } from './service-file-modes.mjs'
 import { verifyShellSandboxFiles } from './shell-sandbox.mjs'
 import { resolveBuildTarget } from './targets.mjs'
 
@@ -40,8 +41,12 @@ export function verifyDesktopResources(directory, targetId, cwd = repoRoot) {
     throw new Error(`${platformId} Desktop must not contain the Linux shell sandbox`)
   if (platform.features.includes('nativePet'))
     assertNativeExecutable(readFileSync(join(resources, 'native-pet/lexora-buddy-pet')), platform, 'native pet')
+  if (platformId === OPERATING_SYSTEM.Linux)
+    checkServiceFileModes(join(resources, 'lexora-service'))
   const { version, prerelease } = readBuddyProductMetadata(cwd)
   execFileSync(process.execPath, [join(repoRoot, 'packaging/buddy/release/product-release-set.mjs'), '--verify', join(resources, 'release-set.json'), platform.id, version], { stdio: 'pipe', timeout: 120_000 })
+  const node = join(resources, 'lexora-runtime', platformId === OPERATING_SYSTEM.Windows ? 'node.exe' : 'node')
+  execFileSync(node, [join(resources, 'lexora-service/service.mjs'), '--check-runtime'], { cwd: resources, stdio: 'pipe', timeout: 30_000 })
   if (prerelease)
     verifyDesktopNativeVersion(directory, executablePath, platformId, version)
   return { executablePath, resources }

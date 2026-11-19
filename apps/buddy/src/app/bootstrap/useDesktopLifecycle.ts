@@ -34,7 +34,7 @@ export function useDesktopLifecycle(options: DesktopLifecycleOptions) {
     resolveReady = resolve
   })
   let tail = Promise.resolve()
-  let requestedGeneration: string | null = null
+  let requested: { generation: string } | null = null
   const runtimeReady = computed(() => state.value.stages.some(stage => stage.stage === 'runtime.connection' && stage.status === 'completed'))
   const maintenance = computed(() => state.value.maintenance)
   const loading = computed(() => !dataReady.value && !failed.value && state.value.status !== 'failed')
@@ -50,23 +50,28 @@ export function useDesktopLifecycle(options: DesktopLifecycleOptions) {
 
   function scheduleRefresh(force = false): Promise<void> {
     const generation = state.value.generation
-    if (!generation || !runtimeReady.value || (!force && generation === requestedGeneration))
+    if (!generation || !runtimeReady.value || (!force && generation === requested?.generation))
       return tail
-    requestedGeneration = generation
+    const request = { generation }
+    requested = request
+    const isCurrent = () => !disposed && requested === request
     dataReady.value = false
     failed.value = false
     tail = tail.then(async () => {
-      if (disposed || generation !== state.value.generation || !runtimeReady.value)
+      if (!isCurrent())
         return
       const host = new ServiceHost()
       const reports: Promise<void>[] = []
       const subscription = host.lifecycle.onDidChange((change) => {
-        const report = Promise.resolve().then(() => api.app.startup.reportLifecycle({ generation, change }))
+        const report = Promise.resolve().then(async () => {
+          if (isCurrent())
+            await api.app.startup.reportLifecycle({ generation, change })
+        })
         void report.catch(() => {})
         reports.push(report)
       })
       const assertActive = () => {
-        if (disposed || generation !== state.value.generation || !runtimeReady.value)
+        if (!isCurrent())
           throw new DOMException('Startup superseded', 'AbortError')
       }
       try {
@@ -103,25 +108,28 @@ export function useDesktopLifecycle(options: DesktopLifecycleOptions) {
           })
         })
         await Promise.all(reports)
-        if (!disposed && generation === state.value.generation && runtimeReady.value)
+        if (isCurrent())
           dataReady.value = true
       }
       catch {
         await Promise.allSettled(reports)
-        if (!disposed && generation === state.value.generation)
+        if (isCurrent())
           failed.value = true
       }
       finally {
         subscription.dispose()
-        initialAttemptSettled = true
-        resolveReady()
+        if (isCurrent()) {
+          initialAttemptSettled = true
+          resolveReady()
+        }
       }
     })
     return tail
   }
 
   const stopRuntimeWatch = watch([() => state.value.generation, runtimeReady], () => {
-    if (!runtimeReady.value) {
+    if (!runtimeReady.value || !state.value.generation) {
+      requested = null
       dataReady.value = false
       return
     }

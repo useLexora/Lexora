@@ -1,4 +1,4 @@
-import { lstat, readdir, readFile, readlink, writeFile } from 'node:fs/promises'
+import { cp, lstat, readdir, readFile, readlink, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import process from 'node:process'
@@ -62,9 +62,20 @@ export async function writeProductReleaseSet({ resourcesRoot, coreDirectory, hos
   return manifest
 }
 
+function packagedResourcesRoot(context) {
+  const target = resolveBuildTarget()
+  return join(context.appOutDir, target.platform === 'darwin' ? `${context.packager.appInfo.productFilename}.app/Contents/Resources` : 'resources')
+}
+
+export async function packageDesktopService(context) {
+  const source = join(context.packager.projectDir, '.output/build/service')
+  await cp(source, join(packagedResourcesRoot(context), 'lexora-service'), { recursive: true, verbatimSymlinks: true })
+  await writePackagedReleaseSet(context)
+}
+
 export async function writePackagedReleaseSet(context) {
   const target = resolveBuildTarget()
-  const resourcesRoot = join(context.appOutDir, target.platform === 'darwin' ? `${context.packager.appInfo.productFilename}.app/Contents/Resources` : 'resources')
+  const resourcesRoot = packagedResourcesRoot(context)
   await refreshCoreInventory(join(resourcesRoot, 'lexora-service'))
   await writeProductReleaseSet({ resourcesRoot, coreDirectory: join(resourcesRoot, 'lexora-service'), hostPath: join(resourcesRoot, 'app.asar'), hostKind: 'asar', nodeDirectory: join(resourcesRoot, 'lexora-runtime'), target, productVersion: context.packager.appInfo.version })
 }

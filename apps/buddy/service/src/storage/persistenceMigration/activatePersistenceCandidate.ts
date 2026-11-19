@@ -9,11 +9,20 @@ import { BUDDY_STORAGE_WRITER_VERSION } from '../schema'
 import { withTransaction } from '../transaction'
 import { importPersistenceCandidate } from './importPersistenceCandidate'
 import { PERSISTENCE_MIGRATION_ID, PersistenceMigrationError } from './legacyRunHistory'
-import { readPersistenceSourceManifest } from './persistenceSources'
+import { verifyActivatedUpgradeReferences } from './migrationReferences'
+import { assertUpgradeDatabaseCopy, readPersistenceSourceManifest, verifyPersistenceSources } from './persistenceSources'
 
 export async function activatePersistenceCandidate(input: PersistenceCandidateInput) {
   if (input.sourceLease)
     assertStorageRootLease(input.sourceLease, input.sourceRoot)
+  const release = input.sourceLease ? undefined : acquireStorageRootLease(input.sourceRoot, input.leaseDirectory, input.privateDirectoriesExecutable)
+  try {
+    return await activateCandidate({ ...input, sourceLease: input.sourceLease ?? release })
+  }
+  finally { release?.() }
+}
+
+async function activateCandidate(input: PersistenceCandidateInput) {
   const existing = await readActivatedCandidate(input)
   if (existing)
     return existing
@@ -58,6 +67,8 @@ async function readActivatedCandidate(input: PersistenceCandidateInput) {
   const release = acquireStorageRootLease(profileRoot, input.leaseDirectory, input.privateDirectoriesExecutable)
   let database: DatabaseSync | undefined
   try {
+    if (manifest.scope === 'upgrade')
+      await assertUpgradeDatabaseCopy(profileRoot)
     database = new DatabaseSync(path, { readOnly: true })
     if (!database.prepare('SELECT 1 FROM sqlite_master WHERE name = \'persistence_migrations\'').get())
       return null
@@ -68,6 +79,10 @@ async function readActivatedCandidate(input: PersistenceCandidateInput) {
     if (migration.source_fingerprint !== manifest.fingerprint || profile?.authority !== 'sqlite' || profile.migration_state !== 'ready'
       || profile.min_writer_version !== BUDDY_STORAGE_WRITER_VERSION) {
       throw new PersistenceMigrationError('MIGRATION_CANDIDATE_CHANGED')
+    }
+    if (manifest.scope === 'upgrade') {
+      await verifyPersistenceSources(manifest, input.signal)
+      await verifyActivatedUpgradeReferences(database, manifest, input.signal)
     }
     const count = (kind: string) => Number(database!.prepare('SELECT COUNT(*) AS count FROM persistence_migration_entries WHERE migration_id = ? AND kind = ?').get(PERSISTENCE_MIGRATION_ID, kind)!.count)
     return { profileRoot, sourceFingerprint: manifest.fingerprint, runs: count('run'), files: count('file') }

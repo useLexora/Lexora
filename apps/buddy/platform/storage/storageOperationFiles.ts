@@ -14,7 +14,7 @@ export function restoreCredentialStage(locationPath: string, operationId: string
   return join(dirname(locationPath), 'restore-secrets', operationId)
 }
 
-async function removeOwnedStage(operation: StorageOperation): Promise<void> {
+export async function ownedStorageStage(operation: StorageOperation): Promise<string | null> {
   const stage = storageOperationStage(operation)
   const existing = await lstat(stage).catch((error) => {
     if (isMissing(error))
@@ -22,13 +22,19 @@ async function removeOwnedStage(operation: StorageOperation): Promise<void> {
     throw error
   })
   if (!existing)
-    return
+    return null
   if (!existing.isDirectory() || existing.isSymbolicLink())
     throw storageError('STORAGE_STAGE_NOT_OWNED')
   const owner = await readStorageJson(join(stage, '.storage-owner.json'))
   if (!owner || typeof owner !== 'object' || !('id' in owner) || owner.id !== operation.id)
     throw storageError('STORAGE_STAGE_NOT_OWNED')
-  await rm(stage, { recursive: true })
+  return stage
+}
+
+async function removeOwnedStage(operation: StorageOperation): Promise<void> {
+  const stage = await ownedStorageStage(operation)
+  if (stage)
+    await rm(stage, { recursive: true })
 }
 
 export async function prepareStorageStage(operation: StorageOperation, privateDirectoriesExecutable?: string): Promise<string> {

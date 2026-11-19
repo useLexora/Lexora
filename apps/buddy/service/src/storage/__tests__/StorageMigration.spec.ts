@@ -277,7 +277,7 @@ it('upgrades in place, retains original bytes and preserves references and devic
   const { root, store, run } = await fixture()
   const original = await readFile(join(root, 'buddy', 'buddy.sqlite3'))
   await writeFile(join(root, 'config.toml'), '[desktop]\nexit_behavior = "stop_service"\n')
-  const untouched = ['buddy/unknown-data/file.bin', 'buddy/extensions/inference/model.bin', 'buddy/backups/snapshot.bin', 'buddy/themes/custom/theme.json', 'device/chromium/Cache/page', 'recovery/previous/buddy.sqlite3']
+  const untouched = ['buddy/conversations/task/changes/before.txt', 'buddy/conversations/task/web-cache/page', 'buddy/spaces/space/workspace/source.ts', 'buddy/unknown-data/file.bin', 'buddy/extensions/inference/model.bin', 'buddy/backups/snapshot.bin', 'buddy/themes/custom/theme.json', 'device/chromium/Cache/page', 'recovery/previous/buddy.sqlite3']
   for (const path of untouched) {
     await mkdir(join(root, path, '..'), { recursive: true })
     await writeFile(join(root, path), 'preserve in place')
@@ -294,7 +294,8 @@ it('upgrades in place, retains original bytes and preserves references and devic
     await expect(lstat(join(retained, path))).rejects.toMatchObject({ code: 'ENOENT' })
   }
   expect(await readFile(join(retained, 'buddy', 'buddy.sqlite3'))).toEqual(original)
-  expect(await readFile(join(retained, 'buddy', 'drafts', 'draft', 'hello.txt'), 'utf8')).toBe('hello')
+  await expect(lstat(join(retained, 'buddy', 'drafts'))).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(await readFile(join(root, 'buddy', 'drafts', 'draft', 'hello.txt'), 'utf8')).toBe('hello')
   expect(await readFile(join(root, 'config.toml'), 'utf8')).toBe('[desktop]\nexit_behavior = "stop_service"\n')
   const database = openBuddySqliteDatabase({ databasePath: join(root, 'buddy', 'buddy.sqlite3') })
   try {

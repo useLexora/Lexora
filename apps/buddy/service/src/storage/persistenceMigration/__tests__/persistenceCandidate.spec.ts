@@ -1,12 +1,15 @@
+import type { StorageProgress } from '../../../../../shared/storage/storageApi'
 import type { BuddyRunEvent } from '../../../events/BuddyRunEvent'
-import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { StorageLocationStore } from '../../../../../platform/storage/StorageLocationStore'
 import { createRunEventLog } from '../../../events/createRunEventLog'
 import { RunEventQueries } from '../../../events/RunEventQueries'
 import { SqliteRunEventLog } from '../../../events/SqliteRunEventLog'
 import { openBuddyDatabase, openBuddyMigrationCandidate } from '../../database'
+import { runStorageMigration } from '../../StorageMigration'
 import { activatePersistenceCandidate } from '../activatePersistenceCandidate'
 import { importPersistenceCandidate } from '../importPersistenceCandidate'
 import { parseLegacyRunHistory, reconcileLegacyRunHistory } from '../legacyRunHistory'
@@ -84,6 +87,71 @@ describe('persistence candidate migration', () => {
     }
     expect(result).toMatchObject({ runs: 1, files: 1 })
     await expect(activatePersistenceCandidate(fixture)).rejects.toThrow('MIGRATION_SOURCE_CHANGED')
+  })
+
+  it.each(['device', 'inode', 'pending', 'conflict'] as const)('checks compacted history against the old projection after a %s change', async (change) => {
+    const fixture = await sourceFixture({ compact: true })
+    const database = openBuddyDatabase({ databasePath: fixture.databasePath })
+    const row = database.prepare('SELECT * FROM run_event_checkpoints WHERE run_id = ?').get('run')!
+    const parts = String(row.file_fingerprint).split(':')
+    const index = change === 'inode' ? 1 : 0
+    parts[index] = String(BigInt(parts[index]!) + 1n)
+    if (change === 'conflict')
+      database.prepare('UPDATE run_events SET payload_json = \'{}\' WHERE sequence = 3').run()
+    database.prepare('INSERT OR REPLACE INTO run_event_checkpoints VALUES (?, ?, ?, ?)').run('run', row.last_sequence!, row.projection_version!, parts.join(':'))
+    database.prepare('UPDATE run_event_maintenance SET recovery_pending = ?, compaction_pending = 0, projection_version = 3, compaction_version = 1 WHERE run_id = ?').run(change === 'pending' ? 1 : 0, 'run')
+    database.close()
+    const before = await lstat(fixture.eventFile)
+    const upgrade = activatePersistenceCandidate({ ...fixture, scope: 'upgrade' })
+    if (change === 'device') {
+      const result = await upgrade
+      const next = openBuddyMigrationCandidate({ databasePath: join(result.profileRoot, 'buddy/buddy.sqlite3') })
+      try {
+        expect(new RunEventQueries(next).read('run').map(event => event.sequence)).toEqual([1, 3, 4, 5])
+        expect(next.prepare('SELECT next_event_sequence FROM runs').get()?.next_event_sequence).toBe(6)
+      }
+      finally { next.close() }
+    }
+    else {
+      await expect(upgrade).rejects.toThrow(change === 'conflict' ? 'MIGRATION_EVENT_CONFLICT' : 'MIGRATION_EVENT_GAP_UNVERIFIED')
+    }
+    expect(await lstat(fixture.eventFile)).toMatchObject({ ino: before.ino, mtimeMs: before.mtimeMs })
+  })
+
+  it.each([false, true])('retries an interrupted in-place import with changed source %s', async (changed) => {
+    const fixture = await sourceFixture({ compact: true, attachment: true, pi: true })
+    const store = new StorageLocationStore(join(dirname(fixture.sourceRoot), 'bootstrap/location.json'), fixture.sourceRoot)
+    await store.request('upgrade', fixture.sourceRoot)
+    const input = { locationPath: store.path, defaultRoot: fixture.sourceRoot, leaseDirectory: fixture.leaseDirectory, legacySources: [] }
+    const controller = new AbortController()
+    await expect(runStorageMigration(input, controller.signal, (progress) => {
+      if (progress.phase === 'converting' && progress.upgradeStep === 'runs' && progress.items?.completed === 1)
+        controller.abort()
+    })).rejects.toThrow('STORAGE_CANCELLED')
+    if (changed) {
+      const original = openBuddyDatabase({ databasePath: fixture.databasePath })
+      original.prepare('UPDATE conversations SET title = \'Updated\' WHERE id = \'task\'').run()
+      original.close()
+    }
+    const updates: StorageProgress[] = []
+    await runStorageMigration(input, fixture.signal, progress => updates.push(progress))
+    expect(updates.some(update => update.phase === 'copying' && update.completedBytes > 0)).toBe(changed)
+    const database = openBuddyMigrationCandidate({ databasePath: fixture.databasePath })
+    try {
+      expect(database.prepare('SELECT next_event_sequence FROM runs').get()?.next_event_sequence).toBe(6)
+      if (changed)
+        expect(database.prepare('SELECT title FROM conversations WHERE id = \'task\'').get()?.title).toBe('Updated')
+      expect(database.prepare('SELECT state FROM persistence_migrations').get()?.state).toBe('activated')
+    }
+    finally { database.close() }
+  })
+
+  it('rechecks a referenced journal before returning an activated in-place candidate', async () => {
+    const fixture = await sourceFixture()
+    const input = { ...fixture, scope: 'upgrade' as const }
+    expect(await activatePersistenceCandidate(input)).toEqual(await activatePersistenceCandidate(input))
+    await writeFile(fixture.eventFile, '')
+    await expect(activatePersistenceCandidate(input)).rejects.toThrow('MIGRATION_SOURCE_CHANGED')
   })
 
   it('preserves unknown facts, aliases, bytes and Pi continuity and can resume verification', async () => {

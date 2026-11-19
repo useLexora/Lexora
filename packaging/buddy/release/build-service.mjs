@@ -8,6 +8,7 @@ import { writeOutput } from '../../shared/cli-output.mjs'
 import { nativeHostResources, prepareNativeHost } from './native-host.mjs'
 import { writeFileInventory } from './product-release-set.mjs'
 import { prepareSearchTools, resolveSearchTools } from './search-tools.mjs'
+import { checkServiceFileModes } from './service-file-modes.mjs'
 import { resolveBuildTarget } from './targets.mjs'
 
 async function main() {
@@ -90,6 +91,8 @@ async function main() {
   await writeFileInventory(output, join(output, 'inventory.json'), [join(output, 'resources.json')])
   const inventorySha256 = createHash('sha256').update(await readFile(join(output, 'inventory.json'))).digest('hex')
   await writeFile(join(output, 'resources.json'), `${JSON.stringify({ inventory: { path: 'inventory.json', sha256: inventorySha256 }, target: target.id, node: '>=26.2.0', entry: 'service.mjs', bundled, resources, skills, packages: [...copied.values()].map(({ name, version }) => ({ name, version })) }, null, 2)}\n`)
+  if (target.platform !== 'win32')
+    checkServiceFileModes(output, { normalize: true })
   writeOutput(`Lexora Server: ${output} (${copied.size} packages, ${resources.length} native/search/license resources)`)
 }
 

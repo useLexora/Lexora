@@ -43,6 +43,7 @@ export function parseLegacyRunHistory(content: string, runId: string): { events:
 export function reconcileLegacyRunHistory(input: {
   events: readonly BuddyRunEvent[]
   projected: readonly BuddyRunEvent[]
+  compactedThrough?: number | null
   certifiedThrough: number | null
   hasProductFacts: boolean
 }): { events: BuddyRunEvent[], nextSequence: number, compacted: boolean } {
@@ -66,7 +67,8 @@ export function reconcileLegacyRunHistory(input: {
     throw new PersistenceMigrationError('MIGRATION_EVENT_SOURCE_BEHIND')
   const gaps = all.filter((event, index) => event.sequence !== (all[index - 1]?.sequence ?? 0) + 1)
   const hasGaps = gaps.length > 0
-  if (gaps.some(event => input.certifiedThrough === null || event.sequence > input.certifiedThrough))
+  const matchedCompaction = terminal && input.compactedThrough === last && events.length === projected.length && merged.size === events.length
+  if (!matchedCompaction && gaps.some(event => input.certifiedThrough === null || event.sequence > input.certifiedThrough))
     throw new PersistenceMigrationError('MIGRATION_EVENT_GAP_UNVERIFIED')
   return { events: [...events], nextSequence: last + 1, compacted: hasGaps || missing.length > 0 }
 }
@@ -75,6 +77,7 @@ export function importLegacyRunHistory(database: DatabaseSync, input: {
   runId: string
   content: string | null
   sourceFingerprint: string
+  compactedThrough?: number | null
   certifiedThrough: number | null
 }): { events: number, nextSequence: number } {
   const { runId, sourceFingerprint } = input
@@ -95,15 +98,16 @@ export function importLegacyRunHistory(database: DatabaseSync, input: {
   if (profile?.authority !== 'legacy_jsonl' || profile.migration_state !== 'pending')
     throw new PersistenceMigrationError('MIGRATION_NOT_PENDING')
   const queries = new RunEventQueries(database)
+  const projected = queries.read(runId)
   const reconciled = reconcileLegacyRunHistory({
     events: parsed.events,
-    projected: queries.read(runId),
-    hasProductFacts: queries.hasProjectedEvents(runId),
+    projected,
+    hasProductFacts: !parsed.events.length && queries.hasProjectedEvents(runId),
     certifiedThrough: input.certifiedThrough,
+    compactedThrough: input.compactedThrough,
   })
   return withTransaction(database, () => {
     assertLegacyMessageProjection(database, runId, reconciled.events)
-    const projected = queries.read(runId)
     const existingSequences = new Set(projected.map(event => event.sequence))
     new RunEventProjector(database).project(reconciled.events.filter(event => !existingSequences.has(event.sequence)))
     const retained = new Set(reconciled.events.map(event => event.sequence))
