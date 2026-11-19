@@ -202,6 +202,16 @@ export class RunEventQueries {
     return rows.map(row => row.id)
   }
 
+  listSqliteRecoveryRunIds(): string[] {
+    const rows = this.#database.prepare(`
+      SELECT id FROM runs WHERE id IN (
+        SELECT id FROM runs WHERE status IN ('queued', 'running')
+        UNION SELECT run_id FROM run_event_maintenance WHERE recovery_pending = 1
+      ) ORDER BY started_at, id
+    `).all() as Array<{ id: string }>
+    return rows.map(row => row.id)
+  }
+
   hasProjectedEvents(runId: string): boolean {
     return this.#database.prepare(`
       SELECT 1 FROM run_events WHERE run_id = ?

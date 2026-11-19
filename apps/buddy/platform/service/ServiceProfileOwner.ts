@@ -64,7 +64,6 @@ export class ServiceProfileOwner {
         productEndpoint: address('product'),
         phase: 'starting',
       }), directory, release)
-      await owner.publish('starting')
       await writePrivateServiceJson(owner.#credentialsPath, { version: 1, serviceInstanceId, managementSecret: owner.managementSecret, productSecret: owner.productSecret })
       return owner
     }

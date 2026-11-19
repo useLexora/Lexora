@@ -15,6 +15,11 @@ import { RunEventMaintenanceService } from './RunEventMaintenanceService'
 import { RunEventQueries } from './RunEventQueries'
 import { SqliteRunEventWriter } from './SqliteRunEventWriter'
 
+const invalidSequence = `
+  next_event_sequence IS NULL OR next_event_sequence > ? OR
+  EXISTS (SELECT 1 FROM run_events WHERE run_id = runs.id AND sequence >= runs.next_event_sequence)
+`
+
 export interface SqliteRunEventLogOptions {
   database: DatabaseSync
   onObserverError?: (error: unknown) => void
@@ -164,7 +169,11 @@ export class SqliteRunEventLog implements RunEventLogPort {
 
   async recoverAll(options: RunEventRecoveryOptions = {}): Promise<Readonly<RunEventRecoverySummary>> {
     const started = performance.now()
-    const runIds = this.#execute('', 'read', () => this.#queries.listRunIds())
+    const runIds = this.#execute('', 'read', () => {
+      if (this.#database.prepare(`SELECT 1 FROM runs WHERE ${invalidSequence} LIMIT 1`).get(Number.MAX_SAFE_INTEGER))
+        throw new Error('Run event sequence is unverified or inconsistent')
+      return options.force ? this.#queries.listRunIds() : this.#queries.listSqliteRecoveryRunIds()
+    })
     const enumerationMs = performance.now() - started
     let events = 0
     const progress = (completed: number) => {
@@ -198,12 +207,7 @@ export class SqliteRunEventLog implements RunEventLogPort {
   }
 
   #assertSequences(runIds: readonly string[]): void {
-    const invalid = this.#database.prepare(`
-      SELECT 1 FROM runs WHERE id = ? AND (
-        next_event_sequence IS NULL OR next_event_sequence > ? OR
-        EXISTS (SELECT 1 FROM run_events WHERE run_id = runs.id AND sequence >= runs.next_event_sequence)
-      )
-    `)
+    const invalid = this.#database.prepare(`SELECT 1 FROM runs WHERE id = ? AND (${invalidSequence})`)
     const unsupported = this.#database.prepare('SELECT 1 FROM run_events WHERE run_id = ? AND format_version != 1 LIMIT 1')
     for (const runId of new Set(runIds)) {
       if (invalid.get(runId, Number.MAX_SAFE_INTEGER))

@@ -1,3 +1,4 @@
+import type { Dirent } from 'node:fs'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -24,27 +25,41 @@ export function createReleaseSet(input: z.infer<typeof releaseSetContentSchema>)
 }
 
 export async function readReleaseSet(path: string, fileSystem: ReleaseFileSystem = fs) {
+  const release = await readReleaseIdentity(path, fileSystem)
+  await verifyReleaseSet(release, fileSystem)
+  return release
+}
+
+export async function readReleaseIdentity(path: string, fileSystem: ReleaseFileSystem = fs) {
   const { realpath, readFile } = fileSystem.promises
-  const hash = (file: string) => hashReleaseFile(file, fileSystem)
   const file = await realpath(path)
   const resourcesRoot = dirname(file)
   const manifest = releaseSetSchema.parse(JSON.parse(await readFile(file, 'utf8')))
   const { buildId, ...content } = manifest
   if (buildId !== createReleaseSet(content).buildId)
     throw new Error('SERVICE_RELEASE_IDENTITY_CHANGED')
-  const resolveResource = async (value: string) => {
-    const location = await realpath(resolve(resourcesRoot, value))
-    const boundary = relative(resourcesRoot, location)
-    if (isAbsolute(boundary) || boundary === '..' || boundary.startsWith(`..${sep}`))
-      throw new Error('SERVICE_RESOURCE_OUTSIDE_RELEASE')
-    return location
-  }
-  const coreManifest = await resolveResource(manifest.core.manifest)
-  const hostArtifact = await resolveResource(manifest.host.path)
+  const coreEntry = await resolveReleaseResource(resourcesRoot, manifest.core.entry, fileSystem)
+  const nodeExecutable = await resolveReleaseResource(resourcesRoot, manifest.node.entry, fileSystem)
+  return { manifest, resourcesRoot, nodeExecutable, coreEntry }
+}
+
+async function resolveReleaseResource(resourcesRoot: string, value: string, fileSystem: ReleaseFileSystem) {
+  const { realpath } = fileSystem.promises
+  const location = await realpath(resolve(resourcesRoot, value))
+  const boundary = relative(resourcesRoot, location)
+  if (isAbsolute(boundary) || boundary === '..' || boundary.startsWith(`..${sep}`))
+    throw new Error('SERVICE_RESOURCE_OUTSIDE_RELEASE')
+  return location
+}
+
+export async function verifyReleaseSet(release: Awaited<ReturnType<typeof readReleaseIdentity>>, fileSystem: ReleaseFileSystem = fs) {
+  const { manifest, resourcesRoot, coreEntry, nodeExecutable } = release
+  const { readFile } = fileSystem.promises
+  const hash = (file: string) => hashReleaseFile(file, fileSystem)
+  const coreManifest = await resolveReleaseResource(resourcesRoot, manifest.core.manifest, fileSystem)
+  const hostArtifact = await resolveReleaseResource(resourcesRoot, manifest.host.path, fileSystem)
   if (await hash(coreManifest) !== manifest.core.manifestSha256 || await hash(hostArtifact) !== manifest.host.sha256)
     throw new Error('SERVICE_RELEASE_CONTENT_CHANGED')
-  const coreEntry = await resolveResource(manifest.core.entry)
-  const nodeExecutable = await resolveResource(manifest.node.entry)
   const core = JSON.parse(await readFile(coreManifest, 'utf8')) as { entry?: string, bundled?: Array<{ path: string, sha256: string }>, inventory?: { path: string, sha256: string } }
   const entryName = relative(dirname(coreManifest), coreEntry).split(sep).join('/')
   const recordedEntry = core.bundled?.find(entry => entry.path === entryName)
@@ -52,13 +67,12 @@ export async function readReleaseSet(path: string, fileSystem: ReleaseFileSystem
     throw new Error('SERVICE_RELEASE_CONTENT_CHANGED')
   if (await hash(nodeExecutable) !== manifest.node.binarySha256 || !core.inventory)
     throw new Error('SERVICE_RELEASE_CONTENT_CHANGED')
-  const coreInventory = await resolveResource(relative(resourcesRoot, join(dirname(coreManifest), resourcePath.parse(core.inventory.path))))
+  const coreInventory = await resolveReleaseResource(resourcesRoot, relative(resourcesRoot, join(dirname(coreManifest), resourcePath.parse(core.inventory.path))), fileSystem)
   if (await hash(coreInventory) !== digestSchema.parse(core.inventory.sha256))
     throw new Error('SERVICE_RELEASE_CONTENT_CHANGED')
   await verifyFileInventory(coreInventory, [coreManifest], fileSystem)
   if (manifest.host.kind === 'inventory')
     await verifyFileInventory(hostArtifact, [], fileSystem)
-  return { manifest, resourcesRoot, nodeExecutable, coreEntry }
 }
 
 export async function hashReleaseFile(path: string, fileSystem: ReleaseFileSystem = fs): Promise<string> {
@@ -78,6 +92,7 @@ const inventoryEntrySchema = z.union([
   z.object({ path: resourcePath, size: z.number().int().nonnegative(), sha256: digestSchema }).strict(),
   z.object({ path: resourcePath, link: z.string().min(1).max(1024) }).strict(),
 ])
+const inventoryVerificationBatchSize = 8
 
 export async function verifyFileInventory(inventoryPath: string, excluded: string[] = [], fileSystem: ReleaseFileSystem = fs) {
   const { lstat, readdir, readFile, readlink, realpath } = fileSystem.promises
@@ -86,35 +101,46 @@ export async function verifyFileInventory(inventoryPath: string, excluded: strin
   const expected = new Map(inventory.files.map(entry => [entry.path, entry]))
   if (expected.size !== inventory.files.length)
     throw new Error('SERVICE_RELEASE_CONTENT_CHANGED')
-  async function visit(directory: string) {
+  async function* visit(directory: string): AsyncGenerator<Dirent> {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name)
       if (path === inventoryPath || excluded.includes(path))
         continue
-      if (entry.isDirectory()) {
-        await visit(path)
-        continue
-      }
-      const name = relative(root, path).split(sep).join('/')
-      const recorded = expected.get(name)
-      if (!recorded)
-        throw new Error('SERVICE_RELEASE_CONTENT_CHANGED')
-      expected.delete(name)
-      if ('link' in recorded) {
-        if (!entry.isSymbolicLink())
-          throw new Error('SERVICE_RELEASE_CONTENT_CHANGED')
-        const target = await readlink(path)
-        const actual = await realpath(path)
-        const boundary = relative(root, actual)
-        if (target.split(sep).join('/') !== recorded.link || isAbsolute(target) || isAbsolute(boundary) || boundary === '..' || boundary.startsWith(`..${sep}`))
-          throw new Error('SERVICE_RESOURCE_OUTSIDE_RELEASE')
-      }
-      else if (!entry.isFile() || (await lstat(path)).size !== recorded.size || await hashReleaseFile(path, fileSystem) !== recorded.sha256) {
-        throw new Error('SERVICE_RELEASE_CONTENT_CHANGED')
-      }
+      if (entry.isDirectory())
+        yield* visit(path)
+      else
+        yield entry
     }
   }
-  await visit(root)
+  async function verify(entry: Dirent) {
+    const path = join(entry.parentPath, entry.name)
+    const name = relative(root, path).split(sep).join('/')
+    const recorded = expected.get(name)
+    if (!recorded)
+      throw new Error('SERVICE_RELEASE_CONTENT_CHANGED')
+    expected.delete(name)
+    if ('link' in recorded) {
+      if (!entry.isSymbolicLink())
+        throw new Error('SERVICE_RELEASE_CONTENT_CHANGED')
+      const target = await readlink(path)
+      const actual = await realpath(path)
+      const boundary = relative(root, actual)
+      if (target.split(sep).join('/') !== recorded.link || isAbsolute(target) || isAbsolute(boundary) || boundary === '..' || boundary.startsWith(`..${sep}`))
+        throw new Error('SERVICE_RESOURCE_OUTSIDE_RELEASE')
+    }
+    else if (!entry.isFile() || (await lstat(path)).size !== recorded.size || await hashReleaseFile(path, fileSystem) !== recorded.sha256) {
+      throw new Error('SERVICE_RELEASE_CONTENT_CHANGED')
+    }
+  }
+  let batch: Dirent[] = []
+  for await (const entry of visit(root)) {
+    batch.push(entry)
+    if (batch.length === inventoryVerificationBatchSize) {
+      await Promise.all(batch.map(verify))
+      batch = []
+    }
+  }
+  await Promise.all(batch.map(verify))
   if (expected.size)
     throw new Error('SERVICE_RELEASE_CONTENT_CHANGED')
 }

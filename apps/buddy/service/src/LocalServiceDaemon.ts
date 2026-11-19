@@ -1,4 +1,4 @@
-import type { serviceRuntimeStateSchema } from '../../shared/service/localServiceProtocol'
+import type { DesktopOpenIntent, ServiceLaunch, serviceRuntimeStateSchema } from '../../shared/service/localServiceProtocol'
 import type { startServiceRuntime } from './startServiceRuntime'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
@@ -11,7 +11,6 @@ import { createProxyEnvironment } from '../../platform/process/proxyEnvironment'
 import { HostConnection } from '../../platform/service/HostConnection'
 import { LocalServiceServer } from '../../platform/service/LocalServiceServer'
 import { ServiceChildProcess } from '../../platform/service/ServiceChildProcess'
-import { readServiceLaunch } from '../../platform/service/serviceFiles'
 import { ServiceProfileOwner } from '../../platform/service/ServiceProfileOwner'
 import { ServiceRpcChannel } from '../../platform/service/ServiceRpcChannel'
 import { ApplicationEvents } from '../../shared/observability/ApplicationEvents'
@@ -19,7 +18,6 @@ import { desktopOpenIntentSchema, platformHostReadySchema, serviceIdentitySchema
 import { createRpcRuntimePlatform } from './platform/createRpcRuntimePlatform'
 import { prepareNodeService } from './platform/nodeServiceConfig'
 import { startServiceRuntime as startRuntime } from './startServiceRuntime'
-import { validateServiceRelease } from './validateServiceRelease'
 
 type Runtime = Awaited<ReturnType<typeof startServiceRuntime>>
 interface ServiceMaintenance {
@@ -39,9 +37,7 @@ interface HostGeneration {
   cancelReady: () => void
 }
 
-export async function startLocalServiceDaemon(path: string, options: { restartDesktop?: () => void } = {}) {
-  const config = await readServiceLaunch(path)
-  await validateServiceRelease(config)
+export async function startLocalServiceDaemon(config: ServiceLaunch, options: { restartDesktop?: () => void, foreground?: boolean } = {}) {
   const nativePaths = { appPath: config.resourcesRoot, resourcesPath: config.resourcesRoot, isPackaged: true }
   const processControl = resolveBuddyProcessControl(nativePaths)
   const owner = await ServiceProfileOwner.acquire(config, processControl)
@@ -50,6 +46,7 @@ export async function startLocalServiceDaemon(path: string, options: { restartDe
   const events = new ApplicationEvents()
   let runtime: Runtime | undefined
   let generation: HostGeneration | undefined
+  let startup: Promise<void>
   let stopping: Promise<void> | undefined
   let recovering: Promise<void> | undefined
   let failures = 0
@@ -60,17 +57,24 @@ export async function startLocalServiceDaemon(path: string, options: { restartDe
   let builtinSkillsDirectories: readonly string[] = []
   let maintenance: ServiceMaintenance | undefined
   const attachedClients = new Set<ServiceRpcChannel>()
+  const platformReady = Promise.withResolvers<void>()
+  const desktopRequests = new AbortController()
+  void platformReady.promise.catch(() => {})
   function publishRuntime(status: z.infer<typeof serviceRuntimeStateSchema>['status'], errorCode: string | null = null) {
     if (host.available)
       host.notify('service.runtimeState', { generation: runtimeGeneration, status, maintenance: maintenance?.kind === 'backup' ? 'backup' : null, errorCode })
   }
   async function createRuntime() {
-    const value = await startRuntime({ buddyHome: join(config.profileRoot, 'buddy'), builtinSkillsDirectories, proxy: readyHost!.proxy, platform: createRpcRuntimePlatform(host), events, serviceInstanceId: runtimeGeneration, storageAuthority: config.storageAuthority, notify: (method, params) => {
+    const value = await startRuntime({ buddyHome: join(config.profileRoot, 'buddy'), builtinSkillsDirectories, proxy: readyHost!.proxy, platform: createRpcRuntimePlatform(host), events, serviceInstanceId: runtimeGeneration, storageAuthority: config.storageAuthority, forceEventRecovery: process.env.LEXORA_BUDDY_EVENT_RECOVERY === 'full', notify: (method, params) => {
       if (host.available)
         host.notify(method, params)
     }, onFatalFailure: (error) => {
       terminate(error)
     } })
+    if (stopping) {
+      await value.dispose()
+      throw new Error('SERVICE_STOPPING')
+    }
     runtime = value
     value.startMaintenance()
     return value
@@ -89,6 +93,7 @@ export async function startLocalServiceDaemon(path: string, options: { restartDe
       if (fromHost)
         exitingHost = generation.id
     }
+    desktopRequests.abort()
     setImmediate(() => {
       void stop().catch(failed)
     })
@@ -162,6 +167,24 @@ export async function startLocalServiceDaemon(path: string, options: { restartDe
     rejectRuntime = reject
   })
   void available.catch(() => {})
+  async function openDesktop(intent: DesktopOpenIntent, signal?: AbortSignal) {
+    const allowStarting = intent.kind === 'tasks' && !intent.conversationId
+    const requestSignal = signal ? AbortSignal.any([signal, desktopRequests.signal]) : desktopRequests.signal
+    try {
+      if (owner.discovery.phase === 'starting' && allowStarting)
+        await platformReady.promise
+      requestSignal.throwIfAborted()
+      const phase = owner.discovery.phase
+      if (stopping || !generation?.peer || (phase !== 'ready' && !(allowStarting && phase === 'starting')))
+        throw new Error('SERVICE_NOT_READY')
+      return await generation.peer.request('host.openDesktop', intent, 25000, requestSignal)
+    }
+    catch (error) {
+      if (desktopRequests.signal.aborted)
+        return { accepted: false, uiReady: false, targetVisible: false, visible: false, focused: false }
+      throw error
+    }
+  }
   const management = new LocalServiceServer({
     endpoint: endpoint(owner.discovery.managementEndpoint),
     identity,
@@ -193,9 +216,7 @@ export async function startLocalServiceDaemon(path: string, options: { restartDe
       })
       peer.onRequest('service.openDesktop', async (raw, signal) => {
         const input = z.object({ expectedServiceInstanceId: z.literal(identity.serviceInstanceId), intent: desktopOpenIntentSchema }).strict().parse(raw)
-        if (owner.discovery.phase !== 'ready' || !generation?.peer)
-          throw new Error('SERVICE_NOT_READY')
-        return generation.peer.request('host.openDesktop', input.intent, 25000, signal)
+        return openDesktop(input.intent, signal)
       })
       peer.onRequest('service.stop', async (raw) => {
         return requestStop(raw)
@@ -376,6 +397,7 @@ export async function startLocalServiceDaemon(path: string, options: { restartDe
         }
       }
       generation?.cancelReady()
+      await phase(() => startup.catch(() => {}), 20000)
       await owner.publish('stopping')
       await phase(() => product.dispose(), 2000)
       await phase(async () => recovering, 15000)
@@ -405,22 +427,38 @@ export async function startLocalServiceDaemon(path: string, options: { restartDe
       await owner.dispose()
     })()
   }
-  try {
+  startup = (async () => {
     await management.listen()
+    await owner.publish('starting')
     const ready = await launchHost()
     updateProxy(ready.proxy.httpProxy)
     readyHost = ready
+    publishRuntime('starting')
+    platformReady.resolve()
+    if (options.foreground)
+      void openDesktop({ kind: 'tasks' }).catch(() => {})
     builtinSkillsDirectories = await prepareNodeService({ profile: config.profile, buddyHome: join(config.profileRoot, 'buddy'), resourcesRoot: config.resourcesRoot, preferences: ready.preferences, proxy: ready.proxy, display: ready.display, storageAuthority: config.storageAuthority })
+    if (stopping)
+      throw new Error('SERVICE_STOPPING')
     await createRuntime()
     if (host.instanceId !== ready.hostInstanceId)
       throw new Error('PLATFORM_HOST_UNAVAILABLE')
+    if (stopping)
+      throw new Error('SERVICE_STOPPING')
     resolveRuntime(runtime!)
     await product.listen()
+    if (stopping)
+      throw new Error('SERVICE_STOPPING')
     await owner.publish('ready')
-    publishRuntime('ready')
-    return { config, discovery: owner.discovery, stop, openDesktop: () => generation!.peer!.request('host.openDesktop', { kind: 'tasks' }, 25000) }
+    if (!stopping)
+      publishRuntime('ready')
+  })()
+  try {
+    await startup
+    return { config, discovery: owner.discovery, stop }
   }
   catch (error) {
+    platformReady.reject(error)
     rejectRuntime(error)
     await stop().catch(failed)
     throw error

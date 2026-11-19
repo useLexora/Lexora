@@ -9,7 +9,7 @@ import { ensurePrivateDirectories } from '../filesystem/privateDirectories'
 import { resolveBuddyPrivateDirectories, resolveBuddyProcessControl } from '../native/nativeHost'
 import { storageBootstrapRoot } from '../storage/StorageLocationStore'
 import { connectLocalService } from './connectLocalService'
-import { readReleaseSet } from './releaseSet'
+import { readReleaseIdentity, verifyReleaseSet } from './releaseSet'
 import { readPrivateServiceJson, writePrivateServiceJson } from './serviceFiles'
 import { readServiceProcessIdentity, waitForServiceProcessExit } from './serviceProcessIdentity'
 import { ServiceRpcChannel } from './ServiceRpcChannel'
@@ -26,10 +26,11 @@ export interface LocalServiceLaunchOptions {
   leaseDirectory: string
   storageAuthority: ServiceLaunch['storageAuthority']
   startIfMissing?: boolean
+  connectDuringStartup?: boolean
 }
 
 export async function launchLocalService(options: LocalServiceLaunchOptions) {
-  const release = await readReleaseSet(options.releaseSetPath, options.releaseFileSystem)
+  const release = await readReleaseIdentity(options.releaseSetPath, options.releaseFileSystem)
   const resourcesRoot = join(dirname(release.coreEntry), 'resources')
   const native = { appPath: resourcesRoot, resourcesPath: resourcesRoot, isPackaged: true }
   const launcher = resolveBuddyProcessControl(native)
@@ -59,9 +60,10 @@ export async function launchLocalService(options: LocalServiceLaunchOptions) {
     leaseDirectory: options.leaseDirectory,
     privateDirectoriesExecutable,
   })
-  const existing = await findLiveService(directory, config, launcher)
+  const existing = await findLiveService(directory, config, launcher, options.connectDuringStartup)
   if (existing || options.startIfMissing === false)
     return existing
+  await verifyReleaseSet(release, options.releaseFileSystem)
   const launchDirectory = join(storageBootstrapRoot(config.defaultRoot!), 'service')
   await ensurePrivateDirectories([launchDirectory], privateDirectoriesExecutable)
   const path = join(launchDirectory, 'launch.json')
@@ -69,7 +71,7 @@ export async function launchLocalService(options: LocalServiceLaunchOptions) {
   await new SessionServiceRegistration(config, path, launcher).start()
   const deadline = Date.now() + 120_000
   while (Date.now() < deadline) {
-    const connected = await findLiveService(directory, config, launcher)
+    const connected = await findLiveService(directory, config, launcher, options.connectDuringStartup)
     if (connected)
       return connected
     await delay(250)
@@ -77,7 +79,7 @@ export async function launchLocalService(options: LocalServiceLaunchOptions) {
   throw new Error('SERVICE_START_TIMEOUT')
 }
 
-async function findLiveService(directory: string, config: ServiceLaunch, helper: string) {
+async function findLiveService(directory: string, config: ServiceLaunch, helper: string, connectDuringStartup = false) {
   const discovery = await readPrivateServiceJson(join(directory, 'service.json')).catch(error => (error as NodeJS.ErrnoException).code === 'ENOENT' ? null : Promise.reject(error))
   if (!discovery)
     return null
@@ -85,11 +87,11 @@ async function findLiveService(directory: string, config: ServiceLaunch, helper:
   const actual = await readServiceProcessIdentity(current.process.pid, helper).catch(error => ['ENOENT', 'ESRCH'].includes((error as NodeJS.ErrnoException).code ?? '') || (error as Error).message === 'SERVICE_PROCESS_CHANGED' ? null : Promise.reject(error))
   if (!actual || actual.startIdentity !== current.process.startIdentity || actual.executable !== current.process.executable)
     return null
-  if (current.buildId !== config.buildId || current.sessionId !== config.sessionId || current.userId !== config.userId)
+  if (current.buildId !== config.buildId || current.sessionId !== config.sessionId || current.userId !== config.userId || actual.executable !== config.nodeExecutable)
     throw new Error('SERVICE_RUNNING_DIFFERENT_RELEASE_OR_SESSION')
   if (current.phase === 'failed' || current.phase === 'stopping')
     throw new Error('SERVICE_REQUIRES_RECOVERY')
-  if (current.phase !== 'ready')
+  if (current.phase !== 'ready' && !(connectDuringStartup && current.phase === 'starting'))
     return null
   const credentials = z.object({ version: z.literal(1), serviceInstanceId: z.literal(current.serviceInstanceId), managementSecret: z.string().regex(/^[a-f0-9]{64}$/), productSecret: z.string().regex(/^[a-f0-9]{64}$/) }).strict().parse(await readPrivateServiceJson(join(directory, 'local-client.json')))
   const identity = serviceIdentitySchema.strip().parse(current)

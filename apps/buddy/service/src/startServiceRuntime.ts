@@ -80,7 +80,10 @@ export async function startServiceRuntime(options: ServiceRuntimeOptions) {
       await network.replace(options.proxy)
     })
     const openedDatabase = await host.start('runtime.database', ({ defer }) => {
-      database = (options.storageAuthority === 'sqlite' ? openBuddySqliteDatabase : openBuddyDatabase)({ databasePath: resolveBuddyDatabasePath(buddyHome) })
+      const databasePath = resolveBuddyDatabasePath(buddyHome)
+      database = options.storageAuthority === 'sqlite'
+        ? openBuddySqliteDatabase({ databasePath, verifyForeignKeys: options.forceEventRecovery })
+        : openBuddyDatabase({ databasePath })
       defer(closeDatabase)
       const isolation = guardStorageDatabase(database)
       const subscription = isolation.onDidIsolate(error => options.onFatalFailure(error))

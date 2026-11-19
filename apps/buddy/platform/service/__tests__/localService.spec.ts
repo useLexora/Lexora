@@ -1,8 +1,8 @@
 import type { ServiceIdentity, ServiceLaunch } from '../../../shared/service/localServiceProtocol'
 import { spawn } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { once } from 'node:events'
-import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,6 +14,7 @@ import { RuntimeRpcPeer } from '../../ipc/runtimeRpcPeer'
 import { connectLocalService } from '../connectLocalService'
 import { HostConnection } from '../HostConnection'
 import { LocalServiceServer } from '../LocalServiceServer'
+import { verifyFileInventory } from '../releaseSet'
 import { readPrivateServiceJson } from '../serviceFiles'
 import { readServiceProcessIdentity, waitForServiceProcessExit } from '../serviceProcessIdentity'
 import { ServiceProfileOwner } from '../ServiceProfileOwner'
@@ -24,6 +25,20 @@ afterEach(async () => {
 })
 const identity: ServiceIdentity = { protocol: 1, profileId: randomUUID(), serviceInstanceId: randomUUID(), buildId: 'a'.repeat(64), sessionId: 'test-session', userId: 'test-user' }
 const secret = 'b'.repeat(64)
+
+it('verifies the complete release inventory across multiple batches', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'lexora-release-inventory-'))
+  cleanup.push(() => rm(directory, { recursive: true, force: true }))
+  const sha256 = createHash('sha256').update('original').digest('hex')
+  const files = Array.from({ length: 10 }, (_, index) => ({ path: `dependency-${index}.mjs`, size: 8, sha256 }))
+  await Promise.all(files.map(file => writeFile(join(directory, file.path), 'original')))
+  const inventory = join(directory, 'inventory.json')
+  await writeFile(inventory, JSON.stringify({ version: 1, files }))
+  await verifyFileInventory(inventory)
+  await writeFile(join(directory, 'dependency-9.mjs'), 'modified')
+  await expect(verifyFileInventory(inventory)).rejects.toThrow('SERVICE_RELEASE_CONTENT_CHANGED')
+})
+
 async function server(role: 'host' | 'management' | 'product' = 'host') {
   const root = await mkdtemp(join(tmpdir(), 'lexora-local-'))
   cleanup.push(() => rm(root, { recursive: true, force: true }))
@@ -116,7 +131,10 @@ it.skipIf(process.platform !== 'linux')('locks the canonical profile before publ
   const owner = await ServiceProfileOwner.acquire(config)
   cleanup.push(() => owner.dispose())
   await expect(ServiceProfileOwner.acquire({ ...config, profile: 'stable', profileRoot: join(root, 'alias') })).rejects.toThrow('STORAGE_ROOT_IN_USE')
-  const discovery = await readPrivateServiceJson(join(profile, '.runtime/service.json'))
+  const discoveryPath = join(profile, '.runtime/service.json')
+  await expect(readPrivateServiceJson(discoveryPath)).rejects.toMatchObject({ code: 'ENOENT' })
+  await owner.publish('starting')
+  const discovery = await readPrivateServiceJson(discoveryPath)
   expect(discovery).toMatchObject({ serviceInstanceId: owner.discovery.serviceInstanceId, process: { pid: process.pid }, phase: 'starting' })
   expect(JSON.stringify(discovery)).not.toContain(owner.managementSecret)
   await owner.dispose()

@@ -50,6 +50,10 @@ export async function startDesktopServiceEntry(): Promise<boolean> {
       const value = app.commandLine.getSwitchValue(name)
       return [value ? `--${name}=${value}` : `--${name}`]
     })
+    const installerExit = process.argv.includes(INSTALLER_EXIT_ARGUMENT)
+    if (process.platform === 'darwin' && !installerExit)
+      await app.whenReady()
+    const foreground = !installerExit && resolveDesktopLaunchIntent(process.argv, process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAtLogin) === 'foreground'
     const options: LocalServiceLaunchOptions = {
       releaseFileSystem: originalFs,
       releaseSetPath: app.isPackaged ? join(process.resourcesPath, 'release-set.json') : join(app.getAppPath(), '.output/release-set.json'),
@@ -60,9 +64,10 @@ export async function startDesktopServiceEntry(): Promise<boolean> {
       hostArguments: [...platformArguments, ...app.isPackaged ? [] : [app.getAppPath()]],
       leaseDirectory: join(paths.profile === 'test' ? dirname(paths.lexoraHome) : homedir(), '.lexora-locations', 'locks'),
       storageAuthority: 'sqlite',
+      connectDuringStartup: foreground || installerExit,
     }
     let connection = await launchLocalService({ ...options, startIfMissing: false })
-    if (!connection && !process.argv.includes(INSTALLER_EXIT_ARGUMENT)) {
+    if (!connection && !installerExit) {
       const release = acquireStorageRootLease(storage.state.activeRoot, options.leaseDirectory, resolveBuddyPrivateDirectories({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, isPackaged: app.isPackaged }))
       let maintenance: boolean
       try {
@@ -83,12 +88,12 @@ export async function startDesktopServiceEntry(): Promise<boolean> {
       return true
     }
     try {
-      if (process.argv.includes(INSTALLER_EXIT_ARGUMENT)) {
+      if (installerExit) {
         await connection.peer.request('service.stop', { expectedServiceInstanceId: connection.discovery.serviceInstanceId, commandId: randomUUID(), reason: 'maintenance' })
         await connection.waitForExit()
       }
-      else if (resolveDesktopLaunchIntent(process.argv, process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAtLogin) === 'foreground') {
-        await connection.peer.request('service.openDesktop', { expectedServiceInstanceId: connection.discovery.serviceInstanceId, intent: { kind: 'tasks' } })
+      else if (foreground) {
+        await connection.peer.request('service.openDesktop', { expectedServiceInstanceId: connection.discovery.serviceInstanceId, intent: { kind: 'tasks' } }, 145_000)
       }
     }
     finally { connection.peer.close(new Error('SERVICE_LAUNCHER_FINISHED')) }

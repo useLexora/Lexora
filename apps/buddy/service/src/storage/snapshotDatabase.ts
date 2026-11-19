@@ -20,7 +20,7 @@ export function openSnapshotDatabase(databasePath: string): DatabaseSync {
   const version = snapshotDatabaseVersion(databasePath)
   if (version <= BUDDY_SCHEMA_VERSION)
     return openBuddyDatabase({ databasePath })
-  return openBuddySqliteDatabase({ databasePath })
+  return openBuddySqliteDatabase({ databasePath, verifyForeignKeys: true })
 }
 
 export async function rewriteIsolatedSnapshotDatabase<T>(databasePath: string, operation: (database: DatabaseSync) => T | Promise<T>): Promise<T> {
