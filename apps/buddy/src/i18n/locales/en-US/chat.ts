@@ -623,6 +623,4 @@ export default {
   'desktop.chat.draftRestoration.resolveFailed': 'Restoration is incomplete, or the input changed while waiting. Your input is still available. Review it and retry.',
   'desktop.chat.draftRestoration.keepLocal': 'Keep input for now',
   'desktop.chat.draftRestoration.useSaved': 'Discard input and restore saved content',
-  'desktop.chat.originalBranch': 'Original branch',
-  'desktop.chat.numberedBranch': 'Branch {index}',
 } satisfies Record<keyof typeof zhCN, string>

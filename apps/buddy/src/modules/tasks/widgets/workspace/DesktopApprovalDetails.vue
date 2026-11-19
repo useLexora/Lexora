@@ -9,7 +9,7 @@ import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { translateSystemInterruption } from '../../model/approvals/systemActionPresentation'
 
 const props = defineProps<{
-  review: ApprovalReviewPayload | null
+  review: ApprovalReviewPayload
   language: BuddyLocale
   browserEffect: string
   systemEffect: string
@@ -73,7 +73,7 @@ const browserAction = computed(() => {
 
 <template>
   <section
-    v-if="review?.card === 'automation'"
+    v-if="review.card === 'automation'"
     class="desktop-approval-card__details"
   >
     <NDescriptions v-bind="detailsProps">
@@ -104,7 +104,7 @@ const browserAction = computed(() => {
     </NDescriptions>
   </section>
   <section
-    v-else-if="review?.card === 'sandbox-directory'"
+    v-else-if="review.card === 'sandbox-directory'"
     class="desktop-approval-card__details"
   >
     <NDescriptions v-bind="detailsProps">
@@ -119,7 +119,7 @@ const browserAction = computed(() => {
       </NDescriptionsItem>
     </NDescriptions>
   </section>
-  <section v-else-if="review?.card === 'network-permission'" class="desktop-approval-card__details">
+  <section v-else-if="review.card === 'network-permission'" class="desktop-approval-card__details">
     <NDescriptions v-bind="detailsProps">
       <NDescriptionsItem :label="t('desktop.approval.target')">
         <code>{{ review.host }}<template v-if="review.port"> · {{ review.port }}</template></code>
@@ -133,7 +133,7 @@ const browserAction = computed(() => {
     </NDescriptions>
   </section>
   <section
-    v-else-if="review?.card === 'sandbox-network'"
+    v-else-if="review.card === 'sandbox-network'"
     class="desktop-approval-card__details"
   >
     <NDescriptions v-bind="detailsProps">
@@ -146,7 +146,7 @@ const browserAction = computed(() => {
     </NDescriptions>
   </section>
   <section
-    v-else-if="review?.card === 'web'"
+    v-else-if="review.card === 'web'"
     class="desktop-approval-card__details"
   >
     <NDescriptions v-bind="detailsProps">
@@ -159,7 +159,7 @@ const browserAction = computed(() => {
     </NDescriptions>
   </section>
   <section
-    v-else-if="review?.card === 'network-target'"
+    v-else-if="review.card === 'network-target'"
     class="desktop-approval-card__details"
   >
     <NDescriptions v-bind="detailsProps">
@@ -169,7 +169,7 @@ const browserAction = computed(() => {
     </NDescriptions>
   </section>
   <section
-    v-else-if="review?.card === 'system-action'"
+    v-else-if="review.card === 'system-action'"
     class="desktop-approval-card__details"
   >
     <NDescriptions v-bind="detailsProps">
@@ -200,7 +200,7 @@ const browserAction = computed(() => {
     </NDescriptions>
   </section>
   <section
-    v-else-if="review?.card === 'browser-action'"
+    v-else-if="review.card === 'browser-action'"
     class="desktop-approval-card__details"
   >
     <NDescriptions v-bind="detailsProps">
@@ -221,7 +221,7 @@ const browserAction = computed(() => {
       </NDescriptionsItem>
     </NDescriptions>
   </section>
-  <section v-else-if="review?.card === 'shell'" class="desktop-approval-card__details">
+  <section v-else-if="review.card === 'shell'" class="desktop-approval-card__details">
     <NDescriptions v-bind="detailsProps">
       <NDescriptionsItem :label="t('desktop.approval.runCommand')">
         <pre>{{ review.command }}</pre>
@@ -234,7 +234,7 @@ const browserAction = computed(() => {
       </NDescriptionsItem>
     </NDescriptions>
   </section>
-  <div v-else-if="review?.card === 'paths'" class="desktop-approval-card__review border border-solid border-border rounded-2 bg-subtle py-[0.65rem] px-[0.7rem]">
+  <div v-else-if="review.card === 'paths'" class="desktop-approval-card__review border border-solid border-border rounded-2 bg-subtle py-[0.65rem] px-[0.7rem]">
     <ul class="desktop-approval-card__paths">
       <li v-for="target in review.targets" :key="target.path">
         <code>{{ target.path }}</code>
@@ -251,7 +251,7 @@ const browserAction = computed(() => {
     </p>
   </div>
   <section
-    v-else-if="review?.card === 'arguments'"
+    v-else-if="review.card === 'arguments'"
     class="desktop-approval-card__details"
   >
     <NDescriptions v-bind="detailsProps">
@@ -268,9 +268,6 @@ const browserAction = computed(() => {
       </NDescriptionsItem>
     </NDescriptions>
   </section>
-  <p v-else class="desktop-approval-card__review border border-solid border-border rounded-2 bg-subtle py-[0.65rem] px-[0.7rem]">
-    {{ t('desktop.approval.unsupported') }}
-  </p>
 </template>
 
 <style scoped lang="scss">

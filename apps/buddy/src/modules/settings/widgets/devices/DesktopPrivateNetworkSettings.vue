@@ -50,7 +50,7 @@ async function saveOptions() {
         {{ t('desktop.settings.devices.pair') }}
       </NButton>
     </div>
-    <DesktopPairedDevices :devices="devices" :loading="!status && !unavailable" :unavailable="unavailable" :enabled="status?.state === 'listening'" :busy="busy" @revoke="deviceId => act(() => api.revoke({ deviceId }))" />
+    <DesktopPairedDevices v-if="!unavailable" :devices="devices" :loading="!status" :enabled="status?.state === 'listening'" :busy="busy" @revoke="deviceId => act(() => api.revoke({ deviceId }))" />
     <NModal :show="!!pairing" preset="card" :title="t('desktop.settings.devices.pair')" class="w-[min(24rem,calc(100vw-2rem))]" @update:show="show => { if (!show) act(cancelPairing) }">
       <div class="flex flex-col items-center gap-4" data-testid="device-pairing-code">
         <NQrCode v-if="qr" class="box-content" :value="qr" :size="256" :padding="16" error-correction-level="M" />
