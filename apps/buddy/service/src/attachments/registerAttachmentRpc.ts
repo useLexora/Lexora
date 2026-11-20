@@ -1,6 +1,7 @@
 import type { RuntimeRequestRegistrar } from '../rpc/runtimeRequest'
 import type { AttachmentService } from './AttachmentService'
 import { z } from 'zod'
+import { attachmentHostRpc } from '../../../shared/runtime/attachmentHostProtocol'
 import { parse } from '../rpc/runtimeRequest'
 
 const idSchema = z.string().trim().min(1).max(256)
@@ -15,7 +16,7 @@ export interface RegisterAttachmentRpcOptions {
 
 export function registerAttachmentRpc(options: RegisterAttachmentRpcOptions): () => void {
   const disposers = [
-    options.rpc.onRequest('attachments.readPreview', (params) => {
+    options.rpc.onRequest(attachmentHostRpc.readPreview, (params) => {
       const input = parse(z.object({ attachmentId: idSchema }).strict(), params)
       return options.service.readPreview(input.attachmentId)
     }),

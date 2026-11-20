@@ -2,6 +2,7 @@ import type { Writable } from 'node:stream'
 import type { ApplicationDiagnostic } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { RuntimeLifecycleChange, RuntimeLifecycleSnapshot, RuntimeMaintenance } from '../../../shared/lifecycle/runtimeLifecycle'
 import type { LifecycleComponent, ServiceLifecycleSnapshot } from '../../../shared/lifecycle/serviceLifecycle'
+import type { DesktopClientRequestMethod, DesktopHostRequestMethod } from '../../../shared/runtime/desktopHostRequests'
 import type { BuddyServiceSupervisorFailureCode } from '../../../shared/runtime/runtimeProtocol'
 import type { BuddyServicePeer } from './BuddyServicePeer'
 import type { BuddyServiceProcessHandle, BuddyServiceProcessInstance } from './buddyServiceProcess'
@@ -179,7 +180,15 @@ export class BuddyServiceSupervisor {
     void this.restart()
   }
 
-  async request(
+  requestHost(method: DesktopHostRequestMethod, params: unknown, options?: BuddyServiceRequestOptions): Promise<unknown> {
+    return this.#request(method, params, options)
+  }
+
+  request<Method extends string>(method: Method & DesktopClientRequestMethod<Method>, params: unknown, options?: BuddyServiceRequestOptions): Promise<unknown> {
+    return this.#request(method, params, options)
+  }
+
+  async #request(
     method: string,
     params: unknown,
     options: BuddyServiceRequestOptions = {},

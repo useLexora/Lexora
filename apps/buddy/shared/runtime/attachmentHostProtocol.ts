@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+export const attachmentHostRpc = { readPreview: 'attachments.readPreview' } as const
+
 export const ATTACHMENT_PREVIEW_BYTES_LIMIT = 8 * 1024 * 1024
 export const attachmentPreviewBytesSchema = z.object({
   mimeType: z.string().regex(/^image\//),

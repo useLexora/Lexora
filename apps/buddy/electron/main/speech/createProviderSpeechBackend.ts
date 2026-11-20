@@ -4,7 +4,7 @@ import { ProviderSpeechBackend } from '../../../platform/speech/ProviderSpeechBa
 import { providerSpeechRpc } from '../../../shared/providers/providerSpeechApi'
 
 export function createProviderSpeechBackend(options: {
-  request: (method: string, input: unknown, signal?: AbortSignal) => Promise<unknown>
+  request: (method: typeof providerSpeechRpc[keyof typeof providerSpeechRpc]['method'], input: unknown, signal?: AbortSignal) => Promise<unknown>
   onChanged: (listener: () => void) => () => void
   preferences: () => Promise<SpeechPreferences>
   transport: SyncTransport
