@@ -169,10 +169,15 @@ export class MutationCoordinator {
     if (this.#disposed)
       throw new MutationCoordinatorError('MUTATION_COORDINATOR_STOPPED')
     const decision = this.#evidence?.decision(invocationId)
-    if (decision?.outcome === 'requested' && decision.kind === 'waived')
+    if (decision?.outcome === 'requested' && decision.kind === 'waived') {
       await this.#resolveProtection(invocationId, 'waived')
-    else if (this.#canConfirmReleased(invocationId))
-      await this.confirmReleased(invocationId)
+    }
+    else {
+      if (this.#hazards.get(invocationId)?.reason === 'OWNED_PROCESS_CLEANUP_UNCONFIRMED')
+        this.#settleUnstartedDispatch(invocationId)
+      if (this.#canConfirmReleased(invocationId))
+        await this.confirmReleased(invocationId)
+    }
     return !this.#hazards.has(invocationId)
   }
 
@@ -246,6 +251,15 @@ export class MutationCoordinator {
     if (!processes?.size)
       return 'none'
     return [...processes.values()].every(value => value === 'released') ? 'released' : 'unknown'
+  }
+
+  #settleUnstartedDispatch(invocationId: string): void {
+    const processes = this.#processes.get(invocationId)
+    if (!this.#repository || processes?.size !== 1)
+      return
+    const processId = processes.keys().next().value
+    if (processId && this.#repository.releaseUnstartedLinuxSandboxDispatch(invocationId, processId))
+      processes.set(processId, 'released')
   }
 
   async waitForRun(runId: string, signal?: AbortSignal): Promise<MutationRunState> {
@@ -441,9 +455,12 @@ export class MutationCoordinator {
     if (this.#active.get(lease.invocationId) !== lease || this.#closing.has(lease.invocationId))
       return
     this.#closing.add(lease.invocationId)
-    if (hazard === 'OWNED_PROCESS_CLEANUP_UNCONFIRMED' && this.getInvocationSettlement(lease.invocationId) === 'released')
-      hazard = undefined
     try {
+      if (hazard === 'OWNED_PROCESS_CLEANUP_UNCONFIRMED') {
+        this.#settleUnstartedDispatch(lease.invocationId)
+        if (this.getInvocationSettlement(lease.invocationId) === 'released')
+          hazard = undefined
+      }
       this.#repository?.settle(lease.invocationId, hazard ? 'hazard' : 'released', hazard ?? null)
     }
     catch {

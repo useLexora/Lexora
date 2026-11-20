@@ -26,12 +26,22 @@ export interface MutationRepository {
   recordProcess: (invocationId: string, processId: string, settlement: OwnedProcessSettlement, execution?: MutationExecutionUpdate) => void
   listUnreleased: () => StoredMutation[]
   isReleased: (invocationId: string) => boolean
+  releaseUnstartedLinuxSandboxDispatch: (invocationId: string, processId: string) => boolean
 }
 
 const claimsSchema = z.array(z.union([
   z.object({ kind: z.enum(['file', 'tree']), canonicalPath: z.string().min(1) }).strict(),
   z.object({ kind: z.literal('host') }).strict(),
 ]))
+
+const linuxSandboxDispatchSchema = z.object({
+  kind: z.literal('sandbox-dispatch'),
+  platform: z.literal('linux'),
+  version: z.literal(3),
+  requestId: z.uuid(),
+  executionId: z.uuid(),
+  dispatchId: z.uuid(),
+}).strict()
 
 interface MutationRow {
   invocation_id: string
@@ -72,7 +82,31 @@ export function createMutationRepository(database: DatabaseSync): MutationReposi
   const listUnreleased = database.prepare('SELECT * FROM run_mutation_leases WHERE status <> \'released\' ORDER BY created_at, invocation_id')
   const findStatus = database.prepare('SELECT status FROM run_mutation_leases WHERE invocation_id = ?')
   const listProcesses = database.prepare('SELECT process_id, settlement FROM run_mutation_processes WHERE invocation_id = ? ORDER BY process_id')
+  const releaseDispatch = database.prepare(`
+    UPDATE run_mutation_processes SET settlement = 'released', updated_at = ?
+    WHERE invocation_id = ? AND process_id = ? AND settlement = 'unknown'
+      AND EXISTS (
+        SELECT 1 FROM run_mutation_executions e WHERE e.invocation_id = run_mutation_processes.invocation_id
+          AND e.execution_id = ? AND e.dispatch_id = ? AND e.launch_state = 'settled'
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM run_mutation_processes p WHERE p.invocation_id = run_mutation_processes.invocation_id
+          AND p.process_id <> run_mutation_processes.process_id
+      )
+  `)
   return {
+    releaseUnstartedLinuxSandboxDispatch(invocationId, processId) {
+      let value: unknown
+      try {
+        value = JSON.parse(processId)
+      }
+      catch { return false }
+      const identity = linuxSandboxDispatchSchema.safeParse(value)
+      if (!identity.success)
+        return false
+      // Linux v3 must persist native preparation before starting its helper. A settled execution rejects late preparation.
+      return Number(releaseDispatch.run(new Date().toISOString(), invocationId, processId, identity.data.executionId, identity.data.dispatchId).changes) === 1
+    },
     isReleased(invocationId) {
       return (findStatus.get(invocationId) as { status: string } | undefined)?.status === 'released'
     },

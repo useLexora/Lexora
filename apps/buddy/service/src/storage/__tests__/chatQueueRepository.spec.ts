@@ -157,6 +157,15 @@ describe('chat queue ownership and delivery', () => {
     expect(f.queue.list(f.scope)[0]?.delivery).toEqual(delivery)
   })
 
+  it('starts a fresh turn after a closed degraded run without changing its history', () => {
+    const f = fixture()
+    f.database.exec('UPDATE runs SET status = \'failed\'; UPDATE execution_state SET phase = \'closed\', cleanup_state = \'degraded\'')
+    const input = { ...f.input('continue'), delivery: { mode: 'current' as const, actorId: 'default', target: null } }
+    expect(f.turns.prepare(input)).toMatchObject({ created: true, runId: 'run-continue' })
+    expect(f.turns.prepare(input)).toMatchObject({ created: false, runId: 'run-continue' })
+    expect(f.database.prepare('SELECT cleanup_state FROM execution_state WHERE run_id = ?').get('run-initial')).toEqual({ cleanup_state: 'degraded' })
+  })
+
   it.each([
     { rootRunId: 'another-root', runId: 'run-initial' },
     { rootRunId: 'run-initial', runId: 'missing-run' },
