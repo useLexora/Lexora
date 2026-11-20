@@ -3,9 +3,11 @@ import type { LocalCustomProviderModel, LocalRuntimeModelOption } from '@buddy-s
 
 import type { ModelParameterActions } from './typing'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
-import { NAlert, NButton, NInputNumber } from 'naive-ui'
+import { NAlert, NButton } from 'naive-ui'
 import { computed, reactive, shallowRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
+import { outputTokensForContext } from './contextWindowPreset'
+import DesktopContextWindowPresetField from './DesktopContextWindowPresetField.vue'
 import DesktopModelSectionHeader from './DesktopModelSectionHeader.vue'
 
 const props = defineProps<{
@@ -17,12 +19,9 @@ const props = defineProps<{
 }>()
 const { t } = useBuddyI18n(() => props.language)
 const editing = shallowRef(false)
-const form = reactive({ contextWindow: 1, maxTokens: 1 })
-const valid = computed(() => (
-  form.contextWindow > 0
-  && form.maxTokens > 0
-  && form.maxTokens <= form.contextWindow
-))
+const form = reactive({ contextWindow: 128_000 })
+const draftMaxTokens = computed(() => outputTokensForContext(form.contextWindow))
+const valid = computed(() => form.contextWindow > 0 && draftMaxTokens.value <= form.contextWindow)
 const defaultParametersLabel = computed(() => t(
   !props.model.metadataKnown
     ? 'desktop.providers.unconfirmedParameters'
@@ -43,10 +42,7 @@ watch([
 }, { immediate: true })
 
 function resetForm() {
-  if (props.model.contextWindow === null || props.model.maxTokens === null)
-    return
-  form.contextWindow = props.model.contextWindow
-  form.maxTokens = props.model.maxTokens
+  form.contextWindow = props.model.contextWindow ?? 128_000
 }
 
 function startEditing() {
@@ -61,23 +57,24 @@ function formatTokens(value: number | null): string {
 async function save() {
   if (!valid.value)
     return
+  const parameters = {
+    contextWindow: form.contextWindow,
+    maxTokens: draftMaxTokens.value,
+  }
   let succeeded: boolean
   if (props.model.source === 'manual' && !props.model.hasParameterOverride) {
     const input: LocalCustomProviderModel = {
-      contextWindow: form.contextWindow,
+      contextWindow: parameters.contextWindow,
       id: props.model.modelId,
       input: props.model.sourceCapabilities.image ? ['text', 'image'] : ['text'],
-      maxTokens: form.maxTokens,
+      maxTokens: parameters.maxTokens,
       name: props.model.displayName,
       reasoning: props.model.sourceCapabilities.reasoningOptions.some(level => level !== 'off'),
     }
     succeeded = await props.actions.saveManualModel(input)
   }
   else {
-    succeeded = await props.actions.saveParameters({
-      contextWindow: form.contextWindow,
-      maxTokens: form.maxTokens,
-    })
+    succeeded = await props.actions.saveParameters(parameters)
   }
   if (succeeded)
     editing.value = false
@@ -128,15 +125,15 @@ async function keepCustomParameters() {
       </div>
     </NAlert>
 
-    <div v-if="editing" class="desktop-model-parameters-panel__form">
-      <label>
+    <div v-if="editing" class="desktop-model-parameters-panel__editor">
+      <div>
         <span>{{ t('desktop.providers.contextWindow') }}</span>
-        <NInputNumber v-model:value="form.contextWindow" :min="1" :precision="0" :disabled="saving" />
-      </label>
-      <label>
+        <DesktopContextWindowPresetField v-model="form.contextWindow" :language="language" :disabled="saving" />
+      </div>
+      <div>
         <span>{{ t('desktop.providers.maxTokens') }}</span>
-        <NInputNumber v-model:value="form.maxTokens" :min="1" :precision="0" :disabled="saving" />
-      </label>
+        <strong>{{ formatTokens(draftMaxTokens) }}</strong>
+      </div>
     </div>
 
     <dl v-else class="desktop-model-parameters-panel__metrics">
@@ -207,34 +204,32 @@ async function keepCustomParameters() {
   width: 100%;
 }
 
-.desktop-model-parameters-panel__metrics,
-.desktop-model-parameters-panel__form {
+.desktop-model-parameters-panel__metrics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   border-top: 1px solid var(--buddy-border-subtle);
   margin: 0;
 }
 
-.desktop-model-parameters-panel__metrics > div,
-.desktop-model-parameters-panel__form > label {
+.desktop-model-parameters-panel__metrics > div {
   display: grid;
   min-width: 0;
   gap: 0.3rem;
   padding: 0.85rem 1rem;
 }
 
-.desktop-model-parameters-panel__metrics > div + div,
-.desktop-model-parameters-panel__form > label + label {
+.desktop-model-parameters-panel__metrics > div + div {
   border-left: 1px solid var(--buddy-border-subtle);
 }
 
 .desktop-model-parameters-panel__metrics dt,
-.desktop-model-parameters-panel__form label > span {
+.desktop-model-parameters-panel__editor span {
   color: var(--buddy-text-secondary);
   font-size: 0.65rem;
 }
 
-.desktop-model-parameters-panel__metrics dd {
+.desktop-model-parameters-panel__metrics dd,
+.desktop-model-parameters-panel__editor strong {
   margin: 0;
   color: var(--buddy-text-strong);
   font-size: 0.9rem;
@@ -242,8 +237,17 @@ async function keepCustomParameters() {
   font-weight: 620;
 }
 
-.desktop-model-parameters-panel__form :deep(.n-input-number) {
-  width: 100%;
+.desktop-model-parameters-panel__editor {
+  display: grid;
+  gap: 0.85rem;
+  border-top: 1px solid var(--buddy-border-subtle);
+  padding: 0.85rem 1rem 1rem;
+}
+
+.desktop-model-parameters-panel__editor > div {
+  display: grid;
+  min-width: 0;
+  gap: 0.45rem;
 }
 
 @media (max-width: 620px) {
@@ -253,13 +257,11 @@ async function keepCustomParameters() {
     flex-direction: column;
   }
 
-  .desktop-model-parameters-panel__metrics,
-  .desktop-model-parameters-panel__form {
+  .desktop-model-parameters-panel__metrics {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .desktop-model-parameters-panel__metrics > div + div,
-  .desktop-model-parameters-panel__form > label + label {
+  .desktop-model-parameters-panel__metrics > div + div {
     border-top: 1px solid var(--buddy-border-subtle);
     border-left: 0;
   }
