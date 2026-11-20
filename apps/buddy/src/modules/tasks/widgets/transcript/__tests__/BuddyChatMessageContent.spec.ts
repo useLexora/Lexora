@@ -3,6 +3,7 @@ import type { MaybeRefOrGetter } from 'vue'
 // @vitest-environment jsdom
 
 import { DEFAULT_DESKTOP_CHAT_PREFERENCES } from '@buddy-electron/shared/desktopApi'
+import { taskFileMediaUrl } from '@buddy-shared/files/mediaPreview'
 import { describe, expect, it, vi } from 'vitest'
 import { computed, createSSRApp, h, shallowRef, toValue } from 'vue'
 import { renderToString } from 'vue/server-renderer'
@@ -45,6 +46,24 @@ describe('buddyChatMessageContent', () => {
     const document = parseHtml(await renderMessage(role, 'Quoted text', runId))
     const source = JSON.parse(document.querySelector('[data-quote-source]')!.getAttribute('data-quote-source')!)
     expect(source).toEqual({ conversationId: 'conversation-1', branchId: 'branch-1', messageId: `${role}-message`, role, runId, ...(author ? { author } : {}) })
+  })
+
+  it('renders a photo-only local reference through its own task without a file caption or empty text bubble', async () => {
+    const photo = { kind: 'file', name: 'summer #1.jpg', mimeType: 'image/jpeg', path: '/photos/summer #1.jpg', sizeBytes: 2000 }
+    const document = parseHtml(await renderContent({
+      attachments: [],
+      branchId: 'branch',
+      conversationId: 'task',
+      id: 'input',
+      runId: null,
+      createdAt: '2026-08-28T00:00:00.000Z',
+      role: 'user',
+      content: { userContent: { version: 1, body: [{ type: 'paragraph', content: [] }], panelResourceIds: ['photo'] }, resourceSnapshots: [{ resourceId: 'photo', localReference: photo }] },
+    }))
+    const card = document.querySelector('[data-resource-card="photo"]')!
+    expect(card.querySelector('img')?.getAttribute('src')).toBe(taskFileMediaUrl({ conversationId: 'task', path: photo.path }))
+    expect(card.textContent).not.toContain(photo.name)
+    expect(document.querySelector('.buddy-chat-user-bubble')).toBeNull()
   })
 
   it.each([false, true])('renders inline-only snapshots once above the body and keeps named references readable (independent attachment: %s)', async (panel) => {

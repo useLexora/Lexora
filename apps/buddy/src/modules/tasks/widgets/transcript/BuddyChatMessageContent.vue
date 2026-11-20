@@ -12,7 +12,7 @@ import { buddyPromptDirectiveToText } from '@buddy-shared/conversation/buddyUser
 import { computed, useTemplateRef } from 'vue'
 import { useBuddyIdentity } from '@/modules/buddies'
 import BuddyChatMarkdownContent from '@/shared/ui/markdown/DesktopMarkdownContent.vue'
-import { resolveBuddyAttachmentPreviewUrl } from '../../model/attachments/chatAttachmentView'
+import { resolveBuddyAttachmentPreviewUrl, resolveMessageResourcePreviewUrl } from '../../model/attachments/chatAttachmentView'
 import { getInputMaterialViews, inputMaterialLabel } from '../../model/materials/inputMaterialView'
 import { getChatMessageDisplayText, getChatMessageImageLabels, getChatMessageUserContent } from '../../model/transcript/chatMessageContent'
 import { useArtifactActions } from '../artifacts/artifactActionsContext'
@@ -82,7 +82,7 @@ const materials = computed(() => {
     return props.message.attachments.map(attachment => ({ kind: 'resource' as const, id: attachment.attachmentId, resource: { ...attachment, state: 'ready' as const }, previewUrl: resolveBuddyAttachmentPreviewUrl(attachment), imageLabel: imageLabels.value.get(attachment.attachmentId) }))
   return getInputMaterialViews(structured.userContent, (id) => {
     const attachment = attachmentByResourceId.value.get(id)
-    return attachment ? { resource: { ...attachment, state: 'ready' as const }, previewUrl: 'attachmentId' in attachment ? resolveBuddyAttachmentPreviewUrl(attachment) : null, imageLabel: imageLabels.value.get(id) } : undefined
+    return attachment ? { resource: { ...attachment, state: 'ready' as const }, previewUrl: resolveMessageResourcePreviewUrl(attachment, props.message.conversationId), imageLabel: imageLabels.value.get(id) } : undefined
   })
 })
 const hasStructuredBody = computed(() => hasText.value || structuredUserContent.value?.userContent.body.some(paragraph => paragraph.content.some(node => node.type === 'quote_ref' || node.type === 'session_ref')))

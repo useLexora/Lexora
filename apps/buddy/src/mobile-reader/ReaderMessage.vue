@@ -6,6 +6,7 @@ import ChatMarkdownBody from '../shared/ui/markdown/ChatMarkdownBody.vue'
 import MessageAvatar from './MessageAvatar.vue'
 import ReaderArtifacts from './ReaderArtifacts.vue'
 import ReaderMessageActions from './ReaderMessageActions.vue'
+import ReaderMessagePhoto from './ReaderMessagePhoto.vue'
 import { useReaderStrings } from './readerStrings'
 
 const props = defineProps<{
@@ -42,10 +43,18 @@ async function copy(text: string) {
       <span v-if="message.role === 'assistant' && !message.final" class="stream-status" role="status"><i /><i /><i /><span>{{ labels.replying }}</span></span>
     </div>
     <div v-if="message.resources.length" class="message-resources">
-      <button v-for="resource in message.resources" :key="resource.id" class="resource-link" :disabled="!resource.available" @click="action({ action: 'resource', id: message.id, resourceId: resource.id })">
-        <Document20Regular class="reader-icon resource-icon" />
-        <span class="resource-info"><span>{{ resource.name }}</span><small>{{ resource.description }}</small></span>
-      </button>
+      <template v-for="resource in message.resources" :key="resource.id">
+        <ReaderMessagePhoto
+          v-if="message.role === 'user' && resource.photo" :key="resource.photo.revision"
+          :resource="resource" :photo="resource.photo"
+          @load="(revision, retry) => send({ action: 'photo-thumbnail', id: message.id, resourceId: resource.id, revision, ...(retry ? { retry: true } : {}) })"
+          @open="revision => action({ action: 'resource', id: message.id, resourceId: resource.id, revision })"
+        />
+        <button v-else class="resource-link" :disabled="!resource.available" @click="action({ action: 'resource', id: message.id, resourceId: resource.id })">
+          <Document20Regular class="reader-icon resource-icon" />
+          <span class="resource-info"><span>{{ resource.name }}</span><small>{{ resource.description }}</small></span>
+        </button>
+      </template>
     </div>
     <div v-if="message.text || message.role !== 'user'" class="message-body" :data-result-run-id="message.canRegenerate ? message.runId : undefined">
       <ChatMarkdownBody v-if="message.role === 'assistant' && message.text && message.markdown" :animate="false" :content="message.text" :is-dark="dark" :final="message.final" :allow-images="false" code-overflow="scroll" :write-clipboard-text="copy" />

@@ -34,7 +34,17 @@ export const readerMessageSchema = schema.object({
   canRegenerate: schema.boolean(),
   canFollowup: schema.boolean(),
   canCopy: schema.boolean(),
-  resources: schema.array(schema.object({ id, name: schema.string(), description: schema.string(), available: schema.boolean() }).strict()),
+  resources: schema.array(schema.object({
+    id,
+    name: schema.string(),
+    description: schema.string(),
+    available: schema.boolean(),
+    photo: schema.object({
+      revision: id,
+      status: schema.enum(['idle', 'loading', 'ready', 'failed', 'unavailable']),
+      thumbnail: schema.string().regex(/^https:\/\/appassets\.androidplatform\.net\/artifacts\/[0-9a-f]{64}\.png$/).optional(),
+    }).strict().optional(),
+  }).strict()),
 }).strict()
 export const readerEntrySchema = schema.object({ id, continuation: schema.boolean(), messages: schema.array(readerMessageSchema) }).strict()
 export const readerTranscriptSchema = schema.object({ events: schema.array(publicRunEventSchema), loaded: schema.boolean().optional(), error: schema.string().nullable().optional(), append: schema.boolean().optional() }).strict()
@@ -92,7 +102,8 @@ export const readerActionSchema = schema.discriminatedUnion('action', [
   action('regenerate', { id }),
   action('followup', { id }),
   action('detail', { id }),
-  action('resource', { id, resourceId: id }),
+  action('resource', { id, resourceId: id, revision: id.optional() }),
+  action('photo-thumbnail', { id, resourceId: id, revision: id, retry: schema.literal(true).optional() }),
   action('copy', { id: schema.string().optional(), runId: id.optional(), text: schema.string(), feedback: schema.literal('message').optional() }),
   action('link', { href: schema.string() }),
 ])

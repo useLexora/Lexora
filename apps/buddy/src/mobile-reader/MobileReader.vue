@@ -65,7 +65,7 @@ watch(topic, () => {
       {{ labels.anchorMissing }}
     </p>
     <div ref="viewport" class="reader-viewport" :aria-label="labels.messages" @scroll.passive="scroll" @touchstart.passive="touch(true)" @touchend.passive="touch(false)" @touchcancel.passive="touch(false)" @wheel.passive="touch(true); followsEnd = false; touch(false)">
-      <div class="reader-content" :style="{ height: `${height}px` }" :data-message-count="entries.length" @click.capture="click">
+      <div :key="topic" class="reader-content" :style="{ height: `${height}px` }" :data-message-count="entries.length" @click.capture="click">
         <section v-for="row in rows" :key="row.entry.id" :ref="measure" class="reader-entry" :class="{ continuation: row.entry.continuation }" :data-entry-id="row.entry.id" :data-index="row.index" :style="{ transform: `translateY(${row.start}px)` }">
           <button v-if="row.entry.transcriptError" class="transcript-retry" @click="send({ action: 'transcript', runId: row.entry.turn?.runId ?? row.entry.messages[0]!.runId!, retry: 'true' })">
             {{ labels.retryTranscript }}
