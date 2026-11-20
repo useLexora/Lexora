@@ -43,6 +43,7 @@ import type { ModelCatalogReference } from '../../shared/providers/providerCatal
 import type { ProviderRequestHeader } from '../../shared/providers/providerHeaders'
 import type { ProviderModelType } from '../../shared/providers/providerModelType'
 import type { UserQuestionRequest, UserQuestionsChanged, UserQuestionSubmit, UserQuestionTarget } from '../../shared/questions/userQuestionApi'
+import type { ReadRunEventPage } from '../../shared/runs/readRunEventWindow'
 import type { LocalRun, LocalRunEvent } from '../../shared/runs/runApi'
 import type { LocalTaskMetrics, TaskMetricsChanged } from '../../shared/runs/taskMetricsApi'
 import type { ProductRecoveryItem } from '../../shared/runtime/productRecovery'
@@ -204,6 +205,7 @@ export const LOCAL_CHAT_IPC_CHANNELS = {
   conversationsSetBuddy: 'lexora:local-chat:conversations:set-buddy',
   conversationsMoveToSpace: 'lexora:buddy:conversations:move-to-space',
   conversationsSetModelSelection: 'lexora:buddy:conversations:set-model-selection',
+  conversationsReadEventPage: 'lexora:buddy:conversations:read-event-page',
   conversationsListTimeline: 'lexora:buddy:conversations:list-timeline',
   notificationsChanged: 'lexora:buddy:notifications:changed',
   notificationsList: 'lexora:buddy:notifications:list',
@@ -568,7 +570,9 @@ export interface LocalChatApi {
       modelSelection: LocalConversation['modelSelection'],
       target?: ConversationModelMutationTarget,
     ) => Promise<LocalConversation>
+    readEventPage: ReadRunEventPage
     listTimeline: (input: {
+      eventView?: 'paged'
       branchId?: string
       conversationId: string
       cursor?: string

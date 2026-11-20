@@ -11,6 +11,8 @@ import { createConversationTreeReader } from '../storage/conversationTreeReposit
 import { projectConversationTree } from './projectConversationTree'
 import { projectRunOutputs } from './projectRunOutputs'
 
+import { readTimelineEventSnapshot } from './timelineEventSnapshot'
+
 export function registerConversationTreeRpc(options: Pick<RegisterConversationRpcOptions, 'artifacts' | 'attachments' | 'changes' | 'eventLog' | 'rpc' | 'runInputs'> & {
   database: DatabaseSync
   conversations: Pick<ConversationRepository, 'findById' | 'listBranches' | 'findMessageById'>
@@ -55,17 +57,19 @@ export function registerConversationTreeRpc(options: Pick<RegisterConversationRp
     let run = options.runs.findById(input.runId)
     if (!run || run.conversationId !== input.conversationId || run.purpose === 'conversation.compaction')
       throw new BuddyServiceError('VALIDATION_FAILED')
-    await options.eventLog.verifyRun(run.id)
+    await options.eventLog.verifyRun(run.id, { metadataOnly: input.eventView === 'paged' })
     requireConversation(input.conversationId)
     run = options.runs.findById(input.runId)
     if (!run || run.conversationId !== input.conversationId || run.purpose === 'conversation.compaction')
       throw new BuddyServiceError('VALIDATION_FAILED')
-    const events = options.eventLog.listForRuns([run.id])
+    const snapshot = input.eventView === 'paged' ? readTimelineEventSnapshot(options.database, [run.id]) : null
+    const events = snapshot ? [] : options.eventLog.listForRuns([run.id])
     return {
       items: withMessageAttachments(repository.listRunMessages(input.conversationId, run.id).map(message => ({ ...message, kind: 'message' as const })), attachments),
       runs: [toPublicRun(run, options.runInputs.findByRunId(run.id)?.reasoning ?? null)],
+      ...(snapshot ? { eventWindows: snapshot.eventWindows } : {}),
       runEvents: events.map(toPublicRunEvent),
-      outputs: projectRunOutputs(events, options.artifacts.listForConversation(input.conversationId)),
+      outputs: projectRunOutputs(snapshot?.outputs ?? events, options.artifacts.listForConversation(input.conversationId)),
       changeSets: options.changes.listSummariesForRuns([run.id]),
       nextCursor: null,
     }

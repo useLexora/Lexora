@@ -169,8 +169,8 @@ export class TaskWorkspacePool {
     return results.every(Boolean)
   }
 
-  async refresh(): Promise<void> {
-    await Promise.all([...this.#entries.values()].map(entry => entry.task.refreshRuntimeDependentState()))
+  async refresh(generationChanged = false): Promise<void> {
+    await Promise.all([...this.#entries.values()].map(entry => entry.task.refreshRuntimeDependentState(generationChanged)))
   }
 
   acquire(resource: ResourceRef): () => void {

@@ -51,7 +51,7 @@ export type LocalConversationTreeNode = DeepReadonly<z.infer<typeof conversation
 
 export const conversationNodeDetailRequestSchema = z.discriminatedUnion('kind', [
   z.object({ conversationId: idSchema, kind: z.literal('question'), messageId: idSchema }).strict(),
-  z.object({ conversationId: idSchema, kind: z.literal('answer'), runId: idSchema }).strict(),
+  z.object({ conversationId: idSchema, kind: z.literal('answer'), runId: idSchema, eventView: z.literal('paged').optional() }).strict(),
 ])
 export type ConversationNodeDetailRequest = z.infer<typeof conversationNodeDetailRequestSchema>
 

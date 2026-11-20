@@ -9,6 +9,7 @@ import { translateBuddy } from '@/i18n/buddyI18n'
 import { useTaskEnvironment } from '@/modules/tasks'
 import { DesktopTaskEditor, DesktopTaskViewProvider } from '@/modules/tasks/ui'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
+import { useTaskErrorMessage } from '@/shared/ui/useTaskErrorMessage'
 import WorkbenchPaneActions from '@/workbench/browser/WorkbenchPaneActions.vue'
 import WorkbenchPaneTitle from '@/workbench/browser/WorkbenchPaneTitle.vue'
 import { resourceKey } from '@/workbench/common/workbench'
@@ -31,6 +32,7 @@ const notificationTargetMessageId = computed(() => {
 })
 const context = computed(() => ({ ...environment, notificationTargetMessageId, tasks: task.value!, startTask: (spaceId: string | null = null) => task.value!.session.startTask(spaceId) }))
 const message = useMessage()
+const showTaskError = useTaskErrorMessage()
 const newTaskActions = computed<DropdownOption[]>(() => {
   const command = workbench.controller.registry.commands.get('task.newInSpace')
   return command
@@ -59,7 +61,7 @@ async function selectAction(key: string | number, fallback?: (key: string | numb
 }
 watch(() => task.value?.workspace.status.errorMessage.value, (error) => {
   if (error) {
-    message.error(error)
+    showTaskError(error)
     task.value?.workspace.status.dismissError()
   }
 })

@@ -1,5 +1,5 @@
 import type { LocalChangeSetSummary } from '@buddy-shared/changes/changeApi'
-import type { LocalConversationTimelineItem, LocalConversationTimelinePage, LocalMessage } from '@buddy-shared/conversation/conversationApi'
+import type { LocalConversationTimelineItem, LocalConversationTimelinePage, LocalMessage, LocalTimelineEventWindow } from '@buddy-shared/conversation/conversationApi'
 import type { LocalApproval } from '@buddy-shared/permissions/approvalApi'
 import type { LocalRun, LocalRunEvent, LocalRunOutput } from '@buddy-shared/runs/runApi'
 import type { ChatRunEventBuckets } from '../../model/runs/typing'
@@ -35,6 +35,21 @@ export function useChatRunProjection() {
   const hasOlderMessages = shallowRef(false)
   const knownRunIds = new Set<string>()
   const dirtyRunIds = new Set<string>()
+  const loadedWindows = new Map<string, LocalTimelineEventWindow>()
+  function commitWindow(window: LocalTimelineEventWindow, events: readonly LocalRunEvent[], mode: 'append' | 'replace' | 'quarantined') {
+    const current = runEventBuckets.value
+    const next = new Map(current)
+    if (mode !== 'append')
+      next.delete(window.runId)
+    if (mode === 'replace') {
+      events = [...events, ...(current.get(window.runId)?.events.filter(event => event.sequence > window.throughSequence) ?? [])]
+    }
+    const reconciled = reconcileTimelineEventBuckets(next, events, [], new Set([window.runId]))
+    runEventBuckets.value = reconciled.buckets
+    runSignalEvents.value = reconciled.signals
+    loadedWindows.set(window.runId, window)
+  }
+
   let hasLoadedTimelinePage = false
   let snapshotBoundaryKey: string | null = null
 
@@ -43,7 +58,7 @@ export function useChatRunProjection() {
     const reconciled = reconcileTimelineEventBuckets(
       runEventBuckets.value,
       page.runEvents,
-      page.runs,
+      page.eventWindows ? [] : page.runs,
       dirtyRunIds,
     )
     runSignalEvents.value = reconciled.signals
@@ -126,6 +141,7 @@ export function useChatRunProjection() {
     changeSets.value = []
     approvals.value = []
     knownRunIds.clear()
+    loadedWindows.clear()
     dirtyRunIds.clear()
   }
 
@@ -142,6 +158,10 @@ export function useChatRunProjection() {
     runs.value = runs.value.filter(run => retainedRunIds.has(run.id))
     runSignalEvents.value = runSignalEvents.value.filter(event => retainedRunIds.has(event.runId))
     runEventBuckets.value = new Map([...runEventBuckets.value].filter(([runId]) => retainedRunIds.has(runId)))
+    for (const runId of loadedWindows.keys()) {
+      if (!retainedRunIds.has(runId))
+        loadedWindows.delete(runId)
+    }
     for (const runId of dirtyRunIds) {
       if (!retainedRunIds.has(runId))
         dirtyRunIds.delete(runId)
@@ -175,6 +195,8 @@ export function useChatRunProjection() {
     state,
     appendEvents,
     applySnapshot,
+    loadedWindows,
+    commitWindow,
     clear,
     getRefreshBoundaryKey,
     hasRun: (runId: string) => knownRunIds.has(runId),

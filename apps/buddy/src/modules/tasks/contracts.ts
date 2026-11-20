@@ -327,7 +327,7 @@ export interface TaskCapability {
   session: TaskSession
   workspace: TaskChatWorkspace
   initialize: () => Promise<void>
-  refreshRuntimeDependentState: () => Promise<void>
+  refreshRuntimeDependentState: (generationChanged?: boolean) => Promise<void>
   flushDrafts: () => Promise<boolean>
   dispose: () => void
 }

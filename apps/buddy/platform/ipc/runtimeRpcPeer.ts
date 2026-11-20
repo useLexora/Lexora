@@ -7,7 +7,7 @@ import { copyEventSnapshot } from '../../shared/events/eventSnapshot'
 import { readLocalChatErrorCode } from '../../shared/runtime/localChatError'
 import { runtimeWireMessageSchema } from '../../shared/runtime/runtimeProtocol'
 
-const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
+export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 
 interface PendingRequest {
   dispose: () => void

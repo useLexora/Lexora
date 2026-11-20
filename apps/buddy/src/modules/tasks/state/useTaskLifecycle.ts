@@ -14,7 +14,7 @@ interface TaskLifecycleOptions {
   clearError: () => void
   onError: (error: unknown) => void
   refreshBranches: () => Promise<void>
-  runSync: Pick<ChatRunSync, 'handleRunEvent' | 'refreshActiveConversation'>
+  runSync: Pick<ChatRunSync, 'clearConversationState' | 'handleRunEvent' | 'refreshActiveConversation'>
   session: ChatSession
   taskIndex: TaskIndexData
   taskModels: TaskModelSelection
@@ -70,7 +70,9 @@ export function useTaskLifecycle(options: TaskLifecycleOptions) {
     }
   }
 
-  function refreshRuntimeDependentState(): Promise<void> {
+  function refreshRuntimeDependentState(generationChanged = false): Promise<void> {
+    if (generationChanged)
+      options.runSync.clearConversationState()
     if (runtimeRefresh)
       return runtimeRefresh
     runtimeRefresh = refreshRuntime().finally(() => runtimeRefresh = null)
@@ -122,12 +124,12 @@ export function useTaskLifecycle(options: TaskLifecycleOptions) {
       }
     }
     if (selected) {
-      await Promise.all([verifySelection(), options.runSync.refreshActiveConversation()])
+      await Promise.all([verifySelection(), options.runSync.refreshActiveConversation({ waitForEvents: false })])
     }
     else {
       await verifySelection()
       if (!isDisposed && options.session.isCurrent(navigation, conversationId))
-        await options.runSync.refreshActiveConversation()
+        await options.runSync.refreshActiveConversation({ waitForEvents: false })
     }
   }
 

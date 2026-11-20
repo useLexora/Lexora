@@ -34,6 +34,7 @@ import { useProvideWorkbenchUi } from '@/shared/ui/contributions/workbenchUiCont
 import { useProvideDesktopUi } from '@/shared/ui/desktopUiContext'
 import { useReferenceTargetPicker } from '@/shared/ui/selection/useReferenceTargetPicker'
 import { workbenchSelectionReferencesKey } from '@/shared/ui/selection/workbenchSelectionReferences'
+import { useTaskErrorMessage } from '@/shared/ui/useTaskErrorMessage'
 import { useDesktopReadingWidth } from '@/theme/desktopReadingWidth'
 import { useDesktopTypography } from '@/theme/desktopTypography'
 import { ThemeMaterialController } from '@/theme/ThemeMaterialController'
@@ -68,6 +69,7 @@ const guestCatalog = new BrowserGuestCatalog(api.browser)
 onScopeDispose(() => guestCatalog.dispose())
 const router = useRouter()
 const message = useMessage()
+const showTaskError = useTaskErrorMessage()
 const appState = useDesktopAppState({ api })
 const { stores } = appState
 const cloudBackup = useCloudBackupFeedback({ api: api.sync, language: stores.applicationSettings.language, notify: (type, content) => message[type](content) })
@@ -263,14 +265,14 @@ function onTaskDeleted(id: string) {
 }
 watch(taskIndex.errorMessage, (error) => {
   if (error) {
-    message.error(error)
+    showTaskError(error)
     taskIndex.dismissError()
   }
 })
 watch(stores.modelProviders.modelProviderError, (error) => {
   if (!error)
     return
-  message.error(error)
+  showTaskError(error)
   stores.modelProviders.clearModelProviderError()
 })
 const shell = useDesktopShellState(stores.applicationSettings, api)

@@ -14,7 +14,7 @@ export interface RunEventWriter {
 }
 
 export interface RunEventReader {
-  verifyRun: (runId: string) => Promise<void>
+  verifyRun: (runId: string, options?: { metadataOnly: boolean }) => Promise<void>
   findLatest: (runId: string, eventTypes: readonly string[]) => Promise<BuddyRunEvent | null>
   list: (
     runId: string,

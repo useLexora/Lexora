@@ -2,6 +2,7 @@ const pollingMethods = new Set([
   'chat.queue.list',
   'approvals.list',
   'conversations.listTimeline',
+  'runs.readEventPage',
   'taskMarks.states',
   'taskMarks.list',
   'notifications.list',

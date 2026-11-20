@@ -7,7 +7,8 @@ import { conversationArchiveRpc } from '../../../shared/conversation/conversatio
 import { conversationHistoryRpc } from '../../../shared/conversation/conversationHistoryApi'
 import { conversationTreeRpc } from '../../../shared/conversation/conversationTree'
 import { LOCAL_WORKSPACE_STATE_KEY, workspaceRequestSchemas, workspaceStateRpc } from '../../../shared/conversation/workspaceApi'
-import { runsRequestSchemas } from '../../../shared/runs/runApi'
+import { readRunEventWindow } from '../../../shared/runs/readRunEventWindow'
+import { runsRequestSchemas, runsRpc } from '../../../shared/runs/runApi'
 import { LOCAL_CHAT_IPC_CHANNELS } from '../../shared/localChatApi'
 
 export function registerConversationIpc(context: LocalChatIpcContext): void {
@@ -26,7 +27,24 @@ export function registerConversationIpc(context: LocalChatIpcContext): void {
     return request(workspaceStateRpc.write, { key: LOCAL_WORKSPACE_STATE_KEY, value })
   })
 
-  handle(LOCAL_CHAT_IPC_CHANNELS.conversationsGetNodeDetail, (_event, input) => request(conversationTreeRpc.detail, conversationTreeRpc.detail.input.parse(input)))
+  const readEventPage = (input: unknown) =>
+    request(runsRpc.readEventPage, runsRpc.readEventPage.input.parse(input))
+  handle(LOCAL_CHAT_IPC_CHANNELS.conversationsReadEventPage, (_event, input) => readEventPage(input))
+  handle(LOCAL_CHAT_IPC_CHANNELS.conversationsGetNodeDetail, async (_event, input) => {
+    const target = conversationTreeRpc.detail.input.parse(input)
+    if (target.kind === 'question')
+      return request(conversationTreeRpc.detail, target)
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const page = await request(conversationTreeRpc.detail, { ...target, eventView: 'paged' })
+      const window = page.eventWindows?.[0]
+      if (!window)
+        return page
+      const runEvents = await readRunEventWindow(readEventPage, { conversationId: target.conversationId, runId: target.runId, throughSequence: window.throughSequence, afterSequence: 0 })
+      if (runEvents.length === window.count)
+        return { ...page, runEvents }
+    }
+    throw Object.assign(new Error('SOURCE_CHANGED'), { code: 'SOURCE_CHANGED' })
+  })
 
   handle(LOCAL_CHAT_IPC_CHANNELS.conversationsGetTree, (_event, input) => request(conversationTreeRpc.get, conversationTreeRpc.get.input.parse(input)))
 

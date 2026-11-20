@@ -29,6 +29,7 @@ export function mergeConversationTimelinePages(
     nextCursor: older.nextCursor,
     outputs: mergeRunOutputs(older.outputs, newer.outputs),
     runEvents: mergeTimelineEvents(older.runEvents, newer.runEvents, newer.runs),
+    ...(newer.eventWindows && older.eventWindows ? { eventWindows: [...new Map([...older.eventWindows, ...newer.eventWindows].map(window => [window.runId, window])).values()] } : {}),
     runs: [...new Map([...older.runs, ...newer.runs].map(run => [run.id, run])).values()],
   }
 }

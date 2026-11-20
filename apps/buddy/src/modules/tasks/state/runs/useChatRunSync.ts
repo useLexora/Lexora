@@ -1,6 +1,8 @@
 import type { LocalTurnStart } from '@buddy-shared/conversation/chatApi'
+import type { LocalConversationTimelinePage } from '@buddy-shared/conversation/conversationApi'
 import type { LocalRun, LocalRunEvent } from '@buddy-shared/runs/runApi'
 import type { ChatRunSync, ChatRunSyncOptions } from './typing'
+import { readRunEventWindow } from '@buddy-shared/runs/readRunEventWindow'
 import { computed, onScopeDispose, shallowRef, watch } from 'vue'
 import { mergeConversationTimelinePages, timelineItemKey } from '../../model/runs/chatTimelineMerge'
 import { useChatRunProjection } from './useChatRunProjection'
@@ -24,6 +26,7 @@ interface ProjectionRequest {
 
 interface RefreshFlight {
   dirty: boolean
+  snapshot: PromiseWithResolvers<void>
   promise: Promise<void>
   request: ProjectionRequest
 }
@@ -43,6 +46,7 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
   let disposed = false
   let refreshFlight: RefreshFlight | null = null
   let refreshTimer: number | null = null
+  const changedWindows = new Map<string, string>()
   let runEventCommitFrame: number | null = null
   let pendingRunEvents: LocalRunEvent[] = []
 
@@ -79,7 +83,7 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
     loadedBranchId = branchId
   }
 
-  async function refreshActiveConversation(): Promise<void> {
+  async function refreshActiveConversation({ waitForEvents = true } = {}): Promise<void> {
     if (disposed)
       return
     const conversationId = options.activeConversationId.value
@@ -95,6 +99,7 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
     }
     const flight: RefreshFlight = {
       dirty: false,
+      snapshot: Promise.withResolvers<void>(),
       promise: Promise.resolve(),
       request: { branchId, conversationId, generation },
     }
@@ -103,20 +108,60 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
         refreshFlight = null
     })
     refreshFlight = flight
-    return flight.promise
+    return waitForEvents ? flight.promise : flight.snapshot.promise
   }
 
   async function drainRefreshFlight(flight: RefreshFlight): Promise<void> {
     do {
       flight.dirty = false
-      await refreshSnapshot(flight.request)
+      await refreshSnapshot(flight)
     } while (flight.dirty && isCurrent(flight.request))
   }
 
-  async function refreshSnapshot(request: ProjectionRequest): Promise<void> {
+  async function loadEventWindows(page: LocalConversationTimelinePage, request: ProjectionRequest) {
+    const read = options.api.conversations.readEventPage
+    if (!page.eventWindows)
+      return
+    const windows = new Map(page.eventWindows.map(window => [window.runId, window]))
+    for (const run of page.runs) {
+      if (!isCurrent(request))
+        return
+      const window = windows.get(run.id) ?? { runId: run.id, count: 0, throughSequence: 0 }
+      const prior = projection.loadedWindows.get(run.id)
+      if (run.errorCode === 'EVENT_LOG_CORRUPTED') {
+        projection.commitWindow(window, [], 'quarantined')
+        continue
+      }
+      if (prior?.throughSequence === window.throughSequence && prior.count === window.count)
+        continue
+      if (prior && prior.throughSequence > window.throughSequence)
+        continue
+      const append = prior && window.count - prior.count === window.throughSequence - prior.throughSequence
+      const afterSequence = append ? prior.throughSequence : 0
+      const events = await readRunEventWindow(read, { conversationId: request.conversationId, runId: run.id, throughSequence: window.throughSequence, afterSequence }, () => isCurrent(request))
+      if (!isCurrent(request))
+        return
+      if (projection.loadedWindows.get(run.id) !== prior)
+        continue
+      if (events.length !== window.count - (append ? prior.count : 0)) {
+        const version = `${window.count}:${window.throughSequence}`
+        if (changedWindows.get(run.id) === version)
+          throw Object.assign(new Error('SOURCE_CHANGED'), { code: 'SOURCE_CHANGED' })
+        changedWindows.set(run.id, version)
+        scheduleRefresh()
+        continue
+      }
+      changedWindows.delete(run.id)
+      projection.commitWindow(window, events, append ? 'append' : 'replace')
+    }
+  }
+
+  async function refreshSnapshot(flight: RefreshFlight): Promise<void> {
+    const { request } = flight
     try {
       const [latest, approvals] = await Promise.all([
         options.api.conversations.listTimeline({
+          eventView: 'paged',
           branchId: request.branchId,
           conversationId: request.conversationId,
           limit: TIMELINE_PAGE_SIZE,
@@ -131,6 +176,7 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
         if (!rememberedStart || page.items.some(item => timelineItemKey(item) === rememberedStart))
           break
         const older = await options.api.conversations.listTimeline({
+          eventView: 'paged',
           branchId: request.branchId,
           conversationId: request.conversationId,
           cursor: page.nextCursor,
@@ -140,14 +186,19 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
           return
         page = mergeConversationTimelinePages(page, older)
       }
-      if (isCurrent(request))
+      if (isCurrent(request)) {
         projection.applySnapshot(page, approvals)
+        settledScopeKey.value = `${request.conversationId}:${request.branchId}`
+        flight.snapshot.resolve()
+        await loadEventWindows(page, request)
+      }
     }
     catch (error) {
       if (isCurrent(request))
         options.onError(error)
     }
     finally {
+      flight.snapshot.resolve()
       if (isCurrent(request))
         settledScopeKey.value = `${request.conversationId}:${request.branchId}`
     }
@@ -161,6 +212,7 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
     isLoadingOlderMessages.value = true
     try {
       const page = await options.api.conversations.listTimeline({
+        eventView: 'paged',
         branchId: request.branchId,
         conversationId: request.conversationId,
         cursor,
@@ -168,7 +220,8 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
       })
       if (!isCurrent(request) || projection.timelineCursor.value !== cursor)
         return false
-      return projection.prependPage(page)
+      await loadEventWindows(page, request)
+      return isCurrent(request) && projection.timelineCursor.value === cursor && projection.prependPage(page)
     }
     catch (error) {
       if (isCurrent(request))
@@ -276,6 +329,8 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
 
   function invalidatePendingWork() {
     generation += 1
+    changedWindows.clear()
+    refreshFlight?.snapshot.resolve()
     refreshFlight = null
     isLoadingOlderMessages.value = false
     pendingRunEvents = []

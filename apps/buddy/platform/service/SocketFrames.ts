@@ -37,7 +37,9 @@ export class SocketFrames {
     if (this.#ended)
       return false
     const bytes = Buffer.byteLength(frame)
-    if (frame.includes('\n') || bytes > SERVICE_FRAME_BYTES || this.#writingControlBytes + bytes > SERVICE_CONNECTION_BYTES) {
+    if (bytes > SERVICE_FRAME_BYTES)
+      throw Object.assign(new RangeError('RPC_PAYLOAD_TOO_LARGE'), { code: 'RPC_PAYLOAD_TOO_LARGE' })
+    if (frame.includes('\n') || this.#writingControlBytes + bytes + 1 > SERVICE_CONNECTION_BYTES) {
       this.close(new Error('SERVICE_FRAME_LIMIT'))
       return false
     }
