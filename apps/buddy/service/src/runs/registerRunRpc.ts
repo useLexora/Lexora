@@ -4,6 +4,8 @@ import type { RunInputRepository } from '../storage/runInputRepository'
 import type { RunRecord } from '../storage/runRecord'
 import type { RunRepository } from '../storage/runRepository'
 import type { ConversationStatusService } from './ConversationStatusService'
+import { Buffer } from 'node:buffer'
+import { PRODUCT_LIMITS } from '../../../shared/productProtocol/limits'
 import { runsStatusRpc } from '../../../shared/runs/conversationStatusApi'
 import { toPublicRunEvent } from '../../../shared/runs/publicRunEvent'
 import { runsRpc } from '../../../shared/runs/runApi'
@@ -14,6 +16,7 @@ import { toPublicRun } from './publicRun'
 
 export interface RegisterRunRpcOptions {
   statistics: Pick<ConversationStatusService, 'metrics' | 'status'>
+  isConversationReadable: (id: string) => boolean
   isBusy: () => boolean
   eventLog: Pick<RunEventReader, 'list' | 'listForConversation' | 'verifyRun'> & Partial<Pick<RunEventAvailability, 'getRecoveryFailures'>>
   inputs: Pick<RunInputRepository, 'findByRunId'>
@@ -46,6 +49,27 @@ export function registerRunRpc(options: RegisterRunRpcOptions): () => void {
       if (!run)
         throw new BuddyServiceError('VALIDATION_FAILED')
       return publicRun(run)
+    }),
+    registerRuntimeRequest(options.rpc, runsRpc.readEventPage, async ({ conversationId, runId, afterSequence, throughSequence }) => {
+      const requireScope = () => {
+        if (options.repository.findById(runId)?.conversationId !== conversationId || !options.isConversationReadable(conversationId))
+          throw new BuddyServiceError('VALIDATION_FAILED')
+      }
+      requireScope()
+      const rows = await options.eventLog.list(runId, { afterSequence, throughSequence, limit: PRODUCT_LIMITS.pageItems, maxPayloadBytes: PRODUCT_LIMITS.pageBytes })
+      requireScope()
+      const events = []
+      let bytes = 0
+      for (const row of rows) {
+        const event = toPublicRunEvent(row)
+        const size = Buffer.byteLength(JSON.stringify(event)) + 1
+        if (events.length && bytes + size > PRODUCT_LIMITS.pageBytes - 4096)
+          break
+        events.push(event)
+        bytes += size
+      }
+      const lastSequence = events.at(-1)?.sequence
+      return { events, nextSequence: lastSequence !== undefined && lastSequence < throughSequence ? lastSequence : null }
     }),
     registerRuntimeRequest(options.rpc, runsRpc.listEvents, async (input) => {
       let events = 'conversationId' in input

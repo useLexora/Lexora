@@ -510,6 +510,51 @@ describe('useChatRunSync', () => {
     }
   })
 
+  it('loads only the missing suffix and retains a terminal run until its compacted page arrives', async () => {
+    stubAnimationFrameWindow()
+    const active = run('run-a', 'conversation-a')
+    let sequences = [1, 2]
+    let compacted = false
+    const started = deferred<void>()
+    const gate = deferred<void>()
+    const api = createApi({ listTimeline: async () => ({
+      ...timelinePage([], null, [compacted ? { ...active, status: 'completed' } : active]),
+      eventWindows: [{ runId: active.id, throughSequence: sequences.at(-1)!, count: sequences.length }],
+    }) })
+    const cursors: number[] = []
+    api.conversations.readEventPage = async (input) => {
+      cursors.push(input.afterSequence)
+      if (compacted) {
+        started.resolve()
+        await gate.promise
+      }
+      const events = sequences.filter(n => n > input.afterSequence).map(n => event(active.id, n))
+      return { events, nextSequence: null }
+    }
+    const errors: unknown[] = []
+    const sync = useChatRunSync({ activeBranchId: ref(active.branchId), activeConversationId: ref(active.conversationId), api, onError: error => errors.push(error) })
+    try {
+      await sync.refreshActiveConversation()
+      await sync.refreshActiveConversation()
+      sequences.push(3)
+      await sync.refreshActiveConversation()
+      expect(errors).toEqual([])
+      expect(cursors).toEqual([0, 2])
+      compacted = true
+      sequences = [2, 4]
+      const refresh = sync.refreshActiveConversation()
+      await started.promise
+      expect(sync.runEventBuckets.value.get(active.id)?.events.map(row => row.sequence)).toEqual([1, 2, 3])
+      gate.resolve()
+      await refresh
+      expect(sync.runEventBuckets.value.get(active.id)?.events.map(row => row.sequence)).toEqual([2, 4])
+    }
+    finally {
+      gate.resolve()
+      sync.dispose()
+    }
+  })
+
   it('replaces compacted events when an active run becomes terminal', async () => {
     const activeConversationId = ref<string | null>('conversation-a')
     const activeBranchId = ref<string | null>('branch-conversation-a')

@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { BuddyRunEvent, ListBuddyRunEventsOptions } from './BuddyRunEvent'
 import type { RunEventCheckpoint, RunEventRecoveryRun } from './RunEventRecovery'
+import { Buffer } from 'node:buffer'
 import { buddyRunEventSchema } from './BuddyRunEvent'
 import { RUN_EVENT_COMPACTION_VERSION, RUN_EVENT_PROJECTION_VERSION } from './RunEventRecovery'
 
@@ -41,20 +42,26 @@ export class RunEventQueries {
 
   list(runId: string, options: ListBuddyRunEventsOptions = {}): BuddyRunEvent[] {
     const limit = options.limit ?? 500
-    const rows = options.afterSequence === undefined
-      ? this.#database.prepare(`
-          SELECT * FROM run_events
-          WHERE run_id = ?
-          ORDER BY sequence DESC
-          LIMIT ?
-        `).all(runId, limit).toReversed()
-      : this.#database.prepare(`
-          SELECT * FROM run_events
-          WHERE run_id = ? AND sequence > ?
-          ORDER BY sequence
-          LIMIT ?
-        `).all(runId, options.afterSequence, limit)
-    return (rows as unknown as RunEventRow[]).map(toRunEvent)
+    if (options.afterSequence === undefined) {
+      const rows = this.#database.prepare(`
+        SELECT * FROM run_events WHERE run_id = ? ORDER BY sequence DESC LIMIT ?
+      `).all(runId, limit).toReversed()
+      return (rows as unknown as RunEventRow[]).map(toRunEvent)
+    }
+    const rows = this.#database.prepare(`
+      SELECT * FROM run_events WHERE run_id = ? AND sequence > ? AND sequence <= ? ORDER BY sequence LIMIT ?
+    `).iterate(runId, options.afterSequence, options.throughSequence ?? Number.MAX_SAFE_INTEGER, limit)
+    const events: BuddyRunEvent[] = []
+    let bytes = 0
+    for (const row of rows as unknown as Iterable<RunEventRow>) {
+      if (options.maxPayloadBytes !== undefined) {
+        bytes += Buffer.byteLength(row.payload_json)
+        if (events.length && bytes > options.maxPayloadBytes)
+          break
+      }
+      events.push(toRunEvent(row))
+    }
+    return events
   }
 
   listForConversation(

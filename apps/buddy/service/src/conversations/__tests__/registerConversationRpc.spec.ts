@@ -106,7 +106,7 @@ describe('registerConversationRpc', () => {
     }
     const harness = createRpcHarness()
     registerConversationRpc({
-      ...emptyConversationDependencies(conversations),
+      ...emptyConversationDependencies(database, conversations),
       artifacts: {
         listForConversation: () => [{
           conversationId: 'conversation-1',
@@ -214,7 +214,7 @@ it('reads archived details, models, members and usage without permitting writes 
     VALUES ('usage', 'historical-run', 'answer', 'fixture', 'model', 'chat', 10, 20, 0, 0, 30, 0, 0, 0, 0, 0, ?)`).run(now)
   createConversationArchiveRepository(database).archive('archived', now)
   const harness = createRpcHarness()
-  const dependencies = emptyConversationDependencies(conversations)
+  const dependencies = emptyConversationDependencies(database, conversations)
   registerConversationRpc({ ...dependencies, rpc: harness.rpc })
   registerConversationTreeRpc({ ...dependencies, rpc: harness.rpc, database, conversations, runs })
   const scope = { conversationId: 'archived' }
@@ -250,7 +250,7 @@ it('checks newly exposed history when repairing a stale projection changes the c
   }
   const harness = createRpcHarness()
   registerConversationRpc({
-    ...emptyConversationDependencies(conversations),
+    ...emptyConversationDependencies(database, conversations),
     rpc: harness.rpc,
     eventLog: {
       listForRuns: () => [],
@@ -270,9 +270,11 @@ it('checks newly exposed history when repairing a stale projection changes the c
 })
 
 function emptyConversationDependencies(
+  database: DatabaseSync,
   conversations: ReturnType<typeof createConversationRepository>,
 ): Omit<RegisterConversationRpcOptions, 'rpc'> {
   return {
+    database,
     artifacts: {
       listForConversation: () => [],
     },

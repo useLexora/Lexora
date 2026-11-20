@@ -408,7 +408,8 @@ export function useChatTranscriptViewport(
   function handleScroll() {
     const metrics = readScrollMetrics()
     if (metrics && !layoutAnchor && !requestedAnchor.value) {
-      const programmatic = programmaticTop !== null && Math.abs(programmaticTop - metrics.scrollTop) < 1
+      const reachableTop = programmaticTop === null ? null : Math.max(0, Math.min(programmaticTop, metrics.scrollHeight - metrics.clientHeight))
+      const programmatic = reachableTop !== null && Math.abs(reachableTop - metrics.scrollTop) < 1
       programmaticTop = null
       events.onScroll(metrics, { userInitiated: !programmatic && (pointerDragging || performance.now() < interactingUntil) })
     }

@@ -18,7 +18,7 @@ interface DesktopLifecycleOptions {
   prepareSurface?: () => Promise<void>
   flushSurface?: () => Promise<boolean>
   prepareQuit?: (signal: AbortSignal) => Promise<ClosePreparation | false>
-  refreshSurface?: () => Promise<void>
+  refreshSurface?: (generationChanged: boolean) => Promise<void>
 }
 
 export function useDesktopLifecycle(options: DesktopLifecycleOptions) {
@@ -27,6 +27,7 @@ export function useDesktopLifecycle(options: DesktopLifecycleOptions) {
   const dataReady = shallowRef(false)
   const failed = shallowRef(false)
   let disposed = false
+  let restoredGeneration: string | null = null
   let indexInitialized = false
   let initialAttemptSettled = false
   let resolveReady!: () => void
@@ -87,7 +88,7 @@ export function useDesktopLifecycle(options: DesktopLifecycleOptions) {
             host.step('renderer.tasks', async () => {
               if (indexInitialized) {
                 await taskIndex.refresh()
-                await options.refreshSurface?.()
+                await options.refreshSurface?.(restoredGeneration !== generation)
               }
               else {
                 await taskIndex.initialize()
@@ -108,8 +109,10 @@ export function useDesktopLifecycle(options: DesktopLifecycleOptions) {
           })
         })
         await Promise.all(reports)
-        if (isCurrent())
+        if (isCurrent()) {
+          restoredGeneration = generation
           dataReady.value = true
+        }
       }
       catch {
         await Promise.allSettled(reports)

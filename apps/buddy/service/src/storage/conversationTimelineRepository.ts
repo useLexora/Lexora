@@ -7,6 +7,7 @@ import type {
   VisibleConversationBranchSegment,
 } from './conversationHistoryRepository'
 import type { RunStatus } from './runRecord'
+import { Buffer } from 'node:buffer'
 import { extensionActionTimelineSchema } from '../../../shared/extensions/extensionActionApi'
 
 export interface ConversationTimelineMessageRecord extends MessageRecord {
@@ -46,6 +47,7 @@ export interface ConversationTimelinePageRecord {
 }
 
 export interface ListConversationTimelinePageOptions {
+  maxContentBytes?: number
   before?: ConversationTimelineBoundaryRecord | null
   limit: number
 }
@@ -242,10 +244,12 @@ export function createConversationTimelineRepository(
     segments: VisibleConversationBranchSegment[],
     boundary: ConversationTimelineRow | null,
     limit: number,
+    maxContentBytes?: number,
   ): ConversationTimelineRowsPage => {
     const segmentIndex = boundary
       ? segments.findIndex(segment => segment.branchId === boundary.branch_id)
       : segments.length - 1
+    let contentBytes = 0
     const descending: ConversationTimelineRow[] = []
     for (let index = segmentIndex; index >= 0 && descending.length <= limit; index -= 1) {
       const segment = segments[index]!
@@ -259,7 +263,7 @@ export function createConversationTimelineRepository(
         segment.branchId,
       ] as const
       const rows = boundary && index === segmentIndex
-        ? listTimelineForBranchBefore.all(
+        ? listTimelineForBranchBefore.iterate(
           ...common,
           boundary.occurred_at,
           boundary.occurred_at,
@@ -267,9 +271,9 @@ export function createConversationTimelineRepository(
           boundary.sort_rank,
           boundary.id,
           remaining,
-        ) as unknown as ConversationTimelineRow[]
+        ) as unknown as Iterable<ConversationTimelineRow>
         : segment.throughMessage
-          ? listTimelineForBranchThrough.all(
+          ? listTimelineForBranchThrough.iterate(
             ...common,
             segment.throughMessage.createdAt,
             segment.throughMessage.createdAt,
@@ -277,12 +281,19 @@ export function createConversationTimelineRepository(
             0,
             segment.throughMessage.id,
             remaining,
-          ) as unknown as ConversationTimelineRow[]
-          : listNewestTimelineForBranch.all(
+          ) as unknown as Iterable<ConversationTimelineRow>
+          : listNewestTimelineForBranch.iterate(
             ...common,
             remaining,
-          ) as unknown as ConversationTimelineRow[]
-      descending.push(...rows)
+          ) as unknown as Iterable<ConversationTimelineRow>
+      for (const row of rows) {
+        if (maxContentBytes !== undefined) {
+          contentBytes += Buffer.byteLength(row.content_json ?? row.action_json ?? row.compaction_payload_json ?? '')
+          if (descending.length && contentBytes > maxContentBytes)
+            return { descending, hasMore: true }
+        }
+        descending.push(row)
+      }
     }
     return {
       descending: descending.slice(0, limit),
@@ -320,6 +331,7 @@ export function createConversationTimelineRepository(
         segments,
         boundary,
         options.limit,
+        options.maxContentBytes,
       )
       let selected = initialPage.descending.reverse()
       assertTimelinePageExpansionCapacity(selected.length)

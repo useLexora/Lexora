@@ -79,7 +79,12 @@ export class SqliteRunEventLog implements RunEventLogPort {
     return []
   }
 
-  async verifyRun(runId: string): Promise<void> {
+  async verifyRun(runId: string, options?: { metadataOnly: boolean }): Promise<void> {
+    if (options?.metadataOnly) {
+      buddyRunIdSchema.parse(runId)
+      this.#execute(runId, 'read', () => this.#assertSequences([runId]))
+      return
+    }
     await this.read(runId)
   }
 

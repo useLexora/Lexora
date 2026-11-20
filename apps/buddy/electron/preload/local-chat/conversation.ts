@@ -59,6 +59,7 @@ export function createConversationApi(): Pick<LocalChatApi, 'context' | 'workspa
         LOCAL_CHAT_IPC_CHANNELS.conversationsSetModelSelection,
         { conversationId, modelSelection, ...revisionCondition(target?.expectedRevision), ...(target?.expectedRunGeneration !== undefined ? { expectedRunGeneration: target.expectedRunGeneration } : {}), ...(target?.expectedRunModelSelection !== undefined ? { expectedRunModelSelection: target.expectedRunModelSelection } : {}), ...(target?.expectedActiveRun !== undefined ? { expectedActiveRun: target.expectedActiveRun } : {}), ...(target?.actorId ? { actorId: target.actorId } : {}), ...(target?.runId ? { targetRunId: target.runId } : {}) },
       ),
+      readEventPage: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsReadEventPage, input),
       listTimeline: input =>
         ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.conversationsListTimeline, input),
     }),

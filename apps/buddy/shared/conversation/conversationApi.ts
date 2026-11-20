@@ -144,6 +144,13 @@ export const conversationListFilterSchema = z.object({
 }).strict()
 export type ConversationListFilter = z.infer<typeof conversationListFilterSchema>
 
+export const timelineEventWindowSchema = z.object({
+  runId: idSchema,
+  throughSequence: z.number().int().nonnegative(),
+  count: z.number().int().nonnegative(),
+}).strict()
+export type LocalTimelineEventWindow = z.infer<typeof timelineEventWindowSchema>
+
 export const conversationRequestSchemas = {
   list: validationRequestSchemas.limit.extend({ filter: conversationListFilterSchema.optional() }),
   conversationMutation: z.object({ conversationId: idSchema, expectedRevision: z.number().int().nonnegative().optional() }).strict(),
@@ -184,6 +191,7 @@ export const conversationRequestSchemas = {
     modelSelection: modelSelectionSchema.nullable(),
   }).strict(),
   conversationTimeline: z.object({
+    eventView: z.literal('paged').optional(),
     branchId: idSchema.optional(),
     conversationId: idSchema,
     cursor: optionalCursorSchema,
@@ -200,6 +208,7 @@ export const conversationResponseSchemas = {
     nextCursor: z.string().regex(/^[\w-]+$/).max(2_048).nullable(),
   }).strict(),
   timelinePage: z.object({
+    eventWindows: z.array(timelineEventWindowSchema).optional(),
     changeSets: z.array(changeSetSummarySchema),
     items: z.array(conversationTimelineItemSchema),
     nextCursor: z.string().regex(/^[\w-]+$/).max(2_048).nullable(),

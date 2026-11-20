@@ -21,6 +21,8 @@ export interface AppendBuddyRunEventInput {
 
 export interface ListBuddyRunEventsOptions {
   afterSequence?: number
+  throughSequence?: number
+  maxPayloadBytes?: number
   limit?: number
 }
 

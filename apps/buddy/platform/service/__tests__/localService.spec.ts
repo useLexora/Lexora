@@ -19,6 +19,7 @@ import { verifyFileInventory } from '../releaseSet'
 import { readPrivateServiceJson } from '../serviceFiles'
 import { readServiceProcessIdentity, waitForServiceProcessExit } from '../serviceProcessIdentity'
 import { ServiceProfileOwner } from '../ServiceProfileOwner'
+import { ServiceRpcChannel } from '../ServiceRpcChannel'
 
 const cleanup: Array<() => void | Promise<void>> = []
 afterEach(async () => {
@@ -46,8 +47,7 @@ async function server(role: 'host' | 'management' | 'product' = 'host') {
   const endpoint = process.platform === 'win32' ? localTransports.namedPipe(`\\\\.\\pipe\\lexora-test-${randomUUID()}`) : localTransports.unix(join(root, 'service.sock'))
   const peers: RuntimeRpcPeer[] = []
   const listener = new LocalServiceServer({ endpoint, identity, role, secret, connected: (frames) => {
-    const peer = new RuntimeRpcPeer({ transport: frames.transport(), onFatalError: () => frames.close() })
-    frames.onDidClose(error => peer.close(error))
+    const peer = new ServiceRpcChannel(frames)
     peer.onRequest('echo', value => value)
     peer.notify('initial', { ready: true })
     peers.push(peer)
@@ -67,6 +67,22 @@ it('authenticates the original instance and preserves frames immediately followi
   cleanup.push(() => client.frames.close())
   expect(await peer.request('echo', { same: true })).toEqual({ same: true })
   expect(notifications).toContainEqual({ jsonrpc: '2.0', method: 'initial', params: { ready: true } })
+})
+
+it('isolates oversized RPC failures and reassembles simultaneous history reads on one socket', async () => {
+  const f = await server('management')
+  const connection = await connectLocalService(f.endpoint.address, { ...identity, type: 'hello', role: 'management', secret })
+  const client = new ServiceRpcChannel(connection.frames)
+  cleanup.push(() => client.close(new Error('done')))
+  const body = { text: '界🙂'.repeat(180000) }
+  const serverPeer = f.peers[0]!
+  serverPeer.onRequest('large', () => body)
+  serverPeer.onRequest('conversations.listTimeline', () => body)
+  await expect(client.request('large', {})).rejects.toMatchObject({ data: { code: 'RPC_PAYLOAD_TOO_LARGE' } })
+  await expect(client.request('echo', body)).rejects.toMatchObject({ code: 'RPC_PAYLOAD_TOO_LARGE' })
+  const values = await Promise.all([client.request('conversations.listTimeline', {}), client.request('echo', 17), client.request('conversations.listTimeline', {})])
+  expect(values).toEqual([body, 17, body])
+  expect(client.closed).toBe(false)
 })
 
 it('transports binary request bodies and preserves interleaved RPC boundaries', async () => {

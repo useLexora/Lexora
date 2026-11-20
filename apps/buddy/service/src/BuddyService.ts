@@ -14,6 +14,7 @@ import type { ProductConnectionOptions } from './productProtocol/ProductConnecti
 import type { BuddyServiceErrorCode, RuntimeRequestRegistrar } from './rpc/runtimeRequest'
 import type { ServiceClientPeer, ServiceClientRole } from './rpc/ServiceClientConnections'
 import type { ConversationRecord } from './storage/conversationRecord'
+import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -40,6 +41,7 @@ import { ApplicationEvents as EventPublisher } from '../../shared/observability/
 import { observeLifecycleDiagnostics } from '../../shared/observability/lifecycleDiagnostics'
 import { resourcePrepareSchema } from '../../shared/privateNetwork/resources'
 import { ProductProtocolError } from '../../shared/productProtocol/errors'
+import { PRODUCT_LIMITS } from '../../shared/productProtocol/limits'
 import { desktopProductContentProject } from '../../shared/productProtocol/transport'
 import { promptsRpc } from '../../shared/prompts/promptApi'
 import { userQuestionsChanged } from '../../shared/questions/userQuestionApi'
@@ -305,6 +307,7 @@ export async function startBuddyService(
   const host = new ServiceHost(options.lifecycle ?? new ServiceLifecycleSource(() => record({ event: 'observer.failed', component: 'runtime.lifecycle', level: 'warn' })))
   const stopLifecycleDiagnostics = options.lifecycle ? () => {} : observeLifecycleDiagnostics(host.lifecycle, events)
   const storage = guardStorageDatabase(options.database)
+  const runs = createRunRepository(options.database)
   const clients = new ServiceClientConnections(storage.assertAvailable)
   let stopExecution: () => Promise<void> = async () => {}
   const notify = (method: string, params: unknown) => clients.notify('product', method, params)
@@ -314,7 +317,18 @@ export async function startBuddyService(
         clients.stopAccepting()
         void stopExecution().catch(() => record({ event: 'execution.cleanup_failed', level: 'error' }))
       })
-      const delivery = options.eventLog.onDidCommit(event => notify(runNotifications.event.method, toPublicRunEvent(event)))
+      const sourceId = randomUUID()
+      let revision = 0
+      const delivery = options.eventLog.onDidCommit((event) => {
+        const value = toPublicRunEvent(event)
+        if (Buffer.byteLength(JSON.stringify(value)) <= PRODUCT_LIMITS.pageBytes) {
+          notify(runNotifications.event.method, value)
+          return
+        }
+        const run = runs.findById(event.runId)
+        if (run)
+          notify(conversationTimelineChanged.method, { sourceId, revision: ++revision, conversationId: run.conversationId, branchId: run.branchId })
+      })
       defer(() => {
         isolation.dispose()
         delivery.dispose()
@@ -349,7 +363,6 @@ export async function startBuddyService(
     const spacesRepository = createSpaceRepository(options.database)
     const conversations = createConversationRepository(options.database)
     const conversationHistory = createConversationHistoryStore(options.database)
-    const runs = createRunRepository(options.database)
     const conversationMutations = new ConversationMutationGuard()
     const conversationAvailability = {
       assertConversationWritable: (id: string) => {
@@ -1913,6 +1926,7 @@ export async function startBuddyService(
           recovery: mutationRecovery,
         })
         registerRunRpc({
+          isConversationReadable: id => conversations.findById(id)?.deletedAt === null,
           statistics,
           isBusy,
           eventLog: options.eventLog,
@@ -1965,6 +1979,7 @@ export async function startBuddyService(
         })
         registerConversationArchiveRpc({ rpc: conditionalRpc, archive: conversationArchive, legacyWrites: !commandContext })
         registerConversationRpc({
+          database: options.database,
           artifacts: artifactsRepository,
           attachments: attachmentService,
           changes: changeCaptureService,

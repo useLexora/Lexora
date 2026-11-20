@@ -76,7 +76,18 @@ export const runsResponseSchemas = {
   runs: z.array(runSchema),
 } as const
 
+export const runEventPageInputSchema = z.object({
+  conversationId: idSchema,
+  runId: idSchema,
+  afterSequence: z.number().int().nonnegative(),
+  throughSequence: z.number().int().nonnegative(),
+}).strict()
+export type RunEventPageInput = z.infer<typeof runEventPageInputSchema>
 export const runsRpc = {
+  readEventPage: { method: 'runs.readEventPage', input: runEventPageInputSchema, response: z.object({
+    events: z.array(runEventSchema),
+    nextSequence: z.number().int().positive().nullable(),
+  }).strict() },
   isBusy: { method: 'runs.isBusy', input: z.object({}).strict(), response: z.boolean() },
   list: { method: 'runs.list', input: z.object({ conversationId: idSchema.nullable().optional(), limit: optionalLimitSchema }).strict(), response: runsResponseSchemas.runs },
   get: { method: 'runs.get', input: runsRequestSchemas.runId, response: runsResponseSchemas.run },

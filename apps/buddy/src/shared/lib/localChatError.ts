@@ -93,7 +93,9 @@ export function resolveLocalChatErrorMessage(error: unknown, language: BuddyLoca
     PROVIDER_ID_CONFLICT: 'desktop.providers.identifierConflict',
     PROVIDER_LOGIN_CANCELLED: 'desktop.error.providerLoginCancelled',
     PROVIDER_UNAVAILABLE: 'desktop.error.providerUnavailable',
+    RPC_PAYLOAD_TOO_LARGE: 'desktop.error.rpcPayloadTooLarge',
     RUNTIME_PROTOCOL_ERROR: 'desktop.error.runtimeProtocol',
+    RUNTIME_RECONNECTING: 'desktop.error.runtimeReconnecting',
     RUNTIME_UNAVAILABLE: 'desktop.error.runtimeUnavailable',
     VALIDATION_FAILED: 'desktop.error.validation',
   } as const
