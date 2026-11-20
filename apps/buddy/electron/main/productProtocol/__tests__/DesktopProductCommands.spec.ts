@@ -4,8 +4,10 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { DesktopNotificationInbox } from '../../notifications/DesktopNotificationInbox'
 import { DesktopProductCommands } from '../DesktopProductCommands'
 import { ProductOutboxStore } from '../ProductOutboxStore'
+import { ProductRecoveryNotifications } from '../ProductRecoveryNotifications'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -53,6 +55,54 @@ describe('desktop durable command delivery', () => {
     expect((await restarted.execute(command)).state).toBe('decided')
     expect(calls).toEqual(['commands.get'])
     await expect(restarted.execute({ ...command, intent: { ...command.intent, expectedRevision: '3' } })).rejects.toThrow('OUTBOX_COMMAND_ID_REUSED')
+  })
+
+  it('retires a confirmed stale read from an earlier Desktop without prompting on restart', async () => {
+    const { client, store } = await fixture()
+    const read = { method: 'taskMarks.setRead' as const, commandId: 'read', intent: { conversationId: 'task', resultRunId: 'run', readRevision: '0', read: true } }
+    const rejected = { ...receipt, commandId: read.commandId, method: read.method, decision: 'rejected', target: {}, result: {}, errorCode: 'SOURCE_CHANGED' }
+    client.attach(connection(async () => ({ receipt: rejected })))
+    const { record } = await client.execute(read)
+    expect(record.receipt).toEqual(rejected)
+    const restarted = new DesktopProductCommands(store)
+    restarted.attach(connection(async () => {
+      throw new Error('unexpected dispatch')
+    }))
+    expect(await restarted.recover()).toEqual([])
+    expect(await store.list()).toEqual([])
+    expect((await store.read(record.owner, read.commandId))?.receipt).toEqual(rejected)
+  })
+
+  it('tracks attention for the reviewed result revision and keeps the pending input when attention is damaged', async () => {
+    const { store, client } = await fixture()
+    const attentionPath = join(store.directory, 'notification-attention.json')
+    const inbox = new DesktopNotificationInbox(attentionPath, () => {})
+    const notifications = new ProductRecoveryNotifications(inbox, () => client.recover(), (error) => {
+      throw error
+    })
+    try {
+      client.attach(connection(async () => {
+        throw new Error('disconnected')
+      }))
+      const outcome = await client.execute(command)
+      const { record } = outcome
+      notifications.publish(outcome)
+      const [unknown] = await inbox.markAllSeen()
+      expect(unknown).toMatchObject({ revision: 'unknown', attention: 'seen' })
+      client.attach(connection(async () => ({ lookup: 'not_found' })))
+      expect(await inbox.list()).toMatchObject([{ revision: 'unknown', attention: 'seen' }])
+      await notifications.reconcile()
+      const stale = { notificationId: unknown!.id, revision: unknown!.revision }
+      expect(await inbox.markSeen(stale)).toMatchObject([{ id: unknown!.id, revision: 'not_accepted', attention: 'unseen' }])
+      await writeFile(attentionPath, '{broken')
+      expect(await inbox.list()).toMatchObject([{ attention: 'unseen' }])
+      expect(await inbox.markAllSeen()).toMatchObject([{ attention: 'seen' }])
+      expect((await store.list())[0]?.envelope).toEqual(record.envelope)
+    }
+    finally {
+      notifications.dispose()
+      inbox.dispose()
+    }
   })
 
   it('does not send when durable preparation fails', async () => {

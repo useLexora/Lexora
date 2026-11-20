@@ -3,7 +3,7 @@ import type { ServiceHost } from '@buddy-shared/lifecycle/ServiceHost'
 import { useModelProvidersStore } from '@/modules/models'
 import { useNotificationCenterStore } from '@/modules/notifications'
 import { useApplicationSettingsStore, useStorageStore, useStorageUsageStore, useUsageStore } from '@/modules/settings'
-import { useDesktopUpdates } from '@/modules/updates'
+import { updateNotificationSource, useDesktopUpdates } from '@/modules/updates'
 import { useRuntimeSupervisorStore } from '@/platform/runtime/useRuntimeSupervisorStore'
 import { requireInitialState } from './requireInitialState'
 
@@ -14,7 +14,8 @@ export interface UseDesktopAppStateOptions {
 export function useDesktopAppState(options: UseDesktopAppStateOptions) {
   const applicationSettings = useApplicationSettingsStore(options.api.settings)
   const updates = useDesktopUpdates(options.api.app)
-  const notifications = useNotificationCenterStore(options.api.localChat, updates)
+  const notifications = useNotificationCenterStore(options.api.localChat)
+  notifications.registerSource(updateNotificationSource(updates))
   const modelProviders = useModelProvidersStore({
     api: options.api.localChat.providers,
     language: applicationSettings.language,

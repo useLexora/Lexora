@@ -22,6 +22,9 @@ import { spaceFilesChanged } from '../../../shared/spaces/spaceFileApi'
 import { LOCAL_CHAT_IPC_CHANNELS } from '../../shared/localChatApi'
 
 export function registerLocalChatNotifications(options: RegisterLocalChatIpcOptions): () => void {
+  let notificationRevision = 0
+  const notifyCenter = () => sendToRenderer(options.getWindow(), LOCAL_CHAT_IPC_CHANNELS.notificationsChanged, { revision: ++notificationRevision })
+  const inboxSubscription = options.notificationInbox?.onChanged(notifyCenter)
   const stopStateSubscription = options.runtime.onStateChange((state) => {
     const parsed = runtimeResponseSchemas.runtimeState.safeParse(state)
     if (parsed.success)
@@ -74,7 +77,7 @@ export function registerLocalChatNotifications(options: RegisterLocalChatIpcOpti
     if (notification.method === notificationsChanged.method) {
       const result = notificationsChanged.params.safeParse(notification.params)
       if (result.success)
-        sendToRenderer(options.getWindow(), LOCAL_CHAT_IPC_CHANNELS.notificationsChanged, result.data)
+        notifyCenter()
       return
     }
     if (notification.method === composerResourcesChanged.method) {
@@ -159,6 +162,7 @@ export function registerLocalChatNotifications(options: RegisterLocalChatIpcOpti
     }
   })
   return () => {
+    inboxSubscription?.dispose()
     stopNotificationSubscription()
     stopStateSubscription()
   }

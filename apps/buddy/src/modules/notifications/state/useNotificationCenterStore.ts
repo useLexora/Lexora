@@ -1,8 +1,14 @@
+import type { DeviceNotification, DeviceNotificationList } from '@buddy-electron/shared/desktopNotifications'
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
-import type { LocalNotification, LocalNotificationList } from '@buddy-shared/notifications/notificationApi'
 import type { DesktopNotification } from '../contracts'
-import type { DesktopUpdates } from '@/modules/updates/contracts'
-import { computed, readonly, shallowRef } from 'vue'
+import { compareNotifications } from '@buddy-electron/shared/desktopNotifications'
+import { computed, readonly, shallowReactive, shallowRef } from 'vue'
+
+interface NotificationSource {
+  owns: (notification: DesktopNotification) => boolean
+  items: () => readonly DesktopNotification[]
+  markSeen: (revision: string) => Promise<void>
+}
 
 export type NotificationFilter = 'all' | 'unseen'
 
@@ -17,13 +23,17 @@ export function filterNotifications(
 
 export function useNotificationCenterStore(api: {
   notifications: LocalChatApi['notifications']
-}, updates: Pick<DesktopUpdates, 'state' | 'markSeen'>) {
-  const localItems = shallowRef<ReadonlyArray<LocalNotification>>([])
-  const items = computed<readonly DesktopNotification[]>(() => {
-    const update = updates.state.value?.notification
-    return [...(update ? [update] : []), ...localItems.value]
-      .sort(compareNotifications)
-  })
+}) {
+  const deviceItems = shallowRef<ReadonlyArray<DeviceNotification>>([])
+  const sources = shallowReactive(new Set<NotificationSource>())
+  function registerSource(source: NotificationSource) {
+    sources.add(source)
+    return () => sources.delete(source)
+  }
+  const items = computed<readonly DesktopNotification[]>(() => [
+    ...deviceItems.value,
+    ...Array.from(sources).flatMap(source => source.items()),
+  ].sort(compareNotifications))
   const unseenCount = computed(() => items.value.filter(item => item.attention === 'unseen').length)
   const isLoading = shallowRef(false)
   const error = shallowRef<unknown>(null)
@@ -42,8 +52,8 @@ export function useNotificationCenterStore(api: {
 
   const hasNotifications = computed(() => items.value.length > 0)
 
-  function apply(value: LocalNotificationList) {
-    localItems.value = value.items
+  function apply(value: DeviceNotificationList) {
+    deviceItems.value = value.items
   }
 
   function load(): Promise<boolean> {
@@ -89,7 +99,7 @@ export function useNotificationCenterStore(api: {
     return loadPromise
   }
 
-  function mutate(operation: () => Promise<LocalNotificationList>): Promise<boolean> {
+  function mutate(operation: () => Promise<DeviceNotificationList>): Promise<boolean> {
     if (stopped)
       return Promise.resolve(false)
     generation += 1
@@ -129,10 +139,11 @@ export function useNotificationCenterStore(api: {
   async function markSeen(notification: DesktopNotification): Promise<boolean> {
     if (stopped)
       return false
-    if (notification.kind !== 'app.update-available')
+    const source = Array.from(sources).find(source => source.owns(notification))
+    if (!source)
       return mutate(() => api.notifications.markSeen(notification.id, notification.revision))
     try {
-      await updates.markSeen(notification.revision)
+      await source.markSeen(notification.revision)
       return true
     }
     catch (markError) {
@@ -143,10 +154,10 @@ export function useNotificationCenterStore(api: {
   }
 
   async function markAllSeen() {
-    const update = updates.state.value?.notification
+    const contributed = Array.from(sources).flatMap(source => source.items())
     const results = await Promise.all([
       mutate(() => api.notifications.markAllSeen()),
-      update ? markSeen(update) : true,
+      ...contributed.filter(item => item.attention === 'unseen').map(markSeen),
     ])
     return results.every(Boolean)
   }
@@ -158,6 +169,7 @@ export function useNotificationCenterStore(api: {
     generation += 1
     refreshRequested = false
     stopChanges()
+    sources.clear()
   }
 
   return {
@@ -167,6 +179,7 @@ export function useNotificationCenterStore(api: {
     isLoading: readonly(isLoading),
     items: readonly(items),
     load,
+    registerSource,
     markAllSeen,
     markSeen,
     unseenCount: readonly(unseenCount),
@@ -174,13 +187,3 @@ export function useNotificationCenterStore(api: {
 }
 
 export type NotificationCenterStore = ReturnType<typeof useNotificationCenterStore>
-
-function compareNotifications(left: DesktopNotification, right: DesktopNotification): number {
-  if (left.attention !== right.attention)
-    return left.attention === 'unseen' ? -1 : 1
-  const leftActive = left.kind === 'app.update-available' || left.lifecycle === 'active'
-  const rightActive = right.kind === 'app.update-available' || right.lifecycle === 'active'
-  if (leftActive !== rightActive)
-    return leftActive ? -1 : 1
-  return right.occurredAt.localeCompare(left.occurredAt) || right.id.localeCompare(left.id)
-}

@@ -219,7 +219,7 @@ export default {
   'desktop.notifications.open': '打开通知',
   'desktop.notifications.origin.account': '账户',
   'desktop.notifications.origin.local-runtime': '本机',
-  'desktop.notifications.origin.desktop': '应用更新',
+  'desktop.notifications.origin.desktop': '桌面端',
   'desktop.notifications.origin.platform-public': '平台',
   'desktop.notifications.title': '通知',
   'desktop.notifications.unseenEmptyTitle': '暂无未读通知',

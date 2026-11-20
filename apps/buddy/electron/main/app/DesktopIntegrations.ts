@@ -45,6 +45,7 @@ import { registerImageIpc } from '../images/registerImageIpc'
 import { registerOcrIpc } from '../images/registerOcrIpc'
 import { registerDesktopIpc } from '../ipc'
 import { registerLocalChatIpc } from '../localChatIpc'
+import { DesktopNotificationInbox } from '../notifications/DesktopNotificationInbox'
 import { NotificationAudioPlayer } from '../notifications/NotificationAudioPlayer'
 import { NotificationSoundLibrary } from '../notifications/NotificationSoundLibrary'
 import { NotificationSoundService } from '../notifications/NotificationSoundService'
@@ -416,8 +417,16 @@ export class DesktopIntegrations {
       resolveArtifactEntry: async input => browserArtifactEntrySchema.parse(await service.request('artifacts.resolveBrowserEntry', input)),
       resolveFileEntry: async input => taskFilesRpc.resolveBrowser.response.parse(await service.request(taskFilesRpc.resolveBrowser.method, input)),
     }))
+    const reportNotificationError = () => diagnostics.record({
+      scope: 'desktop',
+      component: 'desktop.notifications',
+      level: 'warn',
+      event: 'notifications.sync.failed',
+    })
+    const notificationInbox = new DesktopNotificationInbox(join(paths.lexoraHome, 'device/notification-attention.json'), reportNotificationError)
+    this.#subscriptions.push(() => notificationInbox.dispose())
     const productGateway = process.env.LEXORA_BUDDY_STORAGE_AUTHORITY === 'sqlite'
-      ? new ProductDesktopGateway(service, join(paths.lexoraHome, 'device/product-outbox'), buddyVersion.version)
+      ? new ProductDesktopGateway(service, join(paths.lexoraHome, 'device/product-outbox'), buddyVersion.version, notificationInbox, reportNotificationError)
       : null
     if (productGateway)
       this.#subscriptions.push(() => productGateway.dispose())
@@ -427,6 +436,7 @@ export class DesktopIntegrations {
       identity: async () => productGateway ? productGateway.getIdentity() : null,
     }))
     this.#subscriptions.push(registerLocalChatIpc({
+      notificationInbox,
       recordDiagnostic: this.#environment.events.scope({ component: 'desktop.gateway' }).publish,
       readWebCredential: () => runtime.readWebCredential(),
       getLanguage: () => runtime.language,

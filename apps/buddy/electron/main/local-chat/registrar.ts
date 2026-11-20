@@ -4,6 +4,7 @@ import type { RuntimeRequestContract, RuntimeRequestInput, RuntimeRequestResult 
 import type { LocalChatErrorCode } from '../../../shared/runtime/localChatError'
 import type { ProductRecoveryItem } from '../../../shared/runtime/productRecovery'
 import type { LexoraConfig } from '../../shared/desktopApi'
+import type { DesktopNotificationInbox } from '../notifications/DesktopNotificationInbox'
 import { randomUUID } from 'node:crypto'
 import { ipcMain } from 'electron'
 import { ZodError } from 'zod'
@@ -13,7 +14,7 @@ import { formatLocalChatPublicError, readLocalChatErrorCode } from '../../../sha
 import { assertTrustedSender } from '../ipc'
 
 export interface DesktopRuntimeGateway {
-  recover?: () => Promise<ProductRecoveryItem[]>
+  recover?: (id?: string) => Promise<ProductRecoveryItem[]>
   acknowledgeRecovery?: (id: string) => Promise<void>
   restoreRecovery?: (id: string) => Promise<string>
   readonly state: unknown
@@ -30,6 +31,7 @@ export interface DesktopRuntimeGateway {
 }
 
 export interface RegisterLocalChatIpcOptions {
+  notificationInbox?: DesktopNotificationInbox
   recordDiagnostic?: ApplicationDiagnosticReporter
   getLanguage: () => LexoraConfig['desktop']['language']
   getWindow: () => BrowserWindow | null

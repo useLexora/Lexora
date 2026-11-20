@@ -6,6 +6,7 @@ import type { DesktopNotification } from '@/modules/notifications/contracts'
 import type { TaskSession } from '@/modules/tasks/contracts'
 import { useTimeoutFn } from '@vueuse/core'
 import { nextTick, onScopeDispose, readonly, shallowRef, watch } from 'vue'
+import { createNotificationActions } from '@/modules/notifications'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
 
 interface DesktopNavigationOptions {
@@ -100,20 +101,20 @@ export function useDesktopNavigation(options: DesktopNavigationOptions) {
     }
   }
 
+  const actions = createNotificationActions()
+  actions.register('open-conversation', action => openTask(action.conversationId, action.runId))
+  actions.register('open-model-settings', () => navigate(desktopRouteLocations.settings('models')))
+  actions.register('open-app-update', options.openUpdate)
+
   async function openNotification(notification: DesktopNotification) {
-    if (notification.action.type === 'open-app-update') {
-      try {
-        await options.openUpdate()
-      }
-      catch (error) {
-        options.onError(error)
-      }
-      return
+    if (notification.attention === 'unseen')
+      void options.notifications.markSeen(notification)
+    try {
+      await actions.dispatch(notification.action)
     }
-    void options.notifications.markSeen(notification)
-    return notification.action.type === 'open-model-settings'
-      ? navigate(desktopRouteLocations.settings('models'))
-      : openTask(notification.action.conversationId, notification.action.runId)
+    catch (error) {
+      options.onError(error)
+    }
   }
 
   async function openTarget(target: DesktopOpenTarget): Promise<boolean> {
@@ -127,7 +128,7 @@ export function useDesktopNavigation(options: DesktopNavigationOptions) {
       && ('kind' in target || session.activeTaskId.value === target.conversationId)
   }
 
-  return { navigate, notificationTarget: readonly(notificationTarget), openNotification, openSpace, openTarget, openTask }
+  return { registerNotificationAction: actions.register, navigate, notificationTarget: readonly(notificationTarget), openNotification, openSpace, openTarget, openTask }
 }
 
 export type DesktopNavigation = ReturnType<typeof useDesktopNavigation>

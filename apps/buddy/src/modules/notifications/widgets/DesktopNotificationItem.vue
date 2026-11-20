@@ -23,6 +23,8 @@ const dateFormatter = computed(() => new Intl.DateTimeFormat(props.language, {
   month: 'short',
 }))
 const title = computed(() => {
+  if ('presentation' in props.notification)
+    return t(props.notification.presentation.title)
   if (props.notification.kind === 'app.update-available')
     return t(/-beta\.\d+$/.test(props.notification.payload.version) ? 'desktop.update.betaNotificationTitle' : 'desktop.update.notificationTitle', { version: props.notification.payload.version })
   if (props.notification.kind === 'model.source-parameters-updated') {
@@ -33,6 +35,8 @@ const title = computed(() => {
   return props.notification.payload.automationName
 })
 const description = computed(() => {
+  if ('presentation' in props.notification)
+    return t(props.notification.presentation.description)
   if (props.notification.kind === 'app.update-available')
     return t('desktop.update.notificationDescription')
   if (props.notification.kind === 'model.source-parameters-updated')
@@ -63,7 +67,8 @@ const icon = computed(() => {
     @click="emit('open', notification)"
   >
     <span class="desktop-notification-item__icon grid w-[28px] h-[28px] place-items-center rounded-[6px] bg-accent-surface text-accent-text text-[16px]" aria-hidden="true">
-      <DesktopIcon :component="icon" />
+      <DesktopIcon v-if="'presentation' in notification" :name="notification.presentation.icon" />
+      <DesktopIcon v-else :component="icon" />
     </span>
     <span class="desktop-notification-item__copy grid min-w-0">
       <strong>{{ title }}</strong>

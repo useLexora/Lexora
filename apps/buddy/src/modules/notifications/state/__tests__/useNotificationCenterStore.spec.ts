@@ -3,6 +3,7 @@ import type { LocalNotification, LocalNotificationList } from '@buddy-shared/not
 import { deferred } from '@buddy-tests/deferred'
 import { describe, expect, it, vi } from 'vitest'
 import { shallowRef } from 'vue'
+import { updateNotificationSource } from '@/modules/updates'
 import { useNotificationCenterStore } from '../useNotificationCenterStore'
 
 function list(seen = false): LocalNotificationList {
@@ -20,7 +21,8 @@ function fixture() {
     }, list: vi.fn(async () => list()), markSeen: vi.fn(async () => list(true)), markAllSeen: vi.fn(async () => list(true)) },
   }
   const updates = { state: shallowRef<DesktopUpdateState | null>(null), markSeen: vi.fn(async (_version: string) => {}) }
-  const store = useNotificationCenterStore(api, updates)
+  const store = useNotificationCenterStore(api)
+  store.registerSource(updateNotificationSource(updates))
   return { api, store, updates, changed: () => changed({ revision: 1 }) }
 }
 

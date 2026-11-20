@@ -2,7 +2,6 @@ import type { LocalChatIpcContext } from './registrar'
 import { shell } from 'electron'
 import { artifactsRequestSchemas, artifactsRpc } from '../../../shared/artifacts/artifactApi'
 import { changeOverviewRequestSchema, changesRecoveryRpc, changesRequestSchemas, changesRpc } from '../../../shared/changes/changeApi'
-import { notificationsRequestSchemas, notificationsRpc } from '../../../shared/notifications/notificationApi'
 import { approvalsRequestSchemas, approvalsRpc } from '../../../shared/permissions/approvalApi'
 import { conversationStatusRequestSchema, runsStatusRpc } from '../../../shared/runs/conversationStatusApi'
 import { toPublicRunEvent } from '../../../shared/runs/publicRunEvent'
@@ -11,6 +10,8 @@ import { runsMetricsRpc, taskMetricsRequestSchema } from '../../../shared/runs/t
 import { usageAnalyticsRpc, usagePeriodSchema, usageTopTasksRequestSchema, usageTrendRequestSchema } from '../../../shared/usage/usageAnalyticsApi'
 import { usageRpc } from '../../../shared/usage/usageApi'
 import { LOCAL_CHAT_IPC_CHANNELS } from '../../shared/localChatApi'
+
+import { registerNotificationCenterIpc } from './notificationCenter'
 
 export function registerActivityIpc(context: LocalChatIpcContext): void {
   const { handle, request } = context
@@ -32,11 +33,7 @@ export function registerActivityIpc(context: LocalChatIpcContext): void {
 
   handle(LOCAL_CHAT_IPC_CHANNELS.artifactsReadText, (_event, input) => request(artifactsRpc.readText, artifactsRequestSchemas.artifactText.parse(input)))
 
-  handle(LOCAL_CHAT_IPC_CHANNELS.notificationsList, () => request(notificationsRpc.list, {}))
-
-  handle(LOCAL_CHAT_IPC_CHANNELS.notificationsMarkSeen, (_event, input) => request(notificationsRpc.markSeen, notificationsRequestSchemas.notificationRevision.parse(input)))
-
-  handle(LOCAL_CHAT_IPC_CHANNELS.notificationsMarkAllSeen, () => request(notificationsRpc.markAllSeen, {}))
+  registerNotificationCenterIpc(context)
 
   handle(LOCAL_CHAT_IPC_CHANNELS.changesGet, (_event, input) => request(changesRpc.get, changesRequestSchemas.changeSet.parse(input)))
 
