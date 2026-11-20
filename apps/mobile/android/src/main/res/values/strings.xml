@@ -417,6 +417,9 @@
     <string name="review_system_interaction">System interaction</string>
     <string name="review_browser_interaction">Browser interaction</string>
     <string name="review_mcp_call">MCP call</string>
+    <string name="new_task_permissions_unknown">Not synced</string>
+    <string name="new_task_permissions_choose">Choose permissions before sending.</string>
+    <string name="new_task_defaults_retry">Could not read new task settings. Tap to retry.</string>
     <string name="execution_inherited">Keep service permissions</string>
     <string name="models_load_failed">Models could not load. Tap to retry.</string>
     <string name="models_cached">Showing the previous model list; refresh unavailable.</string>

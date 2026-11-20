@@ -1,15 +1,18 @@
 import type { DesktopOpenResult } from '../../../../shared/service/localServiceProtocol'
 import type { RuntimePlatform } from '../../platform/RuntimePlatform'
+import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { buddySettingsSchema } from '../../../../shared/buddies/buddySettings'
 import { DEFAULT_NETWORK_PERMISSIONS } from '../../../../shared/permissions/networkPermissions'
-import { DEFAULT_RUNTIME_PREFERENCES } from '../../../../shared/runtime/runtimePreferences'
+import { DEFAULT_RUNTIME_PREFERENCES, runtimePreferencesRpc } from '../../../../shared/runtime/runtimePreferences'
 import { startBuddyService } from '../../BuddyService'
 import { SqliteRunEventLog } from '../../events/SqliteRunEventLog'
 import { createRpcRuntimePlatform } from '../../platform/createRpcRuntimePlatform'
 import { createServiceConnection } from '../../rpc/__tests__/serviceConnectionHarness'
+import { createBuddyRepository } from '../../storage/buddyRepository'
 import { openBuddyMigrationCandidate } from '../../storage/database'
 
 describe('product service transport ownership', () => {
@@ -29,7 +32,7 @@ describe('product service transport ownership', () => {
           frames.push(JSON.parse((params as { frame: string }).frame))
       })
       await peer.client.request('product.exchange', { frame: JSON.stringify({ jsonrpc: '2.0', id: 'initialize', method: 'initialize', params: { protocol: { major: 1, minMinor: 0, maxMinor: 0 }, client: { kind: 'desktop', version: 'test' }, supportedContentKinds: [], supportedReviewKinds: [] } }) })
-      expect(frames).toMatchObject([{ result: { profileId: 'test-profile' } }])
+      expect(frames).toMatchObject([{ result: { profileId: 'test-profile', capabilities: expect.arrayContaining(['chat.getNewTaskDefaults']) } }])
       await peer.client.request('product.exchange', { frame: JSON.stringify({ jsonrpc: '2.0', id: 'host', method: 'service.host', params: {} }) })
       expect(frames.at(-1)).toMatchObject({ result: { platform: process.platform } })
       await peer.client.request('product.exchange', { frame: JSON.stringify({ jsonrpc: '2.0', id: 'info', method: 'service.info', params: {} }) })
@@ -39,39 +42,101 @@ describe('product service transport ownership', () => {
       await close()
     }
   })
+  it('reads current Desktop task defaults without granting the reader write access', async () => {
+    const f = await fixture()
+    try {
+      let hostMode: string = 'read_only'
+      f.peer.client.onRequest(runtimePreferencesRpc.getDefaultPermissionMode, () => hostMode)
+      const reader = await f.connect('remote-reader', 'reader')
+      expect(reader.result()).toMatchObject({ capabilities: expect.arrayContaining(['chat.getNewTaskDefaults']) })
+      for (const [mode, executionProfile, approvalPolicy] of [
+        ['read_only', 'read_only', 'policy'],
+        ['manual_approval', 'workspace_write', 'manual'],
+        ['policy_approval', 'workspace_write', 'policy'],
+        ['full_access', 'full_access', 'policy'],
+      ] as const) {
+        hostMode = mode
+        await reader.send('chat.getNewTaskDefaults', {})
+        expect(reader.result()).toEqual({ executionConfig: { executionProfile, approvalPolicy }, modelSelection: null, modelDisplayName: null })
+      }
+      await reader.send('conversations.setPermissionSettings', {})
+      expect(reader.error()).toMatchObject({ code: 'NOT_AUTHORIZED' })
+      await reader.send('chat.getNewTaskDefaults', { conversationId: 'existing' })
+      expect(reader.error()).toMatchObject({ code: 'INVALID_PARAMS' })
+      hostMode = 'invalid'
+      await reader.send('chat.getNewTaskDefaults', {})
+      expect(reader.error()).toMatchObject({ code: 'INTERNAL_ERROR', acceptance: 'not_accepted' })
+    }
+    finally {
+      await f.close()
+    }
+  })
+
+  it('returns the concrete name for the same buddy or application default as getInputSelection', async () => {
+    const f = await fixture({ getDefaultPermissionMode: async () => 'manual_approval' })
+    try {
+      f.service.connectClient('management', f.peer.server)
+      const modelId = 'shared-model'
+      for (const [id, name] of [['application', 'Application model'], ['actor', 'Actor model']]) {
+        await f.peer.client.request('providers.createCustom', { id, displayName: `${id} provider`, api: 'openai-completions', authentication: 'none', baseUrl: 'https://example.test/v1', enabled: true, models: [{ id: modelId, name }] })
+      }
+      const reader = await f.connect('remote-reader', 'reader')
+      const executionConfig = { executionProfile: 'workspace_write', approvalPolicy: 'manual' }
+      await reader.send('chat.getNewTaskDefaults', {})
+      expect(reader.result()).toEqual({ executionConfig, modelSelection: null, modelDisplayName: null })
+
+      const application = { modelId, providerId: 'application', reasoning: null }
+      await f.peer.client.request('providers.setDefaultModel', { model: application })
+      await reader.send('chat.getNewTaskDefaults', {})
+      expect(reader.result()).toEqual({ executionConfig, modelSelection: { ...application, serviceTier: null }, modelDisplayName: 'Application model' })
+
+      const buddies = createBuddyRepository(f.database)
+      const buddy = buddies.get(buddies.state().defaultBuddyId)
+      const modelSelection = { modelId, providerId: 'actor', reasoning: 'high', serviceTier: 'priority' } as const
+      const updated = buddies.update({ buddyId: buddy.id, expectedRevision: buddy.revision, settings: buddySettingsSchema.parse({ ...buddy.settings, model: modelSelection }) })
+      await reader.send('chat.getNewTaskDefaults', {})
+      expect(reader.result()).toEqual({ executionConfig, modelSelection, modelDisplayName: 'Actor model' })
+      await reader.send('providers.getInputSelection', {})
+      expect(reader.result()).toEqual({ modelSelection })
+
+      const missing = { ...modelSelection, providerId: 'removed-provider' }
+      buddies.update({ buddyId: buddy.id, expectedRevision: updated.revision, settings: buddySettingsSchema.parse({ ...updated.settings, model: missing }) })
+      await reader.send('chat.getNewTaskDefaults', {})
+      expect(reader.result()).toEqual({ executionConfig, modelSelection: missing, modelDisplayName: null })
+    }
+    finally {
+      await f.close()
+    }
+  })
+
+  it('omits the optional query when the platform cannot supply Desktop defaults', async () => {
+    const f = await fixture({ getDefaultPermissionMode: undefined })
+    try {
+      const reader = await f.connect('remote-reader', 'reader')
+      expect(reader.result()).toMatchObject({ capabilities: expect.not.arrayContaining(['chat.getNewTaskDefaults']) })
+      await reader.send('chat.getNewTaskDefaults', {})
+      expect(reader.error()).toMatchObject({ code: 'METHOD_NOT_AVAILABLE' })
+    }
+    finally {
+      await f.close()
+    }
+  })
+
   it('shares actor admission across connections and drains every actor before stopping', async () => {
     const opened: Array<ReturnType<typeof Promise.withResolvers<DesktopOpenResult>> & { signal?: AbortSignal }> = []
     const visible = { accepted: true, uiReady: true, targetVisible: true, visible: true, focused: true }
-    const f = await fixture(async (_intent, signal) => {
+    const f = await fixture({ openDesktop: async (_intent, signal) => {
       const request = { ...Promise.withResolvers<DesktopOpenResult>(), signal }
       opened.push(request)
       return request.promise
-    })
+    } })
     try {
       const identity = f.service.commands!.identity
       const owner = String(f.database.prepare('SELECT local_actor_id FROM storage_profile').get()!.local_actor_id)
       f.database.exec('INSERT INTO storage_actors VALUES (\'remote-test\', \'device\', \'active\', \'2026-11-14T00:00:00.000Z\')')
-      let connectionId = 0
-      const connect = async (actorId: string) => {
-        const frames: Array<{ result?: unknown, error?: unknown }> = []
-        const connection = f.service.createProductConnection({
-          context: { ...identity, serviceId: 'test-service', profileId: 'test-profile', connectionId: String(++connectionId), clientSessionId: String(connectionId), deviceId: actorId, ownerPrincipalId: owner, credentialId: actorId, grantGeneration: '0', role: 'owner' },
-          trustedPrincipal: { actorId, assertAuthenticated() {} },
-          assertCurrent() {},
-          send: (frame) => {
-            frames.push(JSON.parse(frame))
-            return true
-          },
-          close() {},
-        })
-        let requestId = 0
-        const send = (method: string, params: unknown) => connection.receive(JSON.stringify({ jsonrpc: '2.0', id: String(++requestId), method, params }))
-        await send('initialize', { protocol: { major: 1, minMinor: 0, maxMinor: 0 }, client: { kind: 'desktop', version: 'test' }, supportedContentKinds: [], supportedReviewKinds: [] })
-        return { send, connection, result: () => frames.at(-1)?.result }
-      }
-      const first = await connect(owner)
-      const second = await connect(owner)
-      const remote = await connect('remote-test')
+      const first = await f.connect(owner)
+      const second = await f.connect(owner)
+      const remote = await f.connect('remote-test')
       const envelope = { dataGeneration: identity.dataGeneration, expectedServiceInstanceId: identity.serviceInstanceId, commandId: 'shared-command', intent: { kind: 'settings' } }
       const lookup = { dataGeneration: identity.dataGeneration, commandId: envelope.commandId }
       const pending = first.send('desktop.open', envelope)
@@ -81,7 +146,7 @@ describe('product service transport ownership', () => {
       await remote.send('commands.get', lookup)
       expect(remote.result()).toEqual({ lookup: 'not_found' })
       first.connection.close()
-      const reconnected = await connect(owner)
+      const reconnected = await f.connect(owner)
       await reconnected.send('commands.get', lookup)
       expect(reconnected.result()).toEqual({ lookup: 'pending' })
       const duplicate = reconnected.send('desktop.open', envelope)
@@ -116,7 +181,7 @@ describe('product service transport ownership', () => {
   })
 })
 
-async function fixture(openDesktop?: RuntimePlatform['openDesktop']) {
+async function fixture(platform?: Partial<RuntimePlatform>) {
   const root = await mkdtemp(join(tmpdir(), 'lexora-product-peers-'))
   const buddyHome = join(root, 'buddy')
   const database = openBuddyMigrationCandidate({ databasePath: join(buddyHome, 'buddy.sqlite3') })
@@ -130,11 +195,29 @@ async function fixture(openDesktop?: RuntimePlatform['openDesktop']) {
   peer.client.onRequest('host.runtimePreferences.get', () => ({ ...DEFAULT_RUNTIME_PREFERENCES, cacheWarming: 'off', codemode: 'off' }))
   peer.client.onRequest('host.credentials.list', () => ({ ok: true, providers: [] }))
   peer.client.onRequest('host.credentials.read', () => ({ ok: true, value: null }))
-  const service = await startBuddyService({ buddyHome, database, eventLog: events, platform: { ...createRpcRuntimePlatform(peer.server), ...(openDesktop ? { openDesktop } : {}) }, builtinSkillsDirectories: [], productIdentity: { serviceId: 'test-service', profileId: 'test-profile' } })
+  const service = await startBuddyService({ buddyHome, database, eventLog: events, platform: { ...createRpcRuntimePlatform(peer.server), ...platform }, builtinSkillsDirectories: [], productIdentity: { serviceId: 'test-service', profileId: 'test-profile' } })
   return {
     database,
     peer,
     service,
+    async connect(actorId: string, role: 'reader' | 'owner' = 'owner') {
+      const owner = String(database.prepare('SELECT local_actor_id FROM storage_profile').get()!.local_actor_id)
+      const frames: Array<{ result?: unknown, error?: unknown }> = []
+      const connection = service.createProductConnection({
+        context: { ...service.commands!.identity, serviceId: 'test-service', profileId: 'test-profile', connectionId: randomUUID(), clientSessionId: randomUUID(), deviceId: actorId, ownerPrincipalId: owner, credentialId: actorId, grantGeneration: '0', role },
+        trustedPrincipal: { actorId, assertAuthenticated() {} },
+        assertCurrent() {},
+        send: (frame) => {
+          frames.push(JSON.parse(frame))
+          return true
+        },
+        close() {},
+      })
+      let requestId = 0
+      const send = (method: string, params: unknown) => connection.receive(JSON.stringify({ jsonrpc: '2.0', id: String(++requestId), method, params }))
+      await send('initialize', { protocol: { major: 1, minMinor: 0, maxMinor: 0 }, client: { kind: 'mobile', version: 'test' }, supportedContentKinds: [], supportedReviewKinds: [] })
+      return { send, connection, result: () => frames.at(-1)?.result, error: () => frames.at(-1)?.error }
+    },
     async close() {
       await service.dispose()
       await events.close()

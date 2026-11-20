@@ -115,7 +115,7 @@ class MobileComposerSession(
             } catch (_: Exception) { onUi { if (!closed && scope == target && request == restoreGeneration) failed() } }
         }
     }
-    fun submit(client: ProductClient, method: String, extra: JSONObject, work: (() -> Unit) -> Unit, reviewed: LocalDraft? = null,
+    fun submit(client: ProductClient, method: String, extra: JSONObject, execution: JSONObject, work: (() -> Unit) -> Unit, reviewed: LocalDraft? = null,
         accepted: (Submission) -> Unit, failed: (MobileOperationFailure) -> Unit, settled: () -> Unit) {
         val target = scope
         if (!submitting.add(target)) return
@@ -145,7 +145,7 @@ class MobileComposerSession(
                 val actualMethod = if (editing) "chat.editUserMessage" else method
                 val intent = if (editing) JSONObject().put("conversationId", context.getString("conversationId")).put("userMessageId", context.getString("userMessageId")) else extraSnapshot
                 val receipt = CommandReceipt.requireAccepted(
-                    MobileInputCommands(store).submit(client, draft, context, actualMethod, intent, confirmedRepeat = reviewed != null))
+                    MobileInputCommands(store).submit(client, draft, context, actualMethod, intent, confirmedRepeat = reviewed != null, displayedExecution = execution))
                 val acceptedTarget = ConversationTarget.fromTarget(receipt.getJSONObject("target"))
                 onUi { if (!closed) accepted(Submission(target, acceptedTarget)) }
             } catch (error: Exception) {

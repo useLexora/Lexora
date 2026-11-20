@@ -47,7 +47,7 @@ internal fun ConversationSettings(state: MobileUiState, onAction: (MobileAction,
                         }
                         val dividerColor = MaterialTheme.colorScheme.outlineVariant
                         HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = dividerColor.copy(alpha = dividerColor.alpha * 0.7f))
-                        SettingsRow(mobileText(R.string.label_permissions), desktopSymbol(executionSymbol(state.executionSelection)),
+                        SettingsRow(mobileText(R.string.label_permissions), executionIcon(state.executionSelection),
                             value = state.executionLabel, tag = "execution", divider = hasMembers) { onAction(MobileAction.ChooseExecution, null) }
                         if (hasMembers) SettingsRow(mobileText(R.string.mobile_task_members), desktopSymbol(DesktopSymbol.Partners), tag = "task-partners", divider = false) { onAction(MobileAction.ShowMembers, null) }
                     }
@@ -74,7 +74,7 @@ private fun ExecutionSettingsPage(state: MobileUiState, onAction: (MobileAction,
                             else onAction(MobileAction.ApplyExecution, mode.config())
                         }
                     }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(desktopSymbol(executionSymbol(mode.config())), null, Modifier.size(22.dp))
+                    Icon(executionIcon(mode.config()), null, Modifier.size(22.dp))
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(mode.label, style = MaterialTheme.typography.bodyLarge)

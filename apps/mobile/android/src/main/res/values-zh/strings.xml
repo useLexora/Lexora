@@ -416,6 +416,9 @@
     <string name="review_system_interaction">系统交互</string>
     <string name="review_browser_interaction">浏览器交互</string>
     <string name="review_mcp_call">MCP 调用</string>
+    <string name="new_task_permissions_unknown">未同步</string>
+    <string name="new_task_permissions_choose">请先选择权限再发送。</string>
+    <string name="new_task_defaults_retry">未能读取新任务设置，点此重试</string>
     <string name="execution_inherited">保留服务执行设置</string>
     <string name="models_load_failed">模型暂未载入，点按重试</string>
     <string name="models_cached">显示上次的模型列表，暂未更新</string>

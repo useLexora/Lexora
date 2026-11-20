@@ -18,6 +18,12 @@ object ExecutionSettings {
         ExecutionMode(R.string.label_smart_approval, "workspace_write", "policy", R.string.label_work_within_granted_permissions_and_ask_when_more_access_is_needed),
         ExecutionMode(R.string.label_full_access, "full_access", "policy", R.string.label_use_the_host_account_s_permissions_and_approve_actions_automatically)
     )
+    fun newTaskConfig(response: JSONObject): JSONObject {
+        val config = response.optJSONObject("executionConfig")
+        return modes.firstOrNull { config != null && it.matches(config) }?.config()
+            ?: throw ProtocolFailure("PROTOCOL_INCOMPATIBLE")
+    }
+
     fun defaultConfig() = modes[2].config()
     fun resolve(draft: JSONObject?, task: JSONObject?): JSONObject {
         draft?.optJSONObject("executionConfig")?.let { return JSONObject(it.toString()) }

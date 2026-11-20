@@ -46,6 +46,7 @@ import app.uselexora.mobile.network.ProductClient
 import app.uselexora.mobile.protocol.ExecutionMode
 import app.uselexora.mobile.protocol.DraftContext
 import app.uselexora.mobile.protocol.ExecutionSettings
+import app.uselexora.mobile.protocol.NewTaskDefaults
 import app.uselexora.mobile.protocol.MobileMessageDetail
 import app.uselexora.mobile.storage.LocalDraft
 import app.uselexora.mobile.protocol.CommandOutbox
@@ -132,7 +133,13 @@ class MainActivity : ComponentActivity() {
     private var inheritedModel: JSONObject? = null
     private var modelContextKey = ""
     private var modelContextRequest = 0L
-    private var executionConfig = ExecutionSettings.defaultConfig()
+    private var savedExecution: JSONObject? = null
+    private var openingNewTaskDraft = false
+    private class NewTaskEntry(val owner: MobileOperationOwner, var readingDefaults: Boolean,
+        var defaults: NewTaskDefaults? = null, var failed: Boolean = false)
+    private var newTaskEntry: NewTaskEntry? = null
+    private val currentEntry get() = newTaskEntry?.takeIf { isCurrent(it.owner) }
+    private val executionConfig get() = savedExecution ?: currentEntry?.defaults?.execution
     private var changingExecution = false
     private var spaceId: String? = null
     private var spaceName: String? = null
@@ -365,7 +372,7 @@ class MainActivity : ComponentActivity() {
             MobileAction.ChooseSpace -> chooseSpace()
             MobileAction.Send -> send()
             MobileAction.MoreHistory -> moreHistory()
-            MobileAction.Refresh -> {
+            MobileAction.Refresh -> if (isNewTaskPage()) restoreInput(retryDefaults = true) else {
                 refreshSpaces()
                 if (ui.screen == MobileScreen.Conversation && selectedTask != null) { refreshConversation(); refreshTaskMarks() }
                 else refreshTasks()
@@ -413,6 +420,9 @@ class MainActivity : ComponentActivity() {
         ui.topic = "$partition:$activeTopic:$scope"
         ui.readerTopic = if (conversationTarget == null) "$partition:$scope" else "$partition:$activeTopic"
         runTranscripts.update("$partition:$activeTopic", client, ui.runs)
+        val entry = currentEntry
+        ui.newTaskOpening = isNewTaskPage() && (openingNewTaskDraft || (ui.connected && entry?.readingDefaults == true))
+        ui.newTaskDefaultsFailed = entry?.failed == true && ui.connected
         renderExecution()
         renderSpace()
         ui.inputEnabled = composer.isEnabled
@@ -421,11 +431,12 @@ class MainActivity : ComponentActivity() {
         ui.sendFeedback = when {
             waiting != null && !input.isSubmitting -> mobileText(if (waiting) R.string.send_check_original else R.string.error_command_result_unknown)
             !ui.connected && ui.hasInput -> mobileText(R.string.send_offline)
+            ui.hasInput && executionConfig == null -> mobileText(R.string.new_task_permissions_choose)
             else -> sendIssue?.takeIf { it.first == input.scope }?.second.orEmpty()
         }
         ui.canCheckInputReceipt = waiting != null && !input.isSubmitting && ui.connected && checkingReceipts !== client
-        ui.sendEnabled = composer.isEnabled && ui.hasInput && waiting == null && !input.isSubmitting && !writingCurrentModel() && ui.conversationReady && !ui.viewingArchived
-        val fallback = inheritedModel.takeIf { modelContextKey == modelKey() }
+        ui.sendEnabled = !ui.newTaskOpening && composer.isEnabled && executionConfig != null && ui.hasInput && waiting == null && !input.isSubmitting && !writingCurrentModel() && ui.conversationReady && !ui.viewingArchived
+        val fallback = if (isNewTaskPage()) entry?.defaults?.model else inheritedModel.takeIf { modelContextKey == modelKey() }
         val selection = model ?: selectedTask?.optJSONObject("modelSelection") ?: fallback
         if (ui.modelPickerOpen) {
             val error = modelEditProblem()
@@ -434,10 +445,8 @@ class MainActivity : ComponentActivity() {
         }
         val resolvedModel = selection?.let { MobileModelControls.resolve(it, ui.models) }
         if (ui.modelSelection?.toString() != resolvedModel?.toString()) ui.modelSelection = resolvedModel
-        if (ui.executionSelection.toString() != executionConfig.toString()) ui.executionSelection = JSONObject(executionConfig.toString())
-        ui.modelLabel = MobileModelControls.model(ui.modelSelection, ui.models)?.optString("displayName")?.takeIf { it.isNotBlank() }
+        ui.modelLabel = entry?.defaults?.nameFor(selection) ?: MobileModelControls.model(ui.modelSelection, ui.models)?.optString("displayName")?.takeIf { it.isNotBlank() }
             ?: ui.modelSelection?.optString("modelId")?.takeIf { it.isNotBlank() } ?: if (ui.connected) mobileText(R.string.label_choose_model) else mobileText(R.string.label_disconnected)
-        ui.executionLabel = ExecutionSettings.label(executionConfig)
         ui.spaceLabel = spaceName ?: mobileText(R.string.label_no_space)
         val taskSpace = selectedTask?.opt("spaceId") as? String
         ui.selectedTaskSpaceLabel = if (taskSpace == null) mobileText(R.string.label_no_space) else ui.spaces.firstOrNull { it.optString("id") == taskSpace }?.optString("name") ?: mobileText(R.string.mobile_space_temporarily_unavailable)
@@ -456,6 +465,7 @@ class MainActivity : ComponentActivity() {
         input.flush()
         hideKeyboard()
         ui.screen = screenHistory.removeLastOrNull() ?: MobileScreen.Workbench
+        if (isNewTaskPage()) restoreInput()
         if (ui.screen in setOf(MobileScreen.Workbench, MobileScreen.Tasks, MobileScreen.Spaces)) { refreshTasks(); refreshPendingOperations() }
     }
     private fun showTaskFilter(filter: MobileTaskFilter) {
@@ -697,7 +707,8 @@ class MainActivity : ComponentActivity() {
         if (!composer.isEnabled) return
         saveFeedback("")
         val selection = model; val execution = executionConfig; val space = spaceId; val name = spaceName
-        input.persist({ ComposerEdit(text.toString(), selection?.toString(), execution.toString(), space, name, keepSettings) }, saved = { saveFeedback(mobileText(R.string.mobile_saved_on_phone)) }, failed = { saveFeedback(mobileText(R.string.mobile_save_failed_keep_this_input_open), false) })
+        if (keepSettings || text.isNotEmpty()) savedExecution = execution
+        input.persist({ ComposerEdit(text.toString(), selection?.toString(), execution?.toString(), space, name, keepSettings) }, saved = { saveFeedback(mobileText(R.string.mobile_saved_on_phone)) }, failed = { saveFeedback(mobileText(R.string.mobile_save_failed_keep_this_input_open), false) })
     }
     private fun clearConversationState() {
         ui.taskFiles = null
@@ -724,15 +735,24 @@ class MainActivity : ComponentActivity() {
         navigate(MobileScreen.Conversation)
         restoreInput(); syncUi(); ui.notice = ""
     }
-    private fun restoreInput() {
+    private fun isNewTaskPage() = ui.screen == MobileScreen.Conversation && selectedTask == null && conversationTarget == null
+    private fun restoreInput(retryDefaults: Boolean = false) {
         val target = scope
         val task = selectedTask?.let { JSONObject(it.toString()) }
-        refreshModelContext()
+        val newTask = task == null && conversationTarget == null
+        if (!input.displayingScope) savedExecution = null
+        val opening = isNewTaskPage()
+        if (opening && currentEntry == null) openingNewTaskDraft = true
+        if (opening) prepareNewTaskEntry(retryDefaults) else {
+            newTaskEntry = null
+            if (!newTask) refreshModelContext()
+        }
         if (!input.displayingScope) {
             writingView = true; composer.setText(""); writingView = false
-            composer.isEnabled = false; ui.sendEnabled = false; ui.inputEnabled = false; ui.executionEnabled = false; ui.spaceEnabled = false; model = null; ui.attachments = emptyList(); ui.attachmentCount = 0; saveFeedback(mobileText(R.string.mobile_opening_draft), false)
+            composer.isEnabled = false; ui.sendEnabled = false; ui.inputEnabled = false; ui.executionEnabled = false; ui.spaceEnabled = false; model = null; ui.attachments = emptyList(); ui.attachmentCount = 0; saveFeedback(if (newTask) "" else mobileText(R.string.mobile_opening_draft), false)
         }
         input.restore(::draftAttachments, ready = { current, attachments ->
+            openingNewTaskDraft = false
             writingView = true
             composer.setText(current?.value?.optJSONObject("content")?.let { MobileContentAdapter.text(it) } ?: "")
             composer.setSelection(composer.text.length)
@@ -743,11 +763,12 @@ class MainActivity : ComponentActivity() {
             ui.attachments = attachments
             saveFeedback(if (!composer.isEnabled) mobileText(R.string.mobile_edit_this_content_on_the_desktop) else "", false)
             model = current?.value?.optJSONObject("modelSelection")
-            executionConfig = ExecutionSettings.resolve(current?.value, task)
+            savedExecution = if (newTask && !demo) current?.value?.optJSONObject("executionConfig") else ExecutionSettings.resolve(current?.value, task)
             spaceId = if (current == null && target == DraftContext.newTaskKey(ui.selectedSpaceId)) ui.selectedSpaceId?.takeIf { it.isNotBlank() }
                 else DraftContext.spaceId(current?.value)
             spaceName = current?.value?.optString("spaceName")?.takeUnless { it.isEmpty() || it == "null" }
                 ?: ui.spaces.firstOrNull { it.optString("id") == spaceId }?.optString("name")
+                ?: ui.selectedSpaceLabel.takeIf { spaceId != null && spaceId == ui.selectedSpaceId }
             renderSpace()
             renderExecution()
             when (HistorySource.fromScope(DraftContext.target(target))?.kind) {
@@ -756,7 +777,7 @@ class MainActivity : ComponentActivity() {
                 null -> Unit
             }
 
-        }, failed = { saveFeedback(mobileText(R.string.mobile_could_not_open_the_draft_please_retry), false) })
+        }, failed = { openingNewTaskDraft = false; saveFeedback(mobileText(R.string.mobile_could_not_open_the_draft_please_retry), false) })
     }
     private fun resumeConnection() = session.resume()
     private fun openDiscoveryHit(hit: JSONObject) {
@@ -1027,7 +1048,7 @@ class MainActivity : ComponentActivity() {
     private fun renderRows() { syncUi() }
     private fun send(method: String = "chat.startTurn", extra: JSONObject = JSONObject(), reviewed: LocalDraft? = null) {
         if (!demo && client?.isConnected != true) { syncUi(); return }
-        if (input.scope in pendingInputScopes || input.isSubmitting) return
+        if (ui.newTaskOpening || input.scope in pendingInputScopes || input.isSubmitting) return
         if (writingCurrentModel()) {
             if (pendingModel()) { sendIssue = input.scope to mobileText(R.string.error_command_result_unknown); syncUi() }
             return
@@ -1040,7 +1061,8 @@ class MainActivity : ComponentActivity() {
         val sendingClient = client?.takeIf { it.isConnected && it.identity?.partition == partition && foreground } ?: return
         val owner = operationOwner()
         sendIssue = null
-        input.submit(sendingClient, method, extra, ::work, reviewed = reviewed, accepted = { result ->
+        val execution = executionConfig ?: run { ui.notice = mobileText(R.string.new_task_permissions_choose); return }
+        input.submit(sendingClient, method, extra, execution, ::work, reviewed = reviewed, accepted = { result ->
             if (isCurrent(owner)) acceptedInput(sendingClient, result.target)
         }, failed = { failure ->
             if (isCurrent(owner)) {
@@ -1177,7 +1199,8 @@ class MainActivity : ComponentActivity() {
         if (demo) {
             if (ui.models.isEmpty()) ui.models = listOf(JSONObject().put("modelId", "demo").put("providerId", "demo").put("displayName", mobileText(R.string.mobile_demo_model)).put("reasoningOptions", JSONArray()).put("serviceTiers", JSONArray()))
             ui.modelsLoading = false
-        } else refreshModelContext(refreshCatalog = true)
+        } else if (isNewTaskPage()) client?.takeIf { it.isConnected }?.let { refreshModelCatalog(it, force = true) }
+        else refreshModelContext(refreshCatalog = true)
         modelEditProblem()?.let { modelReadError = it; return }
         if (localModelScope()) { quickSelection?.let(::applyModel); return }
         val current = owner.connection ?: return
@@ -1236,22 +1259,41 @@ class MainActivity : ComponentActivity() {
             } finally { onUi { if (modelWriting == owner) modelWriting = null; refreshPendingOperations() } }
         }
     }
+    private fun prepareNewTaskEntry(retry: Boolean) {
+        val owner = operationOwner()
+        currentEntry?.let { if (!retry || it.readingDefaults) return }
+        val current = owner.connection?.takeIf { !demo && it.isConnected && it.identity?.partition == partition }
+        val entry = NewTaskEntry(owner, readingDefaults = current != null)
+        newTaskEntry = entry
+        if (current != null) work {
+            val result = runCatching { NewTaskDefaults.read(current) }
+            onUi {
+                if (newTaskEntry !== entry) return@onUi
+                entry.defaults = result.getOrNull()
+                entry.failed = result.isFailure
+                entry.readingDefaults = false
+            }
+        }
+    }
     private fun renderExecution() {
-        ui.executionLabel = ExecutionSettings.label(executionConfig)
+        val config = executionConfig
+        if (ui.executionSelection.toString() != (config?.toString() ?: "{}")) ui.executionSelection = config ?: JSONObject()
+        ui.executionLabel = config?.let(ExecutionSettings::label) ?: mobileText(R.string.new_task_permissions_unknown)
         ui.executionEnabled = composer.isEnabled && !changingExecution && !ui.viewingArchived && (conversationTarget == null || ui.conversationReady)
     }
     private fun chooseExecution(selection: JSONObject? = null) {
-        if (selection == null) { executionPickerOwner = partition; executionPickerScope = scope; hideKeyboard(); ui.executionPickerOpen = true; return }
+        if (selection == null) {
+            executionPickerOwner = partition; executionPickerScope = scope; hideKeyboard(); ui.executionPickerOpen = true; return
+        }
         if (!ui.executionEnabled || executionPickerOwner != partition || executionPickerScope != scope) return
         val owner = partition
         val target = scope
         val task = selectedTask?.let { JSONObject(it.toString()) }
-        val current = JSONObject(executionConfig.toString())
         fun apply(mode: ExecutionMode) {
             if (partition != owner || scope != target || !composer.isEnabled) return
             val config = mode.config()
             if (task == null || demo) {
-                executionConfig = config
+                savedExecution = config
                 renderExecution()
                 persistInput(composer.text.toString())
                 return
@@ -1269,7 +1311,7 @@ class MainActivity : ComponentActivity() {
                     onUi {
                         if (partition == owner && scope == target) {
                             acceptTaskProjection(updated)
-                            executionConfig = ExecutionSettings.resolve(null, selectedTask)
+                            savedExecution = ExecutionSettings.resolve(null, selectedTask)
                             renderExecution()
                             persistInput(composer.text.toString())
                             ui.notice = mobileText(R.string.mobile_the_service_updated_this_task_s_execution_mode)
@@ -1549,7 +1591,7 @@ class MainActivity : ComponentActivity() {
     }
     private fun captureFileTarget(): Boolean {
         if (!composer.isEnabled) { ui.notice = mobileText(R.string.mobile_this_input_contains_preserved_content_add_attachments_on_the); return false }
-        if (composer.text.isEmpty() && (model != null || spaceId != null || ui.selectedSpaceId != null || executionConfig.toString() != ExecutionSettings.defaultConfig().toString())) persistInput(composer.text)
+        if (composer.text.isEmpty() && (model != null || spaceId != null || ui.selectedSpaceId != null || executionConfig?.let { !ExecutionSettings.modes[2].matches(it) } == true)) persistInput(composer.text)
         input.flush()
         val target = DraftContext.scope(JSONObject().put("spaceId", spaceId ?: JSONObject.NULL), DraftContext.target(scope))
         pendingFileTarget = JSONObject().put("partition", partition).put("scope", scope).put("targetScope", target)

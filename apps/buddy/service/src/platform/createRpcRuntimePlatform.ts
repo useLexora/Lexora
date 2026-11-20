@@ -11,6 +11,7 @@ import { extensionIdSchema } from '../../../shared/extensions/extensionManifest'
 import { extensionShellRpc } from '../../../shared/extensions/extensionShell'
 import { extensionSkillDescriptorSchema, extensionSkillsRpc } from '../../../shared/extensions/extensionSkills'
 import { imagePreferencesSchema, imageRpc } from '../../../shared/images/imagePreferences'
+import { BUDDY_PERMISSION_MODES } from '../../../shared/permissions/permissionMode'
 import { credentialMutationResultSchema, credentialReadResultSchema, openExternalResultSchema } from '../../../shared/runtime/credentialProtocol'
 import { inferenceLeaseRpc } from '../../../shared/runtime/desktopHostRequests'
 import { petExecuteSequenceResultSchema } from '../../../shared/runtime/petProtocol'
@@ -140,6 +141,7 @@ export function createRpcRuntimePlatform(peer: RuntimeRpcPeerContract, options: 
       capabilities: async (input, signal) => extensionCapabilitiesSchema.parse(await peer.request(EXTENSION_CAPABILITIES_RPC, input, 10000, signal)),
       inspect: async (id, signal) => extensionInspectionSchema.parse(await peer.request(EXTENSION_INSPECT_RPC, { id }, 10000, signal)),
     },
+    getDefaultPermissionMode: async () => z.enum(BUDDY_PERMISSION_MODES).parse(await peer.request(runtimePreferencesRpc.getDefaultPermissionMode, {})),
     preferences: options.preferences ?? {
       get: async () => runtimePreferencesSchema.parse(await peer.request(runtimePreferencesRpc.get, {})),
       subscribe: apply => peer.onNotification((method, params) => {

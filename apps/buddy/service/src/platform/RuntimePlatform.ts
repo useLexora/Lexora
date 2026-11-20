@@ -2,6 +2,7 @@ import type { BrowserPresentationSource } from '../../../shared/context-panel/co
 import type { ExtensionCapabilityDescriptor, ExtensionCapabilityImpact } from '../../../shared/extensions/extensionCapabilities'
 import type { ExtensionSkillDescriptor } from '../../../shared/extensions/extensionSkills'
 import type { ImagePreferences } from '../../../shared/images/imagePreferences'
+import type { BuddyPermissionMode } from '../../../shared/permissions/permissionMode'
 import type { PetExecuteSequenceParams, PetExecuteSequenceResult } from '../../../shared/runtime/petProtocol'
 import type { RuntimePreferences } from '../../../shared/runtime/runtimePreferences'
 import type { DesktopOpenIntent, DesktopOpenResult } from '../../../shared/service/localServiceProtocol'
@@ -63,6 +64,7 @@ export interface RuntimePlatform {
   plugins: PluginAgentHost
   authoring: PluginAuthoringHost
   preferences: RuntimePreferenceSource
+  getDefaultPermissionMode?: () => Promise<BuddyPermissionMode>
   openExternal: (url: string) => Promise<void>
   presentBrowser?: (source: BrowserPresentationSource) => Promise<void>
   executePetSequence: (input: PetExecuteSequenceParams) => Promise<PetExecuteSequenceResult>

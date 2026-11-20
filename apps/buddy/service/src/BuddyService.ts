@@ -2074,7 +2074,12 @@ export async function startBuddyService(
           actorScope.sync.authorizeTopic(topic)
         },
         phase: () => productStopping ? 'stopping' : 'ready',
-        handlers: { 'resources.prepare': { handle: input => remoteResources!.prepare(resourcePrepareSchema.parse(input), principal) }, ...actorScope.queries.handlers(), ...createProductModelQueries(providerService, id => id ? conversationMetadata.getModelControls(id).next.modelSelection : buddies.get(buddies.defaultBuddyId).settings.model), ...createProductCommandHandlers({ commands: actorScope.commands, assertOwner, hasReview: (id, version) => remoteResources!.hasReview(principal.actorId, id, version), assertExecutionAvailable: assertPlatformAvailable, allowLocalEffects: principal.actorId === commandContext.principal.actorId && connectionOptions.allowLocalEffects, allowedActions: new Set(['compact']), resolveQuote: resourceId => actorScope.queries.resolveQuote(resourceId) }) },
+        handlers: {
+          'resources.prepare': { handle: input => remoteResources!.prepare(resourcePrepareSchema.parse(input), principal) },
+          ...actorScope.queries.handlers(),
+          ...createProductModelQueries(providerService, id => id ? conversationMetadata.getModelControls(id).next.modelSelection : buddies.get(buddies.defaultBuddyId).settings.model, options.platform.getDefaultPermissionMode),
+          ...createProductCommandHandlers({ commands: actorScope.commands, assertOwner, hasReview: (id, version) => remoteResources!.hasReview(principal.actorId, id, version), assertExecutionAvailable: assertPlatformAvailable, allowLocalEffects: principal.actorId === commandContext.principal.actorId && connectionOptions.allowLocalEffects, allowedActions: new Set(['compact']), resolveQuote: resourceId => actorScope.queries.resolveQuote(resourceId) }),
+        },
         close: () => {
           productConnections.delete(connection)
           connectionOptions.close()

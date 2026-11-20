@@ -37,7 +37,7 @@ internal fun ComposerToolbar(state: MobileUiState, onAction: (MobileAction, JSON
             Icon(desktopSymbol(DesktopSymbol.Add), null, Modifier.size(20.dp), tint = muted)
         }
         ComposerButton(mobileText(R.string.permissions_summary, state.executionLabel), "composer-permission", state.executionEnabled, { onAction(MobileAction.ChooseExecution, null) }) {
-            Icon(desktopSymbol(executionSymbol(state.executionSelection)), null, Modifier.size(18.dp), tint = if (fullAccess) colors.tertiary else muted)
+            Icon(executionIcon(state.executionSelection), null, Modifier.size(18.dp), tint = if (fullAccess) colors.tertiary else muted)
         }
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
             TextButton(

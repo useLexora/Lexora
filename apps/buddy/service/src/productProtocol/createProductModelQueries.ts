@@ -1,15 +1,21 @@
 import type { ZodType } from 'zod'
 import type { LocalConversation } from '../../../shared/conversation/conversationApi'
+import type { BuddyPermissionMode } from '../../../shared/permissions/permissionMode'
 import type { ProductMethod } from '../../../shared/productProtocol/methods'
 import type { ProviderService } from '../providers/ProviderService'
 import type { ProductRequestHandler } from './ProductConnection'
 import { createHash } from 'node:crypto'
+import { resolveBuddyPermissionSettings } from '../../../shared/permissions/permissionMode'
 import { ProductProtocolError } from '../../../shared/productProtocol/errors'
 import { PRODUCT_LIMITS, productByteLength } from '../../../shared/productProtocol/limits'
 import { decodeProductCursor, encodeProductCursor, encodeProductRevision } from '../../../shared/productProtocol/scalars'
 import { productModelSchema, productProviderSchema } from '../../../shared/productProtocol/views'
 
-export function createProductModelQueries(providers: ProviderService, inputSelection: (conversationId?: string) => LocalConversation['modelSelection']): Partial<Record<ProductMethod, ProductRequestHandler>> {
+export function createProductModelQueries(providers: ProviderService, inputSelection: (conversationId?: string) => LocalConversation['modelSelection'], getDefaultPermissionMode?: () => Promise<BuddyPermissionMode>): Partial<Record<ProductMethod, ProductRequestHandler>> {
+  const resolveInputSelection = async (conversationId?: string) => {
+    const selection = inputSelection(conversationId) ?? await providers.getDefaultModel()
+    return selection ? { ...selection, serviceTier: 'serviceTier' in selection ? selection.serviceTier : null } : null
+  }
   const paginate = (scope: string, input: unknown, items: unknown[], schema: ZodType) => {
     const request = input as { cursor: string | null, limit: number }
     const publicItems = items.map(item => schema.parse(item))
@@ -34,10 +40,12 @@ export function createProductModelQueries(providers: ProviderService, inputSelec
     return { items: page, nextCursor: position < publicItems.length ? encodeProductCursor({ version: 1, scope: cursorScope, branchId: null, revision: '0', upperBound: encodeProductRevision(publicItems.length), position: encodeProductRevision(position) }) : null }
   }
   return {
-    'providers.getInputSelection': { handle: async (input) => {
-      const selection = inputSelection((input as { conversationId?: string }).conversationId) ?? await providers.getDefaultModel()
-      return { modelSelection: selection ? { ...selection, serviceTier: 'serviceTier' in selection ? selection.serviceTier : null } : null }
-    } },
+    ...(getDefaultPermissionMode && { 'chat.getNewTaskDefaults': { handle: async () => {
+      const [mode, modelSelection] = await Promise.all([getDefaultPermissionMode(), resolveInputSelection()])
+      const modelDisplayName = modelSelection ? providers.getModelDisplayName(modelSelection.providerId, modelSelection.modelId) : null
+      return { executionConfig: resolveBuddyPermissionSettings(mode), modelSelection, modelDisplayName }
+    } } }),
+    'providers.getInputSelection': { handle: async input => ({ modelSelection: await resolveInputSelection((input as { conversationId?: string }).conversationId) }) },
     'providers.list': { handle: async input => paginate('providers', input, (await providers.listProviders()).map(provider => Object.fromEntries(Object.keys(productProviderSchema.shape).map(key => [key, provider[key as keyof typeof provider]]))), productProviderSchema) },
     'providers.listModels': { handle: async (input) => {
       const providerId = (input as { providerId?: string }).providerId

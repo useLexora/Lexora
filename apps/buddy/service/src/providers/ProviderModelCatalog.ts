@@ -110,6 +110,10 @@ export class ProviderModelCatalog {
     return this.#models.list(providerId).map(model => this.#toBuddyModel(model))
   }
 
+  getDisplayName(providerId: string, modelId: string): string | null {
+    return this.#models.find(providerId, modelId)?.displayName ?? null
+  }
+
   capture() {
     return this.#models.list().map((state) => {
       const resolution = effectiveType(state) === 'chat' ? this.#resolveSource(state) : undefined
