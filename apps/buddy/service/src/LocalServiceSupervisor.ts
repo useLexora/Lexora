@@ -37,7 +37,7 @@ export function startLocalServiceSupervisor(path: string) {
       await active.stop()
   }
   async function migrate(config: ServiceLaunch, defaultRoot: string) {
-    const native = { appPath: config.resourcesRoot, resourcesPath: config.resourcesRoot, isPackaged: true }
+    const native = { serviceResourcesRoot: config.resourcesRoot }
     const environment = createBuddyNativeEnvironment(native)
     const child = new ServiceChildProcess({ executable: config.hostExecutable, args: [...config.hostArguments, '--lexora-storage-maintenance'], env: { ...process.env, ...environment, LEXORA_HOME: defaultRoot, LEXORA_BUDDY_PROFILE: config.profile, LEXORA_BUDDY_SERVICE_MODE: 'utility' }, processControl: resolveBuddyProcessControl(native), runtimeGuard: environment.LEXORA_BUDDY_RUNTIME_GUARD, output: (_stream, value) => process.stderr.write(value) })
     maintenance = child

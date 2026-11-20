@@ -3,7 +3,8 @@ import { extname, join } from 'node:path'
 import { protocol } from 'electron'
 import { containsCanonicalPath, filePaths } from '../../platform/filesystem/filePaths'
 
-const RENDERER_PROTOCOL = 'lexora-app'
+import { RENDERER_PROTOCOL } from '../../shared/platform/desktopSchemes'
+
 const MIME_TYPES: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
@@ -13,11 +14,6 @@ const MIME_TYPES: Record<string, string> = {
   '.svg': 'image/svg+xml',
   '.webp': 'image/webp',
   '.woff2': 'font/woff2',
-}
-
-export const rendererSchemePrivileges: Electron.CustomScheme = {
-  scheme: RENDERER_PROTOCOL,
-  privileges: { codeCache: true, secure: true, standard: true, supportFetchAPI: true },
 }
 
 export function installRendererProtocol(rendererRoot = join(__dirname, '../renderer')): () => void {

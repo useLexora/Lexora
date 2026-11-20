@@ -1,3 +1,4 @@
+import type { ServiceResourceLocation } from '../service/serviceResources'
 import type { StorageProtection } from '../storage/ProfileLocations'
 import { userInfo } from 'node:os'
 import process from 'node:process'
@@ -8,23 +9,15 @@ import searchTools from '../native/searchTools.json'
 import { createChildProcessEnvironment } from '../process/childProcessEnvironment'
 import { createProxyEnvironment } from '../process/proxyEnvironment'
 import { createToolchainEnvironment } from '../process/toolchainEnvironment'
+import { resolveServiceResource } from '../service/serviceResources'
 import { resolveBuddyTarget } from '../target'
 
-export function resolveBuddySearchToolsDirectory(options: {
-  appPath: string
-  isPackaged: boolean
-  resourcesPath: string
-  platform?: NodeJS.Platform
-  architecture?: string
-}): string {
+export function resolveBuddySearchToolsDirectory(options: ServiceResourceLocation): string {
   const platform = resolveBuddyPlatform(options.platform ?? process.platform)
   const { id: target } = resolveBuddyTarget(platform.id, options.architecture ?? process.arch)
   if (!Object.values(searchTools.tools).every(tool => Object.hasOwn(tool.targets, target)))
     throw new Error(`Unsupported search tools target: ${target}`)
-  return filePathAdapters[platform.id].resolveInput(
-    options.isPackaged ? searchTools.resource.to : `${searchTools.resource.from}/${target}`,
-    options.isPackaged ? options.resourcesPath : options.appPath,
-  )
+  return filePathAdapters[platform.id].resolveInput(resolveServiceResource(options, searchTools.resource.to, `${searchTools.resource.from}/${target}`))
 }
 
 export function createBuddyServiceEnvironment(

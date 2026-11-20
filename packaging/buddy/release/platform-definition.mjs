@@ -1,35 +1,16 @@
-import searchTools from '../../../apps/buddy/platform/native/searchTools.json' with { type: 'json' }
 import shellSandbox from '../../../apps/buddy/platform/native/shellSandbox.json' with { type: 'json' }
 import definitions from '../../../apps/buddy/shared/platform/definitions.json' with { type: 'json' }
 import { CPU_ARCHITECTURE, OPERATING_SYSTEM } from '../../../apps/buddy/shared/platform/identifiers.ts'
-import { nativeHostResources } from './native-host.mjs'
 
-const featureResources = {
-  nativePet: [
-    { from: '.output/build/native/release/lexora-buddy-pet', to: 'native-pet/lexora-buddy-pet' },
-    { from: 'service/resources/skills/lexora-buddy-animation', to: 'service/resources/skills/lexora-buddy-animation' },
-  ],
-  systemActions: [],
-}
-
-export function platformResources(target) {
+export function desktopHostResources(target) {
   return [
-    ...definitions.skills.map(name => ({ from: `service/resources/skills/${name}`, to: `service/resources/skills/${name}` })),
-    ...nativeHostResources(target).map(({ from, to }) => ({ from, to })),
-    { from: `${searchTools.resource.from}/${target.id}`, to: searchTools.resource.to },
     ...(target.platform === OPERATING_SYSTEM.Linux ? [{ from: `${shellSandbox.resource.from}/${target.id}`, to: shellSandbox.resource.to }] : []),
-    ...target.features.flatMap(id => featureResources[id]),
+    ...(target.features.includes('nativePet') ? [{ from: '.output/build/native/release/lexora-buddy-pet', to: 'native-pet/lexora-buddy-pet' }] : []),
   ]
 }
 
 export function platformSkills(target) {
   return [...definitions.skills, ...target.features.flatMap(id => definitions.features[id].skills)]
-}
-
-export function excludedPlatformResources(target) {
-  return Object.entries(featureResources)
-    .filter(([id]) => !target.features.includes(id))
-    .flatMap(([, resources]) => resources)
 }
 
 export function excludedDependencyFiles(target) {

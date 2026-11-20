@@ -1,0 +1,7 @@
+export const ATTACHMENT_PROTOCOL = 'lexora-attachment'
+export const ARTIFACT_PROTOCOL = 'lexora-artifact'
+export const FILE_PROTOCOL = 'lexora-file'
+export const RENDERER_PROTOCOL = 'lexora-app'
+export const EXTENSION_PROTOCOL = 'lexora-extension'
+export const FILE_ICON_PROTOCOL = 'lexora-icon'
+export const THEME_ASSET_PROTOCOL = 'lexora-theme'

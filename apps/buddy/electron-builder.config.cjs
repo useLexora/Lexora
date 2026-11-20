@@ -4,14 +4,16 @@ const { desktopArtifactName } = require('../../packaging/buddy/release/artifacts
 const { macosSigningMode } = require('../../packaging/buddy/release/macos.mjs')
 const { nativeHostResources } = require('../../packaging/buddy/release/native-host.mjs')
 const { withDesktopNativeVersion } = require('../../packaging/buddy/release/native-version.mjs')
-const { excludedDependencyFiles, platformResources } = require('../../packaging/buddy/release/platform-definition.mjs')
+const { desktopHostResources, excludedDependencyFiles } = require('../../packaging/buddy/release/platform-definition.mjs')
+const { resolveSearchTools } = require('../../packaging/buddy/release/search-tools.mjs')
 const { resolveBuildTarget } = require('../../packaging/buddy/release/targets.mjs')
+const { PACKAGED_SERVICE_RESOURCES } = require('./platform/service/serviceResources.ts')
 const { resolveInferenceEnvironment } = require('./shared/extensions/inferencePlatform.ts')
 const { OPERATING_SYSTEM } = require('./shared/platform/identifiers.ts')
 
 const target = resolveBuildTarget()
 const resources = [
-  ...platformResources(target),
+  ...desktopHostResources(target),
   { from: `.output/resources/node-runtime/${target.id}`, to: 'lexora-runtime' },
 ]
 const packageFormat = process.env.LEXORA_BUDDY_PACKAGE_FORMAT ?? target.packageFormats[0]
@@ -79,10 +81,13 @@ module.exports = withDesktopNativeVersion({
     notarize: signedMacos,
     entitlements: '../../packaging/buddy/macos/entitlements.plist',
     entitlementsInherit: '../../packaging/buddy/macos/entitlements.plist',
-    binaries: (target.platform === OPERATING_SYSTEM.MacOS ? resources : [])
-      .filter(resource => resource.to.startsWith('native-'))
-      .map(resource => `Contents/Resources/${resource.to}`)
-      .concat(['Contents/Resources/search-tools/fd', 'Contents/Resources/search-tools/rg', 'Contents/Resources/lexora-runtime/node']),
+    binaries: target.platform === OPERATING_SYSTEM.MacOS
+      ? [
+          ...nativeHostResources(target).map(resource => `Contents/Resources/${PACKAGED_SERVICE_RESOURCES}/${resource.to}`),
+          ...resolveSearchTools(target.platform, target.architecture).map(tool => `Contents/Resources/${PACKAGED_SERVICE_RESOURCES}/search-tools/${tool.binary}`),
+          'Contents/Resources/lexora-runtime/node',
+        ]
+      : [],
   },
   dmg: {
     sign: signedMacos,

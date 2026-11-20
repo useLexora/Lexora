@@ -11,7 +11,7 @@ export function verifyElectronBundle(cwd = repoRoot) {
   const errors = []
   const read = path => readFileSync(resolve(cwd, path), 'utf8')
   const main = read(`${bundleRoot}/main/index.js`)
-  const service = read(`${bundleRoot}/main/buddy-service.js`)
+  const service = read('apps/buddy/.output/build/service/utility.mjs')
   const preload = read(`${bundleRoot}/preload/index.cjs`)
   const renderer = read(`${bundleRoot}/renderer/index.html`)
   for (const [name, content] of [['main', main], ['service', service], ['preload', preload]]) {

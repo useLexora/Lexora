@@ -36,6 +36,25 @@ afterEach(async () => {
 })
 
 describe('skillService', () => {
+  it.each([true, false])('uses the current application Skill path after an upgrade and preserves enabled=%s', async (enabled) => {
+    const fixture = await createFixture()
+    await writeSkill(fixture.builtin, 'bundled', 'application skill')
+    await fixture.service.list(null)
+    const [installation] = fixture.repository.list()
+    const oldRoot = join(fixture.root, 'previous-install')
+    fixture.repository.save({ ...installation!, enabled, path: join(oldRoot, 'bundled/SKILL.md'), origin: { kind: 'application', location: oldRoot } })
+
+    const path = join(fixture.builtin, 'bundled/SKILL.md')
+    const skill = (await fixture.service.list(null, true)).skills[0]!
+    expect(skill).toMatchObject({ id: installation!.id, enabled, filePath: path, origin: { kind: 'application', location: fixture.builtin } })
+    if (enabled)
+      expect((await fixture.service.materializeForSpace(null, ['bundled']))[0]?.filePath).toBe(path)
+    else
+      expect((await fixture.service.loadForSpace(null)).paths).not.toContain(path)
+    await fixture.service.list(null)
+    expect(fixture.repository.list()).toMatchObject([{ id: installation!.id, createdAt: installation!.createdAt, enabled, path }])
+  })
+
   it('publishes source creation, document edits and removal', async () => {
     const fixture = await createFixture()
     fixture.spaces.create(spaceInput('space-trusted', fixture.trustedSpace))

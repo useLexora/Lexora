@@ -21,7 +21,6 @@ import { extensionSubagentContributionSchema, subagentConnectorReferences } from
 export const EXTENSION_API_VERSION = 5
 export const extensionExecutionScopeSchema = z.enum(['desktop', 'service'])
 export type ExtensionExecutionScope = z.infer<typeof extensionExecutionScopeSchema>
-export const EXTENSION_PROTOCOL = 'lexora-extension'
 export const EXTENSION_ICON_LIMIT = 64 * 1024
 export const extensionIconUrlSchema = z.string().max(Math.ceil(EXTENSION_ICON_LIMIT / 3) * 4 + 40).regex(/^data:image\/(?:svg\+xml|png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/)
 export const extensionIdSchema = z.string().max(120).regex(/^[a-z][a-z0-9-]*\.[a-z][a-z0-9-]*$/)

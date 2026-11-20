@@ -77,8 +77,8 @@ describe('buddyServiceEnvironment', () => {
     expect(env.NODE_USE_ENV_PROXY).toBe('1')
   })
   it.each([
-    ['linux', '/repo/apps/buddy', '/opt/buddy/resources', '/opt/buddy/resources/search-tools', '/repo/apps/buddy/.output/build/search-tools/linux-x64'],
-    ['win32', 'C:\\源码 空格\\buddy', 'C:\\Apps\\Buddy\\resources', 'C:\\Apps\\Buddy\\resources\\search-tools', 'C:\\源码 空格\\buddy\\.output\\build\\search-tools\\win32-x64'],
+    ['linux', '/repo/apps/buddy', '/opt/buddy/resources', '/opt/buddy/resources/lexora-service/resources/search-tools', '/repo/apps/buddy/.output/build/search-tools/linux-x64'],
+    ['win32', 'C:\\源码 空格\\buddy', 'C:\\Apps\\Buddy\\resources', 'C:\\Apps\\Buddy\\resources\\lexora-service\\resources\\search-tools', 'C:\\源码 空格\\buddy\\.output\\build\\search-tools\\win32-x64'],
   ] as const)('resolves bundled and development binaries for %s without using user data', (platform, appPath, resourcesPath, packaged, development) => {
     const options = { platform, appPath, resourcesPath, architecture: 'x64' }
     expect(resolveBuddySearchToolsDirectory({ ...options, isPackaged: true })).toBe(packaged)

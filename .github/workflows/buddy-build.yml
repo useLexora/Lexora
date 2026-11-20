@@ -506,7 +506,7 @@ jobs:
         timeout-minutes: 24
         run: >-
           ./packaging/buddy/release/verify-windows-sandbox.ps1
-          -SandboxExecutable "$env:BUDDY_INSTALL_DIRECTORY/resources/native-host/lexora-buddy-sandbox.exe"
+          -SandboxExecutable "$env:BUDDY_INSTALL_DIRECTORY/resources/lexora-service/resources/native-host/lexora-buddy-sandbox.exe"
           -AdversaryExecutable ./apps/buddy/.output/build/native/${{ steps.package.outputs.rust-target }}/release/examples/sandbox-adversary.exe
           -InstallerExecutable "${{ steps.package.outputs.path }}"
           -ZipArchive "${{ steps.zip.outputs.path }}"

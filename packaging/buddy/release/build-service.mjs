@@ -1,15 +1,26 @@
 import { createHash } from 'node:crypto'
 import { cp, mkdir, readdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { dirname, join, relative, sep } from 'node:path'
+import { dirname, join, posix, relative, sep } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { writeOutput } from '../../shared/cli-output.mjs'
 import { nativeHostResources, prepareNativeHost } from './native-host.mjs'
+import { excludedDependencyFiles, platformSkills } from './platform-definition.mjs'
 import { writeFileInventory } from './product-release-set.mjs'
 import { prepareSearchTools, resolveSearchTools } from './search-tools.mjs'
 import { checkServiceFileModes } from './service-file-modes.mjs'
 import { resolveBuildTarget } from './targets.mjs'
+
+export function servicePackageFile(pkg, path, excluded) {
+  if (posix.basename(path) === 'node_modules' || /\.(?:[cm]?js|d\.[cm]?ts)\.map$/.test(path))
+    return false
+  if (/^@(?:aws-sdk|smithy)\//.test(pkg.name) && pkg.types?.startsWith('./dist-types/') && path.startsWith('dist-types/') && path.endsWith('.d.ts'))
+    return false
+  if (pkg.name === '@earendil-works/pi-tui' && path.endsWith('.node'))
+    return !excluded.some(pattern => posix.matchesGlob(`node_modules/${pkg.name}/${path}`, pattern))
+  return true
+}
 
 async function main() {
   const buddy = fileURLToPath(new URL('../../../apps/buddy/', import.meta.url))
@@ -17,6 +28,7 @@ async function main() {
   const { build } = await import(pathToFileURL(requireBuddy.resolve('vite')).href)
   const output = join(buddy, '.output/build/service')
   const target = resolveBuildTarget(`${process.platform}-${process.arch}`)
+  const excluded = excludedDependencyFiles(target).map(pattern => pattern.slice(1))
   const searchDirectory = await prepareSearchTools()
   prepareNativeHost(target)
   await build({ root: buddy, configFile: join(buddy, 'service.vite.config.ts') })
@@ -48,7 +60,7 @@ async function main() {
     const pkg = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'))
     const directory = join(output, 'packages', `${pkg.name.replaceAll('/', '+')}@${pkg.version}-${copied.size}`)
     copied.set(source, { name: pkg.name, version: pkg.version, directory })
-    await cp(source, directory, { recursive: true, filter: path => !relative(source, path).split(sep).includes('node_modules') })
+    await cp(source, directory, { recursive: true, verbatimSymlinks: true, filter: path => servicePackageFile(pkg, relative(source, path).split(sep).join('/'), excluded) })
     for (const name of Object.keys({ ...pkg.peerDependencies, ...pkg.optionalDependencies, ...pkg.dependencies })) {
       const dependency = await resolvePackage(name, source, Boolean(pkg.optionalDependencies?.[name] || pkg.peerDependenciesMeta?.[name]?.optional))
       if (!dependency)
@@ -64,9 +76,8 @@ async function main() {
   }
 
   for (const name of roots)
-    await linkPackage(join(output, 'node_modules', name), await copyPackage(await resolvePackage(name, buddy, false)))
+    await linkPackage(join(output, 'node_modules', name), await copyPackage(await resolvePackage(name, join(buddy, 'service'), false)))
 
-  const definitions = JSON.parse(await readFile(join(buddy, 'shared/platform/definitions.json'), 'utf8'))
   const bundled = await Promise.all(files.map(async path => ({ path, sha256: createHash('sha256').update(await readFile(join(output, path))).digest('hex') })))
   const resources = []
   async function resource(from, to) {
@@ -84,7 +95,7 @@ async function main() {
       await resource(join(searchDirectory, path), `search-tools/${path}`)
     }
   }
-  const skills = [...definitions.skills, ...definitions.platforms[process.platform].features.flatMap(id => definitions.features[id].skills)]
+  const skills = platformSkills(target)
   for (const name of skills)
     await cp(join(buddy, 'service/resources/skills', name), join(output, 'resources/skills', name), { recursive: true })
   await writeFile(join(output, 'package.json'), `${JSON.stringify({ name: 'lexora-service', private: true, type: 'module', engines: { node: '>=26.2.0' } }, null, 2)}\n`)
@@ -96,7 +107,9 @@ async function main() {
   writeOutput(`Lexora Server: ${output} (${copied.size} packages, ${resources.length} native/search/license resources)`)
 }
 
-main().catch((error) => {
-  console.error(error)
-  process.exitCode = 1
-})
+if (import.meta.main) {
+  main().catch((error) => {
+    console.error(error)
+    process.exitCode = 1
+  })
+}

@@ -1,14 +1,9 @@
 import type { BrowserWindow, IpcMainEvent } from 'electron'
 import type { FileIconThemeService } from '../../../platform/icons/FileIconThemeService'
 import { ipcMain, session } from 'electron'
-import { FILE_ICON_PROTOCOL } from '../../../shared/icons/fileIconTheme'
 import { FILE_ICON_IPC, fileIconThemeRequestSchema } from '../../../shared/icons/fileIconThemeApi'
+import { FILE_ICON_PROTOCOL } from '../../../shared/platform/desktopSchemes'
 import { assertTrustedSender } from '../ipc'
-
-export const fileIconSchemePrivileges: Electron.CustomScheme = {
-  scheme: FILE_ICON_PROTOCOL,
-  privileges: { standard: true, secure: true, supportFetchAPI: true },
-}
 
 export function registerFileIconIpc(service: FileIconThemeService, getWindow: () => BrowserWindow | null): () => void {
   const initial = (event: IpcMainEvent) => {

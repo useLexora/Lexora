@@ -32,7 +32,7 @@ export interface LocalServiceLaunchOptions {
 export async function launchLocalService(options: LocalServiceLaunchOptions) {
   const release = await readReleaseIdentity(options.releaseSetPath, options.releaseFileSystem)
   const resourcesRoot = join(dirname(release.coreEntry), 'resources')
-  const native = { appPath: resourcesRoot, resourcesPath: resourcesRoot, isPackaged: true }
+  const native = { serviceResourcesRoot: resourcesRoot }
   const launcher = resolveBuddyProcessControl(native)
   if (!launcher)
     throw new Error('SERVICE_LAUNCHER_UNAVAILABLE')
