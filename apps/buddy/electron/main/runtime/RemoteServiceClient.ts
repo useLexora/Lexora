@@ -1,4 +1,5 @@
 import type { RuntimeLifecycleChange, RuntimeLifecycleSnapshot } from '../../../shared/lifecycle/runtimeLifecycle'
+import type { DesktopClientRequestMethod, DesktopHostRequestMethod } from '../../../shared/runtime/desktopHostRequests'
 import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
 import type { ServiceHostBootstrap } from '../../../shared/service/localServiceProtocol'
 import type { BuddyServiceNotification, BuddyServiceRequestOptions, BuddyServiceSupervisorState } from './BuddyServiceSupervisor'
@@ -6,11 +7,8 @@ import { randomUUID } from 'node:crypto'
 import { connectLocalService } from '../../../platform/service/connectLocalService'
 import { ServiceRpcChannel } from '../../../platform/service/ServiceRpcChannel'
 import { Emitter } from '../../../shared/events/Emitter'
-import { extensionAgentRpc } from '../../../shared/extensions/extensionAgent'
 import { SERVICE_LIFECYCLE_METHOD, serviceLifecycleChangeSchema } from '../../../shared/lifecycle/serviceLifecycle'
 import { serviceMaintenanceTicketSchema, serviceRuntimeStateSchema } from '../../../shared/service/localServiceProtocol'
-
-const hostRequestMethods = new Set<string>([extensionAgentRpc.request, 'extensions.inference.acquire', 'extensions.inference.release'])
 
 function reconnecting(cause?: unknown) {
   return Object.assign(new Error('Desktop is reconnecting to the local service', { cause }), { code: 'RUNTIME_RECONNECTING' })
@@ -89,13 +87,17 @@ export class RemoteServiceClient {
     void this.#connect().catch(() => {})
   }
 
-  async request(method: string, params: unknown, options: BuddyServiceRequestOptions = {}): Promise<unknown> {
-    const peer = hostRequestMethods.has(method) ? this.#host : await this.#connect()
+  requestHost(method: DesktopHostRequestMethod, params: unknown, options: BuddyServiceRequestOptions = {}): Promise<unknown> {
+    return this.#host.request(method, params, options.timeoutMs, options.signal, options.requestId)
+  }
+
+  async request<Method extends string>(method: Method & DesktopClientRequestMethod<Method>, params: unknown, options: BuddyServiceRequestOptions = {}): Promise<unknown> {
+    const peer = await this.#connect()
     try {
       return await peer.request(method, params, options.timeoutMs, options.signal, options.requestId)
     }
     catch (error) {
-      if (peer instanceof ServiceRpcChannel && peer.closed && this.#daemonReady && !this.#closed && !this.#transitioning && !options.signal?.aborted)
+      if (peer.closed && this.#daemonReady && !this.#closed && !this.#transitioning && !options.signal?.aborted)
         throw reconnecting(error)
       throw error
     }

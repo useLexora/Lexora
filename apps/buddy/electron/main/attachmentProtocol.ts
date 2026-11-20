@@ -1,15 +1,13 @@
 import type { BuddyServiceSupervisor } from './runtime/BuddyServiceSupervisor'
 import { Buffer } from 'node:buffer'
-import { readFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import process from 'node:process'
 import { app, protocol } from 'electron'
 import { readNativeBoundedFile } from '../../platform/filesystem/nativeBoundedFile'
 import { resolveBuddyFileReader } from '../../platform/native/nativeHost'
-import { artifactsRequestSchemas, artifactsResponseSchemas } from '../../shared/artifacts/artifactApi'
 import { attachmentsRequestSchemas } from '../../shared/conversation/attachmentApi'
 import { composerResourcesRpc } from '../../shared/conversation/composerApi'
-import { attachmentPreviewBytesSchema } from '../../shared/runtime/attachmentHostProtocol'
+import { attachmentHostRpc, attachmentPreviewBytesSchema } from '../../shared/runtime/attachmentHostProtocol'
 import { handleMediaRequest } from './mediaProtocol'
 import { resolveDevelopmentRendererUrl } from './security/navigationPolicy'
 
@@ -22,7 +20,7 @@ export const attachmentSchemePrivileges: Electron.CustomScheme[] = [ATTACHMENT_P
   privileges: { secure: true, standard: true, stream: true, supportFetchAPI: true, corsEnabled: scheme === ARTIFACT_PROTOCOL || scheme === ATTACHMENT_PROTOCOL },
 }))
 
-export function installAttachmentProtocol(runtime: Pick<BuddyServiceSupervisor, 'request'>): () => void {
+export function installAttachmentProtocol(runtime: Pick<BuddyServiceSupervisor, 'request' | 'requestHost'>): () => void {
   const fileReader = resolveBuddyFileReader({ appPath: app.getAppPath(), isPackaged: app.isPackaged, resourcesPath: process.resourcesPath })
   const developmentUrl = resolveDevelopmentRendererUrl(process.env.ELECTRON_RENDERER_URL, app.isPackaged)
   const rendererOrigin = developmentUrl ? new URL(developmentUrl).origin : 'lexora-app://renderer'
@@ -37,26 +35,19 @@ export function installAttachmentProtocol(runtime: Pick<BuddyServiceSupervisor, 
       return response
     }
   }
-  const installPreviewProtocol = (
-    scheme: string,
-    idKey: 'artifactId' | 'attachmentId',
-    method: 'artifacts.resolvePreview' | 'attachments.resolvePreview',
-    schema: typeof artifactsRequestSchemas.artifactPreview | typeof attachmentsRequestSchemas.attachmentPreview,
-  ) => protocol.handle(scheme, allowRendererRead(async (request) => {
-    if (scheme === ARTIFACT_PROTOCOL && ['media', 'preview'].includes(new URL(request.url).hostname))
-      return handleMediaRequest(request, runtime, fileReader)
+  void protocol.handle(ATTACHMENT_PROTOCOL, allowRendererRead(async (request) => {
     if (request.method !== 'GET')
       return new Response(null, { status: 405 })
 
     const url = new URL(request.url)
-    if (scheme === ATTACHMENT_PROTOCOL && url.hostname === 'local-preview') {
+    if (url.hostname === 'local-preview') {
       try {
         const [draftId, resourceId, extra] = url.pathname.slice(1).split('/').map(decodeURIComponent)
         if (extra !== undefined)
           return new Response(null, { status: 400 })
         const input = composerResourcesRpc.resolvePreview.input.parse({ draftId, resourceId })
         const preview = composerResourcesRpc.resolvePreview.response.parse(await runtime.request(composerResourcesRpc.resolvePreview.method, input))
-        const bytes = await readNativeBoundedFile(dirname(preview.path), preview.path, 10 * 1024 * 1024, request.signal, resolveBuddyFileReader({ appPath: app.getAppPath(), isPackaged: app.isPackaged, resourcesPath: process.resourcesPath }))
+        const bytes = await readNativeBoundedFile(dirname(preview.path), preview.path, 10 * 1024 * 1024, request.signal, fileReader)
         return new Response(bytes, { headers: { 'cache-control': 'private, no-store', 'content-type': preview.mimeType, 'x-content-type-options': 'nosniff' } })
       }
       catch {
@@ -71,42 +62,16 @@ export function installAttachmentProtocol(runtime: Pick<BuddyServiceSupervisor, 
       return new Response(null, { status: 400 })
 
     try {
-      const input = schema.parse({ [idKey]: id })
-      if (scheme === ATTACHMENT_PROTOCOL) {
-        const preview = attachmentPreviewBytesSchema.parse(await runtime.request('attachments.readPreview', input))
-        return new Response(Buffer.from(preview.data, 'base64'), { headers: { 'cache-control': 'private, max-age=300', 'content-type': preview.mimeType, 'x-content-type-options': 'nosniff' } })
-      }
-      const preview = artifactsResponseSchemas.artifactPreview.parse(
-        await runtime.request(method, input),
-      )
-      const body = await readFile(preview.path)
-      return new Response(body, {
-        headers: {
-          'cache-control': scheme === ARTIFACT_PROTOCOL
-            ? 'private, no-store'
-            : 'private, max-age=300',
-          'content-type': preview.mimeType,
-          'x-content-type-options': 'nosniff',
-        },
-      })
+      const input = attachmentsRequestSchemas.attachmentPreview.parse({ attachmentId: id })
+      const preview = attachmentPreviewBytesSchema.parse(await runtime.requestHost(attachmentHostRpc.readPreview, input, { signal: request.signal }))
+      return new Response(Buffer.from(preview.data, 'base64'), { headers: { 'cache-control': 'private, max-age=300', 'content-type': preview.mimeType, 'x-content-type-options': 'nosniff' } })
     }
     catch {
       return new Response(null, { status: 404 })
     }
   }))
 
-  void installPreviewProtocol(
-    ATTACHMENT_PROTOCOL,
-    'attachmentId',
-    'attachments.resolvePreview',
-    attachmentsRequestSchemas.attachmentPreview,
-  )
-  void installPreviewProtocol(
-    ARTIFACT_PROTOCOL,
-    'artifactId',
-    'artifacts.resolvePreview',
-    artifactsRequestSchemas.artifactPreview,
-  )
+  void protocol.handle(ARTIFACT_PROTOCOL, allowRendererRead(request => handleMediaRequest(request, runtime, fileReader)))
 
   void protocol.handle(FILE_PROTOCOL, request => handleMediaRequest(request, runtime, fileReader))
 

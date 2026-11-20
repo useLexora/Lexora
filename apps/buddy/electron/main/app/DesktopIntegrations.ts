@@ -31,6 +31,7 @@ import { localDocumentRpc } from '../../../shared/files/localDocumentApi'
 import { taskFilesRpc } from '../../../shared/files/taskFileApi'
 import { providerNotifications, providersRpc } from '../../../shared/providers/providerApi'
 import { runNotifications } from '../../../shared/runs/runApi'
+import { inferenceLeaseRpc } from '../../../shared/runtime/desktopHostRequests'
 import { spaceFilesRpc, spaceTextDocumentSchema } from '../../../shared/spaces/spaceFileApi'
 import { DESKTOP_IPC_CHANNELS } from '../../shared/desktopApi'
 import { registerBrowserDesktopIpc } from '../browser/registerBrowserDesktopIpc'
@@ -183,10 +184,10 @@ export class DesktopIntegrations {
       inferenceRequest: runtime.network.request,
       inferenceAdmission: async (extensionId, invocationId, signal, parentInvocationId) => {
         const release = async () => {
-          await service.request('extensions.inference.release', { invocationId }, { timeoutMs: 10000 })
+          await service.requestHost(inferenceLeaseRpc.release, { invocationId }, { timeoutMs: 10000 })
         }
         try {
-          await service.request('extensions.inference.acquire', { extensionId, invocationId, ...(parentInvocationId ? { parentInvocationId } : {}) }, { signal, timeoutMs: null })
+          await service.requestHost(inferenceLeaseRpc.acquire, { extensionId, invocationId, ...(parentInvocationId ? { parentInvocationId } : {}) }, { signal, timeoutMs: null })
         }
         catch (error) {
           await release().catch(() => {})
@@ -204,7 +205,7 @@ export class DesktopIntegrations {
       get: runtime.network.get,
       getDownloadSettings: () => runtime.config?.downloads,
       notificationsEnabled: () => runtime.config?.desktop.notificationsEnabled ?? true,
-      conditionRuntime: async (input, signal) => extensionConditionSnapshotRpc.response.parse(await service.request(extensionConditionSnapshotRpc.method, input, { signal, timeoutMs: 5000 })),
+      conditionRuntime: async (input, signal) => extensionConditionSnapshotRpc.response.parse(await service.requestHost(extensionConditionSnapshotRpc.method, input, { signal, timeoutMs: 5000 })),
       conversationCleanup: {
         list: async input => conversationCleanupRpc.list.response.parse(await service.request(conversationCleanupRpc.list.method, input)),
         delete: async input => conversationCleanupRpc.delete.response.parse(await service.request(conversationCleanupRpc.delete.method, input, { timeoutMs: null })),
@@ -216,11 +217,11 @@ export class DesktopIntegrations {
       shellsChanged: () => service.notify(extensionShellRpc.changed, {}),
       skillsChanged: () => service.notify(extensionSkillsRpc.changed, {}),
       capabilitiesChanged: () => service.notify(extensionCapabilitiesRpc.changed, {}),
-      capabilityImpact: async extensionId => extensionCapabilityImpactSchema.parse(await service.request(extensionCapabilitiesRpc.impact, { extensionId })),
+      capabilityImpact: async extensionId => extensionCapabilityImpactSchema.parse(await service.requestHost(extensionCapabilitiesRpc.impact, { extensionId })),
       syncCapabilities: async (descriptors, clearExtensionId) => {
-        extensionCapabilityApplyRpc.response.parse(await service.request(extensionCapabilitiesRpc.apply, { descriptors, clearExtensionId }))
+        extensionCapabilityApplyRpc.response.parse(await service.requestHost(extensionCapabilitiesRpc.apply, { descriptors, clearExtensionId }))
       },
-      agentRequest: async (input, signal) => extensionJsonSchema.parse(await service.request(extensionAgentRpc.request, input, { signal, timeoutMs: null })),
+      agentRequest: async (input, signal) => extensionJsonSchema.parse(await service.requestHost(extensionAgentRpc.request, input, { signal, timeoutMs: null })),
       readResource: (target, signal, request) => readSpaceFileResource(target, signal, async input => spaceFilesRpc.locate.response.parse(await service.request(spaceFilesRpc.locate.method, input, { signal })), request),
       readTaskFileResource: async (target, signal, request) => {
         let name = ''
@@ -249,7 +250,7 @@ export class DesktopIntegrations {
       runtime.speechModels = undefined
     })
     const speech = createProviderSpeechBackend({
-      request: (method, input, signal) => service.request(method, input, { signal }),
+      request: (method, input, signal) => service.requestHost(method, input, { signal }),
       onChanged: (listener) => {
         const stopNotification = service.onNotification(notification => notification.method === providerNotifications.changed.method && listener())
         const stopState = service.onStateChange((state) => {

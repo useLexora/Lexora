@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
 import { afterEach, expect, it } from 'vitest'
+import { attachmentHostRpc } from '../../../shared/runtime/attachmentHostProtocol'
 import { serviceLaunchSchema } from '../../../shared/service/localServiceProtocol'
 import { localTransports } from '../../ipc/localTransport'
 import { RuntimeRpcPeer } from '../../ipc/runtimeRpcPeer'
@@ -83,6 +84,24 @@ it('isolates oversized RPC failures and reassembles simultaneous history reads o
   const values = await Promise.all([client.request('conversations.listTimeline', {}), client.request('echo', 17), client.request('conversations.listTimeline', {})])
   expect(values).toEqual([body, 17, body])
   expect(client.closed).toBe(false)
+})
+
+it('reads a multi-frame attachment preview only on the host connection', async () => {
+  const host = await server('host')
+  const management = await server('management')
+  const connect = async (endpoint: string, role: 'host' | 'management') => {
+    const connection = await connectLocalService(endpoint, { ...identity, type: 'hello', role, secret })
+    const peer = new ServiceRpcChannel(connection.frames)
+    cleanup.push(() => peer.close(new Error('done')))
+    return peer
+  }
+  const reader = await connect(host.endpoint.address, 'host')
+  const desktop = await connect(management.endpoint.address, 'management')
+  const preview = { mimeType: 'image/png', data: Buffer.alloc(1024 * 1024, 123).toString('base64') }
+  host.peers[0]!.onRequest(attachmentHostRpc.readPreview, () => preview)
+  await expect(desktop.request(attachmentHostRpc.readPreview, { attachmentId: 'image' })).rejects.toMatchObject({ code: -32601 })
+  expect(await reader.request(attachmentHostRpc.readPreview, { attachmentId: 'image' })).toEqual(preview)
+  expect(await reader.request('echo', 'ready')).toBe('ready')
 })
 
 it('transports binary request bodies and preserves interleaved RPC boundaries', async () => {

@@ -4,13 +4,16 @@ import fs from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
 import path from 'node:path'
+import process from 'node:process'
 import { DatabaseSync } from 'node:sqlite'
 import { expect, test, useSyntheticCredentialStorage } from '../fixtures/electron.mjs'
 
 const { PhotonImage } = createRequire(new URL('../../../apps/buddy/package.json', import.meta.url))('@silvia-odwyer/photon-node')
 
-for (const dimensions of [[2, 1], [2400, 1200]]) {
-  test(`image ${dimensions.join('x')} keeps its original and stable model input across desktop restart`, async ({ buddy }) => {
+for (const [dimensions, daemon] of [[[2, 1], false], [[2400, 1200], false], [[80, 48], true]]) {
+  test(`image ${dimensions.join('x')} keeps its preview, original and stable model input across ${daemon ? 'daemon' : 'desktop'} restart`, async ({ buddy }) => {
+    test.skip(daemon && process.platform !== 'linux', 'The daemon Desktop fixture requires Linux')
+    const launchOptions = daemon ? { serviceMode: 'daemon', storageAuthority: 'sqlite' } : undefined
     const requests = []
     const server = createServer(async (request, response) => {
       if (request.method !== 'POST' || request.url !== '/v1/chat/completions') {
@@ -31,7 +34,7 @@ for (const dimensions of [[2, 1], [2400, 1200]]) {
     await once(server, 'listening')
     const instance = await buddy.createInstance('image-input')
     try {
-      let application = await instance.launch()
+      let application = await instance.launch(launchOptions)
       await useSyntheticCredentialStorage(application)
       await application.page.evaluate(async (baseUrl) => {
         const providers = window.lexoraDesktop.localChat.providers
@@ -72,7 +75,10 @@ for (const dimensions of [[2, 1], [2400, 1200]]) {
         document.querySelector('.desktop-chat-composer-wrap').dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }))
       }, image)
       const card = application.page.locator('.composer-resource-strip__card')
-      await expect(card).toHaveCount(1)
+      await expect(card.locator('img')).toHaveJSProperty('naturalWidth', dimensions[0])
+      await card.getByRole('button').first().click()
+      await expect(application.page.getByRole('dialog').getByText(`${dimensions[0]} × ${dimensions[1]}`, { exact: true })).toBeVisible()
+      await application.page.keyboard.press('Escape')
       await editor.fill('Inspect the attached image.')
       await application.page.getByRole('button', { name: '发送消息', exact: true }).click()
       await expect.poll(() => completedRuns(instance.home)).toBe(1)
@@ -96,10 +102,12 @@ for (const dimensions of [[2, 1], [2400, 1200]]) {
       expect(firstJournal).not.toContain(sentData)
       expect(firstJournal).not.toContain('[Image omitted:')
 
+      await expect(application.page.locator('.buddy-chat-message-content__attachment img')).toHaveJSProperty('naturalWidth', dimensions[0])
       await instance.stop()
-      application = await instance.launch()
+      application = await instance.launch(launchOptions)
       await useSyntheticCredentialStorage(application)
       await application.page.reload()
+      await expect(application.page.locator('.buddy-chat-message-content__attachment img')).toHaveJSProperty('naturalWidth', dimensions[0])
       const resumed = application.page.locator('.desktop-chat-composer__prosemirror:visible')
       await expect(resumed).toBeVisible()
       await resumed.fill('Describe the same image again.')

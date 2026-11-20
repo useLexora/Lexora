@@ -12,6 +12,7 @@ import { extensionShellRpc } from '../../../shared/extensions/extensionShell'
 import { extensionSkillDescriptorSchema, extensionSkillsRpc } from '../../../shared/extensions/extensionSkills'
 import { imagePreferencesSchema, imageRpc } from '../../../shared/images/imagePreferences'
 import { credentialMutationResultSchema, credentialReadResultSchema, openExternalResultSchema } from '../../../shared/runtime/credentialProtocol'
+import { inferenceLeaseRpc } from '../../../shared/runtime/desktopHostRequests'
 import { petExecuteSequenceResultSchema } from '../../../shared/runtime/petProtocol'
 import { runtimePreferencesRpc, runtimePreferencesSchema } from '../../../shared/runtime/runtimePreferences'
 import { desktopOpenResultSchema } from '../../../shared/service/localServiceProtocol'
@@ -119,8 +120,8 @@ export function createRpcRuntimePlatform(peer: RuntimeRpcPeerContract, options: 
           apply(extensionAgentCatalogSchema.parse(params))
       }),
       bindInference(handlers) {
-        const acquire = peer.onRequest('extensions.inference.acquire', (raw, signal) => handlers.acquire(z.object({ extensionId: extensionIdSchema, invocationId: z.uuid(), parentInvocationId: z.uuid().optional() }).strict().parse(raw), signal))
-        const release = peer.onRequest('extensions.inference.release', raw => handlers.release(z.object({ invocationId: z.uuid() }).strict().parse(raw).invocationId))
+        const acquire = peer.onRequest(inferenceLeaseRpc.acquire, (raw, signal) => handlers.acquire(z.object({ extensionId: extensionIdSchema, invocationId: z.uuid(), parentInvocationId: z.uuid().optional() }).strict().parse(raw), signal))
+        const release = peer.onRequest(inferenceLeaseRpc.release, raw => handlers.release(z.object({ invocationId: z.uuid() }).strict().parse(raw).invocationId))
         return () => {
           acquire()
           release()

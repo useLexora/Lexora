@@ -2,10 +2,12 @@ import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { PRODUCT_LIMITS } from '../../shared/productProtocol/limits'
+import { attachmentHostRpc } from '../../shared/runtime/attachmentHostProtocol'
 
 export const readPartMethod = 'service.readResultPart'
 export const releaseReadMethod = 'service.releaseReadResult'
-export const pagedServiceReads = new Set([
+export const pagedServiceReads = new Set<string>([
+  attachmentHostRpc.readPreview,
   'conversations.listTimeline',
   'conversations.getNodeDetail',
   'conversations.getTree',
