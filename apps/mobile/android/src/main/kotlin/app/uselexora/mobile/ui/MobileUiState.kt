@@ -133,6 +133,8 @@ class MobileUiState {
     var devices by mutableStateOf<List<MobileDeviceItem>>(emptyList())
     var hasInput by mutableStateOf(false)
     var modelPickerOpen by mutableStateOf(false)
+    var modelConfirmEnabled by mutableStateOf(true)
+    var modelConfirmError by mutableStateOf("")
     var modelsLoading by mutableStateOf(false)
     var modelsError by mutableStateOf("")
     var models by mutableStateOf<List<JSONObject>>(emptyList())

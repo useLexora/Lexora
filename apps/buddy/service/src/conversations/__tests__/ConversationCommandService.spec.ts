@@ -1,7 +1,10 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { BuddyServiceCommands } from '../../BuddyService'
 import type { ConversationModelSelection } from '../../storage/conversationRecord'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { PRODUCT_METHODS } from '../../../../shared/productProtocol/methods'
 import { CommandAdmissionService, createLocalCommandPrincipal } from '../../commands/CommandAdmissionService'
+import { createProductCommandHandlers } from '../../productProtocol/createProductCommandHandlers'
 import { projectCommandReceipt } from '../../productProtocol/projectCommandReceipt'
 import { createBuddyRepository } from '../../storage/buddyRepository'
 import { ConversationCommandRepository } from '../../storage/ConversationCommandRepository'
@@ -161,6 +164,50 @@ describe('conditional task metadata commands', () => {
     expect(accepted.receipt.decision).toBe('accepted')
     expect(f.conversations.findById('task')?.modelSelection).toEqual(selection)
     expect(f.runs.findById('run')).toMatchObject({ model: 'accepted-model', modelOverride: selection })
+  })
+
+  it('round-trips the wire baseline without changing another branch run, partner or task permissions', async () => {
+    const f = fixture()
+    seedRun(f)
+    const history = createConversationHistoryStore(f.database).repository
+    history.createBranch({ id: 'fork', conversationId: 'task', parentBranchId: 'branch', forkedFromMessageId: 'message', activate: false, createdAt: now })
+    const other = createBuddyRepository(f.database).create({ name: 'Reviewer' })
+    const target = { conversationId: 'task', branchId: 'fork', actorId: 'default' }
+    expect(() => f.commands.getModelControls({ ...target, branchId: 'absent' })).toThrow()
+    expect(() => f.commands.getModelControls({ ...target, actorId: other.id })).toThrow()
+    f.metadata.addMember({ id: 'task', buddyId: other.id })
+    expect(f.commands.getModelControls(target).current).toBeNull()
+    const original = f.runs.findById('run')!
+    f.runs.create({ ...original, id: 'fork-run', branchId: 'fork', rootRunId: 'fork-run', generation: 9 })
+    f.runs.create({ ...original, id: 'partner-run', branchId: 'fork', rootRunId: 'partner-run', buddyId: other.id })
+    const effective = { ...selection, modelId: 'actual-live', reasoning: 'high' as const }
+    f.runs.setModelSelection('fork-run', effective)
+    const handlers = createProductCommandHandlers({
+      commands: { admission: f.admission, metadata: f.commands } as BuddyServiceCommands,
+      assertOwner: () => {},
+      resolveQuote: () => { throw new Error('Unexpected quote') },
+      allowedActions: new Set(),
+    })
+    const read = 'conversations.getModelControls'
+    const write = 'conversations.setModelSelection'
+    expect(PRODUCT_METHODS[read].role).toBe('reader')
+    expect(PRODUCT_METHODS[write].role).toBe('owner')
+    const context = { serviceId: 'service', profileId: 'profile', dataGeneration: f.command('c', {}).dataGeneration, serviceInstanceId: 'instance', connectionId: 'connection', clientSessionId: 'session', deviceId: 'device', ownerPrincipalId: 'owner', credentialId: 'credential', grantGeneration: '1', role: 'owner' as const }
+    const client = { supportedContentKinds: [], supportedReviewKinds: [] }
+    const baseline = await handlers[read]!.handle(target, context, client)
+    expect(baseline).toEqual({ ...target, revision: String(f.repository.conversationRevision('task')), modelSelection: null, activeRun: { runId: 'fork-run', generation: '9', modelSelection: effective } })
+    const expected = { ...target, expectedRevision: String(f.repository.conversationRevision('task')), modelSelection: selection }
+    const change = async (id: string, expectedActiveRun: unknown) => {
+      const params = f.command(id, { ...expected, expectedActiveRun })
+      return handlers[write]!.handle(PRODUCT_METHODS[write].input.parse(params), context, client)
+    }
+    expect(await change('wrong-branch', { runId: 'run', generation: '0', modelSelection: effective })).toMatchObject({ receipt: { decision: 'rejected', errorCode: 'SOURCE_CHANGED' } })
+    expect(await change('confirmed-model', { runId: 'fork-run', generation: '9', modelSelection: effective })).toMatchObject({ receipt: { decision: 'accepted', target } })
+    expect(f.conversations.findById('task')).toMatchObject({ modelSelection: selection, activeBranchId: 'branch', approvalPolicy: 'policy', executionProfile: 'workspace_write' })
+    expect(f.runs.findById('fork-run')?.modelOverride).toEqual(selection)
+    expect(f.runs.findById('run')?.modelOverride).toBeNull()
+    expect(f.runs.findById('partner-run')?.modelOverride).toBeNull()
+    expect(f.conversations.findMember('task', other.id)?.modelSelection).toBeNull()
   })
 
   it('keeps read and mark assignment revisions independent and refuses stale clear or read', async () => {

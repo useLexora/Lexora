@@ -237,10 +237,10 @@ export class ConversationMetadataService {
       throw new BuddyServiceError('CONVERSATION_QUEUE_NOT_EMPTY')
   }
 
-  getModelControls(conversationId: string, actorId?: string) {
+  getModelControls(conversationId: string, actorId?: string, branchId?: string) {
     const conversation = this.#requireReadable(conversationId)
     const nextActorId = actorId ?? conversation.buddyId
-    const run = this.#options.runs?.findActiveForConversation(conversationId, nextActorId)
+    const run = this.#options.runs?.findActiveForConversation(conversationId, nextActorId, branchId)
     const buddy = this.#options.buddies?.get(nextActorId)
     if (!conversation.archivedAt && buddy && (buddy.kind !== 'actor' || !buddy.enabled || buddy.deletedAt))
       throw new BuddyServiceError('BUDDY_NOT_ACTOR')
@@ -266,7 +266,7 @@ export class ConversationMetadataService {
     })))
   }
 
-  async prepareModelSelection(input: { id: string, actorId?: string, runId?: string, modelSelection: ConversationModelSelection | null }) {
+  async prepareModelSelection(input: { id: string, actorId?: string, branchId?: string, runId?: string, modelSelection: ConversationModelSelection | null }) {
     const id = input.id
     const actorId = input.actorId ?? this.#targetRunActor(input.runId, id) ?? this.#requireActive(id).buddyId
     this.#targetRunActor(input.runId, id, actorId)
@@ -283,7 +283,7 @@ export class ConversationMetadataService {
           reasoning: resolved.reasoning,
           serviceTier: resolved.serviceTier,
         }
-    return { id, actorId, runId: input.runId, selection }
+    return { id, actorId, branchId: input.branchId, runId: input.runId, selection }
   }
 
   commitModelSelection(input: Awaited<ReturnType<ConversationMetadataService['prepareModelSelection']>>): ConversationRecord {
@@ -303,20 +303,20 @@ export class ConversationMetadataService {
     this.#targetRunActor(input.runId, id, actorId)
     if (sameSelection(member.modelSelection, selection)
       && (selection === null || member.modelSelectionSource === 'explicit')) {
-      if (this.#refreshActorModel(id, actorId, selection))
+      if (this.#refreshActorModel(id, actorId, selection, input.branchId))
         this.#publish('model', current, actorId)
       return current
     }
     const conversation = this.#options.repository.setModelSelection({ id, actorId, modelSelection: selection })
     if (!conversation)
       throw new BuddyServiceError('VALIDATION_FAILED')
-    this.#refreshActorModel(id, actorId, selection)
+    this.#refreshActorModel(id, actorId, selection, input.branchId)
     this.#publish('model', conversation, actorId)
     return conversation
   }
 
-  #refreshActorModel(conversationId: string, actorId: string, selection: ConversationModelSelection | null): boolean {
-    const run = this.#options.runs?.findActiveForConversation(conversationId, actorId)
+  #refreshActorModel(conversationId: string, actorId: string, selection: ConversationModelSelection | null, branchId?: string): boolean {
+    const run = this.#options.runs?.findActiveForConversation(conversationId, actorId, branchId)
     if (!run || run.buddyId !== actorId || sameSelection(this.#runModelSelection(run), selection))
       return false
     if (!this.#options.runs?.setModelSelection(run.id, selection))

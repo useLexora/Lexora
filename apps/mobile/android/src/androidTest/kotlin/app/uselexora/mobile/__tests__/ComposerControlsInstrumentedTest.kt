@@ -75,8 +75,9 @@ class ComposerControlsInstrumentedTest {
         compose.runOnIdle { assertEquals(listOf(MobileAction.StopRun), actions) }
     }
 
-    private fun capture(name: String, tag: String? = null) {
-        val bitmap = (if (tag == null) compose.onRoot() else compose.onNodeWithTag(tag)).captureToImage().asAndroidBitmap()
+    private fun capture(name: String, tag: String? = null, includePopup: Boolean = false) {
+        val bitmap = if (includePopup) requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+            else (if (tag == null) compose.onRoot() else compose.onNodeWithTag(tag)).captureToImage().asAndroidBitmap()
         try { java.io.File(context.filesDir, name).outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) } }
         finally { bitmap.recycle() }
     }
@@ -231,21 +232,37 @@ class ComposerControlsInstrumentedTest {
         compose.setContent { LexoraTheme {
             ConversationModelPicker(state) { action, value -> if (action == MobileAction.ApplyModel) selections.add(value!!) }
         } }
+        val selector = compose.onNodeWithTag("reasoning-selector")
+        selector.assertTextContains("high")
+        compose.onNodeWithTag("reasoning:off").assertDoesNotExist()
+        selector.performClick()
         compose.onNodeWithTag("reasoning:high").assertIsSelected()
-        compose.onNodeWithText("off").assertIsDisplayed()
-        compose.onNodeWithText("medium").assertIsDisplayed()
+        compose.onNodeWithTag("reasoning:off").assertIsNotSelected()
         compose.onNodeWithTag("reasoning:medium").performClick()
+        selector.assertTextContains("medium")
+        compose.onNodeWithTag("reasoning:high").assertDoesNotExist()
+        compose.runOnIdle { assertTrue(selections.isEmpty()); assertEquals("high", state.modelSelection!!.getString("reasoning")) }
         compose.onNodeWithTag("fast-mode").assertIsOn()
         capture("models-parameters.png", "model-picker")
+        selector.performClick()
+        compose.onNodeWithTag("reasoning:medium").assertIsDisplayed().assertIsSelected()
+        capture("models-reasoning-menu.png", includePopup = true)
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        selector.assertTextContains("medium")
+        compose.onNodeWithTag("reasoning:high").assertDoesNotExist()
         compose.onNodeWithTag("model-list").performScrollToNode(hasTestTag("model-option:local:second"))
         compose.onNodeWithTag("model-option:local:second").performClick()
+        selector.assertTextContains("medium")
+        selector.performClick()
         compose.onNodeWithTag("reasoning:medium").assertIsSelected()
-        compose.onNodeWithTag("fast-mode").assertDoesNotExist()
+        compose.onNodeWithTag("reasoning:high").assertDoesNotExist()
         compose.runOnIdle {
             assertTrue(selections.isEmpty())
             state.models = listOf(first, candidate("second", listOf("off")))
         }
-        compose.onNodeWithTag("reasoning:off").assertIsSelected()
+        selector.assertTextContains("off")
+        compose.onNodeWithTag("reasoning:medium").assertDoesNotExist()
+        compose.onNodeWithTag("fast-mode").assertDoesNotExist()
         compose.onNodeWithTag("apply-model").performClick()
         compose.runOnIdle {
             assertEquals("second", selections.single().getString("modelId"))

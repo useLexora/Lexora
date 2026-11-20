@@ -1,5 +1,9 @@
 package app.uselexora.mobile.storage
 
+import app.uselexora.mobile.protocol.TaskModelTarget
+import app.uselexora.mobile.protocol.TaskModelLane
+import app.uselexora.mobile.protocol.ConversationTarget
+import app.uselexora.mobile.protocol.ProtocolFailure
 import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
@@ -24,6 +28,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "lexora-mobile.db
     }
     @Synchronized fun edit(partition: String, scope: String, value: JSONObject): LocalDraft {
         val previous = draft(partition, scope)
+        if (scope.startsWith("conversation:") && previous?.value?.optBoolean("followsTaskModel") == true) TaskModelTarget.followConfirmed(value)
         value.put("inputId", previous?.value?.optString("inputId")?.takeIf { it.isNotEmpty() } ?: value.optString("inputId").takeIf { it.isNotEmpty() } ?: newId())
         val sequence = (previous?.editSequence ?: 0) + 1
         val entry = ContentValues().apply { put("partition", partition); put("scope", scope); put("edit_sequence", sequence); put("value", value.toString()); put("confirmed_sequence", previous?.confirmedSequence ?: 0) }
@@ -93,8 +98,28 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "lexora-mobile.db
     @Synchronized fun queue(partition: String, method: String, envelope: JSONObject, localEffect: JSONObject? = null): OutboxItem {
         val id = envelope.getString("commandId")
         val entry = OutboxItem(id, partition, method, JSONObject(envelope.toString()), "prepared", null, localEffect?.let { JSONObject(it.toString()) })
-        writableDatabase.insertOrThrow("outbox", null, ContentValues().apply { put("id", id); put("partition", partition); put("method", method); put("envelope", envelope.toString()); put("state", entry.state); localEffect?.let { put("local_effect", it.toString()) } })
-        return entry
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val intent = envelope.optJSONObject("intent")
+            val lane = intent?.let { TaskModelLane.of(method, it) }
+            if (intent != null && lane != null) {
+                val methods = if (method == TaskModelTarget.WRITE) "method IN ('conversations.setModelSelection','chat.submitInput')" else "method='conversations.setModelSelection'"
+                db.rawQuery("SELECT method,envelope FROM outbox WHERE partition=? AND state NOT IN ('accepted','rejected') AND $methods", arrayOf(partition)).use { rows ->
+                    while (rows.moveToNext()) {
+                        val pending = JSONObject(rows.getString(1)).optJSONObject("intent")?.let { TaskModelLane.of(rows.getString(0), it) }
+                        if (pending != null && lane.overlaps(pending)) throw ProtocolFailure("COMMAND_RESULT_UNKNOWN")
+                    }
+                }
+                val input = intent.optJSONObject("input")
+                val scope = localEffect?.optString("scope")
+                if (input != null && !input.isNull("modelSelection") && scope?.startsWith("conversation:") == true &&
+                    draft(partition, scope)?.value?.optBoolean("followsTaskModel") == true) throw ProtocolFailure("DRAFT_CONFLICT")
+            }
+            db.insertOrThrow("outbox", null, ContentValues().apply { put("id", id); put("partition", partition); put("method", method); put("envelope", envelope.toString()); put("state", entry.state); localEffect?.let { put("local_effect", it.toString()) } })
+            db.setTransactionSuccessful()
+            return entry
+        } finally { db.endTransaction() }
     }
     @Synchronized fun mark(id: String, state: String, receipt: JSONObject? = null) {
         require(state in setOf("prepared", "unknown", "pending", "not_found", "accepted", "rejected"))
@@ -115,6 +140,16 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "lexora-mobile.db
         try {
             val terminal = db.rawQuery("SELECT state FROM outbox WHERE id=?", arrayOf(item.id)).use { it.moveToFirst() && it.getString(0) in setOf("accepted", "rejected") }
             if (terminal) { db.setTransactionSuccessful(); return }
+            if (item.method == TaskModelTarget.WRITE && receipt.optString("decision") == "accepted" && item.localEffect?.optString("kind") == "taskModel") {
+                val intent = item.envelope.getJSONObject("intent")
+                val target = TaskModelTarget(ConversationTarget.fromTarget(intent), intent.getString("actorId"), intent.getString("expectedRevision"))
+                target.acceptedRevision(receipt)
+                val scope = target.conversation.localKey
+                draft(item.partition, scope)?.let { current ->
+                    val value = TaskModelTarget.followConfirmed(current.value)
+                    db.update("drafts", ContentValues().apply { put("value", value.toString()) }, "partition=? AND scope=?", arrayOf(item.partition, scope))
+                }
+            }
             mark(item.id, receipt.getString("decision"), receipt)
             if (receipt.getString("decision") == "accepted") item.localEffect?.takeIf { it.optString("kind") in setOf("bind", "save", "send", "submit") }?.let { effect ->
                 val scope = effect.getString("scope")
@@ -129,6 +164,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "lexora-mobile.db
                             val value = JSONObject(current.value.toString())
                             val submittedContent = item.envelope.getJSONObject("intent").getJSONObject("input").getJSONObject("content")
                             if (current.editSequence == sequence) {
+                                TaskModelTarget.followConfirmed(value)
                                 value.put("content", app.uselexora.mobile.protocol.MobileContentAdapter.textContent(""))
                                 value.remove("draftId"); value.remove("revision")
                             } else {

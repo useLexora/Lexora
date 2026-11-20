@@ -22,7 +22,7 @@ const serviceInterruption = process.env.LEXORA_TEST_MOBILE_SERVICE_INTERRUPTION 
 
 test('real Desktop and Android keep independent local input and submit one immutable input with attachments', async ({ buddy }) => {
   test.skip(!serial, 'Requires an isolated Android device with the debug and instrumentation APKs installed')
-  test.setTimeout(180000)
+  test.setTimeout(270000)
   expect(!networkRecovery || !useAdbReverse, 'Wi-Fi recovery requires a real private-network address').toBe(true)
   const adb = (...args) => execute(process.env.ADB ?? 'adb', ['-s', serial, ...args], { timeout: 90000, maxBuffer: 8 * 1024 * 1024 })
   const token = randomUUID()
@@ -68,7 +68,8 @@ test('real Desktop and Android keep independent local input and submit one immut
   await page.evaluate(async (baseUrl) => {
     await window.lexoraDesktop.settings.update({ runtime: { codemode: 'off', modelRetryLimit: 0 } })
     const providers = window.lexoraDesktop.localChat.providers
-    await providers.upsertCustom({ id: 'input-fixture', displayName: 'Input fixture', api: 'openai-completions', baseUrl, enabled: true, models: [{ id: 'fixture-model', name: 'Input model', input: ['text'], reasoning: false, contextWindow: 128000, maxTokens: 1024 }] })
+    const model = { id: 'fixture-model', name: 'Input model', input: ['text'], reasoning: false, contextWindow: 128000, maxTokens: 1024 }
+    await providers.upsertCustom({ id: 'input-fixture', displayName: 'Input fixture', api: 'openai-completions', baseUrl, enabled: true, models: [model, { ...model, id: 'reasoning-model', name: 'Reasoning model', reasoning: true }] })
     const stop = providers.onAuthChallenge((challenge) => {
       if (challenge.providerId === 'input-fixture' && challenge.type === 'secret')
         void providers.respondToAuth(challenge.challengeId, 'offline-fixture-key')
@@ -192,6 +193,41 @@ test('real Desktop and Android keep independent local input and submit one immut
     await expect(page.locator('.desktop-workbench-area__tasks').getByText('输入和附件已收到', { exact: true })).toBeVisible()
     await expect(page.locator('.desktop-workbench-area__tasks img').filter({ visible: true }).and(page.locator(`img[src="${avatar}"]`)).first()).toBeVisible()
     await page.screenshot({ path: test.info().outputPath('desktop-conversation.png') })
+
+    await test.step('Phone confirms the existing task member model without submitting either draft', async () => {
+      const { conversationId } = target
+      const task = await page.evaluate(id => window.lexoraDesktop.localChat.conversations.get(id), conversationId)
+      const modelControls = () => page.evaluate(({ id, buddyId }) => window.lexoraDesktop.localChat.conversations.getModelControls(id, buddyId), task)
+      const pane = page.locator('.desktop-chat-page:visible').filter({ has: page.getByText('输入和附件已收到', { exact: true }) })
+      const trigger = pane.locator('.desktop-model-selector__trigger')
+      const taskDraft = 'Desktop 同任务未发送的草稿'
+      await pane.locator('.tiptap').fill(taskDraft)
+      const selection = { providerId: 'input-fixture', modelId: 'reasoning-model', reasoning: 'high', serviceTier: null }
+      await expect(trigger).toContainText('Input model')
+      expect(await modelControls()).toMatchObject({ current: null, next: { actorId: task.buddyId, isMember: true, modelSelection: { modelId: 'fixture-model' } } })
+      const inputActivity = () => read(db => db.prepare(`SELECT
+        (SELECT count(*) FROM messages) AS messages,
+        (SELECT count(*) FROM runs) AS runs,
+        (SELECT count(*) FROM chat_queue) AS queued,
+        (SELECT count(*) FROM command_receipts WHERE method = 'chat.submitInput') AS submissions`).get())
+      const before = inputActivity()
+      const requestCount = requests.length
+      const pairing = await page.evaluate(() => window.lexoraDesktop.localChat.privateNetwork.issuePairing({}))
+      await fs.writeFile(configuration, JSON.stringify({ pairing, conversationId, selection }), { mode: 0o600 })
+      await adb('push', configuration, remoteConfig)
+      await fs.rm(configuration)
+      const result = await adb('shell', 'am', 'instrument', '-w', '-r', '-e', 'class', 'app.uselexora.mobile.TaskModelSelectionInstrumentedTest', '-e', 'taskModelToken', token, `${appPackage}.test/androidx.test.runner.AndroidJUnitRunner`)
+      await fs.writeFile(test.info().outputPath('android-model-selection.txt'), result.stdout + result.stderr)
+      expect(result.stdout).toMatch(/OK \(1 test\)/)
+      expect(result.stdout).not.toMatch(/INSTRUMENTATION_STATUS_CODE: -[234]|FAILURES/)
+      expect(await modelControls()).toMatchObject({ current: null, next: { actorId: task.buddyId, isMember: true, modelSelection: selection } })
+      await expect(trigger).toBeVisible()
+      await expect(trigger).toHaveAccessibleName('Reasoning model · High')
+      await expect(pane.locator('.tiptap')).toHaveText(taskDraft)
+      await expect(editor).toContainText(updatedText)
+      expect(inputActivity()).toEqual(before)
+      expect(requests).toHaveLength(requestCount)
+    })
 
     await fs.writeFile(test.info().outputPath('workflow.json'), JSON.stringify({ ...checkpoint, localDrafts: true, immutableInput: true, nativeAndroidUi: true, electronUi: true, coreAdapter: serviceMode, wifiInterruptionRecovery: networkRecovery, serviceInterruptionRecovery: serviceInterruption, customAvatar: true, avatarHash, offlineAvatar: networkRecovery || serviceInterruption, transport: useAdbReverse ? 'adb-reverse' : 'private-network', serverAddress: bindAddress }, null, 2))
   }

@@ -52,6 +52,9 @@ import app.uselexora.mobile.storage.OutboxItem
 import app.uselexora.mobile.protocol.CommandOutbox
 import app.uselexora.mobile.protocol.CommandReceipt
 import app.uselexora.mobile.protocol.ConversationTarget
+import app.uselexora.mobile.protocol.TaskModelLane
+import app.uselexora.mobile.protocol.TaskModelTarget
+import app.uselexora.mobile.protocol.TaskModelEdit
 import app.uselexora.mobile.protocol.HistorySource
 import app.uselexora.mobile.protocol.MobileContentAdapter
 import app.uselexora.mobile.protocol.MobileMessagePresentation
@@ -353,8 +356,7 @@ class MainActivity : ComponentActivity() {
             MobileAction.ChooseModel -> chooseModel()
             MobileAction.ToggleFast -> {
                 if (MobileModelControls.supportsFast(ui.modelSelection, ui.models)) ui.modelSelection?.let { selection ->
-                    modelPickerOwner = partition; modelPickerTarget = scope
-                    applyModel(JSONObject(selection.toString()).put("serviceTier", if (selection.optString("serviceTier") == "priority") JSONObject.NULL else "priority"))
+                    chooseModel(JSONObject(selection.toString()).put("serviceTier", if (selection.optString("serviceTier") == "priority") JSONObject.NULL else "priority"))
                 }
             }
             MobileAction.ApplyModel -> payload?.let(::applyModel)
@@ -413,9 +415,15 @@ class MainActivity : ComponentActivity() {
         renderExecution()
         renderSpace()
         ui.inputEnabled = composer.isEnabled
-        ui.sendEnabled = composer.isEnabled && (composer.text.isNotBlank() || ui.attachmentCount > 0) && !input.isSubmitting && ui.conversationReady && !ui.viewingArchived
+        ui.sendEnabled = composer.isEnabled && (composer.text.isNotBlank() || ui.attachmentCount > 0) && !input.isSubmitting && !writingCurrentModel() && ui.conversationReady && !ui.viewingArchived
         ui.hasInput = composer.text.isNotBlank() || ui.attachmentCount > 0
-        val selection = model ?: inheritedModel.takeIf { modelContextKey == "$partition:$scope" }
+        val fallback = inheritedModel.takeIf { modelContextKey == modelKey() }
+        val selection = model ?: selectedTask?.optJSONObject("modelSelection") ?: fallback
+        if (ui.modelPickerOpen) {
+            val error = modelEditProblem()
+            ui.modelConfirmEnabled = error == null && (localModelScope() || modelPickerEdit != null) && modelWriting == null
+            ui.modelConfirmError = error ?: modelReadError
+        }
         val resolvedModel = selection?.let { MobileModelControls.resolve(it, ui.models) }
         if (ui.modelSelection?.toString() != resolvedModel?.toString()) ui.modelSelection = resolvedModel
         if (ui.executionSelection.toString() != executionConfig.toString()) ui.executionSelection = JSONObject(executionConfig.toString())
@@ -565,8 +573,9 @@ class MainActivity : ComponentActivity() {
     private fun refreshPendingOperations() {
         val owner = partition
         disk.execute {
-            val pending = store.outbox(owner).count { it.state !in setOf("accepted", "rejected") }
-            onUi { if (partition == owner) ui.outboxCount = pending }
+            val pending = store.outbox(owner).filter { it.state !in setOf("accepted", "rejected") }
+            val models = pending.filter { it.method == TaskModelTarget.WRITE }.mapNotNull { item -> item.envelope.optJSONObject("intent")?.let { TaskModelLane.of(item.method, it) } }
+            onUi { if (partition == owner) { ui.outboxCount = pending.size; pendingTaskModels = owner to models } }
         }
     }
     private fun loadMessageDetail(message: JSONObject) {
@@ -909,7 +918,7 @@ class MainActivity : ComponentActivity() {
             ui.approvalItems = items.filter { it.optString("entity") == "approval" }.map { it.getJSONObject("value") }
             if (ui.runs.none { it.optString("id") == ui.stoppingRunId && it.optString("status") in setOf("queued", "running") }) ui.stoppingRunId = null
             items.firstOrNull { it.optString("entity") == "task" }?.getJSONObject("value")?.let {
-                if (projectedTaskSource !== it) { projectedTaskSource = it; selectedTask = JSONObject(it.toString()) }
+                if (projectedTaskSource !== it) { projectedTaskSource = it; acceptTaskProjection(it) }
             }
             if (modelTaskRevision != selectedTask?.optString("revision")) refreshModelContext()
             refreshReaderResult(); bindQuestions(); renderRows()
@@ -954,6 +963,10 @@ class MainActivity : ComponentActivity() {
     }
     private fun renderRows() { syncUi() }
     private fun send(method: String = "chat.startTurn", extra: JSONObject = JSONObject()) {
+        if (writingCurrentModel()) {
+            if (pendingModel()) ui.notice = mobileText(R.string.error_command_result_unknown)
+            return
+        }
         if (!composer.isEnabled) { ui.notice = mobileText(R.string.mobile_input_is_being_restored_or_requires_desktop_editing_the); return }
         if (!demo && (!ui.conversationReady || ui.viewingArchived || (conversationTarget != null && (!session.isSynchronized || readyContext != liveContext())))) {
             ui.notice = mobileText(if (ui.viewingArchived) R.string.mobile_archived_read_only else if (ui.syncFailure.isNotBlank()) R.string.mobile_sync_failed_input else R.string.mobile_sync_required); return
@@ -1010,6 +1023,10 @@ class MainActivity : ComponentActivity() {
     }
     private fun commandRecovered(item: OutboxItem) {
         refreshPendingOperations()
+        if (item.method == TaskModelTarget.WRITE && item.state == "accepted" && item.partition == partition && item.localEffect?.optString("scope") == scope) {
+            useConfirmedTaskModel(partition, scope)
+            refreshModelContext()
+        }
         if (item.partition == partition && item.state == "accepted" && item.localEffect?.optString("kind") in setOf("send", "submit") &&
             CommandHistoryTarget.originalScope(item) == scope) {
             val retainView = {
@@ -1049,21 +1066,58 @@ class MainActivity : ComponentActivity() {
             onUi { if (isCurrent(owner)) showTask(task, branches, ConversationTarget(target.conversationId, branch)) }
         }
     }
-    private var modelPickerOwner = ""
-    private var modelPickerTarget = ""
+    private var modelPickerOwner: MobileOperationOwner? = null
+    private var modelPickerTask: TaskModelTarget? = null
+    private var modelPickerEdit: TaskModelEdit? = null
+    private var modelPickerRequest = 0L
+    private var modelReadError = ""
+    private var modelWriting: MobileOperationOwner? = null
+    private var pendingTaskModels: Pair<String, List<TaskModelLane>>? = null
+    private fun pendingModel(actorId: String? = null): Boolean {
+        val id = conversationTarget?.conversationId ?: return false
+        return pendingTaskModels?.takeIf { it.first == partition }?.second?.any { it.overlaps(TaskModelLane(id, actorId)) } == true
+    }
+    private fun useConfirmedTaskModel(owner: String, target: String) {
+        disk.execute { onUi { if (partition == owner && scope == target) model = null } }
+    }
+    private fun writingCurrentModel() = pendingModel() || modelWriting?.let { it.partition == partition && it.inputScope == scope } == true
+    private fun localModelScope() = demo || scope.startsWith("message-edit:") || scope.startsWith("message-followup:") || (selectedTask == null && conversationTarget == null && (scope == "global" || scope.startsWith("draft:") || scope.startsWith("space:")))
+    private fun modelKey() = "$partition:$scope:${selectedTask?.optString("buddyId")}:${selectedTask?.optString("revision")}"
+    private fun modelTarget() = TaskModelTarget.capture(selectedTask, conversationTarget, scope)
+    private fun acceptTaskProjection(value: JSONObject) {
+        val previous = selectedTask
+        if (previous != null && previous.optString("id") == value.optString("id") && previous.optLong("revision", -1) > value.optLong("revision", -1)) return
+        selectedTask = JSONObject(value.toString())
+    }
+    private fun modelEditProblem(): String? {
+        if (modelPickerOwner != operationOwner()) return mobileText(R.string.error_source_changed)
+        if (localModelScope()) return null
+        val current = client ?: return mobileText(R.string.error_not_connected)
+        return when {
+            !current.isConnected || current.identity?.partition != partition -> mobileText(R.string.error_not_connected)
+            ui.viewingArchived -> mobileText(R.string.mobile_archived_read_only)
+            !ui.conversationReady || !session.isSynchronized || readyContext != liveContext() -> mobileText(R.string.mobile_sync_required)
+            !current.supports(TaskModelTarget.READ) -> mobileText(R.string.error_method_not_available)
+            !current.supports(TaskModelTarget.WRITE) -> mobileText(R.string.error_not_authorized)
+            modelPickerTask == null || modelTarget() != modelPickerTask -> mobileText(R.string.error_source_changed)
+            input.isSubmitting || ui.membersChanging || pendingModel(modelPickerTask?.actorId) -> mobileText(R.string.error_command_result_unknown)
+            else -> null
+        }
+    }
     private var modelTaskRevision: String? = null
     private fun refreshModelContext(refreshCatalog: Boolean = false) {
         val current = client?.takeIf { it.isConnected } ?: return
         val owner = partition; val target = scope; val task = selectedTask
         val request = ++modelContextRequest
         modelTaskRevision = task?.optString("revision")
-        if (modelContextKey != "$owner:$target") { inheritedModel = null; modelContextKey = "$owner:$target" }
+        val key = modelKey()
+        if (modelContextKey != key) { inheritedModel = null; modelContextKey = key }
         refreshModelCatalog(current, refreshCatalog)
         work {
             try {
                 val selection = if (current.supports("providers.getInputSelection")) current.call("providers.getInputSelection", JSONObject().apply { task?.let { put("conversationId", it.getString("id")) } }).optJSONObject("modelSelection") else task?.optJSONObject("modelSelection")
                 onUi {
-                    if (client === current && partition == owner && scope == target && request == modelContextRequest) {
+                    if (client === current && partition == owner && scope == target && modelKey() == key && request == modelContextRequest) {
                         inheritedModel = selection
                     }
                 }
@@ -1078,27 +1132,74 @@ class MainActivity : ComponentActivity() {
         ui.readingCached = false
         if (!demo) selectedTask?.getString("id")?.let(readModel::restoreConversation)
     }
-    private fun chooseModel() {
+    private fun chooseModel(quickSelection: JSONObject? = null) {
         hideKeyboard()
-        modelPickerOwner = partition; modelPickerTarget = scope
+        val owner = operationOwner()
+        val target = modelTarget()
+        val request = ++modelPickerRequest
+        modelPickerOwner = owner; modelPickerTask = target; modelPickerEdit = null; modelReadError = ""
         ui.modelPickerOpen = true
         if (demo) {
             if (ui.models.isEmpty()) ui.models = listOf(JSONObject().put("modelId", "demo").put("providerId", "demo").put("displayName", mobileText(R.string.mobile_demo_model)).put("reasoningOptions", JSONArray()).put("serviceTiers", JSONArray()))
             ui.modelsLoading = false
         } else refreshModelContext(refreshCatalog = true)
+        modelEditProblem()?.let { modelReadError = it; return }
+        if (localModelScope()) { quickSelection?.let(::applyModel); return }
+        val current = owner.connection ?: return
+        if (target == null) return
+        work {
+            try {
+                val edit = target.bind(current.call(TaskModelTarget.READ, target.params()))
+                onUi {
+                    if (!isCurrent(owner) || modelPickerRequest != request || !ui.modelPickerOpen) return@onUi
+                    modelPickerEdit = edit
+                    quickSelection?.let(::applyModel)
+                }
+            } catch (error: Exception) { onUi {
+                if (isCurrent(owner) && modelPickerRequest == request) modelReadError = MobileFailurePresentation.message(MobileOperationFailure.from(error))
+            } }
+        }
     }
     private fun applyModel(selection: JSONObject) {
-        if (partition != modelPickerOwner || scope != modelPickerTarget || !composer.isEnabled) return
+        if (!ui.modelPickerOpen || !composer.isEnabled || modelWriting != null || modelEditProblem() != null) return
         val selected = ui.models.firstOrNull { it.optString("modelId") == selection.optString("modelId") && it.optString("providerId") == selection.optString("providerId") } ?: return
         val reasoning = selection.opt("reasoning") as? String
         val tier = selection.opt("serviceTier") as? String
         val options = selected.optJSONArray("reasoningOptions") ?: JSONArray()
         if (reasoning != null && (0 until options.length()).none { options.optString(it) == reasoning }) return
         if (tier != null && objects(selected.optJSONArray("serviceTiers") ?: JSONArray()).none { it.optString("id") == tier }) return
-        model = JSONObject().put("modelId", selected.getString("modelId")).put("providerId", selected.getString("providerId"))
-            .put("reasoning", reasoning ?: JSONObject.NULL).put("serviceTier", tier ?: JSONObject.NULL)
+        val choice = MobileModelControls.parameters(selected, reasoning, tier)
+        if (localModelScope()) {
+            model = choice
+            ui.modelPickerOpen = false
+            persistInput(composer.text.toString())
+            return
+        }
+        val edit = modelPickerEdit ?: return
+        val owner = modelPickerOwner ?: return
+        val current = owner.connection ?: return
+        val intent = edit.intent(choice)
+        modelWriting = owner
         ui.modelPickerOpen = false
-        persistInput(composer.text.toString())
+        work {
+            try {
+                if (current.identity?.partition != owner.partition || !current.supports(TaskModelTarget.WRITE)) throw ProtocolFailure("NOT_CONNECTED")
+                store.draft(owner.partition, owner.inputScope)?.let { if (store.hasPendingDraftCommand(it)) throw ProtocolFailure("COMMAND_RESULT_UNKNOWN") }
+                val effect = JSONObject().put("kind", "taskModel").put("scope", owner.inputScope)
+                val receipt = CommandOutbox(store).submit(current, TaskModelTarget.WRITE, intent, effect)
+                val revision = edit.target.acceptedRevision(receipt)
+                useConfirmedTaskModel(owner.partition, owner.inputScope)
+                val taskId = edit.target.conversation.conversationId
+                val updated = current.call("conversations.get", JSONObject().put("conversationId", taskId))
+                if (updated.optString("id") != taskId || updated.getString("revision").toLong() < revision) throw ProtocolFailure("SOURCE_CHANGED")
+                onUi {
+                    if (isCurrent(owner)) {
+                        acceptTaskProjection(updated)
+                        refreshModelContext()
+                    }
+                }
+            } finally { onUi { if (modelWriting == owner) modelWriting = null; refreshPendingOperations() } }
+        }
     }
     private fun renderExecution() {
         ui.executionLabel = ExecutionSettings.label(executionConfig)
@@ -1132,8 +1233,8 @@ class MainActivity : ComponentActivity() {
                     val acceptedConfig = ExecutionSettings.resolve(null, updated)
                     onUi {
                         if (partition == owner && scope == target) {
-                            selectedTask = updated
-                            executionConfig = acceptedConfig
+                            acceptTaskProjection(updated)
+                            executionConfig = ExecutionSettings.resolve(null, selectedTask)
                             renderExecution()
                             persistInput(composer.text.toString())
                             ui.notice = mobileText(R.string.mobile_the_service_updated_this_task_s_execution_mode)
@@ -1348,8 +1449,8 @@ class MainActivity : ComponentActivity() {
             val task = connection.callValue("conversations.get", JSONObject().put("conversationId", conversationId)) as? JSONObject ?: throw ProtocolFailure("OBJECT_DELETED")
             onUi {
                 if (generation == navigation && partition == draft.partition && scope == draft.scope) {
-                    selectedTask = task
-                    bindQuestions(); renderSpace()
+                    acceptTaskProjection(task)
+                    refreshModelContext(); bindQuestions(); renderSpace()
                 }
             }
         }
