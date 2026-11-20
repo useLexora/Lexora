@@ -95,7 +95,7 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
     selectProjection(conversationId, branchId)
     if (refreshFlight) {
       refreshFlight.dirty = true
-      return refreshFlight.promise
+      return waitForEvents ? refreshFlight.promise : refreshFlight.snapshot.promise
     }
     const flight: RefreshFlight = {
       dirty: false,
