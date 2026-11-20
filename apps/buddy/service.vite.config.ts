@@ -37,14 +37,18 @@ export default defineConfig({
   plugins: [serviceResources()],
   ssr: { noExternal: ['fflate'] },
   build: {
-    ssr: fileURLToPath(new URL('./service/src/index.ts', import.meta.url)),
+    ssr: true,
     outDir: '.output/build/service',
     target: 'node26',
     minify: false,
     ssrEmitAssets: true,
     rolldownOptions: {
+      input: {
+        service: fileURLToPath(new URL('./service/src/index.ts', import.meta.url)),
+        utility: fileURLToPath(new URL('./electron/main/runtime/serviceProcess.ts', import.meta.url)),
+      },
       external: id => id !== 'fflate/browser' && !id.startsWith('.') && !isAbsolute(id) && !id.startsWith('\0'),
-      output: { entryFileNames: 'service.mjs', format: 'es' },
+      output: { entryFileNames: '[name].mjs', format: 'es' },
     },
   },
 })

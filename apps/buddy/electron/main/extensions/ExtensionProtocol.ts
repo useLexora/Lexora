@@ -5,13 +5,8 @@ import { extname } from 'node:path'
 import hostSource from 'virtual:extension-runtime/host'
 import viewSource from 'virtual:extension-runtime/view'
 import { fileRange } from '../../../platform/filesystem/fileRange'
-import { EXTENSION_PROTOCOL } from '../../../shared/extensions/extensionManifest'
 import { extensionResourceMimeType } from '../../../shared/extensions/extensionResources'
-
-export const extensionSchemePrivileges: Electron.CustomScheme = {
-  scheme: EXTENSION_PROTOCOL,
-  privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true, corsEnabled: true },
-}
+import { EXTENSION_PROTOCOL } from '../../../shared/platform/desktopSchemes'
 
 type SelectedResourceReader = (id: string, request: Request, signal: AbortSignal) => Promise<Response>
 interface ExtensionEndpoint { token: string, kind: 'host' | 'view', package: ExtensionPackage, abort: AbortController, readSelected?: SelectedResourceReader }

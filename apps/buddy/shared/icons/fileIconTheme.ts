@@ -3,7 +3,6 @@ import { extensionPathSchema } from '../extensions/extensionPath.ts'
 import { themeIdSchema } from '../theme/themePreferences.ts'
 
 export const BUILTIN_FILE_ICON_THEME = 'lexora.material'
-export const FILE_ICON_PROTOCOL = 'lexora-icon'
 export const fileIconPreferenceSchema = z.object({ id: themeIdSchema }).strict()
 export const fileIconThemeContributionSchema = z.object({
   id: themeIdSchema,

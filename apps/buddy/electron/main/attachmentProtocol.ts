@@ -7,18 +7,10 @@ import { readNativeBoundedFile } from '../../platform/filesystem/nativeBoundedFi
 import { resolveBuddyFileReader } from '../../platform/native/nativeHost'
 import { attachmentsRequestSchemas } from '../../shared/conversation/attachmentApi'
 import { composerResourcesRpc } from '../../shared/conversation/composerApi'
+import { ARTIFACT_PROTOCOL, ATTACHMENT_PROTOCOL, FILE_PROTOCOL } from '../../shared/platform/desktopSchemes'
 import { attachmentHostRpc, attachmentPreviewBytesSchema } from '../../shared/runtime/attachmentHostProtocol'
 import { handleMediaRequest } from './mediaProtocol'
 import { resolveDevelopmentRendererUrl } from './security/navigationPolicy'
-
-const ATTACHMENT_PROTOCOL = 'lexora-attachment'
-const ARTIFACT_PROTOCOL = 'lexora-artifact'
-const FILE_PROTOCOL = 'lexora-file'
-
-export const attachmentSchemePrivileges: Electron.CustomScheme[] = [ATTACHMENT_PROTOCOL, ARTIFACT_PROTOCOL, FILE_PROTOCOL].map(scheme => ({
-  scheme,
-  privileges: { secure: true, standard: true, stream: true, supportFetchAPI: true, corsEnabled: scheme === ARTIFACT_PROTOCOL || scheme === ATTACHMENT_PROTOCOL },
-}))
 
 export function installAttachmentProtocol(runtime: Pick<BuddyServiceSupervisor, 'request' | 'requestHost'>): () => void {
   const fileReader = resolveBuddyFileReader({ appPath: app.getAppPath(), isPackaged: app.isPackaged, resourcesPath: process.resourcesPath })

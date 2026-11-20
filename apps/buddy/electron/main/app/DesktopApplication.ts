@@ -31,7 +31,7 @@ import { DesktopRuntimeHost } from './DesktopRuntimeHost'
 import { checkDesktopSmokeBridge } from './desktopSmokeCheck'
 import { checkDesktopDirectories, DesktopInstanceLockUnavailable } from './desktopStorage'
 import { DesktopWindowHost } from './DesktopWindowHost'
-import { initializeDesktopEnvironment, prepareDesktopEnvironment, prepareDesktopReady, registerDesktopSchemes } from './environment'
+import { initializeDesktopEnvironment, prepareDesktopEnvironment, prepareDesktopReady } from './environment'
 import { requestDesktopTarget } from './requestDesktopTarget'
 
 class DesktopApplication {
@@ -379,7 +379,6 @@ export async function startDesktopApplication(): Promise<void> {
   let environment: DesktopEnvironment | undefined
   let recoveryRecorded = false
   try {
-    registerDesktopSchemes()
     if (isDesktopInstallationActive()) {
       app.quit()
       return

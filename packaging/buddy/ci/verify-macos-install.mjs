@@ -49,10 +49,10 @@ async function main() {
     if (fingerprint(updateBundle) !== fingerprint(installed))
       throw new Error('macOS update ZIP and DMG application content differs')
     verifyFirstLaunchPolicy(installed, signing)
-    const { executablePath, resources } = verifyDesktopResources(installed, target.id)
+    const { executablePath, serviceResources } = verifyDesktopResources(installed, target.id)
     const fixture = join(directory, '文档.txt')
     writeFileSync(fixture, 'native-reader-ready')
-    const result = execFileSync(join(resources, 'native-host/lexora-buddy-file-reader'), [], {
+    const result = execFileSync(join(serviceResources, 'native-host/lexora-buddy-file-reader'), [], {
       input: JSON.stringify({ root: directory, path: fixture, maxBytes: 64 }),
       encoding: 'utf8',
       timeout: 5000,
@@ -60,12 +60,12 @@ async function main() {
     if (result !== 'native-reader-ready')
       throw new Error('Installed macOS file reader failed')
     for (const name of ['fd', 'rg'])
-      execFileSync(join(resources, 'search-tools', name), ['--version'], { stdio: 'inherit', timeout: 5000 })
+      execFileSync(join(serviceResources, 'search-tools', name), ['--version'], { stdio: 'inherit', timeout: 5000 })
     const options = Buffer.from(JSON.stringify({ operation: 'chroma', options: { color: '#00ff00', tolerance: 10, softness: 20, despill: 1 } }))
     const size = Buffer.alloc(4)
     size.writeUInt32BE(options.length)
     const png = readFileSync(new URL('../../../apps/buddy/resources/icons/app-icon.png', import.meta.url))
-    const transformed = execFileSync(join(resources, 'native-image/lexora-buddy-image-transform'), [], {
+    const transformed = execFileSync(join(serviceResources, 'native-image/lexora-buddy-image-transform'), [], {
       input: Buffer.concat([size, options, png]),
       maxBuffer: 16 * 1024 * 1024,
       timeout: 15_000,

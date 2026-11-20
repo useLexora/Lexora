@@ -6,6 +6,7 @@ import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'electron-vite'
 import UnoCSS from 'unocss/vite'
 import { extensionRuntimePlugin } from './electron/extensionRuntimePlugin.ts'
+import corePackage from './service/package.json'
 
 const PRODUCTION_CONNECT_SRC = 'connect-src \'self\' lexora-attachment://preview lexora-attachment://local-preview lexora-artifact://preview lexora-artifact://media;'
 const DEVELOPMENT_CONNECT_SRC
@@ -31,22 +32,24 @@ const electronCacheRoot = fileURLToPath(
   new URL('./.output/cache/electron-vite', import.meta.url),
 )
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   main: {
     cacheDir: join(electronCacheRoot, 'main'),
     plugins: [extensionRuntimePlugin()],
     build: {
-      externalizeDeps: { exclude: ['typescript'] },
+      externalizeDeps: { exclude: ['typescript'], include: mode === 'desktop' ? [] : Object.keys(corePackage.dependencies) },
       outDir: join(electronOutputRoot, 'main'),
       rollupOptions: {
         external: ['electron', 'original-fs', '@silvia-odwyer/photon-node', 'fflate/node', /^@earendil-works\/pi-/],
         input: {
           'index': fileURLToPath(new URL('./electron/main/index.ts', import.meta.url)),
           'storage-worker': fileURLToPath(new URL('./service/src/storage/storageWorker.ts', import.meta.url)),
-          'buddy-service': fileURLToPath(new URL('./electron/main/runtime/serviceProcess.ts', import.meta.url)),
+          ...(mode === 'desktop' ? {} : { 'buddy-service': fileURLToPath(new URL('./electron/main/runtime/serviceProcess.ts', import.meta.url)) }),
           'extension-package-worker': fileURLToPath(new URL('./electron/main/extensions/packageWorker.ts', import.meta.url)),
         },
         output: {
+          // Desktop modules resolve sibling workers, preload and renderer relative to their own output.
+          chunkFileNames: '[name]-[hash].js',
           format: 'es',
         },
       },
@@ -100,4 +103,4 @@ export default defineConfig({
       },
     },
   },
-})
+}))

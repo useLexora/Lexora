@@ -50,7 +50,8 @@ export class SyncHub {
     const connection = syncConnectionSchema.parse({ ...rest, id: input.id ?? randomUUID() })
     const signal = AbortSignal.timeout(30_000)
     try {
-      await probeSyncConnection(createSyncAdapter(connection, credential, this.#transport), signal)
+      const adapter = await createSyncAdapter(connection, credential, this.#transport)
+      await probeSyncConnection(adapter, signal)
     }
     catch (error) {
       if (signal.aborted)
@@ -196,7 +197,7 @@ export class SyncHub {
       const credential = await this.credentials.read('sync', this.#credentialIds.get(id)!)
       if (credential !== null && typeof credential !== 'string')
         throw new Error('SYNC_CREDENTIAL_INVALID')
-      const adapter = createSyncAdapter(connection, credential ?? '', this.#transport)
+      const adapter = await createSyncAdapter(connection, credential ?? '', this.#transport)
       const transfer = new SnapshotTransfer(adapter, this.#snapshots, (completedBytes, totalBytes) => {
         this.#state.activity = { ...this.#state.activity!, completedBytes, totalBytes }
         this.#emit()

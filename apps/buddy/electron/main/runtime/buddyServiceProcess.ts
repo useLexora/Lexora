@@ -1,8 +1,9 @@
 import type { BuddyServiceMessageProcess } from './BuddyServicePeer'
+import { join } from 'node:path'
 import nodeProcess from 'node:process'
 import { PassThrough } from 'node:stream'
 import { fileURLToPath } from 'node:url'
-import { utilityProcess } from 'electron'
+import { app, utilityProcess } from 'electron'
 
 import { BuddyServicePeer } from './BuddyServicePeer'
 
@@ -43,6 +44,11 @@ export interface BuddyServiceProcessHandle {
 }
 
 export function resolveBuddyServiceEntry(mainModuleUrl = import.meta.url): string {
+  if (import.meta.env.MODE === 'desktop') {
+    return app.isPackaged
+      ? join(nodeProcess.resourcesPath, 'lexora-service', 'utility.mjs')
+      : join(app.getAppPath(), '.output/build/service/utility.mjs')
+  }
   return fileURLToPath(new URL('./buddy-service.js', mainModuleUrl))
 }
 

@@ -1,13 +1,9 @@
 import type { BrowserWindow, IpcMainEvent } from 'electron'
 import type { ThemeService } from '../../../platform/themes/ThemeService'
 import { ipcMain, nativeTheme, session } from 'electron'
-import { THEME_ASSET_PROTOCOL, THEME_IPC, themeRequestSchema } from '../../../shared/theme/themeApi'
+import { THEME_ASSET_PROTOCOL } from '../../../shared/platform/desktopSchemes'
+import { THEME_IPC, themeRequestSchema } from '../../../shared/theme/themeApi'
 import { assertTrustedSender } from '../ipc'
-
-export const themeSchemePrivileges: Electron.CustomScheme = {
-  scheme: THEME_ASSET_PROTOCOL,
-  privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true },
-}
 
 export function registerThemeIpc(service: ThemeService, getWindow: () => BrowserWindow | null, applyBackground: (color: string, dark: boolean, system: boolean) => void): () => void {
   session.defaultSession.protocol.handle(THEME_ASSET_PROTOCOL, async (request) => {

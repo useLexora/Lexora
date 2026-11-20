@@ -4,6 +4,7 @@ import process from 'node:process'
 import { z } from 'zod'
 import { createBuddyNativeEnvironment } from '../../../platform/native/nativeHost'
 import searchTools from '../../../platform/native/searchTools.json'
+import { resolveBuddySearchToolsDirectory } from '../../../platform/process/serviceEnvironment'
 import { resolveBuddyTarget } from '../../../platform/target'
 import { establishWindowsRuntimeGuard } from '../../../platform/windows/runtimeGuard'
 import { BUDDY_BUILTIN_SKILLS, BUDDY_FEATURES, resolveBuddyPlatform } from '../../../shared/platform'
@@ -24,8 +25,8 @@ export type NodeServiceConfig = z.infer<typeof nodeServiceConfigSchema>
 
 export async function prepareNodeService(config: NodeServiceConfig): Promise<readonly string[]> {
   const target = resolveBuddyTarget(process.platform, process.arch)
-  const native = createBuddyNativeEnvironment({ appPath: config.resourcesRoot, resourcesPath: config.resourcesRoot, isPackaged: true })
-  const searchDirectory = join(config.resourcesRoot, 'search-tools')
+  const native = createBuddyNativeEnvironment({ serviceResourcesRoot: config.resourcesRoot })
+  const searchDirectory = resolveBuddySearchToolsDirectory({ serviceResourcesRoot: config.resourcesRoot })
   const platform = resolveBuddyPlatform(process.platform)
   const skills = [...BUDDY_BUILTIN_SKILLS, ...platform.features.flatMap(id => BUDDY_FEATURES[id].skills)]
     .map(name => join(config.resourcesRoot, 'skills', name))

@@ -5,12 +5,13 @@ import { tmpdir } from 'node:os'
 import { join, normalize, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
+import { PACKAGED_SERVICE_RESOURCES } from '../../../apps/buddy/platform/service/serviceResources.ts'
 import { CPU_ARCHITECTURE, OPERATING_SYSTEM } from '../../../apps/buddy/shared/platform/identifiers.ts'
 import { writeOutput } from '../../shared/cli-output.mjs'
 import { readBuddyReleaseMetadata } from './artifacts.mjs'
 import { assertNativeExecutable, verifyNativeHostFiles } from './native-host.mjs'
 import { desktopNativeVersions } from './native-version.mjs'
-import { excludedPlatformResources, platformResources } from './platform-definition.mjs'
+import { platformSkills } from './platform-definition.mjs'
 import { readBuddyProductMetadata } from './release-metadata.mjs'
 import { verifySearchToolFiles } from './search-tools.mjs'
 import { checkServiceFileModes } from './service-file-modes.mjs'
@@ -25,31 +26,41 @@ export function verifyDesktopResources(directory, targetId, cwd = repoRoot) {
   const executablePath = join(directory, platformId === OPERATING_SYSTEM.MacOS ? 'Contents/MacOS/lexora-buddy' : platformId === OPERATING_SYSTEM.Windows ? 'Lexora Buddy.exe' : 'lexora-buddy')
   assertNativeExecutable(readFileSync(executablePath), platform, executablePath)
   const resources = join(directory, platformId === OPERATING_SYSTEM.MacOS ? 'Contents/Resources' : 'resources')
-  for (const { to: path } of platformResources(platform)) {
-    if (!existsSync(join(resources, path)))
-      throw new Error(`Desktop is missing ${path}`)
-  }
-  for (const { to: path } of excludedPlatformResources(platform)) {
+  const serviceResources = join(resources, PACKAGED_SERVICE_RESOURCES)
+  for (const path of ['native-host', 'native-image', 'search-tools', 'service/resources/skills']) {
     if (existsSync(join(resources, path)))
-      throw new Error(`Desktop must not contain ${path} on ${platformId}`)
+      throw new Error(`Desktop contains a duplicate service resource: ${path}`)
   }
-  verifyNativeHostFiles(entry => readFileSync(join(resources, entry)), platform)
-  verifySearchToolFiles(entry => readFileSync(join(resources, 'search-tools', entry)), platformId, platform.architecture, { signed: platformId === OPERATING_SYSTEM.MacOS })
+  verifyNativeHostFiles(entry => readFileSync(join(serviceResources, entry)), platform)
+  verifySearchToolFiles(entry => readFileSync(join(serviceResources, 'search-tools', entry)), platformId, platform.architecture, { signed: platformId === OPERATING_SYSTEM.MacOS })
+  const skills = platformSkills(platform)
+  for (const name of skills) {
+    if (!existsSync(join(serviceResources, 'skills', name, 'SKILL.md')))
+      throw new Error(`Desktop is missing the built-in Skill: ${name}`)
+  }
+  for (const name of readdirSync(join(serviceResources, 'skills'))) {
+    if (!skills.includes(name))
+      throw new Error(`Unexpected built-in Skill on ${platformId}: ${name}`)
+  }
   if (platformId === OPERATING_SYSTEM.Linux)
     verifyShellSandboxFiles(entry => readFileSync(join(resources, 'shell-sandbox', entry)), platform)
   else if (existsSync(join(resources, 'shell-sandbox')))
     throw new Error(`${platformId} Desktop must not contain the Linux shell sandbox`)
   if (platform.features.includes('nativePet'))
     assertNativeExecutable(readFileSync(join(resources, 'native-pet/lexora-buddy-pet')), platform, 'native pet')
+  else if (existsSync(join(resources, 'native-pet')))
+    throw new Error(`${platformId} Desktop must not contain the native pet`)
   if (platformId === OPERATING_SYSTEM.Linux)
     checkServiceFileModes(join(resources, 'lexora-service'))
   const { version, prerelease } = readBuddyProductMetadata(cwd)
   execFileSync(process.execPath, [join(repoRoot, 'packaging/buddy/release/product-release-set.mjs'), '--verify', join(resources, 'release-set.json'), platform.id, version], { stdio: 'pipe', timeout: 120_000 })
+  if (!existsSync(join(resources, 'lexora-service/utility.mjs')))
+    throw new Error('Missing packaged Core utility adapter')
   const node = join(resources, 'lexora-runtime', platformId === OPERATING_SYSTEM.Windows ? 'node.exe' : 'node')
   execFileSync(node, [join(resources, 'lexora-service/service.mjs'), '--check-runtime'], { cwd: resources, stdio: 'pipe', timeout: 30_000 })
   if (prerelease)
     verifyDesktopNativeVersion(directory, executablePath, platformId, version)
-  return { executablePath, resources }
+  return { executablePath, resources, serviceResources }
 }
 
 function verifyDesktopNativeVersion(directory, executablePath, platform, version) {
@@ -82,7 +93,7 @@ export function verifyDesktopDirectory(directory, targetId, cwd = repoRoot) {
   const asar = createRequire(builder.resolve('app-builder-lib'))('@electron/asar')
   const archive = join(resources, 'app.asar')
   const entries = asar.listPackage(archive).map(entry => entry.replaceAll('\\', '/').replace(/^\//, ''))
-  for (const entry of ['main/index.js', 'main/buddy-service.js', 'preload/index.cjs', 'renderer/index.html']) {
+  for (const entry of ['main/index.js', 'preload/index.cjs', 'renderer/index.html']) {
     if (!entries.includes(`.output/build/electron/${entry}`))
       throw new Error(`Desktop archive is missing ${entry}`)
   }

@@ -38,7 +38,7 @@ interface HostGeneration {
 }
 
 export async function startLocalServiceDaemon(config: ServiceLaunch, options: { restartDesktop?: () => void, foreground?: boolean } = {}) {
-  const nativePaths = { appPath: config.resourcesRoot, resourcesPath: config.resourcesRoot, isPackaged: true }
+  const nativePaths = { serviceResourcesRoot: config.resourcesRoot }
   const processControl = resolveBuddyProcessControl(nativePaths)
   const owner = await ServiceProfileOwner.acquire(config, processControl)
   const identity = serviceIdentitySchema.parse(serviceIdentitySchema.strip().parse(owner.discovery))

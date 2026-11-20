@@ -3,7 +3,7 @@ import { mkdirSync, realpathSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
-import { app, crashReporter, Menu, protocol } from 'electron'
+import { app, crashReporter, Menu } from 'electron'
 import buddyPackage from '../../../package.json'
 import { currentPlatform } from '../../../platform/currentPlatform'
 import { resolveBuddyPrivateDirectories } from '../../../platform/native/nativeHost'
@@ -11,17 +11,12 @@ import { acquireStorageRootLease } from '../../../platform/storage/StorageRootLe
 import { readDiagnosticError } from '../../../shared/diagnostics/applicationDiagnostic'
 import { ApplicationEvents } from '../../../shared/observability/ApplicationEvents'
 import { OPERATING_SYSTEM } from '../../../shared/platform/identifiers'
-import { attachmentSchemePrivileges } from '../attachmentProtocol'
 import { DesktopDiagnosticLogger } from '../desktopDiagnostics'
-import { extensionSchemePrivileges } from '../extensions/ExtensionProtocol'
 import { resolveBuddyRuntimePaths } from '../paths'
 import { desktopHosts } from '../platform/desktopHost'
-import { rendererSchemePrivileges } from '../rendererProtocol'
 import { resolveDesktopLaunchIntent } from '../startupIntent'
 import { requestPersistenceUpgrade } from '../storage/requestPersistenceUpgrade'
 import { prepareStorageBootstrap, readStorageBootstrap, unifiedStoragePaths } from '../storage/storageBootstrap'
-import { fileIconSchemePrivileges } from '../themes/registerFileIconIpc'
-import { themeSchemePrivileges } from '../themes/registerThemeIpc'
 import { bootstrapStep } from './desktopBootstrap'
 import { desktopIcons } from './desktopIcons'
 import { DesktopStartup } from './DesktopStartup'
@@ -152,7 +147,6 @@ export function initializeDesktopEnvironment(environment: DesktopEnvironment): v
       environment.diagnostics.record({ scope: 'desktop', level: 'warn', event: 'crash_reporter.unavailable', ...readDiagnosticError(error) })
     }
   }
-  registerDesktopSchemes()
   bootstrapStep('desktop_identity', () => desktopHosts[currentPlatform.id].setIdentity?.(paths.desktopName))
 }
 
@@ -181,14 +175,4 @@ export async function prepareDesktopReady(environment: DesktopEnvironment): Prom
   }
   app.setAppUserModelId(paths.desktopName)
   Menu.setApplicationMenu(null)
-}
-
-let desktopSchemesRegistered = false
-export function registerDesktopSchemes(): void {
-  if (desktopSchemesRegistered)
-    return
-  bootstrapStep('register_protocols', () => {
-    protocol.registerSchemesAsPrivileged([...attachmentSchemePrivileges, rendererSchemePrivileges, extensionSchemePrivileges, fileIconSchemePrivileges, themeSchemePrivileges])
-  })
-  desktopSchemesRegistered = true
 }

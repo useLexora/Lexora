@@ -12,7 +12,6 @@ import { launchLocalService } from '../../../platform/service/launchLocalService
 import { acquireStorageRootLease } from '../../../platform/storage/StorageRootLease'
 import { resolveBuddyRuntimePaths } from '../paths'
 import { INSTALLER_EXIT_ARGUMENT, resolveDesktopLaunchIntent } from '../startupIntent'
-import { requestPersistenceUpgrade } from '../storage/requestPersistenceUpgrade'
 import { prepareStorageBootstrap, readStorageBootstrap } from '../storage/storageBootstrap'
 
 export async function startDesktopServiceEntry(): Promise<boolean> {
@@ -72,6 +71,7 @@ export async function startDesktopServiceEntry(): Promise<boolean> {
       let maintenance: boolean
       try {
         const prepared = prepareStorageBootstrap(paths, resolveBuddyPrivateDirectories({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, isPackaged: app.isPackaged }))
+        const { requestPersistenceUpgrade } = await import('../storage/requestPersistenceUpgrade')
         await requestPersistenceUpgrade(prepared)
         maintenance = !!(await prepared.store.read()).pending
       }
