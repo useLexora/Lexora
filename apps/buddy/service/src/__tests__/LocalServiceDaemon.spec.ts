@@ -3,6 +3,7 @@ import type { ServiceLaunch } from '../../../shared/service/localServiceProtocol
 import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ServiceRpcChannel } from '../../../platform/service/ServiceRpcChannel'
+import { ServiceFrameError } from '../../../platform/service/SocketFrames'
 import { Emitter } from '../../../shared/events/Emitter'
 import { startLocalServiceDaemon } from '../LocalServiceDaemon'
 
@@ -28,6 +29,7 @@ class Frames {
   readonly onDidClose = this.closes.event
   opposite!: Frames
   closed = false
+  readonly activity = { pendingWriteBytes: 0, pendingBinaryBytes: 0 }
   transport() {
     return {
       postMessage: (message: unknown) => this.opposite.messages.fire(message),
@@ -83,6 +85,7 @@ vi.mock('../../../platform/service/LocalServiceServer', () => ({ LocalServiceSer
 } }))
 vi.mock('../../../platform/service/ServiceChildProcess', () => ({ ServiceChildProcess: class {
   readonly ordinal = fixture.children.length
+  readonly child = { pid: 9000 + this.ordinal }
   readonly exited: Promise<{ code: number, signal: null }>
   exit!: () => void
   peer?: ServiceRpcChannel
@@ -146,6 +149,7 @@ afterEach(async () => {
   daemon = undefined
   process.exitCode = exitCode
   process.env = environment
+  vi.restoreAllMocks()
 })
 
 const readyAgain = () => expect.poll(() => fixture.phases).toEqual(['starting', 'ready', 'recovering', 'ready'])
@@ -192,12 +196,13 @@ it('opens the startup window while Core initializes and waits for initialization
 
 describe('local service host recovery', () => {
   it.each(['process', 'socket'])('recovers exactly once when %s loss arrives first', async (first) => {
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {})
     daemon = await startLocalServiceDaemon(config)
     const original = fixture.children[0]
     if (first === 'process')
       original.exit()
     else
-      original.peer.close(new Error('CONNECTION_LOST'))
+      original.peer.close(new ServiceFrameError('SERVICE_WRITE_QUEUE_LIMIT', 128))
     await readyAgain()
     expect(fixture.children).toHaveLength(2)
     expect(fixture.suspended).toBe(1)
@@ -205,6 +210,21 @@ describe('local service host recovery', () => {
     expect(original.clean).toBe(true)
     expect(fixture.ownerReleased).toBe(false)
     expect(process.exitCode).toBe(exitCode)
+    const records = stderr.mock.calls.map(([line]) => JSON.parse(String(line)))
+    const exit = expect.objectContaining({ event: 'platform_host.process_exited', hostPid: 9000, exit: { code: 1, signal: null } })
+    const recovered = expect.objectContaining({ event: 'platform_host.recovered', attempt: 1 })
+    expect(records).toEqual(first === 'process'
+      ? [exit, recovered]
+      : [
+          expect.objectContaining({
+            event: 'platform_host.connection_closed',
+            hostPid: 9000,
+            rpcDisconnect: expect.objectContaining({ reason: 'SERVICE_WRITE_QUEUE_LIMIT', frameBytes: 128 }),
+          }),
+          exit,
+          recovered,
+        ])
+    expect(records.at(-1).previousGeneration).toBe(records[0].generation)
     original.exit()
     await Promise.resolve()
     expect(fixture.children).toHaveLength(2)

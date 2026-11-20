@@ -53,6 +53,7 @@ const bundleRecordSchema = applicationLogRecordSchema.pick({
   sandboxProcess: true,
   output: true,
   processExit: true,
+  rpcDisconnect: true,
   loadFailure: true,
   recoveryAction: true,
   previousLaunchId: true,

@@ -28,6 +28,25 @@ function unpack(bytes: Uint8Array) {
 }
 
 describe('application diagnostic bundles', () => {
+  it('retains platform host disconnect metadata in the application log and export', async () => {
+    const directory = await createTemporaryDirectory('lexora-host-disconnect-')
+    const logger = new DesktopDiagnosticLogger({ directory, appVersion: '0.22.0', userHome: '/fixture' })
+    const fact = {
+      scope: 'desktop',
+      level: 'error',
+      event: 'platform_host.connection_closed',
+      component: 'desktop.platform_host',
+      generation: crypto.randomUUID(),
+      rpcDisconnect: { reason: 'SERVICE_WRITE_QUEUE_LIMIT', frameBytes: 65536, pendingWriteBytes: 4136960, pendingBinaryBytes: 0, lastSentMethod: 'host.sandbox.output' },
+    } as const
+    expect(logger.record(fact)).toBe(true)
+    expect(logger.record({ ...fact, rpcDisconnect: { ...fact.rpcDisconnect, lastSentMethod: '/fixture/private' } })).toBe(false)
+    await logger.close()
+    const reader = new ApplicationLogReader(directory, logger.launchId, '/fixture')
+    const bundle = unpack((await createApplicationDiagnosticBundle(reader, 'current'))!.bytes)
+    expect(bundle.errors).toContainEqual(expect.objectContaining(fact))
+  })
+
   it('makes native inference facts available to log queries and exports without raw stderr or private data', async () => {
     const directory = await createTemporaryDirectory('lexora-inference-diagnostic-bundle-')
     const logger = new DesktopDiagnosticLogger({ directory, appVersion: '0.21.0', userHome: '/fixture' })

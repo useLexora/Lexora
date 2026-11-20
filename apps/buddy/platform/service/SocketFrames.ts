@@ -13,9 +13,29 @@ const binaryRequestHeader = z.object({
   byteLength: z.number().int().nonnegative().max(BUDDY_ATTACHMENT_TOTAL_BYTES_LIMIT),
 }).strict()
 
+export class ServiceFrameError extends Error {
+  readonly code: string
+  readonly frameBytes?: number
+  readonly systemCode?: string
+
+  constructor(code: string, frameBytes?: number, systemCode?: string) {
+    super(code)
+    this.code = code
+    this.frameBytes = frameBytes
+    this.systemCode = systemCode
+  }
+}
+
+function readMethod(message: unknown): string | undefined {
+  if (message && typeof message === 'object' && 'method' in message && typeof message.method === 'string'
+    && /^[a-z][a-z\d.]{0,95}$/i.test(message.method)) {
+    return message.method
+  }
+}
+
 export class SocketFrames {
   readonly #socket: Socket
-  readonly #messages = new Emitter<string>(() => this.close(new Error('SERVICE_FRAME_HANDLER_FAILED')))
+  readonly #messages = new Emitter<string>(() => this.close(new ServiceFrameError('SERVICE_FRAME_HANDLER_FAILED')))
   readonly #closed = new Emitter<Error>(() => {})
   readonly onFrame = this.#messages.event
   readonly onDidClose = this.#closed.event
@@ -24,13 +44,24 @@ export class SocketFrames {
   #paused = false
   #writingControlBytes = 0
   #writingBinaryBytes = 0
+  #lastSentMethod: string | undefined
+  #lastReceivedMethod: string | undefined
   #body: { bytes: Uint8Array, offset: number, deliver: (bytes: Uint8Array) => void } | null = null
 
   constructor(socket: Socket) {
     this.#socket = socket
     socket.on('data', chunk => this.#receive(typeof chunk === 'string' ? Buffer.from(chunk) : chunk))
-    socket.once('error', () => this.close(new Error('SERVICE_CONNECTION_FAILED')))
-    socket.once('close', () => this.close(new Error('SERVICE_CONNECTION_CLOSED')))
+    socket.once('error', (error: NodeJS.ErrnoException) => this.close(new ServiceFrameError('SERVICE_CONNECTION_FAILED', undefined, error.code)))
+    socket.once('close', () => this.close(new ServiceFrameError('SERVICE_CONNECTION_CLOSED')))
+  }
+
+  get activity() {
+    return {
+      lastSentMethod: this.#lastSentMethod,
+      lastReceivedMethod: this.#lastReceivedMethod,
+      pendingWriteBytes: this.#writingControlBytes,
+      pendingBinaryBytes: this.#writingBinaryBytes,
+    }
   }
 
   send(frame: string): boolean {
@@ -39,8 +70,12 @@ export class SocketFrames {
     const bytes = Buffer.byteLength(frame)
     if (bytes > SERVICE_FRAME_BYTES)
       throw Object.assign(new RangeError('RPC_PAYLOAD_TOO_LARGE'), { code: 'RPC_PAYLOAD_TOO_LARGE' })
-    if (frame.includes('\n') || this.#writingControlBytes + bytes + 1 > SERVICE_CONNECTION_BYTES) {
-      this.close(new Error('SERVICE_FRAME_LIMIT'))
+    if (frame.includes('\n')) {
+      this.close(new ServiceFrameError('SERVICE_WRITE_FRAME_INVALID', bytes))
+      return false
+    }
+    if (this.#writingControlBytes + bytes + 1 > SERVICE_CONNECTION_BYTES) {
+      this.close(new ServiceFrameError('SERVICE_WRITE_QUEUE_LIMIT', bytes))
       return false
     }
     this.#writingControlBytes += bytes + 1
@@ -66,6 +101,7 @@ export class SocketFrames {
   transport(): RuntimeMessageTransport {
     return {
       postMessage: (message) => {
+        this.#lastSentMethod = readMethod(message) ?? this.#lastSentMethod
         if ('id' in message && 'method' in message && message.params && typeof message.params === 'object'
           && 'bytes' in message.params && message.params.bytes instanceof Uint8Array) {
           const { bytes, ...params } = message.params
@@ -80,17 +116,20 @@ export class SocketFrames {
           })
           return
         }
-        if (!this.send(JSON.stringify(message)))
+        const wireMessage = 'result' in message && message.result === undefined ? { ...message, result: null } : message
+        if (!this.send(JSON.stringify(wireMessage)))
           throw new Error('SERVICE_CONNECTION_CLOSED')
       },
       subscribe: (listener) => {
         const subscription = this.onFrame((frame) => {
           const message = JSON.parse(frame)
+          this.#lastReceivedMethod = readMethod(message) ?? this.#lastReceivedMethod
           if (!message || typeof message !== 'object' || !('binaryRequest' in message)) {
             listener(message)
             return
           }
           const { binaryRequest, byteLength } = binaryRequestHeader.parse(message)
+          this.#lastReceivedMethod = readMethod(binaryRequest) ?? this.#lastReceivedMethod
           const deliver = (bytes: Uint8Array) => listener({ ...binaryRequest, params: { ...binaryRequest.params, bytes } })
           const bytes = new Uint8Array(byteLength)
           if (byteLength === 0)
@@ -104,7 +143,7 @@ export class SocketFrames {
     }
   }
 
-  close(reason = new Error('SERVICE_CONNECTION_CLOSED')): void {
+  close(reason: Error = new ServiceFrameError('SERVICE_CONNECTION_CLOSED')): void {
     if (this.#ended)
       return
     this.#ended = true
@@ -136,7 +175,7 @@ export class SocketFrames {
             body.deliver(body.bytes)
           }
           catch {
-            this.close(new Error('SERVICE_FRAME_HANDLER_FAILED'))
+            this.close(new ServiceFrameError('SERVICE_FRAME_HANDLER_FAILED'))
           }
         }
         continue
@@ -144,11 +183,11 @@ export class SocketFrames {
       const index = this.#buffer.indexOf(10)
       if (index < 0) {
         if (this.#buffer.length > SERVICE_FRAME_BYTES)
-          this.close(new Error('SERVICE_FRAME_LIMIT'))
+          this.close(new ServiceFrameError('SERVICE_READ_FRAME_LIMIT', this.#buffer.length))
         return
       }
       if (index === 0 || index > SERVICE_FRAME_BYTES) {
-        this.close(new Error('SERVICE_FRAME_LIMIT'))
+        this.close(new ServiceFrameError(index === 0 ? 'SERVICE_READ_FRAME_EMPTY' : 'SERVICE_READ_FRAME_LIMIT', index))
         return
       }
       const bytes = this.#buffer.subarray(0, index)
@@ -159,7 +198,7 @@ export class SocketFrames {
         this.#messages.fire(frame)
       }
       catch {
-        this.close(new Error('SERVICE_FRAME_INVALID'))
+        this.close(new ServiceFrameError('SERVICE_READ_FRAME_INVALID', bytes.length))
       }
     }
   }
