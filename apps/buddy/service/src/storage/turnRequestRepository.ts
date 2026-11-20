@@ -52,7 +52,7 @@ export function assertTurnInputDelivery(database: DatabaseSync, input: PrepareTu
   if (boundary === 'dispatch' && target && (target.phase !== 'closed' || target.cleanupState !== 'clean'))
     throw new BuddyServiceError('INPUT_DELIVERY_TARGET_UNAVAILABLE')
   if (!target && database.prepare(`SELECT 1 FROM runs r JOIN execution_state e ON e.run_id = r.id
-    WHERE r.conversation_id = ? AND r.branch_id = ? AND r.buddy_id = ? AND (r.status IN ('queued', 'running') OR e.phase <> 'closed' OR e.cleanup_state <> 'clean') LIMIT 1`).get(input.conversationId, input.branchId, delivery.actorId)) {
+    WHERE r.conversation_id = ? AND r.branch_id = ? AND r.buddy_id = ? AND (r.status IN ('queued', 'running') OR e.phase <> 'closed' OR e.cleanup_state = 'pending') LIMIT 1`).get(input.conversationId, input.branchId, delivery.actorId)) {
     throw new BuddyServiceError('INPUT_DELIVERY_TARGET_UNAVAILABLE')
   }
   if (target && delivery.mode === 'current') {

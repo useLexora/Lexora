@@ -146,6 +146,7 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
     }
     let supplementTarget = delivery?.mode === 'current' ? options.actorInput?.mailboxTarget.value : null
     let deliveryKey: string | undefined
+    let operationKey: string | undefined
     const sourceScopeKey = options.draftScopeKey.value
     const submittedDraft = options.drafts.snapshot(sourceScopeKey)
     const initialConfiguration = draftSubmissionConfiguration(submittedDraft)
@@ -213,7 +214,7 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
           submissionRevision.value += 1
         return true
       }
-      const operationKey = `turn:${confirmedDraft.draftId}:${expectedRevision}:${buddyId ?? ''}:${JSON.stringify(delivery ?? null)}`
+      operationKey = `turn:${confirmedDraft.draftId}:${expectedRevision}:${buddyId ?? ''}:${JSON.stringify(delivery ?? null)}`
       const requestId = requestIds.resolve(operationKey)
       if (delivery?.target || stoppingRunId.value || options.activeRun.value || queue.queuedMessages.value.length) {
         const result = await options.api.chat.enqueue({ draftId: confirmedDraft.draftId, expectedRevision, requestId, ...(delivery ? { delivery } : {}) })
@@ -271,8 +272,12 @@ export function useChatTurnExecution(options: UseChatTurnExecutionOptions) {
     }
     catch (error) {
       const code = error instanceof Error ? parseLocalChatPublicError(error.message)?.code : undefined
-      if (deliveryKey && (code === 'INPUT_DELIVERY_TARGET_UNAVAILABLE' || code === 'INPUT_DELIVERY_INCOMPATIBLE' || code === 'DRAFT_CONFLICT'))
-        pendingDeliveries.delete(deliveryKey)
+      if (code === 'INPUT_DELIVERY_TARGET_UNAVAILABLE' || code === 'INPUT_DELIVERY_INCOMPATIBLE' || code === 'DRAFT_CONFLICT') {
+        if (operationKey)
+          requestIds.release(operationKey)
+        if (deliveryKey)
+          pendingDeliveries.delete(deliveryKey)
+      }
       if (isSourceViewCurrent())
         setNormalizedError(error)
       return false
