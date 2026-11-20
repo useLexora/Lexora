@@ -1,8 +1,8 @@
 import type { ZodType } from 'zod'
 import { z } from 'zod'
 import { buddyInputDeliverySchema } from '../conversation/chatApi'
-import { buddyComposerDraftOpenSchema, buddyComposerDraftSaveSchema, buddyComposerDraftScopeSchema } from '../conversation/composerDraft'
-import { conversationRequestSchemas } from '../conversation/conversationApi'
+import { buddyComposerDraftExecutionConfigSchema, buddyComposerDraftOpenSchema, buddyComposerDraftSaveSchema, buddyComposerDraftScopeSchema } from '../conversation/composerDraft'
+import { conversationRequestSchemas, modelSelectionSchema } from '../conversation/conversationApi'
 import { conversationArchivePolicySchema, conversationArchiveTargetSchema } from '../conversation/conversationArchiveApi'
 import { submitInputIntentSchema } from '../conversation/submittedInput'
 import { taskMarkClearSchema, taskMarkInputSchema, taskMarkReadSchema } from '../conversation/taskMarkApi'
@@ -74,6 +74,13 @@ export const productCommandIntents = {
 export type ProductCommandMethod = keyof typeof productCommandIntents
 export const PRODUCT_METHODS = {
   ...PRODUCT_QUERY_METHODS,
+  'chat.getNewTaskDefaults': {
+    input: z.object({}).strict(),
+    output: z.object({ executionConfig: buddyComposerDraftExecutionConfigSchema, modelSelection: modelSelectionSchema.nullable(), modelDisplayName: z.string().min(1).nullable() }).strict(),
+    role: 'reader',
+    command: false,
+    ready: true,
+  },
   'resources.prepare': { input: resourcePrepareSchema, output: resourceDownloadSchema, role: 'reader', command: false, ready: true },
   'uploads.get': { input: uploadGetSchema, output: uploadStateSchema, role: 'owner', command: false, ready: true },
   ...Object.fromEntries(Object.entries(productCommandIntents).map(([method, intent]) => [method, command(intent)])) as { [M in ProductCommandMethod]: ReturnType<typeof command> },

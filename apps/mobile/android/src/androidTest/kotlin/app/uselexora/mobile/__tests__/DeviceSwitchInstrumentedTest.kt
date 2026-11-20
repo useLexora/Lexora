@@ -124,7 +124,10 @@ class DeviceSwitchInstrumentedTest {
                 val retainedA = connection.connect()!!.also { clients.add(it) }
                 assertEquals(identityA.partition, retainedA.identity!!.partition)
                 assertScope(retainedA, first, second)
-                val created = retainedA.call("conversations.get", JSONObject().put("conversationId", uiEvidence.getString("createdConversationId")))
+                val items = retainedA.call("conversations.list", JSONObject().put("spaceId", first.getString("spaceId"))).getJSONArray("items")
+                val submitted = (0 until items.length()).map(items::getJSONObject).single { it.optString("title") == "服务 A 空间草稿😀 $token" }
+                uiEvidence.put("createdConversationId", submitted.getString("id")).put("createdRunId", submitted.getString("resultRunId"))
+                val created = retainedA.call("conversations.get", JSONObject().put("conversationId", submitted.getString("id")))
                 assertEquals(first.getString("spaceId"), created.getString("spaceId"))
                 waitUntil(30000) { retainedA.call("runs.get", JSONObject().put("runId", uiEvidence.getString("createdRunId"))).getString("status") == "completed" }
                 marker.writeText(JSONObject().put("deviceCount", 2).put("firstDeviceId", identityA.deviceId).put("secondDeviceId", identityB.deviceId)
@@ -146,7 +149,6 @@ class DeviceSwitchInstrumentedTest {
         val firstText = "服务 A 空间草稿😀 $token"
         val secondText = "服务 B 空间草稿😀 $token"
         val screenshots = JSONArray()
-        var receipt: JSONObject? = null
         ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java)).use { scenario ->
             fun input(): String {
                 var result = ""
@@ -227,9 +229,12 @@ class DeviceSwitchInstrumentedTest {
                 click("切换到 $next")
                 awaitComputer(next, config)
             }
-            fun resume(text: String) {
+            fun openNewTask() {
                 MobileUiTestDriver.openWorkbench()
-                click("新任务")
+                click("新任务"); waitInput()
+            }
+            fun resume(text: String) {
+                openNewTask()
                 waitUntil { input() == text }
             }
 
@@ -248,44 +253,56 @@ class DeviceSwitchInstrumentedTest {
             clickId("space-filter"); click("未分配空间")
             waitUntil { MobileUiTestDriver.contains(first.getString("unassignedTitle")) && !MobileUiTestDriver.contains(first.getString("assignedTitle")) }
             capture("unassigned") { MobileUiTestDriver.contains(first.getString("unassignedTitle")) && !MobileUiTestDriver.contains(first.getString("assignedTitle")) }
-            click("新任务"); waitInput()
+            openNewTask()
             assertTrue(MobileUiTestDriver.exists("未分配空间"))
             click("返回")
-            clickId("space-filter"); click(first.getString("spaceName"))
+            clickId("space-filter"); click(first.getString("spaceName")); clickId("home-all-tasks")
             waitUntil { MobileUiTestDriver.contains(first.getString("assignedTitle")) && !MobileUiTestDriver.contains(first.getString("unassignedTitle")) }
             capture("space-tasks") { MobileUiTestDriver.contains(first.getString("assignedTitle")) && !MobileUiTestDriver.contains(first.getString("unassignedTitle")) }
-            click("新任务"); waitInput()
+            openNewTask()
             assertTrue(MobileUiTestDriver.exists(first.getString("spaceName")))
+            waitUntil { MobileUiTestDriver.exists("权限：完全访问") && MobileUiTestDriver.exists("Devices verification") }
             write(firstText, firstIdentity, first)
             capture("new-space-task") { input() == firstText && MobileUiTestDriver.exists("任务设置") }
 
             switchComputer("验收服务 A", "验收服务 B", second)
             clickId("space-filter"); click(second.getString("spaceName")); clickId("home-all-tasks")
             waitUntil { MobileUiTestDriver.contains(second.getString("assignedTitle")) && !MobileUiTestDriver.contains(second.getString("unassignedTitle")) }
-            click("新任务"); waitInput()
+            openNewTask()
             assertEquals("", input())
+            waitUntil { MobileUiTestDriver.exists("权限：本机只读") }
+            clickId("composer-permission")
+            click("人工审批")
+            waitUntil { MobileUiTestDriver.exists("权限：人工审批") }
             write(secondText, secondIdentity, second)
             switchComputer("验收服务 B", "验收服务 A", first)
             resume(firstText)
             assertTrue(MobileUiTestDriver.exists(first.getString("spaceName")))
             assertTrue(store.drafts().any { it.partition == secondIdentity.partition && MobileContentAdapter.text(it.value.getJSONObject("content")) == secondText })
             clickId("send")
-            waitUntil(30000) { store.outbox(firstIdentity.partition).any { it.method == "chat.submitInput" && it.state == "accepted" } }
-            receipt = store.outbox(firstIdentity.partition).single { it.method == "chat.submitInput" && it.state == "accepted" }.receipt
-            waitUntil(30000) { MobileUiTestDriver.contains("空间验收回复") }
-            capture("conversation") { MobileUiTestDriver.contains("空间验收回复") && MobileUiTestDriver.exists("任务设置") }
+            fun hasReply(): Boolean {
+                val result = java.util.concurrent.CompletableFuture<Boolean>()
+                scenario.onActivity {
+                    fun reader(view: android.view.View): android.webkit.WebView? = if (view is android.webkit.WebView) view else
+                        (view as? android.view.ViewGroup)?.let { group -> (0 until group.childCount).firstNotNullOfOrNull { reader(group.getChildAt(it)) } }
+                    val web = reader(it.window.decorView)
+                    if (web == null) result.complete(false)
+                    else web.evaluateJavascript("document.body.innerText.includes('空间验收回复')") { value -> result.complete(value == "true") }
+                }
+                return result.get(5, TimeUnit.SECONDS)
+            }
+            waitUntil(30000) { hasReply() }
+            capture("conversation") { hasReply() && MobileUiTestDriver.exists("任务设置") }
             switchComputer("验收服务 A", "验收服务 B", second)
             resume(secondText)
             assertTrue(MobileUiTestDriver.exists(second.getString("spaceName")))
             scenario.recreate()
-            waitUntil { input() == secondText }
+            waitUntil { input() == secondText && MobileUiTestDriver.exists("权限：人工审批") }
             capture("restored-second-input") { input() == secondText && MobileUiTestDriver.enabled("发送") && MobileUiTestDriver.exists("任务设置") }
             assertEquals(0, store.outbox(secondIdentity.partition).count { it.method == "chat.submitInput" })
         }
-        val target = receipt!!.getJSONObject("target")
         return JSONObject().put("topBarDeviceSwitch", true).put("spaceNavigation", true).put("allAndUnassignedFilters", true)
             .put("newTaskInheritsSpace", true).put("localInputIsolation", true).put("inputSurvivesRecreation", true)
-            .put("createdConversationId", target.getString("conversationId")).put("createdRunId", target.getString("runId"))
             .put("screenshots", screenshots)
     }
 

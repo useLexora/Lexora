@@ -5,7 +5,7 @@ import app.uselexora.mobile.protocol.ProtocolFailure
 import org.json.JSONObject
 
 /** A single immutable editor snapshot; attachment ownership stays with the database. */
-data class ComposerEdit(val text: String, val model: String?, val execution: String, val spaceId: String?, val spaceName: String?, val keepSettings: Boolean = false) {
+data class ComposerEdit(val text: String, val model: String?, val execution: String?, val spaceId: String?, val spaceName: String?, val keepSettings: Boolean = false) {
     internal fun applyTo(value: JSONObject, bodyChanged: Boolean, followsTaskModel: Boolean): Boolean {
         if (bodyChanged) {
             val panel = value.optJSONObject("content")?.optJSONArray("panelResourceIds")
@@ -16,7 +16,7 @@ data class ComposerEdit(val text: String, val model: String?, val execution: Str
             if (!sameDraftJson(value.opt(key), next)) { value.put(key, next); changed = true }
         }
         set("modelSelection", if (followsTaskModel) JSONObject.NULL else model?.let(::JSONObject) ?: JSONObject.NULL)
-        set("executionConfig", JSONObject(execution))
+        execution?.let { set("executionConfig", JSONObject(it)) }
         set("spaceId", spaceId ?: JSONObject.NULL)
         set("spaceName", spaceName ?: JSONObject.NULL)
         return changed

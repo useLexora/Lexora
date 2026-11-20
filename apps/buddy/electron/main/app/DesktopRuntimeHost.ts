@@ -288,6 +288,7 @@ export class DesktopRuntimeHost {
           return this.extensionAgent.invoke(extensionAgentInvocationSchema.parse(input), signal ?? new AbortController().signal)
         }),
         peer.onRequest(runtimePreferencesRpc.get, () => this.#config!.runtime),
+        peer.onRequest(runtimePreferencesRpc.getDefaultPermissionMode, async () => (await this.configStore.read()).desktop.chat.permissionMode),
         peer.onRequest(networkPermissionsRpc.get, async () => (await this.configStore.read()).browser.networkPermissions),
         peer.onRequest(networkPermissionsRpc.allow, async (params, signal) => {
           const input = networkPermissionGrantSchema.parse(params)

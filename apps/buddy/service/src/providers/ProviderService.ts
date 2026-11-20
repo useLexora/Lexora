@@ -357,6 +357,10 @@ export class ProviderService {
     return this.#states.findByProviderId(providerId)?.enabled !== false && this.#modelCatalog.list(providerId).find(model => model.id === modelId)?.enabled !== false
   }
 
+  getModelDisplayName(providerId: string, modelId: string): string | null {
+    return this.#modelCatalog.getDisplayName(providerId, modelId)
+  }
+
   async listModels(providerId?: string): Promise<readonly BuddyModel[]> {
     await this.#credentialStatus.listOrEmpty()
     return this.#modelCatalog.list(providerId)

@@ -88,6 +88,15 @@ fun MobileShell(
                     (composer.context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(composer.windowToken, 0)
                 } else appearanceSettings = true
             }
+            if (conversation && state.newTaskOpening) {
+                Box(Modifier.fillMaxSize().testTag("new-task-loading"), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.dp)
+                }
+                return@Column
+            }
+            if (conversation && state.newTaskDefaultsFailed) TextButton(onClick = { act(MobileAction.Refresh) }) {
+                Text(mobileText(R.string.new_task_defaults_retry))
+            }
             val connectionNotice = !state.connected && (state.notice == mobileText(R.string.error_not_connected) || state.notice == MobileFailurePresentation.NETWORK_UNAVAILABLE_NOTICE)
             if (!tightInput && !fullscreenInput && state.notice.isNotBlank() && !connectionNotice) Notice(state.notice) { act(MobileAction.DismissNotice) }
             if (conversation && state.selectedTask != null && (state.viewingArchived || (state.connected && (!state.conversationReady || state.readingCached)))) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -143,7 +152,7 @@ fun MobileShell(
                     modifier = if (fullscreenInput) Modifier.weight(1f) else Modifier)
             }
         }
-        if (taskSettings) ConversationSettings(state, onAction) { taskSettings = false }
+        if (taskSettings && !state.newTaskOpening) ConversationSettings(state, onAction) { taskSettings = false }
         if (appearanceSettings) AppearanceSettings { appearanceSettings = false }
     }
     state.taskFiles?.let { TaskFilesPanel(it, onAction) { state.taskFiles = null } }
@@ -305,7 +314,7 @@ private fun ShellHeader(state: MobileUiState, act: (MobileAction) -> Unit, more:
                     Icon(Icons.Outlined.Inventory2, mobileText(if (state.discovery.archived) R.string.mobile_show_active_tasks else R.string.mobile_show_archived_tasks), Modifier.size(20.dp))
                 }
             }
-            MobileScreen.Conversation -> HeaderAction(mobileText(R.string.label_task_settings), desktopSymbol(DesktopSymbol.More), Modifier.testTag("task-information"), plain = true, action = more)
+            MobileScreen.Conversation -> if (!state.newTaskOpening) HeaderAction(mobileText(R.string.label_task_settings), desktopSymbol(DesktopSymbol.More), Modifier.testTag("task-information"), plain = true, action = more)
             else -> HeaderAction(mobileText(R.string.mobile_phone_settings), Icons.Outlined.Tune, action = more)
         }
     }

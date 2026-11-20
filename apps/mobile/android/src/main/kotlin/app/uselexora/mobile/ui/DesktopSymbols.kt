@@ -1,5 +1,7 @@
 package app.uselexora.mobile.ui
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
@@ -17,7 +19,11 @@ internal enum class DesktopSymbol(val key: String) {
     ReadOnly("readOnly"), ManualApproval("manualApproval"), SmartApproval("smartApproval"), FullAccess("fullAccess"), Partners("partners")
 }
 
-internal fun executionSymbol(config: JSONObject) = when {
+@Composable
+internal fun executionIcon(config: JSONObject): ImageVector =
+    if (config.length() == 0) Icons.Outlined.HelpOutline else desktopSymbol(executionSymbol(config))
+
+private fun executionSymbol(config: JSONObject) = when {
     config.optString("executionProfile") == "full_access" -> DesktopSymbol.FullAccess
     config.optString("executionProfile") == "read_only" -> DesktopSymbol.ReadOnly
     config.optString("approvalPolicy") == "manual" -> DesktopSymbol.ManualApproval

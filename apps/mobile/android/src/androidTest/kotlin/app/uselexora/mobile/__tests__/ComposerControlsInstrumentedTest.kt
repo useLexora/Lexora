@@ -24,6 +24,37 @@ class ComposerControlsInstrumentedTest {
     @get:Rule val compose = createComposeRule()
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
+    @Test fun newTaskOpensAsOneSurfaceWithoutIntermediateControlsOrLoadingCopy() {
+        lateinit var input: EditText
+        compose.runOnUiThread { input = EditText(context) }
+        val state = MobileUiState().apply {
+            screen = MobileScreen.Conversation
+            newTaskOpening = true
+            inputFeedback = "partial draft status"
+            modelLabel = "partial model"
+            spaceVisible = true
+        }
+        val actions = mutableListOf<MobileAction>()
+        compose.setContent { LexoraTheme { MobileShell(state, input, { action, _ -> actions.add(action) }) { Box(it) } } }
+        compose.onNodeWithTag("new-task-loading").assertIsDisplayed()
+        for (tag in listOf("space", "model", "composer-permission", "send", "task-information")) compose.onNodeWithTag(tag).assertDoesNotExist()
+        compose.onNodeWithText("partial draft status").assertDoesNotExist()
+        compose.onNodeWithContentDescription(app.uselexora.mobile.i18n.mobileText(R.string.label_back)).performClick()
+        compose.runOnIdle {
+            assertEquals(listOf(MobileAction.Back), actions)
+            state.modelLabel = "Service model"
+            state.spaceLabel = "Draft space"
+            state.executionSelection = ExecutionSettings.modes.last().config()
+            state.executionLabel = ExecutionSettings.label(state.executionSelection)
+            state.inputFeedback = ""
+            state.newTaskOpening = false
+        }
+        compose.onNodeWithTag("new-task-loading").assertDoesNotExist()
+        compose.onNodeWithText("Service model").assertIsDisplayed()
+        compose.onNodeWithText("Draft space").assertIsDisplayed()
+        compose.onNodeWithTag("composer-permission").assertIsDisplayed()
+    }
+
     @Test fun narrowLargeTextKeepsStopSeparateDuringTypingAndAttachmentOnlySend() {
         val run = JSONObject().put("id", "active-run").put("generation", "generation-7")
         val state = MobileUiState().apply {

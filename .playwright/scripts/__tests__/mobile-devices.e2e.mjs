@@ -97,8 +97,8 @@ test('Android switches between two real computers without mixing credentials, sc
       const display = label === 'first' ? 'A' : 'B'
       const spaceName = `验收空间 ${display}`
       const space = await desktop.page.evaluate(name => window.lexoraDesktop.localChat.spaces.create({ name, memoryScope: 'space_only', primaryDirectory: null }), spaceName)
-      await desktop.page.evaluate(async (baseUrl) => {
-        await window.lexoraDesktop.settings.update({ runtime: { codemode: 'off', modelRetryLimit: 0 } })
+      await desktop.page.evaluate(async ({ baseUrl, permissionMode }) => {
+        await window.lexoraDesktop.settings.update({ desktop: { chat: { permissionMode } }, runtime: { codemode: 'off', modelRetryLimit: 0 } })
         const providers = window.lexoraDesktop.localChat.providers
         await providers.upsertCustom({ id: 'devices-fixture', displayName: 'Devices verification', api: 'openai-completions', baseUrl, enabled: true, models: [{ id: 'fixture-model', name: 'Devices verification', input: ['text'], reasoning: false, contextWindow: 128000, maxTokens: 1024 }] })
         const stop = providers.onAuthChallenge((challenge) => {
@@ -110,7 +110,7 @@ test('Android switches between two real computers without mixing credentials, sc
         }
         finally { stop() }
         await providers.setDefaultModel({ providerId: 'devices-fixture', modelId: 'fixture-model', reasoning: null })
-      }, `http://127.0.0.1:${provider.address().port}/v1`)
+      }, { baseUrl: `http://127.0.0.1:${provider.address().port}/v1`, permissionMode: label === 'first' ? 'full_access' : 'read_only' })
       computer.tasks = []
       for (const assigned of [true, false]) {
         const title = `电脑 ${display} ${assigned ? '空间任务' : '未分配任务'}`
@@ -161,7 +161,7 @@ test('Android switches between two real computers without mixing credentials, sc
     expect(new Set(checkpoint.partitions).size).toBe(2)
     expect(checkpoint.firstServiceId).toBe(config.first.pairing.serviceId)
     expect(checkpoint.secondServiceId).toBe(config.second.pairing.serviceId)
-    expect(await computers[0].desktop.page.evaluate(id => window.lexoraDesktop.localChat.conversations.get(id), checkpoint.ui.createdConversationId)).toMatchObject({ spaceId: config.first.spaceId })
+    expect(await computers[0].desktop.page.evaluate(id => window.lexoraDesktop.localChat.conversations.get(id), checkpoint.ui.createdConversationId)).toMatchObject({ spaceId: config.first.spaceId, executionProfile: 'full_access', approvalPolicy: 'policy' })
     expect(await computers[1].desktop.page.evaluate(() => window.lexoraDesktop.localChat.conversations.list())).toHaveLength(2)
     const userInputs = JSON.stringify(requests.flatMap(request => request.messages.filter(message => message.role === 'user')))
     expect(userInputs).toContain(`服务 A 空间草稿😀 ${token}`)
