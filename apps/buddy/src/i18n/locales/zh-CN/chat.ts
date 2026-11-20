@@ -1,8 +1,5 @@
 export default {
-  'desktop.recovery.pending': '有 {count} 项操作需要核对',
-  'desktop.recovery.review': '查看',
   'desktop.recovery.title': '操作恢复',
-  'desktop.recovery.description': '这里保留了尚未向你确认的操作。核对结果后，可以查看原任务或将未受理的输入保存为新草稿。',
   'desktop.recovery.accepted': '操作已受理',
   'desktop.recovery.rejected': '操作未执行',
   'desktop.recovery.not_accepted': '未找到受理记录',

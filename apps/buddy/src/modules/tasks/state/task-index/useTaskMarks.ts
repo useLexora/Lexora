@@ -4,6 +4,7 @@ import type { LocalTaskMark, LocalTaskMarkState, TaskMarkInput } from '@buddy-sh
 import type { Ref } from 'vue'
 import type { TaskMarks } from '../../contracts'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
+import { parseLocalChatPublicError } from '@buddy-shared/runtime/localChatError'
 import { onScopeDispose, readonly, shallowRef, watch } from 'vue'
 import { resolveLocalChatErrorMessage } from '@/shared/lib/localChatError'
 
@@ -221,8 +222,22 @@ export function useTaskMarks(options: TaskMarksOptions): TaskMarks & { dispose: 
         if (suppressed.get(conversationId) === resultRunId)
           return
         const previous = states.value.get(conversationId)
-        const result = await options.api.setRead({ conversationId, resultRunId, readRevision, read: true })
-        await applyMutationState(result, previous)
+        if (!previous?.unread || previous.readRevision !== readRevision || previous.resultRunId !== resultRunId)
+          return
+        let result: LocalTaskMarkState | undefined
+        try {
+          result = await options.api.setRead({ conversationId, resultRunId, readRevision, read: true })
+        }
+        catch (error) {
+          if (!(error instanceof Error) || parseLocalChatPublicError(error.message)?.code !== 'SOURCE_CHANGED')
+            throw error
+          const [current] = await options.api.states([conversationId])
+          result = current
+          if (current?.unread && current.resultRunId === resultRunId && current.readRevision > readRevision)
+            suppressed.set(conversationId, resultRunId)
+        }
+        if (result)
+          await applyMutationState(result, previous)
       })
     }
     finally {

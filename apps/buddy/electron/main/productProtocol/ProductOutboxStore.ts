@@ -134,7 +134,12 @@ export class ProductOutboxStore {
       const current = await this.#read(record.owner, record.commandId)
       if (!current || current.fingerprint !== record.fingerprint)
         throw new Error('OUTBOX_RECORD_CHANGED')
-      const next = recordSchema.parse(update(current))
+      if (!current.envelope && !current.recovery)
+        return current
+      const updated = update(current)
+      if (updated === current)
+        return current
+      const next = recordSchema.parse(updated)
       await this.#write(next)
       return next
     })

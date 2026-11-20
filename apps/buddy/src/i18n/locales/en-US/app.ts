@@ -221,7 +221,7 @@ export default {
   'desktop.notifications.open': 'Open notifications',
   'desktop.notifications.origin.account': 'Account',
   'desktop.notifications.origin.local-runtime': 'This device',
-  'desktop.notifications.origin.desktop': 'App update',
+  'desktop.notifications.origin.desktop': 'Desktop',
   'desktop.notifications.origin.platform-public': 'Platform',
   'desktop.notifications.title': 'Notifications',
   'desktop.notifications.unseenEmptyTitle': 'No unread notifications',

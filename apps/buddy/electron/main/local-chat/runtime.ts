@@ -6,7 +6,7 @@ import { LOCAL_CHAT_IPC_CHANNELS } from '../../shared/localChatApi'
 export function registerRuntimeIpc(context: LocalChatIpcContext): void {
   const { handle, options } = context
 
-  handle(LOCAL_CHAT_IPC_CHANNELS.runtimeRecoveryList, async () => productRecoveryListSchema.parse(await options.runtime.recover?.() ?? []))
+  handle(LOCAL_CHAT_IPC_CHANNELS.runtimeRecoveryList, async (_event, input) => productRecoveryListSchema.parse(await options.runtime.recover?.(productRecoveryTargetSchema.optional().parse(input)?.id) ?? []))
   handle(LOCAL_CHAT_IPC_CHANNELS.runtimeRecoveryAcknowledge, async (_event, input) => {
     await options.runtime.acknowledgeRecovery?.(productRecoveryTargetSchema.parse(input).id)
   })

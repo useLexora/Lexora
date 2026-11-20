@@ -20,6 +20,16 @@ import { DESKTOP_IPC_CHANNELS } from '../shared/desktopApi'
 import { subscribe } from './subscribe'
 
 export function createDesktopApi(): Pick<LexoraDesktopApi, 'app' | 'clipboard' | 'commands' | 'contextPanel' | 'notifications' | 'notificationSounds' | 'settings' | 'storage' | 'sync' | 'window' | 'workbench'> {
+  const quitListeners = new Set<(requestId: string) => Promise<boolean>>()
+  async function prepareQuit(_event: Electron.IpcRendererEvent, input: { requestId?: unknown }) {
+    const requestId = input?.requestId
+    if (typeof requestId !== 'string' || !requestId)
+      return
+    const results = await Promise.allSettled([...quitListeners].map(async listener => listener(requestId)))
+    const saved = results.every(result => result.status === 'fulfilled' && result.value === true)
+    ipcRenderer.send(DESKTOP_IPC_CHANNELS.appPrepareQuitAck, { requestId, saved })
+  }
+
   return {
     notifications: Object.freeze({
       test: () => ipcRenderer.invoke(DESKTOP_NOTIFICATION_CHANNEL, { action: 'test' }),
@@ -107,19 +117,14 @@ export function createDesktopApi(): Pick<LexoraDesktopApi, 'app' | 'clipboard' |
       setupSandbox: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.appSetupSandbox),
       onQuitPreparationCancelled: (listener: (requestId: string) => void) => subscribe(DESKTOP_IPC_CHANNELS.appCancelQuitPreparation, (input: { requestId: string }) => listener(input.requestId)),
       onBeforeQuit: (listener: (requestId: string) => Promise<boolean>) => {
-        const handler = (_event: Electron.IpcRendererEvent, input: { requestId?: unknown }) => {
-          const requestId = typeof input?.requestId === 'string' ? input.requestId : ''
-          if (!requestId)
-            return
-          void Promise.resolve()
-            .then(() => listener(requestId))
-            .catch(() => false)
-            .then((saved) => {
-              ipcRenderer.send(DESKTOP_IPC_CHANNELS.appPrepareQuitAck, { requestId, saved })
-            })
+        if (!quitListeners.size)
+          ipcRenderer.on(DESKTOP_IPC_CHANNELS.appPrepareQuit, prepareQuit)
+        quitListeners.add(listener)
+        return () => {
+          quitListeners.delete(listener)
+          if (!quitListeners.size)
+            ipcRenderer.off(DESKTOP_IPC_CHANNELS.appPrepareQuit, prepareQuit)
         }
-        ipcRenderer.on(DESKTOP_IPC_CHANNELS.appPrepareQuit, handler)
-        return () => ipcRenderer.off(DESKTOP_IPC_CHANNELS.appPrepareQuit, handler)
       },
       onOpenTarget: (listener: (target: DesktopOpenTarget) => Promise<boolean>) => {
         const stopLegacy = subscribe<DesktopOpenTarget>(DESKTOP_IPC_CHANNELS.appOpenTarget, target => void listener(target).catch(() => {}))

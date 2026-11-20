@@ -105,14 +105,26 @@ export class DesktopProductCommands {
     }
   }
 
-  async recover(): Promise<DesktopCommandOutcome[]> {
+  async recover(records?: ProductOutboxRecord[]): Promise<DesktopCommandOutcome[]> {
     const outcomes: DesktopCommandOutcome[] = []
-    for (const record of await this.outbox.list()) {
-      if (record.envelope || record.recovery)
-        outcomes.push(await this.reconcile(record))
+    for (const record of records ?? await this.outbox.list()) {
+      if (!record.envelope && !record.recovery)
+        continue
+      const outcome = await this.reconcile(record)
+      if (!outcome.record.envelope && !outcome.record.recovery)
+        continue
+      if (outcome.state === 'decided' && isStaleReadReceipt(outcome.record))
+        await this.outbox.archive(outcome.record)
+      else
+        outcomes.push(outcome)
     }
     return outcomes
   }
+}
+
+export function isStaleReadReceipt(record: ProductOutboxRecord): boolean {
+  return record.method === 'taskMarks.setRead' && record.receipt?.decision === 'rejected'
+    && record.receipt.errorCode === 'SOURCE_CHANGED' && !record.recovery
 }
 
 function commandKey(owner: Pick<ProductIdentity, 'serviceId' | 'profileId' | 'dataGeneration' | 'deviceId'>, commandId: string): string {

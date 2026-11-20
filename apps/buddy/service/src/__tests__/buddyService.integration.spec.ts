@@ -21,6 +21,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SessionManager } from '@earendil-works/pi-coding-agent'
 import { afterEach, describe, expect, it } from 'vitest'
+import { DesktopNotificationInbox } from '../../../electron/main/notifications/DesktopNotificationInbox'
 import { ProductDesktopGateway } from '../../../electron/main/productProtocol/ProductDesktopGateway'
 import { DEFAULT_BUDDY_SETTINGS } from '../../../shared/buddies/buddySettings'
 
@@ -256,7 +257,9 @@ describe('buddy runtime cross-subsystem contract', () => {
       onStateChange: () => () => {},
       restart: async () => {},
       request: (method, params) => method === 'product.exchange' ? product.client.request(method, params) : harness.invoke(method, params),
-    }, join(root, 'outbox'), 'test')
+    }, join(root, 'outbox'), 'test', new DesktopNotificationInbox(join(root, 'attention.json'), () => {}), (error) => {
+      throw error
+    })
     try {
       await harness.invoke('providers.upsertCustom', offlineProviderConfig(provider.baseUrl))
       const opened = await gateway.request('composerDrafts.open', {

@@ -1,5 +1,6 @@
 import type { LexoraDesktopApi } from '@buddy-electron/shared/desktopApi'
 import type { DesktopUpdateCheckResult, DesktopUpdateState } from '@buddy-electron/shared/desktopUpdates'
+import type { DesktopNotification } from '@/modules/notifications/contracts'
 import { readonly, shallowRef } from 'vue'
 
 export function useDesktopUpdates(app: Pick<LexoraDesktopApi['app'], 'checkForUpdates' | 'updates'>) {
@@ -30,14 +31,15 @@ export function useDesktopUpdates(app: Pick<LexoraDesktopApi['app'], 'checkForUp
     apply(await app.updates.acknowledge({ action: 'reminded', version }))
   }
 
-  async function openDetails() {
+  async function openDetails(markAsSeen = true) {
     const current = ++generation
     const result = state.value?.result
     if (disposed || !result)
       return
     details.value = result
     if (result.status === 'update_available') {
-      await markSeen(result.latestVersion)
+      if (markAsSeen)
+        await markSeen(result.latestVersion)
       if (!disposed && current === generation && state.value?.delivery?.reason === 'metadata-required')
         await app.checkForUpdates().catch(() => {})
     }
@@ -82,4 +84,12 @@ export function useDesktopUpdates(app: Pick<LexoraDesktopApi['app'], 'checkForUp
   }
 
   return { state: readonly(state), details: readonly(details), load, check, openDetails, closeDetails, markSeen, markReminded, ignore, restore, snooze, cancelSnooze, takeReminder: app.updates.takeReminder, dispose }
+}
+
+export function updateNotificationSource(updates: Pick<ReturnType<typeof useDesktopUpdates>, 'state' | 'markSeen'>) {
+  return {
+    owns: (item: DesktopNotification) => item.kind === 'app.update-available',
+    items: () => updates.state.value?.notification ? [updates.state.value.notification] : [],
+    markSeen: updates.markSeen,
+  }
 }

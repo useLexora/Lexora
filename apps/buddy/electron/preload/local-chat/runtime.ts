@@ -7,7 +7,7 @@ import { subscribe } from '../subscribe'
 export function createRuntimeApi(): Pick<LocalChatApi, 'runtime'> {
   return {
     runtime: Object.freeze({
-      listRecovery: () => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.runtimeRecoveryList),
+      listRecovery: (id?: string) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.runtimeRecoveryList, id === undefined ? undefined : { id }),
       acknowledgeRecovery: (id: string) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.runtimeRecoveryAcknowledge, { id }),
       restoreRecovery: (id: string) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.runtimeRecoveryRestore, { id }),
       getStatus: () => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.runtimeStatus),

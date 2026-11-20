@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { DesktopNotificationInbox } from '../../../../electron/main/notifications/DesktopNotificationInbox'
 import { ProductDesktopGateway } from '../../../../electron/main/productProtocol/ProductDesktopGateway'
 import { productPageSchema, productQuestionSchema } from '../../../../shared/productProtocol/queries'
 import { userQuestionRpc } from '../../../../shared/questions/userQuestionApi'
@@ -173,7 +174,9 @@ describe('durable product question commands', () => {
           return f.service.list(userQuestionRpc.list.input.parse(params))
         throw new Error(`Unexpected internal RPC: ${method}`)
       },
-    }, join(f.directory, 'desktop-outbox'), 'test')
+    }, join(f.directory, 'desktop-outbox'), 'test', new DesktopNotificationInbox(join(f.directory, 'attention.json'), () => {}), (error) => {
+      throw error
+    })
     try {
       const input = { ...scope, requestId: question.id, answers }
       const answered = userQuestionRpc.answer.response.parse(await gateway.request('questions.answer', input, { requestId: 'desktop-answer' }))

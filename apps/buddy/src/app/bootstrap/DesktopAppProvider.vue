@@ -14,6 +14,7 @@ import { DesktopExtensionControl, DesktopExtensionFrameHost, DesktopExtensionMen
 import { useProvideFileOpening } from '@/modules/files'
 import { fileOperationsKey } from '@/modules/files/ui'
 import { useDesktopOnboarding, useFeatureDiscovery } from '@/modules/onboarding'
+import { DesktopRecoveryHost } from '@/modules/operation-recovery/ui'
 import { useCloudBackupFeedback, usePluginSettings, useProvideSettingsContext, useSettingsRegistry } from '@/modules/settings'
 import { useProvideSkillsContext } from '@/modules/skills'
 import { DesktopSkillReviewHost } from '@/modules/skills/ui'
@@ -302,7 +303,7 @@ const navigation = useDesktopNavigation({
     startTask: spaceId => workbench.newTask({ spaceId }),
   },
   notifications: stores.notifications,
-  openUpdate: stores.updates.openDetails,
+  openUpdate: () => stores.updates.openDetails(false),
   getRun: api.localChat.runs.get,
   activateRunBranch: async (run) => {
     const task = selectedTask.value
@@ -457,6 +458,10 @@ watch(() => stores.applicationSettings.config.value?.desktop.language, (language
   <DesktopExtensionOverlays />
   <DesktopExtensionReviewHost />
   <DesktopSkillReviewHost />
+  <DesktopRecoveryHost
+    :language="stores.applicationSettings.language.value" :register-action="navigation.registerNotificationAction" :notifications="stores.notifications.items.value"
+    @open-task="workbench.openTask" @open-draft="workbench.openDraft"
+  />
   <DesktopUpdateHost v-if="!onboarding.pending.value" :language="stores.applicationSettings.language.value" />
   <slot :shell="shellBindings" />
 </template>

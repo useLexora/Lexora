@@ -3,6 +3,8 @@ import type { ProductCommandMethod } from '../../../shared/productProtocol/metho
 import type { productCommandReceiptSchema } from '../../../shared/productProtocol/receipts'
 import type { ProductRecoveryItem } from '../../../shared/runtime/productRecovery'
 import type { DesktopRuntimeGateway } from '../local-chat/registrar'
+import type { DesktopNotificationInbox } from '../notifications/DesktopNotificationInbox'
+import type { DesktopCommandOutcome } from './DesktopProductCommands'
 import type { ProductOutboxRecord, ProductRecoveryInput } from './ProductOutboxStore'
 import { randomUUID } from 'node:crypto'
 import { buddyComposerDraftSchema } from '../../../shared/conversation/composerDraft'
@@ -15,9 +17,10 @@ import { decodeSafeProductRevision, encodeProductRevision } from '../../../share
 import { desktopProductContentProject } from '../../../shared/productProtocol/transport'
 import { userQuestionRpc } from '../../../shared/questions/userQuestionApi'
 import { runsResponseSchemas } from '../../../shared/runs/runApi'
-import { DesktopProductCommands } from './DesktopProductCommands'
+import { DesktopProductCommands, isStaleReadReceipt } from './DesktopProductCommands'
 import { DesktopTaskSynchronization } from './DesktopTaskSynchronization'
 import { isProductOutboxOwner, productOutboxRecordId, ProductOutboxStore } from './ProductOutboxStore'
+import { ProductRecoveryNotifications, recoveryState } from './ProductRecoveryNotifications'
 import { ProductRpcClient } from './ProductRpcClient'
 
 const turnMethods = new Set(['chat.startTurn', 'chat.editUserMessage', 'chat.regenerateAssistant', 'chat.executeCommand'])
@@ -34,17 +37,24 @@ export class ProductDesktopGateway implements DesktopRuntimeGateway {
   #synchronization: DesktopTaskSynchronization | null = null
   #client: Promise<ProductRpcClient> | null = null
   #current: ProductRpcClient | null = null
+  readonly #delivering = new Set<{ client: ProductRpcClient, commandId: string }>()
+  readonly #recoveryNotifications: ProductRecoveryNotifications
   #generation = 0
   #detach: (() => void) | null = null
 
-  constructor(runtime: DesktopRuntimeGateway, directory: string, version: string) {
+  constructor(runtime: DesktopRuntimeGateway, directory: string, version: string, inbox: DesktopNotificationInbox, onNotificationError: (error: unknown) => void) {
     this.#runtime = runtime
     this.#version = version
     this.#commands = new DesktopProductCommands(new ProductOutboxStore(directory))
-    this.#stopState = runtime.onStateChange((state) => {
-      if (!state || typeof state !== 'object' || !('status' in state) || state.status !== 'ready')
+    this.#recoveryNotifications = new ProductRecoveryNotifications(inbox, () => this.#recoveryOutcomes(), onNotificationError)
+    const onStateChange = (state: unknown) => {
+      if (state && typeof state === 'object' && 'status' in state && state.status === 'ready')
+        void this.#recoveryNotifications.reconcile()
+      else
         this.#reset()
-    })
+    }
+    this.#stopState = runtime.onStateChange(onStateChange)
+    onStateChange(runtime.state)
   }
 
   get state(): unknown {
@@ -121,46 +131,88 @@ export class ProductDesktopGateway implements DesktopRuntimeGateway {
       intent.expectedActiveRun = { ...active, generation: encodeProductRevision(Number(active.generation)) }
     }
     const recovery = await this.#recoveryInput(method, input, client, commandId)
-    const outcome = await this.#commands.execute({ method: actualMethod as ProductCommandMethod, commandId, intent, recovery })
-    if (outcome.state !== 'decided' || !outcome.record.receipt)
-      throw gatewayError(outcome.state === 'trust_changed' ? 'AUTHENTICATION_REQUIRED' : 'COMMAND_RESULT_UNKNOWN')
-    const receipt = outcome.record.receipt
-    if (receipt.decision === 'rejected')
-      throw gatewayError(receipt.errorCode ?? 'LOCAL_CHAT_OPERATION_FAILED')
-    if (this.#current !== client)
-      throw gatewayError('COMMAND_RESULT_UNKNOWN')
-    const result = await this.#projectResult(method, input, receipt, options)
-    if (this.#current !== client)
-      throw gatewayError('COMMAND_RESULT_UNKNOWN')
-    void this.#commands.outbox.archive(outcome.record).catch(() => {})
-    return result
+    const delivery = { client, commandId }
+    this.#delivering.add(delivery)
+    let outcome: DesktopCommandOutcome | undefined
+    const finish = (needsReview: boolean) => {
+      this.#delivering.delete(delivery)
+      if (!outcome || (needsReview && (this.#current !== client || isStaleReadReceipt(outcome.record)))) {
+        void this.#recoveryNotifications.reconcile()
+      }
+      else if (needsReview && (outcome.record.envelope || outcome.record.recovery)) {
+        this.#recoveryNotifications.publish(outcome)
+      }
+      else {
+        this.#recoveryNotifications.withdraw(productOutboxRecordId(outcome.record))
+      }
+    }
+    try {
+      outcome = await this.#commands.execute({ method: actualMethod as ProductCommandMethod, commandId, intent, recovery })
+      if (outcome.state !== 'decided' || !outcome.record.receipt)
+        throw gatewayError(outcome.state === 'trust_changed' ? 'AUTHENTICATION_REQUIRED' : 'COMMAND_RESULT_UNKNOWN')
+      const receipt = outcome.record.receipt
+      if (receipt.decision === 'rejected')
+        throw gatewayError(receipt.errorCode ?? 'LOCAL_CHAT_OPERATION_FAILED')
+      if (this.#current !== client)
+        throw gatewayError('COMMAND_RESULT_UNKNOWN')
+      const result = await this.#projectResult(method, input, receipt, options)
+      if (this.#current !== client)
+        throw gatewayError('COMMAND_RESULT_UNKNOWN')
+      void this.#commands.outbox.archive(outcome.record).then(() => finish(false), () => finish(true))
+      return result
+    }
+    catch (error) {
+      finish(true)
+      throw error
+    }
   }
 
   async getIdentity() {
     return (await this.#connect()).identity
   }
 
-  async recover(): Promise<ProductRecoveryItem[]> {
-    const client = await this.#connect()
-    const outcomes = await this.#commands.recover()
-    return outcomes.map(({ state, record }) => {
-      const status = state === 'decided' ? record.receipt!.decision : state === 'connection_replaced' ? 'unknown' : state
+  async #recoveryOutcomes(id?: string) {
+    const available = (record: ProductOutboxRecord) => !Array.from(this.#delivering).some(delivery =>
+      delivery.commandId === record.commandId && isProductOutboxOwner(record.owner, delivery.client.identity))
+    const records = (await this.#commands.outbox.list()).filter(record => available(record) && (!id || productOutboxRecordId(record) === id))
+    if (!records.length)
+      return []
+    await this.#connect().catch(() => {})
+    return (await this.#commands.recover(records)).filter(outcome => available(outcome.record))
+  }
+
+  async recover(id?: string): Promise<ProductRecoveryItem[]> {
+    const outcomes = await this.#recoveryOutcomes(id)
+    if (id) {
+      if (outcomes[0])
+        this.#recoveryNotifications.publish(outcomes[0])
+      else
+        this.#recoveryNotifications.withdraw(id)
+    }
+    return outcomes.map((outcome) => {
+      const record = outcome.record
+      const state = recoveryState(outcome)
       return {
         id: productOutboxRecordId(record),
         commandId: record.commandId,
         method: record.method,
         createdAt: record.createdAt,
-        state: status,
+        state,
         conversationId: record.receipt?.target.conversationId ?? null,
         content: record.recovery?.content ?? null,
-        canRestore: (status === 'rejected' || status === 'not_accepted') && Boolean(record.recovery?.executionConfig) && isProductOutboxOwner(record.owner, client.identity),
+        canRestore: (state === 'rejected' || state === 'not_accepted') && Boolean(record.recovery?.executionConfig) && this.#current !== null && isProductOutboxOwner(record.owner, this.#current.identity),
       }
     })
   }
 
   async acknowledgeRecovery(id: string): Promise<void> {
-    const record = await this.#recoveryRecord(id)
-    await this.#commands.outbox.archive(record)
+    const [outcome] = await this.#recoveryOutcomes(id)
+    if (!outcome)
+      throw gatewayError('OBJECT_DELETED')
+    if (outcome.state !== 'decided' && outcome.state !== 'not_accepted')
+      throw gatewayError('COMMAND_RESULT_UNKNOWN')
+    await this.#commands.outbox.archive(outcome.record)
+    this.#recoveryNotifications.withdraw(id)
   }
 
   async restoreRecovery(id: string): Promise<string> {
@@ -178,6 +230,7 @@ export class ProductDesktopGateway implements DesktopRuntimeGateway {
       if (recovered.state !== 'decided' || recovered.record.receipt?.decision !== 'accepted' || !recovered.record.receipt.target.draftId)
         throw gatewayError('COMMAND_RESULT_UNKNOWN')
       await this.#commands.outbox.archive(outcome.record)
+      this.#recoveryNotifications.withdraw(id)
       return recovered.record.receipt.target.draftId
     }
     const current = await client.request('composerDrafts.get', { draftId: source.draftId }) as { revision: string } | null
@@ -204,6 +257,7 @@ export class ProductDesktopGateway implements DesktopRuntimeGateway {
       }, { requestId: commandId })
     }
     await this.#commands.outbox.archive(outcome.record)
+    this.#recoveryNotifications.withdraw(id)
     return draftId
   }
 
@@ -241,6 +295,7 @@ export class ProductDesktopGateway implements DesktopRuntimeGateway {
   }
 
   dispose(): void {
+    this.#recoveryNotifications.dispose()
     this.#stopState()
     this.#reset()
   }

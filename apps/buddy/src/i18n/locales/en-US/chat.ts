@@ -1,10 +1,7 @@
 import type zhCN from '../zh-CN/chat'
 
 export default {
-  'desktop.recovery.pending': '{count} operations need review',
-  'desktop.recovery.review': 'Review',
   'desktop.recovery.title': 'Operation recovery',
-  'desktop.recovery.description': 'These operations have not been confirmed to you. Check their results, open the original task, or save unaccepted input as a new draft.',
   'desktop.recovery.accepted': 'Operation accepted',
   'desktop.recovery.rejected': 'Operation was not performed',
   'desktop.recovery.not_accepted': 'No acceptance record found',

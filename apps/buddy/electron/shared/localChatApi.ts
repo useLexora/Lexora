@@ -31,7 +31,7 @@ import type { ExecutionActivityRequest, ExecutionAnswer, ExecutionEventsRequest,
 import type { DirectoryPage, FilePreview } from '../../shared/files/filePreview'
 import type { TaskFile, TaskFileLink, TaskFileTarget } from '../../shared/files/taskFileApi'
 import type { WebSettings, WebSettingsSnapshot } from '../../shared/network/webProtocol'
-import type { LocalNotificationList, NotificationsChanged } from '../../shared/notifications/notificationApi'
+import type { NotificationsChanged } from '../../shared/notifications/notificationApi'
 import type { LocalApproval } from '../../shared/permissions/approvalApi'
 import type { ApprovalGrantScope } from '../../shared/permissions/approvalReviewPayload'
 import type { BuddyPermissionSettings } from '../../shared/permissions/permissionMode'
@@ -47,14 +47,15 @@ import type { LocalRun, LocalRunEvent } from '../../shared/runs/runApi'
 import type { LocalTaskMetrics, TaskMetricsChanged } from '../../shared/runs/taskMetricsApi'
 import type { ProductRecoveryItem } from '../../shared/runtime/productRecovery'
 import type { LocalBuddyServiceSupervisorState } from '../../shared/runtime/serviceState'
-
 import type { LocalSkillCatalog, SkillChangeNotice, SkillDetail, SkillDirectoryRequest, SkillFileTarget, SkillInstallPreview, SkillPreviewInput } from '../../shared/skills/skillApi'
+
 import type { LocalSpace, LocalSpaceCreateInput, LocalSpaceFile, LocalSpaceUpdateInput, SpaceChangeNotice } from '../../shared/spaces/spaceApi'
-
 import type { LocalSpaceDirectoryPage, LocalSpaceFilePreview, SpaceDirectoryRequest, SpaceFileTarget } from '../../shared/spaces/spaceFileApi'
-import type { LocalUsageAnalytics, LocalUsageTopTasks, LocalUsageTrend, UsagePeriod, UsageTopTasksRequest, UsageTrendRequest } from '../../shared/usage/usageAnalyticsApi'
 
+import type { LocalUsageAnalytics, LocalUsageTopTasks, LocalUsageTrend, UsagePeriod, UsageTopTasksRequest, UsageTrendRequest } from '../../shared/usage/usageAnalyticsApi'
 import type { LocalUsageSnapshot } from '../../shared/usage/usageApi'
+
+import type { DeviceNotificationList } from './desktopNotifications'
 
 export const LOCAL_CHAT_IPC_CHANNELS = {
   draftRecoveryLoad: 'lexora:local-chat:draft-recovery:load',
@@ -366,7 +367,7 @@ export interface LocalChatApi {
   }
   privateNetwork: PrivateNetworkManagementApi
   runtime: {
-    listRecovery: () => Promise<ProductRecoveryItem[]>
+    listRecovery: (id?: string) => Promise<ProductRecoveryItem[]>
     acknowledgeRecovery: (id: string) => Promise<void>
     restoreRecovery: (id: string) => Promise<string>
     getStatus: () => Promise<LocalBuddyServiceSupervisorState>
@@ -440,9 +441,9 @@ export interface LocalChatApi {
   }
   notifications: {
     onChanged: (listener: (event: NotificationsChanged) => void) => () => void
-    list: () => Promise<LocalNotificationList>
-    markAllSeen: () => Promise<LocalNotificationList>
-    markSeen: (notificationId: string, revision: string) => Promise<LocalNotificationList>
+    list: () => Promise<DeviceNotificationList>
+    markAllSeen: () => Promise<DeviceNotificationList>
+    markSeen: (notificationId: string, revision: string) => Promise<DeviceNotificationList>
   }
   taskFiles: {
     resolve: (link: TaskFileLink) => Promise<TaskFile>

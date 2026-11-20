@@ -1,5 +1,6 @@
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { LocalTaskMark, LocalTaskMarkState } from '@buddy-shared/conversation/taskMarkApi'
+import { formatLocalChatPublicError } from '@buddy-shared/runtime/localChatError'
 import { deferred } from '@buddy-tests/deferred'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { effectScope, shallowRef } from 'vue'
@@ -58,6 +59,24 @@ describe('task mark owner', () => {
     expect(await creating).toBe(true)
     expect(await assigning).toBe(false)
     expect(f.getState()).toMatchObject({ markId: 'mark', assignmentRevision: 2 })
+  })
+
+  it.each([
+    { resultRunId: 'result', unread: false },
+    { resultRunId: 'result', unread: true },
+    { resultRunId: 'next', unread: true },
+  ])('reconciles a stale visible read with the authoritative state %o', async (change) => {
+    const f = fixture(true)
+    await f.store.refresh()
+    f.replace({ ...change, readRevision: 1 })
+    vi.mocked(f.api.setRead).mockRejectedValueOnce(new Error(formatLocalChatPublicError({ code: 'SOURCE_CHANGED', retryable: false })))
+    await f.store.readResult('a', 'result', 0)
+    expect(f.store.states.value.get('a')).toEqual(f.getState())
+    expect(f.store.error.value).toBeNull()
+    if (change.unread && change.resultRunId === 'result') {
+      await f.store.readResult('a', 'result', 1)
+      expect(f.getState().unread).toBe(true)
+    }
   })
 
   it('keeps manual unread during a visit, reads it on a later visit, and clears both states without deleting the mark', async () => {

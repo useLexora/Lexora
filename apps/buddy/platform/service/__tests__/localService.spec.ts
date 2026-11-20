@@ -1,4 +1,5 @@
 import type { ServiceIdentity, ServiceLaunch } from '../../../shared/service/localServiceProtocol'
+import { Buffer } from 'node:buffer'
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { once } from 'node:events'
@@ -66,6 +67,23 @@ it('authenticates the original instance and preserves frames immediately followi
   cleanup.push(() => client.frames.close())
   expect(await peer.request('echo', { same: true })).toEqual({ same: true })
   expect(notifications).toContainEqual({ jsonrpc: '2.0', method: 'initial', params: { ready: true } })
+})
+
+it('transports binary request bodies and preserves interleaved RPC boundaries', async () => {
+  const f = await server('management')
+  const client = await connectLocalService(f.endpoint.address, { ...identity, type: 'hello', role: 'management', secret })
+  cleanup.push(() => client.frames.close())
+  const peer = new RuntimeRpcPeer({ transport: client.frames.transport() })
+  f.peers[0]!.onRequest('digest', (params) => {
+    const { bytes } = params as { bytes: Uint8Array }
+    expect(bytes).toBeInstanceOf(Uint8Array)
+    return createHash('sha256').update(bytes).digest('hex')
+  })
+  const large = Buffer.alloc(32 * 1024 * 1024, 10)
+  await expect(peer.request('digest', { bytes: new Uint8Array(large.length + 1) })).rejects.toThrow('SERVICE_BINARY_LIMIT')
+  const bodies = [new Uint8Array(), large.subarray(17, 189254), large]
+  const results = await Promise.all([...bodies.map(bytes => peer.request('digest', { bytes })), peer.request('echo', 'alive')])
+  expect(results).toEqual([...bodies.map(bytes => createHash('sha256').update(bytes).digest('hex')), 'alive'])
 })
 
 it.each(['role', 'secret', 'instance', 'session', 'build'] as const)('rejects an invalid %s without closing unrelated clients', async (field) => {
