@@ -10,6 +10,7 @@ class CommandOutbox(private val store: LocalStore) {
         val identity = client.identity ?: throw ProtocolFailure("NOT_CONNECTED")
         val envelope = JSONObject().put("commandId", store.newId()).put("dataGeneration", identity.dataGeneration).put("expectedServiceInstanceId", identity.serviceInstanceId).put("intent", intent)
         client.validateRequest(method, envelope)
+        if (method == "chat.submitInput" && !client.isConnected) throw ProtocolFailure("NOT_CONNECTED")
         return deliver(client, store.queue(identity.partition, method, envelope, localEffect))
     }
     fun retry(client: ProductClient, item: OutboxItem): JSONObject {
@@ -34,10 +35,21 @@ class CommandOutbox(private val store: LocalStore) {
         val identity = client.identity ?: throw ProtocolFailure("NOT_CONNECTED")
         if (identity.partition != item.partition) throw ProtocolFailure("DATA_GENERATION_CHANGED")
         val result = client.call("commands.get", JSONObject().put("dataGeneration", item.envelope.getString("dataGeneration")).put("commandId", item.id))
+        return applyLookup(item, identity.serviceInstanceId, result)
+    }
+    internal fun applyLookup(item: OutboxItem, instance: String, result: JSONObject): OutboxItem {
         if (result.getString("lookup") == "decided") {
             val receipt = result.getJSONObject("receipt")
+            if (receipt.getString("commandId") != item.id || receipt.getString("method") != item.method || receipt.getString("dataGeneration") != item.envelope.getString("dataGeneration")) throw ProtocolFailure("PROTOCOL_INCOMPATIBLE")
             store.resolve(item, receipt)
-        } else store.mark(item.id, result.getString("lookup"))
-        return store.outbox(identity.partition).first { it.id == item.id }
+            return item.copy(state = receipt.getString("decision"), receipt = receipt)
+        }
+        val lookup = result.getString("lookup")
+        if (lookup == "not_found" && item.inputScope != null && instance == item.envelope.getString("expectedServiceInstanceId")) {
+            store.releaseComposerCommand(item, reviewed = false)
+            return item.copy(state = "not_received")
+        }
+        store.mark(item.id, lookup)
+        return item.copy(state = lookup)
     }
 }

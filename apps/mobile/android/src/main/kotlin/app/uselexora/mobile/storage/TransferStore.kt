@@ -13,5 +13,8 @@ class TransferStore(context: Context) : SQLiteOpenHelper(context, "lexora-transf
     override fun onCreate(db: SQLiteDatabase) { db.execSQL("CREATE TABLE transfers(id TEXT PRIMARY KEY, partition TEXT NOT NULL, record TEXT NOT NULL)") }
     override fun onUpgrade(db: SQLiteDatabase, old: Int, new: Int) { error("UNSUPPORTED_STORAGE_VERSION") }
     @Synchronized fun save(value: JSONObject) { check(writableDatabase.insertWithOnConflict("transfers", null, ContentValues().apply { put("id", value.getString("id")); put("partition", value.getString("partition")); put("record", value.toString()) }, SQLiteDatabase.CONFLICT_REPLACE) != -1L) { "LOCAL_STORAGE_FAILED" } }
+    @Synchronized fun get(id: String): JSONObject? = readableDatabase.rawQuery("SELECT record FROM transfers WHERE id=?", arrayOf(id)).use {
+        if (it.moveToFirst()) JSONObject(it.getString(0)) else null
+    }
     @Synchronized fun list(partition: String): List<JSONObject> = readableDatabase.rawQuery("SELECT record FROM transfers WHERE partition=? ORDER BY rowid DESC", arrayOf(partition)).use { cursor -> buildList { while (cursor.moveToNext()) add(JSONObject(cursor.getString(0))) } }
 }

@@ -29,6 +29,7 @@ object MobileFailurePresentation {
         "LOCAL_COPY_UNAVAILABLE" -> mobileText(R.string.error_local_copy_unavailable)
         "SERVICE_UNREACHABLE" -> NETWORK_UNAVAILABLE_NOTICE
         "FILE_TOO_LARGE" -> mobileText(R.string.error_file_too_large)
+        "LOCAL_PREVIEW_FULL" -> mobileText(R.string.preview_cache_full)
         "LOCAL_CACHE_FULL" -> mobileText(R.string.error_local_cache_full)
         "LOCAL_FILE_FAILED" -> mobileText(R.string.error_local_file_failed)
         "LOCAL_FILE_IN_USE" -> mobileText(R.string.error_local_file_in_use)

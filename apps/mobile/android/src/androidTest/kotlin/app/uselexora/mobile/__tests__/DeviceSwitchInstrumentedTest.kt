@@ -229,8 +229,7 @@ class DeviceSwitchInstrumentedTest {
             }
             fun resume(text: String) {
                 MobileUiTestDriver.openWorkbench()
-                MobileUiTestDriver.openDrafts()
-                MobileUiTestDriver.clickContaining(text); click("继续编辑")
+                click("新任务")
                 waitUntil { input() == text }
             }
 

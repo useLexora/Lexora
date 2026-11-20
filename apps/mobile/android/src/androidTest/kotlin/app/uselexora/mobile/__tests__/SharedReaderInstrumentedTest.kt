@@ -429,6 +429,8 @@ class SharedReaderInstrumentedTest {
         val state = MobileUiState().apply {
             screen = MobileScreen.Conversation
             selectedTask = JSONObject().put("id", "input-task").put("activeBranchId", "input-branch").put("title", "输入与流式验收")
+            connected = true
+            conversationReady = true
             sendEnabled = true
         }
         lateinit var composer: EditText

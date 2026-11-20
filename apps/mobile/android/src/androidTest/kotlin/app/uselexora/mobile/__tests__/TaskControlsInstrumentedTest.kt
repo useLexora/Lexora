@@ -60,10 +60,9 @@ class TaskControlsInstrumentedTest {
                     checkpoint("await queue: $value")
                     waitFor { queue().any { MobileContentAdapter.text(it.getJSONObject("content")) == value } }
                     val queued = queue().single { MobileContentAdapter.text(it.getJSONObject("content")) == value }
-                    waitFor { store.outbox(partition).any { it.method == "chat.submitInput" && it.receipt?.optString("decision") == "accepted" && it.receipt?.optJSONObject("target")?.optString("queueId") == queued.getString("id") } }
-                    val accepted = store.outbox(partition).single { it.method == "chat.submitInput" && it.receipt?.optJSONObject("target")?.optString("queueId") == queued.getString("id") }
-                    assertEquals("enqueue", accepted.envelope.getJSONObject("intent").getString("operation"))
-                    assertEquals(value, MobileContentAdapter.text(accepted.envelope.getJSONObject("intent").getJSONObject("input").getJSONObject("content")))
+                    val scope = "conversation:${target.getString("conversationId")}:${target.getString("branchId")}"
+                    waitFor { store.draft(partition, scope)?.let { MobileContentAdapter.text(it.value.getJSONObject("content")).isEmpty() } == true }
+                    assertTrue(store.outbox(partition).none { it.method == "chat.submitInput" })
                     return queued
                 }
                 fun openQueue(value: String) { MobileUiTestDriver.openTaskSettings(); click("待发送队列"); clickContaining(" · $value") }

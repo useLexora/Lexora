@@ -12,7 +12,7 @@ import java.io.IOException
 
 internal class TaskFileCopies(context: Context, transfers: TransferStore, store: LocalStore) {
     private val files = LocalFiles(context, transfers, store)
-    fun find(partition: String, resource: JSONObject): File? = synchronized(TransferStore.fileLock) {
+    fun find(partition: String, resource: JSONObject, retain: Boolean = false): File? = synchronized(TransferStore.fileLock) {
         val entry = files.list().firstOrNull {
             it.complete && it.record.optString("partition") == partition &&
                 it.record.optString("resourceId") == resource.getString("resourceId") &&
@@ -22,7 +22,9 @@ internal class TaskFileCopies(context: Context, transfers: TransferStore, store:
             val metadata = entry.record.getJSONObject("prepared")
             val size = metadata.getString("sizeBytes").toLong()
             if (size !in 0..MobileFiles.MAX_BYTES || entry.file.length() != size) return@synchronized null
-            entry.file.takeIf { MobileFiles.hash(it) == entry.record.getString("contentVersion") }
+            entry.file.takeIf { MobileFiles.hash(it) == entry.record.getString("contentVersion") }?.also {
+                if (retain && entry.previewOnly) files.retain(it)
+            }
         } catch (error: IOException) { throw ProtocolFailure("LOCAL_STORAGE_FAILED", error) }
         catch (error: SecurityException) { throw ProtocolFailure("LOCAL_STORAGE_FAILED", error) }
     }

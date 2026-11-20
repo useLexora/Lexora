@@ -1,0 +1,4 @@
+<resources>
+    <string name="preview_cache_full">预览缓存已满。请关闭已打开的预览，或改为保存文件。</string>
+    <string name="preview_cache_label">预览缓存</string>
+</resources>

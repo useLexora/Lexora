@@ -3,6 +3,10 @@ package app.uselexora.mobile.protocol
 import org.json.JSONObject
 
 object DraftContext {
+    fun newTaskKey(selectedSpaceId: String?): String = selectedSpaceId?.takeIf { it.isNotBlank() }?.let {
+        "draft:new-${java.util.UUID.nameUUIDFromBytes(it.toByteArray(Charsets.UTF_8))}"
+    } ?: "draft:new-unassigned"
+
     fun target(localScope: String): JSONObject {
         if (localScope.startsWith("space:")) {
             val id = localScope.substringAfter(':')

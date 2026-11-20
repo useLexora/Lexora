@@ -8,6 +8,9 @@ import android.content.ClipData
 import android.content.res.Configuration
 import androidx.compose.ui.graphics.toArgb
 import app.uselexora.mobile.storage.DocumentExport
+import app.uselexora.mobile.storage.LocalFiles
+import app.uselexora.mobile.storage.PreviewUse
+import app.uselexora.mobile.storage.TransferStore
 import app.uselexora.mobile.ui.MobileAppearance
 import app.uselexora.mobile.ui.MobileTheme
 import android.graphics.Bitmap
@@ -27,6 +30,7 @@ import java.util.concurrent.Executors
 
 class PreviewActivity : ComponentActivity() {
     private lateinit var file: File
+    private var held: java.io.Closeable? = null
     private lateinit var kind: PreviewKind
     private lateinit var content: FrameLayout
     private var loading by mutableStateOf(true)
@@ -57,7 +61,8 @@ class PreviewActivity : ComponentActivity() {
         try {
             file = PreviewPolicy.exportedFile(File(filesDir, "exports"), intent.getStringExtra("path") ?: "")
             kind = PreviewPolicy.kind(name, mime) ?: throw PreviewFailure("unsupported")
-        } catch (_: Exception) { finish(); return }
+            held = PreviewUse.open(file)
+        } catch (_: Exception) { Toast.makeText(this, mobileText(R.string.preview_copy_missing), Toast.LENGTH_SHORT).show(); finish(); return }
         page = state?.getInt("page") ?: 0
         MobileAppearance.load(this)
         val palette = MobileTheme.palette(this, MobileAppearance.isDark(resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES))
@@ -73,7 +78,7 @@ class PreviewActivity : ComponentActivity() {
                     canFollowup = intent.getBooleanExtra("canFollowup", false),
                     feedback = feedback, feedbackShown = { if (feedback == it) feedback = null },
                     back = ::finish, retry = { render(retryPage) }, navigate = ::render,
-                    save = ::save, share = ::share, openWith = ::openWith, followup = { followup("") },
+                    save = { retainThen(::save) }, share = { retainThen(::share) }, openWith = { retainThen(::openWith) }, followup = { followup("") },
                 )
             }
         }
@@ -178,7 +183,17 @@ class PreviewActivity : ComponentActivity() {
         catch (_: SecurityException) { feedback = mobileText(R.string.mobile_could_not_grant_another_app_read_access_the_phone) }
     }
     override fun onSaveInstanceState(state: Bundle) { state.putInt("page", page); super.onSaveInstanceState(state) }
-    private fun followup(quote: String) {
+    private fun retainThen(action: () -> Unit) {
+        io.execute {
+            val kept = runCatching { TransferStore(this).use { LocalFiles.retain(this, it, file) } }.isSuccess
+            runOnUiThread {
+                if (active && !isFinishing) {
+                    if (kept) action() else feedback = mobileText(R.string.preview_copy_missing)
+                }
+            }
+        }
+    }
+    private fun followup(quote: String) = retainThen {
         setResult(RESULT_OK, Intent().putExtra("quote", quote))
         finish()
     }
@@ -189,7 +204,7 @@ class PreviewActivity : ComponentActivity() {
         image?.recycle(); image = null
         super.onStop()
     }
-    override fun onDestroy() { io.shutdownNow(); super.onDestroy() }
+    override fun onDestroy() { io.shutdownNow(); held?.close(); super.onDestroy() }
     private fun dp(value: Int) = (resources.displayMetrics.density * value).toInt()
     companion object { const val QUOTE_ID = 0x2207; const val TEXT_ID = 0x2202; const val IMAGE_ID = 0x2209; private const val SAVE_REQUEST = 4101 }
 }

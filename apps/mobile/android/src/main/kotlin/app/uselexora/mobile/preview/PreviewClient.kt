@@ -3,6 +3,7 @@ package app.uselexora.mobile.preview
 import android.content.*
 import android.graphics.Bitmap
 import android.os.*
+import app.uselexora.mobile.storage.PreviewUse
 import java.io.File
 import java.io.FileInputStream
 import java.nio.ByteBuffer
@@ -35,10 +36,12 @@ class PreviewClient(private val context: Context) : AutoCloseable {
     }
     fun render(file: File, kind: PreviewKind, page: Int = 0): PreviewPage {
         if (closed.get() || !rendering.compareAndSet(false, true)) throw PreviewFailure("unavailable")
+        var source: java.io.Closeable? = null
         var output: File? = null
         val id = sequence.incrementAndGet()
         val response = CompletableFuture<Bundle>()
         try {
+            source = PreviewUse.open(file)
             val service = ready.get(10, TimeUnit.SECONDS)
             if (closed.get()) throw PreviewFailure("unavailable")
             output = File.createTempFile("preview-", ".pixels", context.cacheDir)
@@ -72,7 +75,7 @@ class PreviewClient(private val context: Context) : AutoCloseable {
             try { bitmap.copyPixelsFromBuffer(buffer) } catch (failure: Throwable) { bitmap.recycle(); throw failure }
             return PreviewPage(bitmap, null, false, pages, result.getInt("uid"))
         } catch (error: java.util.concurrent.TimeoutException) { close(); throw PreviewFailure("timeout") }
-        finally { pending.remove(id); output?.delete(); rendering.set(false) }
+        finally { pending.remove(id); output?.delete(); source?.close(); rendering.set(false) }
     }
     private fun fail() {
         val failure = PreviewFailure("unavailable")

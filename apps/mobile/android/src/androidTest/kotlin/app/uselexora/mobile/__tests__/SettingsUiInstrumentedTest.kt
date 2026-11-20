@@ -81,12 +81,10 @@ class SettingsUiInstrumentedTest {
         compose.runOnIdle { assertEquals("zh", MobileAppearance.language) }
     }
 
-    @Test fun phoneSettingsOwnLocalDataAndKeepAboutNavigation() {
-        val actions = mutableListOf<MobileAction>()
-        compose.setContent { LexoraTheme { AppearanceSettings(onAction = { actions.add(it) }) {} } }
-        for ((label, expected) in listOf(R.string.label_send_history to MobileAction.Outbox, R.string.label_local_drafts to MobileAction.Recovery, R.string.phone_copies to MobileAction.ManageFiles)) {
-            compose.onNodeWithText(mobileText(label)).performScrollTo().performClick()
-            assertEquals(expected, actions.last())
+    @Test fun phoneSettingsContainPreferencesAndKeepAboutNavigation() {
+        compose.setContent { LexoraTheme { AppearanceSettings {} } }
+        for (label in listOf(R.string.label_send_history, R.string.label_local_drafts, R.string.phone_copies)) {
+            compose.onNodeWithText(mobileText(label)).assertDoesNotExist()
         }
         compose.onNodeWithTag("about-lexora").performScrollTo().performClick()
         compose.onNodeWithTag("app-version").assertTextEquals(mobileText(R.string.mobile_about_version, BuildConfig.VERSION_NAME))

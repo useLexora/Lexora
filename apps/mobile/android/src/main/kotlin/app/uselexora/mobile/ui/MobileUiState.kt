@@ -17,10 +17,10 @@ enum class MobileAction {
     NewTask, OpenTask, OpenTaskQuestions, OpenRunningTask, OpenTaskResult, ShowTasks, ShowPending, ShowDevices,
     ShowWorkbench, ShowSpaces, OpenSpace, ChooseSpaceFilter, ShowTaskFilter, Back, ReviewTaskApproval,
     ScanDevice, SelectDevice, ManageDevice,
-    Approvals, Outbox, Recovery, Files, ManageFiles, AttachFile, TakePhoto, OpenResource, ResourceActions, MoreFiles,
+    Approvals, InspectUnplacedInput, Recovery, RecoverDownloads, Files, AttachFile, TakePhoto, OpenResource, ResourceActions, MoreFiles,
     ChooseModel, ToggleFast, ApplyModel, ChooseExecution, ApplyExecution, ChooseSpace, Send,
     MoreHistory, Refresh, Reconnect, TaskControls, TaskQueue, TaskBranches, SelectBranch,
-    QueueInput, OpenOnDesktop, ReadState, Disconnect, MessageActions, DismissNotice,
+    QueueInput, CheckInputReceipt, OpenOnDesktop, ReadState, Disconnect, MessageActions, DismissNotice,
     CopyMessage, EditMessage, ContinueMessage, RegenerateMessage, ShowMessageRun, OpenMessageDetail,
     StopRun, ReviewApproval, AnswerQuestion, OpenAttachment, RemoveAttachment,
 }
@@ -152,6 +152,9 @@ class MobileUiState {
     var spaceVisible by mutableStateOf(true)
     var spaceEnabled by mutableStateOf(true)
     var inputFeedback by mutableStateOf("")
+    var sendFeedback by mutableStateOf("")
+    var canCheckInputReceipt by mutableStateOf(false)
     var attachmentCount by mutableStateOf(0)
-    var outboxCount by mutableStateOf<Int?>(null)
+    var hasUnplacedInput by mutableStateOf(false)
+    var hasOrphanDownloads by mutableStateOf(false)
 }

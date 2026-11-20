@@ -48,7 +48,6 @@ import app.uselexora.mobile.protocol.DraftContext
 import app.uselexora.mobile.protocol.ExecutionSettings
 import app.uselexora.mobile.protocol.MobileMessageDetail
 import app.uselexora.mobile.storage.LocalDraft
-import app.uselexora.mobile.storage.OutboxItem
 import app.uselexora.mobile.protocol.CommandOutbox
 import app.uselexora.mobile.protocol.CommandReceipt
 import app.uselexora.mobile.protocol.ConversationTarget
@@ -64,6 +63,8 @@ import app.uselexora.mobile.protocol.ProtocolSchemas
 import app.uselexora.mobile.storage.PhotoStore
 import app.uselexora.mobile.storage.DocumentExport
 import app.uselexora.mobile.storage.LocalFiles
+import app.uselexora.mobile.storage.ComposerEdit
+import app.uselexora.mobile.storage.ComposerMemory
 import app.uselexora.mobile.storage.MaterialDrafts
 import app.uselexora.mobile.storage.LocalStore
 import app.uselexora.mobile.storage.ReadCache
@@ -88,8 +89,6 @@ class MainActivity : ComponentActivity() {
     private val downloadingResources = mutableSetOf<String>()
     private lateinit var operations: TaskOperations
     private lateinit var recovery: DraftRecoveryPanel
-    private val commandHistory by lazy { CommandHistoryPanel(this, store, { partition }, { client }, ::localWork, ::work, ::onUi,
-        ::commandTargetLabel, ::openCommandTarget, ::restoreCommandInput, { operations.review(it) }, ::commandRecovered) }
     private lateinit var questions: MobileQuestions
     private var messageItems = listOf<JSONObject>()
     private var liveMessages = listOf<JSONObject>()
@@ -159,10 +158,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(state)
         MobileAppearance.load(this)
         store = LocalStore(this)
-        input = MobileComposerSession(store, disk, ::onUi)
         schemas = ProtocolSchemas(JSONObject(assets.open("protocol-schema.json").bufferedReader().use { it.readText() }))
         connection = MobileConnection(this, schemas, BuildConfig.VERSION_NAME)
         transfers = TransferStore(this)
+        input = MobileComposerSession(store, ComposerMemory(store, transfers), disk, streamHandler, ::onUi)
         files = MobileFiles(this, transfers, store, connection)
         pendingFileTarget = state?.getString("fileTarget")?.let { JSONObject(it) }
         pendingCapturePath = state?.getString("capturePath")
@@ -200,12 +199,13 @@ class MainActivity : ComponentActivity() {
         session = MobileConnectionSession(connection, schemas, getSystemService(ConnectivityManager::class.java), streamHandler,
             enabled = { !demo && !disconnecting }, topic = { activeTopic }, work = ::work, onUi = ::onUi,
             released = { operations.closeReview(); questions.close() },
-            connected = { _, identity ->
+            connected = { authenticated, identity ->
                 ui.connectionPhase = app.uselexora.mobile.session.MobileConnectionPhase.Idle
                 if (partition != identity.partition) restoreNavigation(identity.partition)
                 partition = identity.partition; restoreInput(); restoreCachedCatalogs(); refreshDevices(); refreshSpaces(); refreshPendingOperations(); ui.connectionLabel = mobileText(R.string.connection_loading_tasks)
                 if (ui.notice == MobileFailurePresentation.NETWORK_UNAVAILABLE_NOTICE || ui.notice == mobileText(R.string.error_not_connected)) ui.notice = ""
                 subscription?.subscribe(activeTopic); bindQuestions(); if (selectedTask != null) loadBranches()
+                checkInputReceipts(authenticated)
                 if (activeTopic != "taskIndex") refreshTaskMarks()
                 if (incomingMaterials.isNotEmpty() && !ui.importingMaterial) ui.incomingMaterial = incomingMaterials.first()
                 syncUi()
@@ -242,8 +242,7 @@ class MainActivity : ComponentActivity() {
                 if (draft.partition != partition) null
                 else runCatching { DraftContext.conversation(draft.scope) }.getOrNull()?.let { recoveryTargetLabel(draft.partition, it.conversationId) }
             },
-            attachmentSummary = { draft -> draftAttachments(draft).filter { it.id.startsWith("transfer:") }
-                .takeIf { it.isNotEmpty() }?.joinToString("\n") { mobileText(R.string.recovery_pending_attachment, it.name, it.stateLabel) } })
+            attachmentLookup = ::recoveryAttachmentLookup)
         if (savedState == null && !demo && partition != "unpaired-local") { restoreNavigation(partition); activeTopic = "taskIndex" }
         savedState?.getStringArrayList("screenHistory")?.forEach { value -> MobileScreen.entries.firstOrNull { it.name == value }?.let(screenHistory::addLast) }
         buildLayout()
@@ -270,6 +269,7 @@ class MainActivity : ComponentActivity() {
     private fun buildLayout() {
         composer = EditText(this).apply {
             id = INPUT_ID
+            isSaveEnabled = false
             hint = mobileText(R.string.label_what_would_you_like_lexora_to_do)
             textSize = 16f; gravity = Gravity.TOP
             minLines = 1; maxLines = 6; setPadding(0, dp(10), 0, dp(10))
@@ -279,7 +279,7 @@ class MainActivity : ComponentActivity() {
             addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
                 override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-                override fun afterTextChanged(s: Editable?) { if (!writingView) persistInput(s?.toString().orEmpty()); syncUi() }
+                override fun afterTextChanged(s: Editable?) { if (!writingView) persistInput(s ?: "", keepSettings = false); syncUi() }
             })
         }
         ui.connectionLabel = if (demo) mobileText(R.string.mobile_local_demo) else mobileText(R.string.mobile_not_connected)
@@ -296,7 +296,7 @@ class MainActivity : ComponentActivity() {
                         avatarContext = ReaderAvatarContext(partition, connectedClient, schemas),
                         artifactContext = ui.viewBranchId?.let { branchId -> ReaderArtifactContext(partition, branchId, connectedClient, schemas) { connection, resource ->
                             val owner = connection.identity?.partition ?: throw ProtocolFailure("NOT_CONNECTED")
-                            taskFileCopies.find(owner, resource) ?: files.download(connection, resource)
+                            taskFileCopies.find(owner, resource) ?: files.download(connection, resource, previewOnly = true)
                         } }, onResourceActions = ::resourceActions,
                         branches = ui.branches, selectedBranchId = ui.viewBranchId, onBranch = ::selectBranch,
                         onMessageMenu = { message, anchor, contextual -> prepareMessageAction(message, null, anchor, contextual) },
@@ -340,10 +340,10 @@ class MainActivity : ComponentActivity() {
             MobileAction.SelectDevice -> payload?.optString("id")?.let(::switchDevice)
             MobileAction.ManageDevice -> payload?.optString("id")?.let(::manageDevice)
             MobileAction.Approvals -> showApprovals()
-            MobileAction.Outbox -> showOutbox()
+            MobileAction.InspectUnplacedInput -> inspectUnplacedInput()
+            MobileAction.RecoverDownloads -> showLocalFiles()
             MobileAction.Recovery -> showRecovery()
             MobileAction.Files -> selectedTask?.let { showTaskFiles(it.getString("id")) } ?: showFiles()
-            MobileAction.ManageFiles -> showFiles()
             MobileAction.OpenResource -> payload?.let { value ->
                 val resource = value.optJSONObject("resource")
                 if (resource == null) openResource(value)
@@ -375,6 +375,7 @@ class MainActivity : ComponentActivity() {
             MobileAction.TaskQueue -> conversationTarget?.let(operations::queue)
             MobileAction.TaskBranches -> loadBranches()
             MobileAction.SelectBranch -> payload?.let(::selectBranch)
+            MobileAction.CheckInputReceipt -> client?.let { checkInputReceipts(it, scope) }
             MobileAction.QueueInput -> if (selectedTask != null && scope.startsWith("conversation:")) send("chat.queue.enqueue")
             MobileAction.OpenOnDesktop -> openOnDesktop()
             MobileAction.ReadState -> selectedTask?.let { operations.readState(JSONObject(it.toString())) }
@@ -415,8 +416,15 @@ class MainActivity : ComponentActivity() {
         renderExecution()
         renderSpace()
         ui.inputEnabled = composer.isEnabled
-        ui.sendEnabled = composer.isEnabled && (composer.text.isNotBlank() || ui.attachmentCount > 0) && !input.isSubmitting && !writingCurrentModel() && ui.conversationReady && !ui.viewingArchived
         ui.hasInput = composer.text.isNotBlank() || ui.attachmentCount > 0
+        val waiting = pendingInputScopes[input.scope]
+        ui.sendFeedback = when {
+            waiting != null && !input.isSubmitting -> mobileText(if (waiting) R.string.send_check_original else R.string.error_command_result_unknown)
+            !ui.connected && ui.hasInput -> mobileText(R.string.send_offline)
+            else -> sendIssue?.takeIf { it.first == input.scope }?.second.orEmpty()
+        }
+        ui.canCheckInputReceipt = waiting != null && !input.isSubmitting && ui.connected && checkingReceipts !== client
+        ui.sendEnabled = composer.isEnabled && ui.hasInput && waiting == null && !input.isSubmitting && !writingCurrentModel() && ui.conversationReady && !ui.viewingArchived
         val fallback = inheritedModel.takeIf { modelContextKey == modelKey() }
         val selection = model ?: selectedTask?.optJSONObject("modelSelection") ?: fallback
         if (ui.modelPickerOpen) {
@@ -435,14 +443,17 @@ class MainActivity : ComponentActivity() {
         ui.selectedTaskSpaceLabel = if (taskSpace == null) mobileText(R.string.label_no_space) else ui.spaces.firstOrNull { it.optString("id") == taskSpace }?.optString("name") ?: mobileText(R.string.mobile_space_temporarily_unavailable)
     }
     private fun navigate(screen: MobileScreen) {
+        if (ui.screen == MobileScreen.Conversation && screen != ui.screen) input.flush()
         if (screen != ui.screen) { screenHistory.addLast(ui.screen); ui.screen = screen }
         if (screen != MobileScreen.Conversation) hideKeyboard()
     }
     private fun showRoot(screen: MobileScreen) {
+        input.flush()
         screenHistory.clear(); ui.screen = screen; hideKeyboard()
         refreshTasks(); refreshSpaces(); refreshPendingOperations()
     }
     private fun goBack() {
+        input.flush()
         hideKeyboard()
         ui.screen = screenHistory.removeLastOrNull() ?: MobileScreen.Workbench
         if (ui.screen in setOf(MobileScreen.Workbench, MobileScreen.Tasks, MobileScreen.Spaces)) { refreshTasks(); refreshPendingOperations() }
@@ -516,7 +527,7 @@ class MainActivity : ComponentActivity() {
         selectedTask = saved?.optJSONObject("task")
         conversationTarget = runCatching { ConversationTarget.fromTopic(saved?.optString("topic") ?: "taskIndex") }.getOrNull()
         messageItems = emptyList(); taskItems = emptyList(); details = emptyMap()
-        ui.outboxCount = null
+        ui.hasUnplacedInput = false; ui.hasOrphanDownloads = false
         ui.spaces = emptyList(); ui.tasksLoaded = false; ui.taskSyncFailed = false
         resetTaskMarks()
         ui.taskFilter = MobileTaskFilter.entries.firstOrNull { it.name == saved?.optString("taskFilter") } ?: MobileTaskFilter.All
@@ -527,7 +538,7 @@ class MainActivity : ComponentActivity() {
         if (disconnecting) return
         if (id == connection.activeDeviceId()) { if (client?.isConnected != true) resumeConnection(); return }
         rememberNavigation()
-        val pending = input.pendingWrite
+        val pending = input.flush()
         disconnecting = true; composer.isEnabled = false; navigation++
         session.invalidate()
         ui.connectionLabel = mobileText(R.string.mobile_switching_services)
@@ -570,13 +581,72 @@ class MainActivity : ComponentActivity() {
         ui.connectionPhase = app.uselexora.mobile.session.MobileConnectionPhase.Idle
         ui.connectionLabel = mobileText(R.string.connection_disconnected); refreshDevices()
     }
+    private var pendingInputScopes = emptyMap<MobileComposerSession.Scope, Boolean>()
+    private var sendIssue: Pair<MobileComposerSession.Scope, String>? = null
+    private var checkingReceipts: ProductClient? = null
+
     private fun refreshPendingOperations() {
         val owner = partition
         disk.execute {
-            val pending = store.outbox(owner).filter { it.state !in setOf("accepted", "rejected") }
+            val pending = store.pendingComposerCommands(owner)
+            val inputs = pending.mapNotNull { item -> item.inputScope?.let { MobileComposerSession.Scope(owner, it) to (item.state == "not_found") } }.toMap()
             val models = pending.filter { it.method == TaskModelTarget.WRITE }.mapNotNull { item -> item.envelope.optJSONObject("intent")?.let { TaskModelLane.of(item.method, it) } }
-            onUi { if (partition == owner) { ui.outboxCount = pending.size; pendingTaskModels = owner to models } }
+            onUi {
+                if (partition != owner) return@onUi
+                pendingTaskModels = owner to models
+                sendIssue?.let { (target, message) ->
+                    if (target in pendingInputScopes && target !in inputs && message == mobileText(R.string.error_command_result_unknown)) sendIssue = null
+                }
+                pendingInputScopes = inputs
+            }
         }
+    }
+    private fun checkInputReceipts(current: ProductClient, targetScope: String? = null) {
+        val owner = current.identity?.partition ?: return
+        val generation = connectionGeneration
+        if (!foreground || checkingReceipts === current || partition != owner) return
+        checkingReceipts = current
+        work {
+            try {
+                for (item in store.pendingComposerCommands(owner)) {
+                    if (!foreground || connectionGeneration != generation || !current.isConnected) break
+                    val source = item.inputScope ?: continue
+                    if (targetScope != null && source != targetScope) continue
+                    val checked = try { CommandOutbox(store).reconcile(current, item) } catch (_: Exception) { continue }
+                    onUi {
+                        if (partition != owner || client !== current || !foreground || scope != source) return@onUi
+                        when (checked.state) {
+                            "accepted" -> when (checked.localEffect?.optString("kind")) {
+                                "taskModel" -> { useConfirmedTaskModel(owner, source); refreshModelContext() }
+                                "submit", "send" -> acceptedInput(current, ConversationTarget.fromTarget(checked.receipt!!.getJSONObject("target")))
+                                else -> restoreInput()
+                            }
+                            "not_found" -> if (targetScope != null) reviewMissingInput(current, checked)
+                            "rejected" -> sendIssue = input.scope to MobileFailurePresentation.message(MobileOperationFailure.from(ProtocolFailure(checked.receipt!!.optString("errorCode"))))
+                            "not_received" -> sendIssue = input.scope to mobileText(R.string.send_not_received)
+                        }
+                    }
+                }
+            } finally { onUi { if (checkingReceipts === current) checkingReceipts = null; refreshPendingOperations() } }
+        }
+    }
+    private fun reviewMissingInput(current: ProductClient, checked: app.uselexora.mobile.storage.OutboxItem) {
+        val owner = operationOwner()
+        AlertDialog.Builder(this).setMessage(mobileText(R.string.send_review_missing))
+            .setNegativeButton(mobileText(R.string.label_cancel), null)
+            .setPositiveButton(mobileText(R.string.send_back_to_edit)) { _, _ ->
+                if (isCurrent(owner) && foreground && current.isConnected) work {
+                    val fresh = CommandOutbox(store).reconcile(current, checked)
+                    if (fresh.state == "not_found") store.releaseComposerCommand(fresh, reviewed = true)
+                    onUi {
+                        refreshPendingOperations()
+                        if (isCurrent(owner) && fresh.state == "accepted") {
+                            if (fresh.localEffect?.optString("kind") in setOf("send", "submit")) acceptedInput(current, ConversationTarget.fromTarget(fresh.receipt!!.getJSONObject("target")))
+                            else restoreInput()
+                        }
+                    }
+                }
+            }.show()
     }
     private fun loadMessageDetail(message: JSONObject) {
         val id = message.getString("id")
@@ -601,7 +671,7 @@ class MainActivity : ComponentActivity() {
                 val result = if (resolved.getString("sizeBytes").toLong() > presentation.MAX_INLINE_DETAIL_BYTES) {
                     MobileMessageDetail(resource = resolved, notice = mobileText(R.string.mobile_this_content_is_long_preview_save_or_share_it))
                 } else {
-                    presentation.readDetail(files.download(current, resolved), resolved, schemas, objects(message.optJSONArray("resources") ?: JSONArray()))
+                    presentation.readDetail(files.download(current, resolved, previewOnly = true), resolved, schemas, objects(message.optJSONArray("resources") ?: JSONArray()))
                 }
                 onUi { if (ui.topic == topic && partition == owner && client === current) details = details + (id to result.copy(sourceBody = sourceBody)) }
             } catch (failure: Exception) {
@@ -623,13 +693,11 @@ class MainActivity : ComponentActivity() {
         JSONObject().put("id", "demo-tool").put("role", "tool").put("runId", "demo-run").put("tool", JSONObject().put("name", "read").put("isError", false)).put("body", JSONObject().put("kind", "text").put("text", mobileText(R.string.mobile_checked_the_task_page_and_service_list))),
         JSONObject().put("id", "demo-result").put("role", "assistant").put("body", JSONObject().put("kind", "text").put("text", mobileText(R.string.mobile_keep_common_actions_close_the_task_list_highlights_progress)))
     )
-    private fun persistInput(text: String) {
+    private fun persistInput(text: CharSequence, keepSettings: Boolean = true) {
         if (!composer.isEnabled) return
         saveFeedback("")
-        val value = JSONObject().put("content", MobileContentAdapter.textContent(text)).put("modelSelection", model ?: JSONObject.NULL)
-            .put("executionConfig", JSONObject(executionConfig.toString()))
-            .put("spaceId", spaceId ?: JSONObject.NULL).put("spaceName", spaceName ?: JSONObject.NULL)
-        input.persist(value, saved = { saveFeedback(mobileText(R.string.mobile_saved_on_phone)) }, failed = { saveFeedback(mobileText(R.string.mobile_save_failed_keep_this_input_open), false) })
+        val selection = model; val execution = executionConfig; val space = spaceId; val name = spaceName
+        input.persist({ ComposerEdit(text.toString(), selection?.toString(), execution.toString(), space, name, keepSettings) }, saved = { saveFeedback(mobileText(R.string.mobile_saved_on_phone)) }, failed = { saveFeedback(mobileText(R.string.mobile_save_failed_keep_this_input_open), false) })
     }
     private fun clearConversationState() {
         ui.taskFiles = null
@@ -651,16 +719,9 @@ class MainActivity : ComponentActivity() {
     private fun newTask() {
         navigation++
         clearConversationState()
-        scope = "draft:${store.newId()}"; selectedTask = null; messageItems = emptyList(); activeTopic = "taskIndex"
+        scope = DraftContext.newTaskKey(ui.selectedSpaceId); selectedTask = null; messageItems = emptyList(); activeTopic = "taskIndex"
         subscription?.subscribe(activeTopic)
         navigate(MobileScreen.Conversation)
-        val owner = partition; val target = scope
-        val selected = ui.selectedSpaceId?.takeIf { it.isNotBlank() }
-        val name = ui.spaces.firstOrNull { it.optString("id") == selected }?.optString("name")
-        disk.execute {
-            store.edit(owner, target, JSONObject().put("content", MobileContentAdapter.textContent(""))
-                .put("spaceId", selected ?: JSONObject.NULL).put("spaceName", name ?: JSONObject.NULL))
-        }
         restoreInput(); syncUi(); ui.notice = ""
     }
     private fun restoreInput() {
@@ -683,8 +744,10 @@ class MainActivity : ComponentActivity() {
             saveFeedback(if (!composer.isEnabled) mobileText(R.string.mobile_edit_this_content_on_the_desktop) else "", false)
             model = current?.value?.optJSONObject("modelSelection")
             executionConfig = ExecutionSettings.resolve(current?.value, task)
-            spaceId = DraftContext.spaceId(current?.value)
+            spaceId = if (current == null && target == DraftContext.newTaskKey(ui.selectedSpaceId)) ui.selectedSpaceId?.takeIf { it.isNotBlank() }
+                else DraftContext.spaceId(current?.value)
             spaceName = current?.value?.optString("spaceName")?.takeUnless { it.isEmpty() || it == "null" }
+                ?: ui.spaces.firstOrNull { it.optString("id") == spaceId }?.optString("name")
             renderSpace()
             renderExecution()
             when (HistorySource.fromScope(DraftContext.target(target))?.kind) {
@@ -962,23 +1025,47 @@ class MainActivity : ComponentActivity() {
         }
     }
     private fun renderRows() { syncUi() }
-    private fun send(method: String = "chat.startTurn", extra: JSONObject = JSONObject()) {
+    private fun send(method: String = "chat.startTurn", extra: JSONObject = JSONObject(), reviewed: LocalDraft? = null) {
+        if (!demo && client?.isConnected != true) { syncUi(); return }
+        if (input.scope in pendingInputScopes || input.isSubmitting) return
         if (writingCurrentModel()) {
-            if (pendingModel()) ui.notice = mobileText(R.string.error_command_result_unknown)
+            if (pendingModel()) { sendIssue = input.scope to mobileText(R.string.error_command_result_unknown); syncUi() }
             return
         }
         if (!composer.isEnabled) { ui.notice = mobileText(R.string.mobile_input_is_being_restored_or_requires_desktop_editing_the); return }
         if (!demo && (!ui.conversationReady || ui.viewingArchived || (conversationTarget != null && (!session.isSynchronized || readyContext != liveContext())))) {
             ui.notice = mobileText(if (ui.viewingArchived) R.string.mobile_archived_read_only else if (ui.syncFailure.isNotBlank()) R.string.mobile_sync_failed_input else R.string.mobile_sync_required); return
         }
-        if (demo) { val text = composer.text.toString(); if (text.isBlank()) return; input.pendingWrite?.get(); messageItems = messageItems + JSONObject().put("id", store.newId()).put("role", "user").put("body", JSONObject().put("kind", "text").put("text", text)); syncUi(); ui.notice = mobileText(R.string.mobile_demo_accepted_no_service_task_will_run); streamFixture(); return }
-        val sendingClient = client ?: run { saveFeedback(mobileText(R.string.error_not_connected)); return }
-        input.submit(sendingClient, method, extra, ::work, accepted = { result ->
-            if (partition == result.scope.partition && client === sendingClient) {
-                if (result.method == "chat.queue.enqueue") showNotice(mobileText(R.string.mobile_added_to_the_send_queue)) else ui.notice = ""
-                if (scope == result.scope.target) showTask(result.conversation, target = result.target)
+        if (demo) { val text = composer.text.toString(); if (text.isBlank()) return; input.flush(); messageItems = messageItems + JSONObject().put("id", store.newId()).put("role", "user").put("body", JSONObject().put("kind", "text").put("text", text)); syncUi(); ui.notice = mobileText(R.string.mobile_demo_accepted_no_service_task_will_run); streamFixture(); return }
+        val sendingClient = client?.takeIf { it.isConnected && it.identity?.partition == partition && foreground } ?: return
+        val owner = operationOwner()
+        sendIssue = null
+        input.submit(sendingClient, method, extra, ::work, reviewed = reviewed, accepted = { result ->
+            if (isCurrent(owner)) acceptedInput(sendingClient, result.target)
+        }, failed = { failure ->
+            if (isCurrent(owner)) {
+                val review = failure.cause as? app.uselexora.mobile.storage.SubmittedTextReview
+                if (review == null) sendIssue = input.scope to MobileFailurePresentation.message(failure)
+                else AlertDialog.Builder(this).setMessage(mobileText(R.string.send_review_text))
+                    .setNegativeButton(mobileText(R.string.send_back_to_edit), null)
+                    .setPositiveButton(mobileText(R.string.send_again)) { _, _ ->
+                        if (isCurrent(owner)) send(method, extra, reviewed = review.draft)
+                    }.show()
             }
         }, settled = ::refreshPendingOperations)
+        syncUi()
+    }
+    private fun acceptedInput(current: ProductClient, target: ConversationTarget) {
+        sendIssue = null
+        if (ui.screen != MobileScreen.Conversation) return
+        val known = selectedTask?.takeIf { it.optString("id") == target.conversationId } ?: taskItems.firstOrNull { it.optString("id") == target.conversationId }
+        if (known != null) { showTask(known, target = target); return }
+        val owner = operationOwner()
+        restoreInput()
+        work {
+            val task = current.call("conversations.get", JSONObject().put("conversationId", target.conversationId))
+            onUi { if (isCurrent(owner)) showTask(task, target = target) }
+        }
     }
     private fun renderSpace() {
         ui.spaceVisible = selectedTask == null && scope.startsWith("draft:")
@@ -1009,62 +1096,10 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-    private fun showOutbox() { commandHistory.show() }
     private fun recoveryTargetLabel(owner: String, taskId: String): String? {
         if (partition != owner) return null
         val task = taskItems.firstOrNull { it.optString("id") == taskId } ?: selectedTask?.takeIf { it.optString("id") == taskId }
         return task?.optString("title")?.takeUnless { it.isBlank() || it == "null" }
-    }
-    private fun commandTargetLabel(item: OutboxItem): String {
-        val target = CommandHistoryTarget.target(item)
-        if (target != null) return recoveryTargetLabel(item.partition, target.conversationId) ?: mobileText(R.string.command_original_task)
-        return if (item.envelope.optJSONObject("intent")?.optJSONObject("input")?.optJSONObject("scope")?.optString("kind") == "task") mobileText(R.string.incoming_new_draft)
-        else mobileText(R.string.command_original_target)
-    }
-    private fun commandRecovered(item: OutboxItem) {
-        refreshPendingOperations()
-        if (item.method == TaskModelTarget.WRITE && item.state == "accepted" && item.partition == partition && item.localEffect?.optString("scope") == scope) {
-            useConfirmedTaskModel(partition, scope)
-            refreshModelContext()
-        }
-        if (item.partition == partition && item.state == "accepted" && item.localEffect?.optString("kind") in setOf("send", "submit") &&
-            CommandHistoryTarget.originalScope(item) == scope) {
-            val retainView = {
-                composer.isEnabled = false; ui.inputEnabled = false; ui.sendEnabled = false
-                saveFeedback(mobileText(R.string.command_input_accepted), false)
-            }
-            retainView()
-            input.restore({ Unit }, ready = { _, _ -> retainView() }, failed = retainView)
-        }
-    }
-    private fun restoreCommandInput(item: OutboxItem) {
-        if (item.partition != partition) return
-        val source = CommandHistoryTarget.originalScope(item) ?: return
-        val owner = operationOwner()
-        localWork {
-            val draft = store.draft(item.partition, source) ?: throw ProtocolFailure("OBJECT_DELETED")
-            onUi { if (isCurrent(owner)) resumeDraft(draft, "") }
-        }
-    }
-    private fun openCommandTarget(item: OutboxItem) {
-        if (item.partition != partition) return
-        val target = CommandHistoryTarget.target(item) ?: return
-        val owner = operationOwner()
-        val current = client?.takeIf { it.isConnected && it.identity?.partition == item.partition }
-        if (current == null) {
-            val task = taskItems.firstOrNull { it.optString("id") == target.conversationId } ?: selectedTask?.takeIf { it.optString("id") == target.conversationId }
-            val branch = target.branchId?.takeIf { selectedTask?.optString("id") == target.conversationId && ui.branches.any { branch -> branch.optString("id") == it } }
-            if (task != null && branch != null) showTask(task, ui.branches, ConversationTarget(target.conversationId, branch))
-            else showNotice(mobileText(R.string.command_target_offline))
-            return
-        }
-        work {
-            val task = current.callValue("conversations.get", JSONObject().put("conversationId", target.conversationId)) as? JSONObject ?: throw ProtocolFailure("OBJECT_DELETED")
-            val branches = readBranches(current, target.conversationId)
-            val branch = target.branchId ?: task.getString("activeBranchId")
-            if (branches.none { it.optString("id") == branch }) throw ProtocolFailure("SOURCE_CHANGED")
-            onUi { if (isCurrent(owner)) showTask(task, branches, ConversationTarget(target.conversationId, branch)) }
-        }
     }
     private var modelPickerOwner: MobileOperationOwner? = null
     private var modelPickerTask: TaskModelTarget? = null
@@ -1239,9 +1274,7 @@ class MainActivity : ComponentActivity() {
                             persistInput(composer.text.toString())
                             ui.notice = mobileText(R.string.mobile_the_service_updated_this_task_s_execution_mode)
                         } else disk.execute {
-                            store.draft(owner, target)?.let { draft ->
-                                store.edit(owner, target, JSONObject(draft.value.toString()).put("executionConfig", acceptedConfig))
-                            }
+                            store.updateExecutionConfig(owner, target, acceptedConfig)
                         }
                     }
                 } finally { onUi { changingExecution = false; renderExecution() } }
@@ -1369,7 +1402,7 @@ class MainActivity : ComponentActivity() {
         val value = JSONObject().put("content", if (kind == HistorySource.Kind.Followup) MobileContentAdapter.textContent("") else message.getJSONObject("body").getJSONObject("content").getJSONObject("content"))
             .put("modelSelection", task.opt("modelSelection") ?: JSONObject.NULL).put("executionConfig", ExecutionSettings.resolve(null, task))
         disk.execute {
-            try { if (store.draft(owner, target) == null) store.edit(owner, target, value) }
+            try { if (kind == HistorySource.Kind.Edit && store.draft(owner, target) == null) store.edit(owner, target, value) }
             catch (_: Exception) { onUi { if (partition == owner && scope == target) ui.notice = mobileText(R.string.mobile_previous_input_could_not_be_saved_select_its_source) } }
         }
         restoreInput()
@@ -1433,7 +1466,51 @@ class MainActivity : ComponentActivity() {
             catch (error: Exception) { onUi { if (isCurrent(owner)) showNotice(MobileFailurePresentation.message(MobileOperationFailure.from(error))) } }
         }
     }
-    private fun showRecovery() { disk.execute { onUi { recovery.local() } } }
+    private fun recoveryAttachmentLookup(): (LocalDraft) -> String? {
+        val partitions = mutableMapOf<String, Map<String, List<JSONObject>>>()
+        return { draft ->
+            val byInput = partitions.getOrPut(draft.partition) {
+                transfers.list(draft.partition).filter { it.optString("kind") in setOf("upload", "capture") &&
+                    it.optString("state") in setOf("staged", "receiving", "captured") }
+                    .groupBy { it.optString("inputId").takeIf(String::isNotEmpty)?.let { id -> "id:$id" } ?: "scope:${it.optString("scope")}" }
+            }
+            val records = byInput["id:${draft.value.optString("inputId")}"].orEmpty() + byInput["scope:${draft.scope}"].orEmpty()
+            val ids = draft.value.optJSONObject("content")?.optJSONArray("panelResourceIds")
+            val names = records.filterNot { row -> ids != null && (0 until ids.length()).any { ids.optString(it) == row.optString("resourceId") } }
+            names.takeIf { it.isNotEmpty() }?.joinToString("\n") { row ->
+                mobileText(R.string.recovery_pending_attachment, row.getJSONObject("file").getString("name"),
+                    mobileText(if (row.optString("state") == "captured") R.string.mobile_photo_awaiting_attachment else R.string.mobile_upload_incomplete))
+            }
+        }
+    }
+
+    private fun reachableInputScopes(): Set<String> = buildSet {
+        if (demo || ui.devices.any { it.selected }) {
+            add(DraftContext.newTaskKey(null))
+            ui.spaces.forEach { add(DraftContext.newTaskKey(it.getString("id"))) }
+        }
+        taskItems.forEach { task ->
+            val id = task.optString("id")
+            val branch = task.optString("activeBranchId")
+            if (id.isNotBlank() && branch.isNotBlank()) add(ConversationTarget(id, branch).localKey)
+        }
+    }
+
+    private fun inspectUnplacedInput() {
+        val owner = partition
+        val reachable = reachableInputScopes()
+        val noDevice = !demo && ui.devices.none { it.selected }
+        localWork {
+            val available = recovery.hasUnplaced(owner, reachable)
+            val downloads = noDevice && LocalFiles(this, transfers, store).hasRetainedDownload()
+            onUi { if (partition == owner && ui.screen == MobileScreen.Tasks) {
+                ui.hasUnplacedInput = available
+                ui.hasOrphanDownloads = downloads
+            } }
+        }
+    }
+
+    private fun showRecovery() = recovery.local(reachableInputScopes())
     private fun resumeDraft(draft: LocalDraft, message: String) {
         if (partition != draft.partition) return
         clearConversationState()
@@ -1455,6 +1532,9 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+    private fun showLocalFiles() = LocalFilesPanel(this, LocalFiles(this, transfers, store) { setOfNotNull(pendingCapturePath, pendingSave?.optString("path")) },
+        ::work, ::onUi) { entry, action -> useFile(entry.file, entry.name, entry.mime, action) }.show(partition)
+
     private fun showFiles() {
         val options = mutableListOf(R.string.label_add_attachment, R.string.photo_attachment, R.string.upload_history, R.string.draft_attachments)
         if (selectedTask != null) options.add(R.string.label_task_files)
@@ -1464,13 +1544,14 @@ class MainActivity : ComponentActivity() {
             1 -> capturePhoto()
             2 -> showTransfers()
             3 -> showDraftFiles()
-            else -> if (options[index] == R.string.label_task_files) showTaskFiles(selectedTask!!.getString("id")) else LocalFilesPanel(this, LocalFiles(this, transfers, store) { setOfNotNull(pendingCapturePath, pendingSave?.optString("path")) }, ::work, ::onUi) { entry, action -> useFile(entry.file, entry.name, entry.mime, action) }.show(partition)
+            else -> if (options[index] == R.string.label_task_files) showTaskFiles(selectedTask!!.getString("id")) else showLocalFiles()
         } }.setNegativeButton(mobileText(R.string.review_close), null).show()
     }
     private fun captureFileTarget(): Boolean {
         if (!composer.isEnabled) { ui.notice = mobileText(R.string.mobile_this_input_contains_preserved_content_add_attachments_on_the); return false }
-        persistInput(composer.text.toString())
-        val target = DraftContext.target(scope)
+        if (composer.text.isEmpty() && (model != null || spaceId != null || ui.selectedSpaceId != null || executionConfig.toString() != ExecutionSettings.defaultConfig().toString())) persistInput(composer.text)
+        input.flush()
+        val target = DraftContext.scope(JSONObject().put("spaceId", spaceId ?: JSONObject.NULL), DraftContext.target(scope))
         pendingFileTarget = JSONObject().put("partition", partition).put("scope", scope).put("targetScope", target)
         return true
     }
@@ -1489,7 +1570,9 @@ class MainActivity : ComponentActivity() {
         val target = JSONObject(pendingFileTarget!!.toString())
         work {
             val photos = PhotoStore(this, transfers)
-            val record = photos.create(target)
+            val record = synchronized(TransferStore.fileLock) {
+                store.publishAttachment(target.getString("partition"), target.getString("scope"), null) { id -> photos.create(target.put("inputId", id)) }
+            }
             val capture = photos.file(record)
             val uri = FileProvider.getUriForFile(this, "$packageName.files", capture)
             onUi {
@@ -1512,6 +1595,7 @@ class MainActivity : ComponentActivity() {
         }
     }
     override fun onSaveInstanceState(state: Bundle) {
+        input.flush()
         state.putStringArrayList("screenHistory", ArrayList(screenHistory.map { it.name }))
         state.putString("screen", ui.screen.name)
         state.putString("selectedSpaceId", ui.selectedSpaceId)
@@ -1571,8 +1655,10 @@ class MainActivity : ComponentActivity() {
         val target = JSONObject().put("inputId", transfer.optString("inputId").takeIf { it.isNotEmpty() } ?: store.inputId(owner, transfer.getString("scope")))
         files.upload(current, transfer, target)
         onUi {
-            if (partition == owner && scope == transfer.getString("scope")) restoreInput()
-            showNotice(mobileText(R.string.mobile_attachment_added))
+            if (partition == owner && ownsTransfer(transfer, store.draft(owner, scope))) {
+                restoreInput()
+                showNotice(mobileText(R.string.mobile_attachment_added))
+            }
         }
     }
     private fun showTransfers() {
@@ -1643,17 +1729,24 @@ class MainActivity : ComponentActivity() {
             val file = record?.optJSONObject("file")
             MobileAttachmentItem(id, file?.optString("name")?.takeIf { it.isNotBlank() } ?: mobileText(R.string.mobile_file_attached), file?.optString("mimeType").orEmpty(), mobileText(R.string.mobile_ready), editable)
         }
-        val unfinished = records.filter { it.optString("scope") == draft.scope && it.optString("inputId") == draft.value.optString("inputId") &&
+        val unfinished = records.filter { ownsTransfer(it, draft) &&
             it.optString("kind") in setOf("upload", "capture") && it.optString("state") in setOf("staged", "receiving", "captured") && it.optString("resourceId") !in ids }
             .map { record -> val file = record.getJSONObject("file")
                 MobileAttachmentItem("transfer:${record.getString("id")}", file.getString("name"), file.optString("mimeType"), if (record.optString("state") == "captured") mobileText(R.string.mobile_photo_awaiting_attachment) else mobileText(R.string.mobile_upload_incomplete), false)
             }
         return attached + unfinished
     }
+    private fun ownsTransfer(record: JSONObject, draft: LocalDraft?): Boolean =
+        draft != null && record.optString("partition") == draft.partition &&
+            (record.optString("inputId").takeIf(String::isNotEmpty)?.let { it == draft.value.optString("inputId") }
+                ?: (record.optString("scope") == draft.scope))
+
     private fun openAttachment(id: String) {
         val owner = partition; val targetScope = scope; val current = client
         if (id.startsWith("transfer:")) {
-            val record = transfers.list(owner).firstOrNull { it.optString("id") == id.removePrefix("transfer:") && it.optString("scope") == targetScope } ?: return
+            val record = transfers.get(id.removePrefix("transfer:"))?.takeIf {
+                it.optString("partition") == owner && ownsTransfer(it, store.draft(owner, targetScope))
+            } ?: return
             AlertDialog.Builder(this).setTitle(record.getJSONObject("file").getString("name"))
                 .setMessage(mobileText(R.string.mobile_this_file_is_saved_on_the_phone_and_will))
                 .setPositiveButton(mobileText(R.string.incoming_retry)) { _, _ -> if (owner == partition && targetScope == scope) {
@@ -1676,15 +1769,11 @@ class MainActivity : ComponentActivity() {
         if (ui.attachments.none { it.id == id && it.canRemove }) return
         val owner = partition; val targetScope = scope
         val expectedInput = store.draft(owner, targetScope)?.value?.optString("inputId") ?: return
+        input.flush()
         composer.isEnabled = false
         disk.execute {
             try {
-                val draft = store.draft(owner, targetScope) ?: throw ProtocolFailure("EMPTY_DRAFT")
-                if (expectedInput.isNotBlank() && draft.value.optString("inputId") != expectedInput) throw ProtocolFailure("DRAFT_CONFLICT")
-                if (store.hasPendingDraftCommand(draft)) throw ProtocolFailure("LOCAL_FILE_IN_USE")
-                val resources = draft.value.getJSONObject("content").getJSONArray("panelResourceIds")
-                if ((0 until resources.length()).none { resources.getString(it) == id }) throw ProtocolFailure("SOURCE_CHANGED")
-                store.detach(owner, store.inputId(owner, targetScope), id)
+                ComposerMemory(store, transfers).detach(owner, targetScope, expectedInput, id)
                 onUi { if (partition == owner && scope == targetScope) { restoreInput(); showNotice(mobileText(R.string.mobile_removed_from_input_the_phone_file_is_retained)) } }
             } catch (_: Exception) { onUi { if (partition == owner && scope == targetScope) { restoreInput(); ui.notice = mobileText(R.string.mobile_attachment_operations_remain_unconfirmed_check_send_history_before_retrying) } } }
         }
@@ -1734,11 +1823,11 @@ class MainActivity : ComponentActivity() {
         val followup = if (selectedTask != null && composer.isEnabled) JSONObject().put("id", store.newId()).put("partition", partition).put("scope", scope) else null
         work {
             val result = runCatching {
-                taskFileCopies.find(owner.partition, resource) ?: run {
+                taskFileCopies.find(owner.partition, resource, retain = action != R.string.preview_action) ?: run {
                     if (!isCurrent(owner)) throw ProtocolFailure("SOURCE_CHANGED")
                     val target = owner.connection?.takeIf { it.isConnected && it.identity?.partition == owner.partition }
                         ?: throw ProtocolFailure("LOCAL_COPY_UNAVAILABLE")
-                    files.download(target, resource)
+                    files.download(target, resource, previewOnly = action == R.string.preview_action)
                 }
             }
             onUi {
@@ -1794,7 +1883,7 @@ class MainActivity : ComponentActivity() {
         val name = target.getString("name")
         val text = mobileText(R.string.file_followup_prompt, name) + if (quote.isBlank()) "\n" else "\n\n${mobileText(R.string.file_quote_prompt)}\n> ${quote.replace("\n", "\n> ")}\n\n${mobileText(R.string.file_revision_prompt)}\n"
         if (scope == destination) {
-            persistInput(composer.text.toString())
+            input.flush()
             composer.isEnabled = false; ui.sendEnabled = false; ui.inputEnabled = false
         }
         val appended = disk.submit<LocalDraft> { MaterialDrafts.append(store, owner, destination, id, text) }
@@ -1835,7 +1924,7 @@ class MainActivity : ComponentActivity() {
         if (ui.importingMaterial) return
         if (choice == "connect") { ui.incomingMaterial = null; navigate(MobileScreen.Devices); refreshDevices(); return }
         if (choice != "retry") {
-            if (composer.isEnabled) persistInput(composer.text.toString())
+            input.flush()
             when (choice) {
                 "new" -> newTask()
                 "task" -> {
@@ -1853,9 +1942,11 @@ class MainActivity : ComponentActivity() {
         ui.incomingMaterial = selected; ui.importingMaterial = true; ui.materialError = ""
         composer.isEnabled = false
         val owner = selected.partition!!; val destination = selected.scope!!
+        val initialSpace = ui.selectedSpaceId?.takeIf { destination == DraftContext.newTaskKey(it) && it.isNotBlank() }
+        val initialSpaceName = ui.spaces.firstOrNull { it.optString("id") == initialSpace }?.optString("name")
         work {
             try {
-                val draft = disk.submit<LocalDraft> { MaterialDrafts.append(store, owner, destination, selected.id, selected.text) }.get()
+                val draft = disk.submit<LocalDraft> { MaterialDrafts.append(store, owner, destination, selected.id, selected.text, initialSpace, initialSpaceName) }.get()
                 val staged = selected.uris.mapIndexed { index, uri -> files.stageMaterial(uri, owner, destination, "${selected.id}:$index", draft.value.getString("inputId")) }
                 onUi {
                     incomingMaterials.removeAll { it.id == selected.id }
@@ -1932,7 +2023,7 @@ class MainActivity : ComponentActivity() {
     private fun objects(array: JSONArray) = (0 until array.length()).map { array.getJSONObject(it) }
     private fun dp(value: Int) = (resources.displayMetrics.density * value).toInt()
     override fun onStart() { super.onStart(); session.start(!demo) }
-    override fun onStop() { readerBenchmark?.close(); readModel.flush(); rememberNavigation(); super.onStop(); ui.connected = false; session.stop() }
+    override fun onStop() { input.flush(); readerBenchmark?.close(); readModel.flush(); rememberNavigation(); super.onStop(); ui.connected = false; session.stop() }
     override fun onDestroy() { destroyed = true; input.close(); readerBenchmark?.close(); runTranscripts.close(); session.close(); streamHandler.removeCallbacksAndMessages(null); network.execute { disk.execute { store.close(); transfers.close() } }; network.shutdown(); readModel.close(); super.onDestroy() }
     companion object { private val disk = Executors.newSingleThreadExecutor(); const val INPUT_ID = 0x2101; const val EXECUTION_ID = 0x2102; const val SPACE_ID = 0x2103; const val SEND_ID = 0x2104; const val HISTORY_ID = 0x2105; const val FILE_REQUEST = 4001; const val CAMERA_REQUEST = 4002; const val PREVIEW_REQUEST = 4005; const val SAVE_REQUEST = 4003; const val CAMERA_PERMISSION = 4004 }
 }

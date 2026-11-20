@@ -59,6 +59,34 @@ class LocalFilesInstrumentedTest {
             } finally { for (entry in listOf(download, pending, adopted)) File(entry.getString("path")).delete(); link.delete(); outside.delete() }
         } }
     }
+    @Test fun cleanupRechecksPendingCommandsInTheListedTransferPartition() {
+        val owner = "cleanup-pending-${UUID.randomUUID()}"
+        val other = "$owner-other"
+        LocalStore(context).use { store -> TransferStore(context).use { transfers ->
+            val download = record(owner, "download", "ready")
+            val file = File(download.getString("path"))
+            fun tie(partition: String) = store.queue(partition, "uploads.adopt", JSONObject().put("commandId", store.newId()), JSONObject().put("transferId", download.getString("id")))
+            try {
+                transfers.save(download)
+                tie(other)
+                store.mark(tie(owner).id, "accepted")
+                val files = LocalFiles(context, transfers, store)
+                val listed = files.list().single { it.record.getString("id") == download.getString("id") }
+                assertTrue(listed.removable)
+                val late = tie(owner)
+                val error = runCatching { files.remove(listed.record) }.exceptionOrNull()
+                assertEquals("LOCAL_FILE_IN_USE", (error as? app.uselexora.mobile.protocol.ProtocolFailure)?.code)
+                assertTrue(file.isFile)
+                store.mark(late.id, "rejected")
+                files.remove(listed.record)
+                assertFalse(file.exists())
+            } finally {
+                file.delete()
+                transfers.writableDatabase.delete("transfers", "partition=?", arrayOf(owner))
+                store.writableDatabase.delete("outbox", "partition IN (?,?)", arrayOf(owner, other))
+            }
+        } }
+    }
     @Test fun offlineTaskCopiesRequireTheOriginalIdentityVersionAndCompleteVerifiedBytes() {
         val partition = "offline-copy-${UUID.randomUUID()}"
         LocalStore(context).use { store -> TransferStore(context).use { transfers ->
@@ -87,6 +115,86 @@ class LocalFilesInstrumentedTest {
                 file.delete()
                 transfers.writableDatabase.delete("transfers", "partition=?", arrayOf(partition))
             }
+        } }
+    }
+    @Test fun previewPressureOnlyReclaimsProvenCopiesAndKeepsOfflinePromotionsAndActiveReads() {
+        val owner = "preview-budget-${UUID.randomUUID()}"
+        val root = File(context.cacheDir, owner).apply { mkdirs() }
+        val isolated = object : android.content.ContextWrapper(context) { override fun getFilesDir() = root }
+        val exports = File(root, "exports").apply { mkdir() }
+        val staging = File(root, "staging").apply { mkdir() }
+        LocalStore(context).use { store -> TransferStore(context).use { transfers ->
+            fun copy(purpose: String?, partial: Boolean = false): Pair<File, JSONObject> {
+                val id = UUID.randomUUID().toString()
+                val file = File(exports, if (partial) "$id.part" else "$id-notes.txt").apply { writeText("abcdefgh") }
+                val version = app.uselexora.mobile.network.MobileFiles.hash(file)
+                val metadata = JSONObject().put("name", "notes.txt").put("sizeBytes", file.length()).put("contentVersion", version)
+                val record = JSONObject().put("partition", owner).put("id", id).put("kind", "download").put("prepared", metadata)
+                    .put("resourceId", id).put("expectedVersion", "7").put("contentVersion", version).put("copyPurpose", purpose)
+                    .put("state", if (partial) "receiving" else "ready").put("path", File(exports, "$id-notes.txt").absolutePath)
+                transfers.save(record)
+                return file to record
+            }
+            try {
+                val files = LocalFiles(isolated, transfers, store)
+                val legacy = copy(null).first
+                val explicit = copy("retained").first
+                val (promoted, record) = copy("preview")
+                val resource = JSONObject().put("resourceId", record.getString("resourceId")).put("revision", "7")
+                val copies = app.uselexora.mobile.ui.TaskFileCopies(isolated, transfers, store)
+                assertEquals(promoted.canonicalFile, copies.find(owner, resource, retain = true))
+                val active = copy("preview").first
+                val changed = copy("preview").first.apply { writeText("modified") }
+                val (pending, tied) = copy("preview")
+                val command = store.queue(owner, "uploads.adopt", JSONObject().put("commandId", store.newId()), JSONObject().put("transferId", tied.getString("id")))
+                val (reclaimed, old) = copy("preview")
+                val (partial, interrupted) = copy("preview", partial = true)
+                val savedAs = File(root, "saved-as.txt").apply { writeText("saved outside exports") }
+                val filler = File(staging, "existing-upload")
+                java.io.RandomAccessFile(filler, "rw").use { it.setLength(files.capacity().remaining) }
+                app.uselexora.mobile.storage.PreviewUse.open(active).use {
+                    assertTrue(files.reserve(16).remaining >= 16)
+                    assertFalse(reclaimed.exists()); assertFalse(partial.exists())
+                    assertEquals("cleared", transfers.get(old.getString("id"))?.getString("state"))
+                    assertEquals(0, transfers.get(interrupted.getString("id"))?.getInt("confirmedBytes"))
+                    assertEquals("LOCAL_CACHE_FULL", (runCatching { files.reserve(17) }.exceptionOrNull() as? app.uselexora.mobile.protocol.ProtocolFailure)?.code)
+                    for (f in listOf(legacy, explicit, promoted, active, changed, pending, savedAs, filler)) assertTrue(f.exists())
+                    assertEquals("saved outside exports", savedAs.readText())
+                    assertEquals(command.id, store.outbox(owner).single().id)
+                }
+            } finally { root.deleteRecursively(); transfers.writableDatabase.delete("transfers", "partition=?", arrayOf(owner)) }
+        } }
+    }
+    @Test fun previewSubquotaCountsEmptyEntriesAndReservesOnlyTheMissingBytesOfTheCurrentTransfer() {
+        val owner = "preview-count-${UUID.randomUUID()}"
+        val root = File(context.cacheDir, owner).apply { mkdirs() }
+        val isolated = object : android.content.ContextWrapper(context) { override fun getFilesDir() = root }
+        val exports = File(root, "exports").apply { mkdir() }
+        LocalStore(context).use { store -> TransferStore(context).use { transfers ->
+            val files = LocalFiles(isolated, transfers, store)
+            val hash = app.uselexora.mobile.network.MobileFiles.hash(ByteArray(0))
+            fun record() = JSONObject().put("id", UUID.randomUUID().toString()).put("partition", owner).put("kind", "download")
+                .put("resourceId", "output").put("expectedVersion", "1").put("contentVersion", hash).put("copyPurpose", "preview")
+                .put("prepared", JSONObject().put("name", "empty.txt").put("sizeBytes", "0").put("contentVersion", hash))
+            try {
+                repeat(LocalFiles.PREVIEW_COUNT) { n ->
+                    val record = record()
+                    val file = File(exports, "${record.getString("id")}-empty.txt").apply { createNewFile(); setLastModified(1000L + n) }
+                    transfers.save(record.put("state", "ready").put("path", file.absolutePath))
+                }
+                val incoming = record().put("state", "receiving")
+                files.reserve(0, incoming)
+                assertEquals(LocalFiles.PREVIEW_COUNT - 1, exports.listFiles()!!.size)
+                incoming.getJSONObject("prepared").put("sizeBytes", LocalFiles.PREVIEW_BYTES)
+                val partial = File(exports, "${incoming.getString("id")}.part")
+                java.io.RandomAccessFile(partial, "rw").use { it.setLength(LocalFiles.PREVIEW_BYTES - 1) }
+                transfers.save(incoming)
+                files.reserve(1, incoming)
+                assertTrue(partial.isFile)
+                val error = runCatching { files.reserve(2, incoming) }.exceptionOrNull()
+                assertEquals("LOCAL_PREVIEW_FULL", (error as? app.uselexora.mobile.protocol.ProtocolFailure)?.code)
+                assertEquals(LocalFiles.PREVIEW_BYTES - 1, partial.length())
+            } finally { root.deleteRecursively(); transfers.writableDatabase.delete("transfers", "partition=?", arrayOf(owner)) }
         } }
     }
     @Test fun unwritableStagingIsReportedAsLocalFailureAndDoesNotEraseInput() {

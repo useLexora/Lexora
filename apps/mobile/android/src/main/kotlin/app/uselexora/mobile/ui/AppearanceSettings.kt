@@ -33,7 +33,7 @@ import androidx.compose.ui.unit.dp
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun AppearanceSettings(onAction: ((MobileAction) -> Unit)? = null, close: () -> Unit) {
+internal fun AppearanceSettings(close: () -> Unit) {
     val context = LocalContext.current
     var languagePicker by remember { mutableStateOf(false) }
     var aboutOpen by rememberSaveable { mutableStateOf(false) }
@@ -60,11 +60,6 @@ internal fun AppearanceSettings(onAction: ((MobileAction) -> Unit)? = null, clos
                     SettingsRow(mobileText(R.string.label_language), Icons.Outlined.Language,
                         mobileText(if (MobileAppearance.language == "zh") R.string.mobile_language_chinese else R.string.language_english),
                         kind = SettingsRowKind.Selection, tag = "language-selector", divider = false) { languagePicker = true }
-                }
-                if (onAction != null) SettingsSection(mobileText(R.string.mobile_local_data)) {
-                    SettingsRow(mobileText(R.string.label_send_history), Icons.Outlined.Send) { onAction(MobileAction.Outbox) }
-                    SettingsRow(mobileText(R.string.label_local_drafts), Icons.Outlined.EditNote) { onAction(MobileAction.Recovery) }
-                    SettingsRow(mobileText(R.string.phone_copies), Icons.Outlined.PhoneAndroid, divider = false) { onAction(MobileAction.ManageFiles) }
                 }
                 Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
                     SettingsRow(mobileText(R.string.mobile_about_lexora), Icons.Outlined.Info, tag = "about-lexora", divider = false) { aboutOpen = true }

@@ -41,6 +41,14 @@ class HistoryInstrumentedTest {
         fun awaitSignal(stage: String) = waitFor(60000) { marker(stage).isFile }
         fun task() = client.call("conversations.get", JSONObject().put("conversationId", conversationId))
         fun messages(branchId: String) = client.call("conversations.listMessages", JSONObject().put("conversationId", conversationId).put("branchId", branchId)).getJSONArray("items").let { values -> (0 until values.length()).map { values.getJSONObject(it) } }
+        fun replyTarget(text: String): JSONObject {
+            val branches = client.call("conversations.listBranches", JSONObject().put("conversationId", conversationId)).getJSONArray("items")
+            val (branchId, reply) = (0 until branches.length()).mapNotNull { index ->
+                val id = branches.getJSONObject(index).getString("id")
+                messages(id).singleOrNull { it.optString("role") == "assistant" && it.getJSONObject("body").optString("text").contains(text) }?.let { id to it }
+            }.single()
+            return JSONObject().put("conversationId", conversationId).put("branchId", branchId).put("runId", reply.getString("runId"))
+        }
         fun released(id: String) = client.call("runs.getExecutionState", JSONObject().put("runId", id)).getString("resources") == "released"
         try { LocalStore(context).use { store ->
             ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java)).use { scenario ->
@@ -71,8 +79,7 @@ class HistoryInstrumentedTest {
                 assertEquals(before, store.outbox(partition).size)
                 click("发送")
                 waitFor { text("历史回复 3") }
-                val followup = store.outbox(partition).single { it.method == "chat.submitInput" && it.envelope.getJSONObject("intent").getString("operation") == "start" }.receipt!!
-                val followupTarget = followup.getJSONObject("target")
+                val followupTarget = replyTarget("历史回复 3")
                 assertNotEquals(originalBranch, followupTarget.getString("branchId"))
                 waitFor { released(followupTarget.getString("runId")) }
                 longClickContaining("从第一条回复继续"); click("编辑")
@@ -82,8 +89,7 @@ class HistoryInstrumentedTest {
                 waitFor { MobileUiTestDriver.enabled("发送") && text("正在编辑历史输入") && inputIs("编辑后的接续输入 😀") }
                 click("发送")
                 waitFor { text("历史回复 4") }
-                val edited = store.outbox(partition).single { it.method == "chat.submitInput" && it.envelope.getJSONObject("intent").getString("operation") == "edit" }.receipt!!
-                val editTarget = edited.getJSONObject("target")
+                val editTarget = replyTarget("历史回复 4")
                 assertNotEquals(followupTarget.getString("branchId"), editTarget.getString("branchId"))
                 waitFor { released(editTarget.getString("runId")) }
                 assertTrue(messages(followupTarget.getString("branchId")).any { it.getJSONObject("body").optString("kind") == "user" && MobileContentAdapter.text(it.getJSONObject("body").getJSONObject("content")) == "从第一条回复继续 😀" })
@@ -113,8 +119,7 @@ class HistoryInstrumentedTest {
                 waitFor { task().getString("activeBranchId") == regeneratedTarget.getString("branchId") }
                 click("发送")
                 waitFor { text("历史回复 6") }
-                val independentEdit = store.outbox(partition).filter { it.method == "chat.submitInput" && it.envelope.getJSONObject("intent").getString("operation") == "edit" && it.state == "accepted" }.first { it.receipt!!.getJSONObject("target").getString("branchId") != editTarget.getString("branchId") }
-                val independentTarget = independentEdit.receipt!!.getJSONObject("target")
+                val independentTarget = replyTarget("历史回复 6")
                 assertNotEquals(originalBranch, independentTarget.getString("branchId"))
                 assertNotEquals(regeneratedTarget.getString("branchId"), independentTarget.getString("branchId"))
                 waitFor { released(independentTarget.getString("runId")) }
@@ -131,16 +136,14 @@ class HistoryInstrumentedTest {
                 waitFor { !MobileUiTestDriver.enabled("发送") }
                 assertEquals(beforeDeletion, store.outbox(partition).size)
                 assertTrue(inputIs("任务已删除时必须保留的编辑"))
-                assertTrue(runCatching {
-                    app.uselexora.mobile.protocol.MobileInputCommands(store).send(client, staleDraft, app.uselexora.mobile.protocol.DraftContext.target(staleDraft.scope), "chat.editUserMessage")
-                }.isFailure)
-                waitFor { store.outbox(partition).any { it.method == "chat.submitInput" && it.envelope.getJSONObject("intent").getString("operation") == "edit" && it.state == "rejected" } }
+                val rejection = app.uselexora.mobile.protocol.MobileInputCommands(store).submit(client, staleDraft, app.uselexora.mobile.protocol.DraftContext.target(staleDraft.scope), "chat.editUserMessage")
+                assertEquals("rejected", rejection.getString("decision"))
+                assertEquals("SOURCE_CHANGED", rejection.getString("errorCode"))
+                assertEquals(rejection.toString(), client.call("commands.get", JSONObject().put("dataGeneration", client.identity!!.dataGeneration).put("commandId", rejection.getString("commandId"))).getJSONObject("receipt").toString())
+                assertTrue(store.outbox(partition).none { it.id == rejection.getString("commandId") })
                 assertTrue(inputIs("任务已删除时必须保留的编辑"))
-                val rejection = store.outbox(partition).single { it.method == "chat.submitInput" && it.envelope.getJSONObject("intent").getString("operation") == "edit" && it.state == "rejected" }
-                assertEquals("SOURCE_CHANGED", rejection.receipt!!.getString("errorCode"))
-                assertEquals(rejection.receipt.toString(), CommandOutbox(store).retry(client, rejection).toString())
                 assertEquals("原分支保留输入", MobileContentAdapter.text(store.draft(partition, originalScope)!!.value.getJSONObject("content")))
-                signal("done", JSONObject().put("sourceMessageId", source.getString("id")).put("followup", followupTarget).put("edit", editTarget).put("regenerate", regeneratedTarget).put("independentEdit", independentTarget).put("deletedSourceRejection", rejection.receipt).put("originalInputPreserved", true).put("recreationPreservesTarget", true).put("independentBranchEditAccepted", true).put("deletedSourceUiBlocked", true))
+                signal("done", JSONObject().put("sourceMessageId", source.getString("id")).put("followup", followupTarget).put("edit", editTarget).put("regenerate", regeneratedTarget).put("independentEdit", independentTarget).put("deletedSourceRejection", rejection).put("originalInputPreserved", true).put("recreationPreservesTarget", true).put("independentBranchEditAccepted", true).put("deletedSourceUiBlocked", true))
                 instrumentation.uiAutomation.waitForIdle(300, 5000)
                 instrumentation.uiAutomation.takeScreenshot()?.let { bitmap -> File(context.filesDir, "history-$token-branches.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle() }
             }
