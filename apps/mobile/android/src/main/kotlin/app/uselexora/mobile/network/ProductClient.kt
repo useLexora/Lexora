@@ -31,6 +31,13 @@ class ProductClient(private val transport: PinnedTransport, private val credenti
     private var serviceTime: ServiceTime? = null
     private var capabilities = emptySet<String>()
     fun supports(method: String) = isConnected && method in capabilities
+    val endpoint: String get() = transport.endpoint
+    internal fun fetchConnectionEndpoints(): List<String> {
+        return transport.request("/v1/device/endpoints", credential = credential, timeoutMs = 2500).use { response ->
+            if (!response.isSuccessful) return emptyList()
+            JSONObject(response.peekBody(8192).string()).getJSONArray("endpoints").serviceEndpoints()
+        }
+    }
     fun readAvatar(buddyId: String, avatar: JSONObject): ByteArray {
         val hash = avatar.getString("sha256")
         val size = avatar.getInt("sizeBytes")
@@ -52,7 +59,7 @@ class ProductClient(private val transport: PinnedTransport, private val credenti
         notifications.add(listener)
         return { notifications.remove(listener) }
     }
-    fun connect(version: String): ProductIdentity {
+    fun connect(version: String, connectionTimeoutSeconds: Long = 15): ProductIdentity {
         val ready = CompletableFuture<Unit>()
         val generation = ++connection
         socket = transport.socket("/v1/rpc", credential, object : WebSocketListener() {
@@ -72,7 +79,7 @@ class ProductClient(private val transport: PinnedTransport, private val credenti
             }
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) { if (generation == connection) fail(ProtocolFailure("SERVICE_UNREACHABLE")) }
         })
-        ready.get(15, TimeUnit.SECONDS)
+        ready.get(connectionTimeoutSeconds, TimeUnit.SECONDS)
         val requestStarted = SystemClock.elapsedRealtimeNanos()
         val result = call("initialize", ProductProtocol.initialize(version))
         if (!socketOpen) throw ProtocolFailure("SERVICE_UNREACHABLE")

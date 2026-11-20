@@ -1156,12 +1156,8 @@ class MainActivity : ComponentActivity() {
         val hasSaved = connection.hasSavedIdentity()
         onUi {
             val dialog = AlertDialog.Builder(this).setTitle(mobileText(R.string.label_current_service)).setMessage(if (current == null) mobileText(R.string.mobile_pairing_incomplete_scan_the_service_s_pairing_qr_code) else mobileText(R.string.mobile_address, current.getString("endpoint"), if (client?.isConnected != true) mobileText(R.string.mobile_currently_disconnected) else mobileText(R.string.mobile_authenticated_connection_established))).setNegativeButton(mobileText(R.string.review_close), null)
-            if (current != null) dialog.setPositiveButton(mobileText(R.string.mobile_update_service_address)) { _, _ ->
-                val address = EditText(this).apply { inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI; setText(current.getString("endpoint")); selectAll() }
-                AlertDialog.Builder(this).setTitle(mobileText(R.string.mobile_new_service_address)).setMessage(mobileText(R.string.mobile_enter_the_same_service_s_https_address_it_is)).setView(address).setPositiveButton(mobileText(R.string.mobile_verify_and_save)) { _, _ ->
-                    val endpoint = address.text.toString()
-                    work { connection.updateEndpoint(endpoint); onUi { session.invalidate(); ui.connectionLabel = mobileText(R.string.mobile_service_identity_verified_connecting_to_the_new_address); resumeConnection() } }
-                }.setNegativeButton(mobileText(R.string.label_cancel), null).show()
+            if (current != null && client?.isConnected != true) {
+                dialog.setPositiveButton(mobileText(R.string.label_scan_to_connect)) { _, _ -> handleAction(MobileAction.ScanDevice, null) }
             }
             if (hasSaved) dialog.setNeutralButton(if (current == null) mobileText(R.string.mobile_cancel_pairing) else mobileText(R.string.mobile_unpair)) { _, _ -> leavePairing(current) }
             dialog.show()

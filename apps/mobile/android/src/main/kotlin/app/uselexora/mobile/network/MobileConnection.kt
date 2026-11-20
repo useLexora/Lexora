@@ -36,12 +36,15 @@ class MobileConnection(context: Context, private val schemas: ProtocolSchemas, p
         val generation = synchronized(connectionLock) { closeActive(); connectionGeneration }
         PairingClient(secrets, schemas, version).resume()
         val saved = devices.active() ?: return null
-        val client = verifiedClient(saved.credential, saved.credential.getString("endpoint"))
+        val client = connectSaved(saved.credential)
         try {
             val serviceName = if (client.supports("service.info")) client.call("service.info", JSONObject()).getString("name") else null
             val platform = if (client.supports("service.host")) client.call("service.host", JSONObject()).getString("platform") else null
+            val available = runCatching { client.fetchConnectionEndpoints() }.getOrDefault(emptyList())
+                .takeIf { client.endpoint in it } ?: saved.credential.connectionEndpoints()
+            val updated = JSONObject(saved.credential.toString()).saveEndpoints(client.endpoint, available)
             synchronized(connectionLock) {
-                if (generation != connectionGeneration || !devices.connected(saved, serviceName, platform)) throw ProtocolFailure("SOURCE_CHANGED")
+                if (generation != connectionGeneration || !devices.connected(saved, serviceName, platform, updated)) throw ProtocolFailure("SOURCE_CHANGED")
                 activeClient = client
             }
             return client
@@ -57,8 +60,8 @@ class MobileConnection(context: Context, private val schemas: ProtocolSchemas, p
         val saved = snapshot.credential
         var revoked = false
         try {
-            verifiedClient(saved, saved.getString("endpoint")).close()
-            val transport = PinnedTransport(saved.getString("endpoint"), saved.getString("spkiPin"))
+            val endpoint = connectSaved(saved).let { client -> client.endpoint.also { client.close() } }
+            val transport = PinnedTransport(endpoint, saved.getString("spkiPin"))
             try {
                 val response = transport.json("/v1/device/logout", JSONObject(), saved.getString("credential"))
                 if (!response.optBoolean("revoked")) throw ProtocolFailure("PROTOCOL_INCOMPATIBLE")
@@ -89,26 +92,35 @@ class MobileConnection(context: Context, private val schemas: ProtocolSchemas, p
         if (expected == null || listOf("serviceId", "profileId", "dataGeneration", "deviceId").any { snapshot.credential.optString(it) != expected.optString(it) }) throw ProtocolFailure("SOURCE_CHANGED")
         return snapshot
     }
-    fun updateEndpoint(value: String): ProductIdentity {
-        val snapshot = devices.active() ?: throw ProtocolFailure("NOT_CONNECTED")
+    private fun refreshPairedDevice(qr: JSONObject): ProductIdentity? {
+        val snapshot = devices.active() ?: return null
         val saved = snapshot.credential
-        val uri = try { java.net.URI(value.trim()) } catch (error: Exception) { throw ProtocolFailure("INVALID_ENDPOINT", error) }
-        if (uri.scheme != "https" || uri.host.isNullOrEmpty() || uri.userInfo != null || uri.rawQuery != null || uri.rawFragment != null || !(uri.path.isNullOrEmpty() || uri.path == "/") || (uri.port != -1 && uri.port !in 1..65535)) throw ProtocolFailure("INVALID_ENDPOINT")
-        val endpoint = uri.toASCIIString().trimEnd('/')
-        val candidate = verifiedClient(saved, endpoint)
+        if (listOf("serviceId", "profileId", "spkiPin").any { qr.getString(it) != saved.getString(it) }) return null
+        val endpoints = qr.connectionEndpoints()
+        val candidate = try {
+            tryConnectionEndpoints(endpoints) { verifiedClient(saved, it, endpoints.size > 1) }
+        } catch (failure: Exception) {
+            val cause = if (failure is java.util.concurrent.ExecutionException) failure.cause else failure
+            if (cause is ProtocolFailure && cause.code in setOf("NOT_AUTHORIZED", "DATA_GENERATION_CHANGED")) return null
+            throw failure
+        }
         try {
-            val identity = candidate.identity!!
+            val updated = JSONObject(saved.toString()).saveEndpoints(candidate.endpoint, endpoints)
             synchronized(connectionLock) {
-                if (!devices.update(snapshot, JSONObject(saved.toString()).put("endpoint", endpoint))) throw ProtocolFailure("SOURCE_CHANGED")
+                if (!devices.update(snapshot, updated)) throw ProtocolFailure("SOURCE_CHANGED")
                 closeActive()
             }
-            return identity
+            return candidate.identity!!
         } finally { candidate.close() }
     }
-    private fun verifiedClient(saved: JSONObject, endpoint: String): ProductClient {
-        val client = ProductClient(PinnedTransport(endpoint, saved.getString("spkiPin")), saved.getString("credential"), schemas)
+    private fun connectSaved(saved: JSONObject): ProductClient {
+        val endpoints = saved.connectionEndpoints()
+        return tryConnectionEndpoints(endpoints) { verifiedClient(saved, it, endpoints.size > 1) }
+    }
+    private fun verifiedClient(saved: JSONObject, endpoint: String, hasFallback: Boolean = false): ProductClient {
+        val client = ProductClient(PinnedTransport(endpoint, saved.getString("spkiPin"), if (hasFallback) 3 else 10), saved.getString("credential"), schemas)
         try {
-            val identity = client.connect(version)
+            val identity = client.connect(version, if (hasFallback) 5 else 15)
             if (identity.serviceId != saved.getString("serviceId") || identity.profileId != saved.getString("profileId") || identity.dataGeneration != saved.getString("dataGeneration") || identity.deviceId != saved.getString("deviceId")) throw ProtocolFailure("DATA_GENERATION_CHANGED")
             return client
         } catch (failure: Throwable) { client.close(); throw failure }
@@ -121,6 +133,8 @@ class MobileConnection(context: Context, private val schemas: ProtocolSchemas, p
     }
     fun pair(code: String): ProductIdentity {
         synchronized(connectionLock) { closeActive() }
-        return PairingClient(secrets, schemas, version).start(code, android.os.Build.MODEL.take(80))
+        val pairing = PairingClient(secrets, schemas, version)
+        val qr = pairing.readCode(code)
+        return refreshPairedDevice(qr) ?: pairing.start(qr, android.os.Build.MODEL.take(80))
     }
 }

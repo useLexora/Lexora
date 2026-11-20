@@ -17,7 +17,7 @@ import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLContext
 import javax.net.ssl.X509TrustManager
 
-class PinnedTransport(val endpoint: String, pin: String) {
+class PinnedTransport(val endpoint: String, pin: String, connectTimeoutSeconds: Long = 10) {
     private val client: OkHttpClient
     private val closed = java.util.concurrent.atomic.AtomicBoolean(false)
     init {
@@ -37,16 +37,18 @@ class PinnedTransport(val endpoint: String, pin: String) {
         }
         val ssl = SSLContext.getInstance("TLS").apply { init(null, arrayOf(trust), null) }
         client = OkHttpClient.Builder().sslSocketFactory(ssl.socketFactory, trust).followRedirects(false).followSslRedirects(false)
-            .connectTimeout(10, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).pingInterval(15, TimeUnit.SECONDS).build()
+            .connectTimeout(connectTimeoutSeconds, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).pingInterval(15, TimeUnit.SECONDS).build()
     }
-    fun request(path: String, method: String = "GET", body: ByteArray? = null, credential: String? = null, headers: Map<String, String> = emptyMap()): Response {
+    fun request(path: String, method: String = "GET", body: ByteArray? = null, credential: String? = null, headers: Map<String, String> = emptyMap(), timeoutMs: Long? = null): Response {
         if (closed.get()) throw ProtocolFailure("CONNECTION_CLOSED")
         require(path.startsWith("/v1/") && !path.contains(".."))
         val request = Request.Builder().url(endpoint.trimEnd('/') + path)
         if (credential != null) request.header("Authorization", "Bearer $credential")
         headers.forEach { (key, value) -> request.header(key, value) }
         request.method(method, body?.toRequestBody((headers["Content-Type"] ?: "application/json").toMediaType()))
-        val response = client.newCall(request.build()).execute()
+        val call = client.newCall(request.build())
+        timeoutMs?.let { call.timeout().timeout(it, TimeUnit.MILLISECONDS) }
+        val response = call.execute()
         if (response.code in 300..399) { response.close(); throw ProtocolFailure("REDIRECT_NOT_ALLOWED") }
         return response
     }

@@ -10,18 +10,24 @@ import org.json.JSONObject
 
 class PairingClient(private val secrets: SecretStore, private val schemas: ProtocolSchemas, private val version: String) {
     private val devices = DeviceRegistry(secrets)
-    fun start(raw: String, deviceName: String): ProductIdentity {
+    fun start(raw: String, deviceName: String): ProductIdentity = start(readCode(raw), deviceName)
+
+    internal fun readCode(raw: String): JSONObject {
         val qr = JSONObject(raw)
         if (!schemas.valid(qr, schemas.document.getJSONObject("pairing").getJSONObject("pairingQrSchema"))) throw ProtocolFailure("INVALID_PAIRING_CODE")
         if (java.time.Instant.parse(qr.getString("expiresAt")).isBefore(java.time.Instant.now())) throw ProtocolFailure("PAIRING_EXPIRED")
+        return qr
+    }
+
+    internal fun start(qr: JSONObject, deviceName: String): ProductIdentity {
         val selection = devices.selection()
         devices.pending()?.takeIf { it.selection == selection && it.state.optJSONObject("qr")?.toString() == qr.toString() }?.let { return finish(it) }
-        val transport = PinnedTransport(qr.getString("endpoint"), qr.getString("spkiPin"))
+        val transport = pairingTransport(qr)
         val context = JSONObject().apply { for (key in listOf("serviceId", "profileId", "issuerInstanceId", "ticketId", "ticketSecret")) put(key, qr.get(key)) }
         val attempt = try { transport.json("/v1/pairing/prepare", JSONObject(context.toString()).put("deviceName", deviceName)) }
         finally { transport.close() }
         validate("pairingPrepareResultSchema", attempt)
-        val state = JSONObject().put("stage", "prepared").put("qr", qr).put("attempt", attempt)
+        val state = JSONObject().put("stage", "prepared").put("qr", qr).put("attempt", attempt).put("endpoint", transport.endpoint)
         return finish(devices.beginPairing(state, selection))
     }
     fun resume(): ProductIdentity? {
@@ -34,7 +40,7 @@ class PairingClient(private val secrets: SecretStore, private val schemas: Proto
         val saved = JSONObject(initial.state.toString())
         val qr = saved.getJSONObject("qr")
         val attempt = saved.getJSONObject("attempt")
-        val transport = PinnedTransport(qr.getString("endpoint"), qr.getString("spkiPin"))
+        val transport = pairingTransport(qr, saved.optString("endpoint"))
         try {
             if (!saved.has("credential")) {
                 val recovery = JSONObject().put("serviceId", qr.getString("serviceId")).put("profileId", qr.getString("profileId")).put("attemptId", attempt.getString("attemptId")).put("recoverySecret", attempt.getString("recoverySecret"))
@@ -54,12 +60,32 @@ class PairingClient(private val secrets: SecretStore, private val schemas: Proto
             try {
                 val identity = client.connect(version)
                 if (identity.serviceId != qr.getString("serviceId") || identity.profileId != qr.getString("profileId") || identity.deviceId != saved.getJSONObject("credentialRecord").getString("deviceId")) throw ProtocolFailure("TLS_IDENTITY_MISMATCH")
-                saved.put("stage", "active").put("endpoint", qr.getString("endpoint")).put("spkiPin", qr.getString("spkiPin")).put("serviceId", identity.serviceId).put("profileId", identity.profileId).put("dataGeneration", identity.dataGeneration).put("deviceId", identity.deviceId)
+                saved.saveEndpoints(transport.endpoint, qr.connectionEndpoints()).put("stage", "active").put("spkiPin", qr.getString("spkiPin")).put("serviceId", identity.serviceId).put("profileId", identity.profileId).put("dataGeneration", identity.dataGeneration).put("deviceId", identity.deviceId)
                 saved.remove("qr"); saved.remove("attempt")
                 devices.completePairing(pending, saved)
                 return identity
             } finally { client.close() }
         } finally { transport.close() }
+    }
+    private fun pairingTransport(qr: JSONObject, preferred: String = ""): PinnedTransport {
+        val endpoints = qr.connectionEndpoints()
+        val pin = qr.getString("spkiPin")
+        if (endpoints.size == 1) return PinnedTransport(endpoints.single(), pin)
+        val ordered = endpoints.sortedBy { it != preferred }
+        return tryConnectionEndpoints(ordered) { endpoint ->
+            val transport = PinnedTransport(endpoint, pin, connectTimeoutSeconds = 3)
+            try {
+                transport.request("/v1/connection-info", timeoutMs = 4000).use { response ->
+                    if (!response.isSuccessful) throw ProtocolFailure("SERVICE_UNREACHABLE")
+                    val info = JSONObject(response.peekBody(8192).string())
+                    if (info.optString("serviceId") != qr.getString("serviceId") || info.optString("profileId") != qr.getString("profileId")) throw ProtocolFailure("TLS_IDENTITY_MISMATCH")
+                }
+                transport
+            } catch (failure: Exception) {
+                transport.close()
+                throw failure
+            }
+        }
     }
     private fun validate(schema: String, value: JSONObject) {
         if (!schemas.valid(value, schemas.document.getJSONObject("pairing").getJSONObject(schema))) throw ProtocolFailure("PROTOCOL_INCOMPATIBLE")

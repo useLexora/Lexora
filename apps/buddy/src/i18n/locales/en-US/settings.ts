@@ -1,18 +1,12 @@
 import type zhCN from '../zh-CN/settings'
 
 export default {
-  'desktop.settings.devices.options': 'Connection options',
-  'desktop.settings.devices.automatic': 'Automatic',
-  'desktop.settings.devices.save': 'Save',
   'desktop.settings.devices.emptyReady': 'Choose Pair new device above, then scan the code with your phone.',
   'desktop.settings.devices.emptyDisabled': 'Enable mobile connections to pair your phone.',
 
   'desktop.settings.devices.title': 'Mobile devices',
   'desktop.settings.devices.enable': 'Allow mobile connections',
   'desktop.settings.devices.description': 'Connect Lexora Android over your local or trusted private network. Only paired devices can access tasks.',
-  'desktop.settings.devices.address': 'Computer private IP address',
-  'desktop.settings.devices.addressDescription': 'Enter a local or VPN address reachable from your phone. Turn connections off before changing it.',
-  'desktop.settings.devices.port': 'Connection port',
   'desktop.settings.devices.failed': 'The operation could not be completed. Check the connection status and retry.',
   'desktop.settings.devices.unavailable': 'Unable to load device connection status. Check that the service is running and retry.',
   'desktop.settings.devices.pair': 'Pair a device',
@@ -30,9 +24,9 @@ export default {
   'desktop.settings.devices.state.expired': 'Expired',
   'desktop.settings.devices.error.CREDENTIAL_STORE_UNAVAILABLE': 'Unlock the system keychain and retry.',
   'desktop.settings.devices.error.TLS_IDENTITY_UNAVAILABLE': 'The connection identity is unavailable. Retry or reset the identity and pair again.',
-  'desktop.settings.devices.error.ADDRESS_INVALID': 'Enter a valid private IP address.',
-  'desktop.settings.devices.error.ADDRESS_IN_USE': 'This port is in use. Turn connections off and choose another port.',
-  'desktop.settings.devices.error.ADDRESS_UNAVAILABLE': 'This address is unavailable on this computer. Check the network connection.',
+  'desktop.settings.devices.error.ADDRESS_INVALID': 'The current private address is invalid. Check your network connection.',
+  'desktop.settings.devices.error.ADDRESS_IN_USE': 'The mobile connection port is in use. Try again later.',
+  'desktop.settings.devices.error.ADDRESS_UNAVAILABLE': 'No private network address is available for mobile connections. Check the network connection on this computer.',
   'desktop.settings.devices.error.LISTEN_FAILED': 'Unable to accept device connections. Check the network and retry.',
   'desktop.settings.exitBehavior': 'When exiting',
   'desktop.settings.exitBehaviorDescription': 'Keeping the service running lets tasks and mobile access continue. A full exit stops the service. Closing a window is separate.',

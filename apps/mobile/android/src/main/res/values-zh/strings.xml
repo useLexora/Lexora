@@ -607,11 +607,6 @@
     <string name="mobile_currently_disconnected">当前未连接</string>
     <string name="mobile_authenticated_connection_established">已建立身份验证连接</string>
     <string name="mobile_address">地址：%1$s\n%2$s</string>
-    <string name="mobile_update_service_address">更新服务地址</string>
-    <string name="mobile_new_service_address">服务的新地址</string>
-    <string name="mobile_enter_the_same_service_s_https_address_it_is">填写同一个服务的 HTTPS 地址。验证原身份成功后才会保存；身份失败时保留原连接设置。</string>
-    <string name="mobile_verify_and_save">验证并保存</string>
-    <string name="mobile_service_identity_verified_connecting_to_the_new_address">服务身份已验证 · 正在连接新地址</string>
     <string name="mobile_cancel_pairing">放弃配对</string>
     <string name="mobile_remove_incomplete_pairing">移除未完成的配对</string>
     <string name="mobile_revoke_service_access_and_unpair">撤销服务授权并退出</string>

@@ -20,7 +20,7 @@ internal class DeviceRegistry(private val secrets: SecretStore) {
     fun forget(id: String) = secrets.devices { it.forget(id) }
     fun remove(snapshot: DeviceSnapshot): Boolean = secrets.devices { if (!it.matches(snapshot)) false else { it.forget(snapshot.id); true } }
     fun update(snapshot: DeviceSnapshot, value: JSONObject): Boolean = secrets.devices { it.update(snapshot, value) }
-    fun connected(snapshot: DeviceSnapshot, serviceName: String? = null, platform: String? = null): Boolean = secrets.devices { it.connected(snapshot, serviceName, platform) }
+    fun connected(snapshot: DeviceSnapshot, serviceName: String?, platform: String?, credential: JSONObject): Boolean = secrets.devices { it.connected(snapshot, serviceName, platform, credential) }
     fun pending(): PendingPairing? = secrets.devices { it.pending() }
     fun beginPairing(state: JSONObject, selection: DeviceSelection): PendingPairing = secrets.devices { it.beginPairing(state, selection) }
     fun advancePairing(pending: PendingPairing, state: JSONObject): PendingPairing = secrets.devices { it.advancePairing(pending, state) }
@@ -74,7 +74,7 @@ internal class DeviceDirectory(stored: JSONObject?) {
         requireEntry(snapshot.id).put("credential", copy(credential))
         return true
     }
-    fun connected(snapshot: DeviceSnapshot, serviceName: String? = null, platform: String? = null): Boolean {
+    fun connected(snapshot: DeviceSnapshot, serviceName: String? = null, platform: String? = null, credential: JSONObject = snapshot.credential): Boolean {
         if (!matches(snapshot)) return false
         val entry = requireEntry(snapshot.id)
         val oldName = entry.getString("name")
@@ -84,7 +84,7 @@ internal class DeviceDirectory(stored: JSONObject?) {
             entry.put("name", serviceName.take(253)).put("automaticName", serviceName.take(253))
         }
         if (platform != null) entry.put("platform", platform)
-        entry.put("lastConnectedAt", System.currentTimeMillis())
+        entry.put("credential", copy(credential)).put("lastConnectedAt", System.currentTimeMillis())
         return true
     }
     fun pending(): PendingPairing? = value.optJSONObject("pending")?.let {

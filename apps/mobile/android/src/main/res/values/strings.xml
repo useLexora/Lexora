@@ -610,11 +610,6 @@
     <string name="mobile_currently_disconnected">Currently disconnected</string>
     <string name="mobile_authenticated_connection_established">Authenticated connection established</string>
     <string name="mobile_address">Address: %1$s\n%2$s</string>
-    <string name="mobile_update_service_address">Update service address</string>
-    <string name="mobile_new_service_address">New service address</string>
-    <string name="mobile_enter_the_same_service_s_https_address_it_is">Enter the same service\'s HTTPS address. It is saved only after verifying the existing identity. A verification failure keeps the original connection settings.</string>
-    <string name="mobile_verify_and_save">Verify and save</string>
-    <string name="mobile_service_identity_verified_connecting_to_the_new_address">Service identity verified. Connecting to the new address…</string>
     <string name="mobile_cancel_pairing">Cancel pairing</string>
     <string name="mobile_remove_incomplete_pairing">Remove incomplete pairing</string>
     <string name="mobile_revoke_service_access_and_unpair">Revoke service access and unpair</string>
