@@ -40,6 +40,38 @@ class RecoveryInstrumentedTest {
             assertEquals(envelope.toString(), record.envelope.toString())
         }
     }
+    @Test fun unknownModelChangeProtectsItsTaskAcrossReopenUntilTheReceiptArrives() {
+        val partition = "test-${java.util.UUID.randomUUID()}"
+        val scope = "conversation:task:fork"
+        val method = "conversations.setModelSelection"
+        val target = JSONObject().put("conversationId", "task").put("branchId", "fork").put("actorId", "reviewer")
+        fun envelope(intent: JSONObject) = JSONObject().put("commandId", java.util.UUID.randomUUID().toString()).put("intent", intent)
+        fun send(task: String) = envelope(JSONObject().put("input", JSONObject().put("scope", JSONObject()
+            .put("kind", "conversation_branch").put("conversationId", task).put("branchId", "fork"))))
+        val write = JSONObject(target.toString()).put("expectedRevision", "1").put("expectedActiveRun", JSONObject.NULL)
+        LocalStore(context).use { store ->
+            store.edit(partition, scope, JSONObject().put("content", MobileContentAdapter.textContent("keep"))
+                .put("modelSelection", JSONObject().put("modelId", "old")))
+            val item = store.queue(partition, method, envelope(write), JSONObject().put("kind", "taskModel").put("scope", scope))
+            store.mark(item.id, "unknown")
+        }
+        LocalStore(context).use { store ->
+            val original = store.outbox(partition).single()
+            for ((name, request) in listOf(method to envelope(write), "chat.submitInput" to send("task"))) {
+                assertEquals("COMMAND_RESULT_UNKNOWN", assertThrows(app.uselexora.mobile.protocol.ProtocolFailure::class.java) {
+                    store.queue(partition, name, request)
+                }.code)
+            }
+            store.queue(partition, "chat.submitInput", send("another"))
+            assertEquals(2, store.outbox(partition).size)
+            store.resolve(original, JSONObject().put("decision", "accepted").put("method", method).put("target", target)
+                .put("result", JSONObject().put("revision", "2")))
+            val draft = store.draft(partition, scope)!!.value
+            assertEquals("keep", MobileContentAdapter.text(draft.getJSONObject("content")))
+            assertTrue(draft.isNull("modelSelection"))
+            store.queue(partition, "chat.submitInput", send("task"))
+        }
+    }
     @Test fun receiptAndDraftAcknowledgementCommitTogetherAndReplayDoesNotClearANewDraft() {
         val partition = "test-${java.util.UUID.randomUUID()}"
         val id = java.util.UUID.randomUUID().toString()

@@ -22,7 +22,7 @@ export type ConversationCommandMethod
     | 'conversations.addMember' | 'conversations.removeMember' | 'conversations.moveToSpace'
     | 'taskMarks.create' | 'taskMarks.update' | 'taskMarks.delete' | 'taskMarks.assign' | 'taskMarks.setRead' | 'taskMarks.clear'
 
-type MetadataCommands = Pick<ConversationMetadataService, 'withMutationScope' | 'rename' | 'activateBranch' | 'commitPermissionSettings' | 'prepareModelSelection' | 'commitModelSelection'
+type MetadataCommands = Pick<ConversationMetadataService, 'withMutationScope' | 'rename' | 'activateBranch' | 'commitPermissionSettings' | 'getModelControls' | 'prepareModelSelection' | 'commitModelSelection'
   | 'addMember' | 'removeMember' | 'setBuddy' | 'prepareSpaceMove' | 'commitSpaceMove'>
 
 export interface ConversationArchiveCommands {
@@ -79,6 +79,15 @@ export class ConversationCommandService {
       reject: rejectMetadata,
       commit: prepared => prepared.commit(),
     })
+  }
+
+  getModelControls(input: { conversationId: string, branchId: string, actorId: string }) {
+    assertCommittedRead(this.#options.database)
+    this.#options.repository.assertBranch(input.conversationId, input.branchId)
+    const controls = this.#options.metadata.getModelControls(input.conversationId, input.actorId, input.branchId)
+    if (!controls.next.isMember)
+      throw new ChatControlConflictError('SOURCE_CHANGED')
+    return controls
   }
 
   listArchived(input: ConversationArchiveQuery): ConversationArchivePage {
@@ -151,18 +160,20 @@ export class ConversationCommandService {
         const input = intent as InputCommandIntent<typeof method>
         repository.assertConversation(input.conversationId, input.expectedRevision)
         const assertRun = () => {
+          if (input.branchId)
+            repository.assertBranch(input.conversationId, input.branchId)
           if (input.targetRunId)
             repository.assertRunModel({ ...input, targetRunId: input.targetRunId, expectedRunGeneration: input.expectedRunGeneration!, expectedRunModelSelection: input.expectedRunModelSelection! })
         }
         assertRun()
-        const prepared = await metadata.prepareModelSelection({ id: input.conversationId, actorId: input.actorId, runId: input.targetRunId, modelSelection: input.modelSelection })
+        const prepared = await metadata.prepareModelSelection({ id: input.conversationId, actorId: input.actorId, branchId: input.branchId, runId: input.targetRunId, modelSelection: input.modelSelection })
         return { commit: () => {
           repository.assertConversation(input.conversationId, input.expectedRevision)
           assertRun()
           if (!input.targetRunId)
-            repository.assertActiveRunModel({ conversationId: input.conversationId, actorId: prepared.actorId, expectedActiveRun: input.expectedActiveRun! })
+            repository.assertActiveRunModel({ conversationId: input.conversationId, actorId: prepared.actorId, branchId: input.branchId, expectedActiveRun: input.expectedActiveRun! })
           metadata.commitModelSelection(prepared)
-          return { target: { conversationId: input.conversationId, actorId: prepared.actorId, ...(input.targetRunId ? { runId: input.targetRunId } : {}) }, result: { revision: repository.conversationRevision(input.conversationId), modelSelection: prepared.selection ? { ...prepared.selection } : null } }
+          return { target: { conversationId: input.conversationId, actorId: prepared.actorId, ...(input.branchId ? { branchId: input.branchId } : {}), ...(input.targetRunId ? { runId: input.targetRunId } : {}) }, result: { revision: repository.conversationRevision(input.conversationId), modelSelection: prepared.selection ? { ...prepared.selection } : null } }
         } }
       }
       case 'conversations.moveToSpace': {

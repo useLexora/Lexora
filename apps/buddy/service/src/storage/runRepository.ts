@@ -24,7 +24,7 @@ export interface CreateRunInput extends Omit<
 
 export interface RunRepository {
   setModelSelection: (id: string, modelSelection: ConversationModelSelection | null) => boolean
-  findActiveForConversation: (conversationId: string, actorId?: string) => RunRecord | null
+  findActiveForConversation: (conversationId: string, actorId?: string, branchId?: string) => RunRecord | null
   setActorSnapshot: (id: string, snapshot: NonNullable<RunRecord['actorSnapshot']>) => boolean
   bindSession: (id: string, piSessionFile: string) => boolean
   clearSessionBindings: (
@@ -117,11 +117,12 @@ export function createRunRepository(database: DatabaseSync): RunRepository {
       const selected = modelSelection === null ? null : buddyComposerDraftModelSelectionSchema.parse(modelSelection)
       return Number(database.prepare('UPDATE runs SET model_override_json = ? WHERE id = ? AND status IN (\'queued\', \'running\')').run(selected ? JSON.stringify(selected) : null, id).changes) === 1
     },
-    findActiveForConversation(conversationId, actorId) {
+    findActiveForConversation(conversationId, actorId, branchId) {
       const row = database.prepare(`SELECT * FROM runs WHERE conversation_id = ?
         AND ((? IS NOT NULL AND buddy_id = ?) OR (? IS NULL AND scheduling_lane = 'conversation' AND execution_kind IN ('root', 'maintenance')))
+        AND (? IS NULL OR (branch_id = ? AND execution_kind IN ('root', 'actor_child', 'maintenance')))
         AND status IN ('queued', 'running') ORDER BY started_at DESC, id DESC LIMIT 1`)
-        .get(conversationId, actorId ?? null, actorId ?? null, actorId ?? null) as RunRow | undefined
+        .get(conversationId, actorId ?? null, actorId ?? null, actorId ?? null, branchId ?? null, branchId ?? null) as RunRow | undefined
       return row ? toRunRecord(row) : null
     },
     setActorSnapshot(id, snapshot) {

@@ -28,7 +28,7 @@ import app.uselexora.mobile.i18n.mobileText
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ConversationModelPicker(state: MobileUiState, onAction: (MobileAction, JSONObject?) -> Unit) {
     val target = pickerTarget(state)
@@ -133,16 +133,21 @@ internal fun ConversationModelPicker(state: MobileUiState, onAction: (MobileActi
                                     }
                                     if (current) Icon(desktopSymbol(DesktopSymbol.Check), mobileText(R.string.label_selected), Modifier.padding(start = 8.dp).size(18.dp), tint = MaterialTheme.colorScheme.primary)
                                 }
-                                if (current && parameters != null) ModelParameters(candidate, parameters, state.models, editable) { pending = it }
+                                if (current && parameters != null) key(target) {
+                                    ModelParameters(candidate, parameters, state.models, editable) { pending = it }
+                                }
                             }
                         }
                     }
                     rowIndex += candidates.size + headerSize
                 }
             }
-            Button(enabled = editable && model != null && selectionVisible, onClick = {
+            if (state.modelConfirmError.isNotEmpty()) {
+                Text(state.modelConfirmError, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+            Button(enabled = editable && state.modelConfirmEnabled && model != null && selectionVisible, onClick = {
                 val latest = MobileModelControls.model(selection, state.models)
-                if (pickerTarget(state) == target && state.configEnabled && state.inputEnabled && latest != null && selectionVisible) {
+                if (pickerTarget(state) == target && state.configEnabled && state.inputEnabled && state.modelConfirmEnabled && latest != null && selectionVisible) {
                     onAction(MobileAction.ApplyModel, MobileModelControls.parameters(latest, parameters?.opt("reasoning") as? String, parameters?.opt("serviceTier") as? String))
                 }
             }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 8.dp).heightIn(min = 48.dp).testTag("apply-model"), shape = RoundedCornerShape(12.dp)) {
@@ -165,7 +170,6 @@ private fun ModelProviderTab(label: String, count: Int, active: Boolean, id: Str
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ModelParameters(model: JSONObject, parameters: JSONObject, models: List<JSONObject>, enabled: Boolean, change: (JSONObject) -> Unit) {
     val reasons = model.optJSONArray("reasoningOptions")
@@ -173,14 +177,30 @@ private fun ModelParameters(model: JSONObject, parameters: JSONObject, models: L
     if ((reasons == null || reasons.length() == 0) && !fast) return
     Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 12.dp).testTag("model-parameters"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (reasons != null && reasons.length() > 0) {
-            Text(mobileText(R.string.label_reasoning_effort), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (index in 0 until reasons.length()) {
-                    val value = reasons.getString(index)
-                    FilterChip(selected = parameters.opt("reasoning") == value, enabled = enabled,
-                        onClick = { change(MobileModelControls.parameters(model, value, parameters.opt("serviceTier") as? String)) },
-                        label = { Text(value) }, modifier = Modifier.testTag("reasoning:$value"), shape = RoundedCornerShape(8.dp),
-                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = .1f), selectedLabelColor = MaterialTheme.colorScheme.primary))
+            val options = (0 until reasons.length()).map { reasons.getString(it) }
+            val current = parameters.getString("reasoning")
+            var expanded by remember(options, enabled) { mutableStateOf(false) }
+            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("reasoning-selector")
+                .clickable(enabled = enabled, role = Role.DropdownList) { expanded = true },
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(mobileText(R.string.label_reasoning_effort), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(current, style = MaterialTheme.typography.bodyMedium)
+                Box {
+                    Icon(desktopSymbol(DesktopSymbol.ChevronDown), null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                        for (value in options) {
+                            val checked = current == value
+                            DropdownMenuItem(text = { Text(value) }, modifier = Modifier.testTag("reasoning:$value").semantics {
+                                selected = checked; role = Role.RadioButton
+                            }, trailingIcon = {
+                                if (checked) Icon(desktopSymbol(DesktopSymbol.Check), null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                            }, onClick = {
+                                expanded = false
+                                change(MobileModelControls.parameters(model, value, parameters.opt("serviceTier") as? String))
+                            })
+                        }
+                    }
                 }
             }
         }

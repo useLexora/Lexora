@@ -29,9 +29,14 @@ export class ConversationCommandRepository {
       throw new ChatControlConflictError('SOURCE_CHANGED')
   }
 
-  assertRunModel(input: { conversationId: string, actorId?: string, targetRunId: string, expectedRunGeneration: number, expectedRunModelSelection: ConversationModelSelection | null }): void {
+  assertBranch(conversationId: string, branchId: string): void {
+    if (!this.#database.prepare('SELECT 1 FROM conversation_branches WHERE id = ? AND conversation_id = ?').get(branchId, conversationId))
+      throw new ChatControlConflictError('SOURCE_CHANGED')
+  }
+
+  assertRunModel(input: { conversationId: string, branchId?: string, actorId?: string, targetRunId: string, expectedRunGeneration: number, expectedRunModelSelection: ConversationModelSelection | null }): void {
     const run = createRunRepository(this.#database).findById(input.targetRunId)
-    if (!run || run.conversationId !== input.conversationId || (input.actorId && run.buddyId !== input.actorId)
+    if (!run || run.conversationId !== input.conversationId || (input.branchId !== undefined && run.branchId !== input.branchId) || (input.actorId && run.buddyId !== input.actorId)
       || run.generation !== input.expectedRunGeneration || !['queued', 'running'].includes(run.status)
       || this.#database.prepare('SELECT cancel_requested_at FROM execution_state WHERE run_id = ?').get(run.id)?.cancel_requested_at) {
       throw new ChatControlConflictError('SOURCE_CHANGED')
@@ -42,8 +47,8 @@ export class ConversationCommandRepository {
       throw new ChatControlConflictError('SOURCE_CHANGED')
   }
 
-  assertActiveRunModel(input: { conversationId: string, actorId: string, expectedActiveRun: { runId: string, generation: number, modelSelection: ConversationModelSelection } | null }): void {
-    const run = createRunRepository(this.#database).findActiveForConversation(input.conversationId, input.actorId)
+  assertActiveRunModel(input: { conversationId: string, branchId?: string, actorId: string, expectedActiveRun: { runId: string, generation: number, modelSelection: ConversationModelSelection } | null }): void {
+    const run = createRunRepository(this.#database).findActiveForConversation(input.conversationId, input.actorId, input.branchId)
     if ((run?.id ?? null) !== (input.expectedActiveRun?.runId ?? null))
       throw new ChatControlConflictError('SOURCE_CHANGED')
     if (input.expectedActiveRun) {

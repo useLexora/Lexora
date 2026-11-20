@@ -61,7 +61,14 @@ export type ProductSearchPage = z.infer<typeof productSearchPageSchema>
 export type ProductBuddyProfile = z.infer<typeof productBuddyProfileSchema>
 export type ProductMemberPage = z.infer<typeof productMemberPageSchema>
 export type ProductMessageWindow = z.infer<typeof productMessageWindowSchema>
+export const productModelControlsInputSchema = z.object({ conversationId: id, branchId: id, actorId: id }).strict()
+export const productModelControlsSchema = productModelControlsInputSchema.extend({
+  revision,
+  modelSelection: modelSelectionSchema.nullable(),
+  activeRun: z.object({ runId: id, generation: revision, modelSelection: modelSelectionSchema }).strict().nullable(),
+})
 export const PRODUCT_QUERY_METHODS = {
+  'conversations.getModelControls': query(productModelControlsInputSchema, productModelControlsSchema),
   'conversations.getQueueControls': query(productQueueControlsInputSchema, productQueueControlsPageSchema),
   'buddies.list': query(productPageInputSchema, productBuddyPageSchema),
   'conversations.listMembers': query(productPageInputSchema.extend({ conversationId: id }), productMemberPageSchema),

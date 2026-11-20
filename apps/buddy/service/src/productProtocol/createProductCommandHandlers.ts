@@ -9,7 +9,7 @@ import { assertProductContentActions, productEditableContentSchema, restoreProdu
 import { ProductProtocolError } from '../../../shared/productProtocol/errors'
 import { productByteLength } from '../../../shared/productProtocol/limits'
 import { productCommandIntents } from '../../../shared/productProtocol/methods'
-import { productQueueControlsInputSchema } from '../../../shared/productProtocol/queries'
+import { productModelControlsInputSchema, productQueueControlsInputSchema } from '../../../shared/productProtocol/queries'
 import { decodeSafeProductRevision, encodeProductRevision } from '../../../shared/productProtocol/scalars'
 import { CommandAdmissionError } from '../commands/CommandAdmissionError'
 import { COMMAND_FINGERPRINT_VERSION, fingerprintCommandIntent, fingerprintProductCommandIntent, PRODUCT_COMMAND_FINGERPRINT_VERSION, productCommandFingerprint } from '../commands/commandIntent'
@@ -27,6 +27,18 @@ export function createProductCommandHandlers(options: {
 }): Partial<Record<ProductMethod, ProductRequestHandler>> {
   const { commands } = options
   const handlers: Partial<Record<ProductMethod, ProductRequestHandler>> = {
+    'conversations.getModelControls': { handle: (input) => {
+      const target = productModelControlsInputSchema.parse(input)
+      const { metadataRevision, current, next } = commands.metadata.getModelControls(target)
+      if (metadataRevision === undefined || (current && current.generation === undefined))
+        throw new ProductProtocolError('SERVICE_NOT_READY')
+      return {
+        ...target,
+        revision: encodeProductRevision(metadataRevision),
+        modelSelection: next.modelSelection,
+        activeRun: current ? { runId: current.runId, generation: encodeProductRevision(current.generation!), modelSelection: current.modelSelection } : null,
+      }
+    } },
     'conversations.getQueueControls': { handle: input => commands.queueControls.read(productQueueControlsInputSchema.parse(input)) },
     'conversations.listArchived': { handle: (input, context) => {
       options.assertOwner(context)

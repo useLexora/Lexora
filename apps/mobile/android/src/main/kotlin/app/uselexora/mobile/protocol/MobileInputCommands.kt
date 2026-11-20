@@ -15,7 +15,7 @@ class MobileInputCommands(private val store: LocalStore) {
         val input = JSONObject().put("inputId", snapshot.value.optString("inputId").takeIf { it.isNotEmpty() } ?: store.inputId(snapshot.partition, snapshot.scope))
             .put("scope", DraftContext.scope(snapshot.value, targetScope)).put("content", JSONObject(content.toString()))
             .put("executionConfig", ExecutionSettings.resolve(snapshot.value, null))
-            .put("modelSelection", snapshot.value.opt("modelSelection") ?: JSONObject.NULL)
+            .put("modelSelection", TaskModelTarget.inputOverride(targetScope, snapshot.value, store.draft(snapshot.partition, snapshot.scope)?.value))
             .put("participants", snapshot.value.opt("participants") ?: JSONObject.NULL)
         snapshot.value.optString("draftId").takeIf { it.isNotBlank() && content.getJSONArray("panelResourceIds").length() > 0 }?.let { input.put("legacyResourceDraftId", it) }
         val operation = when (method) {

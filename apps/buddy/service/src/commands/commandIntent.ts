@@ -72,7 +72,7 @@ export const commandIntentSchemas = {
   'conversations.addMember': conversationRequestSchemas.conversationBuddy.extend({ expectedRevision: revision }).strict(),
   'conversations.removeMember': conversationRequestSchemas.conversationBuddy.extend({ expectedRevision: revision }).strict(),
   'conversations.moveToSpace': conversationRequestSchemas.conversationMoveToSpace.extend({ expectedRevision: revision }).strict(),
-  'conversations.setModelSelection': conversationRequestSchemas.conversationModelSelection.extend({ expectedRevision: revision, expectedRunGeneration: revision.optional(), expectedRunModelSelection: conversationRequestSchemas.conversationModelSelection.shape.modelSelection.optional() }).strict().refine(input => input.targetRunId ? (input.expectedRunGeneration !== undefined && input.expectedRunModelSelection !== undefined) : input.expectedActiveRun !== undefined),
+  'conversations.setModelSelection': conversationRequestSchemas.conversationModelSelection.extend({ branchId: id.optional(), expectedRevision: revision, expectedRunGeneration: revision.optional(), expectedRunModelSelection: conversationRequestSchemas.conversationModelSelection.shape.modelSelection.optional() }).strict().refine(input => input.targetRunId ? (input.expectedRunGeneration !== undefined && input.expectedRunModelSelection !== undefined) : input.expectedActiveRun !== undefined),
   'taskMarks.create': taskMarkInputSchema,
   'taskMarks.update': taskMarkInputSchema.extend({ id, expectedRevision: revision }).strict(),
   'taskMarks.delete': z.object({ id, expectedRevision: revision }).strict(),
