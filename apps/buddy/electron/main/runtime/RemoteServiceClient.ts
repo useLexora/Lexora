@@ -6,8 +6,11 @@ import { randomUUID } from 'node:crypto'
 import { connectLocalService } from '../../../platform/service/connectLocalService'
 import { ServiceRpcChannel } from '../../../platform/service/ServiceRpcChannel'
 import { Emitter } from '../../../shared/events/Emitter'
+import { extensionAgentRpc } from '../../../shared/extensions/extensionAgent'
 import { SERVICE_LIFECYCLE_METHOD, serviceLifecycleChangeSchema } from '../../../shared/lifecycle/serviceLifecycle'
 import { serviceMaintenanceTicketSchema, serviceRuntimeStateSchema } from '../../../shared/service/localServiceProtocol'
+
+const hostRequestMethods = new Set<string>([extensionAgentRpc.request, 'extensions.inference.acquire', 'extensions.inference.release'])
 
 export class RemoteServiceClient {
   readonly #bootstrap: ServiceHostBootstrap
@@ -67,7 +70,7 @@ export class RemoteServiceClient {
   }
 
   async request(method: string, params: unknown, options: BuddyServiceRequestOptions = {}): Promise<unknown> {
-    const peer = method === 'extensions.inference.acquire' || method === 'extensions.inference.release' ? this.#host : await this.#connect()
+    const peer = hostRequestMethods.has(method) ? this.#host : await this.#connect()
     return peer.request(method, params, options.timeoutMs, options.signal, options.requestId)
   }
 
