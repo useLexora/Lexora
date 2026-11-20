@@ -69,7 +69,7 @@ class SupportPanelsInstrumentedTest {
                 compose.runOnIdle {
                     DraftRecoveryPanel(activity, store, { partition }, { it() }, { it() }, { value, _ -> restored.set(value) },
                         targetLabel = { if (it.partition == partition) "Pending task" else null },
-                        attachmentSummary = { if (it.partition == partition && it.scope == target && it.value.optString("inputId") == draft.value.optString("inputId")) "$fileName · Upload incomplete" else null }).local()
+                        attachmentLookup = { { if (it.partition == partition && it.scope == target && it.value.optString("inputId") == draft.value.optString("inputId")) "$fileName · Upload incomplete" else null } }).local()
                 }
                 MobileUiTestDriver.waitUntil { MobileUiTestDriver.contains(fileName) }
                 MobileUiTestDriver.clickContaining(fileName)
@@ -83,36 +83,6 @@ class SupportPanelsInstrumentedTest {
                 assertEquals("model", restored.get().value.getJSONObject("modelSelection").getString("modelId"))
                 assertTrue(store.outbox(partition).isEmpty())
             } finally { store.writableDatabase.delete("drafts", "partition=?", arrayOf(partition)) }
-        }
-    }
-
-    @Test fun savedUnknownReceiptIsReadableOfflineAndCheckingDoesNotResend() {
-        lateinit var activity: android.app.Activity
-        compose.setContent { activity = androidx.compose.ui.platform.LocalContext.current as android.app.Activity }
-        val partition = "history-ui-${java.util.UUID.randomUUID()}"
-        val commandId = java.util.UUID.randomUUID().toString()
-        val envelope = JSONObject().put("commandId", commandId).put("dataGeneration", "generation")
-            .put("expectedServiceInstanceId", "instance").put("intent", JSONObject())
-        app.uselexora.mobile.storage.LocalStore(context).use { store ->
-            store.queue(partition, "chat.submitInput", envelope)
-            store.mark(commandId, "unknown")
-            try {
-                compose.runOnIdle {
-                    CommandHistoryPanel(activity, store, { partition }, { null }, { it() }, { it() }, { it() },
-                        { "Offline task" }, {}, {}, {}, {}).show()
-                }
-                MobileUiTestDriver.clickContaining("Offline task")
-                MobileUiTestDriver.waitUntil { MobileUiTestDriver.contains("CHECK ORIGINAL RECEIPT") }
-                assertTrue(MobileUiTestDriver.contains(commandId))
-                assertFalse(MobileUiTestDriver.contains("Retry original operation"))
-                MobileUiTestDriver.click("CHECK ORIGINAL RECEIPT")
-                MobileUiTestDriver.waitUntil { MobileUiTestDriver.contains(app.uselexora.mobile.i18n.mobileText(R.string.error_not_connected)) }
-                val preserved = store.outbox(partition).single()
-                assertEquals(commandId, preserved.id)
-                assertEquals("unknown", preserved.state)
-                assertEquals(envelope.toString(), preserved.envelope.toString())
-                MobileUiTestDriver.click("CLOSE")
-            } finally { store.writableDatabase.delete("outbox", "partition=?", arrayOf(partition)) }
         }
     }
 

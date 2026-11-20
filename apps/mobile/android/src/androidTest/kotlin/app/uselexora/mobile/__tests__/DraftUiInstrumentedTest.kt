@@ -17,35 +17,38 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class DraftUiInstrumentedTest {
-    @Test fun newTaskOpensAnEmptyConversationWithoutSubmittingOrReplacingAnOlderDraft() {
+    @Test fun newTaskReopensTheLatestInputWithoutSubmittingOrReplacingAnOlderDraft() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val partition = "fixture:service:profile:generation:device"
-        val scope = "draft:${java.util.UUID.randomUUID()}"
-        val body = "保留这份已有输入 ${java.util.UUID.randomUUID()}"
+        val legacy = "draft:${java.util.UUID.randomUUID()}"
+        val current = app.uselexora.mobile.protocol.DraftContext.newTaskKey(null)
+        val body = "保留旧输入 ${java.util.UUID.randomUUID()}"
+        val latest = "自然恢复新输入 ${java.util.UUID.randomUUID()}"
         LocalStore(context).use { store ->
-            store.edit(partition, scope, JSONObject().put("content", MobileContentAdapter.textContent(body)))
+            store.edit(partition, legacy, JSONObject().put("content", MobileContentAdapter.textContent(body)))
             val outbox = store.outbox(partition).map { it.id }.toSet()
             ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).putExtra("fixture", true)).use { scenario ->
-                MobileUiTestDriver.openDrafts(); MobileUiTestDriver.clickContaining(body); clickText("继续编辑")
-                waitFor { var ready = false; scenario.onActivity { ready = it.findViewById<EditText>(MainActivity.INPUT_ID)?.text?.toString() == body }; ready }
-                clickText("返回")
-                waitFor { MobileUiTestDriver.existsTag("workbench-list") && !MobileUiTestDriver.exists("任务设置") }
-                MobileUiTestDriver.clickTag("new-task")
-                fun blankConversation(): Boolean {
-                    var ready = false
-                    scenario.onActivity { activity ->
-                        val input = activity.findViewById<EditText>(MainActivity.INPUT_ID)
-                        ready = input != null && input.isEnabled && input.text.isEmpty()
+                fun ready(expected: String? = null): Boolean {
+                    var matches = false
+                    scenario.onActivity {
+                        val field = it.findViewById<EditText>(MainActivity.INPUT_ID)
+                        matches = field != null && field.isEnabled && (expected == null || field.text.toString() == expected)
                     }
-                    return ready && MobileUiTestDriver.exists("任务设置")
+                    return matches && MobileUiTestDriver.exists("任务设置")
                 }
-                waitFor { blankConversation() }
-                assertFalse(MobileUiTestDriver.enabled("发送"))
-                assertEquals(body, MobileContentAdapter.text(store.draft(partition, scope)!!.value.getJSONObject("content")))
-                assertEquals(outbox, store.outbox(partition).map { it.id }.toSet())
+                MobileUiTestDriver.clickTag("new-task")
+                waitFor { ready() }
+                scenario.onActivity { it.findViewById<EditText>(MainActivity.INPUT_ID).setText(latest) }
+                clickText("返回")
+                MobileUiTestDriver.clickTag("new-task")
+                waitFor { ready(latest) }
                 scenario.recreate()
-                waitFor { blankConversation() && !MobileUiTestDriver.contains("正在打开草稿") }
-                InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+                waitFor { ready(latest) }
+                scenario.onActivity { it.findViewById<EditText>(MainActivity.INPUT_ID).setText("") }
+                waitFor { store.draft(partition, current) == null }
+                assertFalse(MobileUiTestDriver.enabled("发送"))
+                assertEquals(body, MobileContentAdapter.text(store.draft(partition, legacy)!!.value.getJSONObject("content")))
+                assertEquals(outbox, store.outbox(partition).map { it.id }.toSet())
                 InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()?.let { bitmap ->
                     try { java.io.File(context.filesDir, "paper-new-conversation.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) } }
                     finally { bitmap.recycle() }

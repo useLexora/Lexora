@@ -5,7 +5,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import app.uselexora.mobile.protocol.CommandOutbox
 import app.uselexora.mobile.protocol.ProtocolFailure
-import app.uselexora.mobile.storage.FileBudget
+import app.uselexora.mobile.storage.LocalFiles
 import app.uselexora.mobile.storage.LocalStore
 import app.uselexora.mobile.storage.PhotoStore
 import androidx.core.content.FileProvider
@@ -22,6 +22,7 @@ class MobileFiles(private val context: Context, private val transfers: TransferS
     private fun <T> localIO(operation: () -> T): T = try { operation() }
         catch (error: IOException) { throw ProtocolFailure("LOCAL_STORAGE_FAILED", error) }
         catch (error: SecurityException) { throw ProtocolFailure("LOCAL_STORAGE_FAILED", error) }
+    private val localFiles = LocalFiles(context, transfers, store)
     private val policy = JSONObject(context.assets.open("protocol-schema.json").bufferedReader().use { it.readText() }).getJSONObject("uploadPolicy")
     private fun uploadLimit(mimeType: String): Long {
         fun includes(key: String): Boolean = policy.getJSONArray(key).let { values -> (0 until values.length()).any { values.getString(it) == mimeType } }
@@ -50,23 +51,34 @@ class MobileFiles(private val context: Context, private val transfers: TransferS
         val safeName = name.replace(Regex("[\\\\/\\p{Cntrl}]"), "_").take(255).ifBlank { "attachment" }
         val mimeType = suppliedMime ?: context.contentResolver.getType(uri) ?: "application/octet-stream"
         val limit = uploadLimit(mimeType)
-        val capacity = FileBudget(context.filesDir).capacity()
+        var capacity = localFiles.capacity()
+        var available = minOf(capacity.remaining, capacity.freeDisk)
         val digest = MessageDigest.getInstance("SHA-256")
         try {
             context.contentResolver.openInputStream(uri).use { input ->
                 if (input == null) throw ProtocolFailure("RESOURCE_UNAVAILABLE")
                 FileOutputStream(temporary).use { output ->
                     val buffer = ByteArray(65536); var size = 0L
-                    while (true) { val read = input.read(buffer); if (read < 0) break; size += read; if (size > limit) throw ProtocolFailure("FILE_TOO_LARGE"); capacity.requireAdditional(size); digest.update(buffer, 0, read); output.write(buffer, 0, read) }
+                    while (true) {
+                        val read = input.read(buffer); if (read < 0) break
+                        size += read; if (size > limit) throw ProtocolFailure("FILE_TOO_LARGE")
+                        if (read > available) {
+                            capacity = localFiles.reserve(read.toLong())
+                            available = minOf(capacity.remaining, capacity.freeDisk)
+                        }
+                        digest.update(buffer, 0, read); output.write(buffer, 0, read); available -= read
+                    }
                     output.fd.sync()
                 }
             }
             if (!temporary.renameTo(destination)) throw ProtocolFailure("LOCAL_STORAGE_FAILED")
-            val value = JSONObject().put("id", id).put("partition", partition).put("scope", scope).put("kind", "upload").put("inputId", inputId ?: store.inputId(partition, scope)).put("targetScope", JSONObject(targetScope.toString())).put("path", destination.absolutePath).put("state", "staged")
+            val value = JSONObject().put("id", id).put("partition", partition).put("scope", scope).put("kind", "upload").put("targetScope", JSONObject(targetScope.toString())).put("path", destination.absolutePath).put("state", "staged")
                 .put("file", JSONObject().put("name", safeName).put("mimeType", mimeType).put("sizeBytes", destination.length()).put("sha256", hex(digest.digest())))
             capture?.let { value.put("sourceCaptureId", it.getString("id")) }
             materialId?.let { value.put("sourceMaterialId", it) }
-            transfers.save(value)
+            store.publishAttachment(partition, scope, inputId ?: capture?.optString("inputId")?.takeIf { it.isNotEmpty() }) { owner ->
+                value.put("inputId", owner); transfers.save(value)
+            }
             return value
         } catch (error: Exception) { temporary.delete(); if (transfers.list(partition).none { it.optString("id") == id }) destination.delete(); if (error is IOException || error is SecurityException) throw ProtocolFailure("LOCAL_FILE_FAILED", error); throw error }
     }
@@ -140,15 +152,16 @@ class MobileFiles(private val context: Context, private val transfers: TransferS
             state = client.call("uploads.get", JSONObject().put("uploadId", id))
         }
         if (state.getString("state") !in setOf("ready", "adopted")) throw ProtocolFailure("RESOURCE_UNAVAILABLE")
-        if (state.getString("state") == "ready") { transfer.put("state", "ready"); transfers.save(transfer) }
         if (transfer.has("inputId")) {
-            transfer.put("state", state.getString("state")).put("resourceId", state.getString("resourceId")); transfers.save(transfer)
+            val resourceId = state.getString("resourceId")
             if (state.getString("state") == "ready") {
-                store.attach(identity.partition, transfer.getString("inputId"), transfer.getString("resourceId"), transfer.optString("replacedResourceId").takeIf { it.isNotEmpty() })
-                transfer.remove("replacedResourceId"); transfers.save(transfer)
+                store.attach(identity.partition, transfer.getString("inputId"), resourceId, transfer.optString("replacedResourceId").takeIf { it.isNotEmpty() })
+                transfer.remove("replacedResourceId")
             }
-            return JSONObject().put("decision", "accepted").put("result", JSONObject().put("resourceId", state.getString("resourceId")))
+            transfers.save(transfer.put("state", state.getString("state")).put("resourceId", resourceId))
+            return JSONObject().put("decision", "accepted").put("result", JSONObject().put("resourceId", resourceId))
         }
+        if (state.getString("state") == "ready") { transfer.put("state", "ready"); transfers.save(transfer) }
         val adopted = command(client, transfer, "uploads.adopt", JSONObject().put("uploadId", id).put("draftId", transfer.getString("draftId")).put("expectedRevision", transfer.getString("expectedRevision")))
         transfer.put("state", "adopted").put("resourceId", adopted.getJSONObject("result").getString("resourceId")); transfers.save(transfer)
         return adopted
@@ -224,8 +237,8 @@ class MobileFiles(private val context: Context, private val transfers: TransferS
         if (receipt.getString("decision") != "accepted") throw ProtocolFailure(receipt.optString("errorCode", "COMMAND_REJECTED"))
         return receipt
     }
-    fun download(client: ProductClient, resource: JSONObject): File = synchronized(TransferStore.fileLock) { downloadLocked(client, resource) }
-    private fun downloadLocked(client: ProductClient, resource: JSONObject): File {
+    fun download(client: ProductClient, resource: JSONObject, previewOnly: Boolean = false): File = synchronized(TransferStore.fileLock) { downloadLocked(client, resource, previewOnly) }
+    private fun downloadLocked(client: ProductClient, resource: JSONObject, previewOnly: Boolean): File {
         val identity = client.identity ?: throw ProtocolFailure("NOT_CONNECTED")
         val existing = transfers.list(identity.partition).firstOrNull { it.optString("kind") == "download" && it.optString("resourceId") == resource.getString("resourceId") && it.optString("expectedVersion") == resource.getString("revision") }
         val reusable = existing?.optJSONObject("prepared")?.takeIf { runCatching { java.time.Instant.parse(it.getString("expiresAt")) > client.serverNow() }.getOrDefault(false) }
@@ -236,24 +249,28 @@ class MobileFiles(private val context: Context, private val transfers: TransferS
         val previous = existing?.takeIf { it.optString("contentVersion") == version }
         val id = previous?.getString("id") ?: UUID.randomUUID().toString()
         val directory = File(context.filesDir, "exports").apply { mkdirs() }
-        val name = prepared.getString("name").replace(Regex("[\\\\/\\p{Cntrl}]"), "_").take(160).ifBlank { "download" }
+        if (java.nio.file.Files.isSymbolicLink(directory.toPath()) || directory.canonicalFile.parentFile != context.filesDir.canonicalFile || !LocalFiles.validId(id)) throw ProtocolFailure("LOCAL_STORAGE_FAILED")
+        val name = LocalFiles.downloadName(prepared.getString("name"))
         val complete = File(directory, "$id-$name")
         val partial = File(directory, "$id.part")
         val record = previous?.let { JSONObject(it.toString()) } ?: JSONObject().put("id", id).put("partition", identity.partition).put("kind", "download").put("resourceId", resource.getString("resourceId")).put("contentVersion", version).put("confirmedBytes", 0L).put("expectedVersion", resource.getString("revision")).put("prepared", prepared)
+        if (java.nio.file.Files.isSymbolicLink(complete.toPath()) || java.nio.file.Files.isSymbolicLink(partial.toPath())) throw ProtocolFailure("LOCAL_STORAGE_FAILED")
+        if (previous == null || !previewOnly) record.put("copyPurpose", if (previewOnly) "preview" else "retained")
         record.put("prepared", prepared)
         if (complete.isFile && complete.length() == size && localIO { hash(complete) } == version) {
             record.put("state", "ready").put("path", complete.absolutePath).put("confirmedBytes", size).remove("localCopyRemoved")
             transfers.save(record)
             return complete
         }
-        record.put("state", "receiving")
+        record.put("state", "receiving").put("path", complete.absolutePath)
         transfers.save(record)
         var offset = record.getLong("confirmedBytes")
         if (offset < 0 || offset > partial.length() || offset > size) offset = 0
+        if (partial.exists() && partial.length() != offset) localIO { RandomAccessFile(partial, "rw").use { it.setLength(offset) } }
+        localIO { localFiles.reserve(size - offset, record) }
         connection.http(identity) { transport, credential ->
             localIO { RandomAccessFile(partial, "rw") }.use { output ->
-                localIO { output.setLength(offset); output.seek(offset) }
-                FileBudget(context.filesDir).capacity().requireAdditional(size - offset)
+                localIO { output.seek(offset) }
                 while (offset < size) {
                     val end = minOf(size - 1, offset + CHUNK_BYTES - 1)
                     transport.request("/v1/resources/${prepared.getString("downloadId")}", credential = credential, headers = mapOf("If-Match" to "\"$version\"", "Range" to "bytes=$offset-$end")).use { response ->

@@ -24,11 +24,7 @@ class LocalizationInstrumentedTest {
         }
     }
     private fun resumeDraft(scenario: ActivityScenario<MainActivity>, text: String) {
-        MobileUiTestDriver.clickTag("workbench-settings")
-        MobileUiTestDriver.click(mobileText(R.string.label_local_drafts))
-        MobileUiTestDriver.waitUntil { MobileUiTestDriver.contains(text) }
-        MobileUiTestDriver.clickContaining(text)
-        MobileUiTestDriver.click(mobileText(R.string.mobile_continue_editing).uppercase(app.uselexora.mobile.i18n.MobileStrings.locale))
+        MobileUiTestDriver.click(mobileText(R.string.label_new_task))
         MobileUiTestDriver.waitUntil {
             var restored = false
             scenario.onActivity { restored = it.findViewById<EditText>(MainActivity.INPUT_ID)?.text?.toString() == text }

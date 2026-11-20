@@ -22,17 +22,21 @@ class DraftRecoveryPanel(
     private val ui: (() -> Unit) -> Unit,
     private val restore: (LocalDraft, String) -> Unit,
     private val targetLabel: (LocalDraft) -> String? = { null },
-    private val attachmentSummary: (LocalDraft) -> String? = { null }
+    private val attachmentLookup: () -> (LocalDraft) -> String? = { { null } }
 ) {
-    fun local() = work {
-        val partition = owner()
-        val saved = store.drafts()
-        val attachments = saved.associate { (it.partition to it.scope) to attachmentSummary(it) }
-        val drafts = saved.filter { draft ->
+    private fun candidates(partition: String, reachable: Set<String>, limit: Int, attachmentSummary: (LocalDraft) -> String?) =
+        store.drafts(includeScope = { identity, scope -> identity != partition || scope !in reachable }, limit = limit) { draft ->
             val content = draft.value.getJSONObject("content")
             MobileContentAdapter.text(content).isNotBlank() || (content.optJSONArray("panelResourceIds")?.length() ?: 0) > 0 ||
-                !MobileContentAdapter.canEditAsText(content) || !attachments[draft.partition to draft.scope].isNullOrBlank()
+                !MobileContentAdapter.canEditAsText(content) || !attachmentSummary(draft).isNullOrBlank()
         }
+
+    fun hasUnplaced(partition: String, reachable: Set<String>) = candidates(partition, reachable, 1, attachmentLookup()).isNotEmpty()
+
+    fun local(reachable: Set<String> = emptySet(), partition: String = owner()) = work {
+        val attachmentSummary = attachmentLookup()
+        val drafts = candidates(partition, reachable, Int.MAX_VALUE, attachmentSummary)
+        val attachments = drafts.associate { (it.partition to it.scope) to attachmentSummary(it) }
         val pending = drafts.filter(store::hasPendingDraftCommand).map { it.partition to it.scope }.toSet()
         ui {
             if (owner() != partition) return@ui

@@ -1,0 +1,4 @@
+<resources>
+    <string name="recover_unsent_input">找回未发内容</string>
+    <string name="recover_downloads">查看已下载的文件</string>
+</resources>

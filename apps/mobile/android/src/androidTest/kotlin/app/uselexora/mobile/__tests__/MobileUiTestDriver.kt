@@ -215,8 +215,8 @@ object MobileUiTestDriver {
 
     fun openDrafts() {
         openWorkbench()
-        clickTag("workbench-settings")
-        click("本地草稿")
+        clickTag("home-all-tasks")
+        clickTag("recover-unsent-input")
         waitUntil { exists("手机草稿") }
     }
 

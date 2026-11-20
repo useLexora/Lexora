@@ -49,7 +49,7 @@ class InterruptionInstrumentedTest {
             val scope = "draft:${store.newId()}"
             val input = store.edit(partition, scope, JSONObject().put("content", MobileContentAdapter.textContent("服务中断后等待我明确重新生成\n" + (1..40).joinToString("\n") { "保留正在阅读的输入第 $it 行" })))
             val original = MobileInputCommands(store).send(client, input, DraftContext.target(scope))
-            val command = store.outbox(partition).single { it.method == "chat.submitInput" }
+            assertTrue(store.outbox(partition).none { it.id == original.getString("commandId") })
             val originalTarget = original.getJSONObject("target")
             val runId = originalTarget.getString("runId")
             val conversationId = originalTarget.getString("conversationId")
@@ -91,9 +91,9 @@ class InterruptionInstrumentedTest {
                 client = connection.connect()!!
                 assertEquals(partition, client.identity!!.partition)
                 assertNotEquals(instance, client.identity!!.serviceInstanceId)
-                val reconciled = CommandOutbox(store).reconcile(client, command)
-                assertEquals(original.toString(), reconciled.receipt!!.toString())
-                assertEquals(original.toString(), CommandOutbox(store).retry(client, command).toString())
+                val checked = client.call("commands.get", JSONObject().put("dataGeneration", client.identity!!.dataGeneration).put("commandId", original.getString("commandId")))
+                assertEquals("decided", checked.getString("lookup"))
+                assertEquals(original.toString(), checked.getJSONObject("receipt").toString())
                 val ended = client.call("runs.get", JSONObject().put("runId", runId))
                 assertTrue(ended.getString("status") in setOf("failed", "cancelled"))
                 assertEquals("released", client.call("runs.getExecutionState", JSONObject().put("runId", runId)).getString("resources"))
@@ -109,12 +109,12 @@ class InterruptionInstrumentedTest {
                 waitFor { text("中断后新回复") }
                 val successor = store.outbox(partition).single { it.method == "chat.regenerateAssistant" }
                 val target = successor.receipt!!.getJSONObject("target")
-                assertNotEquals(command.id, successor.id)
+                assertNotEquals(original.getString("commandId"), successor.id)
                 assertNotEquals(runId, target.getString("runId"))
                 assertEquals(conversationId, target.getString("conversationId"))
                 assertNotEquals(originalTarget.getString("branchId"), target.getString("branchId"))
                 assertEquals(runId, successor.envelope.getJSONObject("intent").getString("sourceRunId"))
-                assertEquals(original.toString(), CommandOutbox(store).retry(client, command).toString())
+                assertEquals(original.toString(), client.call("commands.get", JSONObject().put("dataGeneration", client.identity!!.dataGeneration).put("commandId", original.getString("commandId"))).getJSONObject("receipt").toString())
                 assertEquals(successor.receipt.toString(), CommandOutbox(store).retry(client, successor).toString())
                 assertEquals(ended.getString("status"), client.call("runs.get", JSONObject().put("runId", runId)).getString("status"))
                 assertEquals("不相关的手机输入保留😀", MobileContentAdapter.text(store.draft(partition, "global")!!.value.getJSONObject("content")))

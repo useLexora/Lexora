@@ -1,0 +1,4 @@
+<resources>
+    <string name="preview_cache_full">Preview cache is full. Close an open preview or save this file instead.</string>
+    <string name="preview_cache_label">Cached preview</string>
+</resources>

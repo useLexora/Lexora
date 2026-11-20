@@ -428,7 +428,15 @@
     <string name="draft_attachments">Current draft attachments</string>
     <string name="local_files_storage">Local files and storage</string>
     <string name="more_options">More options</string>
-    <string name="error_command_result_unknown">Sending is not yet confirmed. Check send history for the result.</string>
+    <string name="send_offline">Offline. Connect to send.</string>
+    <string name="send_review_text">This text was already sent. Send it again?</string>
+    <string name="send_back_to_edit">Back to editing</string>
+    <string name="send_again">Send again</string>
+    <string name="send_review_missing">Check the original task to avoid submitting twice. Returning to the editor won\'t send anything.</string>
+    <string name="send_check_status">Check status</string>
+    <string name="send_not_received">The computer did not receive this input. You can send it again.</string>
+    <string name="send_check_original">The result is unknown. Check the original task first.</string>
+    <string name="error_command_result_unknown">Waiting for confirmation from the computer.</string>
     <string name="error_data_generation_changed">Service data has changed. Your input is retained; pair again.</string>
     <string name="mobile_reconnecting_cached_tasks">Reconnecting · Showing previously synced tasks</string>
     <string name="mobile_task_update_failed">Task update failed</string>
@@ -511,7 +519,7 @@
     <string name="mobile_new_draft_created">New draft created</string>
     <string name="mobile_attachments_only_draft">Attachments-only draft</string>
     <string name="mobile_phone_files_256_mib">Phone files · %1$s / 256 MiB</string>
-    <string name="mobile_no_downloaded_files_or_upload_copies_inputs_and_send">No downloaded files or upload copies. Inputs and send history are kept separately.</string>
+    <string name="mobile_no_downloaded_files_or_upload_copies_inputs_and_send">No local files to manage.</string>
     <string name="mobile_downloaded">Downloaded</string>
     <string name="mobile_download_incomplete">Download incomplete</string>
     <string name="mobile_upload_finished">Upload finished</string>
@@ -523,7 +531,7 @@
         <item quantity="one">Remove %1$d leftover temporary file?</item>
         <item quantity="other">Remove %1$d leftover temporary files?</item>
     </plurals>
-    <string name="mobile_total_these_files_are_over_24_hours_old_and">Total: %1$s. These files are over 24 hours old and have no transfer references. Inputs, send history, photos in use and recorded transfers will be kept.</string>
+    <string name="mobile_total_these_files_are_over_24_hours_old_and">Total: %1$s. Only unused temporary files older than 24 hours will be removed. Your attachments will be kept.</string>
     <string name="mobile_clean_up">Clean up</string>
     <plurals name="mobile_removed_files_files_that_changed_during_cleanup_were_kept">
         <item quantity="one">Removed %1$d file. Files that changed during cleanup were kept.</item>
@@ -533,7 +541,7 @@
     <string name="mobile_remove_phone_copy">Remove phone copy</string>
     <string name="mobile_the_upload_or_command_is_still_unconfirmed_so_this">The upload or command is still unconfirmed, so this file cannot be removed. Connect to the original service to finish or cancel the upload first.</string>
     <string name="mobile_remove_this_phone_copy">Remove this phone copy?</string>
-    <string name="mobile_only_the_app_s_copy_of_will_be_removed">Only the app\'s copy of “%1$s” will be removed. The original service file, input and send history will be kept. Downloading again requires the original service. Files saved elsewhere or shared are unaffected.</string>
+    <string name="mobile_only_the_app_s_copy_of_will_be_removed">Only the app\'s copy of “%1$s” will be removed. Your input and the original service file will be kept. Downloading again requires the original service. Files saved elsewhere or shared are unaffected.</string>
     <string name="mobile_task_sync_interrupted_please_retry">Task sync interrupted. Please retry.</string>
     <string name="mobile_unable_to_read_the_phone_s_connection_identity_your">Unable to read the phone\'s connection identity. Your data is retained; reconnect and retry.</string>
     <string name="mobile_local_demo">Local demo</string>
@@ -624,7 +632,7 @@
     <string name="mobile_revoking_service_access">Revoking service access…</string>
     <string name="mobile_removing_phone_connection">Removing phone connection…</string>
     <string name="mobile_no_service_connected_scan_a_qr_code_to_connect">No service connected. Scan a QR code to connect.</string>
-    <string name="mobile_service_access_revoked_local_inputs_remain_available_in_draft">Service access revoked. Local inputs remain available in draft recovery.</string>
+    <string name="mobile_service_access_revoked_local_inputs_remain_available_in_draft">Service access revoked. Unsent input stays on this phone.</string>
     <string name="mobile_phone_connection_removed_service_access_revocation_is_unconfirmed">Phone connection removed. Service access revocation is unconfirmed.</string>
     <string name="mobile_review_operation">Review operation</string>
     <string name="mobile_source_demo_task_operation_read_an_authorized_directory_scope">Source: Demo task\nOperation: Read an authorized directory\nScope: This run\nThis is a local test card and does not approve service operations.</string>
@@ -679,7 +687,7 @@
     <string name="mobile_upload_incomplete">Upload incomplete</string>
     <string name="mobile_this_file_is_saved_on_the_phone_and_will">This file is saved on the phone and will be attached to the original input when uploading finishes.</string>
     <string name="mobile_removed_from_input_the_phone_file_is_retained">Removed from input. The phone file is retained.</string>
-    <string name="mobile_attachment_operations_remain_unconfirmed_check_send_history_before_retrying">Attachment operations remain unconfirmed. Check send history before retrying.</string>
+    <string name="mobile_attachment_operations_remain_unconfirmed_check_send_history_before_retrying">Waiting for the computer to confirm the attachment change.</string>
     <string name="mobile_no_attachments_in_the_current_input">No attachments in the current input</string>
     <string name="mobile_current_input_attachments">Current input attachments</string>
     <string name="mobile_no_file_saver_available_the_phone_copy_is_retained">No file saver available. The phone copy is retained.</string>

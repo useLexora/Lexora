@@ -427,7 +427,15 @@
     <string name="draft_attachments">当前草稿附件</string>
     <string name="local_files_storage">本机文件与清理</string>
     <string name="more_options">更多选项</string>
-    <string name="error_command_result_unknown">还无法确认是否发送成功，请到发送记录查看结果</string>
+    <string name="send_offline">未连接，暂时无法发送。</string>
+    <string name="send_review_text">这段文字已经发过，仍要发送吗？</string>
+    <string name="send_back_to_edit">返回编辑</string>
+    <string name="send_again">再次发送</string>
+    <string name="send_review_missing">请先查看原任务，避免重复提交。返回编辑不会自动发送。</string>
+    <string name="send_check_status">查看状态</string>
+    <string name="send_not_received">电脑未收到，可再次发送。</string>
+    <string name="send_check_original">暂时无法确认结果，请先查看原任务。</string>
+    <string name="error_command_result_unknown">等待电脑确认。</string>
     <string name="error_data_generation_changed">服务数据版本已变化 · 原输入保留，请重新配对</string>
     <string name="mobile_reconnecting_cached_tasks">正在重连 · 显示上次同步的任务</string>
     <string name="mobile_task_update_failed">任务更新失败</string>
@@ -510,7 +518,7 @@
     <string name="mobile_new_draft_created">已创建新草稿</string>
     <string name="mobile_attachments_only_draft">仅附件草稿</string>
     <string name="mobile_phone_files_256_mib">手机文件 · %1$s / 256 MiB</string>
-    <string name="mobile_no_downloaded_files_or_upload_copies_inputs_and_send">暂无已下载文件或上传副本。输入和发件记录单独保留。</string>
+    <string name="mobile_no_downloaded_files_or_upload_copies_inputs_and_send">暂无需要管理的本机文件。</string>
     <string name="mobile_downloaded">已下载</string>
     <string name="mobile_download_incomplete">下载未完成</string>
     <string name="mobile_upload_finished">上传已结束</string>
@@ -521,7 +529,7 @@
     <plurals name="mobile_remove_leftover_temporary_files">
         <item quantity="other">清理 %1$d 个遗留临时文件？</item>
     </plurals>
-    <string name="mobile_total_these_files_are_over_24_hours_old_and">共 %1$s，均已超过 24 小时且没有传输记录引用。输入、发件记录、正在使用的拍照文件和有记录的上传下载保留。</string>
+    <string name="mobile_total_these_files_are_over_24_hours_old_and">共 %1$s。只清理超过 24 小时且未使用的临时文件，不影响输入里的附件。</string>
     <string name="mobile_clean_up">清理</string>
     <plurals name="mobile_removed_files_files_that_changed_during_cleanup_were_kept">
         <item quantity="other">已清理 %1$d 个文件；期间发生变化的文件已保留。</item>
@@ -530,7 +538,7 @@
     <string name="mobile_remove_phone_copy">清理手机副本</string>
     <string name="mobile_the_upload_or_command_is_still_unconfirmed_so_this">上传或命令尚未确认，当前不能清理此文件。请先连接原服务完成或取消上传。</string>
     <string name="mobile_remove_this_phone_copy">清理此手机副本？</string>
-    <string name="mobile_only_the_app_s_copy_of_will_be_removed">只删除此 App 保存的「%1$s」。服务原文件、输入和发件记录保留。再次下载需要原服务可用；已另存或分享的文件不受影响。</string>
+    <string name="mobile_only_the_app_s_copy_of_will_be_removed">只删除此 App 保存的「%1$s」。不会删除输入内容或服务上的原文件。再次下载需要原服务可用；已另存或分享的文件不受影响。</string>
     <string name="mobile_task_sync_interrupted_please_retry">任务同步中断，请重试</string>
     <string name="mobile_unable_to_read_the_phone_s_connection_identity_your">手机连接身份暂时无法读取 · 原资料保留，请恢复连接后重试</string>
     <string name="mobile_local_demo">本地示例</string>
@@ -621,7 +629,7 @@
     <string name="mobile_revoking_service_access">正在撤销服务授权…</string>
     <string name="mobile_removing_phone_connection">正在移除手机连接…</string>
     <string name="mobile_no_service_connected_scan_a_qr_code_to_connect">未连接服务 · 扫码建立新连接</string>
-    <string name="mobile_service_access_revoked_local_inputs_remain_available_in_draft">服务已撤销授权 · 本地输入仍可在恢复入口找回</string>
+    <string name="mobile_service_access_revoked_local_inputs_remain_available_in_draft">服务已撤销授权，未发内容仍保存在手机上。</string>
     <string name="mobile_phone_connection_removed_service_access_revocation_is_unconfirmed">手机连接已移除 · 服务授权尚未确认撤销</string>
     <string name="mobile_review_operation">审阅操作</string>
     <string name="mobile_source_demo_task_operation_read_an_authorized_directory_scope">来源：示例任务\n操作：读取已授权目录\n范围：本次运行\n这是一张本地测试卡片，不会批准服务操作。</string>
@@ -676,7 +684,7 @@
     <string name="mobile_upload_incomplete">上传未完成</string>
     <string name="mobile_this_file_is_saved_on_the_phone_and_will">此文件保存在手机，上传完成后会附加到原输入。</string>
     <string name="mobile_removed_from_input_the_phone_file_is_retained">已从输入移除，手机文件仍保留</string>
-    <string name="mobile_attachment_operations_remain_unconfirmed_check_send_history_before_retrying">附件仍有待确认操作，请查看发送记录后重试</string>
+    <string name="mobile_attachment_operations_remain_unconfirmed_check_send_history_before_retrying">附件操作正在等待电脑确认。</string>
     <string name="mobile_no_attachments_in_the_current_input">当前输入没有附件</string>
     <string name="mobile_current_input_attachments">当前输入附件</string>
     <string name="mobile_no_file_saver_available_the_phone_copy_is_retained">没有可用的文件保存器 · 手机副本保留</string>

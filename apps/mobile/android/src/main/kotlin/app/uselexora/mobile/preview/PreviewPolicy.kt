@@ -23,6 +23,7 @@ object PreviewPolicy {
         }
     }
     fun exportedFile(directory: File, path: String): File {
+        require(!java.nio.file.Files.isSymbolicLink(directory.toPath()) && !java.nio.file.Files.isSymbolicLink(File(path).toPath()))
         val file = File(path).canonicalFile
         require(file.parentFile == directory.canonicalFile && file.isFile && file.length() in 0..MAX_FILE_BYTES)
         return file

@@ -82,10 +82,11 @@ class LiveFilesInstrumentedTest {
                 prepared.put("expiresAt", "2000-01-01T00:00:00Z")
                 val expired = transfers.list(owner).single { it.getString("id") == downloadId }.put("prepared", prepared)
                 transfers.save(expired)
-                val downloaded = files.download(client, resource)
+                val downloaded = files.download(client, resource, previewOnly = true)
                 assertTrue(downloaded.name.startsWith("$downloadId-"))
                 assertFalse(partial.exists())
                 val refreshed = transfers.list(owner).single { it.getString("id") == downloadId }
+                assertFalse(refreshed.has("copyPurpose"))
                 assertNotEquals("2000-01-01T00:00:00Z", refreshed.getJSONObject("prepared").getString("expiresAt"))
                 assertEquals(bytes.size.toLong(), downloaded.length())
                 assertEquals(MobileFiles.hash(bytes), MobileFiles.hash(downloaded))
@@ -98,6 +99,9 @@ class LiveFilesInstrumentedTest {
                 refreshed.getJSONObject("prepared").put("expiresAt", "2000-01-01T00:00:00Z")
                 transfers.save(refreshed)
                 assertEquals(downloaded, files.download(client, resource))
+                assertEquals("retained", transfers.get(downloadId)?.getString("copyPurpose"))
+                assertEquals(downloaded, files.download(client, resource, previewOnly = true))
+                assertEquals("retained", transfers.get(downloadId)?.getString("copyPurpose"))
                 assertEquals(1, transfers.list(owner).count { it.optString("kind") == "download" && it.optString("resourceId") == publicResourceId })
                 val localFiles = app.uselexora.mobile.storage.LocalFiles(context, transfers, store)
                 val cached = localFiles.list().single { it.record.getString("partition") == owner && it.file == downloaded.canonicalFile }

@@ -56,7 +56,7 @@ class LocalFilesPanel(private val activity: Activity, private val files: LocalFi
                         textSize = if (entry == null) 14f else 16f
                     }
                     (row.getChildAt(1) as TextView).visibility = if (entry == null) View.GONE else View.VISIBLE
-                    if (entry != null) (row.getChildAt(1) as TextView).text = "${Formatter.formatShortFileSize(activity, entry.file.length())} · ${if (entry.download) if (entry.complete) mobileText(R.string.mobile_downloaded) else mobileText(R.string.mobile_download_incomplete) else if (entry.removable) mobileText(R.string.mobile_upload_finished) else mobileText(R.string.mobile_upload_awaiting_confirmation)} · ${if (entry.record.getString("partition") == partition) mobileText(R.string.mobile_current_connection) else mobileText(R.string.mobile_other_connection)}"
+                    if (entry != null) (row.getChildAt(1) as TextView).text = "${Formatter.formatShortFileSize(activity, entry.file.length())} · ${if (entry.previewOnly && entry.complete) mobileText(R.string.preview_cache_label) else if (entry.download) if (entry.complete) mobileText(R.string.mobile_downloaded) else mobileText(R.string.mobile_download_incomplete) else if (entry.removable) mobileText(R.string.mobile_upload_finished) else mobileText(R.string.mobile_upload_awaiting_confirmation)} · ${if (entry.record.getString("partition") == partition) mobileText(R.string.mobile_current_connection) else mobileText(R.string.mobile_other_connection)}"
                     return row
                 }
             }) { _, index -> rows[index].second?.let { actions(it, partition) } }
@@ -81,7 +81,10 @@ class LocalFilesPanel(private val activity: Activity, private val files: LocalFi
         val dialog = AlertDialog.Builder(activity).setTitle(entry.name).setNegativeButton(mobileText(R.string.review_close), null)
         if (actions.isEmpty()) dialog.setMessage(mobileText(R.string.mobile_the_upload_or_command_is_still_unconfirmed_so_this))
         else dialog.setItems(actions.map { mobileText(it) }.toTypedArray()) { _, index ->
-            if (actions[index] != R.string.mobile_remove_phone_copy) open(entry, actions[index])
+            if (entry.previewOnly && actions[index] !in setOf(R.string.preview_action, R.string.mobile_remove_phone_copy)) work {
+                files.retain(entry.file)
+                ui { open(entry, actions[index]) }
+            } else if (actions[index] != R.string.mobile_remove_phone_copy) open(entry, actions[index])
             else AlertDialog.Builder(activity).setTitle(mobileText(R.string.mobile_remove_this_phone_copy)).setMessage(mobileText(R.string.mobile_only_the_app_s_copy_of_will_be_removed, entry.name))
                 .setNegativeButton(mobileText(R.string.label_cancel), null).setPositiveButton(mobileText(R.string.mobile_clean_up)) { _, _ -> work {
                     try { files.remove(entry.record); show(partition) }

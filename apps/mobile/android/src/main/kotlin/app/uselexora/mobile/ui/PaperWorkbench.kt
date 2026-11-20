@@ -66,7 +66,9 @@ internal fun PaperWorkbench(
     var connectionPrompt by remember { mutableStateOf(false) }
     fun connectedAction(action: MobileAction, payload: JSONObject? = null) {
         val cachedDiscovery = state.tasksLoaded && action == MobileAction.ShowTaskFilter
-        if (state.connected || cachedDiscovery) onAction(action, payload) else connectionPrompt = true
+        val localInput = action == MobileAction.NewTask && state.devices.any { it.selected }
+        val allTasks = action == MobileAction.ShowTaskFilter && payload?.optString("filter") == MobileTaskFilter.All.name
+        if (state.connected || cachedDiscovery || localInput || allTasks) onAction(action, payload) else connectionPrompt = true
     }
     val filter: (MobileTaskFilter) -> Unit = { connectedAction(MobileAction.ShowTaskFilter, JSONObject().put("filter", it.name)) }
     LaunchedEffect(state.connected) { if (state.connected) connectionPrompt = false }
@@ -104,9 +106,6 @@ internal fun PaperWorkbench(
                     }
                 }
             }
-        }
-        item {
-            if ((state.outboxCount ?: 0) > 0) HomeStatus(mobileQuantity(R.plurals.mobile_send_records_awaiting_confirmation, state.outboxCount ?: 0), mobileText(R.string.label_view_history)) { onAction(MobileAction.Outbox, null) }
         }
     }
 }

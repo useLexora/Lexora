@@ -10,7 +10,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import app.uselexora.mobile.network.MobileConnection
 import app.uselexora.mobile.network.MobileFiles
-import app.uselexora.mobile.protocol.CommandOutbox
 import app.uselexora.mobile.protocol.ProtocolSchemas
 import app.uselexora.mobile.storage.LocalStore
 import app.uselexora.mobile.storage.TransferStore
@@ -52,7 +51,8 @@ class DesktopWorkflowInstrumentedTest {
             val transfer = try { files.stage(FileProvider.getUriForFile(context, "${context.packageName}.files", source), owner, scope, targetScope) } finally { source.delete() }
             assertEquals("accepted", files.upload(client, transfer, JSONObject().put("inputId", store.inputId(owner, scope))).getString("decision"))
             assertEquals(1, store.draft(owner, scope)!!.value.getJSONObject("content").getJSONArray("panelResourceIds").length())
-            marker.writeText(JSONObject().put("inputId", store.inputId(owner, scope)).put("ownerDeviceId", client.identity!!.deviceId).put("attachmentCount", 1).toString())
+            val originalInput = store.inputId(owner, scope)
+            marker.writeText(JSONObject().put("inputId", originalInput).put("ownerDeviceId", client.identity!!.deviceId).put("attachmentCount", 1).toString())
             waitFor(60000) { resume.isFile }
             val expected = JSONObject(resume.readText()).getString("text")
             val expired = transfers.list(owner).single { it.getString("id") == transfer.getString("id") }
@@ -85,18 +85,21 @@ class DesktopWorkflowInstrumentedTest {
                 assertTrue(MobileUiTestDriver.exists("权限：本机只读"))
                 click("发送")
                 scenario.onActivity { it.findViewById<EditText>(MainActivity.INPUT_ID).setText("发送期间继续写的下一条😀") }
-                waitFor(30000) { store.outbox(owner).any { it.method == "chat.submitInput" && it.state == "accepted" } }
-                val command = store.outbox(owner).single { it.method == "chat.submitInput" }
-                val receipt = command.receipt!!
-                val target = receipt.getJSONObject("target")
-                waitFor(30000) { client.call("runs.get", JSONObject().put("runId", target.getString("runId"))).getString("status") == "completed" }
+                fun destination() = store.drafts(owner).singleOrNull { it.value.optString("inputId") == originalInput && it.scope.startsWith("conversation:") }
+                waitFor(30000) { destination() != null }
+                val target = app.uselexora.mobile.protocol.DraftContext.target(destination()!!.scope)
+                fun messages(c: app.uselexora.mobile.network.ProductClient) = c.call("conversations.listMessages", JSONObject().put("conversationId", target.getString("conversationId")).put("branchId", target.getString("branchId"))).getJSONArray("items")
+                fun replies() = messages(client).let { rows -> (0 until rows.length()).map { rows.getJSONObject(it) }.filter { it.optString("role") == "assistant" } }
+                waitFor(30000) { replies().isNotEmpty() }
+                val runId = replies().single().getString("runId")
+                waitFor(30000) { client.call("runs.get", JSONObject().put("runId", runId)).getString("status") == "completed" }
                 waitFor { input() == "发送期间继续写的下一条😀" }
                 assertEquals("另一个任务的未发送输入", MobileContentAdapter.text(store.draft(owner, otherScope)!!.value.getJSONObject("content")))
                 val current = store.draft(owner, "conversation:${target.getString("conversationId")}:${target.getString("branchId")}")!!
                 assertEquals(0, current.value.getJSONObject("content").getJSONArray("panelResourceIds").length())
-                assertEquals(receipt.toString(), CommandOutbox(store).retry(client, command).toString())
-                val messages = client.call("conversations.listMessages", JSONObject().put("conversationId", target.getString("conversationId")).put("branchId", target.getString("branchId"))).getJSONArray("items")
-                val users = (0 until messages.length()).map { messages.getJSONObject(it) }.filter { it.getString("role") == "user" }
+                assertTrue(store.uploadSubmitted(replaced))
+                val received = messages(client)
+                val users = (0 until received.length()).map { received.getJSONObject(it) }.filter { it.getString("role") == "user" }
                 assertEquals(1, users.size)
                 val resource = users.single().getJSONArray("resources").getJSONObject(0)
                 assertEquals("附件内容完整保留😀", files.download(client, resource).readText())
@@ -109,7 +112,7 @@ class DesktopWorkflowInstrumentedTest {
                     waitFor(30000) { MobileUiTestDriver.exists("发送") && !MobileUiTestDriver.enabled("发送") }
                     scenario.recreate()
                     waitFor { input() == "发送期间继续写的下一条😀" }
-                    assertEquals(1, store.outbox(owner).count { it.method == "chat.submitInput" })
+                    assertEquals(0, store.outbox(owner).count { it.method == "chat.submitInput" })
                     waitFor { MobileUiTestDriver.contains(firstText) }
                     val readCache = app.uselexora.mobile.storage.ReadCache(File(context.cacheDir, "product-read-v1"))
                     assertTrue(readCache.read(owner, "models")?.isNotEmpty() == true)
@@ -120,7 +123,8 @@ class DesktopWorkflowInstrumentedTest {
                     val commandsBeforeQueue = store.outbox(owner).map { it.id }.toSet()
                     scenario.onActivity { it.handleAction(app.uselexora.mobile.ui.MobileAction.QueueInput, null) }
                     waitFor {
-                        MobileUiTestDriver.contains(app.uselexora.mobile.i18n.mobileText(R.string.mobile_sync_required)) ||
+                        MobileUiTestDriver.contains(app.uselexora.mobile.i18n.mobileText(R.string.send_offline)) ||
+                            MobileUiTestDriver.contains(app.uselexora.mobile.i18n.mobileText(R.string.mobile_sync_required)) ||
                             MobileUiTestDriver.contains(app.uselexora.mobile.i18n.mobileText(R.string.mobile_sync_failed_input))
                     }
                     assertFalse(MobileUiTestDriver.enabled("发送"))
@@ -134,12 +138,14 @@ class DesktopWorkflowInstrumentedTest {
                     assertFalse(MobileUiTestDriver.contains("暂时无法到达服务"))
                     val reconnected = connection.connect()!!
                     try {
-                        assertEquals(receipt.toString(), CommandOutbox(store).retry(reconnected, command).toString())
-                        assertEquals("completed", reconnected.call("runs.get", JSONObject().put("runId", target.getString("runId"))).getString("status"))
+                        val again = messages(reconnected)
+                        val onlyUser = (0 until again.length()).map { again.getJSONObject(it) }.single { it.getString("role") == "user" }
+                        assertEquals(users.single().getString("id"), onlyUser.getString("id"))
+                        assertEquals("completed", reconnected.call("runs.get", JSONObject().put("runId", runId)).getString("status"))
                         assertEquals("附件内容完整保留😀", files.download(reconnected, resource).readText())
                     } finally { reconnected.close() }
                     assertEquals("发送期间继续写的下一条😀", input())
-                    assertEquals(1, store.outbox(owner).count { it.method == "chat.submitInput" })
+                    assertEquals(0, store.outbox(owner).count { it.method == "chat.submitInput" })
                 }
                 instrumentation.uiAutomation.takeScreenshot()?.let { bitmap -> File(context.filesDir, "desktop-$token.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle() }
             }

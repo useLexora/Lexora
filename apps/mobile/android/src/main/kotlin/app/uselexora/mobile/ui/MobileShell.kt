@@ -144,10 +144,7 @@ fun MobileShell(
             }
         }
         if (taskSettings) ConversationSettings(state, onAction) { taskSettings = false }
-        if (appearanceSettings) AppearanceSettings(onAction = { action ->
-            if (action == MobileAction.Recovery) appearanceSettings = false
-            act(action)
-        }) { appearanceSettings = false }
+        if (appearanceSettings) AppearanceSettings { appearanceSettings = false }
     }
     state.taskFiles?.let { TaskFilesPanel(it, onAction) { state.taskFiles = null } }
     if (state.pairingPhase != null) PairingStatusPanel(state, act)
@@ -407,16 +404,6 @@ private fun SectionHeading(title: String, actionLabel: String? = null, action: (
 }
 
 @Composable
-private fun OutboxNotice(count: Int, open: () -> Unit) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable(role = Role.Button, onClick = open).padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(Icons.Outlined.Send, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
-        Spacer(Modifier.width(12.dp))
-        Text(mobileQuantity(R.plurals.mobile_operation_results_awaiting_confirmation, count), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-        Icon(Icons.Outlined.ChevronRight, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.outline)
-    }
-}
-
-@Composable
 private fun TaskEmptyState(state: MobileUiState, onAction: (MobileAction, JSONObject?) -> Unit) {
     when {
         state.devices.isEmpty() -> EmptyPane(mobileText(R.string.label_continue_your_work_here), mobileText(R.string.mobile_connect_to_follow_task_progress_handle_confirmations_or_start), mobileText(R.string.label_connect_service)) { onAction(MobileAction.ScanDevice, null) }
@@ -577,6 +564,13 @@ private fun ComposerBar(state: MobileUiState, composer: EditText, onAction: (Mob
                 ComposerToolbar(state, onAction, attachments, stopping, active, runs)
             }
         }
+        if (state.sendFeedback.isNotEmpty()) {
+            val status = Modifier.testTag("input-send-status")
+            if (!tight && state.canCheckInputReceipt) TextButton(onClick = { onAction(MobileAction.CheckInputReceipt, null) },
+                modifier = status.heightIn(min = 48.dp)) { Text(state.sendFeedback); Spacer(Modifier.width(8.dp)); Text(mobileText(R.string.send_check_status)) }
+            else Text(state.sendFeedback, status.padding(horizontal = 8.dp), maxLines = if (tight) 1 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         if (state.inputFeedback.isNotBlank() && state.inputFeedback != mobileText(R.string.mobile_saved_on_phone)) Text(state.inputFeedback, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
     }
 }
@@ -635,8 +629,6 @@ private fun sheetEntries(sheet: MobileSheet, state: MobileUiState): List<SheetEn
             add(SheetEntry(mobileText(R.string.label_open_on_desktop), Icons.Outlined.OpenInNew, MobileAction.OpenOnDesktop))
             add(SheetEntry(mobileText(R.string.label_read_status), Icons.Outlined.DoneAll, MobileAction.ReadState))
         }
-        add(SheetEntry(mobileText(R.string.label_send_history), Icons.Outlined.Send, MobileAction.Outbox))
-        add(SheetEntry(mobileText(R.string.label_local_drafts), Icons.Outlined.EditNote, MobileAction.Recovery))
         add(SheetEntry(mobileText(R.string.label_refresh), Icons.Outlined.Refresh, MobileAction.Refresh))
     }
     else -> emptyList()
