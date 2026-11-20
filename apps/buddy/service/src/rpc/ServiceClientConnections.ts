@@ -1,11 +1,11 @@
-import type { Event } from '../../../shared/events/Emitter'
+import type { EventSubscription } from '../../../shared/events/eventTypes'
 import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
 import type { RuntimeRequestRegistrar } from './runtimeRequest'
 
 export type ServiceClientRole = 'product' | 'management'
 export interface ServiceClientPeer extends Pick<RuntimeRpcPeerContract, 'notify' | 'onRequest' | 'close'> {
   readonly closed: boolean
-  readonly onDidClose: Event<void>
+  readonly onDidClose: (listener: () => void) => EventSubscription
 }
 
 interface Connection {

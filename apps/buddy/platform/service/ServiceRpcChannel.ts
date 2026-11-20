@@ -1,13 +1,16 @@
+import type { ApplicationDiagnostic } from '../../shared/diagnostics/applicationDiagnostic'
 import type { RuntimeRequestHandler } from '../../shared/runtime/rpcPeer'
 import type { SocketFrames } from './SocketFrames'
+import { diagnosticCodeSchema } from '../../shared/diagnostics/applicationDiagnostic'
 import { Emitter } from '../../shared/events/Emitter'
-import { DEFAULT_REQUEST_TIMEOUT_MS, RuntimeRequestTimeoutError, RuntimeRpcPeer } from '../ipc/runtimeRpcPeer'
+import { DEFAULT_REQUEST_TIMEOUT_MS, RuntimeProtocolError, RuntimeRequestTimeoutError, RuntimeRpcPeer } from '../ipc/runtimeRpcPeer'
 
 import { pagedServiceReads, readPartMethod, receiveServiceRead, releaseReadMethod, ServiceReadTransfer } from './ServiceReadTransfer'
+import { ServiceFrameError } from './SocketFrames'
 
 export class ServiceRpcChannel extends RuntimeRpcPeer {
   readonly #frames: SocketFrames
-  readonly #closed = new Emitter<void>(() => {})
+  readonly #closed = new Emitter<NonNullable<ApplicationDiagnostic['rpcDisconnect']>>(() => {})
   readonly onDidClose = this.#closed.event
   readonly #transfers = new ServiceReadTransfer()
   #ended = false
@@ -49,10 +52,17 @@ export class ServiceRpcChannel extends RuntimeRpcPeer {
     if (this.#ended)
       return
     this.#ended = true
+    const frameError = reason instanceof ServiceFrameError ? reason : undefined
+    const disconnect = {
+      ...this.#frames.activity,
+      reason: frameError?.code ?? (reason instanceof RuntimeProtocolError ? reason.diagnosticCode : 'SERVICE_RPC_CLOSED'),
+      frameBytes: frameError?.frameBytes,
+      systemCode: diagnosticCodeSchema.safeParse(frameError?.systemCode).data,
+    }
     this.#transfers.clear()
     super.close(reason)
     this.#frames.close(reason)
-    this.#closed.fire()
+    this.#closed.fire(disconnect)
     this.#closed.dispose()
   }
 }

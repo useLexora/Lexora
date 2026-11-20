@@ -17,10 +17,12 @@ interface PendingRequest {
 
 export class RuntimeProtocolError extends Error {
   readonly code = 'RUNTIME_PROTOCOL_ERROR'
+  readonly diagnosticCode: string
 
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options)
+  constructor(message: string, diagnosticCode: string) {
+    super(message)
     this.name = 'RuntimeProtocolError'
+    this.diagnosticCode = diagnosticCode
   }
 }
 
@@ -89,7 +91,7 @@ export class RuntimeRpcPeer implements RuntimeRpcPeerContract {
 
     const id = requestId ?? randomUUID()
     if (this.#pending.has(id))
-      return Promise.reject(new RuntimeProtocolError('Duplicate runtime request ID'))
+      return Promise.reject(new RuntimeProtocolError('Duplicate runtime request ID', 'RPC_DUPLICATE_REQUEST_ID'))
     return new Promise((resolve, reject) => {
       const cancel = (reason: Error) => {
         const pending = this.#pending.get(id)
@@ -102,7 +104,7 @@ export class RuntimeRpcPeer implements RuntimeRpcPeerContract {
           this.notify('$/cancelRequest', { id })
         }
         catch {
-          this.#fail(new RuntimeProtocolError('Runtime cancellation delivery failed'))
+          this.#fail(new RuntimeProtocolError('Runtime cancellation delivery failed', 'RPC_CANCELLATION_DELIVERY_FAILED'))
         }
       }
       const aborted = () => cancel(signal?.reason ?? new DOMException('Request cancelled', 'AbortError'))
@@ -157,14 +159,14 @@ export class RuntimeRpcPeer implements RuntimeRpcPeerContract {
 
     const parsed = runtimeWireMessageSchema.safeParse(message)
     if (!parsed.success) {
-      this.#fail(new RuntimeProtocolError('Runtime emitted an invalid JSON-RPC message'))
+      this.#fail(new RuntimeProtocolError('Runtime emitted an invalid JSON-RPC message', 'RPC_INVALID_MESSAGE'))
       return
     }
 
     const wireMessage = parsed.data
     if ('method' in wireMessage) {
       if ('id' in wireMessage) {
-        void this.#handleRequest(wireMessage.id, wireMessage.method, wireMessage.params).catch(() => this.#fail(new RuntimeProtocolError('Runtime response delivery failed')))
+        void this.#handleRequest(wireMessage.id, wireMessage.method, wireMessage.params).catch(() => this.#fail(new RuntimeProtocolError('Runtime response delivery failed', 'RPC_RESPONSE_DELIVERY_FAILED')))
       }
       else if (wireMessage.method === '$/cancelRequest') {
         const params = wireMessage.params
@@ -182,7 +184,7 @@ export class RuntimeRpcPeer implements RuntimeRpcPeerContract {
 
   async #handleRequest(id: string, method: string, params: unknown): Promise<void> {
     if (this.#running.has(id)) {
-      this.#fail(new RuntimeProtocolError('Duplicate runtime request ID'))
+      this.#fail(new RuntimeProtocolError('Duplicate runtime request ID', 'RPC_DUPLICATE_REQUEST_ID'))
       return
     }
     const handler = this.#handlers.get(method)
@@ -231,7 +233,7 @@ export class RuntimeRpcPeer implements RuntimeRpcPeerContract {
       notification = copyEventSnapshot({ method, params })
     }
     catch {
-      this.#fail(new RuntimeProtocolError('Runtime emitted invalid notification data'))
+      this.#fail(new RuntimeProtocolError('Runtime emitted invalid notification data', 'RPC_INVALID_NOTIFICATION'))
       return
     }
     this.#notifications.fire(notification)

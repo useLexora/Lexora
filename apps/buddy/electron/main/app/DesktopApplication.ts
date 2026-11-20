@@ -7,6 +7,7 @@ import { app, nativeTheme, powerMonitor } from 'electron'
 import { z as schema } from 'zod'
 import { currentPlatform } from '../../../platform/currentPlatform'
 import { localTransports } from '../../../platform/ipc/localTransport'
+import { writePlatformHostDiagnostic } from '../../../platform/service/writePlatformHostDiagnostic'
 import { DEFAULT_BROWSER_PREFERENCES } from '../../../shared/browser/browserPreferences'
 import { readDiagnosticErrorCode } from '../../../shared/diagnostics/applicationDiagnostic'
 import { ServiceHost } from '../../../shared/lifecycle/ServiceHost'
@@ -171,8 +172,19 @@ class DesktopApplication {
         setImmediate(() => app.exit(0))
         return { stopped: true }
       })
-      platformHost.peer.onDidClose(() => {
-        void this.#dispose().finally(() => app.exit(1))
+      platformHost.peer.onDidClose((rpcDisconnect) => {
+        if (!this.#disposePromise && !this.#quit.committed) {
+          const event = {
+            event: 'platform_host.connection_closed',
+            level: 'error' as const,
+            component: 'desktop.platform_host',
+            generation: platformHost.bootstrap.hostInstanceId,
+            rpcDisconnect,
+          }
+          this.#environment.events.publish(event)
+          writePlatformHostDiagnostic({ ...event, hostPid: process.pid })
+        }
+        void this.#dispose().catch(() => {}).then(() => closeDesktopDiagnostics(this.#environment.diagnostics)).finally(() => app.exit(1))
       })
     }
   }

@@ -46,7 +46,7 @@ async function server(role: 'host' | 'management' | 'product' = 'host') {
   const root = await mkdtemp(join(tmpdir(), 'lexora-local-'))
   cleanup.push(() => rm(root, { recursive: true, force: true }))
   const endpoint = process.platform === 'win32' ? localTransports.namedPipe(`\\\\.\\pipe\\lexora-test-${randomUUID()}`) : localTransports.unix(join(root, 'service.sock'))
-  const peers: RuntimeRpcPeer[] = []
+  const peers: ServiceRpcChannel[] = []
   const listener = new LocalServiceServer({ endpoint, identity, role, secret, connected: (frames) => {
     const peer = new ServiceRpcChannel(frames)
     peer.onRequest('echo', value => value)
@@ -84,6 +84,46 @@ it('isolates oversized RPC failures and reassembles simultaneous history reads o
   const values = await Promise.all([client.request('conversations.listTimeline', {}), client.request('echo', 17), client.request('conversations.listTimeline', {})])
   expect(values).toEqual([body, 17, body])
   expect(client.closed).toBe(false)
+})
+
+it('keeps the socket available when an RPC handler returns no value', async () => {
+  const f = await server()
+  const { frames } = await connectLocalService(f.endpoint.address, { ...identity, type: 'hello', role: 'host', secret })
+  const client = new ServiceRpcChannel(frames)
+  cleanup.push(() => client.close(new Error('done')))
+  f.peers[0]!.onRequest('complete', () => undefined)
+  await expect(client.request('complete', {})).resolves.toBeNull()
+  await expect(client.request('echo', 'ready')).resolves.toBe('ready')
+})
+
+it.each([
+  ['{bad json}', 'SERVICE_READ_FRAME_INVALID', 10],
+  ['{"jsonrpc":"2.0","id":"reply-without-result"}', 'RPC_INVALID_MESSAGE', undefined],
+])('preserves the first close reason for a bad frame %# along with recent RPC methods', async (frame, reason, frameBytes) => {
+  const f = await server()
+  const { frames } = await connectLocalService(f.endpoint.address, { ...identity, type: 'hello', role: 'host', secret })
+  const client = new ServiceRpcChannel(frames)
+  cleanup.push(() => client.close(new Error('done')))
+  const serverPeer = f.peers[0]!
+  const closed = Promise.withResolvers<unknown>()
+  const received: unknown[] = []
+  serverPeer.onDidClose((event) => {
+    received.push(event)
+    closed.resolve(event)
+  })
+  await client.request('echo', { text: 'private fixture' })
+  frames.send(frame)
+  await expect(closed.promise).resolves.toEqual({
+    reason,
+    frameBytes,
+    pendingBinaryBytes: 0,
+    pendingWriteBytes: 0,
+    lastSentMethod: 'initial',
+    lastReceivedMethod: 'echo',
+    systemCode: undefined,
+  })
+  serverPeer.close(new Error('later'))
+  expect(received).toHaveLength(1)
 })
 
 it('reads a multi-frame attachment preview only on the host connection', async () => {

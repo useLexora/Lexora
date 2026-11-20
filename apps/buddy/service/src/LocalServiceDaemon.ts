@@ -13,6 +13,7 @@ import { LocalServiceServer } from '../../platform/service/LocalServiceServer'
 import { ServiceChildProcess } from '../../platform/service/ServiceChildProcess'
 import { ServiceProfileOwner } from '../../platform/service/ServiceProfileOwner'
 import { ServiceRpcChannel } from '../../platform/service/ServiceRpcChannel'
+import { writePlatformHostDiagnostic } from '../../platform/service/writePlatformHostDiagnostic'
 import { ApplicationEvents } from '../../shared/observability/ApplicationEvents'
 import { desktopOpenIntentSchema, platformHostReadySchema, serviceIdentitySchema, serviceMaintenanceTicketSchema, serviceStopReasonSchema } from '../../shared/service/localServiceProtocol'
 import { createRpcRuntimePlatform } from './platform/createRpcRuntimePlatform'
@@ -287,7 +288,17 @@ export async function startLocalServiceDaemon(config: ServiceLaunch, options: { 
         return { accepted: true }
       })
       const connected = current
-      peer.onDidClose(() => {
+      peer.onDidClose((rpcDisconnect) => {
+        if (!connected.intentional && connected === generation && !stopping) {
+          writePlatformHostDiagnostic({
+            event: 'platform_host.connection_closed',
+            level: 'warn',
+            component: 'runtime.platform_host',
+            generation: connected.id,
+            hostPid: connected.child.child.pid,
+            rpcDisconnect,
+          })
+        }
         reject(new Error('PLATFORM_HOST_UNAVAILABLE'))
         lost(connected)
       })
@@ -297,12 +308,21 @@ export async function startLocalServiceDaemon(config: ServiceLaunch, options: { 
       if (stopping)
         throw new Error('SERVICE_STOPPING')
       const child = new ServiceChildProcess({ executable: config.hostExecutable, args: [...config.hostArguments, '--lexora-platform-host'], processControl, runtimeGuard: createBuddyNativeEnvironment(nativePaths).LEXORA_BUDDY_RUNTIME_GUARD, env: { ...process.env, ...createBuddyNativeEnvironment(nativePaths), LEXORA_HOME: config.defaultRoot ?? config.profileRoot, LEXORA_BUDDY_PROFILE: config.profile, LEXORA_BUDDY_STORAGE_AUTHORITY: config.storageAuthority }, output: (_stream, value) => process.stderr.write(value) })
-      current = { id, server, child, intentional: false, cancelReady: () => reject(new Error('SERVICE_STOPPING')) }
-      generation = current
-      void child.exited.then(() => {
+      const launched = { id, server, child, intentional: false, cancelReady: () => reject(new Error('SERVICE_STOPPING')) }
+      current = launched
+      generation = launched
+      void child.exited.then((exit) => {
+        writePlatformHostDiagnostic({
+          event: 'platform_host.process_exited',
+          level: launched.intentional || stopping ? 'info' : 'warn',
+          component: 'runtime.platform_host',
+          generation: id,
+          hostPid: child.child.pid,
+          exit,
+        })
         reject(new Error('PLATFORM_HOST_EXITED'))
 
-        lost(current!)
+        lost(launched)
       }, reject)
       await child.ready({ version: 1, identity, profile: config.profile, profileRoot: config.profileRoot, resourcesRoot: config.resourcesRoot, endpoint: address, managementEndpoint: owner.discovery.managementEndpoint, managementSecret: owner.managementSecret, hostInstanceId: id, secret })
       return await ready
@@ -371,6 +391,7 @@ export async function startLocalServiceDaemon(config: ServiceLaunch, options: { 
         if (host.instanceId !== ready.hostInstanceId)
           throw new Error('PLATFORM_HOST_UNAVAILABLE')
         publishRuntime('ready')
+        writePlatformHostDiagnostic({ event: 'platform_host.recovered', level: 'info', component: 'runtime.platform_host', generation: ready.hostInstanceId, previousGeneration: current.id, attempt: failures })
         return
       }
       if (!stopping)

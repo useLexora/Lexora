@@ -5,7 +5,7 @@ import { Buffer } from 'node:buffer'
 import { randomUUID, timingSafeEqual } from 'node:crypto'
 import { createServer } from 'node:net'
 import { serviceHelloSchema, serviceIdentitySchema } from '../../shared/service/localServiceProtocol'
-import { SocketFrames } from './SocketFrames'
+import { ServiceFrameError, SocketFrames } from './SocketFrames'
 
 interface LocalServiceServerOptions {
   endpoint: LocalEndpoint
@@ -65,8 +65,8 @@ export class LocalServiceServer {
         this.#connections.delete(frames)
       })
     })
-    server.on('error', () => {
-      for (const frames of this.#connections) frames.close(new Error('SERVICE_LISTENER_FAILED'))
+    server.on('error', (error: NodeJS.ErrnoException) => {
+      for (const frames of this.#connections) frames.close(new ServiceFrameError('SERVICE_LISTENER_FAILED', undefined, error.code))
     })
     this.#server = server
     try {
