@@ -16,9 +16,7 @@ const track = useTemplateRef<HTMLElement>('track')
 const reducedMotion = usePreferredReducedMotion()
 const highlighted = shallowRef<string | null>(null)
 const { start } = useTimeoutFn(() => highlighted.value = null, 1400, { immediate: false })
-const failedUrls = shallowRef<ReadonlySet<string>>(new Set())
-const materials = computed(() => props.materials.map(material => material.kind === 'resource' && material.previewUrl && failedUrls.value.has(material.previewUrl) ? { ...material, previewUrl: null } : material))
-const previewMaterials = computed(() => materials.value.filter((material): material is Extract<InputMaterialView, { kind: 'resource' }> & { previewUrl: string } => material.kind === 'resource' && !!material.previewUrl))
+const previewMaterials = computed(() => props.materials.filter((material): material is Extract<InputMaterialView, { kind: 'resource' }> & { previewUrl: string } => material.kind === 'resource' && !!material.previewUrl))
 const sources = computed(() => previewMaterials.value.map(material => material.previewUrl))
 const previewNames = computed(() => previewMaterials.value.map(material => material.resource.name))
 const referenceImage = computed(() => props.referenceImage
@@ -77,7 +75,6 @@ defineExpose({ highlightMaterial, highlightResource: (id: string) => highlightMa
           :data-resource-quote-id="material.kind === 'resource_quote' ? material.id : undefined" :data-quote-id="material.kind === 'message_quote' ? material.id : undefined" :data-session-id="material.kind === 'session' ? material.id : undefined"
           :class="{ 'is-highlighted': highlighted === buddyInputMaterialKey(material), 'resource-quote-card': material.kind === 'resource_quote', 'chat-quote-card': material.kind === 'message_quote', 'chat-session-reference': material.kind === 'session', 'composer-resource-strip__card': removable && material.kind === 'resource', 'buddy-chat-message-content__attachment': !removable && material.kind === 'resource' }"
           @remove="emit('remove', material)" @retry="emit('retry', material.id)" @preview="preview(material)" @preview-text="emit('previewText', material.id)"
-          @preview-failed="failedUrls = new Set([...failedUrls, $event])"
         />
       </div>
     </NScrollbar>

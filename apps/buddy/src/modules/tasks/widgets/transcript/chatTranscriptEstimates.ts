@@ -1,5 +1,6 @@
 import type { Token, Tokens } from 'marked'
 import type { ChatTranscriptDisplayRow } from '../../model/transcript/chatMessageTime'
+import { isImageMimeType } from '@buddy-shared/files/fileMimeTypes'
 import { lexer } from 'marked'
 import { getChatMessageDisplayText, getChatMessageUserContent } from '../../model/transcript/chatMessageContent'
 
@@ -52,7 +53,9 @@ function estimateRow(row: ChatTranscriptDisplayRow, layout: ChatTranscriptEstima
   const structured = getChatMessageUserContent(message)
   const materials = message.attachments.length || structured?.resourceSnapshots.length
     || structured?.userContent.quotes?.length || structured?.userContent.resourceQuotes?.length || structured?.userContent.sessionReferences?.length
-  const mediaHeight = materials ? (message.attachments.some(item => item.kind === 'image') ? 190 : 76) : 0
+  const hasPhoto = message.attachments.some(item => item.kind === 'image')
+    || structured?.resourceSnapshots.some(({ localReference }) => localReference?.kind === 'file' && isImageMimeType(localReference.mimeType))
+  const mediaHeight = materials ? (hasPhoto ? 130 : 76) : 0
   if (message.role === 'user') {
     const lines = wrappedLines(text, Math.min(42 * rem, width * 0.92) - 1.9 * rem, fontSize)
     const body = Math.min(5, lines) * lineHeight + (lines > 5 ? 30 : 0)

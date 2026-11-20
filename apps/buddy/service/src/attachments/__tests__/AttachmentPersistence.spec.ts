@@ -88,6 +88,30 @@ describe('persistent managed attachment lifecycle', () => {
     await expect(readFile(record.storedPath)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('conditionally transfers only unchanged, visible, committed photo previews', async () => {
+    const f = await setup()
+    const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a0ZkAAAAASUVORK5CYII=', 'base64')
+    const [record] = await f.service.registerUploads('draft-1', [{ name: 'photo.png', mimeType: 'image/png', bytes }])
+    const id = record!.id
+    expect(await f.service.readPreview(id, null)).toEqual({ mimeType: 'image/png', data: bytes.toString('base64') })
+    const prepared = await f.service.prepareMessageAttachments({ attachmentIds: [id], conversationId: 'conversation-1', draftId: 'draft-1', messageId: 'message-1' })
+    message(f.database)
+    const path = prepared.bindings[0]!.storedPath
+    bind(f.database, path, id)
+    await prepared.commit()
+    const original = await f.service.readPreview(id, null)
+    expect(original).toMatchObject({ version: expect.any(String), data: bytes.toString('base64') })
+    if (!('version' in original) || !original.version)
+      throw new Error('Missing attachment version')
+    const version = original.version
+    expect(await f.service.readPreview(id, version)).toEqual({ unchanged: version })
+    f.database.exec('UPDATE conversations SET deleted_at = \'2026-10-01\' WHERE id = \'conversation-1\'')
+    await expect(f.service.readPreview(id, version)).rejects.toMatchObject({ code: 'ATTACHMENT_NOT_FOUND' })
+    f.database.exec('UPDATE conversations SET deleted_at = NULL WHERE id = \'conversation-1\'')
+    await writeFile(path, Buffer.alloc(bytes.byteLength))
+    await expect(f.service.readPreview(id, version)).rejects.toMatchObject({ code: 'ATTACHMENT_INVALID' })
+  })
+
   it('rejects a late binding after the source owner or actor changes', async () => {
     const fixture = await setup()
     const { record, prepared, target } = await prepare(fixture)

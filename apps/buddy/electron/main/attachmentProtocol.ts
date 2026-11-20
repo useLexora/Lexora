@@ -1,5 +1,4 @@
 import type { BuddyServiceSupervisor } from './runtime/BuddyServiceSupervisor'
-import { Buffer } from 'node:buffer'
 import { dirname } from 'node:path'
 import process from 'node:process'
 import { app, protocol } from 'electron'
@@ -8,7 +7,8 @@ import { resolveBuddyFileReader } from '../../platform/native/nativeHost'
 import { attachmentsRequestSchemas } from '../../shared/conversation/attachmentApi'
 import { composerResourcesRpc } from '../../shared/conversation/composerApi'
 import { ARTIFACT_PROTOCOL, ATTACHMENT_PROTOCOL, FILE_PROTOCOL } from '../../shared/platform/desktopSchemes'
-import { attachmentHostRpc, attachmentPreviewBytesSchema } from '../../shared/runtime/attachmentHostProtocol'
+import { attachmentHostRpc, attachmentPreviewResultSchema } from '../../shared/runtime/attachmentHostProtocol'
+import { createAttachmentPreviewCache } from './attachmentPreviewCache'
 import { handleMediaRequest } from './mediaProtocol'
 import { resolveDevelopmentRendererUrl } from './security/navigationPolicy'
 
@@ -16,6 +16,9 @@ export function installAttachmentProtocol(runtime: Pick<BuddyServiceSupervisor, 
   const fileReader = resolveBuddyFileReader({ appPath: app.getAppPath(), isPackaged: app.isPackaged, resourcesPath: process.resourcesPath })
   const developmentUrl = resolveDevelopmentRendererUrl(process.env.ELECTRON_RENDERER_URL, app.isPackaged)
   const rendererOrigin = developmentUrl ? new URL(developmentUrl).origin : 'lexora-app://renderer'
+  const previews = createAttachmentPreviewCache(async (attachmentId, ifVersion, signal) => attachmentPreviewResultSchema.parse(
+    await runtime.requestHost(attachmentHostRpc.readPreview, { attachmentId, ifVersion }, { signal }),
+  ))
   function allowRendererRead(handler: (request: Request) => Promise<Response>) {
     return async (request: Request) => {
       const response = await handler(request)
@@ -55,8 +58,8 @@ export function installAttachmentProtocol(runtime: Pick<BuddyServiceSupervisor, 
 
     try {
       const input = attachmentsRequestSchemas.attachmentPreview.parse({ attachmentId: id })
-      const preview = attachmentPreviewBytesSchema.parse(await runtime.requestHost(attachmentHostRpc.readPreview, input, { signal: request.signal }))
-      return new Response(Buffer.from(preview.data, 'base64'), { headers: { 'cache-control': 'private, max-age=300', 'content-type': preview.mimeType, 'x-content-type-options': 'nosniff' } })
+      const image = await previews.get(input.attachmentId, request.signal)
+      return new Response(image, { headers: { 'cache-control': 'private, max-age=300', 'content-type': image.type, 'x-content-type-options': 'nosniff' } })
     }
     catch {
       return new Response(null, { status: 404 })
@@ -68,6 +71,7 @@ export function installAttachmentProtocol(runtime: Pick<BuddyServiceSupervisor, 
   void protocol.handle(FILE_PROTOCOL, request => handleMediaRequest(request, runtime, fileReader))
 
   return () => {
+    previews.clear()
     protocol.unhandle(FILE_PROTOCOL)
     protocol.unhandle(ATTACHMENT_PROTOCOL)
     protocol.unhandle(ARTIFACT_PROTOCOL)

@@ -14,6 +14,7 @@ internal data class ReaderSnapshot(
     val runs: List<JSONObject>, val transcripts: Map<String, JSONObject>, val dark: Boolean,
     val fontScale: Float, val language: String, val resultRunId: String?, val avatars: Map<String, String>,
     val anchorMessageId: String? = null, val anchorRequestId: String? = null, val hasLaterMessages: Boolean = false,
+    val photoEpoch: Any? = null,
 )
 
 internal class ReaderProjection {
@@ -33,7 +34,9 @@ internal class ReaderProjection {
 
     fun reset() { sentTopic = null }
 
-    fun encode(snapshot: ReaderSnapshot, appearance: () -> JSONObject, typography: () -> JSONObject): JSONObject = with(snapshot) {
+    fun encode(snapshot: ReaderSnapshot, appearance: () -> JSONObject, typography: () -> JSONObject,
+        photoState: (JSONObject) -> ReaderPhotoState = { ReaderPhotoState("unavailable") },
+    ): JSONObject = with(snapshot) {
         if (topic != sentTopic || language != sentLanguage) encodedEntries.clear()
         val active = runs.filter { it.optString("status") in setOf("queued", "running", "awaiting_approval") }.map { it.optString("id") }.toSet()
         val streaming = messages.filter { it.optString("role") == "assistant" && it.optString("runId") in active }
@@ -46,7 +49,8 @@ internal class ReaderProjection {
             val message = item.message
             val inputs = listOf(message.source, details[message.id], item.continuation, item.showIdentity, item.intermediate,
                 message.id in streaming, message.runId?.let { it in active } == true, message.runId?.let { finalMessages[it] } == message.id,
-                message.runId?.let { terminal[it] }?.optString("status"))
+                message.runId?.let { terminal[it] }?.optString("status"),
+                photoEpoch.takeIf { message.role == "user" && message.resources.isNotEmpty() })
             encodedEntries[message.id]?.takeIf { it.inputs == inputs }?.let { return@map it.value }
             val entry = JSONObject().put("id", message.id).put("continuation", item.continuation).put("messages", JSONArray(listOf(run {
                 val detail = MobileMessagePresentation.matchingDetail(message.source, details[message.id])
@@ -75,7 +79,9 @@ internal class ReaderProjection {
                         val label = MobileReadingPolicy.resource(resource)
                         JSONObject().put("id", resource.getString("resourceId")).put("name", label.name)
                             .put("description", listOfNotNull(label.type, label.size, label.status).joinToString(" · "))
-                            .put("available", label.available)
+                            .put("available", label.available).apply {
+                                if (ReaderMessagePhotos.isPhoto(message.role, resource)) put("photo", photoState(resource).wire(resource))
+                            }
                     }))
             })))
             encodedEntries[message.id] = EncodedEntry(message, inputs, entry, entry.toString())

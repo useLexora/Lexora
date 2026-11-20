@@ -12,6 +12,7 @@ import { useSelectionReferences } from '@/shared/ui/selection/workbenchSelection
 import { inputMaterialLabel, inputMaterialText } from '../../model/materials/inputMaterialView'
 import { chatQuoteNavigationKey } from '../quotes/chatQuoteContext'
 import { sessionReferenceNavigationKey } from '../references/sessionReferenceNavigation'
+import ChatInputImageThumbnail from './ChatInputImageThumbnail.vue'
 
 const props = defineProps<{
   material: InputMaterialView
@@ -21,7 +22,7 @@ const props = defineProps<{
   compact?: boolean
   expanded?: boolean
 }>()
-const emit = defineEmits<{ remove: [], retry: [], preview: [], previewText: [], previewFailed: [url: string] }>()
+const emit = defineEmits<{ remove: [], retry: [], preview: [], previewText: [] }>()
 const { t } = useBuddyI18n(() => props.language)
 const references = useSelectionReferences()
 const locateMessage = inject(chatQuoteNavigationKey, null)
@@ -69,12 +70,15 @@ async function locate() {
 </script>
 
 <template>
-  <div class="chat-input-material-card flex flex-none items-start min-w-0 border-1 border-solid border-border rounded-micro bg-raised" :class="{ 'is-compact': compact, 'is-preview': expanded && !compact && material.kind === 'resource' && !!material.previewUrl, 'is-failed': material.kind === 'resource' && material.resource.state === 'failed' }">
-    <NPopover trigger="click" placement="top-start" :show-arrow="false" :disabled="material.kind === 'resource' && !!(material.previewUrl || material.textPreview)">
+  <div class="chat-input-material-card flex flex-none items-start min-w-0 border-1 border-solid border-border rounded-micro bg-raised" :class="{ 'is-compact': compact, 'is-failed': material.kind === 'resource' && material.resource.state === 'failed' }">
+    <ChatInputImageThumbnail
+      v-if="material.kind === 'resource' && material.previewUrl" :key="material.previewUrl" :src="material.previewUrl"
+      :name="material.resource.name" :label="label" :detail="detail" :language="language" :compact="compact" :expanded="expanded" @preview="emit('preview')"
+    />
+    <NPopover v-else trigger="click" placement="top-start" :show-arrow="false" :disabled="material.kind === 'resource' && material.textPreview">
       <template #trigger>
-        <button type="button" class="chat-input-material-card__trigger chat-reference-card__link flex flex-1 items-center gap-2 min-w-0 border-0 rounded-micro bg-transparent p-[0.4rem] text-fg text-left cursor-pointer hover:bg-hover ui-focus-ring" @click="material.kind === 'resource' && (material.previewUrl ? emit('preview') : material.textPreview && emit('previewText'))">
+        <button type="button" class="chat-input-material-card__trigger chat-reference-card__link flex flex-1 items-center gap-2 min-w-0 border-0 rounded-micro bg-transparent p-[0.4rem] text-fg text-left cursor-pointer hover:bg-hover ui-focus-ring" @click="material.kind === 'resource' && material.textPreview && emit('previewText')">
           <NSpin v-if="material.kind === 'resource' && material.resource.state === 'importing'" :size="20" />
-          <img v-else-if="material.kind === 'resource' && material.previewUrl" class="flex-none rounded-micro object-cover" :src="material.previewUrl" :alt="material.resource.name" :width="compact ? 20 : 36" :height="compact ? 20 : 36" @error="emit('previewFailed', material.previewUrl)">
           <FolderIcon v-else-if="material.kind === 'resource' && material.resource.kind === 'directory'" class="flex-none w-6 h-6" />
           <FileIcon v-else-if="material.kind === 'resource'" :name="material.resource.name" :size="compact ? 'small' : 'medium'" />
           <FileIcon v-else-if="material.kind === 'resource_quote' && (material.quote.source.kind === 'file' || material.quote.source.kind === 'artifact')" :name="material.quote.source.title" :size="compact ? 'small' : 'medium'" />
@@ -102,10 +106,7 @@ async function locate() {
         <NButton v-if="canLocate" size="small" secondary :loading="locating" @click="locate">
           {{ t('desktop.chat.resourceQuoteLocate') }}
         </NButton>
-        <NButton v-if="material.kind === 'resource' && material.previewUrl" size="small" secondary @click="emit('preview')">
-          {{ t('desktop.imagePreview.open', { name: material.resource.name }) }}
-        </NButton>
-        <NButton v-else-if="material.kind === 'resource' && material.textPreview" size="small" secondary @click="emit('previewText')">
+        <NButton v-if="material.kind === 'resource' && material.textPreview" size="small" secondary @click="emit('previewText')">
           {{ t('desktop.chat.pastedTextPreview', { name: material.resource.name }) }}
         </NButton>
       </section>
@@ -129,18 +130,6 @@ async function locate() {
   &.is-compact {
     width: auto;
     max-width: 140px;
-  }
-
-  &.is-preview {
-    .chat-input-material-card__trigger {
-      flex-direction: column;
-      align-items: stretch;
-    }
-
-    img {
-      width: 100%;
-      height: 112px;
-    }
   }
 
   &.is-failed {

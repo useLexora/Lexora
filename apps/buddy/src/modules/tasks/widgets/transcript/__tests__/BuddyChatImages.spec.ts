@@ -3,8 +3,9 @@ import type { LocalMessage } from '@buddy-shared/conversation/conversationApi'
 import type { TaskFile, TaskFileLink } from '@buddy-shared/files/taskFileApi'
 import { taskFileMediaUrl } from '@buddy-shared/files/mediaPreview'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { createApp, h, shallowRef } from 'vue'
+import { createApp, h, nextTick, shallowRef } from 'vue'
 import { createChatImageResolver } from '@/modules/tasks/state/artifacts/createChatImageResolver'
+import ChatInputImageThumbnail from '../../materials/ChatInputImageThumbnail.vue'
 import BuddyChatMessageContent from '../BuddyChatMessageContent.vue'
 import BuddyChatNarrationBody from '../BuddyChatNarrationBody.vue'
 import { useProvideChatContent } from '../chatContentContext'
@@ -117,6 +118,55 @@ it('preserves encoded local paths and leaves remote images to the existing rende
   expect(requests).toEqual([{ conversationId: 'message-conversation', href: '%E7%8C%AB%20%231%20%2520.png' }])
   expect(f.root.querySelector('img[alt="Local"]')?.getAttribute('src')).toBe(taskFileMediaUrl(file('message-conversation').target))
   expect(f.root.querySelector('img[alt="Remote"]')?.getAttribute('src')).toBe('https://example.test/cat.png')
+})
+
+it('loads a sent photo only near the viewport and retries inside the same slot without a caption', async () => {
+  let intersect!: (visible: boolean) => void
+  vi.stubGlobal('IntersectionObserver', class {
+    constructor(callback: (entries: { isIntersecting: boolean }[]) => void) {
+      intersect = visible => callback([{ isIntersecting: visible }])
+    }
+
+    observe() {}
+    disconnect() {}
+  })
+  const root = document.createElement('div')
+  const app = createApp(ChatInputImageThumbnail, {
+    src: 'lexora-attachment://preview/photo',
+    name: 'photo.jpg',
+    label: 'photo.jpg',
+    detail: '2 KB',
+    language: 'zh-CN',
+    expanded: true,
+  })
+  try {
+    app.mount(root)
+    await nextTick()
+    intersect(false)
+    await nextTick()
+    expect(root.querySelector('img')).toBeNull()
+    intersect(true)
+    await nextTick()
+    expect(root.querySelector('[role="status"]')?.textContent).toContain('加载中')
+    const img = root.querySelector('img')!
+    expect(img.getAttribute('src')).toBe('lexora-attachment://preview/photo')
+    img.dispatchEvent(new Event('error'))
+    await nextTick()
+    expect(root.querySelector('button')!.textContent).toContain('重试')
+    root.querySelector('button')!.click()
+    await nextTick()
+    const retried = root.querySelector('img')!
+    expect(retried).not.toBe(img)
+    retried.dispatchEvent(new Event('load'))
+    await nextTick()
+    expect(root.querySelector('[role="status"]')).toBeNull()
+    expect(root.textContent?.trim()).toBe('')
+    expect(retried.alt).toBe('photo.jpg')
+  }
+  finally {
+    app.unmount()
+    vi.unstubAllGlobals()
+  }
 })
 
 it('does not turn missing task ownership, directories or non-images into media URLs', async () => {

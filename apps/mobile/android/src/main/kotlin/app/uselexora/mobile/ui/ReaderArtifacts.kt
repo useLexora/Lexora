@@ -21,6 +21,8 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.Executors
 
+internal fun withinThumbnailLimit(resource: JSONObject) = (resource.optString("sizeBytes").toLongOrNull() ?: 0L) in 1..20L * 1024 * 1024
+
 class ReaderArtifactContext(val partition: String, val branchId: String, val client: ProductClient?, val schemas: ProtocolSchemas, val download: (ProductClient, JSONObject) -> File)
 
 internal class ReaderArtifacts(private val context: Context, private val changed: () -> Unit) {
@@ -33,6 +35,9 @@ internal class ReaderArtifacts(private val context: Context, private val changed
     private var encoded: JSONObject? = null
     private var encodedLanguage = ""
     private fun publish() { encoded = null; changed() }
+    var imageEpoch = Any()
+        private set
+    private fun publishImages() { imageEpoch = Any(); publish() }
     private var owner = ""
     private var topic = ""
     private var source: ReaderArtifactContext? = null
@@ -50,9 +55,10 @@ internal class ReaderArtifacts(private val context: Context, private val changed
         val owner = "${source.partition}:$topic:${source.branchId}"
         if (owner != this.owner || source.client !== this.source?.client) {
             generation++; loading.clear(); imagesRequested.clear(); imageWaiters.clear(); refreshQueued.clear(); refreshAfter.clear(); main.removeCallbacksAndMessages(null)
-            if (owner != this.owner) { requested.clear(); outputs.clear(); images = emptyMap(); publish() }
+            if (owner != this.owner) { requested.clear(); outputs.clear(); images = emptyMap() }
             else outputs.replaceAll { _, output -> output.copy(sequence = null, failed = false) }
             this.owner = owner
+            publishImages()
         }
         this.topic = topic; this.source = source; this.runs = runs
         requested.toList().forEach { load(it) }
@@ -128,6 +134,24 @@ internal class ReaderArtifacts(private val context: Context, private val changed
 
     fun imageSource(resource: JSONObject): String? = imageKey(resource).takeIf { images.containsKey(it) }
 
+    fun photoState(resource: JSONObject): ReaderPhotoState {
+        val source = source ?: return ReaderPhotoState("unavailable")
+        if (!ReaderMessagePhotos.canLoad(resource)) return ReaderPhotoState("unavailable")
+        val key = imageKey(resource)
+        return when {
+            key in images -> ReaderPhotoState("ready", key)
+            key in imageWaiters -> ReaderPhotoState("loading")
+            source.client?.identity?.partition != source.partition -> ReaderPhotoState("unavailable")
+            key in imagesRequested -> ReaderPhotoState("failed")
+            else -> ReaderPhotoState("idle")
+        }
+    }
+
+    fun requestPhoto(resource: JSONObject, retry: Boolean) {
+        val status = photoState(resource).status
+        if (status == "idle" || (retry && status == "failed")) thumbnailResource(resource, retry) {}
+    }
+
     fun thumbnail(runId: String, id: String) {
         resource(runId, id)?.let { thumbnailResource(it) {} }
     }
@@ -135,13 +159,14 @@ internal class ReaderArtifacts(private val context: Context, private val changed
     fun thumbnailResource(resource: JSONObject, retry: Boolean = false, complete: (String?) -> Unit) {
         val source = source
         val connection = source?.client
-        if (source == null || connection == null || connection.identity?.partition != source.partition || !isImage(resource) || (resource.optString("sizeBytes").toLongOrNull() ?: 0L) !in 1..20L * 1024 * 1024) { complete(null); return }
+        if (source == null || connection == null || connection.identity?.partition != source.partition || !isImage(resource) || !withinThumbnailLimit(resource)) { complete(null); return }
         val key = imageKey(resource)
         imageWaiters[key]?.let { it.add(complete); return }
         if (!retry && images.containsKey(key)) { complete(key); return }
         if (!imagesRequested.add(key) && !retry) { complete(null); return }
         if (retry) images = images - key
         imageWaiters[key] = mutableListOf(complete)
+        publishImages()
         val captured = generation
         imageWorker.execute {
             if (captured != generation) return@execute
@@ -169,7 +194,7 @@ internal class ReaderArtifacts(private val context: Context, private val changed
                     images = next
                 }
                 imageWaiters.remove(key)?.forEach { it(key.takeIf { bytes != null }) }
-                publish()
+                publishImages()
             }
         }
     }

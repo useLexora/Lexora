@@ -269,8 +269,10 @@ class ReaderView(context: Context) : FrameLayout(context) {
     private fun publish() {
         if (!ready || disposed) return
         val snapshot = ReaderSnapshot(messages, topic, details, runs, transcripts, dark, fontScale, language,
-            resultRunId?.takeIf { hasWindowFocus() && isShown }, avatars?.sources ?: emptyMap(), anchorMessageId, anchorRequestId, hasLaterMessages)
-        val update = projection.encode(snapshot, { MobileTheme.palette(context, dark) }, { MobileTheme.typography(context) })
+            resultRunId?.takeIf { hasWindowFocus() && isShown }, avatars?.sources ?: emptyMap(), anchorMessageId, anchorRequestId, hasLaterMessages, artifacts?.imageEpoch)
+        val update = projection.encode(snapshot, { MobileTheme.palette(context, dark) }, { MobileTheme.typography(context) }) {
+            artifacts?.photoState(it) ?: ReaderPhotoState("unavailable")
+        }
         if (update.optBoolean("reset") || branches !== sentBranches || selectedBranchId != sentSelectedBranchId) {
             update.put("branches", JSONArray(branches)).put("selectedBranchId", selectedBranchId ?: JSONObject.NULL)
             sentBranches = branches; sentSelectedBranchId = selectedBranchId
@@ -344,7 +346,15 @@ class ReaderView(context: Context) : FrameLayout(context) {
             }
             "edit", "regenerate", "followup" -> message?.let { quickAction(it, data.getString("action")) }
             "detail" -> message?.let(detailAction)
+            "photo-thumbnail" -> {
+                val resource = ReaderMessagePhotos.resolve(message, data) ?: return
+                artifacts?.requestPhoto(resource, data.optBoolean("retry"))
+            }
             "resource" -> {
+                if (data.has("revision")) {
+                    ReaderMessagePhotos.resolve(message, data)?.takeIf { MobileReadingPolicy.resource(it).available }?.let(resourceAction)
+                    return
+                }
                 if (message == null) return
                 val presentation = MobileMessagePresentation.message(message)
                 val detail = MobileMessagePresentation.matchingDetail(message, details[presentation.id])

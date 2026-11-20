@@ -1,12 +1,13 @@
 import type { Buffer } from 'node:buffer'
 import type { BuddyAttachmentUpload } from '../../../shared/conversation/attachmentPolicy'
+import type { AttachmentPreviewResult } from '../../../shared/runtime/attachmentHostProtocol'
 import type { AttachmentRecord, AttachmentRepository } from '../storage/attachmentRepository'
 import type { BuddyDataPaths } from '../storage/BuddyDataPaths'
 import type { AttachmentChange } from './attachmentEvents'
 import type { AttachmentInputScope } from './AttachmentInputReader'
 import { createHash, randomUUID } from 'node:crypto'
 import { constants, createReadStream } from 'node:fs'
-import { chmod, copyFile, mkdir, open, readdir, readFile, realpath, rmdir, stat, statfs, unlink, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, lstat, mkdir, open, readdir, readFile, realpath, rmdir, stat, statfs, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, sep } from 'node:path'
 import { readBoundedFile } from '../../../platform/filesystem/boundedFile'
 import { fileStorage } from '../../../platform/filesystem/fileStorage'
@@ -19,6 +20,7 @@ import {
 } from '../../../shared/conversation/attachmentPolicy'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
+import { mediaFileIdentity } from '../../../shared/files/mediaPreview'
 import { ATTACHMENT_PREVIEW_BYTES_LIMIT } from '../../../shared/runtime/attachmentHostProtocol'
 import { readTransactionFailure } from '../storage/transaction'
 import { AttachmentError } from './AttachmentError'
@@ -527,23 +529,42 @@ export class AttachmentService {
     }
   }
 
-  resolvePreview(id: string): { mimeType: string, path: string } {
+  #visibleImage(id: string): AttachmentRecord {
     const record = this.#repository.findVisibleById(id)
     if (!record)
       throw new AttachmentError('ATTACHMENT_NOT_FOUND')
     this.#assertFileReady(record)
     if (!record.mimeType.startsWith('image/'))
       throw new AttachmentError('VALIDATION_FAILED')
+    return record
+  }
+
+  resolvePreview(id: string): { mimeType: string, path: string } {
+    const record = this.#visibleImage(id)
     return { mimeType: record.mimeType, path: record.storedPath }
   }
 
-  async readPreview(id: string): Promise<{ mimeType: string, data: string }> {
-    const preview = this.resolvePreview(id)
-    const record = this.#requireAvailable(id)
+  async readPreview(id: string, ifVersion?: string | null): Promise<AttachmentPreviewResult> {
+    const record = this.#visibleImage(id)
     if (record.sizeBytes > ATTACHMENT_PREVIEW_BYTES_LIMIT)
       throw new AttachmentError('ATTACHMENT_TOO_LARGE')
-    const bytes = await this.#readBytes(record, () => readBoundedFile(dirname(preview.path), preview.path, ATTACHMENT_PREVIEW_BYTES_LIMIT))
-    return { mimeType: preview.mimeType, data: bytes.toString('base64') }
+
+    let version: string | undefined
+    if (record.messageId && ifVersion !== undefined) {
+      const metadata = await lstat(record.storedPath, { bigint: true }).catch(() => null)
+      const current = this.#visibleImage(id)
+      if (this.#stopping)
+        throw new AttachmentError('RUNTIME_OFFLINE')
+      if (current.storedPath !== record.storedPath || current.messageId !== record.messageId || current.mimeType !== record.mimeType)
+        throw new AttachmentError('ATTACHMENT_NOT_FOUND')
+      if (metadata?.isFile() && metadata.size === BigInt(record.sizeBytes)) {
+        version = createHash('sha256').update(JSON.stringify([this.#ownerInstance, id, record.mimeType, mediaFileIdentity(metadata)])).digest('hex')
+        if (version === ifVersion)
+          return { unchanged: version }
+      }
+    }
+    const bytes = await this.#readBytes(record, () => readBoundedFile(dirname(record.storedPath), record.storedPath, ATTACHMENT_PREVIEW_BYTES_LIMIT))
+    return { mimeType: record.mimeType, data: bytes.toString('base64'), ...(version && { version }) }
   }
 
   #readBytes(record: AttachmentRecord, read: () => Promise<Buffer> = () => this.#readFile(record.storedPath)): Promise<Buffer> {
