@@ -1,8 +1,13 @@
 import type { Component } from 'vue'
-import { Add20Regular, ArrowLeft20Regular, ArrowMaximize20Regular, ArrowMinimize20Regular, ArrowUp20Regular, Checkmark20Regular, ChevronDown20Regular, Dismiss20Regular, HandLeft20Regular, LockClosed20Regular, LockOpen20Regular, MoreHorizontal20Regular, Search20Regular, ShieldTask20Regular } from '@vicons/fluent'
+import { Add20Regular, ArrowLeft20Regular, ArrowUp20Regular, Checkmark20Regular, ChevronDown20Regular, Dismiss20Regular, HandLeft20Regular, LockClosed20Regular, LockOpen20Regular, MoreHorizontal20Regular, Search20Regular, ShieldTask20Regular } from '@vicons/fluent'
 import { h } from 'vue'
 import { renderToString } from 'vue/server-renderer'
 import { buddyIconEyes, buddyIconPaths, buddyToolbarStroke } from '../shared/ui/icon/buddyIcon'
+import { panelResizeIcon } from '../shared/ui/icon/panelResizeIcon'
+
+function resizeIcon(data: string) {
+  return { width: panelResizeIcon.size, height: panelResizeIcon.size, paths: [{ data, strokeWidth: panelResizeIcon.strokeWidth }] }
+}
 
 async function fluentIcon(component: Component) {
   const svg = await renderToString(h(component))
@@ -23,8 +28,8 @@ export async function nativeIcons() {
     add: await fluentIcon(Add20Regular),
     arrowUp: await fluentIcon(ArrowUp20Regular),
     chevronDown: await fluentIcon(ChevronDown20Regular),
-    maximize: await fluentIcon(ArrowMaximize20Regular),
-    minimize: await fluentIcon(ArrowMinimize20Regular),
+    maximize: resizeIcon(panelResizeIcon.maximize),
+    minimize: resizeIcon(panelResizeIcon.minimize),
     readOnly: await fluentIcon(LockClosed20Regular),
     manualApproval: await fluentIcon(HandLeft20Regular),
     smartApproval: await fluentIcon(ShieldTask20Regular),

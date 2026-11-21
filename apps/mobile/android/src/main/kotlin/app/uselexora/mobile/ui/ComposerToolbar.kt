@@ -69,7 +69,8 @@ internal fun ComposerToolbar(state: MobileUiState, onAction: (MobileAction, JSON
             onAction(if (choosePermission) MobileAction.ChooseExecution else MobileAction.Send, null)
         }, surfaceSize = 32.dp) {
             Box(Modifier.size(32.dp).clip(RoundedCornerShape(6.dp)).background(if (enabled) colors.primary else colors.surfaceVariant), contentAlignment = Alignment.Center) {
-                Icon(desktopSymbol(DesktopSymbol.ArrowUp), null, Modifier.size(18.dp), tint = if (enabled) colors.onPrimary else muted)
+                if (state.submittingInput) CircularProgressIndicator(Modifier.size(16.dp), color = muted, strokeWidth = 1.5.dp)
+                else Icon(desktopSymbol(DesktopSymbol.ArrowUp), null, Modifier.size(18.dp), tint = if (enabled) colors.onPrimary else muted)
             }
         }
     }

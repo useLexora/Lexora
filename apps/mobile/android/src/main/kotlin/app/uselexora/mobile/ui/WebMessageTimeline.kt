@@ -99,9 +99,20 @@ class ReaderView(context: Context) : FrameLayout(context) {
         textSize = 16f; gravity = Gravity.CENTER
         setTextColor(android.graphics.Color.rgb(91, 116, 106))
         setPadding(24, 24, 24, 24)
-        setOnClickListener { restartBrowser() }
+        setOnClickListener { if (loadFailed) restartBrowser() }
     }
-    private val loadTimeout = Runnable { if (!ready && !disposed) status.text = mobileText(R.string.mobile_conversation_display_unavailable_tap_to_retry) }
+    private var loadFailed = false
+    private val loadTimeout = Runnable { if (!ready && !disposed) showLoadFailure() }
+    private fun showLoadFailure() {
+        loadFailed = true; status.gravity = Gravity.CENTER; status.visibility = View.VISIBLE
+        status.text = mobileText(R.string.mobile_conversation_display_unavailable_tap_to_retry)
+    }
+    private fun showInitialMessage() {
+        val source = messages.singleOrNull()?.takeIf { it.optString("role") == "user" }
+        val text = source?.let { MobileMessagePresentation.message(it).text }.orEmpty()
+        status.visibility = if (text.isEmpty()) View.GONE else View.VISIBLE
+        status.gravity = Gravity.TOP or Gravity.START; status.text = text
+    }
     private var recoveryAttempts = 0
     private var resultRunId: String? = null
     private var readResult: (String) -> Unit = {}
@@ -129,7 +140,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
 
     private fun createBrowser() {
         if (disposed) return
-        status.text = mobileText(R.string.mobile_opening_conversation); status.visibility = View.VISIBLE
+        loadFailed = false; showInitialMessage()
         handler.removeCallbacks(loadTimeout); handler.postDelayed(loadTimeout, 10_000)
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
         browser = WebView(context).also { view ->
@@ -169,7 +180,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
                         ready = false; port?.close(); port = null
                         removeView(view); view.destroy(); browser = null
                         if (recoveryAttempts++ == 0) post { createBrowser() }
-                        else { status.visibility = View.VISIBLE; status.text = mobileText(R.string.mobile_conversation_display_unavailable_tap_to_retry) }
+                        else showLoadFailure()
                     }
                     return true
                 }
@@ -256,6 +267,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
         this.transcripts = transcripts
         this.messages = messages; this.topic = topic; this.details = details; this.runs = runs
         this.dark = dark; this.fontScale = fontScale; this.language = language
+        if (!ready && !loadFailed) showInitialMessage()
         schedulePublish()
     }
 

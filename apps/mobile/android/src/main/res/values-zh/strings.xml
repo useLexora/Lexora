@@ -431,6 +431,7 @@
     <string name="more_options">更多选项</string>
     <string name="send_offline">未连接，暂时无法发送。</string>
     <string name="send_review_text">这段文字已经发过，仍要发送吗？</string>
+    <string name="send_failed_reason">发送失败：%1$s</string>
     <string name="send_back_to_edit">返回编辑</string>
     <string name="send_again">再次发送</string>
     <string name="send_review_missing">请先查看原任务，避免重复提交。返回编辑不会自动发送。</string>

@@ -23,6 +23,8 @@ function action(value: Extract<ReaderActionInput, { action: 'message' | 'detail'
   props.send(value)
 }
 function openActions(event: MouseEvent) {
+  if (props.message.returnToComposer !== undefined)
+    return
   window.getSelection()?.removeAllRanges()
   const rect = event.type === 'contextmenu'
     ? { x: event.clientX, y: event.clientY, width: 0, height: 0 }
@@ -85,7 +87,7 @@ async function copy(text: string) {
     </div>
     <ReaderArtifacts v-if="message.runId" :run-id="message.runId" :output="output" :send="send" @interact="emit('interact')" />
     <ReaderMessageActions
-      v-if="message.role === 'user' || (message.role === 'assistant' && message.final && message.actionsVisible)"
+      v-if="message.actionsVisible && (message.role === 'user' || (message.role === 'assistant' && message.final))"
       :message="message" :language="language"
       @copy="action({ action: 'copy', id: message.id, text: message.text, feedback: 'message' })" @more="openActions" @regenerate="action({ action: 'regenerate', id: message.id })" @edit="action({ action: 'edit', id: message.id })" @branch="branchId => action({ action: 'branch', branchId })" @followup="action({ action: 'followup', id: message.id })"
     />

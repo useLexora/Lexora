@@ -155,7 +155,7 @@ describe('prepared run command atomic persistence', () => {
     const delivered: string[] = []
     const observe = (kind: string) => {
       expect(f.database.isTransaction).toBe(false)
-      expect(f.owner.find(f.command)?.target).toEqual({ runId: 'run-1', conversationId: 'conversation-1', branchId: 'branch-1' })
+      expect(f.owner.find(f.command)?.target).toEqual({ runId: 'run-1', conversationId: 'conversation-1', branchId: 'branch-1', messageId: 'message-1' })
       expect(f.drafts.findById('draft-1')?.revision).toBe(1)
       delivered.push(kind)
     }

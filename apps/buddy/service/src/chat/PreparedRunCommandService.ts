@@ -100,10 +100,16 @@ export class PreparedRunCommandService {
           createdAt,
         })
       }
+      const createdMessage = request.committedFacts.find(fact => fact.kind === 'message.created')
       return {
         request,
         decision: {
-          target: { runId: request.runId, conversationId: request.conversationId, branchId: request.branchId },
+          target: {
+            runId: request.runId,
+            conversationId: request.conversationId,
+            branchId: request.branchId,
+            ...(createdMessage ? { messageId: createdMessage.messageId } : {}),
+          },
           result: { draftReceipt: request.draftReceipt },
         },
       }

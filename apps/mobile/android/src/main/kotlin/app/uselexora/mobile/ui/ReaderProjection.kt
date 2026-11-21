@@ -70,8 +70,9 @@ internal class ReaderProjection {
                     .put("needsDetail", message.needsDetail).put("hasDetail", detail?.text != null).put("loading", detail?.loading == true)
                     .put("error", detail?.error ?: JSONObject.NULL).put("notice", detail?.notice ?: JSONObject.NULL)
                     .put("detailResource", detail?.resource?.optString("resourceId") ?: JSONObject.NULL)
-                    .put("actionsVisible", message.role == "user" || (message.role == "assistant" && !runActive && !item.intermediate))
+                    .put("actionsVisible", (message.role == "user" && (!message.source.optBoolean("localInput") || detail?.error != null)) || (message.role == "assistant" && !runActive && !item.intermediate))
                     .put("canCopy", MobileMessagePresentation.canCopy(text))
+                    .apply { if (message.source.optBoolean("localInput") && detail?.error != null) put("returnToComposer", detail.canReturnToComposer) }
                     .put("canEdit", message.role == "user" && message.source.getJSONObject("body").let { it.optString("kind") == "user" && MobileContentAdapter.canEditAsText(it.getJSONObject("content")) })
                     .put("canRegenerate", finalAssistant && terminal.containsKey(runId))
                     .put("canFollowup", finalAssistant && terminal[runId]?.optString("status") == "completed")

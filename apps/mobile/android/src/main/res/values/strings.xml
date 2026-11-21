@@ -432,6 +432,7 @@
     <string name="more_options">More options</string>
     <string name="send_offline">Offline. Connect to send.</string>
     <string name="send_review_text">This text was already sent. Send it again?</string>
+    <string name="send_failed_reason">Not sent: %1$s</string>
     <string name="send_back_to_edit">Back to editing</string>
     <string name="send_again">Send again</string>
     <string name="send_review_missing">Check the original task to avoid submitting twice. Returning to the editor won\'t send anything.</string>
