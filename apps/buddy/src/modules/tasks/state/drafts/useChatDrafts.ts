@@ -117,11 +117,11 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
     remote: LocalComposerDraft,
     replaceContent: boolean,
   ) {
-    const source = findDraft(submitted.draftId)
-    if (!source)
+    const key = submitted.targetKey
+    const current = draftsByScope.get(key)
+    if (current?.draftId !== submitted.draftId || current.editorSessionId !== submitted.editorSessionId)
       return false
-    const [key, current] = source
-    if (current.editorSessionId !== submitted.editorSessionId || (current.revision !== null && remote.revision < current.revision))
+    if (current.draftId === remote.draftId && current.revision !== null && remote.revision < current.revision)
       return false
     const unchanged = current.editorSessionId === submitted.editorSessionId
       && current.editVersion === submitted.editVersion
@@ -235,6 +235,8 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
       }
       const wasConfirmed = current.confirmedSnapshot === stateValueFingerprint(current)
       const empty = createBuddyUserContent()
+      if (isolatedDraft.value?.targetKey === sourceKey)
+        isolatedDraft.value = null
       draftsByScope.delete(sourceKey)
       draftsByScope.set(targetKey, {
         ...current,
@@ -245,8 +247,6 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
         editVersion: current.editVersion + (wasConfirmed ? 1 : 0),
         revision: receipt.committedRevision,
       })
-      if (isolatedDraft.value?.targetKey === sourceKey)
-        isolatedDraft.value = null
       options.onChange()
       return true
     },
@@ -299,8 +299,8 @@ export function useChatDrafts(options: UseChatDraftsOptions): ChatDrafts {
       return value.revision !== null && value.confirmedSnapshot === stateValueFingerprint(value)
     },
     isUnchanged(value: ChatDraftSnapshot) {
-      const current = findDraft(value.draftId)?.[1]
-      return current?.editorSessionId === value.editorSessionId
+      const current = draftsByScope.get(value.targetKey)
+      return current?.draftId === value.draftId && current.editorSessionId === value.editorSessionId
         && current.editVersion === value.editVersion
     },
     listSnapshots: () => [...draftsByScope.keys()].map(snapshot),

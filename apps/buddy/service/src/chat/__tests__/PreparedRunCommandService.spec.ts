@@ -250,6 +250,8 @@ describe('prepared run command atomic persistence', () => {
         ? () => f.owner.edit(command, { ...base, draft, sourceUserMessageId: 'message-1', forkedFromMessageId: null, userMessageId: 'message-2' })
         : () => f.owner.compact(command, { ...base, branchId: 'branch-1', draft, command: 'compact', arguments: 'Preserve decisions' })
     }
+    const slots = () => f.database.prepare('SELECT * FROM composer_draft_slots ORDER BY owner_actor_id, scope_key').all()
+    const slotsBefore = slots()
     const draftsBefore = f.database.prepare('SELECT * FROM composer_drafts ORDER BY id').all()
     f.database.exec(`CREATE TRIGGER reject_receipt BEFORE INSERT ON command_receipts BEGIN SELECT RAISE(ABORT, 'receipt unavailable'); END`)
     expect(accept).toThrow('receipt unavailable')
@@ -257,10 +259,15 @@ describe('prepared run command atomic persistence', () => {
     expect(f.database.prepare('SELECT active_branch_id FROM conversations').get()).toEqual({ active_branch_id: 'branch-1' })
     expect(f.database.prepare('SELECT count(*) AS count FROM messages').get()).toEqual({ count: 2 })
     expect(f.database.prepare('SELECT * FROM composer_drafts ORDER BY id').all()).toEqual(draftsBefore)
+    expect(slots()).toEqual(slotsBefore)
     f.database.exec('DROP TRIGGER reject_receipt')
     const accepted = accept()
     expect(accepted).toMatchObject({ created: true, receipt: { target: { runId: 'run-2' } } })
     expect(accept()).toEqual({ created: false, receipt: accepted.receipt })
+    if (method === 'edit') {
+      expect(f.drafts.findByScope({ kind: 'message_edit', conversationId: 'conversation-1', branchId: 'branch-1', userMessageId: 'message-1' })).toBeNull()
+      expect(f.drafts.findByScope({ kind: 'conversation_branch', conversationId: 'conversation-1', branchId: 'branch-2' })?.draftId).toBe('draft-2')
+    }
     expect(f.owner.find(f.command)).toEqual(first.receipt)
     expect(new RunEventQueries(f.database).listForRuns(['run-2'])).toMatchObject([{ sequence: 1, type: 'run.queued' }])
     expect(f.database.prepare('SELECT purpose, next_event_sequence FROM runs WHERE id = \'run-2\'').get()).toEqual({ purpose: method === 'compact' ? 'conversation.compaction' : 'chat', next_event_sequence: 2 })

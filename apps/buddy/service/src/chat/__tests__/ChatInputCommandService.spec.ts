@@ -171,15 +171,16 @@ describe('chat input command admission', () => {
     f.database.prepare('UPDATE runs SET status = \'completed\' WHERE id = \'run\'').run()
     const conversations = createConversationRepository(f.database)
     conversations.createBranch({ id: 'other-branch', conversationId: 'conversation', parentBranchId: 'branch', forkedFromMessageId: 'message', createdAt: now, activate: true })
-    f.repository.open({ draftId: 'stale-draft', initialContent: createBuddyUserContent('Keep the original source'), initialExecutionConfig: { approvalPolicy: 'policy', executionProfile: 'workspace_write' }, initialModelSelection: null, now, scope: method === 'chat.editUserMessage'
+    const opened = f.repository.open({ draftId: 'stale-draft', initialContent: createBuddyUserContent('Keep the original source'), initialExecutionConfig: { approvalPolicy: 'policy', executionProfile: 'workspace_write' }, initialModelSelection: null, now, scope: method === 'chat.editUserMessage'
       ? { kind: 'message_edit', conversationId: 'conversation', branchId: 'branch', userMessageId: 'message' }
       : { kind: 'conversation_branch', conversationId: 'conversation', branchId: 'branch' } })
+    const draft = f.repository.save({ draftId: opened.draftId, expectedRevision: opened.revision, content: createBuddyUserContent('Keep the original source'), executionConfig: opened.executionConfig, modelSelection: null, now })
     f.database.prepare('UPDATE conversations SET deleted_at = ? WHERE id = ?').run(now, 'conversation')
-    const input = { ...f.input, commandId: 'stale-command', intent: { draftId: 'stale-draft', expectedRevision: 0, ...(method === 'chat.editUserMessage' ? { conversationId: 'conversation', userMessageId: 'message' } : {}) } }
+    const input = { ...f.input, commandId: 'stale-command', intent: { draftId: draft.draftId, expectedRevision: draft.revision, ...(method === 'chat.editUserMessage' ? { conversationId: 'conversation', userMessageId: 'message' } : {}) } }
     const result = await f.service.execute(method, input)
     expect(result.receipt).toMatchObject({ decision: 'rejected', errorCode: 'SOURCE_CHANGED' })
     expect(conversations.findById('conversation')?.activeBranchId).toBe('other-branch')
-    expect(f.repository.findById('stale-draft')).toMatchObject({ revision: 0, content: createBuddyUserContent('Keep the original source') })
+    expect(f.repository.findById(draft.draftId)).toEqual(draft)
     expect(f.database.prepare('SELECT COUNT(*) AS count FROM runs').get()).toEqual({ count: 1 })
     f.database.prepare('UPDATE conversations SET deleted_at = NULL WHERE id = ?').run('conversation')
     expect(await f.service.execute(method, input)).toEqual({ created: false, receipt: result.receipt })
