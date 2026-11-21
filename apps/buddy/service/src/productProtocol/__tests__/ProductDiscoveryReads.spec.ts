@@ -1,14 +1,17 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { ProductSearchPage } from '../../../../shared/productProtocol/queries'
+import { Buffer } from 'node:buffer'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createBuddyUserContent } from '../../../../shared/conversation/buddyUserContent'
-import { PRODUCT_QUERY_METHODS, productBuddyPageSchema, productMemberPageSchema, productMessageWindowSchema, productRecentWindowSchema, productSearchPageSchema } from '../../../../shared/productProtocol/queries'
+import { PRODUCT_QUERY_METHODS, productBuddyPageSchema, productMemberPageSchema, productMessageWindowSchema, productSearchPageSchema } from '../../../../shared/productProtocol/queries'
 import { PRODUCT_TOPIC_SCHEMAS } from '../../../../shared/productProtocol/topics'
+import { productActivityStepsPageSchema } from '../../../../shared/productProtocol/turns'
 import { SqliteRunEventWriter } from '../../events/SqliteRunEventWriter'
 import { seedSqliteRun } from '../../storage/__tests__/sqliteRunFixture'
+import { createArtifactRepository } from '../../storage/artifactRepository'
 import { createBuddyRepository } from '../../storage/buddyRepository'
 import { ConversationCommandRepository } from '../../storage/ConversationCommandRepository'
 import { createConversationRepository } from '../../storage/conversationRepository'
@@ -124,7 +127,6 @@ describe('product discovery read contracts', () => {
     }
     expect(f.search('archive-needle').items).toEqual([])
     expect(f.read('conversations.get', { conversationId: 'task' })).toMatchObject({ activeBranchId: 'branch-task' })
-    expect(productRecentWindowSchema.parse(f.read('conversations.getRecentWindow', { conversationId: 'task', branchId: 'branch-task' })).items).toHaveLength(2)
   })
 
   it('returns current actor identities and member CAS revisions without execution settings or NPCs', () => {
@@ -181,6 +183,85 @@ describe('product discovery read contracts', () => {
     }
     finally {
       disconnect()
+      sync.dispose()
+      writer.dispose()
+    }
+  })
+
+  it('keeps a running conversation readable without sending collapsed tool payloads on open or resume', () => {
+    const f = fixture(true)
+    const errors: unknown[] = []
+    const writer = new SqliteRunEventWriter(f.database, error => errors.push(error))
+    const idle = { onDidCommit: () => ({ dispose() {} }) }
+    const sync = createProductSynchronization({ database: f.database, queries: f.queries, drafts: idle, metadata: idle, lifecycle: idle, events: writer })
+    const topic = 'conversationTurns:task:branch-task'
+    const scope = { conversationId: 'task', branchId: 'branch-task' }
+    const log = `UNOPENED_LOG:${'x'.repeat(12_000)}`
+    const frames: string[] = []
+    const transport = { send: (frame: string) => {
+      frames.push(frame)
+      return true
+    }, close() {} }
+    const call = (index: number) => {
+      const toolCallId = `call-${index}`
+      const content = { toolCallId, toolName: 'bash', isError: index === 73 }
+      writer.appendBatch([
+        { runId: 'root', type: 'tool.started', payload: { toolCallId, toolName: 'bash', args: { command: `UNOPENED_COMMAND:${index}` } } },
+        { runId: 'root', type: 'tool.completed', payload: { ...content, result: { content: [{ type: 'text', text: log }] } } },
+        { runId: 'root', type: 'message.tool_result', payload: { role: 'tool', messageId: `result-${index}`, content } },
+      ])
+    }
+    function openSnapshot() {
+      const reader = f.queries.openSnapshot(topic)
+      try {
+        const page = reader.read(null)
+        expect(page.nextCursor).toBeNull()
+        return page.items.map(item => PRODUCT_TOPIC_SCHEMAS.conversationTurns.item.parse(item))
+      }
+      finally { reader.close() }
+    }
+    let disconnect: (() => void) | undefined
+    try {
+      call(1)
+      call(2)
+      const short = openSnapshot()
+      for (let index = 3; index <= 200; index++) call(index)
+      const large = openSnapshot()
+      expect(large.filter(item => item.entity === 'activityGroup').map(item => item.value)).toMatchObject([{ toolCount: 200, failedCount: 1 }])
+      expect(large.filter(item => item.entity === 'message').map(item => item.value.id)).toEqual(['input-root'])
+      expect(JSON.stringify(large)).not.toMatch(/UNOPENED_|call-73|result-73/)
+      expect(Buffer.byteLength(JSON.stringify(large))).toBeLessThan(Buffer.byteLength(JSON.stringify(short)) + 256)
+      const group = large.find(item => item.entity === 'activityGroup')!
+      const steps = productActivityStepsPageSchema.parse(f.read('conversations.listActivitySteps', { ...scope, groupId: group.value.id, runId: 'root', limit: 100 }))
+      expect(steps.items).toContainEqual(expect.objectContaining({ status: 'failed', messageId: 'result-73' }))
+      expect(JSON.stringify(steps)).not.toMatch(/UNOPENED_/)
+
+      sync.authorizeTopic(topic)
+      disconnect = sync.publisher.connect('phone', transport)
+      const start = sync.publisher.subscribe('phone', { subscriptionId: 'before', topic })
+      start.activate()
+      disconnect()
+      writer.append({ runId: 'root', type: 'message.completed', payload: { role: 'assistant', messageId: 'explanation', stopReason: 'completed', content: { text: 'Step 73 failed; retrying packaging.' } } })
+      call(201)
+      createArtifactRepository(f.database).save({ id: 'apk', conversationId: 'task', currentPath: '/fixture/build.apk', directoryRoot: '/fixture', directoryGrantId: 'task', relativePath: 'build.apk', kind: 'file', name: 'build.apk', mimeType: 'application/vnd.android.package-archive', sizeBytes: 120, sourceArtifactId: null, createdAt: now, updatedAt: now })
+      writer.append({ runId: 'root', type: 'output.produced', payload: { artifactIds: ['apk'], sourceToolCallId: 'call-201', sourceToolName: 'lexora_output_present' } })
+      writer.append({ runId: 'root', type: 'message.completed', payload: { role: 'assistant', messageId: 'done', stopReason: 'completed', content: { text: 'The build has recovered.' } } })
+      writer.append({ runId: 'root', type: 'run.completed', payload: {} })
+      disconnect = sync.publisher.connect('phone', transport)
+      const resume = sync.publisher.subscribe('phone', { subscriptionId: 'after', topic, base: start.snapshot.cursor })
+      resume.activate()
+      expect(resume.snapshot.mode).toBe('resume')
+      expect(frames.join('\n')).toContain('The build has recovered.')
+      expect(frames.join('\n')).toContain('output.produced')
+      expect(frames.join('\n')).not.toMatch(/UNOPENED_|result-73|call-73/)
+      const after = openSnapshot()
+      expect(after.filter(item => item.entity === 'message').map(item => item.value.id)).toEqual(['input-root', 'explanation', 'done'])
+      expect(after.filter(item => item.entity === 'activityGroup').map(item => item.value)).toMatchObject([{ afterMessageId: 'input-root', failedCount: 1, toolCount: 200 }, { afterMessageId: 'explanation', failedCount: 0, toolCount: 1 }])
+      expect(f.read('runs.listOutputs', { runId: 'root', branchId: scope.branchId })).toMatchObject({ items: [{ resourceId: 'artifact:apk', name: 'build.apk' }] })
+      expect(errors).toEqual([])
+    }
+    finally {
+      disconnect?.()
       sync.dispose()
       writer.dispose()
     }

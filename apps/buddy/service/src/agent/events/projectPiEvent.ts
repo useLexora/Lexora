@@ -9,6 +9,7 @@ import type { BuddyAssistantTextPhase } from '../../../../shared/runs/assistantT
 import type { BuddyToolPresentation } from '../../../../shared/runs/runEventPresentation'
 import type { BuddyRunProgress, BuddyRunRetry } from '../../../../shared/runs/runProgress'
 import type { ModelRequestFailureCode } from '../../providers/modelRequestFailure'
+import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 
 import { MAX_BUDDY_MESSAGE_TEXT_LENGTH } from '../../../../shared/conversation/buddyMessageContent'
@@ -512,15 +513,10 @@ function projectMessageContentUpdate(
   if (event.type === 'text_delta' && event.delta) {
     const phase = resolvePiTextPhase(event.partial.content[event.contentIndex])
     return {
-      events: [{
-        payload: {
-          contentIndex: event.contentIndex,
-          delta: event.delta.slice(0, MAX_DELTA_LENGTH),
-          messageId,
-          ...(phase ? { phase } : {}),
-        },
+      events: splitPublicTextDelta(event.delta).map(delta => ({
+        payload: { contentIndex: event.contentIndex, delta, messageId, ...(phase ? { phase } : {}) },
         type: 'message.delta',
-      }],
+      })),
     }
   }
   if (event.type === 'text_end') {
@@ -566,9 +562,9 @@ function projectAssistantMessageEnd(
       ? [{ content, contentIndex, phase: resolvePiTextPhase(content) }]
       : []
   ))
-  const text = selectCompletedText(textBlocks)
+  const content = selectCompletedText(textBlocks)
   const phase = resolveCompletedTextPhase(textBlocks)
-    ?? (message.stopReason === 'toolUse' && text.trim() ? 'commentary' : undefined)
+    ?? (message.stopReason === 'toolUse' && content.text.trim() ? 'commentary' : undefined)
   const missingTextBlockEvents: BuddyProjectedEvent[] = textBlocks.flatMap((block) => {
     if (
       block.phase !== 'commentary'
@@ -600,7 +596,7 @@ function projectAssistantMessageEnd(
       {
         payload: {
           content: {
-            text,
+            ...content,
             modelId: message.model,
             providerId: message.provider,
           },
@@ -624,14 +620,32 @@ interface ProjectedTextBlock {
   phase: BuddyAssistantTextPhase | undefined
 }
 
-function selectCompletedText(blocks: readonly ProjectedTextBlock[]): string {
+function splitPublicTextDelta(text: string): string[] {
+  if (Buffer.byteLength(text) <= MAX_DELTA_LENGTH)
+    return [text]
+  const parts: string[] = []
+  for (let start = 0; start < text.length;) {
+    let end = Math.min(start + Math.floor(MAX_DELTA_LENGTH / 3), text.length)
+    if (end < text.length && /[\uD800-\uDBFF]/.test(text.charAt(end - 1)) && /[\uDC00-\uDFFF]/.test(text.charAt(end)))
+      end--
+    parts.push(text.slice(start, end))
+    start = end
+  }
+  return parts
+}
+
+function selectCompletedText(blocks: readonly ProjectedTextBlock[]): { text: string, truncated?: true } {
   const selected = blocks.some(block => block.phase === 'final_answer')
     ? blocks.filter(block => block.phase === 'final_answer')
     : blocks
-  return selected
-    .map(block => block.content.text)
-    .join('')
-    .slice(0, MAX_BUDDY_MESSAGE_TEXT_LENGTH)
+  let text = ''
+  for (const block of selected) {
+    const remaining = MAX_BUDDY_MESSAGE_TEXT_LENGTH - text.length
+    text += block.content.text.slice(0, remaining)
+    if (block.content.text.length > remaining)
+      return { text: text.replace(/[\uD800-\uDBFF]$/, ''), truncated: true }
+  }
+  return { text }
 }
 
 function resolveCompletedTextPhase(

@@ -15,6 +15,7 @@ internal data class ReaderSnapshot(
     val fontScale: Float, val language: String, val resultRunId: String?, val avatars: Map<String, String>,
     val anchorMessageId: String? = null, val anchorRequestId: String? = null, val hasLaterMessages: Boolean = false,
     val photoEpoch: Any? = null,
+    val turn: ReaderTurnContext = ReaderTurnContext(), val stepPages: Map<String, JSONObject> = emptyMap(),
 )
 
 internal class ReaderProjection {
@@ -30,9 +31,25 @@ internal class ReaderProjection {
     private data class EncodedEntry(val message: MobileMessage, val inputs: List<Any?>, val value: JSONObject, val encoded: String)
     private val encodedEntries = mutableMapOf<String, EncodedEntry>()
     private var order = emptyList<String>()
+    private var sentGroups = emptyMap<String, Pair<JSONObject, JSONObject?>>()
     private var sentAvatars: Map<String, String>? = null
 
     fun reset() { sentTopic = null }
+
+    private fun activityOrder(ids: List<String>, messages: List<JSONObject>, groups: List<JSONObject>): List<String> {
+        val positions = ids.withIndex().associate { it.value to it.index }
+        val dates = messages.associate { it.getString("id") to it.optString("createdAt") }
+        val buckets = mutableMapOf<Int, MutableList<String>>()
+        for (group in groups.sortedWith(compareBy<JSONObject> { it.getString("createdAt") }.thenBy { it.getString("id") })) {
+            val after = positions[group.optString("afterMessageId")]
+                ?: (ids.indexOfFirst { (dates[it] ?: "") > group.getString("createdAt") }.let { if (it < 0) ids.size else it } - 1)
+            buckets.getOrPut(after) { mutableListOf() }.add(group.getString("id"))
+        }
+        return buildList {
+            addAll(buckets[-1].orEmpty())
+            ids.forEachIndexed { index, id -> add(id); addAll(buckets[index].orEmpty()) }
+        }
+    }
 
     fun encode(snapshot: ReaderSnapshot, appearance: () -> JSONObject, typography: () -> JSONObject,
         photoState: (JSONObject) -> ReaderPhotoState = { ReaderPhotoState("unavailable") },
@@ -47,7 +64,8 @@ internal class ReaderProjection {
             encodedEntries[source.getString("id")]?.message?.takeIf { it.source === source } ?: MobileMessagePresentation.message(source)
         }.map { item ->
             val message = item.message
-            val inputs = listOf(message.source, details[message.id], item.continuation, item.showIdentity, item.intermediate,
+            val commentary = if (turn.enabled && message.role == "assistant") message.source.optJSONObject("commentary") else null
+            val inputs = listOf(message.source, commentary, details[message.id], item.continuation, item.showIdentity, item.intermediate,
                 message.id in streaming, message.runId?.let { it in active } == true, message.runId?.let { finalMessages[it] } == message.id,
                 message.runId?.let { terminal[it] }?.optString("status"),
                 photoEpoch.takeIf { message.role == "user" && message.resources.isNotEmpty() })
@@ -59,19 +77,28 @@ internal class ReaderProjection {
                 val runActive = runId != null && runId in active
                 val finalAssistant = message.role == "assistant" && runId != null && finalMessages[runId] == message.id
                 JSONObject().put("id", message.id).apply { message.source.optString("branchId").takeIf { it.isNotBlank() }?.let { put("branchId", it) } }.put("createdAt", message.source.opt("createdAt") ?: JSONObject.NULL).put("role", message.role).put("runId", message.runId ?: JSONObject.NULL)
+                    .apply {
+                        (message.source.opt("turnRootId") as? String)?.let { put("turnRootId", it) }
+                        (message.source.opt("turnInputId") as? String)?.let { put("turnInputId", it) }
+                    }
                     .put("authorId", message.source.optJSONObject("author")?.optString("id") ?: JSONObject.NULL)
                     .put("author", message.source.optJSONObject("author")?.optString("name")?.takeIf { it.isNotBlank() } ?: mobileText(R.string.mobile_assistant))
                     .put("text", text).put("final", message.id !in streaming || message.interrupted || message.truncated)
                     .put("markdown", MobileReadingPolicy.canParse(text))
                     .put("interrupted", message.interrupted).put("truncated", message.truncated)
+                    .apply {
+                        if (detail?.text == null) message.source.optJSONObject("textRange")?.let { put("textRange", it) }
+                        commentary?.let { put("commentary", it) }
+                        if (message.truncated && (message.interrupted || message.source.has("turnInputId") || message.source.getJSONObject("body").optString("kind") == "resource")) put("sourceTruncated", true)
+                    }
                     .put("showIdentity", item.showIdentity).put("intermediate", item.intermediate)
-                    .put("toolName", message.toolName ?: JSONObject.NULL).put("toolSummary", message.text)
+                    .put("toolName", message.toolName ?: JSONObject.NULL).put("toolSummary", if (message.role == "tool") message.text else "")
                     .put("toolTitle", MobileMessagePresentation.toolTitle(message.toolName)).put("toolError", message.toolError)
                     .put("needsDetail", message.needsDetail).put("hasDetail", detail?.text != null).put("loading", detail?.loading == true)
                     .put("error", detail?.error ?: JSONObject.NULL).put("notice", detail?.notice ?: JSONObject.NULL)
                     .put("detailResource", detail?.resource?.optString("resourceId") ?: JSONObject.NULL)
                     .put("actionsVisible", (message.role == "user" && (!message.source.optBoolean("localInput") || detail?.error != null)) || (message.role == "assistant" && !runActive && !item.intermediate))
-                    .put("canCopy", MobileMessagePresentation.canCopy(text))
+                    .put("canCopy", (detail?.text != null || !message.source.has("textRange") || message.source.getJSONObject("textRange").optLong("start") == 0L) && MobileMessagePresentation.canCopy(text))
                     .apply { if (message.source.optBoolean("localInput") && detail?.error != null) put("returnToComposer", detail.canReturnToComposer) }
                     .put("canEdit", message.role == "user" && message.source.getJSONObject("body").let { it.optString("kind") == "user" && MobileContentAdapter.canEditAsText(it.getJSONObject("content")) })
                     .put("canRegenerate", finalAssistant && terminal.containsKey(runId))
@@ -89,16 +116,28 @@ internal class ReaderProjection {
             entry
         }
         val reset = topic != sentTopic
-        val nextOrder = entries.map { it.getString("id") }
+        val messageOrder = entries.map { it.getString("id") }
+        val groupRows = if (turn.enabled) turn.groups.associate { group ->
+            val id = group.getString("id")
+            id to (group to stepPages[id])
+        } else emptyMap()
+        val nextOrder = if (groupRows.isEmpty()) messageOrder else activityOrder(messageOrder, messages, turn.groups)
         val next = entries.associate { it.getString("id") to encodedEntries.getValue(it.getString("id")).encoded }
         encodedEntries.keys.retainAll(next.keys)
-        val changed = entries.filter { reset || sent[it.getString("id")] != next[it.getString("id")] }
+        val changed = entries.filter { reset || sent[it.getString("id")] != next[it.getString("id")] }.toMutableList()
+        for ((id, row) in groupRows) if (reset || sentGroups[id] != row) {
+            changed += JSONObject().put("id", id).put("continuation", true).put("messages", JSONArray())
+                .put("activityGroup", row.first).put("steps", row.second)
+        }
+        sentGroups = groupRows
         if (anchorRequestId != null && anchorRequestId != anchorRequest) {
             anchorRequest = anchorRequestId
             anchorTopic = topic
         }
         val anchor = anchorRequestId?.takeIf { it.isNotBlank() && anchorTopic == topic && !anchorMessageId.isNullOrBlank() }
         val update = JSONObject().put("topic", topic).put("reset", reset).put("dark", dark).put("fontScale", fontScale).put("language", language)
+            .put("turnWindow", turn.enabled)
+            .put("history", JSONObject().put("page", turn.historyPage).put("available", turn.historyAvailable).put("loading", turn.historyLoading).put("error", turn.historyError ?: JSONObject.NULL))
             .put("resultRunId", resultRunId ?: JSONObject.NULL)
             .put("anchorMessageId", if (anchor != null) anchorMessageId else JSONObject.NULL)
             .put("anchorRequestId", anchor ?: JSONObject.NULL).put("hasLaterMessages", hasLaterMessages)

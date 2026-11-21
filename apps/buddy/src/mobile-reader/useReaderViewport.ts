@@ -1,12 +1,15 @@
 import type { ComponentPublicInstance, Ref } from 'vue'
 import type { ReaderEntry } from './readerBridge'
 import type { ReaderAnchor } from './readerProjection'
+import type { ReaderUpdate } from './readerProtocol'
 import { defaultRangeExtractor, elementScroll, useVirtualizer } from '@tanstack/vue-virtual'
+import { useResizeObserver } from '@vueuse/core'
 import { computed, nextTick, onMounted, onUnmounted, shallowRef, watch } from 'vue'
 
-export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Ref<ReaderEntry[]>, topic: Ref<string>, anchor: Ref<ReaderAnchor | null>, hasLaterMessages: Ref<boolean>, onLatest: () => void) {
+export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Ref<ReaderEntry[]>, topic: Ref<string>, anchor: Ref<ReaderAnchor | null>, hasLaterMessages: Ref<boolean>, onLatest: () => void, paging: { state: Ref<ReaderUpdate['history']>, load: (retry: boolean) => void }) {
   const followsEnd = shallowRef(true)
   const hasMoreBelow = shallowRef(false)
+  const nearHistoryStart = shallowRef(true)
   const readingHistory = shallowRef(false)
   const anchorStatus = shallowRef<'idle' | 'locating' | 'located' | 'missing'>('idle')
   const locatedMessageId = shallowRef<string | null>(null)
@@ -19,6 +22,9 @@ export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Re
   let frame = 0
   let touching = false
   let lastTop = 0
+  let requestedBoundary: number | string | null = null
+  let filling = false
+  let fillFrame = 0
   let programmaticTop: number | null = null
   const virtualizer = useVirtualizer<HTMLElement, HTMLElement>(computed(() => {
     const items = entries.value
@@ -58,8 +64,33 @@ export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Re
 
   function report() {
     const element = viewport.value
-    hasMoreBelow.value = Boolean(element && virtualizer.value.getTotalSize() - element.clientHeight - element.scrollTop > 24)
+    const size = virtualizer.value.getTotalSize()
+    hasMoreBelow.value = Boolean(element && size - element.clientHeight - element.scrollTop > 24)
+    nearHistoryStart.value = Boolean(element && element.scrollTop < element.clientHeight * 0.8)
   }
+  const boundary = computed(() => paging.state.value?.page ?? entries.value[0]?.id ?? '')
+  function requestOlder(reason: 'fill' | 'scroll' | 'retry') {
+    const state = paging.state.value
+    if (!topic.value || !state?.available || state.loading || (reason === 'retry' ? !state.error : state.error || requestedBoundary === boundary.value))
+      return
+    requestedBoundary = boundary.value
+    filling = reason === 'fill' || (reason === 'retry' && fitsViewport())
+    paging.load(reason === 'retry')
+  }
+  function fitsViewport() {
+    const el = viewport.value
+    return !!el && el.clientHeight > 0 && Math.max(el.scrollHeight, virtualizer.value.getTotalSize()) <= el.clientHeight + 1
+  }
+  function scheduleFill() {
+    cancelAnimationFrame(fillFrame)
+    fillFrame = requestAnimationFrame(() => {
+      report()
+      if (anchorStatus.value !== 'locating' && anchorStatus.value !== 'missing' && fitsViewport())
+        requestOlder('fill')
+    })
+  }
+  useResizeObserver(viewport, scheduleFill)
+  watch([viewport, height, topic, boundary, () => paging.state.value?.available, () => paging.state.value?.loading, () => paging.state.value?.error, anchorStatus], scheduleFill, { flush: 'post' })
   function follow() {
     cancelAnimationFrame(frame)
     if (!followsEnd.value || touching || window.getSelection()?.toString())
@@ -76,6 +107,9 @@ export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Re
     locatingIndex.value = null
   }
   function resumeLatest() {
+    requestedBoundary = null
+    filling = false
+    scheduleFill()
     cancelAnchor()
     anchorStatus.value = 'idle'
     locatedMessageId.value = null
@@ -144,6 +178,8 @@ export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Re
       followsEnd.value = atEnd && !readingHistory.value && !hasLaterMessages.value
     else if (atEnd && !readingHistory.value && !hasLaterMessages.value)
       followsEnd.value = true
+    if (!automatic && element.scrollTop < lastTop - 1 && nearHistoryStart.value && anchorStatus.value !== 'locating')
+      requestOlder('scroll')
     programmaticTop = null
     lastTop = element.scrollTop
   }
@@ -171,6 +207,9 @@ export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Re
     selected.value = indexes
   }
   watch(topic, () => {
+    requestedBoundary = null
+    filling = false
+    lastTop = 0
     cancelAnchor()
     anchorStatus.value = 'idle'
     locatedMessageId.value = null
@@ -182,8 +221,11 @@ export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Re
   })
   watch(entries, (next, previous) => {
     if (previous[0] && next.findIndex(entry => entry.id === previous[0]!.id) > 0) {
-      followsEnd.value = false
-      cancelAnimationFrame(frame)
+      if (!filling) {
+        followsEnd.value = false
+        cancelAnimationFrame(frame)
+      }
+      filling = false
     }
   })
   watch(() => anchor.value ? JSON.stringify([anchor.value.topic, anchor.value.requestId]) : null, (request) => {
@@ -206,7 +248,8 @@ export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Re
   onUnmounted(() => {
     document.removeEventListener('selectionchange', retainSelection)
     cancelAnimationFrame(frame)
+    cancelAnimationFrame(fillFrame)
     cancelAnchor()
   })
-  return { rows, height, followsEnd, showLatest, anchorStatus, locatedMessageId, latest, scroll, touch, measure }
+  return { rows, height, nearHistoryStart, retryOlder: () => requestOlder('retry'), followsEnd, showLatest, anchorStatus, locatedMessageId, latest, scroll, touch, measure }
 }

@@ -14,6 +14,7 @@ import { encodeProductRevision } from '../../../shared/productProtocol/scalars'
 import { formatProductTopic, parseProductTopic, PRODUCT_TOPIC_SCHEMAS } from '../../../shared/productProtocol/topics'
 import { createConversationRepository } from '../storage/conversationRepository'
 import { ProductSyncPublisher } from './ProductSyncPublisher'
+import { projectProductTurnChange } from './projectProductTurnChange'
 
 export function createProductSynchronization(options: {
   database: DatabaseSync
@@ -33,7 +34,8 @@ export function createProductSynchronization(options: {
   function register(name: string) {
     const topic = parseProductTopic(name)
     const schemas = PRODUCT_TOPIC_SCHEMAS[topic.kind]
-    return publisher.register(name, { ...schemas, openSnapshot: () => {
+    const resumeBudget = topic.kind === 'conversationTurns' ? { items: 32, bytes: 64 * 1024 } : undefined
+    return publisher.register(name, { ...schemas, resumeBudget, openSnapshot: () => {
       const reader = queries.openSnapshot(name)
       return { close: reader.close, read: (cursor) => {
         const page = reader.read(cursor)
@@ -72,19 +74,22 @@ export function createProductSynchronization(options: {
     })
   }
   const branchTopics = (conversationId: string, branchId: string) => (['conversation', 'conversationWindow'] as const).map(kind => formatProductTopic({ kind, conversationId, branchId }))
+  const turnTopic = (conversationId: string, branchId: string) => formatProductTopic({ kind: 'conversationTurns', conversationId, branchId })
   const publishConversation = (conversationId: string, branchId: string, changes: () => unknown[]) => {
     for (const name of branchTopics(conversationId, branchId)) publish(name, changes)
   }
   const conversationTopics = (conversationId: string) => [...dynamic.keys()].filter((name) => {
     const topic = parseProductTopic(name)
-    return (topic.kind === 'conversation' || topic.kind === 'conversationWindow') && topic.conversationId === conversationId
+    return (topic.kind === 'conversation' || topic.kind === 'conversationWindow' || topic.kind === 'conversationTurns') && topic.conversationId === conversationId
   })
-  const publishTask = (id: string) => {
+  const publishTask = (id: string, includeTurnMetadata = true) => {
     publish('taskIndex', () => {
       const value = queries.task(id, true)
       return [value ? { kind: 'upsert', value } : { kind: 'remove', id }]
     })
     for (const name of conversationTopics(id)) {
+      if (!includeTurnMetadata && parseProductTopic(name).kind === 'conversationTurns')
+        continue
       publish(name, () => {
         const value = queries.task(id)
         return [value ? { kind: 'upsert', item: { entity: 'task', value } } : { kind: 'remove', entity: 'task', id }]
@@ -112,14 +117,16 @@ export function createProductSynchronization(options: {
     }),
     options.metadata.onDidCommit(({ conversation }) => publishTask(conversation.id)),
     options.lifecycle.onDidCommit(({ conversationId }) => publishVisibility(conversationId)),
-    options.events.onDidCommit(({ runId, type, sequence, payload, createdAt }) => {
-      const row = database.prepare('SELECT conversation_id, branch_id FROM runs WHERE id = ?').get(runId)
+    options.events.onDidCommit((committed) => {
+      const { runId, type, sequence, payload, createdAt } = committed
+      const row = database.prepare('SELECT conversation_id, branch_id, execution_kind FROM runs WHERE id = ?').get(runId)
       if (!row)
         return
       const conversationId = String(row.conversation_id)
       const branchId = String(row.branch_id)
       if (['run.queued', 'run.started', 'run.completed', 'run.failed', 'run.cancelled', 'message.created', 'message.completed', 'message.block.completed', 'approval.requested', 'approval.resolved'].includes(type))
-        publishTask(conversationId)
+        publishTask(conversationId, false)
+      publish(turnTopic(conversationId, branchId), () => projectProductTurnChange(queries, database, { conversationId, branchId, executionKind: String(row.execution_kind) }, committed))
       publishConversation(conversationId, branchId, () => {
         const event = queries.views.event(runId, encodeProductRevision(sequence))
         const changes: unknown[] = event ? [{ kind: 'event', event }] : []
@@ -178,20 +185,28 @@ export function createProductSynchronization(options: {
       if (event.kind === 'attention')
         publishTask(event.conversationId)
       else if (event.kind === 'deleted')
-        event.conversationIds.forEach(publishTask)
+        event.conversationIds.forEach(id => publishTask(id))
     }))
   }
   if (options.queue) {
     subscriptions.push(options.queue.onDidChange(({ scope, committed }) => {
       if (!committed?.queueId) {
-        for (const name of branchTopics(scope.conversationId, scope.branchId)) publisher.invalidate(name)
+        for (const name of [...branchTopics(scope.conversationId, scope.branchId), turnTopic(scope.conversationId, scope.branchId)]) publisher.invalidate(name)
         return
       }
-      publishConversation(scope.conversationId, scope.branchId, () => {
+      const changes = () => {
         const value = queries.views.queue(committed.queueId)
         return value && ['waiting', 'paused'].includes(value.state)
           ? [{ kind: 'upsert', item: { entity: 'queue', value } }]
           : [{ kind: 'remove', entity: 'queue', id: committed.queueId }]
+      }
+      publishConversation(scope.conversationId, scope.branchId, changes)
+      publish(turnTopic(scope.conversationId, scope.branchId), () => {
+        const result: unknown[] = changes()
+        const message = committed.messageId && queries.turnMessage(scope.conversationId, scope.branchId, committed.messageId, committed.runId)
+        if (message && message.role === 'user')
+          result.push({ kind: 'upsert', item: { entity: 'message', value: message } })
+        return result
       })
     }))
   }

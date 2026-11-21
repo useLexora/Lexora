@@ -21,6 +21,7 @@ interface TopicDefinition {
   change: ZodType<JsonValue>
   readSnapshot: () => ProductSnapshotPage
   openSnapshot?: () => ProductSnapshotReader
+  resumeBudget?: { items: number, bytes: number }
 }
 interface Change {
   from: bigint
@@ -62,6 +63,24 @@ interface Connection {
   transport: ProductSyncTransport
   subscriptions: Map<string, Subscription>
   bytes: number
+}
+
+function fitsResumeBudget(topic: Topic, base: bigint) {
+  const budget = topic.definition.resumeBudget
+  if (!budget)
+    return true
+  let bytes = 0
+  let items = 0
+  for (let index = topic.retained.length - 1; index >= 0; index--) {
+    const change = topic.retained[index]!
+    if (change.to <= base)
+      break
+    bytes += change.bytes
+    items += change.count
+    if (bytes > budget.bytes || items > budget.items)
+      return false
+  }
+  return true
 }
 
 export class ProductSyncPublisher {
@@ -115,7 +134,7 @@ export class ProductSyncPublisher {
       throw new ProductProtocolError('SYNC_INVALID')
     const floor = topic.retained[0]?.from ?? topic.seq
     const base = request.base && BigInt(request.base.seq)
-    const resume = topic.valid && request.base?.syncEpoch === topic.epoch && base !== undefined && base >= floor && base <= topic.seq
+    const resume = topic.valid && request.base?.syncEpoch === topic.epoch && base !== undefined && base >= floor && base <= topic.seq && fitsResumeBudget(topic, base)
     const captured = resume ? base as bigint : topic.seq
     const cursor = { syncEpoch: topic.epoch, seq: encodeProductRevision(captured) }
     let snapshot: ProductSyncSnapshot<JsonValue>

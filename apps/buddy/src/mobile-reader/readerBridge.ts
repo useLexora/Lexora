@@ -1,12 +1,15 @@
 import type { LocalRun, LocalRunEvent } from '@buddy-shared/runs/runApi'
 import type { ChatAgentTurn } from '../modules/tasks/contracts'
 import type { ReaderAnchor } from './readerProjection'
-import type { ReaderActionInput, ReaderOutput, ReaderToolImage, ReaderUpdate, ReaderWireEntry } from './readerProtocol'
+import type { ReaderActionInput, ReaderOutput, ReaderStepDetailReply, ReaderToolImage, ReaderUpdate, ReaderWireEntry } from './readerProtocol'
 import { useTimeoutFn } from '@vueuse/core'
 import { onMounted, onUnmounted, provide, shallowRef } from 'vue'
 import { setMarkdownLanguage } from './markdownStrings'
+import { readerBodyPageKey } from './readerBodyPages'
+import { readerTurnWindowKey } from './readerLoadingPolicy'
 import { ReaderProjection } from './readerProjection'
-import { readerActionSchema, readerCopiedSchema, readerUpdateSchema } from './readerProtocol'
+import { readerActionSchema, readerCopiedSchema, readerStepDetailReplySchema, readerUpdateSchema } from './readerProtocol'
+import { readerStepDetailKey } from './readerStepDetail'
 import { readerLanguageKey } from './readerStrings'
 import { readerToolImagesKey } from './readerToolImages'
 import { readerAvatarsKey } from './useReaderAvatars'
@@ -14,7 +17,7 @@ import { readerCopyFeedbackKey } from './useReaderCopyFeedback'
 
 export type { ReaderMessage } from './readerProtocol'
 export interface ReaderTranscript { events: LocalRunEvent[], loaded?: boolean, error?: string | null }
-export interface ReaderEntry extends ReaderWireEntry { transcriptError?: string | null, turn?: ChatAgentTurn }
+export interface ReaderEntry extends ReaderWireEntry { transcriptError?: string | null, turn?: ChatAgentTurn, runStatus?: { run: LocalRun, hasReply: boolean } }
 
 export function useReaderBridge() {
   const copiedMessageId = shallowRef<string | null>(null)
@@ -25,6 +28,13 @@ export function useReaderBridge() {
   const avatars = shallowRef<Record<string, string>>({})
   provide(readerAvatarsKey, avatars)
   const entries = shallowRef<ReaderEntry[]>([])
+  const turnWindow = shallowRef(false)
+  provide(readerTurnWindowKey, turnWindow)
+  const history = shallowRef<ReaderUpdate['history']>()
+  const stepDetail = shallowRef<ReaderStepDetailReply>()
+  provide(readerStepDetailKey, stepDetail)
+  const bodyPage = shallowRef<ReaderUpdate['bodyPage']>()
+  provide(readerBodyPageKey, bodyPage)
   const runs = shallowRef<LocalRun[]>([])
   const transcripts = shallowRef<Record<string, ReaderTranscript>>({})
   const outputs = shallowRef<Record<string, ReaderOutput>>({})
@@ -60,11 +70,13 @@ export function useReaderBridge() {
       catch {
         return
       }
-      const parsed = readerCopiedSchema.or(readerUpdateSchema).safeParse(source)
+      const parsed = readerCopiedSchema.or(readerStepDetailReplySchema).or(readerUpdateSchema).safeParse(source)
       if (!parsed.success)
         return
       const update = parsed.data
       if ('type' in update) {
+        if (update.type === 'step-detail' && update.topic === topic.value)
+          stepDetail.value = update
         if (update.type === 'copied' && update.topic === topic.value) {
           copiedMessageId.value = update.id
           copiedReset.start()
@@ -79,10 +91,17 @@ export function useReaderBridge() {
         typography.value = update.typography
       const next = projection.apply(update)
       if (next.reset) {
+        stepDetail.value = undefined
         copiedMessageId.value = null
         copiedReset.stop()
         avatars.value = {}
       }
+      if (update.turnWindow !== undefined || next.reset)
+        turnWindow.value = update.turnWindow === true
+      if (update.history || next.reset)
+        history.value = update.history
+      if (update.bodyPage || next.reset)
+        bodyPage.value = update.bodyPage
       if (update.avatars)
         avatars.value = update.avatars
       if (update.branches || next.reset)
@@ -116,5 +135,5 @@ export function useReaderBridge() {
     window.removeEventListener('message', connect)
     port?.close()
   })
-  return { entries, runs, transcripts, outputs, branches, selectedBranchId, topic, dark, fontScale, appearance, typography, language, resultRunId, anchor, hasLaterMessages, send }
+  return { entries, turnWindow, history, runs, transcripts, outputs, branches, selectedBranchId, topic, dark, fontScale, appearance, typography, language, resultRunId, anchor, hasLaterMessages, send }
 }

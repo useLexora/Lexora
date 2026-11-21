@@ -121,6 +121,7 @@ test('Android recovers the original receipt after a Core runtime restart and exp
     expect(read(db => db.prepare('SELECT status FROM runs WHERE id = ?').get(original.runId).status)).toBe('running')
     await page.evaluate(() => window.lexoraDesktop.localChat.runtime.restart())
     await expect.poll(async () => (await page.evaluate(() => window.lexoraDesktop.localChat.runtime.getStatus())).status, { timeout: 45000 }).toBe('ready')
+    await expect.poll(() => page.evaluate(() => window.lexoraDesktop.localChat.privateNetwork.status({}))).toMatchObject({ state: 'listening', port })
     await signal('restarted')
     const recovered = await checkpoint('reconciled')
     expect(recovered).toMatchObject({ oldTarget: original, originalReceiptRecovered: true })

@@ -5,6 +5,7 @@ import { Document20Regular } from '@vicons/fluent'
 import ChatMarkdownBody from '../shared/ui/markdown/ChatMarkdownBody.vue'
 import MessageAvatar from './MessageAvatar.vue'
 import ReaderArtifacts from './ReaderArtifacts.vue'
+import ReaderLiveBody from './ReaderLiveBody.vue'
 import ReaderMessageActions from './ReaderMessageActions.vue'
 import ReaderMessagePhoto from './ReaderMessagePhoto.vue'
 import { useReaderStrings } from './readerStrings'
@@ -44,6 +45,9 @@ async function copy(text: string) {
       <span class="author-name">{{ message.author }}</span>
       <span v-if="message.role === 'assistant' && !message.final" class="stream-status" role="status"><i /><i /><i /><span>{{ labels.replying }}</span></span>
     </div>
+    <div v-if="message.role === 'assistant' && message.commentary" class="reader-narration" @contextmenu.stop>
+      <ReaderLiveBody :message="{ id: message.id, text: message.commentary.text, textRange: message.commentary.range }" :send="send" @interact="emit('interact')" />
+    </div>
     <div v-if="message.resources.length" class="message-resources">
       <template v-for="resource in message.resources" :key="resource.id">
         <ReaderMessagePhoto
@@ -59,7 +63,8 @@ async function copy(text: string) {
       </template>
     </div>
     <div v-if="message.text || message.role !== 'user'" class="message-body" :data-result-run-id="message.canRegenerate ? message.runId : undefined">
-      <ChatMarkdownBody v-if="message.role === 'assistant' && message.text && message.markdown" :animate="false" :content="message.text" :is-dark="dark" :final="message.final" :allow-images="false" code-overflow="scroll" :write-clipboard-text="copy" />
+      <ReaderLiveBody v-if="message.role === 'assistant' && message.textRange && message.textRange.start > 0" :message="message" :send="send" @interact="emit('interact')" />
+      <ChatMarkdownBody v-else-if="message.role === 'assistant' && message.text && message.markdown" :animate="false" :content="message.text" :is-dark="dark" :final="message.final" :allow-images="false" code-overflow="scroll" :write-clipboard-text="copy" />
       <p v-else-if="message.text" class="plain-message">
         {{ message.text }}
       </p>
@@ -67,7 +72,7 @@ async function copy(text: string) {
         {{ labels.interrupted }}
       </p>
       <p v-if="message.truncated" class="message-meta">
-        {{ labels.truncated }}
+        {{ message.sourceTruncated ? labels.sourceTruncated : labels.truncated }}
       </p>
       <p v-if="message.loading" class="message-meta">
         {{ labels.loadingSaved }}
@@ -79,7 +84,7 @@ async function copy(text: string) {
         {{ message.notice }}
       </p>
       <button v-if="message.needsDetail && !message.loading && (!message.hasDetail || message.error)" @click="action({ action: 'detail', id: props.message.id })">
-        {{ message.error ? labels.retry : labels.viewFull }}
+        {{ message.error ? labels.retry : message.sourceTruncated ? labels.viewSaved : labels.viewFull }}
       </button>
       <button v-if="message.detailResource && (message.notice || message.error)" @click="action({ action: 'resource', id: message.id, resourceId: message.detailResource })">
         {{ labels.previewSaveShare }}

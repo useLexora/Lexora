@@ -2,12 +2,19 @@ package app.uselexora.mobile
 
 import app.uselexora.mobile.protocol.MobileContentAdapter
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.view.View
+import android.view.ViewGroup
+import android.webkit.WebView
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import app.uselexora.mobile.network.MobileConnection
 import app.uselexora.mobile.protocol.CommandOutbox
 import app.uselexora.mobile.protocol.DraftContext
@@ -26,6 +33,8 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeUnit
 
 @RunWith(AndroidJUnit4::class)
 class InterruptionInstrumentedTest {
@@ -57,12 +66,13 @@ class InterruptionInstrumentedTest {
             ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java)).use { scenario ->
                 MobileUiTestDriver.awaitConnected()
                 MobileUiTestDriver.openTask(task.getString("title"))
-                waitFor { text("中断前的部分回复") }
-                MobileUiTestDriver.scrollHistoryToStart()
+                val reader = TimelineViewport()
+                waitFor { reader.visibleText("中断前的部分回复") }
+                reader.scrollToStart()
                 val anchorText = "服务中断后等待我明确重新生成"
-                waitFor { MobileUiTestDriver.exists(anchorText, prefix = true) && text("回到最新") }
-                val readingBounds = MobileUiTestDriver.bounds(anchorText, prefix = true)!!
-                assertFalse(text("中断前的部分回复"))
+                waitFor { reader.visibleText(anchorText) && reader.latestVisible() }
+                val readingTop = reader.userMessageTop()
+                assertFalse(reader.visibleText("中断前的部分回复"))
                 val live = ProductProjection()
                 val observer = ProductSubscription(client, schemas, live::snapshot, live::apply) { }
                 try {
@@ -73,16 +83,16 @@ class InterruptionInstrumentedTest {
                     }
                     val observeUntil = SystemClock.uptimeMillis() + 1000
                     while (SystemClock.uptimeMillis() < observeUntil) {
-                        assertEquals(readingBounds.top, MobileUiTestDriver.bounds(anchorText, prefix = true)?.top)
-                        assertTrue(text("回到最新"))
-                        assertFalse(text("中断前的部分回复接着输出"))
+                        assertEquals(readingTop, reader.userMessageTop(), 1.0)
+                        assertTrue(reader.latestVisible())
+                        assertFalse(reader.visibleText("中断前的部分回复接着输出"))
                         SystemClock.sleep(50)
                     }
-                    click("回到最新")
-                    waitFor { text("中断前的部分回复接着输出") }
+                    reader.openLatest()
+                    waitFor { reader.visibleText("中断前的部分回复接着输出") }
                 } finally { observer.close() }
                 scenario.recreate()
-                waitFor { text("中断前的部分回复接着输出") }
+                waitFor { reader.visibleText("中断前的部分回复接着输出") }
                 capture("interruption-$token-live.png")
                 scenario.moveToState(Lifecycle.State.CREATED)
                 signal("started", originalTarget)
@@ -99,14 +109,15 @@ class InterruptionInstrumentedTest {
                 assertEquals("released", client.call("runs.getExecutionState", JSONObject().put("runId", runId)).getString("resources"))
                 val before = store.outbox(partition).size
                 scenario.moveToState(Lifecycle.State.RESUMED)
-                waitFor { text("中断前的部分回复接着输出") }
+                waitFor { reader.visibleText("中断前的部分回复接着输出") }
                 assertEquals(before, store.outbox(partition).size)
                 signal("reconciled", JSONObject().put("oldTarget", originalTarget).put("oldStatus", ended.getString("status")).put("originalReceiptRecovered", true))
                 awaitSignal("allow-new-intent")
-                MobileUiTestDriver.longClick("中断前的部分回复接着输出"); click("运行详情")
+                reader.openReplyMenu("中断前的部分回复接着输出")
+                click("运行详情")
                 waitFor { text("服务资源：已释放") }
                 click("重新生成"); waitFor { text("重新生成此次回复？") }; click("重新生成")
-                waitFor { text("中断后新回复") }
+                waitFor { reader.visibleText("中断后新回复") }
                 val successor = store.outbox(partition).single { it.method == "chat.regenerateAssistant" }
                 val target = successor.receipt!!.getJSONObject("target")
                 assertNotEquals(original.getString("commandId"), successor.id)
@@ -121,7 +132,52 @@ class InterruptionInstrumentedTest {
                 capture("interruption-$token-completed.png")
                 signal("done", JSONObject().put("original", originalTarget).put("successor", target).put("oldStatus", ended.getString("status")).put("fixedOriginalReceipt", true).put("explicitNewCommand", true).put("localInputPreserved", true))
             }
-        } } finally { client.close(); connection.description()?.let { connection.logout(it) } }
+        } } finally { client.close(); connection.forget(connection.description()) }
+    }
+    private class TimelineViewport {
+        private val handler = Handler(Looper.getMainLooper())
+
+        private fun findWebView(view: View): WebView? = when (view) {
+            is WebView -> view
+            is ViewGroup -> (0 until view.childCount).firstNotNullOfOrNull { findWebView(view.getChildAt(it)) }
+            else -> null
+        }
+
+        private fun eval(script: String): String {
+            val result = CompletableFuture<String>()
+            handler.post {
+                val activity = ActivityLifecycleMonitorRegistry.getInstance()
+                    .getActivitiesInStage(Stage.RESUMED).filterIsInstance<MainActivity>().firstOrNull()
+                val web = activity?.window?.decorView?.let(::findWebView)
+                if (web == null) result.complete("null") else web.evaluateJavascript(script) { result.complete(it ?: "null") }
+            }
+            return result.get(4, TimeUnit.SECONDS)
+        }
+
+        fun scrollToStart() = eval("document.querySelector('.reader-viewport').scrollTop=0")
+        fun userMessageTop() = eval("document.querySelector('.reader-message.user')?.getBoundingClientRect().top").toDouble()
+        fun openLatest() = eval("document.querySelector('.latest-button').click()")
+        fun openReplyMenu(text: String) {
+            assertEquals("true", eval("""
+                (() => {
+                    const reply = [...document.querySelectorAll('.reader-message.assistant')]
+                        .find(row => row.innerText.includes(${JSONObject.quote(text)}));
+                    if (!reply) return false;
+                    reply.dispatchEvent(new MouseEvent('contextmenu', {bubbles:true, cancelable:true}));
+                    return true;
+                })()
+            """.trimIndent()))
+        }
+
+        fun latestVisible() = eval("!!document.querySelector('.latest-button')?.offsetHeight") == "true"
+        fun visibleText(text: String) = eval("""(() => {
+            const v=document.querySelector('.reader-viewport'); if (!v) return false;
+            const q=${JSONObject.quote(text)}, walk=document.createTreeWalker(v,NodeFilter.SHOW_TEXT), viewport=v.getBoundingClientRect(); let n;
+            while ((n=walk.nextNode())) { const i=n.data.indexOf(q); if(i<0) continue;
+                const range=document.createRange(); range.setStart(n,i); range.setEnd(n,i+q.length);
+                if ([...range.getClientRects()].some(r => r.width>0 && r.height>0 && r.top<viewport.bottom && r.bottom>viewport.top)) return true;
+            } return false;
+        })()""") == "true"
     }
     private fun capture(name: String) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()

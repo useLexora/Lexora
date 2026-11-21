@@ -6,7 +6,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import app.uselexora.mobile.network.ApprovalDocuments
 import app.uselexora.mobile.network.MobileConnection
-import app.uselexora.mobile.protocol.ProtocolFailure
 import app.uselexora.mobile.protocol.ProtocolSchemas
 import app.uselexora.mobile.storage.LocalStore
 import app.uselexora.mobile.storage.SecretStore
@@ -48,18 +47,22 @@ class TaskOperationOwnershipInstrumentedTest {
                     selected.set(second.client)
                     first.client.close()
                     MobileUiTestDriver.click("标为已读")
-                    MobileUiTestDriver.waitUntil { errors.isNotEmpty() }
-                    assertEquals("SOURCE_CHANGED", (errors.poll() as ProtocolFailure).code)
-                    assertFalse(first.read)
-                    assertFalse(second.read)
+                    MobileUiTestDriver.waitUntil { !MobileUiTestDriver.exists("此任务有未读结果") }
+                    executor.submit {}.get(5, TimeUnit.SECONDS)
+                    assertTrue(errors.isEmpty())
+                    assertTrue(first.intents.isEmpty())
+                    assertTrue(second.intents.isEmpty())
                     assertTrue(store.outbox(firstPartition).isEmpty())
                     assertTrue(store.outbox(secondPartition).isEmpty())
                     scenario.onActivity { operations.readState(JSONObject().put("id", "shared-task").put("title", "当前服务任务")) }
                     MobileUiTestDriver.waitUntil { MobileUiTestDriver.exists("此任务有未读结果") }
                     MobileUiTestDriver.click("标为已读")
                     MobileUiTestDriver.waitUntil { store.outbox(secondPartition).any { it.state == "accepted" } }
-                    assertTrue(second.read)
-                    assertFalse(first.read)
+                    assertTrue(first.intents.isEmpty())
+                    val intent = second.intents.single()
+                    assertEquals("shared-task", intent.getString("conversationId"))
+                    assertEquals("shared-run", intent.getString("resultRunId"))
+                    assertTrue(intent.getBoolean("read"))
                     assertTrue(store.outbox(firstPartition).isEmpty())
                     assertEquals("taskMarks.setRead", store.outbox(secondPartition).single().method)
                     assertTrue(errors.isEmpty())
@@ -74,19 +77,25 @@ class TaskOperationOwnershipInstrumentedTest {
         } } }
     }
     private class Fixture(schemas: ProtocolSchemas) : AutoCloseable {
-        @Volatile var read = false
-        private val service = SyntheticProductService(schemas) { call ->
+        val intents = ConcurrentLinkedQueue<JSONObject>()
+        private val service = SyntheticProductService(schemas, listOf("taskMarks.states", "taskMarks.setRead")) { call ->
             when (call.method) {
                 "taskMarks.states" -> call.reply(JSONArray().put(JSONObject().put("conversationId", "shared-task").put("markId", JSONObject.NULL)
-                    .put("assignmentRevision", "0").put("resultRunId", "shared-run").put("readRevision", "0").put("unread", !read)))
+                    .put("assignmentRevision", "0").put("resultRunId", "shared-run").put("readRevision", "0").put("unread", true)))
                 "taskMarks.setRead" -> {
-                    read = call.params.getJSONObject("intent").getBoolean("read")
-                    call.receipt(JSONObject().put("conversationId", "shared-task"))
+                    intents.add(call.params.getJSONObject("intent"))
+                    val receipt = JSONObject().put("commandId", call.params.getString("commandId")).put("method", call.method)
+                        .put("dataGeneration", call.params.getString("dataGeneration")).put("decidedAt", java.time.Instant.now().toString())
+                        .put("decision", "accepted").put("target", JSONObject().put("conversationId", "shared-task")).put("result", JSONObject())
+                    call.reply(JSONObject().put("receipt", receipt))
                 }
                 else -> error("Unexpected fixture method: ${call.method}")
             }
         }
-        val client = service.connect()
+        val client = try { service.connect() } catch (failure: Exception) {
+            service.close()
+            throw failure
+        }
         override fun close() { client.close(); service.close() }
     }
 }

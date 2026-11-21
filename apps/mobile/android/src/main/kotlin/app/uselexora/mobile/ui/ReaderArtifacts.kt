@@ -42,6 +42,7 @@ internal class ReaderArtifacts(private val context: Context, private val changed
     private var topic = ""
     private var source: ReaderArtifactContext? = null
     private var runs = emptyList<JSONObject>()
+    private var historicalRunIds = emptySet<String>()
     private val requested = mutableSetOf<String>()
     private val loading = mutableSetOf<String>()
     private val refreshQueued = mutableSetOf<String>()
@@ -51,7 +52,7 @@ internal class ReaderArtifacts(private val context: Context, private val changed
     private val outputs = mutableMapOf<String, Output>()
     @Volatile private var images = emptyMap<String, ByteArray>()
 
-    fun update(topic: String, source: ReaderArtifactContext, runs: List<JSONObject>) {
+    fun update(topic: String, source: ReaderArtifactContext, runs: List<JSONObject>, history: Set<String> = emptySet()) {
         val owner = "${source.partition}:$topic:${source.branchId}"
         if (owner != this.owner || source.client !== this.source?.client) {
             generation++; loading.clear(); imagesRequested.clear(); imageWaiters.clear(); refreshQueued.clear(); refreshAfter.clear(); main.removeCallbacksAndMessages(null)
@@ -60,7 +61,7 @@ internal class ReaderArtifacts(private val context: Context, private val changed
             this.owner = owner
             publishImages()
         }
-        this.topic = topic; this.source = source; this.runs = runs
+        this.topic = topic; this.source = source; this.runs = runs; historicalRunIds = history
         requested.toList().forEach { load(it) }
     }
 
@@ -70,13 +71,14 @@ internal class ReaderArtifacts(private val context: Context, private val changed
 
     private fun load(runId: String, retry: Boolean = false) {
         val source = source ?: return
-        val run = runs.firstOrNull { it.optString("id") == runId } ?: return
-        val sequence = run.optString("lastEventSequence", "0")
+        val run = runs.firstOrNull { it.optString("id") == runId }
+        if (run == null && runId !in historicalRunIds) return
+        val sequence = run?.optString("lastEventSequence", "0") ?: "history"
         val previous = outputs[runId]
         if (runId in loading || !retry && (previous?.failed == true || previous?.sequence == sequence)) return
         val captured = generation
         val delay = (refreshAfter[runId] ?: 0L) - SystemClock.uptimeMillis()
-        if (!retry && delay > 0 && run.optString("status") in setOf("running", "queued", "awaiting_approval")) {
+        if (!retry && delay > 0 && run?.optString("status") in setOf("running", "queued", "awaiting_approval")) {
             if (refreshQueued.add(runId)) main.postDelayed({ if (captured == generation) { refreshQueued.remove(runId); load(runId) } }, delay)
             return
         }

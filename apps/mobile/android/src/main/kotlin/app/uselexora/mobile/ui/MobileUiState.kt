@@ -3,6 +3,7 @@ package app.uselexora.mobile.ui
 import app.uselexora.mobile.i18n.mobileText
 import app.uselexora.mobile.R
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import org.json.JSONObject
@@ -84,10 +85,13 @@ class MobileUiState {
     var historyLoading by mutableStateOf(false)
     var historyError by mutableStateOf("")
     var historyCursor by mutableStateOf<String?>(null)
+    var historyPage by mutableIntStateOf(0)
     var historyHasMore by mutableStateOf(false)
     var submittingInput by mutableStateOf(false)
     var showingAcceptedInput by mutableStateOf(false)
     var historyPinned by mutableStateOf(false)
+    var historyDetached by mutableStateOf(false)
+    var readerRuns by mutableStateOf<List<JSONObject>>(emptyList())
     var historyInput by mutableStateOf(false)
     var anchorMessageId by mutableStateOf<String?>(null)
     var anchorRequestId by mutableStateOf<String?>(null)
@@ -118,6 +122,9 @@ class MobileUiState {
     var selectedTaskSpaceLabel by mutableStateOf(mobileText(R.string.label_no_space))
     var readingCached by mutableStateOf(false)
     var messages by mutableStateOf<List<JSONObject>>(emptyList())
+    var turnWindow by mutableStateOf(false)
+    var activityGroups by mutableStateOf<List<JSONObject>>(emptyList())
+    var latestError by mutableStateOf("")
     var runs by mutableStateOf<List<JSONObject>>(emptyList())
     var queueItems by mutableStateOf<List<JSONObject>>(emptyList())
     var approvalItems by mutableStateOf<List<JSONObject>>(emptyList())

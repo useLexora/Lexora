@@ -1,10 +1,12 @@
 import { z } from 'zod'
 import { approvalReviewSchema } from '../permissions/conditionalApproval'
 import { modelSchema, modelSnapshotSchema, providerSchema } from '../providers/providerApi'
+import { runSchema } from '../runs/runApi'
 import { productContentSchema } from './content'
 import { productErrorCodeSchema } from './errors'
 import { productIdSchema as id, productRevisionSchema as revision } from './scalars'
 
+export const productRunSchema = runSchema.extend({ executionKind: z.enum(['root', 'actor_child', 'maintenance']).optional(), generation: revision, lastEventSequence: revision, errorCode: productErrorCodeSchema.nullable() }).strict()
 export const productResourceSchema = z.object({
   resourceId: id,
   bindingId: id.optional(),

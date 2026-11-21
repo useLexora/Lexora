@@ -1,8 +1,8 @@
 package app.uselexora.mobile
 
 import app.uselexora.mobile.protocol.MobileContentAdapter
-import app.uselexora.mobile.protocol.MobileMessagePresentation
 import app.uselexora.mobile.protocol.MobileMessageDetail
+import app.uselexora.mobile.protocol.MobileMessagePresentation
 import app.uselexora.mobile.protocol.ProtocolSchemas
 import org.json.JSONArray
 import org.json.JSONObject
@@ -12,7 +12,8 @@ import java.io.File
 import java.io.RandomAccessFile
 
 class MobileMessagePresentationTest {
-    init { app.uselexora.mobile.TestMobileStrings.install() }
+    init { TestMobileStrings.install() }
+
     @Test fun transcriptKeepsOneIdentityPerSpeakerAndExposesEveryToolCall() {
         fun reply(id: String, run: String = "run", actor: String = "default") = message(id, "assistant", JSONObject().put("kind", "text").put("text", id))
             .put("runId", run).put("author", JSONObject().put("id", actor))
@@ -21,7 +22,6 @@ class MobileMessagePresentationTest {
         assertEquals(listOf("before", "a", "b", "result", "other", "next", "user", "after-user"), rows.map { it.message.id })
         assertEquals(listOf("before", "other", "next", "after-user"), rows.filter { it.showIdentity }.map { it.message.id })
         assertTrue(rows.first().intermediate)
-        assertFalse(rows[3].showIdentity)
         assertTrue(rows[3].continuation)
         assertFalse(rows.last().continuation)
     }
@@ -83,6 +83,18 @@ class MobileMessagePresentationTest {
         assertNull(MobileMessagePresentation.matchingDetail(source, detail))
     }
 
-    private fun tool(id: String, name: String = "read", error: Boolean = false, run: String = "run") = message(id, "tool", JSONObject().put("kind", "resource").put("resourceId", "message:$id").put("previewText", "")).put("runId", run).put("tool", JSONObject().put("name", name).put("isError", error))
+    @Test fun savedBodyDigestBindsFullTextAndNotJustItsVisibleTail() {
+        val source = message("saved", "assistant", JSONObject().put("kind", "resource").put("previewText", "😀"))
+            .put("textRange", JSONObject().put("revision", "s:d25833d82bb3443e483e184e504bc05dcd79bc10ffa46ff4b8551d176e9a9af1"))
+        assertTrue(MobileMessagePresentation.matchesSavedText(source, "修复😀"))
+        assertFalse(MobileMessagePresentation.matchesSavedText(source, "错误😀"))
+        val detail = MobileMessageDetail(text = "修复😀", sourceBody = MobileMessagePresentation.detailKey(source))
+        source.getJSONObject("textRange").put("revision", "s:" + "a".repeat(64))
+        assertNull(MobileMessagePresentation.matchingDetail(source, detail))
+    }
+
+    private fun tool(id: String) = message(id, "tool",
+        JSONObject().put("kind", "resource").put("resourceId", "message:$id").put("previewText", ""))
+        .put("tool", JSONObject().put("name", "read").put("isError", false))
     private fun message(id: String, role: String, body: JSONObject) = JSONObject().put("id", id).put("role", role).put("runId", "run").put("body", body).put("resources", JSONArray())
 }

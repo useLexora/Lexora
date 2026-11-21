@@ -143,12 +143,16 @@ class MobileTaskReadModel(
         val request = ++cachedTopicRequest
         val revision = projectionRevision
         cacheWorker.execute {
-            val items = cache.read(captured.partition, captured.topic)?.takeIf { values -> values.all { schemas.valid(it, schemas.document.getJSONObject("topics").getJSONObject("conversation").getJSONObject("item")) } }
+            val items = cache.read(captured.partition, captured.topic)?.takeIf { values ->
+                val kind = if (values.any { it.optString("entity") in setOf("historyWindow", "activityGroup") || it.optJSONObject("value")?.has("textRange") == true }) "conversationTurns" else "conversation"
+                val schema = schemas.document.getJSONObject("topics").optJSONObject(kind)?.optJSONObject("item")
+                schema != null && values.all { schemas.valid(it, schema) }
+            }
             val branches = cache.read(captured.partition, "branches:$taskId")?.takeIf { values -> values.chunked(100).all { schemas.response("conversations.listBranches", JSONObject().put("items", JSONArray(it)).put("nextCursor", JSONObject.NULL)) } }
             onUi {
                 val current = context()
                 if (closed || current.partition != captured.partition || current.topic != captured.topic || cachedTopicRequest != request || projectionRevision != revision) return@onUi
-                if (items != null) cachedConversation(items.filter { it.optString("entity") == "message" }.map { it.getJSONObject("value") }, branches)
+                if (items != null) cachedConversation(items, branches)
                 else if (branches != null) cachedConversation(null, branches)
             }
         }
@@ -160,7 +164,11 @@ class MobileTaskReadModel(
     fun committed(topic: String, items: List<JSONObject>) {
         projectionRevision++
         val owner = context().partition
-        val values = if (topic == "taskIndex") items else items.filter { it.optString("entity") == "message" }
+        val values = when {
+            topic == "taskIndex" -> items
+            context().client?.supports("conversations.getTurnWindow") == true -> items.filter { it.optString("entity") in setOf("message", "activityGroup", "historyWindow") }
+            else -> items.filter { it.optString("entity") == "message" }
+        }
         pendingReadCache = { runCatching { cache.write(owner, topic, values) }; Unit }
         if (cacheSave == null) cacheSave = Runnable { flush() }.also { handler.postDelayed(it, 1500) }
     }

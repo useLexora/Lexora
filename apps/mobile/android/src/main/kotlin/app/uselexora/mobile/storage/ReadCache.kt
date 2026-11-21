@@ -25,7 +25,7 @@ class ReadCache(private val directory: File, private val maxBytes: Long = 32L * 
             snapshot.put("items", JSONArray(items)).toString().toByteArray().takeIf { it.size <= limit }
         } else null
         val bytes = data ?: run {
-            if (!key.startsWith("conversation:")) return
+            if (!key.startsWith("conversation:") || items.any { it.optString("entity") == "historyWindow" }) return
             val envelopeBytes = snapshot.put("items", JSONArray()).toString().toByteArray().size
             val recent = recentMessages(items, limit - envelopeBytes)
             if (recent.isEmpty()) return

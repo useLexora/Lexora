@@ -429,6 +429,8 @@
     <string name="draft_attachments">当前草稿附件</string>
     <string name="local_files_storage">本机文件与清理</string>
     <string name="more_options">更多选项</string>
+    <string name="mobile_reading_previous_window">历史已重新同步。当前保留上次的阅读位置，回到最新后可继续翻页。</string>
+    <string name="mobile_offline_conversation_snapshot">未连接 · 显示上次同步的对话</string>
     <string name="send_offline">未连接，暂时无法发送。</string>
     <string name="send_review_text">这段文字已经发过，仍要发送吗？</string>
     <string name="send_queue_accepted">输入已加入任务队列。</string>

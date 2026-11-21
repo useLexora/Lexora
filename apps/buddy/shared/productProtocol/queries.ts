@@ -8,13 +8,17 @@ import { taskMarkSchema, taskMarkStateSchema } from '../conversation/taskMarkApi
 import { executionPhaseSchema } from '../executions/executionApi'
 import { userQuestionRequestSchema } from '../questions/userQuestionApi'
 import { publicRunEventSchema } from '../runs/publicRunEvent'
-import { runSchema, runStatusSchema } from '../runs/runApi'
+import { runStatusSchema } from '../runs/runApi'
+import { productReadActivityStepDetailInputSchema, productReadActivityStepDetailResultSchema } from './activityStepDetail'
 import { productBuddyAvatarSchema } from './avatars'
 import { productContentSchema } from './content'
-import { productErrorCodeSchema } from './errors'
 import { PRODUCT_LIMITS } from './limits'
+import { productReadLiveTextInputSchema, productReadLiveTextResultSchema, productReadSavedTextInputSchema } from './messageText'
 import { productIdSchema as id, productRevisionSchema as revision } from './scalars'
-import { productApprovalDecisionSchema, productApprovalSchema, productMessageSchema, productModelSchema, productModelSnapshotSchema, productProviderSchema, productQueueItemSchema, productResourceSchema, productRunEventSchema } from './views'
+import { productActivityStepsInputSchema, productActivityStepsPageSchema, productTurnWindowInputSchema, productTurnWindowSchema } from './turns'
+import { productApprovalDecisionSchema, productApprovalSchema, productMessageSchema, productModelSchema, productModelSnapshotSchema, productProviderSchema, productQueueItemSchema, productResourceSchema, productRunEventSchema, productRunSchema } from './views'
+
+export { productRunSchema } from './views'
 
 export const productPageInputSchema = z.object({ limit: z.number().int().min(1).max(PRODUCT_LIMITS.pageItems).default(PRODUCT_LIMITS.pageItems), cursor: z.string().max(4096).nullable().default(null) }).strict()
 export function productPageSchema<T extends ZodType>(item: T) {
@@ -25,7 +29,6 @@ export const productTaskSummarySchema = conversationSummarySchema.omit({ metadat
 export const productBranchSchema = conversationBranchSchema.extend({ pendingQuestionCount: z.number().int().nonnegative().optional(), pendingApprovalCount: z.number().int().nonnegative().optional(), runningCount: z.number().int().nonnegative().optional(), queuedCount: z.number().int().nonnegative().optional() }).strict()
 export const productQuestionSchema = userQuestionRequestSchema.omit({ toolCallId: true, rootRunId: true }).strict()
 export const productDraftSchema = z.object({ ...buddyComposerDraftSchema.unwrap().shape, content: productContentSchema, revision, ownerDeviceId: id, writable: z.boolean(), resources: z.array(productResourceSchema).max(16) }).strict()
-export const productRunSchema = runSchema.extend({ executionKind: z.enum(['root', 'actor_child', 'maintenance']).optional(), generation: revision, lastEventSequence: revision, errorCode: productErrorCodeSchema.nullable() }).strict()
 export const productRunExecutionSchema = z.object({ runId: id, generation: revision, phase: executionPhaseSchema, cancelRequested: z.boolean(), resources: z.enum(['occupied', 'released', 'unknown']) }).strict()
 export const productTaskMarkSchema = taskMarkSchema.extend({ revision }).strict()
 export const productTaskMarkStateSchema = taskMarkStateSchema.extend({ assignmentRevision: revision, readRevision: revision }).strict()
@@ -68,6 +71,11 @@ export const productModelControlsSchema = productModelControlsInputSchema.extend
   activeRun: z.object({ runId: id, generation: revision, modelSelection: modelSelectionSchema }).strict().nullable(),
 })
 export const PRODUCT_QUERY_METHODS = {
+  'conversations.readLiveText': query(productReadLiveTextInputSchema, productReadLiveTextResultSchema),
+  'conversations.readSavedText': query(productReadSavedTextInputSchema, productReadLiveTextResultSchema),
+  'conversations.readActivityStepDetail': query(productReadActivityStepDetailInputSchema, productReadActivityStepDetailResultSchema),
+  'conversations.getTurnWindow': query(productTurnWindowInputSchema, productTurnWindowSchema),
+  'conversations.listActivitySteps': query(productActivityStepsInputSchema, productActivityStepsPageSchema),
   'conversations.getModelControls': query(productModelControlsInputSchema, productModelControlsSchema),
   'conversations.getQueueControls': query(productQueueControlsInputSchema, productQueueControlsPageSchema),
   'buddies.list': query(productPageInputSchema, productBuddyPageSchema),

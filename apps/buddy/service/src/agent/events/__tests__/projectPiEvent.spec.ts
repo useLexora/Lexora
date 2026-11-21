@@ -11,6 +11,24 @@ import {
 } from '../projectPiEvent'
 
 describe('projectPiEvent retries', () => {
+  it('splits oversized provider deltas without gaps and marks a genuinely cut final record', () => {
+    const state = createPiEventProjectionState()
+    const text = `${'字😀'.repeat(21_846)}结尾`
+    const partial: AssistantMessage = { api: 'openai-completions', content: [{ type: 'text', text }], model: 'model', provider: 'fixture', role: 'assistant', stopReason: 'pending', timestamp: 1, usage: emptyUsage() }
+    projectPiEvent({ type: 'message_start', message: partial }, state)
+    const deltas = projectPiEvent({ type: 'message_update', message: partial, assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: text, partial } }, state).events.filter(e => e.type === 'message.delta').map(e => (e.payload as { delta: string }).delta)
+    expect(deltas.length).toBeGreaterThan(1)
+    expect(deltas.join('')).toBe(text)
+    for (const delta of deltas) {
+      expect(new TextEncoder().encode(delta).length).toBeLessThanOrEqual(65_536)
+      expect(delta).not.toMatch(/^[\uDC00-\uDFFF]|[\uD800-\uDBFF]$/)
+    }
+    const prefix = 'a'.repeat(2 * 1024 * 1024 - 1)
+    partial.content = [{ type: 'text', text: `${prefix}😀结尾` }]
+    const completed = projectPiEvent({ type: 'message_end', message: partial }, state).events.at(-1)!
+    expect(completed.payload).toMatchObject({ content: { text: prefix, truncated: true } })
+  })
+
   it.each([3, Infinity])('preserves the %s budget and deadline through public JSON and clears it on settlement', (maxAttempts) => {
     const state = createPiEventProjectionState()
     const now = Date.parse('2026-09-21T00:00:00Z')
@@ -46,6 +64,7 @@ describe('projectPiEvent retries', () => {
     projectPiEvent({ type: 'auto_retry_start', attempt: 1, maxAttempts: 3, delayMs: 2000, errorMessage: '503 transient' }, state)
     projectPiEvent({ type: 'agent_start' }, state)
     projectPiEvent({ type: 'turn_start' }, state)
+    expect(projectPiEvent({ type: 'turn_start' }, state).events).toEqual([])
     projectPiEvent({ type: 'message_start', message: partial }, state)
     const update = (delta: string) => projectPiEvent({
       type: 'message_update',
@@ -156,91 +175,27 @@ describe('projectPiEvent compaction', () => {
 })
 
 describe('projectPiEvent product messages', () => {
-  it.each(['PATH_NOT_FOUND', 'INVALID_PATH', 'VALIDATION_FAILED'])('projects %s as a tool failure', (errorCode) => {
-    expect(projectToolExecutionDenied({
-      denialCode: errorCode,
-      toolCallId: 'tool-1',
-      toolName: 'read',
-    }).events).toEqual([{
-      type: 'tool.failed',
-      payload: { errorCode, toolCallId: 'tool-1', toolName: 'read' },
-    }])
-  })
-
-  it('projects Pi lifecycle events onto one deduplicated run progress channel', () => {
+  it('separates tool preparation, authorized execution, permission denial and validation failure', () => {
     const state = createPiEventProjectionState()
-    const assistantMessage: AssistantMessage = {
-      api: 'openai-codex-responses',
-      content: [],
-      model: 'gpt-5.6',
-      provider: 'openai-codex',
-      role: 'assistant',
-      stopReason: 'stop',
-      timestamp: 1,
-      usage: emptyUsage(),
-    }
-
-    expect(projectPiEvent({ type: 'agent_start' }, state).events).toEqual([{
-      payload: { phase: 'preparing', toolName: null },
-      type: 'run.progress',
-    }])
-    expect(projectPiEvent({ type: 'turn_start' }, state).events).toEqual([{
-      payload: { phase: 'model_requesting', toolName: null },
-      type: 'run.progress',
-    }])
-    expect(projectPiEvent({ type: 'turn_start' }, state).events).toEqual([])
-    expect(projectPiEvent({
-      message: assistantMessage,
-      type: 'message_start',
-    }, state).events).toEqual([
-      {
-        payload: { messageId: expect.any(String), role: 'assistant' },
-        type: 'message.started',
-      },
-      {
-        payload: { phase: 'model_streaming', toolName: null },
-        type: 'run.progress',
-      },
-    ])
-    expect(projectPiEvent({
-      args: { command: 'pwd' },
-      toolCallId: 'tool-1',
-      toolName: 'bash',
-      type: 'tool_execution_start',
-    }, state).events).toEqual([
+    const tool = { toolCallId: 'tool-1', toolName: 'bash' }
+    expect(projectPiEvent({ ...tool, args: { command: 'pwd' }, type: 'tool_execution_start' }, state).events).toEqual([
       expect.objectContaining({ type: 'tool.preparing' }),
-      {
-        payload: { phase: 'preparing', toolName: 'bash' },
-        type: 'run.progress',
-      },
+      { type: 'run.progress', payload: { phase: 'preparing', toolName: 'bash' } },
     ])
-    expect(projectToolExecutionAuthorized({
-      arguments: { command: 'pwd' },
-      toolCallId: 'tool-1',
-      toolName: 'bash',
-    }, state).events).toEqual([
+    expect(projectToolExecutionAuthorized({ ...tool, arguments: { command: 'pwd' } }, state).events).toEqual([
       expect.objectContaining({ type: 'tool.started' }),
-      {
-        payload: { phase: 'tool_executing', toolName: 'bash' },
-        type: 'run.progress',
-      },
+      { type: 'run.progress', payload: { phase: 'tool_executing', toolName: 'bash' } },
     ])
-    expect(projectToolExecutionDenied({
-      denialCode: 'READ_ONLY_PROFILE',
-      toolCallId: 'tool-1',
-      toolName: 'write',
-    }).events).toEqual([{
-      payload: {
-        denialCode: 'READ_ONLY_PROFILE',
-        toolCallId: 'tool-1',
-        toolName: 'write',
-      },
-      type: 'tool.denied',
-    }])
-    expect(projectPiEvent({ type: 'agent_settled', aborted: false }, state).events).toEqual([{
-      payload: { phase: 'idle', toolName: null },
-      type: 'run.progress',
-    }])
+
+    const write = { toolCallId: 'tool-2', toolName: 'write' }
+    expect(projectToolExecutionDenied({ ...write, denialCode: 'READ_ONLY_PROFILE' }).events).toEqual([
+      { type: 'tool.denied', payload: { ...write, denialCode: 'READ_ONLY_PROFILE' } },
+    ])
+    for (const errorCode of ['PATH_NOT_FOUND', 'INVALID_PATH', 'VALIDATION_FAILED']) {
+      expect(projectToolExecutionDenied({ ...write, denialCode: errorCode }).events).toEqual([
+        { type: 'tool.failed', payload: { ...write, errorCode } },
+      ])
+    }
   })
 
   it.each([undefined, 'commentary', 'final_answer'] as const)('distinguishes %s text from thinking, tool arguments and empty message starts', (textPhase) => {

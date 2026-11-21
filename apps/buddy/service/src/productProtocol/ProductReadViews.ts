@@ -1,10 +1,12 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { z } from 'zod'
 import type { BuddyUserContentV1 } from '../../../shared/conversation/buddyUserContent'
+import type { ProductReadSavedTextInput } from '../../../shared/productProtocol/messageText'
 import type { MessageRecord } from '../storage/conversationHistoryRepository'
 import type { ProductContentReferences } from './ProductContentReferences'
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
+import { MAX_BUDDY_MESSAGE_TEXT_LENGTH } from '../../../shared/conversation/buddyMessageContent'
 import { buddyUserContentToText, buddyUserMessageContentV1Schema } from '../../../shared/conversation/buddyUserContent'
 import { redactSensitiveText } from '../../../shared/permissions/approvalReviewPayload'
 import { productErrorCodeSchema, ProductProtocolError } from '../../../shared/productProtocol/errors'
@@ -20,6 +22,9 @@ import { createAttachmentRepository } from '../storage/attachmentRepository'
 import { findPersonalComposerDraft } from '../storage/composerDraftRepository'
 import { createConversationRepository } from '../storage/conversationRepository'
 import { ExecutionResourceQueries } from '../storage/ExecutionResourceQueries'
+
+import { readSavedTextPage, savedTextTail } from './ProductSavedText'
+import { readProductTurnCommentary, readProductTurnCommentaryPage } from './ProductTurnCommentary'
 
 const inlineBytes = 131_072
 const timestamp = '1970-01-01T00:00:00.000Z'
@@ -64,6 +69,32 @@ export class ProductReadViews {
   messagePreview(message: Pick<MessageRecord, 'role' | 'content'>): string {
     const text = this.messageText(message)
     return text === null ? '' : truncateText(text.replace(/\s+/g, ' ').trim(), 240)
+  }
+
+  turnMessage(message: MessageRecord) {
+    const value = this.message(message)
+    const commentary = readProductTurnCommentary(this.#database, message)
+    const item = commentary ? { ...value, commentary } : value
+    if (item.role !== 'assistant' || item.body.kind !== 'resource')
+      return item
+    const text = this.messageText(message)
+    if (text === null)
+      return { ...item, body: { ...item.body, previewText: '' } }
+    if (text.length > MAX_BUDDY_MESSAGE_TEXT_LENGTH)
+      return item
+    const page = savedTextTail(text, 4096)
+    return { ...item, body: { ...item.body, previewText: page.text }, textRange: page.range }
+  }
+
+  readSavedText(message: MessageRecord, input: ProductReadSavedTextInput) {
+    if (input.revision.startsWith('c:'))
+      return readProductTurnCommentaryPage(this.#database, message, input)
+    const text = message.role === 'assistant' ? this.messageText(message) : null
+    if (text === null)
+      throw new ProductProtocolError('RESOURCE_UNAVAILABLE')
+    if (text.length > MAX_BUDDY_MESSAGE_TEXT_LENGTH)
+      throw new ProductProtocolError('CONTENT_UNSUPPORTED')
+    return readSavedTextPage(text, input)
   }
 
   message(message: MessageRecord) {
@@ -132,6 +163,14 @@ export class ProductReadViews {
       }
     }
     return productMessageSchema.parse({ id: message.id, conversationId: message.conversationId, branchId: message.branchId, runId: message.runId, role: message.role, createdAt: message.createdAt, body, resources, ...(tool ? { tool } : {}), ...(author ? { author } : {}) })
+  }
+
+  approvalHeader(id: string) {
+    const row = this.#database.prepare(`SELECT a.id, a.run_id AS runId, r.conversation_id AS conversationId, r.branch_id AS branchId,
+      a.kind, a.summary, a.status, a.created_at AS createdAt, a.resolved_at AS resolvedAt, d.resolution
+      FROM approvals a JOIN runs r ON r.id = a.run_id JOIN conversations c ON c.id = r.conversation_id
+      LEFT JOIN approval_decisions d ON d.approval_id = a.id WHERE a.id = ? AND c.deleted_at IS NULL`).get(id)
+    return row ? productApprovalSchema.parse({ ...row, summary: truncateText(redactSensitiveText(String(row.summary)), 240), review: null }) : null
   }
 
   approval(id: string, localEffects = false) {
@@ -273,7 +312,7 @@ export class ProductReadViews {
       if (!message || !this.#visibleTask(message.conversationId))
         return null
       const bytes = this.document(resourceId)
-      return productResourceSchema.parse({ resourceId, kind, name: '消息内容', mimeType: bytes?.mimeType ?? 'application/json', sizeBytes: encodeProductRevision(bytes?.bytes.byteLength ?? 0), revision: digest(message.content), availability: bytes ? 'ready' : 'unavailable' })
+      return productResourceSchema.parse({ resourceId, kind, name: '消息内容', mimeType: bytes?.mimeType ?? 'application/json', sizeBytes: encodeProductRevision(bytes?.bytes.byteLength ?? 0), revision: bytes?.revision ?? digest(message.content), availability: bytes ? 'ready' : 'unavailable' })
     }
     if (kind === 'review') {
       const approval = createApprovalRepository(this.#database).findById(id)
@@ -323,7 +362,7 @@ export class ProductReadViews {
         lines.push('这条历史调用未保存可读取的参数和输出。')
       }
       const text = lines.join('\n\n')
-      return { bytes: Buffer.from(text), mimeType: 'text/plain; charset=utf-8', revision: digest(message.content) }
+      return { bytes: Buffer.from(text), mimeType: 'text/plain; charset=utf-8', revision: digest(text) }
     }
     return null
   }
@@ -331,10 +370,21 @@ export class ProductReadViews {
   #toolPresentation(message: MessageRecord, source: Record<string, unknown> | null) {
     if (!message.runId || typeof source?.toolCallId !== 'string' || !this.#visibleRun(message.runId))
       return null
-    const row = this.#database.prepare(`SELECT payload_json FROM run_events WHERE run_id = ? AND event_type = 'tool.completed'
-      AND json_extract(payload_json, '$.toolCallId') = ? ORDER BY sequence DESC LIMIT 1`).get(message.runId, source.toolCallId)
-    const payload = row ? JSON.parse(String(row.payload_json)) as Record<string, unknown> : null
-    const presentation = buddyToolPresentationSchema.safeParse(payload?.presentation)
+    const result = this.#database.prepare(`SELECT sequence FROM run_events WHERE run_id = ? AND event_type = 'message.tool_result'
+      AND json_extract(payload_json, '$.messageId') = ? AND json_extract(payload_json, '$.content.toolCallId') = ?`).get(message.runId, message.id, source.toolCallId)
+    const candidates = result
+      ? this.#database.prepare(`SELECT sequence FROM run_events WHERE run_id = ? AND event_type = 'tool.completed'
+        AND json_extract(payload_json, '$.toolCallId') = ? AND sequence < ? AND sequence > COALESCE((
+          SELECT MAX(sequence) FROM run_events WHERE run_id = ? AND event_type = 'message.tool_result'
+          AND json_extract(payload_json, '$.content.toolCallId') = ? AND sequence < ?), 0) LIMIT 2`).all(message.runId, source.toolCallId, result.sequence!, message.runId, source.toolCallId, result.sequence!)
+      : this.#database.prepare(`SELECT sequence FROM run_events WHERE run_id = ? AND event_type = 'tool.completed'
+        AND json_extract(payload_json, '$.toolCallId') = ? AND created_at <= ? AND NOT EXISTS (
+          SELECT 1 FROM messages WHERE run_id = ? AND role = 'tool' AND id <> ? AND json_extract(content_json, '$.toolCallId') = ?) LIMIT 2`).all(message.runId, source.toolCallId, message.createdAt, message.runId, message.id, source.toolCallId)
+    if (candidates.length !== 1)
+      return null
+    const row = this.#database.prepare(`SELECT json_extract(payload_json, '$.presentation') AS presentation FROM run_events
+      WHERE run_id = ? AND sequence = ? AND json_extract(payload_json, '$.toolName') = ? AND json_type(payload_json, '$.presentation') = 'object'`).get(message.runId, candidates[0]!.sequence!, String(source.toolName))
+    const presentation = buddyToolPresentationSchema.safeParse(typeof row?.presentation === 'string' ? JSON.parse(row.presentation) : null)
     return presentation.success ? presentation.data : null
   }
 

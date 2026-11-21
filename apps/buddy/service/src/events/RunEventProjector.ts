@@ -66,6 +66,7 @@ const completedMessagePayloadSchema = z.object({
     modelId: z.string().min(1).optional(),
     providerId: z.string().min(1).optional(),
     text: z.string().max(MAX_BUDDY_MESSAGE_TEXT_LENGTH),
+    truncated: z.literal(true).optional(),
   }).strict(),
   messageId: messageIdSchema,
   phase: buddyAssistantTextPhaseSchema.optional(),
