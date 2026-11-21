@@ -42,6 +42,7 @@ import { observeLifecycleDiagnostics } from '../../shared/observability/lifecycl
 import { resourcePrepareSchema } from '../../shared/privateNetwork/resources'
 import { ProductProtocolError } from '../../shared/productProtocol/errors'
 import { PRODUCT_LIMITS } from '../../shared/productProtocol/limits'
+import { PRODUCT_METHODS } from '../../shared/productProtocol/methods'
 import { desktopProductContentProject } from '../../shared/productProtocol/transport'
 import { promptsRpc } from '../../shared/prompts/promptApi'
 import { userQuestionsChanged } from '../../shared/questions/userQuestionApi'
@@ -177,6 +178,7 @@ import { ProductActorCommandScope } from './productProtocol/ProductActorCommandS
 import { ProductConnection } from './productProtocol/ProductConnection'
 import { ProductContentReferences } from './productProtocol/ProductContentReferences'
 import { ProductQueries } from './productProtocol/ProductQueries'
+import { readProductInputDelivery } from './productProtocol/readProductInputDelivery'
 import { registerLocalProductConnection } from './productProtocol/registerLocalProductConnection'
 import { getBuiltinPromptCatalog } from './prompts/builtinPromptCatalog'
 import { createProviderService } from './providers/createProviderService'
@@ -2064,6 +2066,7 @@ export async function startBuddyService(
         actorProductScopes.set(principal.actorId, scope)
       }
       const actorScope = scope
+      const getFollowUpBehavior = options.platform.getFollowUpBehavior
       const connection = new ProductConnection({
         ...connectionOptions,
         context,
@@ -2077,6 +2080,7 @@ export async function startBuddyService(
         handlers: {
           'resources.prepare': { handle: input => remoteResources!.prepare(resourcePrepareSchema.parse(input), principal) },
           ...actorScope.queries.handlers(),
+          ...(getFollowUpBehavior && { 'chat.getInputDelivery': { handle: input => readProductInputDelivery(options.database, PRODUCT_METHODS['chat.getInputDelivery'].input.parse(input), getFollowUpBehavior) } }),
           ...createProductModelQueries(providerService, id => id ? conversationMetadata.getModelControls(id).next.modelSelection : buddies.get(buddies.defaultBuddyId).settings.model, options.platform.getDefaultPermissionMode),
           ...createProductCommandHandlers({ commands: actorScope.commands, assertOwner, hasReview: (id, version) => remoteResources!.hasReview(principal.actorId, id, version), assertExecutionAvailable: assertPlatformAvailable, allowLocalEffects: principal.actorId === commandContext.principal.actorId && connectionOptions.allowLocalEffects, allowedActions: new Set(['compact']), resolveQuote: resourceId => actorScope.queries.resolveQuote(resourceId) }),
         },

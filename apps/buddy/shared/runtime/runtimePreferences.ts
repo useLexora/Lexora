@@ -32,5 +32,6 @@ export const DEFAULT_RUNTIME_PREFERENCES: RuntimePreferences = {
 export const runtimePreferencesRpc = {
   get: 'host.runtimePreferences.get',
   getDefaultPermissionMode: 'host.runtimePreferences.getDefaultPermissionMode',
+  getFollowUpBehavior: 'host.runtimePreferences.getFollowUpBehavior',
   changed: 'runtime.preferences.changed',
 } as const

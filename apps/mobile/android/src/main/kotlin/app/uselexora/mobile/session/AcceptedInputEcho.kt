@@ -16,6 +16,7 @@ class AcceptedInputEcho private constructor(val target: ConversationTarget, val 
         fun from(receipt: JSONObject, method: String, content: JSONObject, attachmentNames: Map<String, String> = emptyMap()): AcceptedInputEcho? {
             if (receipt.optString("decision") != "accepted" || method !in setOf("chat.startTurn", "chat.editUserMessage")) return null
             val destination = receipt.getJSONObject("target")
+            if (destination.has("queueId")) return null
             val runId = destination.opt("runId") as? String ?: return null
             val target = ConversationTarget.fromTarget(destination)
             val messageId = destination.opt("messageId") as? String

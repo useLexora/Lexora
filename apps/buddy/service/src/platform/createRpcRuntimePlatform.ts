@@ -142,6 +142,7 @@ export function createRpcRuntimePlatform(peer: RuntimeRpcPeerContract, options: 
       inspect: async (id, signal) => extensionInspectionSchema.parse(await peer.request(EXTENSION_INSPECT_RPC, { id }, 10000, signal)),
     },
     getDefaultPermissionMode: async () => z.enum(BUDDY_PERMISSION_MODES).parse(await peer.request(runtimePreferencesRpc.getDefaultPermissionMode, {})),
+    getFollowUpBehavior: async () => z.enum(['queue', 'steer']).parse(await peer.request(runtimePreferencesRpc.getFollowUpBehavior, {})),
     preferences: options.preferences ?? {
       get: async () => runtimePreferencesSchema.parse(await peer.request(runtimePreferencesRpc.get, {})),
       subscribe: apply => peer.onNotification((method, params) => {

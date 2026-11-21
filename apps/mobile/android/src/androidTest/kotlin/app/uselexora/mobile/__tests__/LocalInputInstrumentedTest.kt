@@ -1,6 +1,8 @@
 package app.uselexora.mobile
 
+import app.uselexora.mobile.protocol.DraftContext
 import app.uselexora.mobile.protocol.MobileContentAdapter
+import app.uselexora.mobile.protocol.MobileInputRouting
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import app.uselexora.mobile.protocol.CommandOutbox
@@ -58,9 +60,10 @@ class LocalInputInstrumentedTest {
         }
     }
 
-    private fun transient(store: LocalStore, draft: LocalDraft, confirmedRepeat: Boolean = false): OutboxItem {
+    private fun transient(store: LocalStore, draft: LocalDraft, confirmedRepeat: Boolean = false,
+        intent: JSONObject = JSONObject().put("operation", "start").put("input", JSONObject(draft.value.toString()).put("scope", DraftContext.target(draft.scope)))): OutboxItem {
         val envelope = JSONObject().put("commandId", store.newId()).put("expectedServiceInstanceId", "original").put("dataGeneration", "generation")
-            .put("intent", JSONObject().put("input", JSONObject(draft.value.toString())))
+            .put("intent", intent)
         val effect = JSONObject().put("kind", "submit").put("scope", draft.scope).put("editSequence", draft.editSequence)
             .put("bodySequence", draft.bodySequence).put("untilDecided", true)
         if (confirmedRepeat) effect.put("confirmedRepeat", true)
@@ -107,7 +110,7 @@ class LocalInputInstrumentedTest {
             val item = transient(store, store.draft(owner, scope)!!)
             store.attach(owner, inputId, "later")
             val accepted = JSONObject().put("decision", "accepted").put("commandId", item.id).put("method", item.method).put("dataGeneration", "generation")
-                .put("result", JSONObject()).put("target", JSONObject().put("conversationId", "task").put("branchId", "branch"))
+                .put("result", JSONObject()).put("target", JSONObject().put("conversationId", "task").put("branchId", "branch").put("runId", "accepted-run"))
             val lookup = JSONObject().put("lookup", "decided").put("receipt", accepted)
             val outbox = CommandOutbox(store)
             outbox.applyLookup(item, "original", lookup)
@@ -124,6 +127,44 @@ class LocalInputInstrumentedTest {
             outbox.applyLookup(rejected, "original", JSONObject().put("lookup", "decided").put("receipt", JSONObject(accepted.toString()).put("commandId", rejected.id).put("decision", "rejected").put("errorCode", "SOURCE_CHANGED")))
             assertEquals(edit.value.toString(), store.draft(owner, scope)!!.value.toString())
             assertTrue(store.outbox(owner).isEmpty())
+        }
+    }
+
+    @Test fun recoveredQueueReceiptUsesOriginalBindingAndConsumesOnlyItsSnapshot() {
+        val owner = java.util.UUID.randomUUID().toString(); val scope = "conversation:task:branch"
+        val itemId = LocalStore(context).use { store ->
+            val input = store.edit(owner, scope, JSONObject().put("content", MobileContentAdapter.textContent("supplement")))
+            store.attach(owner, input.value.getString("inputId"), "sent-file")
+            val draft = store.draft(owner, scope)!!
+            val intent = MobileInputRouting.intent("chat.startTurn", JSONObject(draft.value.toString()).put("scope", DraftContext.target(scope)), setOf("child")) {
+                JSONObject().put("mode", "current").put("actorId", "receiver").put("target", JSONObject().put("rootRunId", "root").put("runId", "child"))
+            }
+            val item = transient(store, draft, intent = intent)
+            store.mark(item.id, "unknown"); item.id
+        }
+        LocalStore(context).use { store ->
+            val original = store.pendingComposerCommands(owner).single()
+            assertEquals(itemId, original.id)
+            val intent = original.envelope.getJSONObject("intent")
+            assertEquals("enqueue", intent.getString("operation")); assertEquals("child", intent.getJSONObject("delivery").getJSONObject("target").getString("runId"))
+            val current = store.draft(owner, scope)!!; val inputId = current.value.getString("inputId")
+            assertEquals("COMMAND_RESULT_UNKNOWN", assertThrows(ProtocolFailure::class.java) { transient(store, current) }.code)
+            val outbox = CommandOutbox(store)
+            val target = JSONObject().put("conversationId", "task").put("branchId", "wrong").put("queueId", "admitted")
+            val receipt = JSONObject().put("decision", "accepted").put("commandId", original.id).put("method", original.method).put("dataGeneration", "generation")
+                .put("target", target).put("result", JSONObject())
+            val lookup = JSONObject().put("lookup", "decided").put("receipt", receipt)
+            assertThrows(ProtocolFailure::class.java) { outbox.applyLookup(original, "original", lookup) }
+            assertEquals(current.value.toString(), store.draft(owner, scope)!!.value.toString())
+            assertEquals(itemId, store.pendingComposerCommands(owner).single().id)
+            store.edit(owner, scope, JSONObject(current.value.toString()).put("content", MobileContentAdapter.textContent("next draft")))
+            store.attach(owner, inputId, "next-file")
+            target.put("branchId", "branch")
+            assertEquals("accepted", outbox.applyLookup(original, "original", lookup).state)
+            val remaining = store.draft(owner, scope)!!.value.getJSONObject("content")
+            assertEquals("next draft", MobileContentAdapter.text(remaining)); assertEquals("[\"next-file\"]", remaining.getJSONArray("panelResourceIds").toString())
+            assertTrue(store.pendingComposerCommands(owner).isEmpty())
+            assertTrue(store.uploadSubmitted(JSONObject().put("partition", owner).put("inputId", inputId).put("resourceId", "sent-file")))
         }
     }
 

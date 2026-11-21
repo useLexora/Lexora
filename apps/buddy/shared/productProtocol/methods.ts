@@ -74,6 +74,13 @@ export const productCommandIntents = {
 export type ProductCommandMethod = keyof typeof productCommandIntents
 export const PRODUCT_METHODS = {
   ...PRODUCT_QUERY_METHODS,
+  'chat.getInputDelivery': {
+    input: z.object({ conversationId: id, branchId: id }).strict(),
+    output: buddyInputDeliverySchema,
+    role: 'owner',
+    command: false,
+    ready: true,
+  },
   'chat.getNewTaskDefaults': {
     input: z.object({}).strict(),
     output: z.object({ executionConfig: buddyComposerDraftExecutionConfigSchema, modelSelection: modelSelectionSchema.nullable(), modelDisplayName: z.string().min(1).nullable() }).strict(),

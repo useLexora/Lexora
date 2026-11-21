@@ -4,7 +4,6 @@ import app.uselexora.mobile.network.ProductClient
 import app.uselexora.mobile.protocol.CommandReceipt
 import app.uselexora.mobile.protocol.DraftContext
 import app.uselexora.mobile.protocol.ConversationTarget
-import app.uselexora.mobile.protocol.HistorySource
 import app.uselexora.mobile.protocol.MobileInputCommands
 import app.uselexora.mobile.protocol.ProtocolFailure
 import android.os.Handler
@@ -25,7 +24,7 @@ class MobileComposerSession(
     private val onUi: (() -> Unit) -> Unit,
 ) {
     data class Scope(val partition: String, val target: String)
-    data class Submission(val scope: Scope, val target: ConversationTarget, val echo: AcceptedInputEcho?, val inputUnchanged: Boolean)
+    data class Submission(val scope: Scope, val target: ConversationTarget, val echo: AcceptedInputEcho?, val queued: Boolean, val inputUnchanged: Boolean)
     var scope = Scope("unpaired-local", "global")
         private set
     private var pendingWrite: Future<LocalDraft?>? = null
@@ -115,7 +114,7 @@ class MobileComposerSession(
             } catch (_: Exception) { onUi { if (!closed && scope == target && request == restoreGeneration) failed() } }
         }
     }
-    fun submit(client: ProductClient, method: String, extra: JSONObject, execution: JSONObject, work: (() -> Unit) -> Unit, reviewed: LocalDraft? = null,
+    fun submit(client: ProductClient, method: String, visibleRunIds: Set<String>, execution: JSONObject, work: (() -> Unit) -> Unit, reviewed: LocalDraft? = null,
         attachmentNames: Map<String, String> = emptyMap(), accepted: (Submission) -> Unit, failed: (MobileOperationFailure) -> Unit, settled: () -> Unit) {
         val target = scope
         if (!submitting.add(target)) return
@@ -135,21 +134,17 @@ class MobileComposerSession(
                 draft
             }
         }
-        val extraSnapshot = JSONObject(extra.toString())
         work {
             try {
                 val latest = captured.get() ?: throw ProtocolFailure("EMPTY_DRAFT")
                 val draft = reviewed ?: latest
                 if (draft.partition != target.partition || draft.scope != target.target) throw ProtocolFailure("DRAFT_CONFLICT")
                 val context = DraftContext.target(target.target)
-                val editing = HistorySource.fromScope(context)?.kind == HistorySource.Kind.Edit
-                val actualMethod = if (editing) "chat.editUserMessage" else method
-                val intent = if (editing) JSONObject().put("conversationId", context.getString("conversationId")).put("userMessageId", context.getString("userMessageId")) else extraSnapshot
                 val receipt = CommandReceipt.requireAccepted(
-                    MobileInputCommands(store).submit(client, draft, context, actualMethod, intent, confirmedRepeat = reviewed != null, displayedExecution = execution))
+                    MobileInputCommands(store).submit(client, draft, context, method, visibleRunIds, confirmedRepeat = reviewed != null, displayedExecution = execution))
                 val acceptedTarget = ConversationTarget.fromTarget(receipt.getJSONObject("target"))
-                val echo = AcceptedInputEcho.from(receipt, actualMethod, draft.value.getJSONObject("content"), attachmentNames)
-                onUi { if (!closed) accepted(Submission(target, acceptedTarget, echo, scope == target && revision == submittedRevision && draft.editSequence == latest.editSequence)) }
+                val echo = AcceptedInputEcho.from(receipt, method, draft.value.getJSONObject("content"), attachmentNames)
+                onUi { if (!closed) accepted(Submission(target, acceptedTarget, echo, receipt.getJSONObject("target").has("queueId"), scope == target && revision == submittedRevision && draft.editSequence == latest.editSequence)) }
             } catch (error: Exception) {
                 onUi { if (!closed && scope == target) failed(MobileOperationFailure.from(error)) }
             } finally {

@@ -449,10 +449,12 @@ class MainActivity : ComponentActivity() {
         ui.inputEnabled = composer.isEnabled
         ui.hasInput = composer.text.isNotBlank() || ui.attachmentCount > 0
         val waiting = pendingInputScopes[input.scope]
+        val issue = sendIssue?.takeIf { it.first == input.scope }?.second
         ui.sendFeedback = when {
             waiting != null && !input.isSubmitting -> mobileText(if (waiting) R.string.send_check_original else R.string.error_command_result_unknown)
+            issue != null -> issue
             !ui.connected && ui.hasInput -> mobileText(R.string.send_offline)
-            else -> sendIssue?.takeIf { it.first == input.scope }?.second.orEmpty()
+            else -> ""
         }
         ui.canCheckInputReceipt = waiting != null && !input.isSubmitting && ui.connected && checkingReceipts !== client
         val readyToSend = !ui.newTaskOpening && canStartInput() && composer.isEnabled && ui.hasInput && waiting == null && !input.isSubmitting && !writingCurrentModel() && ui.conversationReady && !ui.viewingArchived
@@ -735,6 +737,7 @@ class MainActivity : ComponentActivity() {
     )
     private fun persistInput(text: CharSequence, keepSettings: Boolean = true) {
         if (!composer.isEnabled || (localEcho?.nextEdit == false && text.isEmpty())) return
+        if (!keepSettings && sendIssue?.first == input.scope) sendIssue = null
         saveFeedback("")
         val selection = model; val execution = executionConfig; val space = spaceId; val name = spaceName
         if (keepSettings || text.isNotEmpty()) savedExecution = execution
@@ -1094,14 +1097,14 @@ class MainActivity : ComponentActivity() {
         }
     }
     private fun renderRows() { syncUi() }
-    private fun send(method: String = "chat.startTurn", extra: JSONObject = JSONObject(), reviewed: LocalDraft? = null) {
+    private fun send(method: String = "chat.startTurn", reviewed: LocalDraft? = null) {
         if (!demo && client?.isConnected != true) { syncUi(); return }
         if (ui.newTaskOpening || !canStartInput() || input.scope in pendingInputScopes || input.isSubmitting) return
         if (writingCurrentModel()) {
             if (pendingModel()) { sendIssue = input.scope to mobileText(R.string.error_command_result_unknown); syncUi() }
             return
         }
-        if (!composer.isEnabled) { ui.notice = mobileText(R.string.mobile_input_is_being_restored_or_requires_desktop_editing_the); return }
+        if (!composer.isEnabled) { sendIssue = input.scope to mobileText(R.string.mobile_input_is_being_restored_or_requires_desktop_editing_the); syncUi(); return }
         if (!demo && (!ui.conversationReady || ui.viewingArchived || (conversationTarget != null && (!session.isSynchronized || readyContext != liveContext())))) {
             syncUi(); return
         }
@@ -1111,19 +1114,21 @@ class MainActivity : ComponentActivity() {
         sendIssue = null
         val execution = executionConfig ?: run { if (ui.choosePermissionToSend) chooseExecution(); return }
         val attachmentNames = ui.attachments.associate { it.id to it.name }
-        val echo = if (method == "chat.startTurn") {
+        val visibleRunIds = activeRuns(ui).mapTo(mutableSetOf()) { it.getString("id") }
+        val sendingWhileWorking = method == "chat.startTurn" && scope.startsWith("conversation:") && visibleRunIds.isNotEmpty()
+        val echo = if (method == "chat.startTurn" && !sendingWhileWorking) {
             val text = reviewed?.value?.optJSONObject("content")?.let { MobileContentAdapter.text(it) } ?: composer.text.toString()
             val attachments = ui.attachments.filterNot { it.id.startsWith("transfer:") }
             if (text.isBlank() && attachments.isEmpty()) return
             LocalInputEcho(owner, text, attachments, ui.messages)
         } else null
-        input.submit(sendingClient, method, extra, execution, ::work, reviewed = reviewed, attachmentNames = attachmentNames, accepted = { result ->
+        input.submit(sendingClient, method, visibleRunIds, execution, ::work, reviewed = reviewed, attachmentNames = attachmentNames, accepted = { result ->
             if (isCurrent(owner)) {
                 if (echo == null && result.inputUnchanged && conversationTarget == result.target && scope == result.target.localKey) {
                     writingView = true; composer.setText(""); writingView = false
                     composer.isEnabled = false
                 }
-                acceptedInput(result.target, result.echo)
+                acceptedInput(result.target, result.echo, result.queued)
             }
         }, failed = { failure ->
             if (isCurrent(owner)) {
@@ -1131,13 +1136,16 @@ class MainActivity : ComponentActivity() {
                 if (review == null) {
                     val reason = MobileFailurePresentation.message(failure)
                     if (echo != null && localEcho === echo && failure.code != "COMMAND_RESULT_UNKNOWN") failLocalEcho(reason)
-                    else sendIssue = input.scope to reason
+                    else {
+                        if (failure.code == "COMMAND_RESULT_UNKNOWN") pendingInputScopes = pendingInputScopes + (input.scope to false)
+                        sendIssue = input.scope to reason
+                    }
                 } else {
                     localEcho = null; restoreInput()
                     AlertDialog.Builder(this).setMessage(mobileText(R.string.send_review_text))
                         .setNegativeButton(mobileText(R.string.send_back_to_edit), null)
                         .setPositiveButton(mobileText(R.string.send_again)) { _, _ ->
-                            if (isCurrent(owner)) send(method, extra, reviewed = review.draft)
+                            if (isCurrent(owner)) send(method, reviewed = review.draft)
                         }.show()
                 }
             }
@@ -1155,10 +1163,12 @@ class MainActivity : ComponentActivity() {
     }
     private fun canStartInput() = localEcho?.let { it.failure != null && it.nextEdit } ?: true
     private fun failLocalEcho(reason: String) {
-        val echo = localEcho ?: run { sendIssue = input.scope to reason; return }
-        echo.failure = mobileText(R.string.send_failed_reason, reason)
-        details = details + (echo.id to MobileMessageDetail(error = echo.failure))
-        displayedMessages = null; sendIssue = null
+        val failure = mobileText(R.string.send_failed_reason, reason)
+        sendIssue = input.scope to failure
+        val echo = localEcho?.takeIf { it.failure == null } ?: return
+        echo.failure = failure
+        details = details + (echo.id to MobileMessageDetail(error = failure))
+        displayedMessages = null
         ui.attachments = (ui.attachments + echo.attachments).distinctBy { it.id }; ui.attachmentCount = ui.attachments.count { !it.id.startsWith("transfer:") }
     }
     private fun acceptRecoveredInput(item: app.uselexora.mobile.storage.OutboxItem) {
@@ -1168,12 +1178,14 @@ class MainActivity : ComponentActivity() {
             val method = when (intent.optString("operation")) { "start" -> "chat.startTurn"; "edit" -> "chat.editUserMessage"; else -> return@let null }
             AcceptedInputEcho.from(receipt, method, content, localEcho?.attachments.orEmpty().associate { it.id to it.name })
         }
-        acceptedInput(ConversationTarget.fromTarget(receipt.getJSONObject("target")), echo)
+        val destination = receipt.getJSONObject("target")
+        acceptedInput(ConversationTarget.fromTarget(destination), echo, destination.has("queueId"))
     }
-    private fun acceptedInput(target: ConversationTarget, echo: AcceptedInputEcho? = null) {
+    private fun acceptedInput(target: ConversationTarget, echo: AcceptedInputEcho?, queued: Boolean) {
         localEcho = null; sendIssue = null
         if (ui.screen != MobileScreen.Conversation) return
         if (conversationTarget == target && scope == target.localKey) {
+            if (queued) sendIssue = input.scope to mobileText(R.string.send_queue_accepted)
             if (echo != null && !echo.isProjected(liveMessages, ui.runs)) {
                 acceptedEchoes[echo.runId] = echo; displayedMessages = null
             }

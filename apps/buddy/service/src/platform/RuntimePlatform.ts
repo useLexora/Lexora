@@ -65,6 +65,7 @@ export interface RuntimePlatform {
   authoring: PluginAuthoringHost
   preferences: RuntimePreferenceSource
   getDefaultPermissionMode?: () => Promise<BuddyPermissionMode>
+  getFollowUpBehavior?: () => Promise<'queue' | 'steer'>
   openExternal: (url: string) => Promise<void>
   presentBrowser?: (source: BrowserPresentationSource) => Promise<void>
   executePetSequence: (input: PetExecuteSequenceParams) => Promise<PetExecuteSequenceResult>
