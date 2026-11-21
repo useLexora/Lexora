@@ -5,11 +5,51 @@ import type { ReaderEntry, ReaderTranscript } from './readerBridge'
 import type { ReaderAnchor } from './readerProjection'
 import { computed, watch } from 'vue'
 import { createChatAgentTurnReducer } from '../modules/tasks/reader'
+import { orderReaderTurns } from './orderReaderTurns'
 
-export function useReaderTurns(entries: Ref<ReaderEntry[]>, runs: Ref<LocalRun[]>, transcripts: Ref<Record<string, ReaderTranscript>>, topic: Ref<string>, anchor?: Ref<ReaderAnchor | null>) {
+function turnWindowEntries(entries: ReaderEntry[], runs: LocalRun[]) {
+  const positions = new Map<string, number>()
+  const inputs = new Map<string, number>()
+  const replies = new Set<string>()
+  const runningTools = new Set<string>()
+  entries.forEach((entry, index) => {
+    if (entry.activityGroup) {
+      positions.set(entry.activityGroup.runId, index)
+      if (entry.activityGroup.runningCount || entry.activityGroup.runningReasoningCount)
+        runningTools.add(entry.activityGroup.runId)
+    }
+    for (const message of entry.messages) {
+      if (message.role === 'user') {
+        inputs.set(message.id, index)
+      }
+      else if (message.role === 'assistant' && message.runId) {
+        positions.set(message.runId, index)
+        replies.add(message.runId)
+      }
+    }
+  })
+  const tails = new Map<number, ReaderEntry[]>()
+  for (const run of runs) {
+    const index = positions.get(run.id) ?? (run.triggeringMessageId ? inputs.get(run.triggeringMessageId) : undefined)
+    const hasReply = replies.has(run.id)
+    if (index === undefined || (hasReply && (run.status === 'completed' || (run.status === 'running' && runningTools.has(run.id)))))
+      continue
+    const tail: ReaderEntry = { id: `run-status:${run.id}`, continuation: true, messages: [], runStatus: { run, hasReply } }
+    const rows = tails.get(index)
+    if (rows)
+      rows.push(tail)
+    else
+      tails.set(index, [tail])
+  }
+  return orderReaderTurns(tails.size ? entries.flatMap((entry, index) => [entry, ...tails.get(index) ?? []]) : entries, runs)
+}
+
+export function useReaderTurns(entries: Ref<ReaderEntry[]>, runs: Ref<LocalRun[]>, transcripts: Ref<Record<string, ReaderTranscript>>, topic: Ref<string>, anchor?: Ref<ReaderAnchor | null>, turnWindow?: Ref<boolean>) {
   const cache = new Map<string, { count: number, state: string, reducer: ReturnType<typeof createChatAgentTurnReducer> }>()
   watch(topic, () => cache.clear())
   return computed(() => {
+    if (turnWindow?.value)
+      return turnWindowEntries(entries.value, runs.value)
     const turns = new Map<string, ChatAgentTurn>()
     const messagesByRun = new Map<string, ReaderEntry['messages']>()
     for (const entry of entries.value) {

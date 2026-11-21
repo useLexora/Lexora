@@ -96,8 +96,9 @@ class MainActivity : ComponentActivity() {
     private val acceptedEchoes = mutableMapOf<String, AcceptedInputEcho>()
     private var localEcho: LocalInputEcho? = null
         set(value) { field = value; displayedMessages = null }
-    private var liveMessages = listOf<JSONObject>()
-    private var historicalMessages = listOf<JSONObject>()
+    private var reading = ConversationReadingWindow()
+    private val liveMessages get() = reading.latest.messages
+    private var projectedTurnWindow = false
     private var readyContext: String? = null
     private var historyRequest = 0L
     private var discoveryOwner = ""
@@ -203,13 +204,17 @@ class MainActivity : ComponentActivity() {
             catalogChanged = { ui.models = it.items; ui.modelProviders = it.providers; ui.modelsLoading = it.loading; ui.modelsError = it.error },
             marksChanged = { ui.markedTaskIds = it.ids; ui.marksLoaded = it.loaded; ui.marksFailed = it.failed },
             cachedTasks = { ui.tasksLoaded = true },
-            cachedConversation = { messages, branches ->
+            cachedConversation = { items, branches ->
                 branches?.let { if (ui.branches.isEmpty()) ui.branches = it }
-                if (messages != null && !ui.historyPinned && readyContext != liveContext()) { messageItems = visibleMessages(messages); ui.readingCached = true }
+                if (items != null && !ui.historyPinned && readyContext != liveContext()) {
+                    projectedTurnWindow = items.any { it.optString("entity") in setOf("historyWindow", "activityGroup") }
+                    ui.activityGroups = entities(items, "activityGroup")
+                    messageItems = visibleMessages(entities(items, "message")); ui.readingCached = true; syncUi()
+                }
             })
         session = MobileConnectionSession(connection, schemas, getSystemService(ConnectivityManager::class.java), streamHandler,
             enabled = { !demo && !disconnecting }, topic = { activeTopic }, work = ::work, onUi = ::onUi,
-            released = { operations.closeReview(); questions.close() },
+            released = { historyRequest++; reading.disconnected(); ui.historyLoading = false; operations.closeReview(); questions.close() },
             connected = { authenticated, identity ->
                 ui.connectionPhase = app.uselexora.mobile.session.MobileConnectionPhase.Idle
                 if (partition != identity.partition) restoreNavigation(identity.partition)
@@ -237,7 +242,7 @@ class MainActivity : ComponentActivity() {
                 if (state == "SYNCHRONIZED" && ui.pairingPhase == "syncing") ui.pairingPhase = "ready"
                 syncUi()
             },
-            projection = { topic, items -> readModel.committed(topic, items); readyContext = liveContext(); ui.readingCached = false; ui.syncFailure = ""; renderProjection(topic, items); syncUi() },
+            projection = { topic, items, serial -> readModel.committed(topic, items); readyContext = liveContext(); ui.readingCached = false; ui.syncFailure = ""; renderProjection(topic, items, serial); syncUi() },
             recoverable = { MobileOperationFailure.from(it).code == "SERVICE_UNREACHABLE" },
             synchronizationFailure = { error -> ui.syncFailure = MobileFailurePresentation.message(MobileOperationFailure.from(error)); readyContext = null; ui.conversationReady = false })
         demo = BuildConfig.PROBE_ENABLED && intent.getBooleanExtra("fixture", false)
@@ -302,20 +307,24 @@ class MainActivity : ComponentActivity() {
         setContent {
             LexoraTheme {
                 val connectedClient = if (ui.connected) client else null
+                val readerClient = connectedClient.takeUnless { ui.historyDetached }
                 ui.incomingMaterial?.let { IncomingMaterialPanel(it, ui, ::chooseMaterialDestination, ::dismissMaterial) }
                 MobileShell(ui, composer, ::handleAction, ReaderAvatarContext(partition, connectedClient, schemas)) { modifier ->
-                    WebMessageTimeline(ui.messages, ui.readerTopic, modifier, details, ui.runs,
+                    WebMessageTimeline(ui.messages, ui.readerTopic, modifier, details, if (demo) ui.runs else ui.readerRuns,
                         anchorMessageId = ui.anchorMessageId, anchorRequestId = ui.anchorRequestId,
-                        hasLaterMessages = ui.historyPinned, onLatest = ::returnLatest,
+                        hasLaterMessages = ui.historyPinned || ui.historyDetached, onLatest = ::returnLatest,
                         avatarContext = ReaderAvatarContext(partition, connectedClient, schemas),
-                        artifactContext = ui.viewBranchId?.let { branchId -> ReaderArtifactContext(partition, branchId, connectedClient, schemas) { connection, resource ->
+                        artifactContext = ui.viewBranchId?.let { branchId -> ReaderArtifactContext(partition, branchId, readerClient, schemas) { connection, resource ->
                             val owner = connection.identity?.partition ?: throw ProtocolFailure("NOT_CONNECTED")
                             taskFileCopies.find(owner, resource) ?: files.download(connection, resource, previewOnly = true)
                         } }, onResourceActions = ::resourceActions,
                         branches = ui.branches, selectedBranchId = ui.viewBranchId, onBranch = ::selectBranch,
                         onMessageMenu = { message, anchor, contextual -> prepareMessageAction(message, null, anchor, contextual) },
-                        transcripts = transcriptRecords, onLoadTranscript = runTranscripts::request,
-                        resultRunId = ui.resultRunId, onReadResult = ::readVisibleResult, onMessageAction = ::messageActions, onQuickAction = ::messageQuickAction, onResource = ::openResource, onLoadDetail = ::loadMessageDetail)
+                        turn = ReaderTurnContext(conversationTarget, readerClient, ui.turnWindow, ui.activityGroups,
+                            ui.historyHasMore && ui.connected && ui.conversationReady, ui.historyLoading, ui.historyError.ifBlank { null }, ui.historyPage),
+                        onOlder = { retry -> if (retry || ui.historyError.isBlank()) moreHistory() },
+                        transcripts = if (ui.turnWindow) emptyMap() else transcriptRecords, onLoadTranscript = runTranscripts::request,
+                        resultRunId = ui.resultRunId.takeUnless { ui.historyDetached }, onReadResult = ::readVisibleResult, onMessageAction = ::messageActions, onQuickAction = ::messageQuickAction, onResource = ::openResource, onLoadDetail = ::loadMessageDetail)
                 }
             }
         }
@@ -430,17 +439,18 @@ class MainActivity : ComponentActivity() {
         }
         if (displayedMessages !== messageItems) {
             displayedMessages = messageItems
-            val confirmed = if (ui.historyPinned || acceptedEchoes.isEmpty()) messageItems else messageItems + acceptedEchoes.values
+            val confirmed = if (ui.historyPinned || ui.historyDetached || acceptedEchoes.isEmpty()) messageItems else messageItems + acceptedEchoes.values
                 .filter { it.target == conversationTarget && !it.isProjected(messageItems, ui.runs) }.map { it.row }
-            ui.messages = localEcho?.display(confirmed) ?: confirmed
+            ui.messages = if (ui.historyDetached) confirmed else localEcho?.display(confirmed) ?: confirmed
         }
         ui.submittingInput = input.isSubmitting
-        ui.showingAcceptedInput = localEcho != null || (acceptedEchoes.isNotEmpty() && !ui.historyPinned)
+        ui.showingAcceptedInput = localEcho != null || (acceptedEchoes.isNotEmpty() && !ui.historyPinned && !ui.historyDetached)
         if (displayedTask !== selectedTask) { displayedTask = selectedTask; ui.selectedTask = selectedTask?.let { JSONObject(it.toString()) } }
         ui.viewBranchId = conversationTarget?.branchId
         ui.topic = "$partition:$activeTopic:$scope"
         ui.readerTopic = if (conversationTarget == null) "$partition:$scope" else "$partition:$activeTopic"
-        runTranscripts.update("$partition:$activeTopic", client, ui.runs)
+        ui.turnWindow = conversationTarget != null && (if (client?.isConnected == true) client?.supports("conversations.getTurnWindow") == true else projectedTurnWindow)
+        runTranscripts.update("$partition:$activeTopic:${ui.turnWindow}", client.takeUnless { ui.turnWindow || ui.historyDetached }, if (ui.turnWindow || ui.historyDetached) emptyList() else ui.runs)
         val entry = currentEntry
         ui.newTaskOpening = localEcho == null && isNewTaskPage() && (openingNewTaskDraft || (ui.connected && entry?.readingDefaults == true))
         ui.newTaskDefaultsFailed = entry?.failed == true && ui.connected
@@ -560,7 +570,7 @@ class MainActivity : ComponentActivity() {
         partition = owner; scope = saved?.optString("scope")?.takeIf { it.isNotEmpty() } ?: "global"
         selectedTask = saved?.optJSONObject("task")
         conversationTarget = runCatching { ConversationTarget.fromTopic(saved?.optString("topic") ?: "taskIndex") }.getOrNull()
-        acceptedEchoes.clear(); displayedMessages = null
+        clearConversationState()
         messageItems = emptyList(); taskItems = emptyList(); details = emptyMap()
         ui.hasUnplacedInput = false; ui.hasOrphanDownloads = false
         ui.spaces = emptyList(); ui.tasksLoaded = false; ui.taskSyncFailed = false
@@ -694,7 +704,7 @@ class MainActivity : ComponentActivity() {
         val id = message.getString("id")
         if (details[id]?.loading == true) return
         val topic = ui.topic
-        val sourceBody = message.getJSONObject("body").toString()
+        val sourceBody = MobileMessagePresentation.detailKey(message)
         val owner = partition
         val current = client
         details = details + (id to MobileMessageDetail(loading = true, sourceBody = sourceBody))
@@ -715,6 +725,7 @@ class MainActivity : ComponentActivity() {
                 } else {
                     presentation.readDetail(files.download(current, resolved, previewOnly = true), resolved, schemas, objects(message.optJSONArray("resources") ?: JSONArray()))
                 }
+                if (result.text != null && !presentation.matchesSavedText(message, result.text)) throw ProtocolFailure("SOURCE_CHANGED")
                 onUi { if (ui.topic == topic && partition == owner && client === current) details = details + (id to result.copy(sourceBody = sourceBody)) }
             } catch (failure: Exception) {
                 val error = when ((failure as? ProtocolFailure)?.code) {
@@ -749,7 +760,8 @@ class MainActivity : ComponentActivity() {
         readyContext = null; ui.conversationReady = false; ui.viewingArchived = false
         acceptedEchoes.clear(); displayedMessages = null; ui.syncFailure = ""
         historyRequest++; ui.membersChanging = false; ui.membersLoading = false; ui.membersError = ""
-        liveMessages = emptyList(); historicalMessages = emptyList()
+        reading = ConversationReadingWindow(); ui.activityGroups = emptyList(); ui.readerRuns = emptyList()
+        projectedTurnWindow = false; ui.historyDetached = false; ui.latestError = ""
         ui.historyPinned = false; ui.historyCursor = null; ui.historyHasMore = false; ui.historyLoading = false; ui.historyError = ""
         ui.anchorMessageId = null; ui.anchorRequestId = null; ui.membersOpen = false; ui.members = null
         readModel.resetTopic(); ui.readingCached = false; projectedTaskSource = null
@@ -830,12 +842,10 @@ class MainActivity : ComponentActivity() {
                 showTask(task, target = target)
                 ui.viewingArchived = archived
                 if (window != null) {
-                    historicalMessages = visibleMessages(objects(window.getJSONArray("items")))
+                    reading.pin(readPage(window))
                     ui.historyPinned = true
-                    ui.historyCursor = window.opt("nextCursor") as? String
-                    ui.historyHasMore = ui.historyCursor != null
                     ui.anchorMessageId = window.getString("anchorMessageId"); ui.anchorRequestId = java.util.UUID.randomUUID().toString()
-                    messageItems = historicalMessages; renderRows()
+                    displayReading(); renderRows()
                 }
                 syncUi()
             }
@@ -885,24 +895,37 @@ class MainActivity : ComponentActivity() {
         else submit()
     }
     private fun returnLatest() {
+        if (ui.historyDetached) {
+            if (!ui.conversationReady || readyContext != liveContext()) return
+            historyRequest++; ui.historyLoading = false; ui.historyError = ""; ui.latestError = ""
+            ui.historyPinned = false; ui.anchorMessageId = null; ui.anchorRequestId = null
+            reading.resume(); displayReading(); renderRows(); return
+        }
         if (!ui.historyPinned) return
         val target = conversationTarget ?: return
-        val current = client?.takeIf { it.isConnected } ?: run { ui.historyError = MobileFailurePresentation.NETWORK_UNAVAILABLE_NOTICE; return }
+        val current = client?.takeIf { it.isConnected } ?: run { ui.latestError = MobileFailurePresentation.NETWORK_UNAVAILABLE_NOTICE; return }
         val context = liveContext(); val visit = navigation; val request = ++historyRequest
-        ui.historyLoading = true; ui.historyError = ""
+        ui.historyLoading = true; ui.historyError = ""; ui.latestError = ""
         work {
             try {
-                val result = if (current.supports("conversations.getRecentWindow")) current.call("conversations.getRecentWindow", target.params()) else current.call("conversations.listMessages", target.params().put("limit", 50))
+                val turn = current.supports("conversations.getTurnWindow")
+                val result = when {
+                    turn -> current.call("conversations.getTurnWindow", target.params())
+                    current.supports("conversations.getRecentWindow") -> current.call("conversations.getRecentWindow", target.params())
+                    else -> current.call("conversations.listMessages", target.params().put("limit", 50))
+                }
                 onUi {
                     if (context != liveContext() || visit != navigation || historyRequest != request) return@onUi
-                    liveMessages = visibleMessages(objects(result.getJSONArray("items")))
-                    historicalMessages = emptyList(); messageItems = liveMessages
+                    val returned = visibleMessages(objects(result.getJSONArray("items")))
+                    val rows = readPage(result, returned)
+                    val streaming = liveMessages.filter { it.has("textRange") && it.optJSONObject("body")?.optString("kind") == "text" }
+                    reading.resume(if (turn) rows.prepend(ConversationPage(messages = streaming, runs = ui.runs, next = rows.next)) else rows.copy(runs = ui.runs))
+                    projectedTurnWindow = turn
                     ui.historyPinned = false; ui.anchorMessageId = null; ui.anchorRequestId = null
-                    ui.historyCursor = result.opt("nextCursor") as? String; ui.historyHasMore = ui.historyCursor != null
-                    ui.historyLoading = false; renderRows()
+                    ui.historyLoading = false; displayReading(); renderRows()
                     subscription?.subscribe(activeTopic)
                 }
-            } catch (error: Exception) { onUi { if (context == liveContext() && visit == navigation && historyRequest == request) { ui.historyLoading = false; ui.historyError = MobileFailurePresentation.message(MobileOperationFailure.from(error)) } } }
+            } catch (error: Exception) { onUi { if (context == liveContext() && visit == navigation && historyRequest == request) { ui.historyLoading = false; ui.latestError = MobileFailurePresentation.message(MobileOperationFailure.from(error)) } } }
         }
     }
     private fun refreshTasks() {
@@ -1021,17 +1044,18 @@ class MainActivity : ComponentActivity() {
         subscription?.let { it.subscribe(activeTopic); return }
         work {
             val metadata = if (task == null) current.call("conversations.get", JSONObject().put("conversationId", target.conversationId)) else null
-            val result = current.call("conversations.listMessages", target.params())
+            val turn = current.supports("conversations.getTurnWindow")
+            val result = current.call(if (turn) "conversations.getTurnWindow" else "conversations.listMessages", target.params())
             val messages = visibleMessages(objects(result.getJSONArray("items")))
             onUi {
                 if (generation != navigation || client !== current) return@onUi
                 metadata?.let(::acceptTaskProjection)
                 acceptedEchoes.values.removeAll { it.isProjected(messages, emptyList()) }
-                messageItems = messages; renderRows(); ui.notice = ""
+                projectedTurnWindow = turn; reading.resume(readPage(result, messages)); displayReading(); renderRows(); ui.notice = ""
             }
         }
     }
-    private fun renderProjection(topic: String, items: List<JSONObject>) {
+    private fun renderProjection(topic: String, items: List<JSONObject>, serial: Long) {
         if (topic != activeTopic) return
         if (topic == "taskIndex") {
             taskItems = items
@@ -1039,15 +1063,18 @@ class MainActivity : ComponentActivity() {
             refreshTaskMarks()
             renderRows()
         } else {
-            val messages = visibleMessages(items.filter { it.optString("entity") == "message" }.map { it.getJSONObject("value") })
-            liveMessages = messages
-            messageItems = if (ui.historyPinned) historicalMessages else mergeMessages(historicalMessages, liveMessages)
+            val turn = client?.supports("conversations.getTurnWindow") == true
+            projectedTurnWindow = turn
             val window = items.firstOrNull { it.optString("entity") == "historyWindow" }?.getJSONObject("value")
-            if (!ui.historyPinned && historicalMessages.isEmpty()) {
-                ui.historyCursor = window?.opt("nextCursor") as? String
-                ui.historyHasMore = window?.optBoolean("hasMore") == true
+            ui.runs = entities(items, "run")
+            val rows = ConversationPage(visibleMessages(entities(items, "message")).sortedWith(compareBy<JSONObject> { it.optString("createdAt") }.thenBy { it.getString("id") }),
+                entities(items, "activityGroup"), ui.runs, window?.opt("nextCursor") as? String)
+            if (reading.project(serial, rows)) {
+                ui.historyPage++
+                historyRequest++; ui.historyLoading = false; ui.historyError = ""; ui.latestError = ""
+                if (reading.mode == ConversationReadingWindow.Mode.Detached) { messageActionRequest++; ui.messageMenu = null }
             }
-            ui.runs = items.filter { it.optString("entity") == "run" }.map { it.getJSONObject("value") }
+            displayReading()
             if (acceptedEchoes.values.removeAll { it.isProjected(liveMessages, ui.runs) }) displayedMessages = null
             ui.queueItems = items.filter { it.optString("entity") == "queue" }.map { it.getJSONObject("value") }
             ui.approvalItems = items.filter { it.optString("entity") == "approval" }.map { it.getJSONObject("value") }
@@ -1079,7 +1106,7 @@ class MainActivity : ComponentActivity() {
         }
     }
     private fun readVisibleResult(runId: String) {
-        if (demo || !foreground || ui.readingCached || ui.screen != MobileScreen.Conversation) return
+        if (demo || !foreground || ui.readingCached || ui.historyPinned || ui.historyDetached || ui.screen != MobileScreen.Conversation) return
         val task = selectedTask ?: return
         if (ui.resultRunId != runId) return
         val current = client?.takeIf { it.isConnected && it.supports("taskMarks.setRead") } ?: return
@@ -1161,7 +1188,7 @@ class MainActivity : ComponentActivity() {
         }
         syncUi()
     }
-    private fun canStartInput() = localEcho?.let { it.failure != null && it.nextEdit } ?: true
+    private fun canStartInput() = !ui.historyDetached && (localEcho?.let { it.failure != null && it.nextEdit } ?: true)
     private fun failLocalEcho(reason: String) {
         val failure = mobileText(R.string.send_failed_reason, reason)
         sendIssue = input.scope to failure
@@ -1490,6 +1517,7 @@ class MainActivity : ComponentActivity() {
         prepareMessageAction(message, selected)
     }
     private fun prepareMessageAction(message: JSONObject, quick: MobileAction?, anchor: androidx.compose.ui.unit.IntRect? = null, contextual: Boolean = false) {
+        if (ui.historyDetached) { ui.notice = mobileText(R.string.mobile_reading_previous_window); return }
         localEcho?.takeIf { it.row === message }?.let { echo ->
             if (quick == MobileAction.EditMessage && echo.failure != null && composer.isEnabled && composer.text.isEmpty()) {
                 localEcho = null; details = details - echo.id
@@ -1580,26 +1608,39 @@ class MainActivity : ComponentActivity() {
     private fun moreHistory(cursor: String? = ui.historyCursor) {
         val target = conversationTarget ?: return
         val current = client?.takeIf { it.isConnected } ?: return
-        if (ui.historyLoading || !ui.historyHasMore) return
+        if (ui.historyLoading || !ui.historyHasMore || cursor == null || !ui.conversationReady) return
         val context = liveContext(); val visit = navigation; val request = ++historyRequest
+        val pageRequest = reading.request()?.takeIf { it.cursor == cursor } ?: return
         val pinned = ui.historyPinned
         ui.historyLoading = true; ui.historyError = ""
         work {
             try {
-                val result = current.call("conversations.listMessages", target.params().put("limit", 100).put("cursor", cursor ?: JSONObject.NULL))
-                val messages = visibleMessages(objects(result.getJSONArray("items")))
+                val turn = !pinned && current.supports("conversations.getTurnWindow")
+                val result = if (turn) current.call("conversations.getTurnWindow", target.params().put("cursor", cursor))
+                    else current.call("conversations.listMessages", target.params().put("limit", 100).put("cursor", cursor))
+                if (result.opt("nextCursor") == cursor) throw ProtocolFailure("SYNC_INVALID")
+                val page = readPage(result)
                 onUi {
                     if (context != liveContext() || visit != navigation || historyRequest != request || pinned != ui.historyPinned) return@onUi
-                    historicalMessages = mergeMessages(messages, historicalMessages)
-                    messageItems = if (pinned) historicalMessages else mergeMessages(historicalMessages, liveMessages)
-                    ui.historyCursor = result.opt("nextCursor") as? String
-                    ui.historyHasMore = ui.historyCursor != null; ui.historyLoading = false
-                    renderRows()
+                    ui.historyLoading = false
+                    if (reading.append(pageRequest, page)) { displayReading(); renderRows() }
                 }
             } catch (error: Exception) { onUi { if (context == liveContext() && visit == navigation && historyRequest == request) { ui.historyLoading = false; ui.historyError = MobileFailurePresentation.message(MobileOperationFailure.from(error)) } } }
         }
     }
-    private fun mergeMessages(older: List<JSONObject>, recent: List<JSONObject>): List<JSONObject> = (older + recent).associateBy { it.getString("id") }.values.sortedWith(compareBy<JSONObject> { it.optString("createdAt") }.thenBy { it.getString("id") })
+    private fun entities(items: List<JSONObject>, name: String) = items.filter { it.optString("entity") == name }.map { it.getJSONObject("value") }
+    private fun readPage(result: JSONObject, messages: List<JSONObject> = visibleMessages(objects(result.getJSONArray("items")))) = ConversationPage(messages,
+        result.optJSONArray("groups")?.let(::objects).orEmpty(), result.optJSONArray("runs")?.let(::objects).orEmpty(), result.opt("nextCursor") as? String)
+    private fun displayReading() {
+        messageItems = reading.display.messages; ui.activityGroups = reading.display.groups
+        ui.readerRuns = if (reading.mode == ConversationReadingWindow.Mode.Search) ui.runs else reading.display.runs
+        val detached = reading.mode == ConversationReadingWindow.Mode.Detached
+        if (ui.historyDetached != detached) displayedMessages = null
+        ui.historyDetached = detached
+        val cursor = reading.request()?.cursor
+        if (ui.historyCursor != cursor) ui.historyPage++
+        ui.historyCursor = cursor; ui.historyHasMore = cursor != null
+    }
     private fun visibleMessages(messages: List<JSONObject>) = messages.filter { message ->
         val body = message.getJSONObject("body")
         message.optString("role") != "assistant" || body.optString("kind") != "text" || body.optString("text").isNotBlank() || body.optBoolean("interrupted") || body.optBoolean("truncated") || message.optJSONArray("resources")?.length() != 0

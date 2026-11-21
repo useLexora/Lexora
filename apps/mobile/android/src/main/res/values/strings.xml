@@ -430,6 +430,8 @@
     <string name="draft_attachments">Current draft attachments</string>
     <string name="local_files_storage">Local files and storage</string>
     <string name="more_options">More options</string>
+    <string name="mobile_reading_previous_window">History was refreshed. You’re reading the previous view; return to the latest messages to load more.</string>
+    <string name="mobile_offline_conversation_snapshot">Offline · showing the last synced conversation</string>
     <string name="send_offline">Offline. Connect to send.</string>
     <string name="send_review_text">This text was already sent. Send it again?</string>
     <string name="send_queue_accepted">Input accepted into the task queue.</string>

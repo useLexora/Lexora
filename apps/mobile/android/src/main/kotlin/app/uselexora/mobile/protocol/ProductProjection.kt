@@ -27,6 +27,10 @@ class ProductProjection {
                 when (change.getString("kind")) {
                     "upsert" -> { val item = change.getJSONObject("item"); val id = key(topic, item); touched.add(id); next[id] = JSONObject(item.toString()) }
                     "remove" -> { val id = "${change.getString("entity")}:${change.getString("id")}"; touched.add(id); next.remove(id) }
+                    "textAppend" -> {
+                        val message = editable("message:${change.getString("messageId")}")?.getJSONObject("value") ?: throw ProtocolFailure("RESYNC_REQUIRED")
+                        ProductLiveText.append(message, change)
+                    }
                     "event" -> {
                         val event = change.getJSONObject("event")
                         val run = editable("run:${event.getString("runId")}")?.getJSONObject("value")

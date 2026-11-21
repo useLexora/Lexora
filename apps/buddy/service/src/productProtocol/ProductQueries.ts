@@ -7,18 +7,19 @@ import type { ProductRequestHandler } from './ProductConnection'
 import { createHash } from 'node:crypto'
 import { hostname, platform } from 'node:os'
 import { DatabaseSync } from 'node:sqlite'
-import { productErrorCodeSchema, ProductProtocolError } from '../../../shared/productProtocol/errors'
+import { productReadActivityStepDetailInputSchema } from '../../../shared/productProtocol/activityStepDetail'
+import { ProductProtocolError } from '../../../shared/productProtocol/errors'
 import { PRODUCT_LIMITS, productByteLength } from '../../../shared/productProtocol/limits'
-import { PRODUCT_QUERY_METHODS, productRunSchema } from '../../../shared/productProtocol/queries'
+import { productReadLiveTextInputSchema, productReadSavedTextInputSchema } from '../../../shared/productProtocol/messageText'
+import { PRODUCT_QUERY_METHODS } from '../../../shared/productProtocol/queries'
 import { decodeProductCursor, encodeProductCursor, encodeProductRevision } from '../../../shared/productProtocol/scalars'
 import { parseProductTopic } from '../../../shared/productProtocol/topics'
-import { toPublicRun } from '../runs/publicRun'
+import { productActivityStepsInputSchema, productTurnWindowInputSchema } from '../../../shared/productProtocol/turns'
 import { ConversationCommandRepository } from '../storage/ConversationCommandRepository'
 import { createConversationRepository } from '../storage/conversationRepository'
-import { createRunInputRepository } from '../storage/runInputRepository'
-import { createRunRepository } from '../storage/runRepository'
 import { createTaskMarkRepository } from '../storage/taskMarkRepository'
 import { assertCommittedRead, withTransaction } from '../storage/transaction'
+import { readActivityStepDetail } from './ProductActivityStepDetail'
 import { ProductBuddyAvatars } from './ProductBuddyAvatars'
 import { ProductBuddyDirectory } from './ProductBuddyDirectory'
 import { ProductContentReferences } from './ProductContentReferences'
@@ -30,6 +31,9 @@ import { ProductReadViews } from './ProductReadViews'
 import { ProductRunOutputs } from './ProductRunOutputs'
 import { ProductStreamingMessages } from './ProductStreamingMessages'
 import { ProductTaskReadModel } from './ProductTaskReadModel'
+import { createProductTurnSnapshot } from './ProductTurnSnapshot'
+import { ProductTurnWindow } from './ProductTurnWindow'
+import { readProductRun } from './readProductRun'
 
 export class ProductQueries {
   readonly #database: DatabaseSync
@@ -39,6 +43,7 @@ export class ProductQueries {
   readonly #hasReview: (approvalId: string, version: string) => boolean
   readonly views: ProductReadViews
   readonly streaming: ProductStreamingMessages
+  readonly turns: ProductTurnWindow
   readonly #tasks: ProductTaskReadModel
   readonly #pages: ProductPageReader
   readonly #drafts: ProductDraftReadModel
@@ -51,6 +56,7 @@ export class ProductQueries {
     this.#references = references ?? new ProductContentReferences(database, actorId)
     this.views = new ProductReadViews(database, actorId, this.#references, hasReview)
     this.streaming = new ProductStreamingMessages(database)
+    this.turns = new ProductTurnWindow(database, serviceInstanceId, this.views)
     this.#tasks = new ProductTaskReadModel(database, message => this.views.messagePreview(message))
     this.#pages = new ProductPageReader(database, serviceInstanceId)
     this.#drafts = new ProductDraftReadModel(database, actorId, this.#references, id => this.views.resource(id))
@@ -90,10 +96,13 @@ export class ProductQueries {
       database.exec('BEGIN')
       database.prepare('SELECT data_generation FROM storage_profile WHERE id = 1').get()
       const queries = new ProductQueries(database, this.#actorId, this.#instance, this.#references, this.#hasReview)
+      const read = topic.kind === 'conversationTurns'
+        ? createProductTurnSnapshot(queries.#turnSnapshotItems(topic.conversationId, topic.branchId))
+        : (cursor: string | null) => queries.#topicPage(topic, cursor)
       return { close, read: (cursor: string | null) => {
         if (closed)
           throw new ProductProtocolError('CURSOR_EXPIRED')
-        const page = queries.#topicPage(topic, cursor)
+        const page = read(cursor)
         return { ...page, complete: page.nextCursor === null }
       } }
     }
@@ -120,7 +129,7 @@ export class ProductQueries {
   assertTopic(topic: ProductTopic): void {
     if (topic.kind === 'draft' && !this.draft(topic.draftId))
       throw new ProductProtocolError('OBJECT_DELETED')
-    if ((topic.kind === 'conversation' || topic.kind === 'conversationWindow' || topic.kind === 'questions') && (!this.task(topic.conversationId) || !this.#database.prepare('SELECT 1 FROM conversation_branches WHERE id = ? AND conversation_id = ?').get(topic.branchId, topic.conversationId)))
+    if ((topic.kind === 'conversation' || topic.kind === 'conversationWindow' || topic.kind === 'conversationTurns' || topic.kind === 'questions') && (!this.task(topic.conversationId) || !this.#database.prepare('SELECT 1 FROM conversation_branches WHERE id = ? AND conversation_id = ?').get(topic.branchId, topic.conversationId)))
       throw new ProductProtocolError('OBJECT_DELETED')
   }
 
@@ -133,6 +142,8 @@ export class ProductQueries {
       return { items: [{ phase: 'ready' }], nextCursor: null }
     if (topic.kind === 'questions')
       return this.#read('questions.list', { conversationId: topic.conversationId, branchId: topic.branchId, limit: PRODUCT_LIMITS.pageItems, cursor }) as { items: unknown[], nextCursor: string | null }
+    if (topic.kind === 'conversationTurns')
+      return createProductTurnSnapshot(this.#turnSnapshotItems(topic.conversationId, topic.branchId))(cursor)
     if (topic.kind === 'conversationWindow')
       return this.#windowTopicPage(topic.conversationId, topic.branchId, cursor)
     if (topic.kind !== 'conversation') {
@@ -179,17 +190,22 @@ export class ProductQueries {
       case 'buddies.list': return new ProductBuddyDirectory(this.#database, this.#instance).list(input)
       case 'conversations.listMembers': return new ProductBuddyDirectory(this.#database, this.#instance).members(input)
       case 'conversations.search': return new ProductHistorySearch(this.#database, this.#instance, this.views).search(input)
+      case 'conversations.readActivityStepDetail': return readActivityStepDetail(this.#database, this.turns, productReadActivityStepDetailInputSchema.parse(input))
+      case 'conversations.getTurnWindow': return this.turns.page(productTurnWindowInputSchema.parse(input))
+      case 'conversations.listActivitySteps': return this.turns.steps(productActivityStepsInputSchema.parse(input))
+      case 'conversations.readSavedText': return this.turns.readSavedText(productReadSavedTextInputSchema.parse(input))
+      case 'conversations.readLiveText': return this.streaming.readBefore(productReadLiveTextInputSchema.parse(input))
       case 'conversations.getMessageWindow': return this.#messageWindow(input)
       case 'conversations.getRecentWindow': return this.#recentWindow(input)
       case 'buddies.getAvatars': return new ProductBuddyAvatars(this.#database).metadata(input.buddyIds as string[])
       case 'questions.list': return this.#pages.read(`${method}:${input.conversationId}:${input.branchId}`, input, 'user_questions', 'EXISTS (SELECT 1 FROM runs r JOIN conversations c ON c.id = r.conversation_id WHERE r.id = user_questions.run_id AND r.conversation_id = ? AND r.branch_id = ? AND c.deleted_at IS NULL)', [String(input.conversationId), String(input.branchId)], id => this.views.question(id))
       case 'spaces.list': return this.#pages.read(method, input, 'spaces', 'revoked_at IS NULL', [], id => this.#database.prepare('SELECT id, name, memory_scope AS memoryScope FROM spaces WHERE id = ?').get(id))
       case 'conversations.listMessages': return this.#messagePage(input)
-      case 'runs.listTranscriptEvents': return this.#run(String(input.runId))?.executionKind === 'root'
+      case 'runs.listTranscriptEvents': return this.readRun(String(input.runId))?.executionKind === 'root'
         ? this.#pages.read(`${method}:${input.runId}`, input, '(SELECT rowid, CAST(sequence AS TEXT) AS id, run_id, sequence FROM run_events)', 'run_id = ? AND sequence > ? AND sequence <= ?', [String(input.runId), BigInt(String(input.afterSequence)), BigInt(String(input.throughSequence))], sequence => this.views.transcriptEvent(String(input.runId), sequence), String(input.throughSequence))
         : { items: [], nextCursor: null }
       case 'runs.listOutputs': return new ProductRunOutputs(this.#database, this.#pages, this.views).read(input)
-      case 'runs.listEvents': return this.#run(String(input.runId)) ? this.#pages.read(`${method}:${input.runId}`, input, `(SELECT rowid, CAST(sequence AS TEXT) AS id, run_id, sequence FROM run_events)`, 'run_id = ? AND (? IS NULL OR sequence <= ?)', [String(input.runId), input.throughSequence ? BigInt(String(input.throughSequence)) : null, input.throughSequence ? BigInt(String(input.throughSequence)) : null], sequence => this.views.event(String(input.runId), sequence)) : { items: [], nextCursor: null }
+      case 'runs.listEvents': return this.readRun(String(input.runId)) ? this.#pages.read(`${method}:${input.runId}`, input, `(SELECT rowid, CAST(sequence AS TEXT) AS id, run_id, sequence FROM run_events)`, 'run_id = ? AND (? IS NULL OR sequence <= ?)', [String(input.runId), input.throughSequence ? BigInt(String(input.throughSequence)) : null, input.throughSequence ? BigInt(String(input.throughSequence)) : null], sequence => this.views.event(String(input.runId), sequence)) : { items: [], nextCursor: null }
       case 'chat.queue.list': return this.#pages.read(`${method}:${input.conversationId}:${input.branchId}`, input, 'chat_queue', 'conversation_id = ? AND branch_id = ? AND state IN (\'waiting\',\'paused\')', [String(input.conversationId), String(input.branchId)], id => this.views.queue(id))
       case 'approvals.getDecision': return this.views.approvalDecision(String(input.approvalId))
       case 'approvals.get': return this.views.approval(String(input.approvalId))
@@ -207,11 +223,11 @@ export class ProductQueries {
       case 'conversations.get': return this.task(String(input.conversationId))
       case 'composerDrafts.get': return this.draft(String(input.draftId))
       case 'composerDrafts.find': return this.#drafts.find(input.scope as BuddyComposerDraft['scope'])
-      case 'runs.get': return this.#run(String(input.runId))
+      case 'runs.get': return this.readRun(String(input.runId))
       case 'runs.getExecutionState': return this.views.runExecution(String(input.runId))
       case 'conversations.list': return this.#pages.read(method, input, 'conversations', 'deleted_at IS NULL AND archived_at IS NULL AND (? IS NULL OR space_id = ?)', [input.spaceId as string ?? null, input.spaceId as string ?? null], { batch: ids => this.#tasks.summaries(ids) })
       case 'composerDrafts.list': return this.#pages.read(method, input, 'composer_drafts', '1', [], id => this.draft(id))
-      case 'runs.list': return this.#pages.read(`${method}:${input.conversationId}:${input.branchId}`, input, 'runs', 'conversation_id = ? AND branch_id = ? AND execution_kind IN (\'root\', \'actor_child\', \'maintenance\') AND EXISTS (SELECT 1 FROM conversations c WHERE c.id = runs.conversation_id AND c.deleted_at IS NULL)', [String(input.conversationId), String(input.branchId)], id => this.#run(id))
+      case 'runs.list': return this.#pages.read(`${method}:${input.conversationId}:${input.branchId}`, input, 'runs', 'conversation_id = ? AND branch_id = ? AND execution_kind IN (\'root\', \'actor_child\', \'maintenance\') AND EXISTS (SELECT 1 FROM conversations c WHERE c.id = runs.conversation_id AND c.deleted_at IS NULL)', [String(input.conversationId), String(input.branchId)], id => this.readRun(id))
       case 'conversations.listBranches': return this.#pages.read(`${method}:${input.conversationId}`, input, 'conversation_branches', 'conversation_id = ? AND EXISTS (SELECT 1 FROM conversations c WHERE c.id = conversation_branches.conversation_id AND c.deleted_at IS NULL)', [String(input.conversationId)], (id) => {
         const branch = this.#database.prepare('SELECT * FROM conversation_branches WHERE id = ?').get(id)!
         const counts = this.#database.prepare(`SELECT
@@ -222,6 +238,66 @@ export class ProductQueries {
         return { id: branch.id, conversationId: branch.conversation_id, parentBranchId: branch.parent_branch_id, forkedFromMessageId: branch.forked_from_message_id, createdAt: branch.created_at, ...Object.fromEntries(Object.entries(counts).map(([name, count]) => [name, Number(count)])) }
       })
     }
+  }
+
+  * #turnSnapshotItems(conversationId: string, branchId: string) {
+    this.assertTopic({ kind: 'conversationTurns', conversationId, branchId })
+    yield { entity: 'task', value: this.task(conversationId) }
+    const window = this.turns.page({ conversationId, branchId, cursor: null })
+    const loaded = new Set(window.runs.map(run => run.id))
+    const runIds = new Set(window.items.flatMap(message => message.runId ? [message.runId] : []))
+    for (const value of window.runs) yield { entity: 'run', value }
+    const messageIds = new Set(window.items.map(message => message.id))
+    const runs = this.#database.prepare(`SELECT id FROM runs WHERE conversation_id = ? AND branch_id = ?
+      AND execution_kind IN ('root', 'actor_child', 'maintenance') AND (status IN ('queued', 'running')
+        OR id IN (SELECT value FROM json_each(?)))
+      ORDER BY started_at, id`).all(conversationId, branchId, JSON.stringify([...runIds]))
+    for (const row of runs) {
+      if (loaded.has(String(row.id)))
+        continue
+      const run = this.readRun(String(row.id))
+      if (!run)
+        continue
+      yield { entity: 'run', value: run }
+      if (run.executionKind === 'root' && ['queued', 'running'].includes(run.status) && !messageIds.has(run.triggeringMessageId)) {
+        const message = this.turnMessage(conversationId, branchId, run.triggeringMessageId, run.id)
+        if (message?.role === 'user') {
+          messageIds.add(message.id)
+          yield { entity: 'message', value: message }
+        }
+      }
+    }
+    yield { entity: 'historyWindow', value: { conversationId, branchId, hasMore: window.nextCursor !== null, nextCursor: window.nextCursor } }
+    for (const value of window.items) yield { entity: 'message', value }
+    for (const value of window.groups) yield { entity: 'activityGroup', value }
+    const approvals = this.#database.prepare(`SELECT a.id FROM approvals a JOIN runs r ON r.id = a.run_id
+      WHERE r.conversation_id = ? AND r.branch_id = ? AND a.status = 'pending' ORDER BY a.created_at, a.id`).all(conversationId, branchId)
+    for (const approval of approvals) {
+      const value = this.views.approvalHeader(String(approval.id))
+      if (value)
+        yield { entity: 'approval', value }
+    }
+    let cursor: string | null = null
+    do {
+      const page = this.#read('chat.queue.list', { conversationId, branchId, cursor, limit: PRODUCT_LIMITS.pageItems }) as { items: unknown[], nextCursor: string | null }
+      for (const value of page.items) yield { entity: 'queue', value }
+      cursor = page.nextCursor
+    } while (cursor !== null)
+    do {
+      const page = this.streaming.turnPage(conversationId, branchId, cursor)
+      for (const message of page.items) yield { entity: 'message', value: { ...message, ...this.turns.binding({ conversationId, branchId, runId: message.runId, messageId: message.id }) } }
+      cursor = page.nextCursor
+    } while (cursor !== null)
+  }
+
+  turnMessage(conversationId: string, branchId: string, id: string, runId?: string) {
+    const message = createConversationRepository(this.#database).findMessageById(id)
+    if (!message || message.conversationId !== conversationId || (message.role !== 'user' && message.role !== 'assistant'))
+      return null
+    const binding = this.turns.binding({ conversationId, branchId, runId: message.runId ?? runId, messageId: message.id })
+    if (message.branchId !== branchId && !(message.role === 'user' && binding.turnInputId === id))
+      return null
+    return { ...this.views.turnMessage(message), ...binding }
   }
 
   #windowTopicPage(conversationId: string, branchId: string, cursor: string | null): { items: unknown[], nextCursor: string | null } {
@@ -243,7 +319,7 @@ export class ProductQueries {
         throw new ProductProtocolError('PAGE_TOO_LARGE')
       const table = `(SELECT rowid, id FROM runs WHERE conversation_id = ? AND branch_id = ? AND execution_kind IN ('root','actor_child','maintenance') ORDER BY (status IN ('queued','running')) DESC, rowid DESC LIMIT ${PRODUCT_LIMITS.pageItems})`
       const rows = this.#database.prepare(`SELECT id FROM ${table}`).all(conversationId, branchId)
-      page = this.#pages.read(`runs.list:recent:${conversationId}:${branchId}`, input, 'runs', 'id IN (SELECT value FROM json_each(?))', [JSON.stringify(rows.map(row => row.id))], id => this.#run(id))
+      page = this.#pages.read(`runs.list:recent:${conversationId}:${branchId}`, input, 'runs', 'id IN (SELECT value FROM json_each(?))', [JSON.stringify(rows.map(row => row.id))], id => this.readRun(id))
     }
     else if (phase === 2 || phase === 3) {
       const method = phase === 2 ? 'chat.queue.list' : 'approvals.list'
@@ -263,13 +339,8 @@ export class ProductQueries {
     return { items: page.items.map(value => ({ entity: entities[phase]!, value })), nextCursor: page.nextCursor ? `${phase}.${encodeURIComponent(page.nextCursor)}` : phase < 6 ? `${phase + 1}.` : null }
   }
 
-  #run(id: string) {
-    const run = createRunRepository(this.#database).findById(id)
-    if (!run || run.executionKind === 'npc_child' || !this.task(run.conversationId))
-      return null
-    const input = createRunInputRepository(this.#database).findByRunId(id)
-    const code = productErrorCodeSchema.safeParse(run.errorCode)
-    return productRunSchema.parse({ ...toPublicRun(run, input?.reasoning ?? null), executionKind: run.executionKind, generation: encodeProductRevision(run.generation), lastEventSequence: encodeProductRevision(Number(this.#database.prepare('SELECT next_event_sequence FROM runs WHERE id = ?').get(id)?.next_event_sequence ?? 1) - 1), errorCode: run.errorCode ? code.success ? code.data : 'INTERNAL_ERROR' : null })
+  readRun(id: string) {
+    return readProductRun(this.#database, id)
   }
 
   #recentWindow(input: Record<string, unknown>) {
@@ -283,7 +354,7 @@ export class ProductQueries {
     const messageId = String(input.messageId)
     const conversations = createConversationRepository(this.#database)
     const message = conversations.findMessageById(messageId)
-    if (!message || message.conversationId !== conversationId || (message.runId && !this.#run(message.runId)))
+    if (!message || message.conversationId !== conversationId || (message.runId && !this.readRun(message.runId)))
       throw new ProductProtocolError('OBJECT_DELETED')
     let page
     try {

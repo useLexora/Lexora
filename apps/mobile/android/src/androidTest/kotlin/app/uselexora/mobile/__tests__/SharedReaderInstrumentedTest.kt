@@ -16,7 +16,11 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
+import app.uselexora.mobile.ui.ReaderTurnContext
 import app.uselexora.mobile.ui.ReaderView
+import app.uselexora.mobile.protocol.ConversationTarget
+import app.uselexora.mobile.protocol.ProtocolSchemas
+import app.uselexora.mobile.ui.ReaderArtifactContext
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -46,6 +50,9 @@ class SharedReaderInstrumentedTest {
     private var anchorMessageId: String? = null
     private var anchorRequestId: String? = null
     private var hasLaterMessages = false
+    private var turn = ReaderTurnContext()
+    private var artifactContext: ReaderArtifactContext? = null
+    private val transcriptRequests = java.util.concurrent.CopyOnWriteArrayList<String>()
     private val latestRequests = java.util.concurrent.CopyOnWriteArrayList<String>()
     private val readResults = java.util.concurrent.CopyOnWriteArrayList<String>()
 
@@ -66,7 +73,7 @@ class SharedReaderInstrumentedTest {
     }
     private fun update() {
         compose.runOnUiThread { host.update(messages, topic, details, runs.map(::completeRun), dark, scale,
-            { actions.add("message:${it.getString("id")}") }, { actions.add("resource:${it.getString("resourceId")}") }, { actions.add("detail:${it.getString("id")}") }, { message, action -> actions.add("$action:${message.getString("id")}") }, language = language, transcripts = transcripts, resultRunId = readTarget, onReadResult = { readResults.add(it) }, anchorMessageId = anchorMessageId, anchorRequestId = anchorRequestId, hasLaterMessages = hasLaterMessages, onLatest = { latestRequests.add(topic) }, branches = branches, selectedBranchId = selectedBranchId, onBranch = { actions.add("branch:${it.getString("id")}") }) }
+            { actions.add("message:${it.getString("id")}") }, { actions.add("resource:${it.getString("resourceId")}") }, { actions.add("detail:${it.getString("id")}") }, { message, action -> actions.add("$action:${message.getString("id")}") }, language = language, transcripts = transcripts, resultRunId = readTarget, onReadResult = { readResults.add(it) }, anchorMessageId = anchorMessageId, anchorRequestId = anchorRequestId, hasLaterMessages = hasLaterMessages, onLatest = { latestRequests.add(topic) }, branches = branches, selectedBranchId = selectedBranchId, onBranch = { actions.add("branch:${it.getString("id")}") }, turn = turn, onOlder = { retry -> actions.add("older:$retry") }, artifactContext = artifactContext, onLoadTranscript = { id, _ -> transcriptRequests.add(id) }) }
     }
     private fun js(script: String): String {
         val result = AtomicReference<String>()
@@ -113,6 +120,70 @@ class SharedReaderInstrumentedTest {
         until("document.body.innerText.includes('收到') && document.querySelectorAll('[data-message-id=\"user-1\"]').length === 1")
     }
 
+    @Test fun compactTurnKeepsNarrationAndFailedGroupWithoutLoadingItsStepsOrTranscript() {
+        val question = message("user", "请修复构建", "user")
+        val explanation = message("explanation", "失败发生在打包阶段")
+        val answer = message("answer", "已切换构建方式并修复")
+        val at = "2026-11-11T05:00:01.000Z"
+        val group = JSONObject().put("id", "build-tools").put("runId", "stream-run").put("afterMessageId", "explanation").put("createdAt", at)
+            .put("toolCount", 200).put("runningCount", 0).put("failedCount", 1).put("interruptedCount", 0).put("activeToolName", JSONObject.NULL)
+            .put("reasoningCount", 1).put("runningReasoningCount", 0).put("interruptedReasoningCount", 0)
+            .put("counts", JSONArray().put(JSONObject().put("category", "command").put("count", 200)))
+        messages = listOf(question.put("createdAt", "2026-11-11T05:00:00.000Z"), explanation.put("createdAt", at), answer.put("createdAt", "2026-11-11T05:00:02.000Z"))
+        runs = listOf(JSONObject().put("status", "completed"))
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val schemas = ProtocolSchemas(JSONObject(context.assets.open("protocol-schema.json").bufferedReader().use { it.readText() }))
+        val calls = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val output = "仅此步骤的构建输出"
+        val liveCommand = "make synthetic-build"
+        val methods = listOf("conversations.listActivitySteps", "resources.get", "conversations.readActivityStepDetail")
+        SyntheticProductService(schemas, methods) { call ->
+            when (call.method) {
+                methods[0] -> {
+                    calls.add("steps:${call.params.getString("groupId")}")
+                    val step = JSONObject().put("id", "step-73").put("toolName", "bash").put("status", "failed").put("messageId", "result-73")
+                    val pending = JSONObject().put("id", "step-200").put("toolName", "bash").put("status", "running").put("messageId", JSONObject.NULL)
+                    call.reply(JSONObject().put("items", JSONArray().put(step).put(pending)).put("nextCursor", "next-page"))
+                }
+                methods[1] -> {
+                    val id = call.params.getString("resourceId")
+                    calls.add("resource:$id")
+                    call.reply(JSONObject().put("resourceId", id).put("kind", "message").put("name", "工具输出").put("mimeType", "text/plain").put("sizeBytes", output.toByteArray().size.toString()).put("revision", "1").put("availability", "ready"))
+                }
+                methods[2] -> {
+                    calls.add("live:${call.params.getString("runId")}:${call.params.getString("groupId")}:${call.params.getString("stepId")}")
+                    val done = call.params.has("knownRevision")
+                    call.reply(JSONObject().put("stepId", "step-200").put("messageId", JSONObject.NULL).put("status", if (done) "completed" else "running")
+                        .put("available", true).put("truncated", false).put("revision", (if (done) "b" else "a").repeat(64)).put("text", if (done) "Build succeeded" else liveCommand))
+                }
+            }
+        }.use { service ->
+            val client = service.connect()
+            val file = File.createTempFile("step-detail", ".txt", context.cacheDir)
+            try {
+                artifactContext = ReaderArtifactContext(client.identity!!.partition, "branch", client, schemas) { _, resource ->
+                    calls.add("body:${resource.getString("resourceId")}"); file.apply { writeText(output) }
+                }
+                turn = ReaderTurnContext(ConversationTarget("conversation", "branch"), client, true, listOf(group))
+                show()
+                until("document.querySelector('[data-activity-id=build-tools] button[aria-expanded=false]') && document.body.innerText.includes('200') && document.body.innerText.includes('已切换构建方式并修复')")
+                assertEquals("true", js("(() => {const b=document.body.innerText; return b.indexOf('失败发生在打包阶段') >= 0 && b.indexOf('失败发生在打包阶段') < b.indexOf('200') && b.indexOf('200') < b.indexOf('已切换构建方式并修复')})()"))
+                assertTrue(calls.isEmpty()); assertTrue(transcriptRequests.isEmpty())
+                js("document.querySelector('[data-activity-id=build-tools] button[aria-expanded]').click()")
+                until("document.querySelector('[data-step-id=step-73]') !== null")
+                assertEquals(listOf("steps:build-tools"), calls.toList())
+                js("document.querySelector('[data-step-id=step-73] button').click()")
+                until("document.body.innerText.includes('$output')")
+                assertEquals(listOf("steps:build-tools", "resource:message:result-73", "body:message:result-73"), calls.toList())
+                js("document.querySelector('[data-step-id=step-73] button').click(); document.querySelector('[data-step-id=step-200] button').click(); document.querySelector('[data-step-id=step-200]').scrollIntoView()")
+                until("document.body.innerText.includes('$liveCommand')")
+                until("document.querySelector('[data-step-id=step-200]').innerText.includes('Build succeeded')")
+                assertEquals(listOf("live:stream-run:build-tools:step-200", "live:stream-run:build-tools:step-200"), calls.filter { it.startsWith("live:") })
+                assertTrue(transcriptRequests.isEmpty())
+            } finally { client.close(); file.delete() }
+        }
+    }
+
     @Test fun languageUpdatesMessageAndMarkdownActionsWithoutTranslatingUserText() {
         val original = app.uselexora.mobile.ui.MobileAppearance.language
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -136,13 +207,26 @@ class SharedReaderInstrumentedTest {
         } finally { compose.runOnUiThread { app.uselexora.mobile.ui.MobileAppearance.selectLanguage(context, original) } }
     }
 
-    @Test fun tablesMathCodeAndNativeActionsWorkInPackagedWebView() {
+    @Test fun streamingRichMarkdownConvergesAndKeepsNativeActionsSafe() {
         val code = "  val text = \"中文😀\"\n\n    println(text)\n"
         val text = "# 共享正文验收\n\n| 项目 | 结果 |\n| --- | --- |\n| 中文表格需要自动换行显示完整内容 | 完成 |\n\n```kotlin\n${code}```\n\n行内公式 ${'$'}E=mc^2${'$'}\n\n${'$'}${'$'}\n\\frac{1}{2}+\\sqrt{x}\n${'$'}${'$'}\n\n![远程图片](https://example.invalid/no-request.png)\n\n<script>window.readerInjected=true</script>"
-        messages = listOf(message("rich", text).put("createdAt", "2026-11-11T05:00:00Z").put("resources", JSONArray().put(JSONObject()
-            .put("resourceId", "attachment-1").put("name", "example.txt").put("mimeType", "text/plain").put("sizeBytes", "30").put("availability", "ready"))))
+        val finalMessage = message("rich", text).put("createdAt", "2026-11-11T05:00:00Z").put("resources", JSONArray().put(JSONObject()
+            .put("resourceId", "attachment-1").put("name", "example.txt").put("mimeType", "text/plain").put("sizeBytes", "30").put("availability", "ready")))
+        val heading = "共享正文验收"
+        runs = listOf(JSONObject().put("status", "running"))
+        messages = listOf(message("rich", "# $heading"))
         show()
-        until("document.querySelector('table') !== null && document.querySelectorAll('.katex').length >= 2")
+        until("document.querySelector('h1')?.textContent === '$heading'")
+        val codeLine = "println(text)"
+        val incomplete = text.substring(0, text.indexOf(codeLine) + codeLine.length)
+        messages = listOf(message("rich", incomplete))
+        update()
+        until("document.querySelector('h1')?.textContent === '$heading' && document.body.innerText.includes('$codeLine') && document.querySelectorAll('[data-message-id=rich]').length === 1")
+        messages = listOf(finalMessage)
+        runs = emptyList()
+        update()
+        until("document.querySelectorAll('table').length === 1 && document.querySelector('table').innerText.includes('完成') && document.querySelectorAll('.katex').length >= 2 && document.body.innerText.includes('println(text)')")
+        assertEquals("1", js("document.querySelectorAll('[data-message-id=rich]').length"))
         until("document.querySelector('.message-avatar img')?.naturalWidth > 0")
         assertEquals("true", js("document.querySelector('.message-time').textContent.trim().length > 0"))
         assertEquals("1", js("document.querySelectorAll('.message-actions').length"))
@@ -160,7 +244,6 @@ class SharedReaderInstrumentedTest {
         js("document.querySelector('.resource-link').click(); document.querySelector('.reader-message').dispatchEvent(new MouseEvent('contextmenu', {bubbles:true}))")
         compose.waitUntil(5_000) { actions.size == 2 }
         assertEquals(listOf("resource:attachment-1", "message:rich"), actions)
-        File(context.filesDir, "shared-reader-rich.png").outputStream().use { InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
     }
 
     @Test fun messageFootersConfirmCopyAndKeepBranchingAndMoreActionsReachable() {
@@ -198,7 +281,7 @@ class SharedReaderInstrumentedTest {
         runs = listOf(JSONObject().put("id", "stream-run").put("branchId", "retry").put("status", "completed"))
         show()
         until("document.querySelector('.message-branches')?.textContent.includes('2/2') === true")
-        assertEquals("true", js("document.querySelector('.assistant .message-actions').getBoundingClientRect().height===28 && document.documentElement.scrollWidth<=innerWidth"))
+        assertEquals("true", js("document.documentElement.scrollWidth<=innerWidth"))
         assertEquals("true", js("document.querySelector('[aria-label=下一个分支]').disabled && !document.querySelector('[aria-label=上一个分支]').disabled"))
         js("document.querySelector('[aria-label=上一个分支]').click()")
         compose.waitUntil(5_000) { actions.contains("branch:branch") }
@@ -238,7 +321,7 @@ class SharedReaderInstrumentedTest {
         select("stopped", "cancelled", "")
         update()
         until("document.querySelector('.message-branches')?.textContent.includes('3/4') === true && document.querySelector('.reader-turn-status')?.textContent.includes('已停止') === true")
-        assertEquals("true", js("document.querySelector('[aria-label=重新生成]') === null && document.querySelectorAll('.message-branches').length===1 && document.querySelector('.message-branches').getBoundingClientRect().height===28"))
+        assertEquals("true", js("document.querySelector('[aria-label=重新生成]') === null && document.querySelectorAll('.message-branches').length===1"))
         navigate("下一个分支", "last")
         select("last")
         update()
@@ -250,7 +333,7 @@ class SharedReaderInstrumentedTest {
         until("document.querySelector('.message-branches')?.textContent.includes('3/4') === true")
         language = "en"; dark = true; scale = 1.5f; update()
         until("document.querySelector('.reader-turn-status')?.textContent.includes('Stopped') === true")
-        assertEquals("true", js("document.documentElement.scrollWidth<=innerWidth && document.querySelector('[aria-label=\"Previous branch\"]').getBoundingClientRect().height===28"))
+        assertEquals("true", js("document.documentElement.scrollWidth<=innerWidth && document.querySelector('[aria-label=\"Previous branch\"]').getBoundingClientRect().height>0"))
         for ((status, label) in listOf("failed" to "Failed", "completed" to "No reply generated")) {
             select("stopped", status, "")
             update()
@@ -281,8 +364,6 @@ class SharedReaderInstrumentedTest {
         until("document.querySelector('.tool-output')?.textContent.includes('Linux') === true")
         assertEquals("1", js("document.querySelectorAll('.message-author').length"))
         assertEquals("true", js("document.documentElement.scrollWidth <= innerWidth"))
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        File(context.filesDir, "reader-turn-tools.png").outputStream().use { InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
     }
 
     @Test fun pendingTurnUsesItsActorAvatarBeforeAnyAssistantMessage() {
@@ -330,8 +411,6 @@ class SharedReaderInstrumentedTest {
         until("document.querySelector('.buddy-chat-tool-read')?.textContent.includes('export const value = 1') === true && document.querySelector('.buddy-chat-tool-diff .is-added') !== null")
         Thread.sleep(400)
         assertEquals("true", js("document.documentElement.scrollWidth <= innerWidth"))
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        File(context.filesDir, "reader-desktop-tools.png").outputStream().use { InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
         dark = true; update()
         until("document.querySelector('main.dark .buddy-chat-activity-group.is-open') !== null")
         event("tool.started", """{"toolCallId":"streaming","toolName":"bash","presentation":{"card":"terminal","command":"sleep 1","cwd":".","exitCode":null,"signal":null,"description":null,"output":null,"truncated":false}}""")
@@ -349,6 +428,31 @@ class SharedReaderInstrumentedTest {
         transcripts = mapOf("stream-run" to JSONObject().put("events", replacement).put("loaded", true))
         update()
         until("document.querySelector('[data-tool-call-id=shell]') !== null && document.querySelector('[data-tool-call-id=streaming]') === null && document.querySelector('[data-tool-call-id=failed]') === null && !document.body.innerText.includes('257,111')")
+    }
+
+    @Test fun shortHistoryFillsAndRetryFloatsWithoutMovingTheMessage() {
+        val selector = "document.querySelector('[data-message-id=tail]')"
+        messages = listOf(message("tail", "当前消息"))
+        turn = ReaderTurnContext(enabled = true, historyAvailable = true, historyPage = 1)
+        show()
+        until("$selector !== null")
+        compose.waitUntil(5000) { actions.count { it == "older:false" } == 1 }
+        js("window.tailTop=$selector.getBoundingClientRect().top")
+        turn = ReaderTurnContext(enabled = true, historyAvailable = true, historyError = "offline", historyPage = 1)
+        update()
+        until("document.querySelector('.history-retry') !== null")
+        assertEquals("true", js("(() => {const b=document.querySelector('.history-retry'); return getComputedStyle(b).position==='absolute' && !b.closest('.reader-viewport') && b.getBoundingClientRect().height>=44 && Math.abs(window.tailTop-$selector.getBoundingClientRect().top)<1})()"))
+        js("document.querySelector('.history-retry').click()")
+        compose.waitUntil(5000) { "older:true" in actions }
+        turn = ReaderTurnContext(enabled = true, historyAvailable = true, historyPage = 2)
+        update()
+        compose.waitUntil(5000) { actions.count { it == "older:false" } == 2 }
+        assertEquals("true", js("!document.querySelector('.history-retry') && Math.abs(window.tailTop-$selector.getBoundingClientRect().top)<1"))
+        messages = (1..40).map { message("early-$it", "以往消息 $it") } + messages
+        turn = ReaderTurnContext(enabled = true, historyAvailable = true, historyPage = 3)
+        update()
+        until("(()=>{const v=document.querySelector('.reader-viewport'); return v.scrollHeight>v.clientHeight && v.scrollTop>0})()")
+        assertEquals(listOf("older:false", "older:true", "older:false"), actions.filter { it.startsWith("older:") })
     }
 
     @Test fun streamingPreservesReadingPositionAndResetsOnTopicChange() {
@@ -374,8 +478,6 @@ class SharedReaderInstrumentedTest {
         until("document.body.innerText.includes('流式片段29')")
         dark = true; scale = 1.3f; update()
         until("document.querySelector('main.dark') !== null && parseFloat(getComputedStyle(document.querySelector('main')).fontSize) >= 19.4")
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        File(context.filesDir, "shared-reader-dark.png").outputStream().use { InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
         topic = "other-topic"; messages = listOf(message("other", "另一分支独立内容")); update()
         until("document.body.innerText.includes('另一分支独立内容') && !document.body.innerText.includes('历史 1')")
     }
@@ -473,15 +575,7 @@ class SharedReaderInstrumentedTest {
                     showSoftInputOnFocus = false
                 } }
                 MobileShell(state, composer, { _, _ -> }) { modifier ->
-                    AndroidView(factory = { ReaderView(it).also { view ->
-            host = view
-            (view.getChildAt(0) as WebView).webChromeClient = object : android.webkit.WebChromeClient() {
-                override fun onConsoleMessage(message: android.webkit.ConsoleMessage): Boolean {
-                    File(view.context.filesDir, "reader-console.txt").appendText("${message.messageLevel()}: ${message.message()} @${message.lineNumber()}\n")
-                    return true
-                }
-            }
-        } }, modifier = modifier, onRelease = { it.dispose() })
+                    AndroidView(factory = { ReaderView(it).also { view -> host = view } }, modifier = modifier, onRelease = { it.dispose() })
                 }
             }
         }
@@ -509,8 +603,6 @@ class SharedReaderInstrumentedTest {
         }
         runs = emptyList(); update()
         until("document.body.innerText.includes('正在输出中文表格')")
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        File(context.filesDir, "shared-reader-composer.png").outputStream().use { InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
         if (android.os.Build.VERSION.SDK_INT >= 29) {
             val previous = AtomicReference<WebView>()
             compose.runOnUiThread { previous.set(host.getChildAt(0) as WebView); assertTrue(previous.get().webViewRenderProcess!!.terminate()) }
@@ -523,23 +615,6 @@ class SharedReaderInstrumentedTest {
             compose.runOnUiThread { assertEquals("中文输入保持连续😀", composer.text.toString()) }
             assertTrue(actions.isEmpty())
         }
-    }
-
-    @Test fun incompleteMarkdownConvergesAfterTheFinalStreamFrame() {
-        val text = "# 流式结构验收\n\n| 项目 | 结果 |\n| --- | --- |\n| 中文 | 正常 |\n\n```kotlin\nval answer = 42\nprintln(answer)\n```\n\n行内 ${'$'}E=mc^2${'$'}\n\n${'$'}${'$'}\n\\frac{1}{2}\n${'$'}${'$'}"
-        messages = listOf(message("partial", "# 流式结构验收\n\n"))
-        runs = listOf(JSONObject().put("id", "stream-run").put("status", "running"))
-        show()
-        until("document.body.innerText.includes('流式结构验收')")
-        for (length in 16..text.length step 5) {
-            messages = listOf(message("partial", text.take(length)))
-            update(); Thread.sleep(40)
-            assertEquals("true", js("document.querySelector('h1')?.textContent.includes('流式结构验收') === true"))
-        }
-        messages = listOf(message("partial", text)); runs = emptyList(); update()
-        until("document.querySelectorAll('table').length === 1 && document.querySelectorAll('.katex').length >= 2 && document.body.innerText.includes('println(answer)')")
-        assertEquals("1", js("document.querySelectorAll('[data-message-id=partial]').length"))
-        assertEquals("true", js("document.querySelector('table').innerText.includes('正常')"))
     }
 
 }

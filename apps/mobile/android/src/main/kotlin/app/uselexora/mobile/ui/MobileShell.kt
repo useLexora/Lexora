@@ -99,27 +99,28 @@ fun MobileShell(
             }
             val connectionNotice = !state.connected && (state.notice == mobileText(R.string.error_not_connected) || state.notice == MobileFailurePresentation.NETWORK_UNAVAILABLE_NOTICE)
             if (!conversation && state.notice.isNotBlank() && !connectionNotice) Notice(state.notice) { act(MobileAction.DismissNotice) }
-            val noTranscript = state.messages.isEmpty() && state.runs.isEmpty()
+            val noTranscript = state.messages.isEmpty() && state.runs.isEmpty() && state.activityGroups.isEmpty()
             val conversationStatus = when {
-                state.viewingArchived -> mobileText(R.string.mobile_archived_read_only)
                 state.connected && state.syncFailure.isNotBlank() -> state.syncFailure
+                state.historyDetached -> mobileText(R.string.mobile_reading_previous_window)
+                state.viewingArchived -> mobileText(R.string.mobile_archived_read_only)
+                !state.connected && !noTranscript && !state.showingAcceptedInput -> mobileText(R.string.mobile_offline_conversation_snapshot)
                 state.connected && state.readingCached && !noTranscript && !state.showingAcceptedInput -> mobileText(R.string.mobile_showing_phone_content_updating)
                 else -> null
             }
             if (conversation && (state.viewBranchId != null || state.selectedTask != null) && conversationStatus != null) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(conversationStatus, Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = if (tightInput) 1 else 3, overflow = TextOverflow.Ellipsis)
-                if (!state.viewingArchived && state.syncFailure.isNotBlank()) TextButton(onClick = { act(MobileAction.Refresh) }) { Text(mobileText(R.string.label_retry)) }
+                if (state.historyDetached && state.conversationReady) TextButton(onClick = { act(MobileAction.ReturnLatest) }) { Text(mobileText(R.string.mobile_return_latest)) }
+                else if (!state.viewingArchived && state.syncFailure.isNotBlank()) TextButton(onClick = { act(MobileAction.Refresh) }) { Text(mobileText(R.string.label_retry)) }
             }
             Box(Modifier.fillMaxWidth().then(if (fullscreenInput) Modifier.height(0.dp).clipToBounds().clearAndSetSemantics {} else Modifier.weight(1f))) {
                 if (conversation) {
                     if (state.selectedTask == null && state.viewBranchId == null && state.messages.isEmpty()) NewTaskIntro(state, act)
                     else Column(Modifier.fillMaxSize()) {
-                        if (!tightInput && (state.historyPinned || (state.connected && state.conversationReady && (state.historyHasMore || state.historyLoading || state.historyError.isNotBlank())))) Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            if (state.historyLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                            else if (state.connected && state.historyHasMore) TextButton(onClick = { act(MobileAction.MoreHistory) }) { Text(mobileText(if (state.historyError.isNotBlank()) R.string.label_retry else R.string.mobile_load_earlier)) }
-                            if (state.historyPinned) TextButton(onClick = { act(MobileAction.ReturnLatest) }) { Text(mobileText(R.string.mobile_return_latest)) }
+                        if (!tightInput && state.historyPinned && !state.historyDetached) Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            TextButton(enabled = !state.historyLoading, onClick = { act(MobileAction.ReturnLatest) }) { Text(mobileText(R.string.mobile_return_latest)) }
+                            if (state.latestError.isNotBlank()) Text(state.latestError, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                         }
-                        if (state.connected && !tightInput && state.historyError.isNotBlank()) Text(state.historyError, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                         if (noTranscript && !state.conversationReady) {
                             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                                 if (conversationStatus == null) {

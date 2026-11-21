@@ -4,6 +4,16 @@ import org.json.JSONObject
 import java.net.URLDecoder
 import java.net.URLEncoder
 
+internal fun conversationWireTopic(name: String, supports: (String) -> Boolean): String {
+    if (!name.startsWith("conversation:")) return name
+    val prefix = when {
+        supports("conversations.getTurnWindow") -> "conversationTurns"
+        supports("conversations.getRecentWindow") -> "conversationWindow"
+        else -> return name
+    }
+    return "$prefix:${name.substringAfter(':')}"
+}
+
 data class ConversationTarget(val conversationId: String, val branchId: String) {
     val localKey get() = "conversation:$conversationId:$branchId"
     val topic get() = "conversation:${encode(conversationId)}:${encode(branchId)}"

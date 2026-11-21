@@ -16,6 +16,8 @@ export interface ChatAgentActivityGroup {
   counts: ReadonlyArray<{ category: ChatToolCategory, count: number, files: number | null }>
 }
 
+export type ChatAgentActivitySummary = Omit<ChatAgentActivityGroup, 'nodes'>
+
 export interface ChatAgentPanelGroup {
   id: string
   kind: 'panel-group'

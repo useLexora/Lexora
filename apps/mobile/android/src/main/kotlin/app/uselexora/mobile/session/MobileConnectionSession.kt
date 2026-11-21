@@ -9,7 +9,8 @@ import android.os.Handler
 import app.uselexora.mobile.network.MobileConnection
 import app.uselexora.mobile.network.ProductClient
 import app.uselexora.mobile.protocol.ProductIdentity
-import app.uselexora.mobile.protocol.ProductProjection
+import app.uselexora.mobile.protocol.ProductResumePoint
+import app.uselexora.mobile.protocol.SubscriptionProjection
 import app.uselexora.mobile.protocol.ProductSubscription
 import app.uselexora.mobile.protocol.ProtocolFailure
 import app.uselexora.mobile.protocol.ProtocolSchemas
@@ -17,6 +18,7 @@ import org.json.JSONObject
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 enum class MobileConnectionPhase { Idle, Connecting, Retrying, Unavailable }
@@ -35,11 +37,11 @@ class MobileConnectionSession(
     private val status: (String, MobileConnectionPhase) -> Unit,
     private val failureMessage: (Exception) -> String,
     private val synchronization: (String) -> Unit,
-    private val projection: (String, List<JSONObject>) -> Unit,
+    private val projection: (String, List<JSONObject>, Long) -> Unit,
     private val recoverable: (Exception) -> Boolean,
     private val synchronizationFailure: (Exception) -> Unit = {},
 ) {
-    var client: ProductClient? = null
+    @Volatile var client: ProductClient? = null
         private set
     var subscription: ProductSubscription? = null
         private set
@@ -56,14 +58,16 @@ class MobileConnectionSession(
     private var observing = false
     private var observedNetwork: Network? = null
     private val retry = Runnable { requestReconnect() }
-    private data class Update(val client: ProductClient, val generation: Long, val topic: String, val items: List<JSONObject>)
+    private val snapshotSerials = AtomicLong()
+    private var backgroundPoint: ProductResumePoint? = null
+    private data class Update(val client: ProductClient, val generation: Long, val topic: String, val items: List<JSONObject>, val snapshotSerial: Long)
     private val pending = AtomicReference<Update?>()
     private val scheduled = AtomicBoolean(false)
     private val flushProjection = Runnable {
         scheduled.set(false)
         val update = pending.getAndSet(null)
         if (!closed && update != null && client === update.client && generation == update.generation && topic() == update.topic)
-            projection(update.topic, update.items)
+            projection(update.topic, update.items, update.snapshotSerial)
     }
     private val networkChanges = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) { observedNetwork = network; requestReconnect() }
@@ -86,10 +90,13 @@ class MobileConnectionSession(
         handler.removeCallbacks(retry)
         reconnectRequested = false
         if (observing) { connectivity.unregisterNetworkCallback(networkChanges); observing = false }
+        val point = if (closed) null else backgroundPoint ?: subscription?.checkpoint?.copy(recordedAt = System.nanoTime())
         invalidate()
+        backgroundPoint = point
         if (enabled() && reconnectAllowed) status(mobileText(if (connection.hasSavedIdentity()) R.string.connection_disconnected else R.string.connection_not_connected), MobileConnectionPhase.Idle)
     }
     fun invalidate(): Long {
+        backgroundPoint = null
         generation++
         releaseConnection()
         pending.set(null)
@@ -121,18 +128,17 @@ class MobileConnectionSession(
                 }
                 val identity = candidate.identity ?: throw ProtocolFailure("NOT_CONNECTED")
                 if (requestedGeneration != generation) { candidate.close(); return@work }
-                val view = ProductProjection()
-                fun publish(topic: String) {
-                    pending.set(Update(candidate, requestedGeneration, topic, view.view()))
+                val view = SubscriptionProjection(identity, snapshotSerials::incrementAndGet, publish = { topic, items, serial ->
+                    val update = Update(candidate, requestedGeneration, topic, items, serial)
+                    pending.updateAndGet { previous -> if (client === candidate && generation == requestedGeneration) update else previous }
                     if (scheduled.compareAndSet(false, true)) handler.postDelayed(flushProjection, 16)
-                }
-                val fresh = ProductSubscription(candidate, schemas,
-                    snapshot = { topic, items -> view.snapshot(topic, items); publish(topic) },
-                    changes = { topic, changes -> view.apply(topic, changes); publish(topic) },
+                })
+                val fresh = ProductSubscription(candidate, schemas, view,
                     state = { state -> onUi { if (client === candidate && generation == requestedGeneration) synchronization(if (state == "RESYNC_REQUIRED") "UNSYNCHRONIZED" else state) } },
                     failure = { error -> onUi { if (client === candidate && generation == requestedGeneration) synchronizationFailure(error) } })
                 candidate.onDisconnected = { onUi {
                     if (client === candidate && generation == requestedGeneration) {
+                        if (backgroundPoint == null) backgroundPoint = subscription?.checkpoint?.copy(recordedAt = System.nanoTime())
                         released(); status(mobileText(R.string.connection_reconnecting), MobileConnectionPhase.Connecting); requestReconnect()
                     }
                 } }
@@ -140,7 +146,9 @@ class MobileConnectionSession(
                 handler.post {
                     try {
                         if (published.isCancelled || closed || !foreground || requestedGeneration != generation) { fresh.close(); candidate.close(); return@post }
+                        view.inherit(backgroundPoint ?: subscription?.checkpoint)
                         releaseConnection()
+                        backgroundPoint = null
                         client = candidate; subscription = fresh; reconnectAttempts = 0
                         connected(candidate, identity)
                     } finally { published.complete(Unit) }

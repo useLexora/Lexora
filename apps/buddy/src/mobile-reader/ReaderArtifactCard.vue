@@ -2,11 +2,13 @@
 import type { ReaderOutput, ReaderSend } from './readerProtocol'
 import { Document20Regular, Image20Regular, MoreHorizontal20Regular } from '@vicons/fluent'
 import { useIntersectionObserver } from '@vueuse/core'
-import { shallowRef, useTemplateRef, watch } from 'vue'
+import { inject, shallowRef, useTemplateRef, watch } from 'vue'
+import { readerTurnWindowKey } from './readerLoadingPolicy'
 import { useReaderStrings } from './readerStrings'
 
 const props = defineProps<{ item: ReaderOutput['items'][number], runId: string, send: ReaderSend }>()
 const labels = useReaderStrings()
+const turnWindow = inject(readerTurnWindowKey, undefined)
 const card = useTemplateRef('card')
 const imageFailed = shallowRef(false)
 const visible = shallowRef(false)
@@ -14,7 +16,7 @@ useIntersectionObserver(card, entries => visible.value = entries.some(entry => e
 watch([visible, () => props.item], ([inView, item]) => {
   if (item.thumbnail)
     imageFailed.value = false
-  else if (inView && item.image && item.available)
+  else if (!turnWindow?.value && inView && item.image && item.available)
     props.send({ action: 'artifact-thumbnail', runId: props.runId, resourceId: item.id })
 })
 </script>

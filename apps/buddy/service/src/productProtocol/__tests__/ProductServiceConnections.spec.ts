@@ -33,8 +33,6 @@ describe('product service transport ownership', () => {
       })
       await peer.client.request('product.exchange', { frame: JSON.stringify({ jsonrpc: '2.0', id: 'initialize', method: 'initialize', params: { protocol: { major: 1, minMinor: 0, maxMinor: 0 }, client: { kind: 'desktop', version: 'test' }, supportedContentKinds: [], supportedReviewKinds: [] } }) })
       expect(frames).toMatchObject([{ result: { profileId: 'test-profile', capabilities: expect.arrayContaining(['chat.getNewTaskDefaults']) } }])
-      await peer.client.request('product.exchange', { frame: JSON.stringify({ jsonrpc: '2.0', id: 'host', method: 'service.host', params: {} }) })
-      expect(frames.at(-1)).toMatchObject({ result: { platform: process.platform } })
       await peer.client.request('product.exchange', { frame: JSON.stringify({ jsonrpc: '2.0', id: 'info', method: 'service.info', params: {} }) })
       expect(Object.keys((frames.at(-1) as { result: object }).result)).toEqual(['name'])
     }
@@ -48,7 +46,9 @@ describe('product service transport ownership', () => {
       let hostMode: string = 'read_only'
       f.peer.client.onRequest(runtimePreferencesRpc.getDefaultPermissionMode, () => hostMode)
       const reader = await f.connect('remote-reader', 'reader')
-      expect(reader.result()).toMatchObject({ capabilities: expect.arrayContaining(['chat.getNewTaskDefaults']) })
+      expect(reader.result()).toMatchObject({ protocol: { major: 1, minor: 0 }, capabilities: expect.arrayContaining(['chat.getNewTaskDefaults', 'conversations.getRecentWindow', 'conversations.getTurnWindow', 'conversations.listActivitySteps', 'conversations.readLiveText']) })
+      await reader.send('conversations.getTurnWindow', { conversationId: 'missing', branchId: 'missing' })
+      expect(reader.error()).toMatchObject({ code: 'OBJECT_DELETED' })
       for (const [mode, executionProfile, approvalPolicy] of [
         ['read_only', 'read_only', 'policy'],
         ['manual_approval', 'workspace_write', 'manual'],
@@ -82,9 +82,6 @@ describe('product service transport ownership', () => {
       }
       const reader = await f.connect('remote-reader', 'reader')
       const executionConfig = { executionProfile: 'workspace_write', approvalPolicy: 'manual' }
-      await reader.send('chat.getNewTaskDefaults', {})
-      expect(reader.result()).toEqual({ executionConfig, modelSelection: null, modelDisplayName: null })
-
       const application = { modelId, providerId: 'application', reasoning: null }
       await f.peer.client.request('providers.setDefaultModel', { model: application })
       await reader.send('chat.getNewTaskDefaults', {})

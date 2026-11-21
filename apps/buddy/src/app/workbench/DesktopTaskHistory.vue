@@ -26,7 +26,11 @@ function newTask(spaceId: string | null = null) {
 <template>
   <div id="desktop-task-history" class="desktop-task-history flex h-full min-h-0 min-w-0 flex-1 flex-col bg-workspace-sidebar">
     <WorkbenchMountPoint target="workbench.sidebar">
-      <DesktopTaskIndexView :pending-task-ids="pendingTaskIds" :index="bindings.taskIndex" :active-task-id="bindings.workbench.activeTaskId.value" @open-task="openTask" @new-task="newTask" />
+      <DesktopTaskIndexView
+        v-if="bindings.lifecycle.state.value.hasBeenReady"
+        :pending-task-ids="pendingTaskIds" :index="bindings.taskIndex" :active-task-id="bindings.workbench.activeTaskId.value"
+        @open-task="openTask" @new-task="newTask"
+      />
     </WorkbenchMountPoint>
     <slot name="footer" />
   </div>

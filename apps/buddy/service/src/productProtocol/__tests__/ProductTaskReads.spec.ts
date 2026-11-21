@@ -15,6 +15,22 @@ afterEach(() => {
 })
 
 describe('product task reads', () => {
+  it('exposes pending approval facts on the turn snapshot but reserves the review document for an explicit read', () => {
+    const database = openBuddyMigrationCandidate({ databasePath: ':memory:' })
+    databases.push(database)
+    seedSqliteRun(database, 'approval-run')
+    database.prepare(`INSERT INTO approvals (id, run_id, tool_call_id, kind, status, summary, payload_json, created_at)
+      VALUES ('approval', 'approval-run', 'call', 'read', 'pending', 'Read fixture', '{}', '2026-11-01T00:00:00Z')`).run()
+    const review = { reviewVersion: '1'.repeat(64), contentVersion: 1, operationDigest: '2'.repeat(64), body: { file: 'only-on-review' }, complete: true, expiresAt: '2099-11-01T00:00:00Z', lifetimeId: 'fixture', allowedDecisions: ['approved', 'denied'], persistentEffect: false }
+    database.prepare('INSERT INTO approval_reviews (approval_id, review_json) VALUES (?, ?)').run('approval', JSON.stringify(review))
+    const queries = new ProductQueries(database, 'desktop-local', 'instance')
+    const snapshot = queries.snapshot('conversationTurns:task-1:branch-task-1')
+    expect(snapshot.complete).toBe(true)
+    expect(snapshot.items).toContainEqual(expect.objectContaining({ entity: 'approval', value: expect.objectContaining({ id: 'approval', status: 'pending', review: null }) }))
+    expect(JSON.stringify(snapshot.items)).not.toContain('only-on-review')
+    expect(queries.read('approvals.get', { approvalId: 'approval' })).toMatchObject({ review: { reviewVersion: review.reviewVersion, document: { text: expect.stringContaining('only-on-review') } } })
+  })
+
   it('keeps batched summaries pinned to one SQLite snapshot across pages', () => {
     const directory = mkdtempSync(join(tmpdir(), 'lexora-task-read-'))
     directories.push(directory)

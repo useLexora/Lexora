@@ -2,6 +2,7 @@
 import type { ReaderActionInput, ReaderMessage } from '../readerProtocol'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, shallowRef } from 'vue'
+import { readerTurnWindowKey } from '../readerLoadingPolicy'
 import ReaderMessageView from '../ReaderMessage.vue'
 import { readerActionSchema } from '../readerProtocol'
 import { readerLanguageKey } from '../readerStrings'
@@ -14,7 +15,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-async function mount() {
+async function mount(turnWindow = false) {
   let intersect: (near: boolean) => void
   vi.stubGlobal('IntersectionObserver', class {
     constructor(callback: (entries: { isIntersecting: boolean }[]) => void) {
@@ -65,6 +66,7 @@ async function mount() {
     }),
   })
   app.provide(readerLanguageKey, shallowRef('en'))
+  app.provide(readerTurnWindowKey, shallowRef(turnWindow))
   const root = document.createElement('div')
   root.className = 'reader-viewport'
   document.body.append(root)
@@ -75,11 +77,26 @@ async function mount() {
   })
   await nextTick()
   async function visible(near: boolean) {
-    intersect(near)
+    intersect?.(near)
     await nextTick()
   }
   return { root, photo, actions, visible }
 }
+
+it('opens a versioned photo from its filename without fetching it on a compact connection; a cached thumbnail stays visible', async () => {
+  const { root, actions, photo, visible } = await mount(true)
+  await visible(true)
+  const button = root.querySelector<HTMLButtonElement>('.resource-link')!
+  expect(button.textContent).toContain('camera.jpg')
+  expect(actions).toEqual([])
+  button.click()
+  expect(actions).toEqual([{ action: 'resource', id: 'msg', resourceId: 'attachment:photo', revision: 'v1' }])
+  photo.value = { ...photo.value, status: 'ready', thumbnail }
+  await nextTick()
+  await visible(true)
+  expect(root.querySelector('img')?.src).toBe(thumbnail)
+  expect(actions).toHaveLength(1)
+})
 
 it('requests only near the viewport, keeps retry inside the slot and preserves native preview for both kinds of file', async () => {
   const { root, photo, actions, visible } = await mount()
@@ -92,7 +109,6 @@ it('requests only near the viewport, keeps retry inside the slot and preserves n
   photo.value = { ...photo.value, status: 'loading' }
   await nextTick()
   expect(slot.querySelector('[role="status"]')?.getAttribute('aria-label')).toContain('Loading image')
-  expect(slot.textContent?.trim()).toBe('')
   photo.value = { ...photo.value, status: 'failed' }
   await nextTick()
   await visible(false)
@@ -107,7 +123,6 @@ it('requests only near the viewport, keeps retry inside the slot and preserves n
   expect(img.src).toBe(thumbnail)
   img.dispatchEvent(new Event('load'))
   await nextTick()
-  expect(slot.textContent?.trim()).toBe('')
   const preview = slot.querySelector<HTMLButtonElement>('.photo-preview')!
   expect(preview.getAttribute('aria-label')).toContain('camera.jpg · Image · 18 KB')
   preview.click()

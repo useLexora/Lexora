@@ -1,17 +1,21 @@
 <script setup lang="ts">
 import type { ReaderMessage } from './readerProtocol'
+import { Image20Regular } from '@vicons/fluent'
 import { useIntersectionObserver } from '@vueuse/core'
-import { computed, shallowRef, useTemplateRef, watch } from 'vue'
+import { computed, inject, shallowRef, useTemplateRef, watch } from 'vue'
+import { readerTurnWindowKey } from './readerLoadingPolicy'
 import { useReaderStrings } from './readerStrings'
 
 type Resource = ReaderMessage['resources'][number]
 const props = defineProps<{ resource: Resource, photo: NonNullable<Resource['photo']> }>()
 const emit = defineEmits<{ load: [revision: string, retry: boolean], open: [revision: string] }>()
 const labels = useReaderStrings()
+const turnWindow = inject(readerTurnWindowKey, undefined)
 const slot = useTemplateRef('slot')
 const near = shallowRef(false)
 const brokenSource = shallowRef<string>()
 const loadedSource = shallowRef<string>()
+const showReference = computed(() => turnWindow?.value && (props.photo.status !== 'ready' || !props.photo.thumbnail || props.photo.thumbnail === brokenSource.value))
 const src = computed(() => near.value && props.photo.status === 'ready' ? props.photo.thumbnail : undefined)
 const failed = computed(() => props.photo.status === 'failed' || (!!src.value && src.value === brokenSource.value))
 useIntersectionObserver(slot, ([entry]) => near.value = !!entry?.isIntersecting, {
@@ -19,7 +23,7 @@ useIntersectionObserver(slot, ([entry]) => near.value = !!entry?.isIntersecting,
   rootMargin: '160px 0px',
 })
 watch([near, () => props.photo.status], ([visible, status]) => {
-  if (visible && status === 'idle')
+  if (!turnWindow?.value && visible && status === 'idle')
     emit('load', props.photo.revision, false)
 })
 watch(src, () => {
@@ -37,7 +41,11 @@ function retry() {
 </script>
 
 <template>
-  <div ref="slot" class="message-photo">
+  <button v-if="showReference" type="button" class="resource-link" :disabled="!resource.available" @click="emit('open', photo.revision)">
+    <Image20Regular class="reader-icon resource-icon" aria-hidden="true" />
+    <span class="resource-info"><span>{{ resource.name }}</span><small>{{ resource.description }}</small></span>
+  </button>
+  <div v-else ref="slot" class="message-photo">
     <button
       class="photo-preview" :disabled="!resource.available"
       :aria-label="[labels.openImage, resource.name, resource.description].filter(Boolean).join(' · ')" @click="emit('open', photo.revision)"

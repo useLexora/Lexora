@@ -55,6 +55,31 @@ describe('productSyncPublisher', () => {
     expect(expired.snapshot.mode).toBe('snapshot')
   })
 
+  it('returns current state instead of replaying a large retained backlog for bounded readers', () => {
+    const publisher = new ProductSyncPublisher()
+    let state = 0
+    publisher.register('bounded', { item: z.number(), change: z.number(), resumeBudget: { items: 2, bytes: 65_536 }, readSnapshot: () => ({ items: [state], complete: true, nextCursor: null }) })
+    const frames: string[] = []
+    publisher.connect('phone', { send: (frame) => {
+      frames.push(frame)
+      return true
+    }, close() {} })
+    const original = publisher.subscribe('phone', { subscriptionId: 'old', topic: 'bounded' })
+    publisher.unsubscribe('phone', 'old')
+    for (const value of [1, 2, 3]) {
+      state = value
+      publisher.publishCommitted('bounded', () => [value])
+    }
+    const fresh = publisher.subscribe('phone', { subscriptionId: 'current', topic: 'bounded', base: original.snapshot.cursor })
+    expect(fresh.snapshot).toMatchObject({ mode: 'snapshot', items: [3], cursor: { seq: '3' } })
+    fresh.activate()
+    expect(frames).toEqual([])
+    const short = publisher.subscribe('phone', { subscriptionId: 'short', topic: 'bounded', base: { ...original.snapshot.cursor, seq: '2' } })
+    expect(short.snapshot.mode).toBe('resume')
+    short.activate()
+    expect(JSON.parse(frames[0]!)).toMatchObject({ params: { fromSeq: '2', toSeq: '3', changes: [3] } })
+  })
+
   it('rebuilds a fresh snapshot when projection failure races an in-flight acknowledgement', () => {
     const { publisher, frames, setState } = fixture()
     const initial = publisher.subscribe('connection', { subscriptionId: 'sub', topic: 'topic-0' })

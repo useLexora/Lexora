@@ -445,7 +445,7 @@ main {
 .reader-turn-flow + .reader-message {
   margin-top: 12px;
 }
-.reader-turn .reader-narration {
+.reader-narration {
   font-size: .9375em;
   color: var(--reader-muted);
   margin-block: 6px;

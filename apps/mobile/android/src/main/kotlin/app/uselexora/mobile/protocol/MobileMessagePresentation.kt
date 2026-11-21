@@ -41,8 +41,19 @@ object MobileMessagePresentation {
 
     fun canCopy(text: String): Boolean = (text.length.toLong() + 1) * Char.SIZE_BYTES + 128 <= MAX_CLIPBOARD_PAYLOAD_BYTES
 
+    fun detailKey(source: JSONObject): String {
+        val body = source.getJSONObject("body").toString()
+        return source.optJSONObject("textRange")?.optString("revision")?.takeIf { it.startsWith("s:") }?.let { "$it:$body" } ?: body
+    }
+
     fun matchingDetail(source: JSONObject, detail: MobileMessageDetail?): MobileMessageDetail? = detail?.takeIf {
-        it.sourceBody == null || it.sourceBody == source.getJSONObject("body").toString()
+        it.sourceBody == null || it.sourceBody == detailKey(source)
+    }
+
+    fun matchesSavedText(source: JSONObject, text: String): Boolean {
+        val revision = source.optJSONObject("textRange")?.optString("revision")?.takeIf { it.startsWith("s:") } ?: return true
+        val bytes = java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_16LE))
+        return revision == "s:" + bytes.joinToString("") { "%02x".format(it) }
     }
 
     fun readDetail(file: File, resource: JSONObject, schemas: ProtocolSchemas, resources: List<JSONObject>): MobileMessageDetail {
@@ -98,7 +109,8 @@ object MobileMessagePresentation {
         val entries = mutableListOf<MobileTimelineEntry>()
         for (source in messages) {
             val message = readMessage(source)
-            if (message.role == "assistant" && message.text.isBlank() && message.resources.isEmpty() && !message.needsDetail && !message.interrupted) continue
+            if (message.role == "assistant" && message.text.isBlank() && message.resources.isEmpty() && !message.needsDetail && !message.interrupted &&
+                source.optJSONObject("commentary")?.optString("text").isNullOrEmpty()) continue
             val previous = entries.lastOrNull()
             if (message.canGroup && previous?.messages?.lastOrNull()?.let { it.canGroup && it.runId == message.runId } == true) {
                 entries[entries.lastIndex] = previous.copy(messages = previous.messages + message)

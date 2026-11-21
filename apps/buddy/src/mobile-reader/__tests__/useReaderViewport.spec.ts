@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import type { ReaderEntry } from '../readerBridge'
 import type { ReaderAnchor } from '../readerProjection'
+import type { ReaderUpdate } from '../readerProtocol'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, shallowRef } from 'vue'
 import { useReaderViewport } from '../useReaderViewport'
@@ -42,7 +43,8 @@ async function settle() {
     await nextTick()
   }
 }
-function mount() {
+function mount(onOlder: (retry: boolean) => void = () => {}) {
+  const state = shallowRef<NonNullable<ReaderUpdate['history']>>({ available: true, loading: false, error: null })
   const entries = shallowRef(Array.from({ length: 60 }, (_, index) => entry(`message-${index + 21}`)))
   const topic = shallowRef('one')
   const anchor = shallowRef<ReaderAnchor | null>(null)
@@ -55,7 +57,7 @@ function mount() {
   const app = createApp({
     setup() {
       const element = shallowRef<HTMLElement | null>(null)
-      view = useReaderViewport(element, entries, topic, anchor, hasLater, () => requests.push(topic.value))
+      view = useReaderViewport(element, entries, topic, anchor, hasLater, () => requests.push(topic.value), { state, load: onOlder })
       return () => h('div', {
         class: 'viewport',
         ref: (value) => {
@@ -78,6 +80,7 @@ function mount() {
     topic,
     anchor,
     hasLater,
+    state,
     requests,
     get viewport() {
       return viewport
@@ -106,7 +109,6 @@ describe('reader viewport navigation', () => {
     reader.anchor.value = { ...reader.anchor.value! }
     await settle()
     expect(reader.viewport.querySelector('[data-message-id="message-40"]')!.getBoundingClientRect().top).toBeCloseTo(offset)
-    expect(reader.view.followsEnd.value).toBe(false)
     const beforeLatest = reader.viewport.scrollTop
     reader.view.latest()
     await settle()
@@ -117,7 +119,65 @@ describe('reader viewport navigation', () => {
     reader.hasLater.value = false
     await settle()
     expect(reader.viewport.scrollTop).toBeCloseTo(reader.viewport.scrollHeight - reader.viewport.clientHeight)
-    expect(reader.view.followsEnd.value).toBe(true)
+  })
+
+  it('prefetches one earlier page per boundary without loading history during initial positioning or prepend', async () => {
+    const older = vi.fn(() => true)
+    const reader = mount(older)
+    await settle()
+    expect(older).not.toHaveBeenCalled()
+    const move = (offset: number) => {
+      reader.viewport.scrollTop = offset
+      reader.viewport.dispatchEvent(new Event('scroll'))
+    }
+    move(290)
+    move(180)
+    await settle()
+    expect(older).toHaveBeenCalledTimes(1)
+    const marker = reader.viewport.querySelector('[data-message-id="message-23"]')!.getBoundingClientRect().top
+    reader.entries.value = [entry('message-19'), entry('message-20'), ...reader.entries.value]
+    await settle()
+    expect(reader.viewport.querySelector('[data-message-id="message-23"]')!.getBoundingClientRect().top).toBeCloseTo(marker)
+    expect(older).toHaveBeenCalledTimes(1)
+    move(100)
+    expect(older).toHaveBeenCalledTimes(2)
+  })
+
+  it('fills a short viewport one confirmed page at a time, including empty pages, and stops at overflow', async () => {
+    const load = vi.fn()
+    const reader = mount(load)
+    reader.entries.value = [entry('short')]
+    reader.state.value = { available: true, loading: false, error: null, page: 1 }
+    await settle()
+    expect(load.mock.calls).toEqual([[false]])
+    reader.state.value = { ...reader.state.value, loading: true }
+    await settle()
+    reader.state.value = { ...reader.state.value, loading: false, page: 2 }
+    await settle()
+    expect(load.mock.calls).toEqual([[false], [false]])
+    reader.entries.value = [entry('a'), entry('b'), entry('c'), ...reader.entries.value]
+    reader.state.value = { ...reader.state.value, page: 3 }
+    await settle()
+    expect(load).toHaveBeenCalledTimes(2)
+    reader.entries.value = []
+    reader.state.value = { ...reader.state.value, available: false }
+    await settle()
+    expect(load).toHaveBeenCalledTimes(2)
+  })
+
+  it('waits for explicit retry after failure, without treating a live row update as a new page', async () => {
+    const load = vi.fn()
+    const reader = mount(load)
+    reader.entries.value = []
+    reader.state.value = { available: true, loading: false, error: null, page: 7 }
+    await settle()
+    reader.entries.value = [entry('live')]
+    await settle()
+    reader.state.value = { ...reader.state.value, error: 'offline' }
+    await settle()
+    expect(load.mock.calls).toEqual([[false]])
+    reader.view.retryOlder()
+    expect(load.mock.calls).toEqual([[false], [true]])
   })
 
   it('reports missing IDs without falling back to the end, and cancels pending navigation on a topic change', async () => {

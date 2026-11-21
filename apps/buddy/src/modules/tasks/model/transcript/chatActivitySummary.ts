@@ -1,4 +1,4 @@
-import type { ChatAgentActivityGroup } from './chatAgentActivities'
+import type { ChatAgentActivitySummary } from './chatAgentActivities'
 import type { ChatToolCategory, ChatToolIcon } from './chatToolRegistry'
 import type { BuddyI18nKey, BuddyLocale } from '@/i18n/buddyI18n'
 import { translateBuddy } from '@/i18n/buddyI18n'
@@ -26,11 +26,11 @@ export interface ChatActivitySummary {
   icon: ChatToolIcon | 'reasoning'
 }
 
-export function summarizeChatActivity(group: ChatAgentActivityGroup, language: BuddyLocale): ChatActivitySummary {
+export function summarizeChatActivity(group: ChatAgentActivitySummary, language: BuddyLocale): ChatActivitySummary {
   return { label: summarizeChatActivityCounts(group, language), icon: group.icon }
 }
 
-export function summarizeChatActivityCounts(group: ChatAgentActivityGroup, language: BuddyLocale, limit = 3): string {
+export function summarizeChatActivityCounts(group: ChatAgentActivitySummary, language: BuddyLocale, limit = 3): string {
   const counts = group.counts.toSorted((left, right) => summaryOrder.indexOf(left.category) - summaryOrder.indexOf(right.category))
   const labels = counts.slice(0, limit).map(({ category, count, files }) => {
     const fileLabel = fileCountLabels[category]

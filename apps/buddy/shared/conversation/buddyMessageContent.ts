@@ -10,10 +10,12 @@ export function createBuddyInterruptedMessageContent(
   text: string,
   truncated: boolean,
 ): BuddyInterruptedMessageContent {
+  const incomplete = truncated || text.length > MAX_BUDDY_MESSAGE_TEXT_LENGTH
+  const prefix = text.slice(0, MAX_BUDDY_MESSAGE_TEXT_LENGTH)
   return {
     state: 'interrupted',
-    text: text.slice(0, MAX_BUDDY_MESSAGE_TEXT_LENGTH),
-    truncated: truncated || text.length > MAX_BUDDY_MESSAGE_TEXT_LENGTH,
+    text: incomplete ? prefix.replace(/[\uD800-\uDBFF]$/, '') : prefix,
+    truncated: incomplete,
   }
 }
 

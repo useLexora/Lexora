@@ -22,36 +22,41 @@ class ConnectionSessionInstrumentedTest {
         session.resume()
         work.removeFirst().invoke()
         assertEquals(mobileText(R.string.connection_not_connected) to MobileConnectionPhase.Idle, current())
-        repeat(2) {
-            session.stop()
-            assertEquals(mobileText(R.string.connection_not_connected) to MobileConnectionPhase.Idle, current())
-            session.start(false)
-            session.requestReconnect()
-            work.removeFirst().invoke()
-            assertEquals(mobileText(R.string.connection_not_connected) to MobileConnectionPhase.Idle, current())
-        }
+        session.stop()
+        session.requestReconnect()
+        assertTrue("Background does not retry", work.isEmpty())
+        assertEquals(mobileText(R.string.connection_not_connected) to MobileConnectionPhase.Idle, current())
     }
 
-    @Test fun savedServiceOnlyShowsConnectingAfterAnAttemptStarts() = withSession { session, secrets, _, current ->
-        secrets.write(JSONObject().put("stage", "active").put("endpoint", "https://127.0.0.1:1")
-            .put("serviceId", "synthetic-service").put("profileId", "synthetic-profile")
-            .put("dataGeneration", "synthetic-generation").put("deviceId", "synthetic-device").put("credential", "synthetic"))
+    @Test fun savedServiceOnlyShowsConnectingAfterAnAttemptStarts() = withSession { session, secrets, work, current ->
+        secrets.write(savedCredential())
         session.start(false)
         session.stop()
         assertEquals(mobileText(R.string.connection_disconnected) to MobileConnectionPhase.Idle, current())
+        assertTrue(work.isEmpty())
         session.start(false)
         session.requestReconnect()
         assertEquals(mobileText(R.string.connection_connecting) to MobileConnectionPhase.Connecting, current())
     }
 
-    @Test fun pausedRecoveryPreservesItsFailureAcrossLifecycleChanges() = withSession { session, _, _, current ->
+    @Test fun pausedRecoveryPreservesItsFailureAcrossLifecycleChanges() = withSession { session, secrets, work, current ->
+        secrets.write(savedCredential())
+        session.start(false)
+        session.requestReconnect()
+        work.removeFirst().invoke()
         val failure = current()
-        session.reconnectAllowed = false
+        assertEquals(MobileConnectionPhase.Unavailable, failure.second)
+        assertTrue(failure.first.contains("spkiPin"))
         session.stop()
         session.start(false)
         session.requestReconnect()
         assertEquals(failure, current())
+        assertTrue("A permanent failure must not retry automatically", work.isEmpty())
     }
+
+    private fun savedCredential() = JSONObject().put("stage", "active").put("endpoint", "https://127.0.0.1:1")
+        .put("serviceId", "synthetic-service").put("profileId", "synthetic-profile")
+        .put("dataGeneration", "synthetic-generation").put("deviceId", "synthetic-device").put("credential", "synthetic")
 
     private fun withSession(test: (MobileConnectionSession, SecretStore, ArrayDeque<() -> Unit>, () -> Pair<String, MobileConnectionPhase>) -> Unit) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -67,7 +72,7 @@ class ConnectionSessionInstrumentedTest {
                 enabled = { true }, topic = { "taskIndex" }, work = { work.addLast(it) }, onUi = { it() },
                 released = {}, connected = { _, _ -> fail("No service should connect") },
                 status = { label, phase -> current = label to phase }, failureMessage = { it.toString() },
-                synchronization = {}, projection = { _, _ -> }, recoverable = { false })
+                synchronization = {}, projection = { _, _, _ -> }, recoverable = { false })
             try { test(session, secrets, work) { current } }
             finally { session.close(); secrets.clear() }
         }

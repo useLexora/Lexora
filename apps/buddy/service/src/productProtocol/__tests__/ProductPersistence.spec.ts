@@ -7,7 +7,9 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { createBuddyUserContent } from '../../../../shared/conversation/buddyUserContent'
 import { restoreProductContent } from '../../../../shared/productProtocol/content'
+import { productReadLiveTextResultSchema } from '../../../../shared/productProtocol/messageText'
 import { PRODUCT_QUERY_METHODS, productDraftSchema, productPageSchema } from '../../../../shared/productProtocol/queries'
+import { productTurnWindowSchema } from '../../../../shared/productProtocol/turns'
 import { publicRunEventSchema } from '../../../../shared/runs/publicRunEvent'
 import { ComposerDraftCommandService } from '../../chat/ComposerDraftCommandService'
 import { ComposerDraftService } from '../../chat/ComposerDraftService'
@@ -181,6 +183,15 @@ describe('product persistence projections', () => {
     expect(document.bytes.toString()).not.toContain('raw-secret')
     expect(document.bytes.toString()).not.toContain('private-reasoning')
     expect(views.resource('message:tool-message')).toMatchObject({ availability: 'ready', sizeBytes: String(document.bytes.byteLength), revision: document.revision })
+    const append = database.prepare(`INSERT INTO run_events (run_id, sequence, event_type, payload_json, created_at) VALUES ('tool-root', ?, ?, ?, ?)`)
+    append.run(2, 'message.tool_result', JSON.stringify({ messageId: message.id, content: message.content }), message.createdAt)
+    const retry = conversations.createMessage({ ...message, id: 'tool-message-retry', content: { toolName: 'bash', toolCallId: 'call-one', isError: false } })
+    append.run(3, 'tool.completed', JSON.stringify({ ...payload, presentation: { ...payload.presentation, command: 'printf retry', description: '重试', output: 'retry-only' } }), retry.createdAt)
+    append.run(4, 'message.tool_result', JSON.stringify({ messageId: retry.id, content: retry.content }), retry.createdAt)
+    expect(views.document('message:tool-message')?.bytes.toString()).toBe(document.bytes.toString())
+    expect(views.document('message:tool-message-retry')?.bytes.toString()).toContain('retry-only')
+    database.prepare('DELETE FROM run_events WHERE run_id = \'tool-root\' AND sequence = 2').run()
+    expect(views.document('message:tool-message')?.bytes.toString()).not.toContain('printf')
     seedSqliteRun(database, 'private-tool')
     database.prepare('UPDATE runs SET execution_kind = \'npc_child\' WHERE id = ?').run('private-tool')
     database.prepare(`INSERT INTO messages (id, conversation_id, branch_id, run_id, role, content_json, created_at) VALUES ('private-tool-message','task-1','branch-task-1','private-tool','tool',?, '2026-01-01T00:00:00.000Z')`).run(JSON.stringify({ toolName: 'bash', toolCallId: 'call-one', isError: false }))
@@ -368,36 +379,12 @@ describe('product persistence projections', () => {
     expect(JSON.stringify(history)).not.toContain('private reasoning')
     const privateEvents = PRODUCT_QUERY_METHODS['runs.listEvents'].output.parse(queries.read('runs.listEvents', { runId: 'private', limit: 100, cursor: null, throughSequence: '1' }))
     expect(privateEvents).toEqual({ items: [], nextCursor: null })
-    expect(JSON.stringify(privateEvents)).not.toMatch(/private reasoning|must-not-leak|private-output/)
     const publicEvents = PRODUCT_QUERY_METHODS['runs.listEvents'].output.parse(queries.read('runs.listEvents', { runId: 'root', limit: 100, cursor: null }))
     expect(publicEvents).toMatchObject({ items: [{ type: 'message.delta', detail: { kind: 'text_delta', delta: '你好😀' } }] })
     expect(JSON.stringify(publicEvents)).not.toContain('/fixture/private')
   })
 
-  it('keeps a dynamic conversation snapshot pinned across entity phases and message pages', () => {
-    const { database } = fixture()
-    seedSqliteRun(database, 'root')
-    const conversations = createConversationRepository(database)
-    for (let index = 0; index < 105; index++) conversations.createMessage({ id: `message-${String(index).padStart(3, '0')}`, conversationId: 'task-1', branchId: 'branch-task-1', runId: 'root', role: 'assistant', content: { text: `before-${index}` }, createdAt: '2026-10-01T00:00:00.000Z' })
-    const queries = new ProductQueries(database, 'desktop-local', 'instance')
-    const reader = queries.openSnapshot('conversation:task-1:branch-task-1')
-    try {
-      let page = reader.read(null)
-      expect(page.items).toMatchObject([{ entity: 'task', value: { id: 'task-1' } }])
-      database.prepare('UPDATE messages SET content_json = ? WHERE id = ?').run('{"text":"after"}', 'message-001')
-      const items = [...page.items]
-      while (page.nextCursor) {
-        page = reader.read(page.nextCursor)
-        items.push(...page.items)
-      }
-      expect(items.filter(item => (item as any).entity === 'message')).toHaveLength(106)
-      expect(items.find(item => (item as any).value.id === 'message-001')).toMatchObject({ value: { body: { text: 'before-1' } } })
-      expect(items.find(item => (item as any).entity === 'run')).toMatchObject({ value: { lastEventSequence: '0', generation: '0' } })
-    }
-    finally { reader.close() }
-    expect(database.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get()?.busy).toBe(0)
-  })
-  it('restores an unfinished public reply from the same frozen snapshot without exposing reasoning or private runs', () => {
+  it('freezes saved history and unfinished public text across conversation snapshot pages without exposing private runs', () => {
     const { database } = fixture()
     seedSqliteRun(database, 'stream-root')
     seedSqliteRun(database, 'stream-private')
@@ -409,21 +396,30 @@ describe('product persistence projections', () => {
     append('stream-root', 'message.delta', { messageId: 'live', delta: '开头😀' })
     append('stream-private', 'message.started', { messageId: 'private', role: 'assistant' })
     append('stream-private', 'message.delta', { messageId: 'private', delta: 'private subagent' })
+    const conversations = createConversationRepository(database)
+    for (let index = 0; index < 105; index++)
+      conversations.createMessage({ id: `message-${String(index).padStart(3, '0')}`, conversationId: 'task-1', branchId: 'branch-task-1', runId: 'stream-root', role: 'assistant', content: { text: `before-${index}` }, createdAt: '2026-10-01T00:00:00.000Z' })
     const queries = new ProductQueries(database, 'desktop-local', 'instance')
     const reader = queries.openSnapshot('conversation:task-1:branch-task-1')
     try {
       let page = reader.read(null)
+      expect(page.items).toMatchObject([{ entity: 'task', value: { id: 'task-1' } }])
+      database.prepare('UPDATE messages SET content_json = ? WHERE id = ?').run('{"text":"after"}', 'message-104')
       append('stream-root', 'message.delta', { messageId: 'live', delta: '后来内容' })
       const items = [...page.items] as any[]
       while (page.nextCursor) {
         page = reader.read(page.nextCursor)
         items.push(...page.items)
       }
+      expect(items.filter(item => item.entity === 'message' && item.value.id.startsWith('message-'))).toHaveLength(105)
+      expect(items.find(item => item.value.id === 'message-104')).toMatchObject({ value: { body: { text: 'before-104' } } })
+      expect(items.find(item => item.entity === 'run' && item.value.id === 'stream-root')).toMatchObject({ value: { lastEventSequence: '3', generation: '0' } })
       expect(items.find(item => item.value.id === 'live')).toMatchObject({ entity: 'message', value: { role: 'assistant', runId: 'stream-root', body: { kind: 'text', text: '开头😀', interrupted: false, truncated: false } } })
       expect(JSON.stringify(items)).not.toContain('private reasoning')
       expect(JSON.stringify(items)).not.toContain('private subagent')
     }
     finally { reader.close() }
+    expect(database.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get()?.busy).toBe(0)
     expect(queries.streaming.page('task-1', 'branch-task-1', null).items[0]?.body).toMatchObject({ text: '开头😀后来内容' })
     expect(queries.views.event('stream-root', '2')?.detail.kind).toBe('status')
     append('stream-root', 'message.completed', { messageId: 'live', role: 'assistant', content: { text: '最终正文' }, stopReason: 'completed' })
@@ -470,6 +466,78 @@ describe('product persistence projections', () => {
       sync.dispose()
       writer.dispose()
     }
+  })
+
+  it('reads every UTF-16 unit of a versioned live reply across reconnect and rejects mismatched scopes or boundaries', () => {
+    const { database } = fixture()
+    seedSqliteRun(database, 'long-live')
+    const writer = new SqliteRunEventWriter(database)
+    const runId = 'long-live'
+    const messageId = 'long-reply'
+    const scope = { conversationId: 'task-1', branchId: 'branch-task-1', runId, messageId }
+    const event = (type: string, value: Record<string, unknown>) => writer.append({ runId, type, payload: { messageId, ...value } })
+    const source = `${'中😀'.repeat(50_000)}结尾😀`
+    event('message.started', { role: 'assistant' })
+    event('message.delta', { delta: source.slice(0, -1) })
+    const queries = new ProductQueries(database, 'phone', 'instance')
+    const first = queries.streaming.turnPage(scope.conversationId, scope.branchId, null).items[0]!
+    expect(first.body).toMatchObject({ truncated: false })
+    expect(first.textRange.end).toBe(source.length - 2)
+    event('message.block.delta', { kind: 'reasoning', delta: 'private' })
+    event('message.delta', { delta: source.slice(-1) })
+    const append = queries.streaming.turnAppend(runId, messageId, 4)!
+    expect(append).toMatchObject({ previousRevision: '2', text: '😀', range: { start: source.length - 2, end: source.length, revision: '4' } })
+    const fresh = new ProductQueries(database, 'phone', 'reconnect')
+    const latest = fresh.streaming.turnPage(scope.conversationId, scope.branchId, null).items[0]!
+    if (latest.body.kind !== 'text')
+      throw new Error('Expected text')
+    const read = (before: number, revision = '4') => fresh.streaming.readBefore({ ...scope, before, revision })
+    event('message.delta', { delta: 'newer' })
+    let text = latest.body.text
+    let before = latest.textRange.start
+    expect(before).toBeGreaterThan(131_072)
+    while (before) {
+      const page = read(before)
+      expect(page.range).toMatchObject({ revision: '4', end: before, total: source.length })
+      expect(page.text.length).toBeLessThanOrEqual(16_384)
+      expect(page.text).not.toMatch(/^[\uDC00-\uDFFF]|[\uD800-\uDBFF]$/)
+      text = page.text + text
+      before = page.range.start
+    }
+    expect(text).toBe(source)
+    expect(() => read(source.length - 1)).toThrow('INVALID_PARAMS')
+    expect(() => read(2, '3')).toThrow('SOURCE_CHANGED')
+    expect(() => fresh.streaming.readBefore({ ...scope, before: 2, revision: '4', branchId: 'other' })).toThrow('SOURCE_CHANGED')
+    event('message.completed', { role: 'assistant', content: { text: source, truncated: true }, stopReason: 'completed' })
+    expect(() => read(2)).toThrow('SOURCE_CHANGED')
+    expect(fresh.streaming.turnPage(scope.conversationId, scope.branchId, null).items).toEqual([])
+    const stored = createConversationRepository(database).findMessageById(messageId)!
+    expect(fresh.views.message(stored).body).toMatchObject({ kind: 'resource', truncated: true })
+    expect(fresh.views.document(`message:${messageId}`)?.bytes.toString()).toBe(source)
+    const page = productTurnWindowSchema.parse(fresh.read('conversations.getTurnWindow', { conversationId: scope.conversationId, branchId: scope.branchId, cursor: null }))
+    const final = page.items.find(item => item.id === messageId)!
+    const revision = final.textRange!.revision
+    expect(final.body).toMatchObject({ kind: 'resource', previewText: source.slice(final.textRange!.start), truncated: true })
+    const saved = (offset: number, direction: 'before' | 'after') => productReadLiveTextResultSchema.parse(fresh.read('conversations.readSavedText', { conversationId: scope.conversationId, branchId: scope.branchId, messageId, revision, offset, direction }))
+    let full = ''
+    while (full.length < source.length) {
+      const part = saved(full.length, 'after')
+      expect(part.range.start).toBe(full.length)
+      expect(part.text.length).toBeGreaterThan(0)
+      expect(part.text).not.toMatch(/^[\uDC00-\uDFFF]|[\uD800-\uDBFF]$/)
+      full += part.text
+    }
+    expect(full).toBe(source)
+    const history = createConversationRepository(database)
+    history.createBranch({ id: 'before-reply', conversationId: scope.conversationId, parentBranchId: scope.branchId, forkedFromMessageId: `input-${runId}`, createdAt: stored.createdAt, activate: false })
+    history.createBranch({ id: 'including-reply', conversationId: scope.conversationId, parentBranchId: scope.branchId, forkedFromMessageId: messageId, createdAt: stored.createdAt, activate: false })
+    const inherited = (branchId: string) => fresh.read('conversations.readSavedText', { conversationId: scope.conversationId, branchId, messageId, revision, offset: 0, direction: 'after' })
+    expect(() => inherited('before-reply')).toThrow('RESOURCE_UNAVAILABLE')
+    expect(inherited('including-reply')).toMatchObject({ range: { start: 0, revision } })
+    expect(saved(source.length, 'before').text).toBe(latest.body.text)
+    database.prepare('UPDATE messages SET content_json = ? WHERE id = ?').run(JSON.stringify({ text: `新${source.slice(1)}`, truncated: true }), messageId)
+    expect(() => saved(0, 'after')).toThrow('SOURCE_CHANGED')
+    writer.dispose()
   })
 
   it('bounds unfinished text without cutting an emoji or losing pagination', () => {

@@ -56,6 +56,8 @@ fun WebMessageTimeline(
     selectedBranchId: String? = null,
     onBranch: (JSONObject) -> Unit = {},
     onMessageMenu: ((JSONObject, IntRect?, Boolean) -> Unit)? = null,
+    turn: ReaderTurnContext = ReaderTurnContext(),
+    onOlder: (Boolean) -> Unit = {},
 ) {
     val dark = MobileAppearance.isDark(isSystemInDarkTheme())
     val fontScale = LocalConfiguration.current.fontScale
@@ -63,7 +65,7 @@ fun WebMessageTimeline(
     AndroidView(
         factory = { ReaderView(it) }, modifier = modifier.testTag("message-list"),
         onRelease = { it.dispose() },
-        update = { it.update(messages, topic, details, runs, dark, fontScale, onMessageAction, onResource, onLoadDetail, onQuickAction, language, transcripts, onLoadTranscript, resultRunId, onReadResult, avatarContext, anchorMessageId, anchorRequestId, hasLaterMessages, onLatest, artifactContext, onResourceActions, branches, selectedBranchId, onBranch, onMessageMenu) },
+        update = { it.update(messages, topic, details, runs, dark, fontScale, onMessageAction, onResource, onLoadDetail, onQuickAction, language, transcripts, onLoadTranscript, resultRunId, onReadResult, avatarContext, anchorMessageId, anchorRequestId, hasLaterMessages, onLatest, artifactContext, onResourceActions, branches, selectedBranchId, onBranch, onMessageMenu, turn, onOlder) },
     )
 }
 
@@ -82,6 +84,11 @@ class ReaderView(context: Context) : FrameLayout(context) {
     private var runs = emptyList<JSONObject>()
     private var transcripts = emptyMap<String, JSONObject>()
     private var loadTranscript: (String, Boolean) -> Unit = { _, _ -> }
+    private var turn = ReaderTurnContext()
+    private var turnRunIds = emptySet<String>()
+    private var older: (Boolean) -> Unit = {}
+    private val steps = ReaderActivitySteps { schedulePublish() }
+    private val stepReads = ReaderStepDetailReads()
     private var dark = false
     private var fontScale = 1f
     private var messageAction: (JSONObject) -> Unit = {}
@@ -132,6 +139,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
 
     private fun restartBrowser() {
         if (disposed) return
+        stepReads.reset()
         ready = false; port?.close(); port = null
         browser?.let { removeView(it); it.destroy() }; browser = null
         recoveryAttempts = 0
@@ -160,7 +168,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
                 override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse = localAsset(request.url)
                 override fun onPageFinished(view: WebView, url: String) {
                     if (view !== browser || url != PAGE) return
-                    port?.close()
+                    stepReads.reset(); port?.close()
                     val channel = view.createWebMessageChannel()
                     port = channel[0]
                     ready = false
@@ -177,7 +185,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
                 }
                 override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
                     if (view === browser) {
-                        ready = false; port?.close(); port = null
+                        stepReads.reset(); ready = false; port?.close(); port = null
                         removeView(view); view.destroy(); browser = null
                         if (recoveryAttempts++ == 0) post { createBrowser() }
                         else showLoadFailure()
@@ -230,6 +238,8 @@ class ReaderView(context: Context) : FrameLayout(context) {
         selectedBranchId: String? = null,
         onBranch: (JSONObject) -> Unit = {},
         onMessageMenu: ((JSONObject, IntRect?, Boolean) -> Unit)? = null,
+        turn: ReaderTurnContext = ReaderTurnContext(),
+        onOlder: (Boolean) -> Unit = {},
     ) {
         if (avatarContext != null) {
             val created = avatars == null
@@ -239,12 +249,17 @@ class ReaderView(context: Context) : FrameLayout(context) {
                     runs.mapNotNull { it.optString("buddyId").takeIf(String::isNotBlank) }).toSet()
             avatars?.update(avatarContext.partition, topic, avatarContext.client, avatarAuthors)
         } else if (avatars != null) { avatars?.close(); avatars = null; schedulePublish() }
+        if (this.messages !== messages || this.turn.groups !== turn.groups || this.turn.enabled != turn.enabled)
+            turnRunIds = if (turn.enabled) buildSet {
+                for (message in messages) (message.opt("runId") as? String)?.let(::add)
+                for (group in turn.groups) add(group.getString("runId"))
+            } else emptySet()
         if (artifactContext != null) {
             if (artifacts == null) {
                 artifacts = ReaderArtifacts(context) { toolImages?.invalidateImages(); schedulePublish() }
                 toolImages = ReaderToolImages(artifacts!!) { schedulePublish() }
             }
-            artifacts?.update(topic, artifactContext, runs)
+            artifacts?.update(topic, artifactContext, runs, turnRunIds)
             toolImages?.update(topic, artifactContext, runs, transcripts)
         } else if (artifacts != null) {
             toolImages?.close(); toolImages = null; artifacts?.close(); artifacts = null; schedulePublish()
@@ -253,11 +268,17 @@ class ReaderView(context: Context) : FrameLayout(context) {
         messageMenu = onMessageMenu
         resourceOptions = onResourceActions
         loadTranscript = onLoadTranscript
+        older = onOlder
+        if (topic != this.topic || this.turn.target != turn.target || !turn.enabled) stepReads.reset()
+        steps.update(topic, turn, artifactContext)
+        val turnChanged = this.turn.enabled != turn.enabled || this.turn.groups !== turn.groups || this.turn.historyLoading != turn.historyLoading ||
+            this.turn.historyAvailable != turn.historyAvailable || this.turn.historyError != turn.historyError || this.turn.historyPage != turn.historyPage || this.turn.client !== turn.client
+        this.turn = turn
         readResult = onReadResult
         latest = onLatest
         quickAction = onQuickAction
         messageAction = onMessageAction; resourceAction = onResource; detailAction = onLoadDetail
-        if (this.messages === messages && this.topic == topic && this.details === details && this.runs === runs && this.dark == dark && this.fontScale == fontScale && this.language == language && this.transcripts === transcripts && this.resultRunId == resultRunId && this.anchorMessageId == anchorMessageId && this.anchorRequestId == anchorRequestId && this.hasLaterMessages == hasLaterMessages && this.branches === branches && this.selectedBranchId == selectedBranchId) return
+        if (!turnChanged && this.messages === messages && this.topic == topic && this.details === details && this.runs === runs && this.dark == dark && this.fontScale == fontScale && this.language == language && this.transcripts === transcripts && this.resultRunId == resultRunId && this.anchorMessageId == anchorMessageId && this.anchorRequestId == anchorRequestId && this.hasLaterMessages == hasLaterMessages && this.branches === branches && this.selectedBranchId == selectedBranchId) return
         this.branches = branches
         this.selectedBranchId = selectedBranchId
         this.anchorMessageId = anchorMessageId
@@ -278,10 +299,10 @@ class ReaderView(context: Context) : FrameLayout(context) {
         if (ready && !disposed) publish()
     }
 
-    private fun publish() {
+    private fun publish(bodyPage: JSONObject? = null) {
         if (!ready || disposed) return
         val snapshot = ReaderSnapshot(messages, topic, details, runs, transcripts, dark, fontScale, language,
-            resultRunId?.takeIf { hasWindowFocus() && isShown }, avatars?.sources ?: emptyMap(), anchorMessageId, anchorRequestId, hasLaterMessages, artifacts?.imageEpoch)
+            resultRunId?.takeIf { hasWindowFocus() && isShown }, avatars?.sources ?: emptyMap(), anchorMessageId, anchorRequestId, hasLaterMessages, artifacts?.imageEpoch, turn, steps.wire)
         val update = projection.encode(snapshot, { MobileTheme.palette(context, dark) }, { MobileTheme.typography(context) }) {
             artifacts?.photoState(it) ?: ReaderPhotoState("unavailable")
         }
@@ -293,6 +314,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
         if (update.optBoolean("reset") || outputs !== sentOutputs) { update.put("outputs", outputs ?: JSONObject()); sentOutputs = outputs }
         val imageState = toolImages?.wire()
         if (update.optBoolean("reset") || imageState !== sentToolImages) { update.put("toolImages", imageState ?: JSONArray()); sentToolImages = imageState }
+        if (bodyPage != null) update.put("bodyPage", bodyPage)
         port?.postMessage(WebMessage(update.toString()))
     }
 
@@ -306,6 +328,39 @@ class ReaderView(context: Context) : FrameLayout(context) {
         browser?.evaluateJavascript("(()=>{const p=window.lexoraFrameProbe;p.active=false;const v=p.values.slice(1).sort((a,b)=>a-b);return {rafFrameP95Ms:v[Math.floor((v.length-1)*.95)],frameSamples:v.length,rafOver64Ms:v.filter(n=>n>64).length,renderedMessages:document.querySelectorAll('.reader-entry').length,completed:document.body.innerText.includes('持续输出结束标记')}})()") { value -> complete(JSONObject(value)) }
     }
 
+    private var bodyPageReads = 0
+    private fun readBodyPage(action: JSONObject) {
+        val id = action.getString("id"); val revision = action.getString("revision")
+        val direction = if (action.getString("action") == "body-after") "after" else "before"
+        val offset = action.getLong(direction)
+        val response = JSONObject().put("id", id).put("revision", revision).put(direction, offset).put("page", JSONObject.NULL)
+        val source = messages.firstOrNull { it.optString("id") == id && it.optString("role") == "assistant" }
+        val commentary = revision.startsWith("c:")
+        val range = if (commentary) source?.optJSONObject("commentary")?.optJSONObject("range") else source?.optJSONObject("textRange")
+        val saved = commentary || revision.startsWith("s:")
+        val method = if (saved) "conversations.readSavedText" else "conversations.readLiveText"
+        val target = turn.target; val client = turn.client
+        val validRevision = if (saved) range?.optString("revision") == revision else direction == "before" &&
+            (revision.toLongOrNull() ?: -1L) in 1..(range?.optString("revision")?.toLongOrNull() ?: 0L)
+        if (!turn.enabled || target == null || client?.supports(method) != true || range == null || !validRevision ||
+            offset !in 0..range.getLong("total") || bodyPageReads >= 4) { publish(response); return }
+        val origin = port; val scope = topic; val run = source?.optString("runId").orEmpty()
+        val params = target.params().put("messageId", id).put("revision", revision)
+        if (saved) params.put("direction", direction).put("offset", offset) else params.put("runId", run).put("before", offset)
+        bodyPageReads++
+        java.util.concurrent.CompletableFuture.supplyAsync { client.call(method, params) }.whenComplete { page, _ -> handler.post {
+            bodyPageReads--
+            if (disposed || origin !== port || scope != topic) return@post
+            if (turn.client === client && turn.target == target && messages.any {
+                val current = if (commentary) it.optJSONObject("commentary")?.optJSONObject("range") else it.optJSONObject("textRange")
+                it.optString("id") == id && it.optString("runId") == run && current != null && (!saved || current.optString("revision") == revision)
+            }) {
+                response.put("page", page ?: JSONObject.NULL)
+            }
+            publish(response)
+        } }
+    }
+
     private var language = "zh"
     private var quickAction: (JSONObject, String) -> Unit = { _, _ -> }
 
@@ -313,11 +368,37 @@ class ReaderView(context: Context) : FrameLayout(context) {
         if (!protocol.valid(data, protocol.document.getJSONObject("action"))) return
         if (data.optString("action") == "ready") { ready = true; handler.removeCallbacks(loadTimeout); status.visibility = View.GONE; publish(); return }
         if (data.optString("topic") != topic) return
+        if (turn.enabled && data.optString("action") in setOf("photo-thumbnail", "artifact-thumbnail", "tool-image")) return
         if (data.optString("action") == "branch") {
             branches.firstOrNull { it.optString("id") == data.optString("branchId") }?.let(selectBranch)
             return
         }
         if (data.optString("action") == "latest") { latest(); return }
+        if (data.optString("action") in setOf("body-before", "body-after")) { readBodyPage(data); return }
+        if (data.optString("action") == "older") {
+            val retry = data.optBoolean("retry")
+            if (turn.historyAvailable && !turn.historyLoading && (turn.historyError == null || retry)) older(retry)
+            return
+        }
+        if (data.optString("action") == "stop-step-detail") { stepReads.stop(data.getString("requestId")); return }
+        if (data.optString("action") == "read-step-detail") {
+            val origin = port; val binding = turn; val scope = topic
+            val group = data.getString("groupId")
+            stepReads.read(data, binding, {
+                !disposed && isShown && windowVisibility == View.VISIBLE && origin === port && scope == topic && turn.enabled &&
+                    turn.target == binding.target && turn.client === binding.client && steps.hasPendingStep(data.getString("runId"), group, data.getString("stepId"))
+            }) { reply ->
+                if (!disposed && scope == topic && origin === port) {
+                    reply.optJSONObject("result")?.let { steps.settle(group, it) }
+                    origin?.postMessage(WebMessage(reply.toString()))
+                }
+            }
+            return
+        }
+        if (data.optString("action") == "activity-steps") {
+            steps.request(data.getString("groupId"), data.getString("runId"), data.opt("cursor") as? String)
+            return
+        }
         if (data.optString("action") == "read-result") {
             val id = data.optString("runId")
             if (id == resultRunId && isShown && hasWindowFocus() && runs.any { it.optString("id") == id && it.optString("status") in setOf("completed", "failed", "cancelled") }) readResult(id)
@@ -325,7 +406,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
         }
         if (data.optString("action") in setOf("outputs", "artifact", "artifact-actions", "artifact-thumbnail")) {
             val runId = data.optString("runId")
-            if (runs.none { it.optString("id") == runId }) return
+            if (runId !in turnRunIds && runs.none { it.optString("id") == runId }) return
             when (data.getString("action")) {
                 "outputs" -> artifacts?.request(runId, data.optString("retry") == "true")
                 "artifact-thumbnail" -> artifacts?.thumbnail(runId, data.optString("resourceId"))
@@ -342,7 +423,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
         val message = messages.firstOrNull { it.optString("id") == data.optString("id") }
         if (data.optString("action") == "transcript") {
             val id = data.optString("runId")
-            if (runs.any { it.optString("id") == id }) loadTranscript(id, data.optString("retry") == "true")
+            if (!turn.enabled && runs.any { it.optString("id") == id }) loadTranscript(id, data.optString("retry") == "true")
             return
         }
         when (data.optString("action")) {
@@ -357,7 +438,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
                 messageMenu?.invoke(source, anchor, data.optBoolean("contextual")) ?: messageAction(source)
             }
             "edit", "regenerate", "followup" -> message?.let { quickAction(it, data.getString("action")) }
-            "detail" -> message?.let(detailAction)
+            "detail" -> if (message != null) detailAction(message) else steps.detail(data.getString("id"))
             "photo-thumbnail" -> {
                 val resource = ReaderMessagePhotos.resolve(message, data) ?: return
                 artifacts?.requestPhoto(resource, data.optBoolean("retry"))
@@ -367,7 +448,10 @@ class ReaderView(context: Context) : FrameLayout(context) {
                     ReaderMessagePhotos.resolve(message, data)?.takeIf { MobileReadingPolicy.resource(it).available }?.let(resourceAction)
                     return
                 }
-                if (message == null) return
+                if (message == null) {
+                    steps.resource(data.getString("id"), data.getString("resourceId"))?.let(resourceAction)
+                    return
+                }
                 val presentation = MobileMessagePresentation.message(message)
                 val detail = MobileMessagePresentation.matchingDetail(message, details[presentation.id])
                 val resource = (presentation.resources + listOfNotNull(detail?.resource)).firstOrNull { it.optString("resourceId") == data.optString("resourceId") }
@@ -391,7 +475,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
     }
 
     fun dispose() {
-        disposed = true; ready = false
+        disposed = true; ready = false; stepReads.reset(); steps.close()
         avatars?.close(); avatars = null
         toolImages?.close(); toolImages = null
         artifacts?.close(); artifacts = null

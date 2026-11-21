@@ -1,18 +1,26 @@
 import type { z } from 'zod'
 import { z as schema } from 'zod'
+import { productReadActivityStepDetailResultSchema } from '../../shared/productProtocol/activityStepDetail'
+import { productReadLiveTextResultSchema, productTextRangeSchema } from '../../shared/productProtocol/messageText'
 import { productBranchSchema, productRunSchema } from '../../shared/productProtocol/queries'
+import { productActivityGroupSchema, productActivityStepSchema, productTurnMessageSchema } from '../../shared/productProtocol/turns'
 import { publicRunEventSchema } from '../../shared/runs/publicRunEvent'
 
 const id = schema.string().min(1)
 export const readerMessageSchema = schema.object({
   id,
   runId: id.nullable(),
+  turnRootId: id.optional(),
+  turnInputId: id.optional(),
   branchId: id.optional(),
   role: schema.enum(['user', 'assistant', 'tool']),
   authorId: id.nullable(),
   author: schema.string(),
   createdAt: schema.string().nullable().optional(),
   text: schema.string(),
+  textRange: productTextRangeSchema.optional(),
+  commentary: productTurnMessageSchema.shape.commentary,
+  sourceTruncated: schema.boolean().optional(),
   final: schema.boolean(),
   markdown: schema.boolean(),
   interrupted: schema.boolean(),
@@ -47,7 +55,9 @@ export const readerMessageSchema = schema.object({
     }).strict().optional(),
   }).strict()),
 }).strict()
-export const readerEntrySchema = schema.object({ id, continuation: schema.boolean(), messages: schema.array(readerMessageSchema) }).strict()
+const stepDetail = schema.object({ loading: schema.boolean(), text: schema.string().optional(), error: schema.string().optional(), notice: schema.string().optional(), resourceId: id.optional() }).strict()
+const steps = schema.object({ items: schema.array(productActivityStepSchema.extend({ detail: stepDetail.optional() })), nextCursor: schema.string().nullable(), loading: schema.boolean(), failed: schema.boolean(), stale: schema.boolean().optional() }).strict()
+export const readerEntrySchema = schema.object({ id, continuation: schema.boolean(), messages: schema.array(readerMessageSchema), activityGroup: productActivityGroupSchema.optional(), steps: steps.optional() }).strict()
 export const readerTranscriptSchema = schema.object({ events: schema.array(publicRunEventSchema), loaded: schema.boolean().optional(), error: schema.string().nullable().optional(), append: schema.boolean().optional() }).strict()
 export const readerOutputSchema = schema.object({
   failed: schema.boolean(),
@@ -74,6 +84,9 @@ export const readerUpdateSchema = schema.object({
   anchorMessageId: id.nullable().optional(),
   anchorRequestId: id.nullable().optional(),
   hasLaterMessages: schema.boolean().optional(),
+  turnWindow: schema.boolean().optional(),
+  history: schema.object({ page: schema.number().int().nonnegative().optional(), available: schema.boolean(), loading: schema.boolean(), error: schema.string().nullable() }).strict().optional(),
+  bodyPage: schema.object({ id, revision: id, before: schema.number().int().positive().optional(), after: schema.number().int().nonnegative().optional(), page: productReadLiveTextResultSchema.nullable() }).strict().optional(),
   topic: schema.string(),
   reset: schema.boolean(),
   dark: schema.boolean(),
@@ -85,10 +98,18 @@ export const readerUpdateSchema = schema.object({
   entries: schema.array(readerEntrySchema),
 }).strict()
 export const readerCopiedSchema = schema.object({ type: schema.literal('copied'), topic: schema.string(), id }).strict()
+export const readerStepDetailReplySchema = schema.object({ type: schema.literal('step-detail'), topic: schema.string(), requestId: id, stepId: id, result: productReadActivityStepDetailResultSchema.nullable(), error: schema.enum(['unsupported', 'unavailable', 'retry']).nullable() }).strict()
+export type ReaderStepDetailReply = z.infer<typeof readerStepDetailReplySchema>
 const action = <T extends string, S extends schema.ZodRawShape>(name: T, fields: S) => schema.object({ action: schema.literal(name), topic: schema.string(), ...fields }).strict()
 export const readerActionSchema = schema.discriminatedUnion('action', [
   action('ready', {}),
   action('latest', {}),
+  action('older', { retry: schema.literal(true).optional() }),
+  action('stop-step-detail', { requestId: id }),
+  action('read-step-detail', { runId: id, groupId: id, stepId: id, requestId: id, knownRevision: schema.string().regex(/^[0-9a-f]{64}$/).optional() }),
+  action('activity-steps', { runId: id, groupId: id, cursor: schema.string().max(4096).optional() }),
+  action('body-before', { id, revision: id, before: schema.number().int().positive() }),
+  action('body-after', { id, revision: id, after: schema.number().int().nonnegative() }),
   action('read-result', { runId: id }),
   action('transcript', { runId: id, retry: schema.literal('true').optional() }),
   action('outputs', { runId: id, retry: schema.literal('true').optional() }),
@@ -108,7 +129,7 @@ export const readerActionSchema = schema.discriminatedUnion('action', [
   action('copy', { id: schema.string().optional(), runId: id.optional(), text: schema.string(), feedback: schema.literal('message').optional() }),
   action('link', { href: schema.string() }),
 ])
-export const READER_SCHEMAS = { update: readerUpdateSchema, copied: readerCopiedSchema, action: readerActionSchema }
+export const READER_SCHEMAS = { update: readerUpdateSchema, copied: readerCopiedSchema, stepDetail: readerStepDetailReplySchema, action: readerActionSchema }
 export type ReaderMessage = z.infer<typeof readerMessageSchema>
 export type ReaderWireEntry = z.infer<typeof readerEntrySchema>
 export type ReaderUpdate = z.infer<typeof readerUpdateSchema>
