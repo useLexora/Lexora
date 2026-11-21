@@ -13,6 +13,7 @@ import DesktopDraftRestorationNotice from './DesktopDraftRestorationNotice.vue'
 
 const props = defineProps<TaskNoticesProps>()
 const emit = defineEmits<{
+  focusComposer: []
   openSettings: [category: DesktopSettingsCategory]
   selectModel: []
 }>()
@@ -33,9 +34,10 @@ const resolvingApprovalActions = computed(() => props.execution.resolvingApprova
   <DesktopDraftRestorationNotice
     :conflict="restorationConflict"
     :language="language"
-    :resolve-remote="restoration.resolveRemote"
+    :resolve-conflict="restoration.resolveConflict"
     :restore="restoration.restore"
     :state="restorationState"
+    @resolved="emit('focusComposer')"
   />
   <DesktopChatStatus
     :blocker="visibleChatBlocker"

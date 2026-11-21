@@ -336,6 +336,7 @@ function openDetailChanges(id: string) {
             :language="language"
             :restoration="workspace.restoration"
             :status="workspace.status"
+            @focus-composer="focusComposer"
             @open-settings="emit('openSettings', $event)"
             @select-model="openModelSelector"
           />
