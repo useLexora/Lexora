@@ -68,7 +68,10 @@ export interface ChatDrafts {
 
 export type DraftRestorationState = 'pending' | 'restoring' | 'ready' | 'failed' | 'conflict'
 
+export type DraftRestorationChoice = 'local' | 'saved' | 'empty'
+
 export interface DraftRestorationConflict {
+  canUseLocal: boolean
   targetKey: string
   local: ChatDraftSnapshot
   remote: LocalComposerDraft

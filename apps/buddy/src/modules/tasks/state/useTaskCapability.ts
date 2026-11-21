@@ -747,7 +747,7 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
       state: workspacePersistence.restorationState,
       conflict: workspacePersistence.restorationConflict,
       restore: lifecycle.refreshRuntimeDependentState,
-      resolveRemote: workspacePersistence.resolveRemote,
+      resolveConflict: workspacePersistence.resolveConflict,
     },
     status: {
       isClosing: readonly(isClosing),
