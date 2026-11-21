@@ -28,8 +28,15 @@ class CommandOutbox(private val store: LocalStore) {
         if (client.identity?.partition != item.partition) throw ProtocolFailure("DATA_GENERATION_CHANGED")
         store.mark(item.id, "unknown")
         return try {
-            client.call(item.method, item.envelope).getJSONObject("receipt").also { store.resolve(item, it) }
+            client.call(item.method, item.envelope).getJSONObject("receipt").also { resolve(item, it) }
         } catch (error: Exception) { throw ProtocolFailure("COMMAND_RESULT_UNKNOWN", error) }
+    }
+    private fun resolve(item: OutboxItem, receipt: JSONObject) {
+        if (receipt.getString("commandId") != item.id || receipt.getString("method") != item.method || receipt.getString("dataGeneration") != item.envelope.getString("dataGeneration"))
+            throw ProtocolFailure("PROTOCOL_INCOMPATIBLE")
+        if (item.method == "chat.submitInput" && receipt.optString("decision") == "accepted")
+            MobileInputRouting.checkDestination(item.envelope.getJSONObject("intent"), receipt.getJSONObject("target"))
+        store.resolve(item, receipt)
     }
     fun reconcile(client: ProductClient, item: OutboxItem): OutboxItem {
         val identity = client.identity ?: throw ProtocolFailure("NOT_CONNECTED")
@@ -40,8 +47,7 @@ class CommandOutbox(private val store: LocalStore) {
     internal fun applyLookup(item: OutboxItem, instance: String, result: JSONObject): OutboxItem {
         if (result.getString("lookup") == "decided") {
             val receipt = result.getJSONObject("receipt")
-            if (receipt.getString("commandId") != item.id || receipt.getString("method") != item.method || receipt.getString("dataGeneration") != item.envelope.getString("dataGeneration")) throw ProtocolFailure("PROTOCOL_INCOMPATIBLE")
-            store.resolve(item, receipt)
+            resolve(item, receipt)
             return item.copy(state = receipt.getString("decision"), receipt = receipt)
         }
         val lookup = result.getString("lookup")

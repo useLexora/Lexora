@@ -98,7 +98,7 @@ fun MobileShell(
                 Text(mobileText(R.string.new_task_defaults_retry))
             }
             val connectionNotice = !state.connected && (state.notice == mobileText(R.string.error_not_connected) || state.notice == MobileFailurePresentation.NETWORK_UNAVAILABLE_NOTICE)
-            if (!tightInput && !fullscreenInput && state.notice.isNotBlank() && !connectionNotice) Notice(state.notice) { act(MobileAction.DismissNotice) }
+            if (!conversation && state.notice.isNotBlank() && !connectionNotice) Notice(state.notice) { act(MobileAction.DismissNotice) }
             val noTranscript = state.messages.isEmpty() && state.runs.isEmpty()
             val conversationStatus = when {
                 state.viewingArchived -> mobileText(R.string.mobile_archived_read_only)
@@ -128,6 +128,10 @@ fun MobileShell(
                                 }
                             }
                         } else timeline(Modifier.weight(1f).fillMaxWidth())
+                    }
+                    key(deviceId, state.topic) {
+                        ConversationFeedbackLayer(state, connectionNotice, visible = !fullscreenInput && !taskSettings && !appearanceSettings && sheet == null,
+                            onAction = act, modifier = Modifier.matchParentSize())
                     }
                 } else {
                     savedPages.SaveableStateProvider("$deviceId:${state.screen}:${state.selectedSpaceId ?: "all"}:${state.taskFilter}") {
@@ -240,6 +244,11 @@ fun MobileShell(
                         }
                     }
                     MobileSheet.Attachments -> {
+                        if (state.canCheckInputReceipt) item {
+                            ActionRow(mobileText(R.string.send_check_status), Icons.Outlined.History, subtitle = state.sendFeedback) {
+                                sheet = null; act(MobileAction.CheckInputReceipt)
+                            }
+                        }
                         if (state.attachments.isNotEmpty()) {
                             item { Text(mobileText(R.string.label_added), Modifier.padding(12.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                             items(state.attachments, key = { it.id }) { attachment ->
@@ -579,14 +588,6 @@ private fun ComposerBar(state: MobileUiState, composer: EditText, onAction: (Mob
                 ComposerToolbar(state, onAction, attachments, stopping, active, runs)
             }
         }
-        if (state.sendFeedback.isNotEmpty()) {
-            val status = Modifier.testTag("input-send-status")
-            if (!tight && state.canCheckInputReceipt) TextButton(onClick = { onAction(MobileAction.CheckInputReceipt, null) },
-                modifier = status.heightIn(min = 48.dp)) { Text(state.sendFeedback); Spacer(Modifier.width(8.dp)); Text(mobileText(R.string.send_check_status)) }
-            else Text(state.sendFeedback, status.padding(horizontal = 8.dp), maxLines = if (tight) 1 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        if (state.inputFeedback.isNotBlank() && state.inputFeedback != mobileText(R.string.mobile_saved_on_phone)) Text(state.inputFeedback, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
     }
 }
 
