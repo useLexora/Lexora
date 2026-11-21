@@ -5,6 +5,7 @@ import type { ChatDraftSnapshot, DraftRestorationConflict, DraftRestorationState
 
 import type { ChatSession } from '@/modules/tasks/state/conversations/useChatSession'
 import type { useChatDrafts } from '@/modules/tasks/state/drafts/useChatDrafts'
+import { createBuddyUserContent } from '@buddy-shared/conversation/buddyUserContent'
 import { computed, readonly, shallowRef, watch } from 'vue'
 import { parseDraftScopeKey } from '../../model/drafts/draftScope'
 import { createDraftValueFingerprint } from '../../model/drafts/draftValueFingerprint'
@@ -112,9 +113,13 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
     if (disposed || !current || current.targetKey !== targetKey)
       return false
     try {
-      const remote = await options.api.composerDrafts.get(current.remote.draftId)
+      const remote = await readRecoveryDraft(current.local, current.remote.draftId)
       if (disposed || conflict.value?.targetKey !== targetKey || !options.drafts.isUnchanged(current.local))
         return false
+      if (remote.draftId !== current.remote.draftId || remote.revision !== current.remote.revision) {
+        conflict.value = { targetKey, remote }
+        return false
+      }
       if (!options.drafts.confirmOpen(current.local, remote))
         return false
       options.onDraftRestored?.(targetKey)
@@ -178,17 +183,34 @@ export function useTaskWorkspacePersistence(options: UseTaskWorkspacePersistence
     }
   }
 
+  function readRecoveryDraft(snapshot: ChatDraftSnapshot, draftId: string) {
+    const scope = parseDraftScopeKey(snapshot.targetKey)
+    if (scope.kind !== 'message_edit' && scope.kind !== 'message_followup')
+      return options.api.composerDrafts.get(draftId)
+    return options.api.composerDrafts.open({
+      scope,
+      draftId: crypto.randomUUID(),
+      initialContent: createBuddyUserContent(),
+      initialExecutionConfig: { approvalPolicy: snapshot.approvalPolicy, executionProfile: snapshot.executionProfile },
+      initialModelSelection: snapshot.modelSelection,
+    })
+  }
+
   async function reconcileRecovered(targetKey: string): Promise<void> {
     const snapshot = options.drafts.snapshot(targetKey)
     if (snapshot.revision === null) {
       recovery.recoveredTargets.delete(targetKey)
       return
     }
-    const remote = await options.api.composerDrafts.get(snapshot.draftId)
+    const remote = await readRecoveryDraft(snapshot, snapshot.draftId)
     if (disposed)
       return
-    if (remote.revision >= snapshot.revision && (sameDraftValue(remote, snapshot) || (remote.revision === snapshot.revision && createDraftValueFingerprint(remote) === snapshot.confirmedSnapshot))) {
-      if (!options.drafts.confirmOpen(snapshot, remote, true))
+    const replaced = remote.draftId !== snapshot.draftId
+    const canRestore = replaced
+      ? options.drafts.isPersisted(snapshot) && options.drafts.isUnchanged(snapshot)
+      : remote.revision >= snapshot.revision && (sameDraftValue(remote, snapshot) || (remote.revision === snapshot.revision && createDraftValueFingerprint(remote) === snapshot.confirmedSnapshot))
+    if (canRestore) {
+      if (!options.drafts.confirmOpen(snapshot, remote, !replaced))
         return
       recovery.recoveredTargets.delete(targetKey)
       return

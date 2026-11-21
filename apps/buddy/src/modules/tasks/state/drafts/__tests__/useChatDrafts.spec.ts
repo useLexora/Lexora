@@ -198,6 +198,7 @@ describe('useChatDrafts', () => {
       draftId: submitted.draftId,
       sourceRevision: 2,
     }, 'conversation:conversation-1:branch-2', editKey)).toBe(true)
+    expect(drafts.listSnapshots().map(draft => draft.targetKey)).not.toContain(editKey)
     if (navigate) {
       expect(drafts.targetKey.value).toBe(otherFollowup)
       expect(drafts.draft.value).toBe('new target input')
