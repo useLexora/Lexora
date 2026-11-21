@@ -120,26 +120,29 @@ const { authChallenge, language } = providerSettings
       />
     </template>
 
-    <DesktopProviderDetail
-      v-if="provider"
-      :provider-id="providerId"
-      :provider-settings="providerSettings"
-      @continue-setup="continueSetup"
-      @manage-plugin="managePlugin"
-    />
-    <DesktopProviderAddDialog
-      v-model:show="showAddDialog"
-      :provider-settings="providerSettings"
-      :resume-provider-id="providerId"
-      :start-at-connection="startAtConnection"
-    />
-    <DesktopProviderAuthDialog
-      :challenge="authChallenge"
-      :provider-name="authProviderName"
-      :language="language"
-      @cancel="providerSettings.cancelAuth"
-      @submit="providerSettings.respondToAuth"
-    />
+    <template #default="{ scrollElement }">
+      <DesktopProviderDetail
+        v-if="provider"
+        :provider-id="providerId"
+        :provider-settings="providerSettings"
+        :scroll-element="scrollElement"
+        @continue-setup="continueSetup"
+        @manage-plugin="managePlugin"
+      />
+      <DesktopProviderAddDialog
+        v-model:show="showAddDialog"
+        :provider-settings="providerSettings"
+        :resume-provider-id="providerId"
+        :start-at-connection="startAtConnection"
+      />
+      <DesktopProviderAuthDialog
+        :challenge="authChallenge"
+        :provider-name="authProviderName"
+        :language="language"
+        @cancel="providerSettings.cancelAuth"
+        @submit="providerSettings.respondToAuth"
+      />
+    </template>
   </DesktopSettingsPageLayout>
 </template>
 

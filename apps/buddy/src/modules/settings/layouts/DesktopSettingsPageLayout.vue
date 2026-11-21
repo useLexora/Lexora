@@ -1,14 +1,20 @@
 <script setup lang="ts">
+import type { ComponentPublicInstance } from 'vue'
 import { NScrollbar } from 'naive-ui'
+import { computed, useTemplateRef } from 'vue'
 import DesktopRuntimePane from '@/platform/runtime/DesktopRuntimePane.vue'
+import { readSettingsScrollElement } from './settingsScrollElement'
 
 defineProps<{ loading?: boolean, requiresRuntime?: boolean, fill?: boolean }>()
 defineSlots<{
   actions?: () => unknown
-  default: () => unknown
+  default: (props: { scrollElement: HTMLElement | null }) => unknown
   description?: () => unknown
   title: () => unknown
 }>()
+
+const scrollbar = useTemplateRef<ComponentPublicInstance>('scrollbar')
+const scrollElement = computed(() => readSettingsScrollElement(scrollbar.value))
 </script>
 
 <template>
@@ -30,12 +36,12 @@ defineSlots<{
     <DesktopRuntimePane :enabled="requiresRuntime" :loading="loading">
       <div v-if="fill" class="desktop-settings-page__content flex w-full h-full min-h-0 flex-col overflow-hidden">
         <div class="flex min-w-0 min-h-0 flex-1">
-          <slot />
+          <slot :scroll-element="null" />
         </div>
       </div>
-      <NScrollbar v-else class="desktop-settings-page__scroll">
+      <NScrollbar v-else ref="scrollbar" class="desktop-settings-page__scroll">
         <div class="desktop-settings-page__content grid w-[min(100%,_64rem)] gap-[1.8rem] my-0 mx-auto pt-[clamp(20px,_3cqw,_24px)] pr-[clamp(1rem,_3cqw,_2.8rem)] pb-12 pl-[clamp(1rem,_3cqw,_2.8rem)]">
-          <slot />
+          <slot :scroll-element="scrollElement" />
         </div>
       </NScrollbar>
     </DesktopRuntimePane>
