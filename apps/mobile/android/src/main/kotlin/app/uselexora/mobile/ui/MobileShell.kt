@@ -99,27 +99,33 @@ fun MobileShell(
             }
             val connectionNotice = !state.connected && (state.notice == mobileText(R.string.error_not_connected) || state.notice == MobileFailurePresentation.NETWORK_UNAVAILABLE_NOTICE)
             if (!tightInput && !fullscreenInput && state.notice.isNotBlank() && !connectionNotice) Notice(state.notice) { act(MobileAction.DismissNotice) }
-            if (conversation && state.selectedTask != null && (state.viewingArchived || (state.connected && (!state.conversationReady || state.readingCached)))) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(when {
-                    state.viewingArchived -> mobileText(R.string.mobile_archived_read_only)
-                    state.syncFailure.isNotBlank() -> state.syncFailure
-                    else -> mobileText(R.string.mobile_sync_required)
-                }, Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = if (tightInput) 1 else 3, overflow = TextOverflow.Ellipsis)
+            val noTranscript = state.messages.isEmpty() && state.runs.isEmpty()
+            val conversationStatus = when {
+                state.viewingArchived -> mobileText(R.string.mobile_archived_read_only)
+                state.connected && state.syncFailure.isNotBlank() -> state.syncFailure
+                state.connected && state.readingCached && !noTranscript && !state.showingAcceptedInput -> mobileText(R.string.mobile_showing_phone_content_updating)
+                else -> null
+            }
+            if (conversation && (state.viewBranchId != null || state.selectedTask != null) && conversationStatus != null) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(conversationStatus, Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = if (tightInput) 1 else 3, overflow = TextOverflow.Ellipsis)
                 if (!state.viewingArchived && state.syncFailure.isNotBlank()) TextButton(onClick = { act(MobileAction.Refresh) }) { Text(mobileText(R.string.label_retry)) }
             }
             Box(Modifier.fillMaxWidth().then(if (fullscreenInput) Modifier.height(0.dp).clipToBounds().clearAndSetSemantics {} else Modifier.weight(1f))) {
                 if (conversation) {
-                    if (state.selectedTask == null && state.messages.isEmpty()) NewTaskIntro(state, act)
+                    if (state.selectedTask == null && state.viewBranchId == null && state.messages.isEmpty()) NewTaskIntro(state, act)
                     else Column(Modifier.fillMaxSize()) {
-                        if (!tightInput && (state.historyPinned || (state.connected && (state.historyHasMore || state.historyLoading || state.historyError.isNotBlank())))) Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (!tightInput && (state.historyPinned || (state.connected && state.conversationReady && (state.historyHasMore || state.historyLoading || state.historyError.isNotBlank())))) Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                             if (state.historyLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                             else if (state.connected && state.historyHasMore) TextButton(onClick = { act(MobileAction.MoreHistory) }) { Text(mobileText(if (state.historyError.isNotBlank()) R.string.label_retry else R.string.mobile_load_earlier)) }
                             if (state.historyPinned) TextButton(onClick = { act(MobileAction.ReturnLatest) }) { Text(mobileText(R.string.mobile_return_latest)) }
                         }
                         if (state.connected && !tightInput && state.historyError.isNotBlank()) Text(state.historyError, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                        if (!state.connected && state.selectedTask != null && state.messages.isEmpty() && state.runs.isEmpty()) {
+                        if (noTranscript && !state.conversationReady) {
                             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                Text(mobileText(R.string.mobile_connect_to_view_conversation), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (conversationStatus == null) {
+                                    if (state.connected) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                                    else Text(mobileText(R.string.mobile_connect_to_view_conversation), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                             }
                         } else timeline(Modifier.weight(1f).fillMaxWidth())
                     }

@@ -5,7 +5,7 @@ import app.uselexora.mobile.protocol.ProtocolFailure
 import org.json.JSONObject
 
 /** A single immutable editor snapshot; attachment ownership stays with the database. */
-data class ComposerEdit(val text: String, val model: String?, val execution: String?, val spaceId: String?, val spaceName: String?, val keepSettings: Boolean = false) {
+data class ComposerEdit(val text: String, val model: String?, val execution: String?, val spaceId: String?, val spaceName: String?, val keepSettings: Boolean = false, val startsNextBody: Boolean = false) {
     internal fun applyTo(value: JSONObject, bodyChanged: Boolean, followsTaskModel: Boolean): Boolean {
         if (bodyChanged) {
             val panel = value.optJSONObject("content")?.optJSONArray("panelResourceIds")
@@ -54,7 +54,7 @@ class ComposerMemory(private val store: LocalStore, private val transfers: Trans
                 }
                 else -> {
                     val value = previous?.value ?: JSONObject()
-                    val bodyChanged = content == null || MobileContentAdapter.text(content) != edit.text
+                    val bodyChanged = edit.startsNextBody || content == null || MobileContentAdapter.text(content) != edit.text
                     val changed = edit.applyTo(value, bodyChanged, destination.startsWith("conversation:") && value.optBoolean("followsTaskModel"))
                     if (changed || previous == null) store.writeDraft(partition, destination, previous, value, bodyChanged) else previous
                 }

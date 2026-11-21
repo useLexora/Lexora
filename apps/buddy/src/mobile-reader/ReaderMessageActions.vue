@@ -22,12 +22,15 @@ const timestamp = computed(() => {
 
 <template>
   <div class="message-actions" :aria-label="labels.messageActions">
-    <ReaderBranchNavigation v-if="navigator" :navigator="navigator" @branch="emit('branch', $event)" />
+    <ReaderBranchNavigation v-if="message.returnToComposer === undefined && navigator" :navigator="navigator" @branch="emit('branch', $event)" />
     <time v-if="message.role === 'user' && timestamp" class="message-time" :datetime="message.createdAt ?? undefined">{{ timestamp }}</time>
     <button v-if="message.text && message.canCopy && (!message.needsDetail || message.hasDetail)" :aria-label="copied ? labels.copied : labels.copyMessage" :class="{ 'is-copied': copied }" @click="emit('copy')">
       <DesktopIcon :name="copied ? 'messageCopied' : 'messageCopy'" :size="15" />
     </button>
-    <button v-if="message.canEdit" :aria-label="labels.edit" @click="emit('edit')">
+    <button v-if="message.returnToComposer" class="return-to-composer" @click="emit('edit')">
+      {{ labels.returnToComposer }}
+    </button>
+    <button v-else-if="message.canEdit" :aria-label="labels.edit" @click="emit('edit')">
       <DesktopIcon name="edit" :size="15" />
     </button>
     <button v-if="message.canRegenerate" :aria-label="labels.regenerate" @click="emit('regenerate')">
@@ -36,7 +39,7 @@ const timestamp = computed(() => {
     <button v-if="message.canFollowup" :aria-label="labels.branch" @click="emit('followup')">
       <DesktopIcon name="messageBranch" :size="15" />
     </button>
-    <button :aria-label="labels.more" @click="emit('more', $event)">
+    <button v-if="message.returnToComposer === undefined" :aria-label="labels.more" @click="emit('more', $event)">
       <MoreHorizontal20Regular class="reader-icon" />
     </button>
 
@@ -70,6 +73,12 @@ const timestamp = computed(() => {
   padding: 6px;
   color: inherit;
   border-radius: 6px;
+}
+.message-actions .return-to-composer {
+  width: auto;
+  flex-basis: auto;
+  padding-inline: 8px;
+  font: inherit;
 }
 .message-actions button:active {
   background: var(--reader-user);

@@ -6,27 +6,17 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import app.uselexora.mobile.network.ApprovalDocuments
 import app.uselexora.mobile.network.MobileConnection
-import app.uselexora.mobile.network.PinnedTransport
-import app.uselexora.mobile.network.ProductClient
 import app.uselexora.mobile.protocol.ProtocolFailure
 import app.uselexora.mobile.protocol.ProtocolSchemas
 import app.uselexora.mobile.storage.LocalStore
 import app.uselexora.mobile.storage.SecretStore
 import app.uselexora.mobile.ui.MainActivity
 import app.uselexora.mobile.ui.TaskOperations
-import okhttp3.CertificatePinner
-import okhttp3.WebSocket
-import okhttp3.WebSocketListener
-import okhttp3.mockwebserver.MockResponse
-import okhttp3.mockwebserver.MockWebServer
-import okhttp3.tls.HandshakeCertificates
-import okhttp3.tls.HeldCertificate
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
@@ -83,48 +73,20 @@ class TaskOperationOwnershipInstrumentedTest {
             }
         } } }
     }
-    private class Fixture(private val schemas: ProtocolSchemas) : AutoCloseable {
+    private class Fixture(schemas: ProtocolSchemas) : AutoCloseable {
         @Volatile var read = false
-        private val token = UUID.randomUUID().toString()
-        private val certificate = HeldCertificate.Builder().addSubjectAlternativeName("localhost").build()
-        private val server = MockWebServer().apply {
-            useHttps(HandshakeCertificates.Builder().heldCertificate(certificate).build().sslSocketFactory(), false)
-            start()
-        }
-        val client: ProductClient
-        init {
-            server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
-                override fun onMessage(webSocket: WebSocket, text: String) {
-                    val request = JSONObject(text)
-                    val method = request.getString("method")
-                    val params = request.getJSONObject("params")
-                    val value: Any = when (method) {
-                        "initialize" -> identity()
-                        "taskMarks.states" -> JSONArray().put(JSONObject().put("conversationId", "shared-task").put("markId", JSONObject.NULL)
-                            .put("assignmentRevision", "0").put("resultRunId", "shared-run").put("readRevision", "0").put("unread", !read))
-                        "taskMarks.setRead" -> {
-                            read = params.getJSONObject("intent").getBoolean("read")
-                            JSONObject().put("receipt", JSONObject().put("commandId", params.getString("commandId")).put("dataGeneration", params.getString("dataGeneration"))
-                                .put("method", method).put("decision", "accepted").put("decidedAt", Instant.now().toString())
-                                .put("target", JSONObject().put("conversationId", "shared-task")).put("result", JSONObject()))
-                        }
-                        else -> throw IllegalArgumentException("Unexpected fixture method: $method")
-                    }
-                    webSocket.send(JSONObject().put("jsonrpc", "2.0").put("id", request.getString("id")).put("result", value).toString())
+        private val service = SyntheticProductService(schemas) { call ->
+            when (call.method) {
+                "taskMarks.states" -> call.reply(JSONArray().put(JSONObject().put("conversationId", "shared-task").put("markId", JSONObject.NULL)
+                    .put("assignmentRevision", "0").put("resultRunId", "shared-run").put("readRevision", "0").put("unread", !read)))
+                "taskMarks.setRead" -> {
+                    read = call.params.getJSONObject("intent").getBoolean("read")
+                    call.receipt(JSONObject().put("conversationId", "shared-task"))
                 }
-            }))
-            client = ProductClient(PinnedTransport(server.url("/").toString().trimEnd('/'), CertificatePinner.pin(certificate.certificate)), "synthetic-credential", schemas)
-            client.connect(BuildConfig.VERSION_NAME)
+                else -> error("Unexpected fixture method: ${call.method}")
+            }
         }
-        private fun identity(): JSONObject {
-            val result = JSONObject()
-            for (key in listOf("serviceId", "profileId", "dataGeneration", "serviceInstanceId", "connectionId", "clientSessionId", "deviceId")) result.put(key, "$token-$key")
-            val limits = JSONObject()
-            val properties = schemas.document.getJSONObject("initialize").getJSONObject("output").getJSONObject("properties").getJSONObject("limits").getJSONObject("properties")
-            for (key in properties.keys()) limits.put(key, properties.getJSONObject(key).get("const"))
-            return result.put("protocol", JSONObject().put("major", 1).put("minor", 0)).put("phase", "ready")
-                .put("serverTime", Instant.now().toString()).put("capabilities", JSONArray()).put("limits", limits)
-        }
-        override fun close() { client.close(); server.close() }
+        val client = service.connect()
+        override fun close() { client.close(); service.close() }
     }
 }

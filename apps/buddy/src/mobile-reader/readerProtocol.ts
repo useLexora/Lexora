@@ -31,6 +31,7 @@ export const readerMessageSchema = schema.object({
   detailResource: schema.string().nullable(),
   actionsVisible: schema.boolean(),
   canEdit: schema.boolean(),
+  returnToComposer: schema.boolean().optional(),
   canRegenerate: schema.boolean(),
   canFollowup: schema.boolean(),
   canCopy: schema.boolean(),

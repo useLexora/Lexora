@@ -76,7 +76,7 @@ watch(topic, () => {
             <ReaderMessage v-else-if="!row.entry.turn" :message="message" :output="message.runId && lastAssistantIds.get(message.runId) === message.id ? outputs[message.runId] : undefined" :language="language" :dark="dark" :send="send" @interact="followsEnd = false" />
           </template>
         </section>
-        <p v-if="!entries.length" class="reader-empty">
+        <p v-if="topic && !entries.length" class="reader-empty">
           {{ labels.empty }}
         </p>
       </div>

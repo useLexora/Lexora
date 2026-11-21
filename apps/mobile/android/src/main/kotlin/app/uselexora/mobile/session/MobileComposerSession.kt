@@ -25,7 +25,7 @@ class MobileComposerSession(
     private val onUi: (() -> Unit) -> Unit,
 ) {
     data class Scope(val partition: String, val target: String)
-    data class Submission(val scope: Scope, val target: ConversationTarget)
+    data class Submission(val scope: Scope, val target: ConversationTarget, val echo: AcceptedInputEcho?, val inputUnchanged: Boolean)
     var scope = Scope("unpaired-local", "global")
         private set
     private var pendingWrite: Future<LocalDraft?>? = null
@@ -116,9 +116,10 @@ class MobileComposerSession(
         }
     }
     fun submit(client: ProductClient, method: String, extra: JSONObject, execution: JSONObject, work: (() -> Unit) -> Unit, reviewed: LocalDraft? = null,
-        accepted: (Submission) -> Unit, failed: (MobileOperationFailure) -> Unit, settled: () -> Unit) {
+        attachmentNames: Map<String, String> = emptyMap(), accepted: (Submission) -> Unit, failed: (MobileOperationFailure) -> Unit, settled: () -> Unit) {
         val target = scope
         if (!submitting.add(target)) return
+        val submittedRevision = revision
         val pending = flush()
         val editingOwner = owner
         val captured = disk.submit<LocalDraft?> {
@@ -147,7 +148,8 @@ class MobileComposerSession(
                 val receipt = CommandReceipt.requireAccepted(
                     MobileInputCommands(store).submit(client, draft, context, actualMethod, intent, confirmedRepeat = reviewed != null, displayedExecution = execution))
                 val acceptedTarget = ConversationTarget.fromTarget(receipt.getJSONObject("target"))
-                onUi { if (!closed) accepted(Submission(target, acceptedTarget)) }
+                val echo = AcceptedInputEcho.from(receipt, actualMethod, draft.value.getJSONObject("content"), attachmentNames)
+                onUi { if (!closed) accepted(Submission(target, acceptedTarget, echo, scope == target && revision == submittedRevision && draft.editSequence == latest.editSequence)) }
             } catch (error: Exception) {
                 onUi { if (!closed && scope == target) failed(MobileOperationFailure.from(error)) }
             } finally {

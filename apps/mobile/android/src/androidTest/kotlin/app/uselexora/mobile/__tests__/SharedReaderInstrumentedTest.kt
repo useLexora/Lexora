@@ -13,6 +13,7 @@ import app.uselexora.mobile.ui.LexoraTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
 import app.uselexora.mobile.ui.ReaderView
@@ -81,6 +82,35 @@ class SharedReaderInstrumentedTest {
             Thread.sleep(100)
         }
         fail("Reader condition failed: $script; page=${js("document.body.innerText")}")
+    }
+
+    @Test fun acceptedFirstInputStaysVisibleWhileTheConversationSynchronizes() {
+        val body = "只显示这条输入"
+        val first = message("user-1", body, "user")
+        val state = MobileUiState().apply {
+            screen = MobileScreen.Conversation; connected = true; conversationReady = false
+            viewBranchId = "branch"; readerTopic = topic; showingAcceptedInput = true
+            messages = listOf(first); readingCached = true; historyHasMore = true
+        }
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        lateinit var input: EditText
+        compose.runOnUiThread { input = EditText(context) }
+        compose.setContent {
+            LexoraTheme {
+                MobileShell(state, input, { _, _ -> }) { modifier ->
+                    AndroidView(factory = { ReaderView(it).also { reader -> host = reader } }, modifier = modifier, onRelease = { it.dispose() },
+                        update = { it.update(state.messages, state.readerTopic, emptyMap(), emptyList(), false, 1f, {}, {}, {}) })
+                }
+            }
+        }
+        until("document.querySelectorAll('[data-message-id=\"user-1\"]').length === 1 && document.body.innerText.includes('$body') && !document.querySelector('.reader-empty')")
+        for (resource in listOf(R.string.mobile_sync_required, R.string.mobile_load_earlier, R.string.mobile_showing_phone_content_updating))
+            compose.onNodeWithText(app.uselexora.mobile.i18n.mobileText(resource)).assertDoesNotExist()
+        compose.runOnUiThread {
+            state.readingCached = false; state.historyHasMore = false; state.conversationReady = true
+            state.messages = listOf(message("user-1", body, "user"), message("reply-1", "收到"))
+        }
+        until("document.body.innerText.includes('收到') && document.querySelectorAll('[data-message-id=\"user-1\"]').length === 1")
     }
 
     @Test fun languageUpdatesMessageAndMarkdownActionsWithoutTranslatingUserText() {

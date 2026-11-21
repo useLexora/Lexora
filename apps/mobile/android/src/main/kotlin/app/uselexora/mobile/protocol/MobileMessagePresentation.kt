@@ -13,6 +13,7 @@ data class MobileMessageDetail(
     val resource: JSONObject? = null,
     val notice: String? = null,
     val sourceBody: String? = null,
+    val canReturnToComposer: Boolean = false,
 )
 
 data class MobileMessage(
