@@ -4,13 +4,13 @@ import app.uselexora.mobile.i18n.mobileText
 import app.uselexora.mobile.R
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -20,8 +20,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.font.FontWeight
@@ -61,26 +59,24 @@ internal fun ConversationSettings(state: MobileUiState, onAction: (MobileAction,
 private fun ExecutionSettingsPage(state: MobileUiState, onAction: (MobileAction, JSONObject?) -> Unit, modifier: Modifier = Modifier) {
     val target = pickerTarget(state)
     var confirmFullAccess by remember(target, state.executionSelection.toString()) { mutableStateOf(false) }
-    Column(modifier.verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(mobileText(R.string.permissions_summary, state.executionLabel), style = MaterialTheme.typography.titleSmall)
-        Text(mobileText(R.string.mobile_permissions_apply_immediately), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Column(modifier.verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 8.dp).selectableGroup(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         for (mode in ExecutionSettings.modes) {
             val current = mode.matches(state.executionSelection)
             Surface(shape = RoundedCornerShape(16.dp), color = if (current) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer) {
-                Row(Modifier.fillMaxWidth().testTag("permission-${mode.profile}-${mode.policy}").semantics { selected = current }
-                    .clickable(enabled = state.executionEnabled, role = Role.RadioButton) {
+                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("permission-${mode.profile}-${mode.policy}")
+                    .selectable(selected = current, enabled = state.executionEnabled, role = Role.RadioButton) {
                         if (pickerTarget(state) == target && state.executionEnabled && !current) {
                             if (mode.profile == "full_access") confirmFullAccess = true
                             else onAction(MobileAction.ApplyExecution, mode.config())
                         }
-                    }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    }.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(executionIcon(mode.config()), null, Modifier.size(22.dp))
                     Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Column(Modifier.weight(1f)) {
                         Text(mode.label, style = MaterialTheme.typography.bodyLarge)
                         Text(mode.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    if (current) Icon(Icons.Outlined.Check, mobileText(R.string.label_selected), Modifier.padding(start = 8.dp).size(20.dp))
+                    if (current) Icon(Icons.Outlined.Check, null, Modifier.padding(start = 8.dp).size(20.dp))
                 }
             }
         }

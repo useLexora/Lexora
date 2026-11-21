@@ -38,7 +38,6 @@
     <plurals name="mobile_queue_attachments">
         <item quantity="other">附件：%1$d 项</item>
     </plurals>
-    <string name="mobile_permissions_apply_immediately">选择后立即应用。关闭不会撤销已应用的更改；全访问需要另行确认。</string>
     <string name="mobile_clear_model_search">清除搜索</string>
     <string name="mobile_exit_fullscreen_editor">退出全屏输入</string>
     <string name="mobile_fullscreen_editor">全屏输入</string>
@@ -416,8 +415,8 @@
     <string name="review_system_interaction">系统交互</string>
     <string name="review_browser_interaction">浏览器交互</string>
     <string name="review_mcp_call">MCP 调用</string>
-    <string name="new_task_permissions_unknown">未同步</string>
-    <string name="new_task_permissions_choose">请先选择权限再发送。</string>
+    <string name="permissions_not_selected">未选择</string>
+    <string name="choose_task_permissions">选择任务权限</string>
     <string name="new_task_defaults_retry">未能读取新任务设置，点此重试</string>
     <string name="execution_inherited">保留服务执行设置</string>
     <string name="models_load_failed">模型暂未载入，点按重试</string>

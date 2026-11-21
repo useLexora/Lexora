@@ -431,11 +431,12 @@ class MainActivity : ComponentActivity() {
         ui.sendFeedback = when {
             waiting != null && !input.isSubmitting -> mobileText(if (waiting) R.string.send_check_original else R.string.error_command_result_unknown)
             !ui.connected && ui.hasInput -> mobileText(R.string.send_offline)
-            ui.hasInput && executionConfig == null -> mobileText(R.string.new_task_permissions_choose)
             else -> sendIssue?.takeIf { it.first == input.scope }?.second.orEmpty()
         }
         ui.canCheckInputReceipt = waiting != null && !input.isSubmitting && ui.connected && checkingReceipts !== client
-        ui.sendEnabled = !ui.newTaskOpening && composer.isEnabled && executionConfig != null && ui.hasInput && waiting == null && !input.isSubmitting && !writingCurrentModel() && ui.conversationReady && !ui.viewingArchived
+        val readyToSend = !ui.newTaskOpening && composer.isEnabled && ui.hasInput && waiting == null && !input.isSubmitting && !writingCurrentModel() && ui.conversationReady && !ui.viewingArchived
+        ui.sendEnabled = readyToSend && executionConfig != null
+        ui.choosePermissionToSend = readyToSend && isNewTaskPage() && ui.executionEnabled && executionConfig == null
         val fallback = if (isNewTaskPage()) entry?.defaults?.model else inheritedModel.takeIf { modelContextKey == modelKey() }
         val selection = model ?: selectedTask?.optJSONObject("modelSelection") ?: fallback
         if (ui.modelPickerOpen) {
@@ -1061,7 +1062,7 @@ class MainActivity : ComponentActivity() {
         val sendingClient = client?.takeIf { it.isConnected && it.identity?.partition == partition && foreground } ?: return
         val owner = operationOwner()
         sendIssue = null
-        val execution = executionConfig ?: run { ui.notice = mobileText(R.string.new_task_permissions_choose); return }
+        val execution = executionConfig ?: run { if (ui.choosePermissionToSend) chooseExecution(); return }
         input.submit(sendingClient, method, extra, execution, ::work, reviewed = reviewed, accepted = { result ->
             if (isCurrent(owner)) acceptedInput(sendingClient, result.target)
         }, failed = { failure ->
@@ -1278,7 +1279,7 @@ class MainActivity : ComponentActivity() {
     private fun renderExecution() {
         val config = executionConfig
         if (ui.executionSelection.toString() != (config?.toString() ?: "{}")) ui.executionSelection = config ?: JSONObject()
-        ui.executionLabel = config?.let(ExecutionSettings::label) ?: mobileText(R.string.new_task_permissions_unknown)
+        ui.executionLabel = config?.let(ExecutionSettings::label) ?: mobileText(R.string.permissions_not_selected)
         ui.executionEnabled = composer.isEnabled && !changingExecution && !ui.viewingArchived && (conversationTarget == null || ui.conversationReady)
     }
     private fun chooseExecution(selection: JSONObject? = null) {
