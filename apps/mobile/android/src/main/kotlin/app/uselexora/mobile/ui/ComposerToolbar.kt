@@ -63,9 +63,13 @@ internal fun ComposerToolbar(state: MobileUiState, onAction: (MobileAction, JSON
                 }
             }
         }
-        ComposerButton(mobileText(R.string.label_send), "send", state.sendEnabled, { onAction(MobileAction.Send, null) }, surfaceSize = 32.dp) {
-            Box(Modifier.size(32.dp).clip(RoundedCornerShape(6.dp)).background(if (state.sendEnabled) colors.primary else colors.surfaceVariant), contentAlignment = Alignment.Center) {
-                Icon(desktopSymbol(DesktopSymbol.ArrowUp), null, Modifier.size(18.dp), tint = if (state.sendEnabled) colors.onPrimary else muted)
+        val choosePermission = state.choosePermissionToSend
+        val enabled = state.sendEnabled || choosePermission
+        ComposerButton(mobileText(if (choosePermission) R.string.choose_task_permissions else R.string.label_send), "send", enabled, {
+            onAction(if (choosePermission) MobileAction.ChooseExecution else MobileAction.Send, null)
+        }, surfaceSize = 32.dp) {
+            Box(Modifier.size(32.dp).clip(RoundedCornerShape(6.dp)).background(if (enabled) colors.primary else colors.surfaceVariant), contentAlignment = Alignment.Center) {
+                Icon(desktopSymbol(DesktopSymbol.ArrowUp), null, Modifier.size(18.dp), tint = if (enabled) colors.onPrimary else muted)
             }
         }
     }

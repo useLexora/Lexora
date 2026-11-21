@@ -39,7 +39,6 @@
         <item quantity="one">%1$d attachment</item>
         <item quantity="other">%1$d attachments</item>
     </plurals>
-    <string name="mobile_permissions_apply_immediately">Selections apply immediately. Closing does not undo applied changes; full access requires confirmation.</string>
     <string name="mobile_clear_model_search">Clear search</string>
     <string name="mobile_exit_fullscreen_editor">Exit full screen input</string>
     <string name="mobile_fullscreen_editor">Full screen input</string>
@@ -417,8 +416,8 @@
     <string name="review_system_interaction">System interaction</string>
     <string name="review_browser_interaction">Browser interaction</string>
     <string name="review_mcp_call">MCP call</string>
-    <string name="new_task_permissions_unknown">Not synced</string>
-    <string name="new_task_permissions_choose">Choose permissions before sending.</string>
+    <string name="permissions_not_selected">Not selected</string>
+    <string name="choose_task_permissions">Choose task permissions</string>
     <string name="new_task_defaults_retry">Could not read new task settings. Tap to retry.</string>
     <string name="execution_inherited">Keep service permissions</string>
     <string name="models_load_failed">Models could not load. Tap to retry.</string>
