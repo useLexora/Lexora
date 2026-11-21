@@ -14,6 +14,8 @@ import { useExtensionUiContributions } from '../../state/useExtensionUiContribut
 import DesktopExtensionFrameHost from '../DesktopExtensionFrameHost.vue'
 import { useExtensionViews } from '../useExtensionViews'
 
+const rect = { x: 0, y: 0, width: 100, height: 100 }
+const geometry = { visible: true, bounds: rect, clip: rect }
 const disposables: (() => void)[] = []
 afterEach(() => disposables.splice(0).forEach(dispose => dispose()))
 
@@ -25,7 +27,7 @@ it('scopes broadcasts by extension and generation and header actions by exact vi
   }
   const layoutCallbacks: (() => void)[] = []
   const layout: SurfaceLayout = { attach: (_element, options) => {
-    layoutCallbacks.push(() => options.onLayout?.({ visible: true, width: 100, height: 100 }))
+    layoutCallbacks.push(() => options.onLayout?.(geometry))
     return { update: () => {}, dispose: () => {} }
   }, invalidate: () => {} }
   const controller = new WorkbenchController(new ContributionRegistry())
@@ -111,7 +113,7 @@ it('allows clipboard writes only from a focused visible ready frame and preserve
   }
   let layoutChanged = () => {}
   const layout: SurfaceLayout = { attach: (_element, options) => {
-    layoutChanged = () => options.onLayout?.({ visible: true, width: 100, height: 100 })
+    layoutChanged = () => options.onLayout?.(geometry)
     return { update: () => {}, dispose: () => {} }
   }, invalidate: () => {} }
   const controller = new WorkbenchController(new ContributionRegistry())

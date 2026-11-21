@@ -28,12 +28,14 @@ it('clips to its container while retaining the surface identity and uncut layout
   Object.defineProperties(parent, { clientWidth: { value: 200 }, clientHeight: { value: 100 }, offsetWidth: { value: 200 }, offsetHeight: { value: 100 } })
   parent.getBoundingClientRect = () => new DOMRect(100, 50, 200, 100)
   anchor.getBoundingClientRect = () => new DOMRect(80, 60, 240, 100)
-  const lease = layout.attach(surface, { anchor, visible: true, interactive: true, layer: 'content' })
+  const onLayout = vi.fn()
+  const lease = layout.attach(surface, { anchor, visible: true, interactive: true, layer: 'content', onLayout })
   layout.start()
   try {
     await vi.advanceTimersByTimeAsync(20)
     expect(surface.style.visibility).toBe('visible')
     expect(surface.style.width).toBe('240px')
+    expect(onLayout).toHaveBeenLastCalledWith({ visible: true, bounds: { x: 80, y: 60, width: 240, height: 100 }, clip: { x: 100, y: 60, width: 200, height: 90 } })
     expect(surface.style.clipPath).toBe('inset(0px 20px 10px 20px)')
     expect(surface.style.pointerEvents).toBe('auto')
     const originalParent = surface.parentElement
@@ -42,7 +44,8 @@ it('clips to its container while retaining the surface identity and uncut layout
     await vi.advanceTimersByTimeAsync(20)
     expect(surface.parentElement).toBe(originalParent)
     expect(surface.style.left).toBe('120px')
-    expect(surface.style.clipPath).toBe('inset(0px 0px 0px 0px)')
+    const uncut = { x: 120, y: 70, width: 100, height: 60 }
+    expect(onLayout).toHaveBeenLastCalledWith({ visible: true, bounds: uncut, clip: uncut })
     lease.update({ anchor, visible: false, interactive: true, layer: 'content' })
     expect(surface.style.visibility).toBe('hidden')
     expect(surface.tabIndex).toBe(-1)
@@ -101,17 +104,19 @@ it('keeps a control above its popup and publishes hidden geometry when its ancho
   popup.append(anchor)
   document.body.append(popup, surface)
   anchor.getBoundingClientRect = () => new DOMRect(40, 50, 240, 64)
-  let geometry = { visible: false, width: 0, height: 0 }
-  layout.attach(surface, { anchor, visible: true, interactive: true, layer: 'content', onLayout: next => geometry = next })
+  const onLayout = vi.fn()
+  layout.attach(surface, { anchor, visible: true, interactive: true, layer: 'content', onLayout })
   layout.start()
   try {
     await vi.advanceTimersByTimeAsync(20)
     expect(surface.style.position).toBe('fixed')
     expect(surface.style.zIndex).toBe('2001')
-    expect(geometry).toEqual({ visible: true, width: 240, height: 64 })
+    const bounds = { x: 40, y: 50, width: 240, height: 64 }
+    expect(onLayout).toHaveBeenLastCalledWith({ visible: true, bounds, clip: bounds })
     popup.hidden = true
     await vi.advanceTimersByTimeAsync(20)
-    expect(geometry).toEqual({ visible: false, width: 0, height: 0 })
+    const empty = { x: 0, y: 0, width: 0, height: 0 }
+    expect(onLayout).toHaveBeenLastCalledWith({ visible: false, bounds: empty, clip: empty })
     expect(surface.style.pointerEvents).toBe('none')
   }
   finally {

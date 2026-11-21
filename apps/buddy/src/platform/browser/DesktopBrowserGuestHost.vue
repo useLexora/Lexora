@@ -4,8 +4,9 @@ import type {
   DesktopBrowserGuestDescriptor,
 } from '@buddy-electron/shared/desktopApi'
 import type { BrowserGuestCatalog } from './BrowserGuestCatalog'
-import type { SurfaceLayout, SurfaceLayoutLease, SurfaceLayoutOptions } from '@/shared/ui/surfaces/surfaceLayout'
+import type { SurfaceLayout, SurfaceLayoutGeometry, SurfaceLayoutLease, SurfaceLayoutOptions, SurfaceRect } from '@/shared/ui/surfaces/surfaceLayout'
 import { onBeforeUnmount, onMounted, useTemplateRef, watch } from 'vue'
+import { hiddenSurfaceGeometry } from '@/shared/ui/surfaces/surfaceLayout'
 
 const props = defineProps<{
   api: DesktopBrowserApi
@@ -26,6 +27,7 @@ interface BrowserGuestEntry {
   descriptor: DesktopBrowserGuestDescriptor
   element: HTMLElement
   layout: SurfaceLayoutLease
+  geometry: SurfaceLayoutGeometry
   pageId: string | null
   previous: string | null
 }
@@ -108,7 +110,7 @@ function createGuest(descriptor: DesktopBrowserGuestDescriptor): void {
     return
 
   const element = document.createElement('div')
-  const entry: BrowserGuestEntry = { descriptor, element, layout: null!, pageId: null, previous: null }
+  const entry: BrowserGuestEntry = { descriptor, element, layout: null!, geometry: hiddenSurfaceGeometry, pageId: null, previous: null }
   entry.layout = props.layout.attach(element, layoutOptions(entry))
   element.className = 'desktop-browser-guest-host__guest'
   element.dataset.browserSessionId = descriptor.sessionId
@@ -118,7 +120,17 @@ function createGuest(descriptor: DesktopBrowserGuestDescriptor): void {
 
 function layoutOptions(entry: BrowserGuestEntry): SurfaceLayoutOptions {
   const surface = surfaces.get(entry.descriptor.sessionId)
-  return { anchor: surface?.element ?? null, visible: !!surface, interactive: false, retainSizeWhenHidden: true, layer: 'content', onLayout: schedulePresentation }
+  return {
+    anchor: surface?.element ?? null,
+    visible: !!surface,
+    interactive: false,
+    retainSizeWhenHidden: true,
+    layer: 'content',
+    onLayout: (geometry) => {
+      entry.geometry = geometry
+      schedulePresentation()
+    },
+  }
 }
 
 function schedulePresentation(): void {
@@ -134,12 +146,8 @@ function schedulePresentation(): void {
 async function present(entry: BrowserGuestEntry): Promise<void> {
   if (!presentationId || guests.get(entry.descriptor.sessionId) !== entry)
     return
-  const rect = entry.element.getBoundingClientRect()
-  const style = getComputedStyle(entry.element)
-  const inset = entry.element.style.clipPath.match(/inset\(([^)]+)\)/)?.[1]?.split(' ').map(Number.parseFloat) ?? [0, 0, 0, 0]
-  const bounds = { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
-  const clip = { x: rect.x + inset[3]!, y: rect.y + inset[0]!, width: Math.max(0, rect.width - inset[1]! - inset[3]!), height: Math.max(0, rect.height - inset[0]! - inset[2]!) }
-  const visible = style.opacity !== '0' && style.visibility !== 'hidden' && !isCovered(entry.element, clip)
+  const { bounds, clip } = entry.geometry
+  const visible = entry.geometry.visible && !isCovered(entry.element, clip)
   const geometry = JSON.stringify({ bounds, clip, visible })
   if (entry.previous === geometry)
     return
@@ -164,7 +172,7 @@ async function present(entry: BrowserGuestEntry): Promise<void> {
   }
 }
 
-function isCovered(element: HTMLElement, clip: { x: number, y: number, width: number, height: number }): boolean {
+function isCovered(element: HTMLElement, clip: SurfaceRect): boolean {
   if (document.querySelector('.workbench.is-dragging, .workbench.is-resizing, .desktop-workbench-layout.is-resizing'))
     return true
   const layer = Number.parseInt(element.style.zIndex, 10) || 0
@@ -182,8 +190,7 @@ function isCovered(element: HTMLElement, clip: { x: number, y: number, width: nu
 function removeGuest(entry: BrowserGuestEntry): void {
   entry.layout.dispose()
   if (presentationId && entry.pageId) {
-    const zero = { x: 0, y: 0, width: 0, height: 0 }
-    void props.api.present({ presentationId, sessionId: entry.descriptor.sessionId, pageId: entry.pageId, visible: false, bounds: zero, clip: zero }).catch(() => {})
+    void props.api.present({ presentationId, sessionId: entry.descriptor.sessionId, pageId: entry.pageId, ...hiddenSurfaceGeometry }).catch(() => {})
   }
   entry.element.remove()
 }
