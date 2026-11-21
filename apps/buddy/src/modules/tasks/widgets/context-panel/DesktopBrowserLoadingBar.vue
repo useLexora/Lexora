@@ -24,7 +24,7 @@ watch([provider, () => props.loading], ([bar, loading], previous) => {
 
 <template>
   <div
-    class="desktop-browser-loading-bar absolute inset-x-0 bottom-[-2px] z-3 h-[2px] overflow-hidden pointer-events-none"
+    class="desktop-browser-loading-bar absolute inset-x-0 bottom-0 z-3 h-[2px] overflow-hidden pointer-events-none"
     data-testid="browser-loading-bar"
     :role="loading ? 'progressbar' : undefined"
     :aria-label="loading ? t('desktop.context.browserLoading') : undefined"

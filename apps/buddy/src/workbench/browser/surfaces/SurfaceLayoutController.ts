@@ -1,5 +1,7 @@
 import type { SurfaceLayout, SurfaceLayoutLease, SurfaceLayoutOptions } from '@/shared/ui/surfaces/surfaceLayout'
 
+import { hiddenSurfaceGeometry } from '@/shared/ui/surfaces/surfaceLayout'
+
 interface SurfaceEntry {
   element: HTMLElement
   options: SurfaceLayoutOptions
@@ -201,7 +203,7 @@ export class SurfaceLayoutController implements SurfaceLayout {
     const anchor = options.anchor
     if (!options.visible || !anchor?.isConnected || anchor.closest('[hidden], [inert]') || getComputedStyle(anchor).visibility === 'hidden') {
       this.#park(element, options.retainSizeWhenHidden)
-      options.onLayout?.({ visible: false, width: 0, height: 0 })
+      options.onLayout?.(hiddenSurfaceGeometry)
       return
     }
     const bounds = anchor.getBoundingClientRect()
@@ -226,7 +228,7 @@ export class SurfaceLayoutController implements SurfaceLayout {
     }
     if (clip.right <= clip.left || clip.bottom <= clip.top) {
       this.#park(element, options.retainSizeWhenHidden)
-      options.onLayout?.({ visible: false, width: 0, height: 0 })
+      options.onLayout?.(hiddenSurfaceGeometry)
       return
     }
     Object.assign(element.style, {
@@ -241,7 +243,11 @@ export class SurfaceLayoutController implements SurfaceLayout {
       zIndex: String(layer + (options.layer === 'decoration' ? 2 : 1)),
       clipPath: `inset(${clip.top - bounds.top}px ${bounds.right - clip.right}px ${bounds.bottom - clip.bottom}px ${clip.left - bounds.left}px)`,
     })
-    options.onLayout?.({ visible: true, width: bounds.width, height: bounds.height })
+    options.onLayout?.({
+      visible: true,
+      bounds: { x: bounds.left, y: bounds.top, width: bounds.width, height: bounds.height },
+      clip: { x: clip.left, y: clip.top, width: clip.right - clip.left, height: clip.bottom - clip.top },
+    })
     element.tabIndex = options.interactive && !options.childrenOnly ? 0 : -1
     element.inert = !options.interactive
     if (options.interactive)

@@ -1,3 +1,19 @@
+export interface SurfaceRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface SurfaceLayoutGeometry {
+  visible: boolean
+  bounds: SurfaceRect
+  clip: SurfaceRect
+}
+
+const emptyRect = { x: 0, y: 0, width: 0, height: 0 }
+export const hiddenSurfaceGeometry: SurfaceLayoutGeometry = { visible: false, bounds: emptyRect, clip: emptyRect }
+
 export interface SurfaceLayoutOptions {
   anchor: HTMLElement | null
   visible: boolean
@@ -5,7 +21,7 @@ export interface SurfaceLayoutOptions {
   childrenOnly?: boolean
   retainSizeWhenHidden?: boolean
   layer: 'content' | 'decoration'
-  onLayout?: (geometry: { visible: boolean, width: number, height: number }) => void
+  onLayout?: (geometry: SurfaceLayoutGeometry) => void
 }
 
 export interface SurfaceLayoutLease {

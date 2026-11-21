@@ -3,7 +3,7 @@ import type { ExtensionViewHostMessage, ExtensionViewNotification } from '@buddy
 import type { ViewEnvironment } from '@buddy-shared/extensions/extensionViewEvents'
 import type { AnchorGeometry, MountGeometry } from '@buddy-shared/workbench/workbenchUi'
 import type { ExtensionSurface } from './useExtensionViews'
-import type { SurfaceLayout, SurfaceLayoutLease } from '@/shared/ui/surfaces/surfaceLayout'
+import type { SurfaceLayout, SurfaceLayoutLease, SurfaceLayoutOptions } from '@/shared/ui/surfaces/surfaceLayout'
 import { extensionDataObserveRequestSchema, extensionDataReadRequestSchema, extensionDataUnobserveRequestSchema } from '@buddy-shared/extensions/extensionData'
 import { onMounted, onScopeDispose, useTemplateRef, watch } from 'vue'
 import { SurfaceHitRegions } from '@/workbench/browser/surfaces/SurfaceHitRegions'
@@ -92,23 +92,23 @@ function sync() {
     if (!session)
       continue
     const overlay = isOverlay(surface)
-    const options = {
+    const options: SurfaceLayoutOptions = {
       anchor: surface.element,
       visible: surface.visible && surface.eligible,
       interactive: !overlay && surface.interactionMode !== 'regions',
-      layer: overlay ? 'decoration' as const : 'content' as const,
-      onLayout: (geometry: { visible: boolean, width: number, height: number }) => {
+      layer: overlay ? 'decoration' : 'content',
+      onLayout: ({ visible, bounds: { width, height } }) => {
         const frame = frames.get(session.token)
         if (!frame)
           return
-        if (frame.visible !== geometry.visible) {
-          frame.visible = geometry.visible
+        if (frame.visible !== visible) {
+          frame.visible = visible
           notify(session.token, frame, { type: 'view:visibility:changed', data: { visible: frame.visible && document.visibilityState === 'visible' } })
         }
         if (surface.mount) {
           const bounds = surface.mount.element.getBoundingClientRect()
           const rect = surface.element.getBoundingClientRect()
-          const mount = { target: surface.mount.target, instanceId: surface.mount.instanceId, visible: geometry.visible, width: bounds.width, height: bounds.height, rect: { x: rect.left - bounds.left, y: rect.top - bounds.top, width: geometry.width, height: geometry.height } }
+          const mount = { target: surface.mount.target, instanceId: surface.mount.instanceId, visible, width: bounds.width, height: bounds.height, rect: { x: rect.left - bounds.left, y: rect.top - bounds.top, width, height } }
           if (JSON.stringify(mount) !== JSON.stringify(frame.mount)) {
             frame.mount = mount
             notify(session.token, frame, { type: 'view:mount:changed', data: { mount } })
@@ -120,7 +120,7 @@ function sync() {
         }
         if (!surface.anchor)
           return
-        const next = { kind: surface.anchor.kind, ...geometry }
+        const next = { kind: surface.anchor.kind, visible, width, height }
         if (JSON.stringify(next) !== JSON.stringify(frame.geometry)) {
           frame.geometry = next
           notify(session.token, frame, { type: 'view:anchor:changed', data: { anchor: next } })
