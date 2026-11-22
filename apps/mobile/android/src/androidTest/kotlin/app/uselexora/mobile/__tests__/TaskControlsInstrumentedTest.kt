@@ -192,21 +192,22 @@ class TaskControlsInstrumentedTest {
                 val forkScope = "conversation:${task.getString("id")}:$forkId"
                 val defaultBranch = client.call("conversations.get", JSONObject().put("conversationId", task.getString("id"))).getString("activeBranchId")
                 val submittedInputs = store.outbox(partition).filter { it.method == "chat.submitInput" }.map { it.id }.toSet()
-                fun switchBranch(expectedId: String, expectedInput: String) {
+                val originalReply = "恢复排队任务完成"
+                val forkReply = "历史分支验证回复"
+                fun switchBranch(from: String, step: BranchStep, to: String, expectedInput: String) {
                     val priorCommands = store.outbox(partition).filter { it.method != "taskMarks.setRead" }.map { it.id }
-                    MobileUiTestDriver.selectBranch(expectedId)
-                    waitFor { input() == expectedInput && MobileUiTestDriver.exists("任务设置") }
+                    MobileUiTestDriver.selectBranch(scenario, from, step, to, expectedInput)
                     assertEquals(priorCommands, store.outbox(partition).filter { it.method != "taskMarks.setRead" }.map { it.id })
                     assertEquals(defaultBranch, client.call("conversations.get", JSONObject().put("conversationId", task.getString("id"))).getString("activeBranchId"))
                 }
-                switchBranch(forkId, "")
+                switchBranch(originalReply, BranchStep.Next, forkReply, "")
                 write(forkInput, forkScope)
-                switchBranch(task.getString("activeBranchId"), originalInput)
+                switchBranch(forkReply, BranchStep.Previous, originalReply, originalInput)
                 assertEquals(forkInput, MobileContentAdapter.text(store.draft(partition, forkScope)!!.value.getJSONObject("content")))
-                switchBranch(forkId, forkInput)
+                switchBranch(originalReply, BranchStep.Next, forkReply, forkInput)
                 scenario.recreate()
                 waitFor { input() == forkInput && MobileUiTestDriver.enabled("发送") }
-                switchBranch(task.getString("activeBranchId"), originalInput)
+                switchBranch(forkReply, BranchStep.Previous, originalReply, originalInput)
                 assertEquals(originalInput, MobileContentAdapter.text(store.draft(partition, originalScope)!!.value.getJSONObject("content")))
                 assertEquals(forkInput, MobileContentAdapter.text(store.draft(partition, forkScope)!!.value.getJSONObject("content")))
                 assertEquals(submittedInputs, store.outbox(partition).filter { it.method == "chat.submitInput" }.map { it.id }.toSet())

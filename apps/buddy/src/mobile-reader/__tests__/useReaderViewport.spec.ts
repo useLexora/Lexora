@@ -49,7 +49,6 @@ function mount(onOlder: (retry: boolean) => void = () => {}) {
   const topic = shallowRef('one')
   const anchor = shallowRef<ReaderAnchor | null>(null)
   const hasLater = shallowRef(false)
-  const requests: string[] = []
   let view!: ReturnType<typeof useReaderViewport>
   let viewport!: HTMLElement
   const root = document.createElement('div')
@@ -57,7 +56,7 @@ function mount(onOlder: (retry: boolean) => void = () => {}) {
   const app = createApp({
     setup() {
       const element = shallowRef<HTMLElement | null>(null)
-      view = useReaderViewport(element, entries, topic, anchor, hasLater, () => requests.push(topic.value), { state, load: onOlder })
+      view = useReaderViewport(element, entries, topic, anchor, hasLater, { state, load: onOlder })
       return () => h('div', {
         class: 'viewport',
         ref: (value) => {
@@ -81,7 +80,6 @@ function mount(onOlder: (retry: boolean) => void = () => {}) {
     anchor,
     hasLater,
     state,
-    requests,
     get viewport() {
       return viewport
     },
@@ -110,12 +108,32 @@ describe('reader viewport navigation', () => {
     await settle()
     expect(reader.viewport.querySelector('[data-message-id="message-40"]')!.getBoundingClientRect().top).toBeCloseTo(offset)
     const beforeLatest = reader.viewport.scrollTop
+    expect(reader.view.showLatest.value).toBe(false)
+    reader.state.value = { available: true, loading: false, error: 'page failed', page: 1 }
     reader.view.latest()
     await settle()
-    expect(reader.requests).toEqual(['one'])
+    expect(reader.view.locatedMessageId.value).toBe('message-40')
     expect(reader.viewport.scrollTop).toBe(beforeLatest)
     reader.entries.value = [...reader.entries.value, entry('latest')]
     reader.anchor.value = null
+    reader.hasLater.value = false
+    await settle()
+    expect(reader.viewport.scrollTop).toBeCloseTo(reader.viewport.scrollHeight - reader.viewport.clientHeight)
+  })
+
+  it('keeps the local down arrow for ordinary reading, but preserves a detached view until the host resumes', async () => {
+    const reader = mount()
+    await settle()
+    reader.viewport.scrollTop -= 160
+    reader.viewport.dispatchEvent(new Event('scroll'))
+    const top = reader.viewport.scrollTop
+    expect(reader.view.showLatest.value).toBe(true)
+    reader.hasLater.value = true
+    await settle()
+    expect(reader.view.showLatest.value).toBe(false)
+    reader.view.latest()
+    await settle()
+    expect(reader.viewport.scrollTop).toBe(top)
     reader.hasLater.value = false
     await settle()
     expect(reader.viewport.scrollTop).toBeCloseTo(reader.viewport.scrollHeight - reader.viewport.clientHeight)
@@ -141,6 +159,28 @@ describe('reader viewport navigation', () => {
     expect(older).toHaveBeenCalledTimes(1)
     move(100)
     expect(older).toHaveBeenCalledTimes(2)
+  })
+
+  it('honors a newer local return to bottom when a prior page arrives before the scroll frame', async () => {
+    const load = vi.fn()
+    const reader = mount(load)
+    await settle()
+    reader.viewport.scrollTop = 120
+    reader.viewport.dispatchEvent(new Event('scroll'))
+    expect(load.mock.calls).toEqual([[false]])
+    expect(reader.view.showLatest.value).toBe(true)
+    reader.view.latest()
+    reader.entries.value = [entry('older'), ...reader.entries.value]
+    await settle()
+    expect(reader.view.followsEnd.value).toBe(true)
+    expect(reader.viewport.scrollTop).toBeCloseTo(reader.viewport.scrollHeight - reader.viewport.clientHeight)
+    reader.viewport.scrollTop -= 280
+    reader.viewport.dispatchEvent(new Event('scroll'))
+    const top = reader.viewport.scrollTop
+    reader.entries.value = [...reader.entries.value, entry('live')]
+    await settle()
+    expect(reader.view.followsEnd.value).toBe(false)
+    expect(reader.viewport.scrollTop).toBe(top)
   })
 
   it('fills a short viewport one confirmed page at a time, including empty pages, and stops at overflow', async () => {

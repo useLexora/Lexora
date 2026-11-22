@@ -12,11 +12,11 @@ defineEmits<{ interact: [] }>()
 provideChatTranscriptRowState(() => props.rowId)
 const labels = useReaderStrings()
 const navigator = useReaderTurnBranch(() => props.status.run.id)
-const statuses = { failed: 'failed', cancelled: 'stopped', completed: 'noReply', queued: 'queued', running: 'running' } as const
+const statuses = { failed: 'failed', cancelled: 'stopped', completed: 'noReply' } as const
 </script>
 
 <template>
-  <p class="message-meta" role="status">
+  <p v-if="status.run.status !== 'running' && status.run.status !== 'queued'" class="message-meta" role="status">
     {{ labels[statuses[status.run.status]] }}
   </p>
   <template v-if="!status.hasReply">

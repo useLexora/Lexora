@@ -1,23 +1,20 @@
-import type { LocalRun } from '@buddy-shared/runs/runApi'
 import type { Ref } from 'vue'
 import type { ChatAgentTurn } from '../modules/tasks/contracts'
-import type { ReaderEntry, ReaderTranscript } from './readerBridge'
+import type { ReaderEntry, ReaderRun, ReaderTranscript } from './readerBridge'
 import type { ReaderAnchor } from './readerProjection'
+import type { ReaderOutput } from './readerProtocol'
 import { computed, watch } from 'vue'
 import { createChatAgentTurnReducer } from '../modules/tasks/reader'
 import { orderReaderTurns } from './orderReaderTurns'
 
-function turnWindowEntries(entries: ReaderEntry[], runs: LocalRun[]) {
+function turnWindowEntries(entries: ReaderEntry[], runs: ReaderRun[], outputs?: Record<string, ReaderOutput>) {
   const positions = new Map<string, number>()
   const inputs = new Map<string, number>()
   const replies = new Set<string>()
-  const runningTools = new Set<string>()
+  const authors = new Map<string, { id: string, name: string }>()
   entries.forEach((entry, index) => {
-    if (entry.activityGroup) {
+    if (entry.activityGroup)
       positions.set(entry.activityGroup.runId, index)
-      if (entry.activityGroup.runningCount || entry.activityGroup.runningReasoningCount)
-        runningTools.add(entry.activityGroup.runId)
-    }
     for (const message of entry.messages) {
       if (message.role === 'user') {
         inputs.set(message.id, index)
@@ -25,6 +22,8 @@ function turnWindowEntries(entries: ReaderEntry[], runs: LocalRun[]) {
       else if (message.role === 'assistant' && message.runId) {
         positions.set(message.runId, index)
         replies.add(message.runId)
+        if (message.authorId && message.author)
+          authors.set(message.runId, { id: message.authorId, name: message.author })
       }
     }
   })
@@ -32,7 +31,9 @@ function turnWindowEntries(entries: ReaderEntry[], runs: LocalRun[]) {
   for (const run of runs) {
     const index = positions.get(run.id) ?? (run.triggeringMessageId ? inputs.get(run.triggeringMessageId) : undefined)
     const hasReply = replies.has(run.id)
-    if (index === undefined || (hasReply && (run.status === 'completed' || (run.status === 'running' && runningTools.has(run.id)))))
+    const active = run.status === 'running' || run.status === 'queued'
+    const output = outputs?.[run.id]
+    if (index === undefined || (active && (hasReply || (!output?.items.length && !output?.failed))) || (hasReply && run.status === 'completed'))
       continue
     const tail: ReaderEntry = { id: `run-status:${run.id}`, continuation: true, messages: [], runStatus: { run, hasReply } }
     const rows = tails.get(index)
@@ -41,15 +42,44 @@ function turnWindowEntries(entries: ReaderEntry[], runs: LocalRun[]) {
     else
       tails.set(index, [tail])
   }
-  return orderReaderTurns(tails.size ? entries.flatMap((entry, index) => [entry, ...tails.get(index) ?? []]) : entries, runs)
+  const ordered = orderReaderTurns(tails.size ? entries.flatMap((entry, index) => [entry, ...tails.get(index) ?? []]) : entries, runs)
+  const runById = new Map(runs.map(run => [run.id, run]))
+  let previous: string | undefined
+  return ordered.map((entry) => {
+    const group = entry.activityGroup
+    if (group) {
+      const author = authors.get(group.runId)
+      const run = runById.get(group.runId)
+      const actor = author?.id ?? run?.buddyId
+      if (previous && actor && previous !== actor && (author || run?.executionKind === 'root')) {
+        previous = actor
+        return { ...entry, groupOwner: { name: author?.name } }
+      }
+      if (previous !== actor)
+        previous = undefined
+    }
+    let messages = entry.messages
+    for (const [index, message] of entry.messages.entries()) {
+      const actor = message.role === 'assistant'
+        ? message.authorId ?? (message.runId && runById.get(message.runId)?.buddyId) ?? undefined
+        : undefined
+      if (previous && actor && previous !== actor && !message.showIdentity) {
+        if (messages === entry.messages)
+          messages = [...messages]
+        messages[index] = { ...message, showIdentity: true }
+      }
+      previous = actor
+    }
+    return messages === entry.messages ? entry : { ...entry, messages }
+  })
 }
 
-export function useReaderTurns(entries: Ref<ReaderEntry[]>, runs: Ref<LocalRun[]>, transcripts: Ref<Record<string, ReaderTranscript>>, topic: Ref<string>, anchor?: Ref<ReaderAnchor | null>, turnWindow?: Ref<boolean>) {
+export function useReaderTurns(entries: Ref<ReaderEntry[]>, runs: Ref<ReaderRun[]>, transcripts: Ref<Record<string, ReaderTranscript>>, topic: Ref<string>, anchor?: Ref<ReaderAnchor | null>, turnWindow?: Ref<boolean>, outputs?: Ref<Record<string, ReaderOutput>>) {
   const cache = new Map<string, { count: number, state: string, reducer: ReturnType<typeof createChatAgentTurnReducer> }>()
   watch(topic, () => cache.clear())
   return computed(() => {
     if (turnWindow?.value)
-      return turnWindowEntries(entries.value, runs.value)
+      return turnWindowEntries(entries.value, runs.value, outputs?.value)
     const turns = new Map<string, ChatAgentTurn>()
     const messagesByRun = new Map<string, ReaderEntry['messages']>()
     for (const entry of entries.value) {

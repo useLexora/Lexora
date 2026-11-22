@@ -18,11 +18,11 @@ enum class MobileAction {
     NewTask, OpenTask, OpenTaskQuestions, OpenRunningTask, OpenTaskResult, ShowTasks, ShowPending, ShowDevices,
     ShowWorkbench, ShowSpaces, OpenSpace, ChooseSpaceFilter, ShowTaskFilter, Back, ReviewTaskApproval,
     ScanDevice, SelectDevice, ManageDevice,
-    Approvals, InspectUnplacedInput, Recovery, RecoverDownloads, Files, AttachFile, TakePhoto, OpenResource, ResourceActions, MoreFiles,
+    Approvals, InspectUnplacedInput, Recovery, RecoverDownloads, Files, DraftAttachments, LocalFileRecords, AttachFile, TakePhoto, OpenResource, ResourceActions, MoreFiles,
     ChooseModel, ToggleFast, ApplyModel, ChooseExecution, ApplyExecution, ChooseSpace, Send,
-    MoreHistory, Refresh, Reconnect, TaskControls, TaskQueue, TaskBranches, SelectBranch,
+    MoreHistory, Refresh, Reconnect, TaskControls, TaskQueue,
     QueueInput, CheckInputReceipt, OpenOnDesktop, ReadState, Disconnect, MessageActions, DismissNotice,
-    CopyMessage, EditMessage, ContinueMessage, RegenerateMessage, ShowMessageRun, OpenMessageDetail,
+    CopyMessage, EditMessage, ContinueMessage, RegenerateMessage, OpenMessageDetail,
     StopRun, ReviewApproval, AnswerQuestion, OpenAttachment, RemoveAttachment,
 }
 
@@ -52,6 +52,7 @@ data class MobileMessageMenu(
     val needsDetail: Boolean,
     val run: JSONObject? = null,
     val canRegenerate: Boolean = false,
+    val canFollowup: Boolean = false,
     val loading: Boolean = false,
     val anchor: androidx.compose.ui.unit.IntRect? = null,
     val contextual: Boolean = false,
@@ -124,6 +125,7 @@ class MobileUiState {
     var messages by mutableStateOf<List<JSONObject>>(emptyList())
     var turnWindow by mutableStateOf(false)
     var activityGroups by mutableStateOf<List<JSONObject>>(emptyList())
+    var latestLoading by mutableStateOf(false)
     var latestError by mutableStateOf("")
     var runs by mutableStateOf<List<JSONObject>>(emptyList())
     var queueItems by mutableStateOf<List<JSONObject>>(emptyList())
@@ -131,8 +133,6 @@ class MobileUiState {
     var questions by mutableStateOf<List<JSONObject>>(emptyList())
     var questionsSupported by mutableStateOf(false)
     var branches by mutableStateOf<List<JSONObject>>(emptyList())
-    var branchesLoading by mutableStateOf(false)
-    var branchesFailed by mutableStateOf(false)
     var attachments by mutableStateOf<List<MobileAttachmentItem>>(emptyList())
     var resultRunId by mutableStateOf<String?>(null)
     var stoppingRunId by mutableStateOf<String?>(null)

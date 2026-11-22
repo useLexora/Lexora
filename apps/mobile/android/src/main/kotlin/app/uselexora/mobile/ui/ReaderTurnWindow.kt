@@ -22,6 +22,8 @@ class ReaderTurnContext(
     val historyLoading: Boolean = false,
     val historyError: String? = null,
     val historyPage: Int = 0,
+    val latestLoading: Boolean = false,
+    val latestError: String? = null,
 )
 
 internal data class ReaderStepPage(val items: List<JSONObject> = emptyList(), val cursor: String? = null,

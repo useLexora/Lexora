@@ -4,15 +4,19 @@ import type { ReaderSend, ReaderWireEntry } from './readerProtocol'
 import { computed } from 'vue'
 import { BuddyChatActivityGroup, provideChatTranscriptRowState } from '../modules/tasks/reader'
 import ReaderActivitySteps from './ReaderActivitySteps.vue'
+import { useReaderStrings } from './readerStrings'
 
 const props = defineProps<{
   group: NonNullable<ReaderWireEntry['activityGroup']>
   steps?: ReaderWireEntry['steps']
   rowId: string
+  owner?: { name?: string }
+  historical?: boolean
   language: string
   send: ReaderSend
 }>()
 provideChatTranscriptRowState(() => props.rowId)
+const labels = useReaderStrings()
 const icons = { command: 'terminal', read: 'file', edit: 'edit', create: 'create', other: 'tool' } as const
 const summary = computed<ChatAgentActivitySummary>(() => {
   const group = props.group
@@ -24,7 +28,7 @@ const summary = computed<ChatAgentActivitySummary>(() => {
     issueCount: group.failedCount,
     approvalCount: 0,
     reasoningCount: group.reasoningCount,
-    status: group.runningCount || group.runningReasoningCount ? 'running' : group.interruptedCount || group.interruptedReasoningCount ? 'interrupted' : 'completed',
+    status: !props.historical && (group.runningCount || group.runningReasoningCount) ? 'running' : group.interruptedCount || group.interruptedReasoningCount ? 'interrupted' : 'completed',
     icon: !group.toolCount ? 'reasoning' : category && !group.reasoningCount ? icons[category] : 'activity',
     counts: group.counts.map(count => ({ ...count, files: null })),
   }
@@ -32,9 +36,12 @@ const summary = computed<ChatAgentActivitySummary>(() => {
 </script>
 
 <template>
-  <BuddyChatActivityGroup :group="summary" :language="language === 'en' ? 'en-US' : 'zh-CN'" :active-label="group.activeToolName">
-    <template #steps>
-      <ReaderActivitySteps :run-id="group.runId" :group-id="group.id" :steps="steps" :send="send" />
-    </template>
-  </BuddyChatActivityGroup>
+  <div>
+    <span v-if="owner" class="author-name group-owner">{{ owner.name ?? labels.rootActivity }}</span>
+    <BuddyChatActivityGroup :group="summary" :language="language === 'en' ? 'en-US' : 'zh-CN'" :active-label="historical ? null : group.activeToolName">
+      <template #steps>
+        <ReaderActivitySteps :run-id="group.runId" :group-id="group.id" :steps="steps" :send="send" />
+      </template>
+    </BuddyChatActivityGroup>
+  </div>
 </template>

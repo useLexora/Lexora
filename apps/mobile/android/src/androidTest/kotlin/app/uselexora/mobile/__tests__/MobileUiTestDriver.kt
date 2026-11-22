@@ -4,13 +4,21 @@ import android.graphics.Rect
 import android.os.SystemClock
 import android.os.ParcelFileDescriptor
 import android.view.Choreographer
+import android.view.View
+import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
+import android.webkit.WebView
+import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
+import app.uselexora.mobile.ui.MainActivity
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+
+enum class BranchStep(val label: String) { Previous("上一个分支"), Next("下一个分支") }
 
 object MobileUiTestDriver {
     private val automation get() = InstrumentationRegistry.getInstrumentation().uiAutomation
@@ -171,7 +179,7 @@ object MobileUiTestDriver {
         if (existsTag("conversation-settings")) returnToConversation()
         if (existsTag("workbench-list")) click("新任务")
         waitUntil { existsTag("task-information") }
-        click("添加附件"); click("浏览任务文件")
+        click("添加附件"); click("本机文件与上传")
     }
 
     fun openTaskSettings() {
@@ -188,10 +196,45 @@ object MobileUiTestDriver {
         }
     }
 
-    fun selectBranch(id: String) {
-        openTaskSettings(); clickTag("current-branch"); clickTag("branch:$id")
-        waitUntil { !existsTag("branch:$id") }
-        returnToConversation()
+    private fun awaitReaderMessage(scenario: ActivityScenario<MainActivity>, message: String, button: String? = null) {
+        fun reader(view: View): WebView? {
+            if (view is WebView) return view.takeIf { it.isShown }
+            if (view is ViewGroup) for (i in 0 until view.childCount) reader(view.getChildAt(i))?.let { return it }
+            return null
+        }
+        val script = """(() => {
+            const bodies = [...document.querySelectorAll('.reader-message .message-body')]
+                .filter(body => body.innerText.trim() === ${JSONObject.quote(message)});
+            if (!bodies.length) {
+                const viewport = document.querySelector('.reader-viewport');
+                if (viewport) viewport.scrollBy(0, -viewport.clientHeight);
+                return false;
+            }
+            if (bodies.length !== 1) return false;
+            const selector = ${button?.let { JSONObject.quote(it) } ?: "null"};
+            const target = selector ? bodies[0].closest('.reader-message').querySelector(selector) : bodies[0];
+            if (!target || target.disabled || !target.getClientRects().length) return false;
+            target.scrollIntoView({block: 'nearest'});
+            if (selector) target.click();
+            return true;
+        })()"""
+        waitUntil {
+            val found = CompletableFuture<String>()
+            scenario.onActivity { activity ->
+                val web = reader(activity.window.decorView)
+                if (web == null) found.complete("false") else web.evaluateJavascript(script) { found.complete(it) }
+            }
+            found.get(4, TimeUnit.SECONDS) == "true"
+        }
+    }
+
+    fun openReplyMenu(scenario: ActivityScenario<MainActivity>, message: String) =
+        awaitReaderMessage(scenario, message, "button[aria-label='更多消息操作']")
+
+    fun selectBranch(scenario: ActivityScenario<MainActivity>, message: String, step: BranchStep, expectedMessage: String, expectedDraft: String) {
+        awaitReaderMessage(scenario, message, ".message-branches button[aria-label='${step.label}']")
+        awaitReaderMessage(scenario, expectedMessage)
+        waitUntil { composerText() == expectedDraft }
     }
 
     fun enqueueInput() {

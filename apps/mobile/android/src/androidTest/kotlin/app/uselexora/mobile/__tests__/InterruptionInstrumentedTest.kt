@@ -114,9 +114,7 @@ class InterruptionInstrumentedTest {
                 signal("reconciled", JSONObject().put("oldTarget", originalTarget).put("oldStatus", ended.getString("status")).put("originalReceiptRecovered", true))
                 awaitSignal("allow-new-intent")
                 reader.openReplyMenu("中断前的部分回复接着输出")
-                click("运行详情")
-                waitFor { text("服务资源：已释放") }
-                click("重新生成"); waitFor { text("重新生成此次回复？") }; click("重新生成")
+                click("重新生成这条回复")
                 waitFor { reader.visibleText("中断后新回复") }
                 val successor = store.outbox(partition).single { it.method == "chat.regenerateAssistant" }
                 val target = successor.receipt!!.getJSONObject("target")
@@ -162,9 +160,9 @@ class InterruptionInstrumentedTest {
                 (() => {
                     const reply = [...document.querySelectorAll('.reader-message.assistant')]
                         .find(row => row.innerText.includes(${JSONObject.quote(text)}));
-                    if (!reply) return false;
-                    reply.dispatchEvent(new MouseEvent('contextmenu', {bubbles:true, cancelable:true}));
-                    return true;
+                    const button = reply?.querySelector('[aria-label="更多消息操作"]');
+                    if (!button) return false;
+                    button.click(); return true;
                 })()
             """.trimIndent()))
         }

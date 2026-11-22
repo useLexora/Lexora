@@ -56,8 +56,10 @@ internal class ReaderProjection {
     ): JSONObject = with(snapshot) {
         if (topic != sentTopic || language != sentLanguage) encodedEntries.clear()
         val active = runs.filter { it.optString("status") in setOf("queued", "running", "awaiting_approval") }.map { it.optString("id") }.toSet()
-        val streaming = messages.filter { it.optString("role") == "assistant" && it.optString("runId") in active }
-            .associate { it.optString("runId") to it.optString("id") }.values.toSet()
+        val streaming = messages.filter { message ->
+            !hasLaterMessages && message.optString("role") == "assistant" && message.optString("runId") in active &&
+                (!turn.enabled || message.optJSONObject("textRange")?.optString("revision")?.toLongOrNull() != null)
+        }.associate { it.optString("runId") to it.optString("id") }.values.toSet()
         val finalMessages = messages.filter { it.optString("role") == "assistant" }.associate { it.optString("runId") to it.optString("id") }
         val terminal = runs.filter { it.optString("status") in setOf("completed", "failed", "cancelled") }.associateBy { it.optString("id") }
         val entries = MobileMessagePresentation.transcript(messages) { source ->
@@ -75,7 +77,8 @@ internal class ReaderProjection {
                 val text = detail?.text ?: message.text
                 val runId = message.runId
                 val runActive = runId != null && runId in active
-                val finalAssistant = message.role == "assistant" && runId != null && finalMessages[runId] == message.id
+                val finalAssistant = message.role == "assistant" && runId != null && finalMessages[runId] == message.id &&
+                    (commentary == null || text.isNotBlank() || message.resources.isNotEmpty() || message.interrupted)
                 JSONObject().put("id", message.id).apply { message.source.optString("branchId").takeIf { it.isNotBlank() }?.let { put("branchId", it) } }.put("createdAt", message.source.opt("createdAt") ?: JSONObject.NULL).put("role", message.role).put("runId", message.runId ?: JSONObject.NULL)
                     .apply {
                         (message.source.opt("turnRootId") as? String)?.let { put("turnRootId", it) }
@@ -97,7 +100,7 @@ internal class ReaderProjection {
                     .put("needsDetail", message.needsDetail).put("hasDetail", detail?.text != null).put("loading", detail?.loading == true)
                     .put("error", detail?.error ?: JSONObject.NULL).put("notice", detail?.notice ?: JSONObject.NULL)
                     .put("detailResource", detail?.resource?.optString("resourceId") ?: JSONObject.NULL)
-                    .put("actionsVisible", (message.role == "user" && (!message.source.optBoolean("localInput") || detail?.error != null)) || (message.role == "assistant" && !runActive && !item.intermediate))
+                    .put("actionsVisible", (message.role == "user" && (!message.source.optBoolean("localInput") || detail?.error != null)) || (message.role == "assistant" && !runActive && !item.intermediate && (runId == null || finalAssistant)))
                     .put("canCopy", (detail?.text != null || !message.source.has("textRange") || message.source.getJSONObject("textRange").optLong("start") == 0L) && MobileMessagePresentation.canCopy(text))
                     .apply { if (message.source.optBoolean("localInput") && detail?.error != null) put("returnToComposer", detail.canReturnToComposer) }
                     .put("canEdit", message.role == "user" && message.source.getJSONObject("body").let { it.optString("kind") == "user" && MobileContentAdapter.canEditAsText(it.getJSONObject("content")) })
@@ -139,6 +142,7 @@ internal class ReaderProjection {
             .put("turnWindow", turn.enabled)
             .put("history", JSONObject().put("page", turn.historyPage).put("available", turn.historyAvailable).put("loading", turn.historyLoading).put("error", turn.historyError ?: JSONObject.NULL))
             .put("resultRunId", resultRunId ?: JSONObject.NULL)
+            .put("latest", JSONObject().put("loading", turn.latestLoading).put("error", turn.latestError ?: JSONObject.NULL))
             .put("anchorMessageId", if (anchor != null) anchorMessageId else JSONObject.NULL)
             .put("anchorRequestId", anchor ?: JSONObject.NULL).put("hasLaterMessages", hasLaterMessages)
             .put("entries", JSONArray(changed)).put("runs", JSONArray(runs))

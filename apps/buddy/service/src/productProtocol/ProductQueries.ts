@@ -191,6 +191,7 @@ export class ProductQueries {
       case 'conversations.listMembers': return new ProductBuddyDirectory(this.#database, this.#instance).members(input)
       case 'conversations.search': return new ProductHistorySearch(this.#database, this.#instance, this.views).search(input)
       case 'conversations.readActivityStepDetail': return readActivityStepDetail(this.#database, this.turns, productReadActivityStepDetailInputSchema.parse(input))
+      case 'conversations.getReplyTarget': return this.turns.replyTarget({ conversationId: String(input.conversationId), branchId: String(input.branchId), messageId: String(input.messageId) })
       case 'conversations.getTurnWindow': return this.turns.page(productTurnWindowInputSchema.parse(input))
       case 'conversations.listActivitySteps': return this.turns.steps(productActivityStepsInputSchema.parse(input))
       case 'conversations.readSavedText': return this.turns.readSavedText(productReadSavedTextInputSchema.parse(input))

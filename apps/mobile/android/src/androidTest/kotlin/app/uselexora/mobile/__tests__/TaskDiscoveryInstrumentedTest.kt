@@ -62,6 +62,35 @@ class TaskDiscoveryInstrumentedTest {
         compose.onNodeWithText(mobileText(R.string.mobile_connect_to_view_conversation)).assertDoesNotExist()
     }
 
+    @Test fun dismissedUnknownSendCanBeCheckedFromTheInputWithoutSendingOrReplacingNewText() {
+        val state = MobileUiState().apply {
+            screen = MobileScreen.Conversation; selectedTask = JSONObject().put("id", "task").put("title", "Task")
+            connected = true; conversationReady = true; inputEnabled = true
+            sendFeedback = mobileText(R.string.error_command_result_unknown); canCheckInputReceipt = true
+        }
+        val actions = mutableListOf<MobileAction>()
+        lateinit var input: android.widget.EditText
+        compose.setContent {
+            val context = androidx.compose.ui.platform.LocalContext.current
+            input = androidx.compose.runtime.remember { android.widget.EditText(context).apply { setText("next input") } }
+            LexoraTheme { MobileShell(state, input, { action, _ -> actions.add(action) }) { modifier -> Box(modifier) } }
+        }
+        val check = mobileText(R.string.send_check_status)
+        compose.onNodeWithText(check).assertIsDisplayed()
+        compose.onNodeWithContentDescription(mobileText(R.string.label_dismiss_notice)).performClick()
+        compose.onNodeWithText(check).assertDoesNotExist()
+        compose.onNodeWithTag("composer-attach").performClick()
+        compose.onNodeWithText(check).assertIsDisplayed().performClick()
+        compose.runOnIdle {
+            assertEquals(listOf(MobileAction.CheckInputReceipt), actions)
+            assertEquals("next input", input.text.toString())
+            state.canCheckInputReceipt = false
+            state.sendFeedback = mobileText(R.string.send_failed_reason, "rejected")
+        }
+        compose.onNodeWithText(mobileText(R.string.send_failed_reason, "rejected")).assertIsDisplayed()
+        compose.onNodeWithText(check).assertDoesNotExist()
+    }
+
     @Test fun partialEmptySearchKeepsContinuationAndOfflineSearchDeclaresItsScope() {
         val state = MobileUiState().apply { connected = true; tasksLoaded = true; discovery.supported = true; deviceLabel = "Fixture service" }
         var continued = false

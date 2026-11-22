@@ -114,12 +114,10 @@
     <string name="label_close_settings">Close settings</string>
     <string name="label_what_would_you_like_lexora_to_do">What would you like Lexora to do?</string>
     <string name="label_ask_before_writing_files_executing_commands_or_accessing_the_network">Ask before writing files, executing commands or accessing the network.</string>
-    <string name="label_could_not_load_branches_tap_to_retry">Could not load branches. Tap to retry.</string>
     <string name="label_switch_service">Switch service</string>
     <string name="label_just_now">Just now</string>
     <string name="label_refresh">Refresh</string>
     <string name="label_refresh_task">Refresh task</string>
-    <string name="label_original_branch">Original branch</string>
     <string name="label_send">Send</string>
     <string name="label_send_history">Send history</string>
     <string name="label_cancel">Cancel</string>
@@ -134,7 +132,7 @@
     <string name="label_approvals">Approvals</string>
     <string name="label_approval_history">Approval history</string>
     <string name="label_review">Review</string>
-    <string name="label_branches">Branches</string>
+    <string name="mobile_local_files_and_uploads">Local files and uploads</string>
     <string name="label_queue_current_input">Queue current input</string>
     <string name="label_allows_file_access_and_commands_with_the_host_account_s_permissions_with_automatic_ap">Allows file access and commands with the host account\'s permissions, with automatic approval. Also applies to active runs in this task.</string>
     <string name="label_no_service_connected">No service connected</string>
@@ -205,7 +203,6 @@
     <string name="label_replying">Replying…</string>
     <string name="label_queued">Queued</string>
     <string name="label_loading_tasks">Loading tasks</string>
-    <string name="label_loading_branches">Loading branches…</string>
     <string name="label_running">Running</string>
     <string name="label_no_matching_models">No matching models</string>
     <string name="label_task_not_found">Task not found</string>
@@ -232,6 +229,8 @@
     <string name="label_input_settings">Input settings</string>
     <string name="label_runs_stop">Runs &amp; stop</string>
     <string name="label_run_failed">Run failed</string>
+    <string name="message_regenerate_reply">Regenerate this reply</string>
+    <string name="message_continue_from_reply">Continue from this reply</string>
     <string name="label_run_details">Run details</string>
     <string name="label_back">Back</string>
     <string name="label_back_to_task_settings">Back to task settings</string>
@@ -794,7 +793,6 @@
         <item quantity="other">View %1$d attachments</item>
     </plurals>
     <string name="mobile_started">Started at %1$s</string>
-    <string name="mobile_branch">Branch %1$s</string>
     <string name="mobile_answer_not_delivered">Answer not delivered</string>
     <string name="mobile_answer_awaiting_delivery">Answer awaiting delivery</string>
     <string name="mobile_skip_result_not_delivered">Skip result not delivered</string>

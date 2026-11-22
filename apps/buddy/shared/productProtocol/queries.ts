@@ -82,6 +82,7 @@ export const PRODUCT_QUERY_METHODS = {
   'conversations.listMembers': query(productPageInputSchema.extend({ conversationId: id }), productMemberPageSchema),
   'conversations.search': query(productSearchInputSchema, productSearchPageSchema),
   'conversations.getRecentWindow': query(z.object({ conversationId: id, branchId: id }).strict(), productRecentWindowSchema),
+  'conversations.getReplyTarget': query(z.object({ conversationId: id, branchId: id, messageId: id }).strict(), z.object({ resultRunId: id.nullable() }).strict()),
   'conversations.getMessageWindow': query(z.object({ conversationId: id, branchId: id, messageId: id, limit: z.number().int().min(2).max(PRODUCT_LIMITS.pageItems).default(50) }).strict(), productMessageWindowSchema),
   'buddies.getAvatars': query(z.object({ buddyIds: z.array(id).min(1).max(PRODUCT_LIMITS.pageItems) }).strict(), z.object({ items: z.array(productBuddyAvatarSchema).max(PRODUCT_LIMITS.pageItems) }).strict()),
   'service.host': query(z.object({}).strict(), z.object({ platform: z.enum(['darwin', 'win32', 'linux', 'other']) }).strict()),

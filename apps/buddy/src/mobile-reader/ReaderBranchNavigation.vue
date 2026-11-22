@@ -37,10 +37,9 @@ const labels = useReaderStrings()
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  flex: 0 0 28px;
-  min-height: 28px;
-  height: 28px;
+  width: 44px;
+  flex: 0 0 44px;
+  min-height: 44px;
   padding: 6px;
   color: inherit;
   border-radius: 6px;

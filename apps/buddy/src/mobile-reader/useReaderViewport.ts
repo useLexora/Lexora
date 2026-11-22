@@ -6,14 +6,14 @@ import { defaultRangeExtractor, elementScroll, useVirtualizer } from '@tanstack/
 import { useResizeObserver } from '@vueuse/core'
 import { computed, nextTick, onMounted, onUnmounted, shallowRef, watch } from 'vue'
 
-export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Ref<ReaderEntry[]>, topic: Ref<string>, anchor: Ref<ReaderAnchor | null>, hasLaterMessages: Ref<boolean>, onLatest: () => void, paging: { state: Ref<ReaderUpdate['history']>, load: (retry: boolean) => void }) {
+export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Ref<ReaderEntry[]>, topic: Ref<string>, anchor: Ref<ReaderAnchor | null>, hasLaterMessages: Ref<boolean>, paging: { state: Ref<ReaderUpdate['history']>, load: (retry: boolean) => void }) {
   const followsEnd = shallowRef(true)
   const hasMoreBelow = shallowRef(false)
   const nearHistoryStart = shallowRef(true)
   const readingHistory = shallowRef(false)
   const anchorStatus = shallowRef<'idle' | 'locating' | 'located' | 'missing'>('idle')
   const locatedMessageId = shallowRef<string | null>(null)
-  const showLatest = computed(() => hasLaterMessages.value || readingHistory.value || (!followsEnd.value && hasMoreBelow.value))
+  const showLatest = computed(() => !hasLaterMessages.value && (readingHistory.value || (!followsEnd.value && hasMoreBelow.value)))
   const selected = shallowRef<number[]>([])
   const locatingIndex = shallowRef<number | null>(null)
   let anchorFrame = 0
@@ -23,7 +23,6 @@ export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Re
   let touching = false
   let lastTop = 0
   let requestedBoundary: number | string | null = null
-  let filling = false
   let fillFrame = 0
   let programmaticTop: number | null = null
   const virtualizer = useVirtualizer<HTMLElement, HTMLElement>(computed(() => {
@@ -74,7 +73,6 @@ export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Re
     if (!topic.value || !state?.available || state.loading || (reason === 'retry' ? !state.error : state.error || requestedBoundary === boundary.value))
       return
     requestedBoundary = boundary.value
-    filling = reason === 'fill' || (reason === 'retry' && fitsViewport())
     paging.load(reason === 'retry')
   }
   function fitsViewport() {
@@ -108,7 +106,6 @@ export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Re
   }
   function resumeLatest() {
     requestedBoundary = null
-    filling = false
     scheduleFill()
     cancelAnchor()
     anchorStatus.value = 'idle'
@@ -118,7 +115,6 @@ export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Re
     follow()
   }
   function latest() {
-    onLatest()
     if (!hasLaterMessages.value)
       resumeLatest()
   }
@@ -208,7 +204,6 @@ export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Re
   }
   watch(topic, () => {
     requestedBoundary = null
-    filling = false
     lastTop = 0
     cancelAnchor()
     anchorStatus.value = 'idle'
@@ -218,15 +213,6 @@ export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Re
     selected.value = []
     virtualizer.value.measure()
     follow()
-  })
-  watch(entries, (next, previous) => {
-    if (previous[0] && next.findIndex(entry => entry.id === previous[0]!.id) > 0) {
-      if (!filling) {
-        followsEnd.value = false
-        cancelAnimationFrame(frame)
-      }
-      filling = false
-    }
   })
   watch(() => anchor.value ? JSON.stringify([anchor.value.topic, anchor.value.requestId]) : null, (request) => {
     if (anchor.value && request !== lastAnchorRequest) {
@@ -240,8 +226,14 @@ export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Re
     }
   })
   watch(hasLaterMessages, (current, previous) => {
-    if (!current && previous && !anchor.value)
+    if (current) {
+      readingHistory.value = true
+      followsEnd.value = false
+      cancelAnimationFrame(frame)
+    }
+    else if (previous && !anchor.value) {
       resumeLatest()
+    }
   })
   watch(entries, follow, { flush: 'post' })
   onMounted(() => document.addEventListener('selectionchange', retainSelection))
@@ -251,5 +243,9 @@ export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Re
     cancelAnimationFrame(fillFrame)
     cancelAnchor()
   })
-  return { rows, height, nearHistoryStart, retryOlder: () => requestOlder('retry'), followsEnd, showLatest, anchorStatus, locatedMessageId, latest, scroll, touch, measure }
+  const visibleRows = computed(() => {
+    const range = virtualizer.value.range
+    return range ? rows.value.filter(row => row.index >= range.startIndex && row.index <= range.endIndex) : []
+  })
+  return { rows, visibleRows, height, nearHistoryStart, retryOlder: () => requestOlder('retry'), followsEnd, showLatest, anchorStatus, locatedMessageId, latest, scroll, touch, measure }
 }

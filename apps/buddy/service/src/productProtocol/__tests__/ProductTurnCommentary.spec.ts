@@ -42,6 +42,19 @@ function text(value: string, phase: 'final_answer' | 'commentary'): TextContent 
   return { type: 'text', text: value, textSignature: JSON.stringify({ id: `block-${phase}`, v: 1, phase }) }
 }
 
+it('只为所选分支可见的最终答复核实操作目标，不把最后一条说明当成答复', () => {
+  const { append, queries } = fixture()
+  const target = (messageId: string) => queries.read('conversations.getReplyTarget', { ...scope, messageId })
+  const note = append('root', [text('独立说明', 'commentary')])
+  expect(target(note.messageId)).toEqual({ resultRunId: null })
+  const mixed = append('root', [text('另一个说明', 'commentary'), text('答复', 'final_answer')])
+  expect(target(mixed.messageId)).toEqual({ resultRunId: 'root' })
+  expect(target(note.messageId)).toEqual({ resultRunId: null })
+  expect(target('missing')).toEqual({ resultRunId: null })
+  const empty = append('root', [text('这不是答复', 'commentary'), text('', 'final_answer')])
+  expect(target(empty.messageId)).toEqual({ resultRunId: null })
+})
+
 it('用同一公开消息身份发布和恢复混合说明：独立说明不重复，推理不入正文，长说明按保存版本读取', () => {
   const { append, queries, db } = fixture()
   const standalone = append('root', [text('独立说明', 'commentary')])

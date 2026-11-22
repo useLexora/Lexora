@@ -269,13 +269,14 @@ class ReaderView(context: Context) : FrameLayout(context) {
         resourceOptions = onResourceActions
         loadTranscript = onLoadTranscript
         older = onOlder
+        latest = onLatest
         if (topic != this.topic || this.turn.target != turn.target || !turn.enabled) stepReads.reset()
         steps.update(topic, turn, artifactContext)
         val turnChanged = this.turn.enabled != turn.enabled || this.turn.groups !== turn.groups || this.turn.historyLoading != turn.historyLoading ||
-            this.turn.historyAvailable != turn.historyAvailable || this.turn.historyError != turn.historyError || this.turn.historyPage != turn.historyPage || this.turn.client !== turn.client
+            this.turn.historyAvailable != turn.historyAvailable || this.turn.historyError != turn.historyError || this.turn.historyPage != turn.historyPage || this.turn.client !== turn.client ||
+            this.turn.latestLoading != turn.latestLoading || this.turn.latestError != turn.latestError
         this.turn = turn
         readResult = onReadResult
-        latest = onLatest
         quickAction = onQuickAction
         messageAction = onMessageAction; resourceAction = onResource; detailAction = onLoadDetail
         if (!turnChanged && this.messages === messages && this.topic == topic && this.details === details && this.runs === runs && this.dark == dark && this.fontScale == fontScale && this.language == language && this.transcripts === transcripts && this.resultRunId == resultRunId && this.anchorMessageId == anchorMessageId && this.anchorRequestId == anchorRequestId && this.hasLaterMessages == hasLaterMessages && this.branches === branches && this.selectedBranchId == selectedBranchId) return
@@ -373,8 +374,11 @@ class ReaderView(context: Context) : FrameLayout(context) {
             branches.firstOrNull { it.optString("id") == data.optString("branchId") }?.let(selectBranch)
             return
         }
-        if (data.optString("action") == "latest") { latest(); return }
         if (data.optString("action") in setOf("body-before", "body-after")) { readBodyPage(data); return }
+        if (data.optString("action") == "latest") {
+            if (hasLaterMessages && !turn.latestLoading) latest()
+            return
+        }
         if (data.optString("action") == "older") {
             val retry = data.optBoolean("retry")
             if (turn.historyAvailable && !turn.historyLoading && (turn.historyError == null || retry)) older(retry)

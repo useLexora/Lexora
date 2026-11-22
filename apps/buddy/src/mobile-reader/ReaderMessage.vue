@@ -12,6 +12,7 @@ import { useReaderStrings } from './readerStrings'
 
 const props = defineProps<{
   message: ReaderMessage
+  replying?: boolean
   output?: ReaderOutput
   dark: boolean
   language?: string
@@ -19,14 +20,18 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ interact: [] }>()
 const labels = useReaderStrings()
-function action(value: Extract<ReaderActionInput, { action: 'message' | 'detail' | 'followup' | 'copy' | 'resource' | 'regenerate' | 'edit' | 'branch' }>) {
+function action(value: Extract<ReaderActionInput, { action: 'message' | 'detail' | 'copy' | 'resource' | 'edit' | 'branch' }>) {
   emit('interact')
   props.send(value)
 }
 function openActions(event: MouseEvent) {
-  if (props.message.returnToComposer !== undefined)
+  if (props.message.returnToComposer !== undefined || props.message.intermediate || (props.message.role === 'assistant' && !props.message.actionsVisible))
     return
-  window.getSelection()?.removeAllRanges()
+  const selection = window.getSelection()
+  if (event.type === 'contextmenu' && props.message.role === 'assistant' && selection && !selection.isCollapsed)
+    return
+  event.preventDefault()
+  selection?.removeAllRanges()
   const rect = event.type === 'contextmenu'
     ? { x: event.clientX, y: event.clientY, width: 0, height: 0 }
     : (event.currentTarget as HTMLElement).getBoundingClientRect()
@@ -39,11 +44,11 @@ async function copy(text: string) {
 </script>
 
 <template>
-  <article class="reader-message" :class="[message.role, { intermediate: message.intermediate }]" :data-message-id="message.id" @contextmenu.prevent="openActions">
-    <div v-if="message.showIdentity" class="message-author">
+  <article class="reader-message" :class="[message.role, { intermediate: message.intermediate }]" :data-message-id="message.id" @contextmenu="openActions">
+    <div v-if="message.showIdentity || replying" class="message-author">
       <MessageAvatar :role="message.role" :author-id="message.authorId" />
       <span class="author-name">{{ message.author }}</span>
-      <span v-if="message.role === 'assistant' && !message.final" class="stream-status" role="status"><i /><i /><i /><span>{{ labels.replying }}</span></span>
+      <span v-if="replying" class="stream-status" role="status"><i /><i /><i /><span>{{ labels.replying }}</span></span>
     </div>
     <div v-if="message.role === 'assistant' && message.commentary" class="reader-narration" @contextmenu.stop>
       <ReaderLiveBody :message="{ id: message.id, text: message.commentary.text, textRange: message.commentary.range }" :send="send" @interact="emit('interact')" />
@@ -94,7 +99,7 @@ async function copy(text: string) {
     <ReaderMessageActions
       v-if="message.actionsVisible && (message.role === 'user' || (message.role === 'assistant' && message.final))"
       :message="message" :language="language"
-      @copy="action({ action: 'copy', id: message.id, text: message.text, feedback: 'message' })" @more="openActions" @regenerate="action({ action: 'regenerate', id: message.id })" @edit="action({ action: 'edit', id: message.id })" @branch="branchId => action({ action: 'branch', branchId })" @followup="action({ action: 'followup', id: message.id })"
+      @copy="action({ action: 'copy', id: message.id, text: message.text, feedback: 'message' })" @more="openActions" @edit="action({ action: 'edit', id: message.id })" @branch="branchId => action({ action: 'branch', branchId })"
     />
   </article>
 </template>

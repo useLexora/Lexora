@@ -130,6 +130,8 @@ class SettingsUiInstrumentedTest {
         compose.onNodeWithText("整理移动端体验与接续方案：完整任务标题").assertIsDisplayed()
         compose.onNodeWithTag("task-space").assertIsDisplayed().assertHasNoClickAction()
         compose.onNodeWithText("设计工作室").assertDoesNotExist()
+        compose.onNodeWithText("当前分支").assertDoesNotExist()
+        compose.onNodeWithTag("current-branch").assertDoesNotExist()
         compose.onNodeWithTag("execution").assertIsDisplayed().performClick()
         compose.onNodeWithTag("permission-picker").assertIsDisplayed()
         compose.onNodeWithTag("permission-read_only-policy").assertIsNotEnabled()

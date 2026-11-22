@@ -13,6 +13,8 @@ import app.uselexora.mobile.ui.LexoraTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
@@ -53,7 +55,6 @@ class SharedReaderInstrumentedTest {
     private var turn = ReaderTurnContext()
     private var artifactContext: ReaderArtifactContext? = null
     private val transcriptRequests = java.util.concurrent.CopyOnWriteArrayList<String>()
-    private val latestRequests = java.util.concurrent.CopyOnWriteArrayList<String>()
     private val readResults = java.util.concurrent.CopyOnWriteArrayList<String>()
 
     @After fun disposeReader() {
@@ -73,7 +74,7 @@ class SharedReaderInstrumentedTest {
     }
     private fun update() {
         compose.runOnUiThread { host.update(messages, topic, details, runs.map(::completeRun), dark, scale,
-            { actions.add("message:${it.getString("id")}") }, { actions.add("resource:${it.getString("resourceId")}") }, { actions.add("detail:${it.getString("id")}") }, { message, action -> actions.add("$action:${message.getString("id")}") }, language = language, transcripts = transcripts, resultRunId = readTarget, onReadResult = { readResults.add(it) }, anchorMessageId = anchorMessageId, anchorRequestId = anchorRequestId, hasLaterMessages = hasLaterMessages, onLatest = { latestRequests.add(topic) }, branches = branches, selectedBranchId = selectedBranchId, onBranch = { actions.add("branch:${it.getString("id")}") }, turn = turn, onOlder = { retry -> actions.add("older:$retry") }, artifactContext = artifactContext, onLoadTranscript = { id, _ -> transcriptRequests.add(id) }) }
+            { actions.add("message:${it.getString("id")}") }, { actions.add("resource:${it.getString("resourceId")}") }, { actions.add("detail:${it.getString("id")}") }, { message, action -> actions.add("$action:${message.getString("id")}") }, language = language, transcripts = transcripts, resultRunId = readTarget, onReadResult = { readResults.add(it) }, anchorMessageId = anchorMessageId, anchorRequestId = anchorRequestId, hasLaterMessages = hasLaterMessages, onLatest = { actions.add("latest:$topic") }, branches = branches, selectedBranchId = selectedBranchId, onBranch = { actions.add("branch:${it.getString("id")}") }, turn = turn, onOlder = { retry -> actions.add("older:$retry") }, artifactContext = artifactContext, onLoadTranscript = { id, _ -> transcriptRequests.add(id) }) }
     }
     private fun js(script: String): String {
         val result = AtomicReference<String>()
@@ -254,13 +255,13 @@ class SharedReaderInstrumentedTest {
         show()
         until("document.querySelector('.user .message-actions') !== null")
         assertEquals("false", js("document.querySelector('.assistant .message-actions') !== null"))
-        js("document.querySelector('.user [aria-label=更多消息操作]').click()")
-        compose.waitUntil(5_000) { actions.contains("message:user") }
+        assertEquals("true", js("document.querySelector('.user [aria-label=更多消息操作]') === null"))
         runs = listOf(JSONObject().put("id", "stream-run").put("status", "completed"))
         update()
-        until("document.querySelector('[aria-label=从这里继续]') !== null")
-        js("document.querySelector('[aria-label=从这里继续]').click()")
-        compose.waitUntil(5_000) { actions.contains("followup:reply") }
+        until("document.querySelector('.assistant .message-actions') !== null")
+        assertEquals("true", js("document.querySelectorAll('.assistant .message-actions button').length===2 && !document.querySelector('[aria-label=从这里继续], [aria-label=重新生成]')"))
+        js("document.querySelector('.user [aria-label=编辑消息]').click()")
+        compose.waitUntil(5_000) { actions.contains("edit:user") }
         js("document.querySelector('.assistant [aria-label=复制消息]').click()")
         until("document.querySelector('.assistant [aria-label=已复制]') !== null")
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -270,7 +271,27 @@ class SharedReaderInstrumentedTest {
         until("document.querySelector('.assistant [aria-label=复制消息]') !== null")
     }
 
-    @Test fun compactFooterNavigatesExistingBranchesAndKeepsQuickActions() {
+    @Test fun publicNarrationLongPressKeepsSelectionWithoutOpeningReplyActions() {
+        turn = ReaderTurnContext(enabled = true)
+        messages = listOf(message("note", "独立公开说明"), message("reply", "最终答复").put("commentary",
+            JSONObject().put("text", "混合公开说明").put("range", JSONObject().put("revision", "c:4").put("start", 0).put("end", 6).put("total", 6))))
+        runs = listOf(JSONObject().put("status", "completed"))
+        show()
+        until("document.querySelector('[data-message-id=reply] .reader-narration') !== null")
+        for ((selector, text) in listOf("[data-message-id=note] .message-body" to "独立公开说明",
+            "[data-message-id=reply] .reader-narration" to "混合公开说明", "[data-message-id=reply] .message-body" to "最终答复")) {
+            assertEquals("true", js("""(() => {
+                const el = document.querySelector('$selector'), range = document.createRange();
+                range.selectNodeContents(el); getSelection().removeAllRanges(); getSelection().addRange(range);
+                return el.dispatchEvent(new MouseEvent('contextmenu', {bubbles:true, cancelable:true})) && getSelection().toString().includes('$text');
+            })()"""))
+        }
+        assertFalse(actions.any { it.startsWith("message:") })
+        js("document.querySelector('.assistant [aria-label=更多消息操作]').click()")
+        compose.waitUntil(5_000) { actions.contains("message:reply") }
+    }
+
+    @Test fun compactFooterNavigatesExistingBranchesIndependentlyOfMore() {
         fun branch(id: String, parent: String?, fork: String?, time: String) = JSONObject()
             .put("id", id).put("conversationId", "conversation").put("parentBranchId", parent ?: JSONObject.NULL)
             .put("forkedFromMessageId", fork ?: JSONObject.NULL).put("createdAt", time)
@@ -290,8 +311,9 @@ class SharedReaderInstrumentedTest {
         runs = listOf(JSONObject().put("id", "stream-run").put("status", "completed"))
         update()
         until("document.querySelector('.message-branches')?.textContent.includes('1/2') === true")
-        js("document.querySelector('[aria-label=下一个分支]').click(); document.querySelector('[aria-label=重新生成]').click()")
-        compose.waitUntil(5_000) { actions.containsAll(listOf("branch:retry", "regenerate:original")) }
+        assertEquals("true", js("document.querySelector('[aria-label=下一个分支]').getBoundingClientRect().width>=44 && document.querySelector('.assistant [aria-label=更多消息操作]').getBoundingClientRect().height>=44"))
+        js("document.querySelector('[aria-label=下一个分支]').click(); document.querySelector('.assistant [aria-label=更多消息操作]').click()")
+        compose.waitUntil(5_000) { actions.containsAll(listOf("branch:retry", "message:original")) }
         dark = true; scale = 1.5f; update()
         until("document.querySelector('main.dark') !== null")
         assertEquals("true", js("document.documentElement.scrollWidth<=innerWidth && document.querySelector('.message-branches').getBoundingClientRect().width>0"))
@@ -417,7 +439,7 @@ class SharedReaderInstrumentedTest {
         runs = listOf(JSONObject(runs[0].toString()).put("status", "running").put("completedAt", JSONObject.NULL))
         transcripts = mapOf("stream-run" to JSONObject().put("events", events).put("loaded", true))
         update()
-        until("document.querySelector('.buddy-chat-run-activity') !== null && document.querySelector('[data-tool-call-id=streaming].is-running') !== null")
+        until("document.querySelector('.buddy-chat-run-activity, .stream-status') === null && document.querySelector('[data-tool-call-id=streaming].is-running') !== null")
         assertEquals("true", js("document.querySelector('[data-tool-detail-id=shell]') !== null && document.querySelector('.buddy-chat-activity-group.is-open') !== null"))
         event("tool.completed", """{"toolCallId":"streaming","toolName":"bash","isError":false,"presentation":{"card":"terminal","command":"sleep 1","cwd":".","exitCode":0,"signal":null,"description":null,"output":"done","truncated":false}}""")
         runs = listOf(JSONObject(runs[0].toString()).put("status", "completed").put("completedAt", "2026-11-11T05:01:00Z"))
@@ -500,16 +522,24 @@ class SharedReaderInstrumentedTest {
         }
         Thread.sleep(300)
         assertEquals("true", js("Math.abs(document.querySelector('[data-message-id=history-40]').getBoundingClientRect().top-window.readingOffset)<3"))
-        assertTrue(latestRequests.isEmpty())
         anchorMessageId = "history-30"; anchorRequestId = "search-2"; update()
         until("document.querySelector('main').dataset.anchorMessageId === 'history-30'")
         js("document.querySelector('.latest-button').click()")
-        compose.waitUntil(5_000) { latestRequests.size == 1 }
-        assertEquals(listOf(topic), latestRequests.toList())
+        compose.waitUntil(5000) { actions.count { it == "latest:$topic" } == 1 }
+        turn = ReaderTurnContext(latestLoading = true)
+        update()
+        until("document.querySelector('.latest-button:disabled .latest-spinner') !== null && !document.querySelector('.history-progress')")
+        turn = ReaderTurnContext(latestError = "offline")
+        update()
+        until("document.querySelector('.latest-failed')?.getAttribute('aria-label').includes('offline') === true")
+        assertEquals("history-30", js("document.querySelector('main').dataset.anchorMessageId").trim('"'))
+        js("document.querySelector('.latest-failed').click()")
+        compose.waitUntil(5000) { actions.count { it == "latest:$topic" } == 2 }
+        turn = ReaderTurnContext()
         anchorMessageId = null; anchorRequestId = null; hasLaterMessages = false
         messages = messages + message("latest", "真实最新消息")
         update()
-        until("document.querySelector('[data-message-id=latest]') !== null && (()=>{const v=document.querySelector('.reader-viewport');return v.scrollHeight-v.scrollTop-v.clientHeight<30})()")
+        until("document.querySelector('[data-message-id=latest]') !== null && !document.querySelector('.latest-button') && (()=>{const v=document.querySelector('.reader-viewport');return v.scrollHeight-v.scrollTop-v.clientHeight<30})()")
     }
 
     @Test fun missingAndCrossTopicAnchorsNeverSilentlyResolveToAnotherMessage() {
@@ -532,7 +562,7 @@ class SharedReaderInstrumentedTest {
             receive.invoke(host, JSONObject().put("action", "latest").put("topic", "test-topic"))
             receive.invoke(host, JSONObject().put("action", "message").put("topic", topic).put("id", "history-20"))
         }
-        assertTrue(latestRequests.isEmpty()); assertTrue(actions.isEmpty())
+        assertTrue(actions.isEmpty())
     }
 
     @Test fun onlyTheVisibleCompletedResultReportsRead() {
@@ -561,6 +591,7 @@ class SharedReaderInstrumentedTest {
         val state = MobileUiState().apply {
             screen = MobileScreen.Conversation
             selectedTask = JSONObject().put("id", "input-task").put("activeBranchId", "input-branch").put("title", "输入与流式验收")
+            runs = listOf(JSONObject().put("id", "stream-run").put("status", "running").put("generation", "1"))
             connected = true
             conversationReady = true
             sendEnabled = true
@@ -582,7 +613,10 @@ class SharedReaderInstrumentedTest {
         messages = listOf(message("stream", "# 输入与流式验收\n\n正文"))
         runs = listOf(JSONObject().put("id", "stream-run").put("status", "running"))
         update()
-        until("document.body.innerText.includes('输入与流式验收')")
+        until("document.querySelector('.message-author .stream-status') !== null && !document.querySelector('.run-hint')")
+        compose.onNodeWithTag("streaming-status").assertDoesNotExist()
+        compose.onNodeWithTag("send").assertIsDisplayed()
+        compose.onNodeWithTag("stop-run").assertIsDisplayed()
         val original = composer
         lateinit var connection: android.view.inputmethod.InputConnection
         compose.runOnUiThread {

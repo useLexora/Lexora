@@ -28,15 +28,18 @@ import androidx.compose.ui.unit.dp
 import org.json.JSONObject
 
 @Composable
-internal fun ComposerToolbar(state: MobileUiState, onAction: (MobileAction, JSONObject?) -> Unit, attachments: () -> Unit, stopping: Boolean, active: List<JSONObject>, runs: () -> Unit) {
+internal fun ComposerToolbar(state: MobileUiState, onAction: (MobileAction, JSONObject?) -> Unit, attachments: () -> Unit, stopping: Boolean, active: List<JSONObject>, runs: () -> Unit, compact: Boolean = false) {
     val colors = MaterialTheme.colorScheme
     val muted = colors.onSurfaceVariant
     val fullAccess = state.executionSelection.optString("executionProfile") == "full_access"
     Row(Modifier.fillMaxWidth().testTag("composer-toolbar"), verticalAlignment = Alignment.CenterVertically) {
+        val count = if (compact) maxOf(state.attachments.size, state.attachmentCount) else 0
         ComposerButton(mobileText(R.string.label_add_attachment), "composer-attach", state.inputEnabled, attachments) {
-            Icon(desktopSymbol(DesktopSymbol.Add), null, Modifier.size(20.dp), tint = muted)
+            if (count > 0) BadgedBox(badge = { Badge { Text(count.toString()) } }) {
+                Icon(Icons.Outlined.AttachFile, mobileText(R.string.compact_attachments, count), Modifier.size(20.dp), tint = muted)
+            } else Icon(desktopSymbol(DesktopSymbol.Add), null, Modifier.size(20.dp), tint = muted)
         }
-        ComposerButton(mobileText(R.string.permissions_summary, state.executionLabel), "composer-permission", state.executionEnabled, { onAction(MobileAction.ChooseExecution, null) }) {
+        if (!state.choosePermissionToSend) ComposerButton(mobileText(R.string.permissions_summary, state.executionLabel), "composer-permission", state.executionEnabled, { onAction(MobileAction.ChooseExecution, null) }) {
             Icon(executionIcon(state.executionSelection), null, Modifier.size(18.dp), tint = if (fullAccess) colors.tertiary else muted)
         }
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
@@ -63,11 +66,14 @@ internal fun ComposerToolbar(state: MobileUiState, onAction: (MobileAction, JSON
                 }
             }
         }
-        val choosePermission = state.choosePermissionToSend
-        val enabled = state.sendEnabled || choosePermission
-        ComposerButton(mobileText(if (choosePermission) R.string.choose_task_permissions else R.string.label_send), "send", enabled, {
-            onAction(if (choosePermission) MobileAction.ChooseExecution else MobileAction.Send, null)
-        }, surfaceSize = 32.dp) {
+        if (state.choosePermissionToSend) {
+            TextButton(onClick = { onAction(MobileAction.ChooseExecution, null) }, modifier = Modifier.heightIn(min = 48.dp).testTag("choose-before-send")) {
+                Text(mobileText(R.string.choose_task_permissions), style = MaterialTheme.typography.labelMedium)
+            }
+            return@Row
+        }
+        val enabled = state.sendEnabled
+        ComposerButton(mobileText(R.string.label_send), "send", enabled, { onAction(MobileAction.Send, null) }, surfaceSize = 32.dp) {
             Box(Modifier.size(32.dp).clip(RoundedCornerShape(6.dp)).background(if (enabled) colors.primary else colors.surfaceVariant), contentAlignment = Alignment.Center) {
                 if (state.submittingInput) CircularProgressIndicator(Modifier.size(16.dp), color = muted, strokeWidth = 1.5.dp)
                 else Icon(desktopSymbol(DesktopSymbol.ArrowUp), null, Modifier.size(18.dp), tint = if (enabled) colors.onPrimary else muted)
