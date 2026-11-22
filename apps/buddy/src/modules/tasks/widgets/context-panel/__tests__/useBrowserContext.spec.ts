@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import type { DesktopBrowserApi, DesktopBrowserState } from '@buddy-electron/shared/desktopApi'
+import type { BrowserGuestSurface } from '@/platform/browser/browserGuestSurface'
 import { browserAgentTabId } from '@buddy-shared/browser/session'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, effectScope, h, nextTick, shallowRef } from 'vue'
@@ -162,77 +163,41 @@ describe('browser context ownership', () => {
     expect(address.address.value).toBe('a.example')
   })
 
-  it('does not hide a new binding when an earlier presentation fails', async () => {
+  it('publishes only the current page and mount acknowledgement, including A → B → A', () => {
     const scope = effectScope()
     cleanups.push(() => scope.stop())
-    const sessionId = shallowRef<string | null>('session')
-    const element = shallowRef<HTMLElement | null>(document.createElement('div'))
-    const pending = deferred<void>()
-    const shown = new Map<string, HTMLElement>()
+    const sessionId = shallowRef('session')
+    const pageId = shallowRef('page-a')
+    const element = shallowRef(document.createElement('div'))
+    const visible = shallowRef(true)
+    const mounts: BrowserGuestSurface[] = []
+    const mounted = new Set<BrowserGuestSurface>()
     const host = {
-      show: (id: string, target: HTMLElement) => {
-        shown.set(id, target)
+      show: (_: string, surface: BrowserGuestSurface) => {
+        mounts.push(surface)
+        mounted.add(surface)
       },
-      hide: (id: string, target?: HTMLElement) => {
-        if (shown.get(id) === target)
-          shown.delete(id)
-      },
+      hide: (_: string, surface: BrowserGuestSurface) => mounted.delete(surface),
     }
-    const api = { setSurface: vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(undefined) }
-    scope.run(() => useBrowserSurface({ api, guestHost: host, sessionId, element }))
-    await nextTick()
-    element.value = document.createElement('div')
-    await nextTick()
-    pending.reject(new Error('old surface failed'))
-    await nextTick()
-    expect(shown.get('session')).toBe(element.value)
-    scope.stop()
-    expect(shown.size).toBe(0)
-  })
-
-  it('hides and restores the same guest without changing the session or address draft', async () => {
-    const scope = effectScope()
-    cleanups.push(() => scope.stop())
-    const sessionId = shallowRef<string | null>('session')
-    const element = shallowRef<HTMLElement | null>(document.createElement('div'))
-    const visible = shallowRef(false)
-    const state = shallowRef<DesktopBrowserState | null>(browserState())
-    let shown: HTMLElement | null = null
-    let hostVisible = false
-    const host = {
-      show: (_id: string, target: HTMLElement) => { shown = target },
-      hide: () => { shown = null },
-    }
-    const api = {
-      setSurface: async (input: { sessionId: string, visible: boolean }) => {
-        hostVisible = input.visible
-      },
-    }
-    const address = scope.run(() => {
-      useBrowserSurface({ api, guestHost: host, sessionId, element, visible })
-      return useBrowserAddress(state, async () => true)
-    })!
-    address.updateAddress('unfinished.example')
-    await nextTick()
-    expect(shown).toBeNull()
-    expect(hostVisible).toBe(false)
-    visible.value = true
-    await nextTick()
-    expect(shown).toBe(element.value)
-    expect(hostVisible).toBe(true)
+    const ready = scope.run(() => useBrowserSurface({ guestHost: host, sessionId, pageId, element, visible }))!
+    expect(ready.value).toBe(false)
+    pageId.value = 'page-b'
+    pageId.value = 'page-a'
+    mounts[0]!.onPresented()
+    mounts[1]!.onPresented()
+    expect(ready.value).toBe(false)
+    expect([...mounted]).toEqual([mounts[2]])
+    mounts[2]!.onPresented()
+    expect(ready.value).toBe(true)
     visible.value = false
-    await nextTick()
-    expect(shown).toBeNull()
-    expect(hostVisible).toBe(false)
+    mounts[2]!.onPresented()
+    expect(ready.value).toBe(false)
+    expect(mounted.size).toBe(0)
     visible.value = true
-    await nextTick()
-    expect(shown).toBe(element.value)
-    expect(hostVisible).toBe(true)
-    expect(state.value?.sessionId).toBe('session')
-    expect(state.value?.url).toBe('https://example.com/')
-    expect(address.address.value).toBe('unfinished.example')
+    expect(ready.value).toBe(false)
+    mounts[3]!.onPresented()
+    expect(ready.value).toBe(true)
     scope.stop()
-    expect(shown).toBeNull()
-    expect(hostVisible).toBe(false)
+    expect(mounted.size).toBe(0)
   })
 })

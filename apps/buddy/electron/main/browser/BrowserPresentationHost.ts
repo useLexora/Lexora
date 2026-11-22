@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { BrowserWindow, View, WebContentsView } from 'electron'
 
 interface OwnedPage {
+  contents: WebContents
   view: WebContentsView
   clip: View
   displayed: boolean
@@ -31,13 +32,13 @@ export class BrowserPresentationHost {
     clip.setBounds({ x: 0, y: 0, width: 1280, height: 800 })
     view.setBounds({ x: 0, y: 0, width: 1280, height: 800 })
     this.#parking.contentView.addChildView(clip)
-    const page = { view, clip, displayed: false }
+    const page: OwnedPage = { contents: view.webContents, view, clip, displayed: false }
     this.#pages.set(descriptor.sessionId, page)
     view.webContents.once('destroyed', () => {
       if (this.#pages.get(descriptor.sessionId) !== page)
         return
-      this.#remove(page)
       this.#pages.delete(descriptor.sessionId)
+      this.#remove(page)
     })
     return view.webContents
   }
@@ -89,10 +90,10 @@ export class BrowserPresentationHost {
     if (this.#window !== window || window.isDestroyed() || this.#token !== input.presentationId)
       throw new Error('BROWSER_PRESENTATION_EXPIRED')
     const page = this.#pages.get(input.sessionId)
-    if (!page || page.view.webContents.isDestroyed())
+    if (!page || page.contents.isDestroyed())
       throw new Error('BROWSER_PAGE_FAILED')
     if (!input.visible) {
-      const capture = page.displayed ? page.view.webContents.capturePage() : null
+      const capture = page.displayed ? page.contents.capturePage() : null
       this.hide(input.sessionId)
       return (capture ?? Promise.resolve(null)).catch(() => null).then(snapshot => this.#token === input.presentationId && this.#pages.get(input.sessionId) === page ? snapshot?.toDataURL() ?? null : null)
     }
@@ -106,7 +107,7 @@ export class BrowserPresentationHost {
     const height = Math.min(rounded(clip.height), content.height - y)
     if (width <= 0 || height <= 0) {
       this.hide(input.sessionId)
-      return Promise.resolve(null)
+      throw new Error('BROWSER_PRESENTATION_UNAVAILABLE')
     }
     if (!page.displayed)
       this.#remove(page)
@@ -123,6 +124,8 @@ export class BrowserPresentationHost {
     const page = this.#pages.get(sessionId)
     if (!page)
       return
+    if (page.displayed && this.#window && !this.#window.isDestroyed() && !page.contents.isDestroyed() && page.contents.isFocused())
+      this.#window.webContents.focus()
     this.#remove(page)
     if (this.#parking && !this.#parking.isDestroyed())
       this.#parking.contentView.addChildView(page.clip)
@@ -141,8 +144,8 @@ export class BrowserPresentationHost {
     this.detachWindow()
     for (const page of this.#pages.values()) {
       this.#remove(page)
-      if (!page.view.webContents.isDestroyed())
-        page.view.webContents.close({ waitForBeforeUnload: false })
+      if (!page.contents.isDestroyed())
+        page.contents.close({ waitForBeforeUnload: false })
     }
     this.#pages.clear()
     this.#parking?.destroy()
@@ -150,11 +153,8 @@ export class BrowserPresentationHost {
   }
 
   #remove(page: OwnedPage): void {
-    if (this.#window && !this.#window.isDestroyed()) {
-      if (page.displayed && page.view.webContents.isFocused())
-        this.#window.webContents.focus()
+    if (this.#window && !this.#window.isDestroyed())
       this.#window.contentView.removeChildView(page.clip)
-    }
     if (this.#parking && !this.#parking.isDestroyed())
       this.#parking.contentView.removeChildView(page.clip)
   }

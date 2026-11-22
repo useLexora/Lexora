@@ -4,9 +4,12 @@ import type {
   DesktopBrowserGuestDescriptor,
 } from '@buddy-electron/shared/desktopApi'
 import type { BrowserGuestCatalog } from './BrowserGuestCatalog'
-import type { SurfaceLayout, SurfaceLayoutGeometry, SurfaceLayoutLease, SurfaceLayoutOptions, SurfaceRect } from '@/shared/ui/surfaces/surfaceLayout'
+import type { BrowserGuestSurface } from './browserGuestSurface'
+import type { SurfaceLayout, SurfaceLayoutGeometry, SurfaceLayoutLease, SurfaceLayoutOptions } from '@/shared/ui/surfaces/surfaceLayout'
 import { onBeforeUnmount, onMounted, useTemplateRef, watch } from 'vue'
 import { hiddenSurfaceGeometry } from '@/shared/ui/surfaces/surfaceLayout'
+
+import { browserSurfaceOccluded } from './browserSurfaceOcclusion'
 
 const props = defineProps<{
   api: DesktopBrowserApi
@@ -29,12 +32,7 @@ interface BrowserGuestEntry {
   layout: SurfaceLayoutLease
   geometry: SurfaceLayoutGeometry
   pageId: string | null
-  previous: string | null
-}
-
-interface BrowserGuestSurface {
-  element: HTMLElement
-  sessionId: string
+  previous: { geometry: string, surface?: BrowserGuestSurface } | null
 }
 
 onMounted(async () => {
@@ -44,10 +42,10 @@ onMounted(async () => {
     return
   stopGuestsChanged = watch(props.catalog.snapshot, reconcileGuests, { immediate: true })
   observer = new MutationObserver((records) => {
-    if (records.some(record => !(record.target instanceof Element) || !record.target.closest('[data-workbench-surface]')))
+    if (records.some(record => !(record.target instanceof Element) || !record.target.closest('[data-browser-session-id]')))
       schedulePresentation()
   })
-  observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'inert'] })
+  observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'inert', 'open', 'role', 'aria-modal'] })
   document.addEventListener('transitionend', schedulePresentation, true)
   document.addEventListener('animationend', schedulePresentation, true)
   void props.catalog.refresh().catch(() => {})
@@ -66,21 +64,21 @@ onBeforeUnmount(() => {
   guests.clear()
 })
 
-function show(sessionId: string, element: HTMLElement): void {
-  const previous = surfaces.get(sessionId)
-  if (previous?.element === element) {
-    scheduleLayout()
-    return
-  }
-  surfaces.set(sessionId, { sessionId, element })
+function show(sessionId: string, surface: BrowserGuestSurface): void {
+  surfaces.set(sessionId, surface)
   scheduleLayout()
 }
 
-function hide(sessionId: string, element?: HTMLElement): void {
-  const current = surfaces.get(sessionId)
-  if (!current || (element && current.element !== element))
+function hide(sessionId: string, surface: BrowserGuestSurface): void {
+  if (surfaces.get(sessionId) !== surface)
     return
   surfaces.delete(sessionId)
+  const entry = guests.get(sessionId)
+  if (entry) {
+    entry.geometry = hiddenSurfaceGeometry
+    entry.element.style.backgroundImage = ''
+    void present(entry)
+  }
   scheduleLayout()
 }
 
@@ -98,7 +96,10 @@ function reconcileGuests(descriptors: readonly DesktopBrowserGuestDescriptor[] |
     }
   }
   for (const descriptor of descriptors) {
-    if (!guests.has(descriptor.sessionId))
+    const entry = guests.get(descriptor.sessionId)
+    if (entry)
+      entry.descriptor = descriptor
+    else
       createGuest(descriptor)
   }
   scheduleLayout()
@@ -128,7 +129,7 @@ function layoutOptions(entry: BrowserGuestEntry): SurfaceLayoutOptions {
     layer: 'content',
     onLayout: (geometry) => {
       entry.geometry = geometry
-      schedulePresentation()
+      void present(entry)
     },
   }
 }
@@ -146,45 +147,35 @@ function schedulePresentation(): void {
 async function present(entry: BrowserGuestEntry): Promise<void> {
   if (!presentationId || guests.get(entry.descriptor.sessionId) !== entry)
     return
-  const { bounds, clip } = entry.geometry
-  const visible = entry.geometry.visible && !isCovered(entry.element, clip)
-  const geometry = JSON.stringify({ bounds, clip, visible })
-  if (entry.previous === geometry)
+  const pageId = entry.descriptor.pageId
+  if (!pageId)
     return
-  entry.previous = geometry
+  const { bounds, clip } = entry.geometry
+  const surface = surfaces.get(entry.descriptor.sessionId)
+  const visible = surface?.pageId === pageId && entry.geometry.visible && !browserSurfaceOccluded(clip)
+  const geometry = JSON.stringify({ pageId, bounds, clip, visible })
+  if (entry.previous?.geometry === geometry && entry.previous.surface === surface)
+    return
+  const request = { geometry, surface }
+  entry.previous = request
   try {
-    entry.pageId = entry.descriptor.pageId ?? null
-    if (!entry.pageId)
-      return
+    entry.pageId = pageId
     const snapshot = await props.api.present({ presentationId, sessionId: entry.descriptor.sessionId, pageId: entry.pageId, visible, bounds, clip })
-    if (entry.previous !== geometry || !mounted)
+    if (!mounted || guests.get(entry.descriptor.sessionId) !== entry || entry.previous !== request || surfaces.get(entry.descriptor.sessionId) !== surface)
       return
     if (visible) {
       entry.element.style.backgroundImage = ''
+      surface.onPresented()
     }
-    else if (snapshot) {
+    else if (snapshot && surface?.pageId === pageId) {
       entry.element.style.backgroundImage = `url("${snapshot}")`
       entry.element.style.backgroundSize = '100% 100%'
     }
   }
   catch {
-    entry.previous = null
+    if (entry.previous === request)
+      entry.previous = null
   }
-}
-
-function isCovered(element: HTMLElement, clip: SurfaceRect): boolean {
-  if (document.querySelector('.workbench.is-dragging, .workbench.is-resizing, .desktop-workbench-layout.is-resizing'))
-    return true
-  const layer = Number.parseInt(element.style.zIndex, 10) || 0
-  return [...document.querySelectorAll<HTMLElement>('body *')].some((candidate) => {
-    if (candidate === element || candidate.contains(element) || element.contains(candidate))
-      return false
-    const style = getComputedStyle(candidate)
-    if (style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0' || (Number.parseInt(style.zIndex, 10) || 0) <= layer)
-      return false
-    const rect = candidate.getBoundingClientRect()
-    return rect.width > 0 && rect.height > 0 && rect.left < clip.x + clip.width && rect.right > clip.x && rect.top < clip.y + clip.height && rect.bottom > clip.y
-  })
 }
 
 function removeGuest(entry: BrowserGuestEntry): void {

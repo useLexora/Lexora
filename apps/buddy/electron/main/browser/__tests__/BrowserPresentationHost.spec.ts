@@ -19,7 +19,12 @@ vi.mock('electron', async () => {
   class Contents extends EventEmitter {
     destroyed = false
     isDestroyed() { return this.destroyed }
-    isFocused() { return false }
+    isFocused() {
+      if (this.destroyed)
+        throw new Error('Object has been destroyed')
+      return false
+    }
+
     focus() {}
     getZoomFactor() { return 1.25 }
     capturePage() { return Promise.resolve({ toDataURL: () => 'data:image/png;base64,c2NyZWVuc2hvdA==' }) }
@@ -39,7 +44,10 @@ vi.mock('electron', async () => {
       this.emit('closed')
     }
   }
-  return { BrowserWindow: Window, View, WebContentsView: class extends View { readonly webContents = new Contents() } }
+  return { BrowserWindow: Window, View, WebContentsView: class extends View {
+    private readonly contents = new Contents()
+    get webContents() { return this.contents.isDestroyed() ? undefined : this.contents }
+  } }
 })
 
 function input(presentationId: string) {
@@ -47,6 +55,24 @@ function input(presentationId: string) {
 }
 
 describe('browser presentation ownership', () => {
+  it('can close a displayed tab after Electron clears the view guest and reuse the session without a stale clip', async () => {
+    const host = new BrowserPresentationHost(() => {})
+    const descriptor = { sessionId: 'session', partition: 'persist:isolated-fixture' }
+    const page = host.createPage(descriptor)
+    const window = new BrowserWindow()
+    host.bindWindow(window)
+    const token = host.acquire(window)
+    await host.present(window, input(token))
+    page.close()
+    expect(window.contentView.children).toHaveLength(0)
+    expect(() => host.present(window, input(token))).toThrow('BROWSER_PAGE_FAILED')
+    const replacement = host.createPage(descriptor)
+    await host.present(window, input(token))
+    expect(window.contentView.children).toHaveLength(1)
+    host.dispose()
+    expect(replacement.isDestroyed()).toBe(true)
+  })
+
   it('preserves the page through window close and rejects the old display token in a new window', async () => {
     const host = new BrowserPresentationHost(() => {})
     const page = host.createPage({ sessionId: 'session', partition: 'persist:isolated-fixture' })
