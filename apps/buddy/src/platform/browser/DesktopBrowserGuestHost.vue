@@ -32,6 +32,7 @@ interface BrowserGuestEntry {
   layout: SurfaceLayoutLease
   geometry: SurfaceLayoutGeometry
   pageId: string | null
+  preview?: HTMLImageElement
   previous: { geometry: string, surface?: BrowserGuestSurface } | null
 }
 
@@ -76,7 +77,7 @@ function hide(sessionId: string, surface: BrowserGuestSurface): void {
   const entry = guests.get(sessionId)
   if (entry) {
     entry.geometry = hiddenSurfaceGeometry
-    entry.element.style.backgroundImage = ''
+    clearPreview(entry)
     void present(entry)
   }
   scheduleLayout()
@@ -152,24 +153,48 @@ async function present(entry: BrowserGuestEntry): Promise<void> {
     return
   const { bounds, clip } = entry.geometry
   const surface = surfaces.get(entry.descriptor.sessionId)
-  const visible = surface?.pageId === pageId && entry.geometry.visible && !browserSurfaceOccluded(clip)
-  const geometry = JSON.stringify({ pageId, bounds, clip, visible })
+  const selected = surface?.pageId === pageId && entry.geometry.visible
+  const covered = selected && browserSurfaceOccluded(clip)
+  const visible = selected && !covered
+  const geometry = JSON.stringify({ pageId, bounds, clip, visible, covered })
   if (entry.previous?.geometry === geometry && entry.previous.surface === surface)
     return
   const request = { geometry, surface }
   entry.previous = request
+  const current = () => mounted && guests.get(entry.descriptor.sessionId) === entry && entry.previous === request && surfaces.get(entry.descriptor.sessionId) === surface
+  const input = { presentationId, sessionId: entry.descriptor.sessionId, pageId, visible, bounds, clip }
   try {
     entry.pageId = pageId
-    const snapshot = await props.api.present({ presentationId, sessionId: entry.descriptor.sessionId, pageId: entry.pageId, visible, bounds, clip })
-    if (!mounted || guests.get(entry.descriptor.sessionId) !== entry || entry.previous !== request || surfaces.get(entry.descriptor.sessionId) !== surface)
-      return
-    if (visible) {
-      entry.element.style.backgroundImage = ''
-      surface.onPresented()
+    if (covered) {
+      const snapshot = await props.api.present({ ...input, previewOnly: true }).catch(() => null)
+      if (!current())
+        return
+      if (snapshot) {
+        const image = new Image()
+        image.alt = ''
+        image.className = 'absolute inset-0 block h-full w-full pointer-events-none'
+        image.src = snapshot
+        const decoded = await image.decode().then(() => true, () => false)
+        if (!current())
+          return
+        if (decoded) {
+          clearPreview(entry)
+          surface.element.append(image)
+          entry.preview = image
+          await afterPreviewPaint()
+          if (!current())
+            return
+        }
+      }
     }
-    else if (snapshot && surface?.pageId === pageId) {
-      entry.element.style.backgroundImage = `url("${snapshot}")`
-      entry.element.style.backgroundSize = '100% 100%'
+    await props.api.present(input)
+    if (current() && visible) {
+      surface.onPresented()
+      if (entry.preview) {
+        await afterPreviewPaint()
+        if (current())
+          clearPreview(entry)
+      }
     }
   }
   catch {
@@ -178,7 +203,17 @@ async function present(entry: BrowserGuestEntry): Promise<void> {
   }
 }
 
+function afterPreviewPaint(): Promise<void> {
+  return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+}
+
+function clearPreview(entry: BrowserGuestEntry): void {
+  entry.preview?.remove()
+  entry.preview = undefined
+}
+
 function removeGuest(entry: BrowserGuestEntry): void {
+  clearPreview(entry)
   entry.layout.dispose()
   if (presentationId && entry.pageId) {
     void props.api.present({ presentationId, sessionId: entry.descriptor.sessionId, pageId: entry.pageId, ...hiddenSurfaceGeometry }).catch(() => {})

@@ -27,7 +27,7 @@ vi.mock('electron', async () => {
 
     focus() {}
     getZoomFactor() { return 1.25 }
-    capturePage() { return Promise.resolve({ toDataURL: () => 'data:image/png;base64,c2NyZWVuc2hvdA==' }) }
+    capturePage() { return Promise.resolve({ isEmpty: () => false, toDataURL: () => 'data:image/png;base64,c2NyZWVuc2hvdA==' }) }
     close() {
       this.destroyed = true
       this.emit('destroyed')
@@ -109,7 +109,10 @@ describe('browser presentation ownership', () => {
     expect(() => host.present(window, input(token))).toThrow('BROWSER_PRESENTATION_EXPIRED')
     const next = host.acquire(window)
     await host.present(window, input(next))
-    expect(await host.present(window, { ...input(next), visible: false })).toMatch(/^data:image\/png/)
+    const hide = { ...input(next), visible: false }
+    expect(await host.present(window, { ...hide, previewOnly: true })).toMatch(/^data:image\/png/)
+    expect(window.contentView.children).toEqual([clip])
+    await host.present(window, hide)
     expect(window.contentView.children).toHaveLength(0)
     expect(page.isDestroyed()).toBe(false)
     host.dispose()

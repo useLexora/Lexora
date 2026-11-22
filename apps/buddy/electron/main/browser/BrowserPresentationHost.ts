@@ -92,10 +92,16 @@ export class BrowserPresentationHost {
     const page = this.#pages.get(input.sessionId)
     if (!page || page.contents.isDestroyed())
       throw new Error('BROWSER_PAGE_FAILED')
+    if (input.previewOnly) {
+      return page.contents.capturePage(undefined, { stayHidden: true }).then(snapshot =>
+        !snapshot.isEmpty() && this.#token === input.presentationId && this.#pages.get(input.sessionId) === page
+          ? snapshot.toDataURL()
+          : null,
+      )
+    }
     if (!input.visible) {
-      const capture = page.displayed ? page.contents.capturePage() : null
       this.hide(input.sessionId)
-      return (capture ?? Promise.resolve(null)).catch(() => null).then(snapshot => this.#token === input.presentationId && this.#pages.get(input.sessionId) === page ? snapshot?.toDataURL() ?? null : null)
+      return Promise.resolve(null)
     }
     const zoom = window.webContents.getZoomFactor()
     const rounded = (value: number) => Math.round(value * zoom)
