@@ -1,7 +1,10 @@
-import type { RendererDiagnosticApi } from '@buddy-shared/diagnostics/rendererDiagnostic'
+import type { RendererDiagnostic, RendererDiagnosticApi } from '@buddy-shared/diagnostics/rendererDiagnostic'
+import type { InjectionKey } from 'vue'
 import { DiagnosticAdmission } from '@buddy-shared/diagnostics/DiagnosticAdmission'
 import { rendererDiagnosticSchema } from '@buddy-shared/diagnostics/rendererDiagnostic'
 import { ApplicationEvents } from '@buddy-shared/observability/ApplicationEvents'
+
+export const rendererDiagnosticKey: InjectionKey<(event: Pick<RendererDiagnostic, 'level' | 'event' | 'errorCode'>) => void> = Symbol('renderer-diagnostic')
 
 export interface RendererDiagnosticStatus {
   pending: number

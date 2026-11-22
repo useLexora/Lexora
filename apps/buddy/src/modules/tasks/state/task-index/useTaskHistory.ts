@@ -3,7 +3,10 @@ import type { LocalConversation, LocalConversationSummary } from '@buddy-shared/
 import type { ConversationHistoryQuery, LocalConversationHistoryItem } from '@buddy-shared/conversation/conversationHistoryApi'
 import type { LocalTaskMarkState } from '@buddy-shared/conversation/taskMarkApi'
 import type { TaskHistory, TaskHistoryScopeState } from '../../contracts'
+import { CONVERSATION_HISTORY_LOOKUP_LIMIT } from '@buddy-shared/conversation/conversationHistoryApi'
 import { readonly, shallowRef } from 'vue'
+
+const ENTRY_BATCH_WINDOW_MS = 16
 
 interface HistoryScope {
   spaceId: string | null
@@ -39,13 +42,14 @@ export function useTaskHistory(api: Pick<LocalChatApi['conversations'], 'listHis
   const entries = new Map<string, LocalConversationHistoryItem>()
   const signatures = new Map<string, string>()
   const records = new Map<string, HistoryScope>()
-  const entryRequests = new Map<string, Promise<void>>()
+  const entryRequests = new Map<string, PromiseWithResolvers<void>>()
+  const queuedEntries = new Set<string>()
+  let entryFlush: ReturnType<typeof setTimeout> | null = null
   let attentionIds = new Set<string>()
   let pinnedIds = new Set<string>()
   let activeTaskId: string | null = null
   let attentionGeneration = 0
   let attentionPending: Promise<void> | null = null
-  let entryGeneration = 0
   let disposed = false
 
   function merge(items: readonly LocalConversationHistoryItem[]) {
@@ -260,7 +264,8 @@ export function useTaskHistory(api: Pick<LocalChatApi['conversations'], 'listHis
           }
         }
         const removed = [...attentionIds].filter(id => !nextIds.has(id))
-        entryGeneration += 1
+        nextIds.forEach(invalidateEntry)
+        removed.forEach(invalidateEntry)
         affected.forEach(invalidateScope)
         merge(items)
         attentionIds = nextIds
@@ -275,54 +280,69 @@ export function useTaskHistory(api: Pick<LocalChatApi['conversations'], 'listHis
     return attentionPending
   }
 
-  function refreshEntries(ids: readonly string[]): Promise<void> {
-    if (disposed || ids.length === 0)
-      return Promise.resolve()
-    const unique = [...new Set(ids)].sort()
-    const key = JSON.stringify(unique)
-    const pending = entryRequests.get(key)
-    if (pending)
-      return pending
-    const request = Promise.resolve().then(async () => {
-      for (let offset = 0; offset < unique.length; offset += 500) {
-        const batch = unique.slice(offset, offset + 500)
-        while (true) {
-          if (disposed)
-            return
-          const generation = entryGeneration
-          let result: readonly LocalConversationHistoryItem[]
-          try {
-            result = await api.getHistoryEntries(batch)
-          }
-          catch (error) {
-            if (disposed)
-              return
-            if (generation !== entryGeneration)
-              continue
-            throw error
-          }
-          if (disposed)
-            return
-          if (generation !== entryGeneration)
-            continue
-          merge(result)
-          const found = new Set(result.map(item => item.conversation.id))
-          for (const id of batch) {
-            if (!found.has(id)) {
-              entries.delete(id)
-              signatures.delete(id)
-              attentionIds.delete(id)
-              for (const scope of records.values())
-                scope.ids = scope.ids.filter(value => value !== id)
-            }
-          }
+  function invalidateEntry(id: string) {
+    if (entryRequests.has(id))
+      queuedEntries.add(id)
+  }
+
+  async function flushEntries() {
+    while (queuedEntries.size) {
+      const batch = [...queuedEntries].slice(0, CONVERSATION_HISTORY_LOOKUP_LIMIT)
+      batch.forEach(id => queuedEntries.delete(id))
+      const attentionAtStart = attentionIds
+      try {
+        const result = await api.getHistoryEntries(batch)
+        if (disposed)
           break
+        const found = new Map(result.map(item => [item.conversation.id, item]))
+        for (const id of batch) {
+          const item = found.get(id)
+          // A newer attention snapshot can rule out an unread row even for a previously unknown ID.
+          if (item && attentionAtStart !== attentionIds && needsAttention(item) !== attentionIds.has(id))
+            invalidateEntry(id)
+          if (queuedEntries.has(id))
+            continue
+          if (item) {
+            merge([item])
+          }
+          else {
+            entries.delete(id)
+            signatures.delete(id)
+            attentionIds.delete(id)
+            for (const scope of records.values())
+              scope.ids = scope.ids.filter(value => value !== id)
+          }
+          entryRequests.get(id)!.resolve()
+          entryRequests.delete(id)
+        }
+        publish()
+      }
+      catch (error) {
+        for (const id of batch) {
+          if (!queuedEntries.has(id)) {
+            entryRequests.get(id)?.reject(error)
+            entryRequests.delete(id)
+          }
         }
       }
-      publish()
-    }).finally(() => entryRequests.delete(key))
-    entryRequests.set(key, request)
-    return request
+    }
+    entryFlush = null
+  }
+
+  function refreshEntries(ids: readonly string[]): Promise<void> {
+    if (disposed || !ids.length)
+      return Promise.resolve()
+    const requests = ids.map((id) => {
+      let request = entryRequests.get(id)
+      if (!request) {
+        request = Promise.withResolvers<void>()
+        entryRequests.set(id, request)
+        queuedEntries.add(id)
+      }
+      return request.promise
+    })
+    entryFlush ??= setTimeout(() => void flushEntries(), ENTRY_BATCH_WINDOW_MS)
+    return Promise.all(requests).then(() => {})
   }
 
   async function ensureConversation(id: string) {
@@ -351,10 +371,12 @@ export function useTaskHistory(api: Pick<LocalChatApi['conversations'], 'listHis
   }
 
   async function refreshConversations() {
+    const retained = new Set([...pinnedIds, ...(activeTaskId ? [activeTaskId] : [])])
+    retained.forEach(invalidateEntry)
     await Promise.all([
       refreshAttention(),
       refreshScopes([...records.values()].map(scope => scope.spaceId)),
-      refreshEntries([...new Set([...pinnedIds, ...(activeTaskId ? [activeTaskId] : [])])]),
+      refreshEntries([...retained]),
       readScope(getScope(null)),
     ])
   }
@@ -374,6 +396,7 @@ export function useTaskHistory(api: Pick<LocalChatApi['conversations'], 'listHis
   function applyConversation(conversation: LocalConversation) {
     if (disposed)
       return Promise.resolve()
+    invalidateEntry(conversation.id)
     const previous = entries.get(conversation.id)
     if (previous && !conversation.deletedAt && !conversation.archivedAt
       && previous.conversation.spaceId === conversation.spaceId
@@ -383,7 +406,6 @@ export function useTaskHistory(api: Pick<LocalChatApi['conversations'], 'listHis
       publish()
       return Promise.resolve()
     }
-    entryGeneration += 1
     attentionGeneration += 1
     invalidateScope(conversation.spaceId)
     if (previous) {
@@ -404,7 +426,7 @@ export function useTaskHistory(api: Pick<LocalChatApi['conversations'], 'listHis
   async function applyMarkState(state: LocalTaskMarkState) {
     if (disposed)
       return
-    entryGeneration += 1
+    invalidateEntry(state.conversationId)
     attentionGeneration += 1
     const previous = entries.get(state.conversationId)
     if (!previous) {
@@ -440,7 +462,11 @@ export function useTaskHistory(api: Pick<LocalChatApi['conversations'], 'listHis
 
   function dispose() {
     disposed = true
-    entryGeneration += 1
+    if (entryFlush !== null)
+      clearTimeout(entryFlush)
+    queuedEntries.clear()
+    entryRequests.forEach(request => request.resolve())
+    entryRequests.clear()
     attentionGeneration += 1
     for (const scope of records.values())
       scope.generation += 1

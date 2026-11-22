@@ -25,7 +25,7 @@ import { BrowserGuestCatalog } from '@/platform/browser/BrowserGuestCatalog'
 import DesktopBrowserGuestHost from '@/platform/browser/DesktopBrowserGuestHost.vue'
 import { useBrowserGuestHost } from '@/platform/browser/useBrowserGuestHost'
 import { requireDesktopApi } from '@/platform/desktop/desktopApi'
-import { createRendererDiagnostics } from '@/platform/runtime/RendererDiagnostics'
+import { createRendererDiagnostics, rendererDiagnosticKey } from '@/platform/runtime/RendererDiagnostics'
 import { runtimeAvailabilityKey } from '@/platform/runtime/runtimeAvailability'
 import { resolveLocalChatErrorMessage } from '@/shared/lib/localChatError'
 import { desktopRouteLocations } from '@/shared/navigation/desktopRoutes'
@@ -88,6 +88,7 @@ const taskIndex = useTaskIndex({
   onSpaceCreated,
 })
 const diagnostics = createRendererDiagnostics(api.app.logs)
+provide(rendererDiagnosticKey, diagnostics.events.publish)
 const fileOpening = useProvideFileOpening(api.extensions)
 const workbench = useDesktopWorkbench({ beforeExtensionClose: prepareExtensionClose, fileOpening, buddyCatalog: buddyDirectory.catalog, api, events: diagnostics.events, stores, taskIndex, router, resources: getResources, onError: () => message.error(translateBuddy(stores.applicationSettings.language.value, 'desktop.command.failed')) })
 

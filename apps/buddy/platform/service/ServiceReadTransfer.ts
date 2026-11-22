@@ -8,6 +8,7 @@ export const readPartMethod = 'service.readResultPart'
 export const releaseReadMethod = 'service.releaseReadResult'
 export const pagedServiceReads = new Set<string>([
   attachmentHostRpc.readPreview,
+  'conversations.getHistoryEntries',
   'conversations.listTimeline',
   'conversations.getNodeDetail',
   'conversations.getTree',

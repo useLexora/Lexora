@@ -210,7 +210,11 @@ export async function startLocalServiceDaemon(config: ServiceLaunch, options: { 
         if (stopping || peer.closed || service !== runtime || maintenance)
           throw new Error('SERVICE_NOT_READY')
         attachedClients.add(peer)
-        peer.onDidClose(() => attachedClients.delete(peer))
+        peer.onDidClose((rpcDisconnect) => {
+          attachedClients.delete(peer)
+          if (!stopping && !maintenance && !recovering && !generation?.intentional)
+            events.publish({ event: 'management.connection_closed', component: 'runtime.management', level: 'warn', generation: runtimeGeneration, rpcDisconnect })
+        })
         service.connectClient('product', peer)
         service.connectClient('management', peer)
         return { serviceInstanceId: identity.serviceInstanceId, pid: process.pid, generation: runtimeGeneration }
