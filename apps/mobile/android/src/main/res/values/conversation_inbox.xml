@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="inbox_undelivered_results">Undelivered results</string>
+    <string name="inbox_redelivery_requested">Delivery retry requested</string>
+    <plurals name="inbox_unanswered">
+        <item quantity="one">%1$d request to answer</item>
+        <item quantity="other">%1$d requests to answer</item>
+    </plurals>
+    <plurals name="inbox_undelivered">
+        <item quantity="one">%1$d undelivered result</item>
+        <item quantity="other">%1$d undelivered results</item>
+    </plurals>
+    <plurals name="inbox_approval">
+        <item quantity="one">%1$d pending approval</item>
+        <item quantity="other">%1$d pending approvals</item>
+    </plurals>
+    <plurals name="inbox_waiting">
+        <item quantity="one">%1$d waiting</item>
+        <item quantity="other">%1$d waiting</item>
+    </plurals>
+    <plurals name="inbox_paused">
+        <item quantity="one">%1$d paused</item>
+        <item quantity="other">%1$d paused</item>
+    </plurals>
+</resources>

@@ -101,6 +101,7 @@ class MainActivity : ComponentActivity() {
     private var projectedTurnWindow = false
     private var readyContext: String? = null
     private var historyRequest = 0L
+    private var latestRequest = 0L
     private var discoveryOwner = ""
     private var executionPickerOwner: String? = null
     private var executionPickerScope: String? = null
@@ -206,7 +207,7 @@ class MainActivity : ComponentActivity() {
             cachedTasks = { ui.tasksLoaded = true },
             cachedConversation = { items, branches ->
                 branches?.let { if (ui.branches.isEmpty()) ui.branches = it }
-                if (items != null && !ui.historyPinned && readyContext != liveContext()) {
+                if (items != null && !ui.historyPinned && !ui.historyDetached && readyContext != liveContext()) {
                     projectedTurnWindow = items.any { it.optString("entity") in setOf("historyWindow", "activityGroup") }
                     ui.activityGroups = entities(items, "activityGroup")
                     messageItems = visibleMessages(entities(items, "message")); ui.readingCached = true; syncUi()
@@ -214,7 +215,12 @@ class MainActivity : ComponentActivity() {
             })
         session = MobileConnectionSession(connection, schemas, getSystemService(ConnectivityManager::class.java), streamHandler,
             enabled = { !demo && !disconnecting }, topic = { activeTopic }, work = ::work, onUi = ::onUi,
-            released = { historyRequest++; reading.disconnected(); ui.historyLoading = false; operations.closeReview(); questions.close() },
+            released = {
+                historyRequest++; reading.disconnected(); ui.historyLoading = false
+                if (ui.latestLoading) ui.latestError = MobileFailurePresentation.NETWORK_UNAVAILABLE_NOTICE
+                latestRequest++; ui.latestLoading = false
+                operations.closeReview(); questions.close()
+            },
             connected = { authenticated, identity ->
                 ui.connectionPhase = app.uselexora.mobile.session.MobileConnectionPhase.Idle
                 if (partition != identity.partition) restoreNavigation(identity.partition)
@@ -321,7 +327,8 @@ class MainActivity : ComponentActivity() {
                         branches = ui.branches, selectedBranchId = ui.viewBranchId, onBranch = ::selectBranch,
                         onMessageMenu = { message, anchor, contextual -> prepareMessageAction(message, null, anchor, contextual) },
                         turn = ReaderTurnContext(conversationTarget, readerClient, ui.turnWindow, ui.activityGroups,
-                            ui.historyHasMore && ui.connected && ui.conversationReady, ui.historyLoading, ui.historyError.ifBlank { null }, ui.historyPage),
+                            ui.historyHasMore && ui.connected && ui.conversationReady, ui.historyLoading, ui.historyError.ifBlank { null }, ui.historyPage,
+                            latestLoading = ui.latestLoading, latestError = ui.latestError.ifBlank { null }),
                         onOlder = { retry -> if (retry || ui.historyError.isBlank()) moreHistory() },
                         transcripts = if (ui.turnWindow) emptyMap() else transcriptRecords, onLoadTranscript = runTranscripts::request,
                         resultRunId = ui.resultRunId.takeUnless { ui.historyDetached }, onReadResult = ::readVisibleResult, onMessageAction = ::messageActions, onQuickAction = ::messageQuickAction, onResource = ::openResource, onLoadDetail = ::loadMessageDetail)
@@ -366,7 +373,9 @@ class MainActivity : ComponentActivity() {
             MobileAction.InspectUnplacedInput -> inspectUnplacedInput()
             MobileAction.RecoverDownloads -> showLocalFiles()
             MobileAction.Recovery -> showRecovery()
-            MobileAction.Files -> selectedTask?.let { showTaskFiles(it.getString("id")) } ?: showFiles()
+            MobileAction.Files -> selectedTask?.let { showTaskFiles(it.getString("id")) } ?: showDraftFiles()
+            MobileAction.DraftAttachments -> showDraftFiles()
+            MobileAction.LocalFileRecords -> showFileRecords()
             MobileAction.OpenResource -> payload?.let { value ->
                 val resource = value.optJSONObject("resource")
                 if (resource == null) openResource(value)
@@ -396,15 +405,13 @@ class MainActivity : ComponentActivity() {
             MobileAction.Reconnect -> resumeConnection()
             MobileAction.TaskControls -> conversationTarget?.let(operations::runs)
             MobileAction.TaskQueue -> conversationTarget?.let(operations::queue)
-            MobileAction.TaskBranches -> loadBranches()
-            MobileAction.SelectBranch -> payload?.let(::selectBranch)
             MobileAction.CheckInputReceipt -> client?.let { checkInputReceipts(it, scope) }
             MobileAction.QueueInput -> if (selectedTask != null && scope.startsWith("conversation:")) send("chat.queue.enqueue")
             MobileAction.OpenOnDesktop -> openOnDesktop()
             MobileAction.ReadState -> selectedTask?.let { operations.readState(JSONObject(it.toString())) }
             MobileAction.Disconnect -> disconnect()
             MobileAction.MessageActions -> payload?.let(::messageActions)
-            MobileAction.CopyMessage, MobileAction.EditMessage, MobileAction.ContinueMessage, MobileAction.RegenerateMessage, MobileAction.ShowMessageRun, MobileAction.OpenMessageDetail -> performMessageAction(action)
+            MobileAction.CopyMessage, MobileAction.EditMessage, MobileAction.ContinueMessage, MobileAction.RegenerateMessage, MobileAction.OpenMessageDetail -> performMessageAction(action)
             MobileAction.DismissNotice -> ui.notice = ""
             MobileAction.StopRun -> payload?.let { run -> operations.stopRun(run) { id ->
                 if (ui.runs.any { it.optString("id") == id && it.optString("status") in setOf("queued", "running") }) ui.stoppingRunId = id
@@ -761,14 +768,14 @@ class MainActivity : ComponentActivity() {
         acceptedEchoes.clear(); displayedMessages = null; ui.syncFailure = ""
         historyRequest++; ui.membersChanging = false; ui.membersLoading = false; ui.membersError = ""
         reading = ConversationReadingWindow(); ui.activityGroups = emptyList(); ui.readerRuns = emptyList()
-        projectedTurnWindow = false; ui.historyDetached = false; ui.latestError = ""
+        projectedTurnWindow = false; ui.historyDetached = false; latestRequest++; ui.latestLoading = false; ui.latestError = ""
         ui.historyPinned = false; ui.historyCursor = null; ui.historyHasMore = false; ui.historyLoading = false; ui.historyError = ""
         ui.anchorMessageId = null; ui.anchorRequestId = null; ui.membersOpen = false; ui.members = null
         readModel.resetTopic(); ui.readingCached = false; projectedTaskSource = null
         resultReadKey = null; ui.resultRunId = null
         readResults.clear(); suppressedReadResults.clear()
         questions.close(); ui.questions = emptyList(); ui.runs = emptyList(); ui.queueItems = emptyList(); ui.approvalItems = emptyList(); ui.stoppingRunId = null
-        ui.branches = emptyList(); ui.branchesLoading = false; ui.branchesFailed = false
+        ui.branches = emptyList()
     }
     private fun bindQuestions() {
         val target = conversationTarget?.takeIf { ui.screen == MobileScreen.Conversation }
@@ -895,17 +902,14 @@ class MainActivity : ComponentActivity() {
         else submit()
     }
     private fun returnLatest() {
-        if (ui.historyDetached) {
-            if (!ui.conversationReady || readyContext != liveContext()) return
-            historyRequest++; ui.historyLoading = false; ui.historyError = ""; ui.latestError = ""
-            ui.historyPinned = false; ui.anchorMessageId = null; ui.anchorRequestId = null
-            reading.resume(); displayReading(); renderRows(); return
+        if (ui.latestLoading || (!ui.historyPinned && !ui.historyDetached)) return
+        if (ui.historyDetached && ui.conversationReady && readyContext == liveContext()) {
+            resumeLatest(reading.latest); return
         }
-        if (!ui.historyPinned) return
         val target = conversationTarget ?: return
         val current = client?.takeIf { it.isConnected } ?: run { ui.latestError = MobileFailurePresentation.NETWORK_UNAVAILABLE_NOTICE; return }
-        val context = liveContext(); val visit = navigation; val request = ++historyRequest
-        ui.historyLoading = true; ui.historyError = ""; ui.latestError = ""
+        val context = liveContext(); val visit = navigation; val request = ++latestRequest
+        ui.latestLoading = true; ui.latestError = ""
         work {
             try {
                 val turn = current.supports("conversations.getTurnWindow")
@@ -914,19 +918,27 @@ class MainActivity : ComponentActivity() {
                     current.supports("conversations.getRecentWindow") -> current.call("conversations.getRecentWindow", target.params())
                     else -> current.call("conversations.listMessages", target.params().put("limit", 50))
                 }
+                val rows = readPage(result)
                 onUi {
-                    if (context != liveContext() || visit != navigation || historyRequest != request) return@onUi
-                    val returned = visibleMessages(objects(result.getJSONArray("items")))
-                    val rows = readPage(result, returned)
+                    if (context != liveContext() || visit != navigation || latestRequest != request) return@onUi
                     val streaming = liveMessages.filter { it.has("textRange") && it.optJSONObject("body")?.optString("kind") == "text" }
-                    reading.resume(if (turn) rows.prepend(ConversationPage(messages = streaming, runs = ui.runs, next = rows.next)) else rows.copy(runs = ui.runs))
                     projectedTurnWindow = turn
-                    ui.historyPinned = false; ui.anchorMessageId = null; ui.anchorRequestId = null
-                    ui.historyLoading = false; displayReading(); renderRows()
+                    val page = when {
+                        !ui.conversationReady -> rows
+                        turn -> rows.prepend(ConversationPage(messages = streaming, runs = ui.runs, next = rows.next))
+                        else -> rows.copy(runs = ui.runs)
+                    }
+                    resumeLatest(page)
                     subscription?.subscribe(activeTopic)
                 }
-            } catch (error: Exception) { onUi { if (context == liveContext() && visit == navigation && historyRequest == request) { ui.historyLoading = false; ui.latestError = MobileFailurePresentation.message(MobileOperationFailure.from(error)) } } }
+            } catch (error: Exception) { onUi { if (context == liveContext() && visit == navigation && latestRequest == request) { ui.latestLoading = false; ui.latestError = MobileFailurePresentation.message(MobileOperationFailure.from(error)) } } }
         }
+    }
+    private fun resumeLatest(page: ConversationPage) {
+        historyRequest++; ui.historyLoading = false; ui.historyError = ""
+        ui.latestLoading = false; ui.latestError = ""
+        ui.historyPinned = false; ui.anchorMessageId = null; ui.anchorRequestId = null
+        reading.resume(page); displayReading(); renderRows()
     }
     private fun refreshTasks() {
         clearConversationState()
@@ -985,22 +997,16 @@ class MainActivity : ComponentActivity() {
         val task = selectedTask ?: return
         val current = client?.takeIf { it.isConnected } ?: return
         val owner = partition; val topic = activeTopic
-        ui.branchesLoading = true; ui.branchesFailed = false
         work {
-            try {
-                val branches = readBranches(current, task.getString("id"))
-                readModel.rememberBranches(owner, task.getString("id"), branches)
-                onUi { if (client === current && partition == owner && activeTopic == topic) {
-                    ui.branches = branches; ui.branchesLoading = false
-                    if (branches.isNotEmpty() && branches.none { it.optString("id") == conversationTarget?.branchId }) {
-                        val fallback = branches.firstOrNull { it.optString("id") == taskItems.firstOrNull { value -> value.optString("id") == task.getString("id") }?.optString("activeBranchId") } ?: branches.first()
-                        showTask(task, branches, ConversationTarget(task.getString("id"), fallback.getString("id")))
-                    }
-                } }
-            } catch (error: Exception) {
-                onUi { if (client === current && partition == owner && activeTopic == topic) { ui.branchesLoading = false; ui.branchesFailed = true } }
-                throw error
-            }
+            val branches = readBranches(current, task.getString("id"))
+            readModel.rememberBranches(owner, task.getString("id"), branches)
+            onUi { if (client === current && partition == owner && activeTopic == topic) {
+                ui.branches = branches
+                if (branches.isNotEmpty() && branches.none { it.optString("id") == conversationTarget?.branchId }) {
+                    val fallback = branches.firstOrNull { it.optString("id") == taskItems.firstOrNull { value -> value.optString("id") == task.getString("id") }?.optString("activeBranchId") } ?: branches.first()
+                    showTask(task, branches, ConversationTarget(task.getString("id"), fallback.getString("id")))
+                }
+            } }
         }
     }
     private fun selectBranch(branch: JSONObject) {
@@ -1051,7 +1057,10 @@ class MainActivity : ComponentActivity() {
                 if (generation != navigation || client !== current) return@onUi
                 metadata?.let(::acceptTaskProjection)
                 acceptedEchoes.values.removeAll { it.isProjected(messages, emptyList()) }
-                projectedTurnWindow = turn; reading.resume(readPage(result, messages)); displayReading(); renderRows(); ui.notice = ""
+                if (!ui.historyPinned && !ui.historyDetached) {
+                    projectedTurnWindow = turn; reading.resume(readPage(result, messages)); displayReading()
+                }
+                renderRows(); ui.notice = ""
             }
         }
     }
@@ -1071,7 +1080,10 @@ class MainActivity : ComponentActivity() {
                 entities(items, "activityGroup"), ui.runs, window?.opt("nextCursor") as? String)
             if (reading.project(serial, rows)) {
                 ui.historyPage++
-                historyRequest++; ui.historyLoading = false; ui.historyError = ""; ui.latestError = ""
+                historyRequest++; ui.historyLoading = false; ui.historyError = ""
+                if (ui.latestLoading) {
+                    latestRequest++; ui.latestLoading = false; ui.latestError = mobileText(R.string.mobile_reading_previous_window)
+                }
                 if (reading.mode == ConversationReadingWindow.Mode.Detached) { messageActionRequest++; ui.messageMenu = null }
             }
             displayReading()
@@ -1162,11 +1174,11 @@ class MainActivity : ComponentActivity() {
                 val review = failure.cause as? app.uselexora.mobile.storage.SubmittedTextReview
                 if (review == null) {
                     val reason = MobileFailurePresentation.message(failure)
-                    if (echo != null && localEcho === echo && failure.code != "COMMAND_RESULT_UNKNOWN") failLocalEcho(reason)
-                    else {
-                        if (failure.code == "COMMAND_RESULT_UNKNOWN") pendingInputScopes = pendingInputScopes + (input.scope to false)
+                    if (failure.code == "COMMAND_RESULT_UNKNOWN") {
+                        pendingInputScopes = pendingInputScopes + (input.scope to false)
                         sendIssue = input.scope to reason
-                    }
+                    } else if (echo != null && localEcho === echo) failLocalEcho(reason)
+                    else sendIssue = input.scope to mobileText(R.string.send_failed_reason, reason)
                 } else {
                     localEcho = null; restoreInput()
                     AlertDialog.Builder(this).setMessage(mobileText(R.string.send_review_text))
@@ -1516,6 +1528,12 @@ class MainActivity : ComponentActivity() {
         }
         prepareMessageAction(message, selected)
     }
+    private fun visibleReplyCandidate(message: JSONObject): Boolean {
+        val runId = message.opt("runId") as? String ?: return false
+        return message.optString("role") == "assistant" && ui.messages.lastOrNull {
+            it.optString("role") == "assistant" && it.optString("runId") == runId
+        }?.optString("id") == message.optString("id")
+    }
     private fun prepareMessageAction(message: JSONObject, quick: MobileAction?, anchor: androidx.compose.ui.unit.IntRect? = null, contextual: Boolean = false) {
         if (ui.historyDetached) { ui.notice = mobileText(R.string.mobile_reading_previous_window); return }
         localEcho?.takeIf { it.row === message }?.let { echo ->
@@ -1532,30 +1550,48 @@ class MainActivity : ComponentActivity() {
         val detail = MobileMessagePresentation.matchingDetail(message, details[presentation.id])
         val text = detail?.text ?: presentation.text
         val body = message.getJSONObject("body")
-        val editable = body.optString("kind") == "user" && MobileContentAdapter.canEditAsText(body.getJSONObject("content"))
+        val editable = presentation.role == "user" && body.optString("kind") == "user" && MobileContentAdapter.canEditAsText(body.getJSONObject("content"))
         val runId = message.opt("runId") as? String
         val owner = "$partition:$activeTopic"
         messageMenuOwner = owner
         val request = ++messageActionRequest
-        val menu = MobileMessageMenu(message, text, text.isNotBlank() && MobileMessagePresentation.canCopy(text) && (!presentation.needsDetail || detail?.text != null), editable,
-            presentation.needsDetail && detail?.text == null, loading = runId != null && !demo, anchor = anchor, contextual = contextual)
+        val copyable = text.isNotBlank() && MobileMessagePresentation.canCopy(text) && (detail?.text != null ||
+            (!presentation.needsDetail && (message.optJSONObject("textRange")?.optLong("start") ?: 0L) == 0L))
+        val candidate = visibleReplyCandidate(message) && client != null && !demo
+        val menu = MobileMessageMenu(message, text, copyable, editable,
+            presentation.needsDetail && detail?.text == null, loading = candidate, anchor = anchor, contextual = contextual)
         fun deliver(value: MobileMessageMenu) {
             if (request != messageActionRequest || "$partition:$activeTopic" != owner) return
-            if (quick == null) ui.messageMenu = value else applyMessageAction(quick, value)
+            if (quick == null) {
+                ui.messageMenu = value.takeIf { it.loading || it.hasMessageActions }
+                if (ui.messageMenu == null && !contextual) ui.notice = mobileText(R.string.mobile_this_message_is_temporarily_unavailable_for_actions_please_retry)
+            } else applyMessageAction(quick, value)
         }
-        ui.messageMenu = if (quick == null) menu else null
+        if (quick == null) deliver(menu) else ui.messageMenu = null
         if (quick == MobileAction.EditMessage) { deliver(menu); return }
-        if (runId != null && !demo) {
+        if (runId != null && candidate) {
             val current = client ?: return
+            val target = conversationTarget
             work {
                 try {
-                    val run = current.callValue("runs.get", JSONObject().put("runId", runId)) as? JSONObject
-                    val execution = if (run != null && current.supports("runs.getExecutionState")) current.callValue("runs.getExecutionState", JSONObject().put("runId", runId)) as? JSONObject else null
-                    onUi {
-                        if (client === current && (quick != null || ui.messageMenu === menu)) deliver(menu.copy(run = run,
-                            canRegenerate = run != null && run.optString("status") !in setOf("queued", "running") && (execution == null || execution.optString("resources") == "released"), loading = false))
+                    val run = (current.callValue("runs.get", JSONObject().put("runId", runId)) as? JSONObject)?.takeIf {
+                        it.optString("id") == runId && it.optString("conversationId") == target?.conversationId && it.optString("branchId") == message.optString("branchId")
                     }
-                } catch (_: Exception) { onUi { if (request == messageActionRequest && "$partition:$activeTopic" == owner) { if (quick == null && ui.messageMenu === menu) ui.messageMenu = menu.copy(loading = false) else if (quick != null) ui.notice = mobileText(R.string.mobile_this_message_is_temporarily_unavailable_for_actions_please_retry) } } }
+                    val terminal = run?.optString("status") in setOf("completed", "cancelled", "failed")
+                    val verify = terminal && run?.optString("executionKind", "root") == "root" && target != null
+                    val verified = if (verify && current.supports("conversations.getReplyTarget")) {
+                        runCatching { current.call("conversations.getReplyTarget", target!!.params().put("messageId", presentation.id)).opt("resultRunId") == runId }.getOrDefault(false)
+                    } else null
+                    val execution = if (verify && verified != false && current.supports("runs.getExecutionState"))
+                        runCatching { current.callValue("runs.getExecutionState", JSONObject().put("runId", runId)) as? JSONObject }.getOrNull() else null
+                    onUi {
+                        if (client === current && (quick != null || ui.messageMenu === menu)) {
+                            val reply = verify && visibleReplyCandidate(message) && (verified ?: confirmedLegacyReply(message, run, transcriptRecords[runId]))
+                            deliver(menu.copy(run = run, canRegenerate = reply && releasedReplyRun(run, execution),
+                                canFollowup = reply && run?.optString("status") == "completed", loading = false))
+                        }
+                    }
+                } catch (_: Exception) { onUi { if (request == messageActionRequest && "$partition:$activeTopic" == owner) { if (quick == null && ui.messageMenu === menu) deliver(menu.copy(loading = false)) else if (quick != null) ui.notice = mobileText(R.string.mobile_this_message_is_temporarily_unavailable_for_actions_please_retry) } } }
             }
         }
     }
@@ -1574,9 +1610,8 @@ class MainActivity : ComponentActivity() {
             }
             MobileAction.OpenMessageDetail -> loadMessageDetail(message)
             MobileAction.EditMessage -> if (menu.canEdit) selectedTask?.let { beginHistoryInput(JSONObject(it.toString()), message, HistorySource.Kind.Edit) }
-            MobileAction.ContinueMessage -> if (menu.run?.optString("status") == "completed") selectedTask?.let { beginHistoryInput(JSONObject(it.toString()), message, HistorySource.Kind.Followup) }
-            MobileAction.RegenerateMessage -> if (menu.canRegenerate) menu.run?.let { operations.command("chat.regenerateAssistant", JSONObject().put("conversationId", it.getString("conversationId")).put("sourceRunId", it.getString("id"))) }
-            MobileAction.ShowMessageRun -> menu.run?.let { operations.showRun(it.getString("id")) }
+            MobileAction.ContinueMessage -> if (menu.canFollowup && visibleReplyCandidate(message)) selectedTask?.let { beginHistoryInput(JSONObject(it.toString()), message, HistorySource.Kind.Followup) }
+            MobileAction.RegenerateMessage -> if (menu.canRegenerate && visibleReplyCandidate(message)) menu.run?.let { operations.command("chat.regenerateAssistant", JSONObject().put("conversationId", it.getString("conversationId")).put("sourceRunId", it.getString("id"))) }
             else -> Unit
         }
     }
@@ -1633,8 +1668,18 @@ class MainActivity : ComponentActivity() {
         result.optJSONArray("groups")?.let(::objects).orEmpty(), result.optJSONArray("runs")?.let(::objects).orEmpty(), result.opt("nextCursor") as? String)
     private fun displayReading() {
         messageItems = reading.display.messages; ui.activityGroups = reading.display.groups
-        ui.readerRuns = if (reading.mode == ConversationReadingWindow.Mode.Search) ui.runs else reading.display.runs
         val detached = reading.mode == ConversationReadingWindow.Mode.Detached
+        ui.readerRuns = when {
+            reading.mode == ConversationReadingWindow.Mode.Search -> ui.runs
+            detached -> {
+                val latest = ui.runs.associateBy { it.getString("id") }
+                val historical = reading.display.runs.mapNotNull { run ->
+                    latest[run.getString("id")] ?: run.takeUnless { it.optString("status") in setOf("running", "queued") }
+                }
+                (historical + activeRuns(ui)).distinctBy { it.getString("id") }
+            }
+            else -> reading.display.runs
+        }
         if (ui.historyDetached != detached) displayedMessages = null
         ui.historyDetached = detached
         val cursor = reading.request()?.cursor
@@ -1734,17 +1779,11 @@ class MainActivity : ComponentActivity() {
     private fun showLocalFiles() = LocalFilesPanel(this, LocalFiles(this, transfers, store) { setOfNotNull(pendingCapturePath, pendingSave?.optString("path")) },
         ::work, ::onUi) { entry, action -> useFile(entry.file, entry.name, entry.mime, action) }.show(partition)
 
-    private fun showFiles() {
-        val options = mutableListOf(R.string.label_add_attachment, R.string.photo_attachment, R.string.upload_history, R.string.draft_attachments)
-        if (selectedTask != null) options.add(R.string.label_task_files)
-        options.add(R.string.local_files_storage)
-        AlertDialog.Builder(this).setTitle(mobileText(R.string.file_label)).setItems(options.map { mobileText(it) }.toTypedArray()) { _, index -> when (index) {
-            0 -> selectFile()
-            1 -> capturePhoto()
-            2 -> showTransfers()
-            3 -> showDraftFiles()
-            else -> if (options[index] == R.string.label_task_files) showTaskFiles(selectedTask!!.getString("id")) else showLocalFiles()
-        } }.setNegativeButton(mobileText(R.string.review_close), null).show()
+    private fun showFileRecords() {
+        val options = listOf(R.string.upload_history to ::showTransfers, R.string.draft_attachments to ::showDraftFiles, R.string.local_files_storage to ::showLocalFiles)
+        AlertDialog.Builder(this).setTitle(mobileText(R.string.mobile_local_files_and_uploads))
+            .setItems(options.map { mobileText(it.first) }.toTypedArray()) { _, index -> options[index].second() }
+            .setNegativeButton(mobileText(R.string.review_close), null).show()
     }
     private fun captureFileTarget(): Boolean {
         if (!composer.isEnabled) { ui.notice = mobileText(R.string.mobile_this_input_contains_preserved_content_add_attachments_on_the); return false }

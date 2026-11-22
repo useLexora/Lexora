@@ -130,6 +130,38 @@ class LocalInputInstrumentedTest {
         }
     }
 
+    @Test fun checkingAnUnknownSendReadsOnlyTheOriginalCommandAndPreservesNewInputOnRejection() {
+        val schemas = app.uselexora.mobile.protocol.ProtocolSchemas(JSONObject(context.assets.open("protocol-schema.json").bufferedReader().use { it.readText() }))
+        val calls = java.util.concurrent.CopyOnWriteArrayList<Pair<String, String>>()
+        SyntheticProductService(schemas, listOf("commands.get", "chat.submitInput")) { call ->
+            calls.add(call.method to call.params.getString("commandId"))
+            val receipt = JSONObject().put("commandId", call.params.getString("commandId")).put("dataGeneration", call.params.getString("dataGeneration"))
+                .put("method", "chat.submitInput").put("decision", "rejected").put("errorCode", "SOURCE_CHANGED").put("decidedAt", java.time.Instant.now().toString())
+                .put("target", JSONObject()).put("result", JSONObject())
+            call.reply(JSONObject().put("lookup", "decided").put("receipt", receipt))
+        }.use { service ->
+            val client = service.connect()
+            try { LocalStore(context).use { store ->
+                val identity = client.identity!!
+                val owner = identity.partition
+                val scope = "conversation:task:branch"
+                val draft = store.edit(owner, scope, JSONObject().put("content", MobileContentAdapter.textContent("original")))
+                val envelope = JSONObject().put("commandId", store.newId()).put("expectedServiceInstanceId", identity.serviceInstanceId).put("dataGeneration", identity.dataGeneration)
+                    .put("intent", JSONObject().put("operation", "start").put("input", JSONObject(draft.value.toString()).put("scope", DraftContext.target(scope))))
+                val original = store.queue(owner, "chat.submitInput", envelope, JSONObject().put("kind", "submit").put("scope", scope)
+                    .put("editSequence", draft.editSequence).put("bodySequence", draft.bodySequence).put("untilDecided", true))
+                store.mark(original.id, "unknown")
+                val next = store.edit(owner, scope, JSONObject(draft.value.toString()).put("content", MobileContentAdapter.textContent("next input")))
+                val checked = CommandOutbox(store).reconcile(client, store.pendingComposerCommands(owner).single())
+                assertEquals(listOf("commands.get" to original.id), calls.toList())
+                assertEquals("rejected", checked.state)
+                assertEquals("SOURCE_CHANGED", checked.receipt!!.getString("errorCode"))
+                assertEquals(next.value.toString(), store.draft(owner, scope)!!.value.toString())
+                assertTrue(store.pendingComposerCommands(owner).isEmpty())
+            } } finally { client.close() }
+        }
+    }
+
     @Test fun recoveredQueueReceiptUsesOriginalBindingAndConsumesOnlyItsSnapshot() {
         val owner = java.util.UUID.randomUUID().toString(); val scope = "conversation:task:branch"
         val itemId = LocalStore(context).use { store ->

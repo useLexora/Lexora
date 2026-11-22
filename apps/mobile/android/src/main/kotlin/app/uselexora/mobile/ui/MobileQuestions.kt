@@ -279,7 +279,11 @@ class MobileQuestions(
                 ui {
                     if (owner === expected) {
                         complete(null)
-                        if (current(expected)) notice(if (actualMethod == "questions.cancel") mobileText(R.string.mobile_skip_choice_submitted) else mobileText(R.string.mobile_answer_submitted))
+                        if (current(expected)) notice(mobileText(when (actualMethod) {
+                            "questions.cancel" -> R.string.mobile_skip_choice_submitted
+                            "questions.retry" -> R.string.inbox_redelivery_requested
+                            else -> R.string.mobile_answer_submitted
+                        }))
                     }
                 }
             } catch (error: Exception) {

@@ -30,11 +30,14 @@ const emptyResultStatus = computed(() => {
 })
 const projector = createChatAgentActivityProjector()
 const rows = computed(() => projector.project(props.turn.nodes))
+const groupActive = computed(() => rows.value.some(row => row.kind === 'activity-group' && row.status !== 'completed' && row.status !== 'interrupted'))
+const replying = computed(() => props.turn.status === 'running' && !groupActive.value && props.messages.some(message => message.role === 'assistant' && !message.final && message.text))
+const showRunActivity = computed(() => props.turn.status === 'queued' || (props.turn.status === 'running' && (props.turn.progress?.retry || (!groupActive.value && !replying.value))))
 const openEntries = useChatTranscriptValue('agent-turn:open-entries', new Map<string, boolean>())
 const author = computed(() => props.messages.find(message => message.role === 'assistant'))
 const results = computed(() => {
   const narrationIds = new Set([...props.turn.processMessageIds, ...props.turn.nodes.flatMap(node => node.kind === 'text' ? [node.messageId] : [])])
-  return props.messages.filter(message => message.role === 'assistant' && !narrationIds.has(message.id))
+  return props.messages.filter(message => message.role === 'assistant' && (message.id === props.turn.finalMessageId || !narrationIds.has(message.id)))
 })
 function toggle(id: string, open = !openEntries.value.get(id)) {
   emit('interact')
@@ -53,6 +56,7 @@ useProvideChatContent({ terminalRenderer: ReaderTerminal, toolImageRenderer: Rea
     <div class="message-author">
       <MessageAvatar role="assistant" :author-id="author?.authorId ?? buddyId ?? null" />
       <span class="author-name">{{ author?.author ?? 'Lexora' }}</span>
+      <span v-if="replying && !showRunActivity" class="stream-status" role="status"><i /><i /><i /><span>{{ labels.replying }}</span></span>
     </div>
     <div class="reader-turn-flow">
       <template v-for="row in rows" :key="row.id">
@@ -64,7 +68,7 @@ useProvideChatContent({ terminalRenderer: ReaderTerminal, toolImageRenderer: Rea
         </div>
       </template>
     </div>
-    <BuddyChatRunActivity v-if="turn.status === 'running' || turn.status === 'queued'" :turn="turn" :language="locale" />
+    <BuddyChatRunActivity v-if="showRunActivity" :turn="turn" :language="locale" />
     <ReaderMessage v-for="(message, index) in results" :key="message.id" :message="{ ...message, showIdentity: false }" :output="index === results.length - 1 ? output : undefined" :dark="dark" :language="language" :send="send" @interact="emit('interact')" />
     <template v-if="!results.length">
       <p v-if="emptyResultStatus" class="reader-turn-status" role="status">

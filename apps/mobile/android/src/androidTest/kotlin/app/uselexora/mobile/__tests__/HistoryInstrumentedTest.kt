@@ -52,6 +52,7 @@ class HistoryInstrumentedTest {
         fun released(id: String) = client.call("runs.getExecutionState", JSONObject().put("runId", id)).getString("resources") == "released"
         try { LocalStore(context).use { store ->
             ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java)).use { scenario ->
+                fun openReplyMenu(text: String) = MobileUiTestDriver.openReplyMenu(scenario, text)
                 fun input(value: String) { scenario.onActivity { it.findViewById<EditText>(MainActivity.INPUT_ID).setText(value) } }
                 fun inputIs(value: String): Boolean { var actual = ""; scenario.onActivity { actual = it.findViewById<EditText>(MainActivity.INPUT_ID)?.text?.toString().orEmpty() }; return actual == value }
                 waitFor { MobileUiTestDriver.connected() }
@@ -68,7 +69,7 @@ class HistoryInstrumentedTest {
                 val originalScope = "conversation:$conversationId:$originalBranch"
                 waitFor { store.draft(partition, originalScope)?.value?.getJSONObject("content")?.let { MobileContentAdapter.text(it) } == "原分支保留输入" }
                 val source = messages(originalBranch).single { it.optString("role") == "assistant" && it.getJSONObject("body").optString("text").contains("历史回复 1") }
-                longClickContaining("历史回复 1"); click("从这里继续")
+                openReplyMenu("历史回复 1 😀"); click("从这条回复继续")
                 waitFor { text("接续选中的历史回复") && inputIs("") }
                 input("从第一条回复继续 😀")
                 val followupScope = "message-followup:$conversationId:$originalBranch:${source.getString("id")}"
@@ -93,9 +94,7 @@ class HistoryInstrumentedTest {
                 assertNotEquals(followupTarget.getString("branchId"), editTarget.getString("branchId"))
                 waitFor { released(editTarget.getString("runId")) }
                 assertTrue(messages(followupTarget.getString("branchId")).any { it.getJSONObject("body").optString("kind") == "user" && MobileContentAdapter.text(it.getJSONObject("body").getJSONObject("content")) == "从第一条回复继续 😀" })
-                longClickContaining("历史回复 4"); click("运行详情")
-                waitFor { text("服务资源：已释放") }
-                click("重新生成"); waitFor { text("重新生成此次回复？") }; click("重新生成")
+                openReplyMenu("历史回复 4 😀"); click("重新生成这条回复")
                 waitFor { text("历史回复 5") }
                 val regeneration = store.outbox(partition).single { it.method == "chat.regenerateAssistant" }
                 val regenerated = regeneration.receipt!!
@@ -108,8 +107,9 @@ class HistoryInstrumentedTest {
                 waitFor { task().getString("activeBranchId") == originalBranch }
                 MobileUiTestDriver.openTaskSettings(); click("刷新任务"); MobileUiTestDriver.returnToConversation()
                 waitFor { text("历史回复 5") && inputIs("") }
-                MobileUiTestDriver.selectBranch(originalBranch)
-                waitFor { text("历史回复 2") && inputIs("原分支保留输入") }
+                MobileUiTestDriver.selectBranch(scenario, "历史回复 5 😀", BranchStep.Previous, "历史回复 4 😀", "")
+                MobileUiTestDriver.selectBranch(scenario, "编辑后的接续输入 😀", BranchStep.Previous, "历史回复 3 😀", "")
+                MobileUiTestDriver.selectBranch(scenario, "从第一条回复继续 😀", BranchStep.Previous, "历史回复 2 😀", "原分支保留输入")
                 val preserved = listOf(originalBranch, followupTarget.getString("branchId"), editTarget.getString("branchId"), regeneratedTarget.getString("branchId")).associateWith { branch -> messages(branch).map { it.toString() } }
                 longClickContaining("后续输入不应进入历史续写"); click("编辑")
                 waitFor { inputIs("后续输入不应进入历史续写") }

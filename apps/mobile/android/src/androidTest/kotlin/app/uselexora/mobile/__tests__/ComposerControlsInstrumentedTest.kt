@@ -55,6 +55,45 @@ class ComposerControlsInstrumentedTest {
         compose.onNodeWithTag("composer-permission").assertIsDisplayed()
     }
 
+    @Test fun newTaskNamesLocalFilesAndPermissionSelectionWithoutSending() {
+        val state = MobileUiState().apply {
+            screen = MobileScreen.Conversation
+            inputEnabled = true
+            choosePermissionToSend = true
+        }
+        lateinit var input: EditText
+        compose.runOnUiThread { input = EditText(context).apply { setText("Keep this draft") } }
+        val actions = mutableListOf<MobileAction>()
+        compose.setContent { LexoraTheme { MobileShell(state, input, { action, _ -> actions.add(action) }) { Box(it) } } }
+        compose.onNodeWithTag("composer-permission").assertDoesNotExist()
+        compose.onNodeWithText(app.uselexora.mobile.i18n.mobileText(R.string.choose_task_permissions)).assertIsDisplayed().performClick()
+        compose.onNodeWithTag("composer-attach").performClick()
+        compose.onNodeWithText(app.uselexora.mobile.i18n.mobileText(R.string.mobile_browse_task_files)).assertDoesNotExist()
+        compose.onNodeWithText(app.uselexora.mobile.i18n.mobileText(R.string.mobile_local_files_and_uploads)).performClick()
+        compose.runOnIdle {
+            assertEquals(listOf(MobileAction.ChooseExecution, MobileAction.LocalFileRecords), actions)
+            assertEquals("Keep this draft", input.text.toString())
+        }
+    }
+
+    @Test fun compactDraftKeepsFilesOnTheAttachmentControlAndFailureInTheReader() {
+        val state = MobileUiState().apply {
+            screen = MobileScreen.Conversation; connected = true; conversationReady = true
+            selectedTask = JSONObject().put("id", "task").put("title", "Task")
+            viewBranchId = "main"; inputEnabled = true; attachmentCount = 2
+            runs = listOf(JSONObject().put("id", "run").put("status", "failed"))
+        }
+        lateinit var input: EditText
+        compose.runOnUiThread { input = EditText(context).apply { showSoftInputOnFocus = false } }
+        compose.setContent { LexoraTheme { Box(Modifier.width(320.dp).height(216.dp)) {
+            MobileShell(state, input, { _, _ -> }) { modifier -> Box(modifier) }
+        } } }
+        compose.onNodeWithText(app.uselexora.mobile.i18n.mobileText(R.string.label_task_files)).assertDoesNotExist()
+        compose.onNodeWithTag("composer-attach").assertIsDisplayed().performClick()
+        compose.onNodeWithText(app.uselexora.mobile.i18n.mobileText(R.string.mobile_browse_task_files)).assertIsDisplayed()
+        compose.onNodeWithText(app.uselexora.mobile.i18n.mobileText(R.string.mobile_local_files_and_uploads)).assertIsDisplayed()
+    }
+
     @Test fun narrowLargeTextKeepsStopSeparateDuringTypingAndAttachmentOnlySend() {
         val run = JSONObject().put("id", "active-run").put("generation", "generation-7")
         val state = MobileUiState().apply {

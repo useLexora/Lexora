@@ -2,6 +2,7 @@
 import type { ReaderMessage, ReaderSend, ReaderUpdate } from './readerProtocol'
 import { computed, inject, shallowRef, watch } from 'vue'
 import { readerBodyPageKey } from './readerBodyPages'
+import ReaderProgress from './ReaderProgress.vue'
 import { useReaderStrings } from './readerStrings'
 
 const props = defineProps<{ message: Pick<ReaderMessage, 'id' | 'textRange' | 'text'>, send: ReaderSend }>()
@@ -85,9 +86,10 @@ if (responses) {
   <p class="plain-message">
     {{ current.text }}
   </p>
-  <p v-if="pending || retry" class="message-meta" role="status">
-    {{ pending ? labels.loadingSaved : labels.bodyReadFailed }}
-    <button v-if="retry" @click="request(retry.direction, retry.offset, retry.forward)">
+  <ReaderProgress v-if="pending" :label="labels.loadingSaved" />
+  <p v-else-if="retry" class="message-meta" role="status">
+    {{ labels.bodyReadFailed }}
+    <button @click="request(retry.direction, retry.offset, retry.forward)">
       {{ labels.retry }}
     </button>
   </p>

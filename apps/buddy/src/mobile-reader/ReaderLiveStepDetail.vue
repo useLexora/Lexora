@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ReaderSend, ReaderStepDetailReply } from './readerProtocol'
 import { inject, onMounted, onUnmounted, ref, useTemplateRef, watch } from 'vue'
+import ReaderProgress from './ReaderProgress.vue'
 import { nextStepRead, readerStepDetailKey } from './readerStepDetail'
 import { useReaderStrings } from './readerStrings'
 
@@ -91,9 +92,7 @@ onUnmounted(() => {
 <template>
   <div ref="panel" class="tool-call-detail">
     <pre v-if="text" class="tool-output">{{ text }}</pre>
-    <p v-if="loading" class="message-meta" role="status">
-      {{ labels.loadingOutput }}
-    </p>
+    <ReaderProgress v-if="loading" :label="labels.loadingOutput" />
     <p v-else-if="error === 'unsupported'" class="message-meta">
       {{ labels.stepUpgrade }}
     </p>

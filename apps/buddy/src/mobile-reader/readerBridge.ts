@@ -17,7 +17,13 @@ import { readerCopyFeedbackKey } from './useReaderCopyFeedback'
 
 export type { ReaderMessage } from './readerProtocol'
 export interface ReaderTranscript { events: LocalRunEvent[], loaded?: boolean, error?: string | null }
-export interface ReaderEntry extends ReaderWireEntry { transcriptError?: string | null, turn?: ChatAgentTurn, runStatus?: { run: LocalRun, hasReply: boolean } }
+export type ReaderRun = LocalRun & Pick<NonNullable<ReaderUpdate['runs']>[number], 'executionKind'>
+export interface ReaderEntry extends ReaderWireEntry {
+  transcriptError?: string | null
+  turn?: ChatAgentTurn
+  runStatus?: { run: ReaderRun, hasReply: boolean }
+  groupOwner?: { name?: string }
+}
 
 export function useReaderBridge() {
   const copiedMessageId = shallowRef<string | null>(null)
@@ -35,7 +41,7 @@ export function useReaderBridge() {
   provide(readerStepDetailKey, stepDetail)
   const bodyPage = shallowRef<ReaderUpdate['bodyPage']>()
   provide(readerBodyPageKey, bodyPage)
-  const runs = shallowRef<LocalRun[]>([])
+  const runs = shallowRef<ReaderRun[]>([])
   const transcripts = shallowRef<Record<string, ReaderTranscript>>({})
   const outputs = shallowRef<Record<string, ReaderOutput>>({})
   const toolImages = shallowRef<ReaderToolImage[]>([])
@@ -49,6 +55,7 @@ export function useReaderBridge() {
   provide(readerLanguageKey, language)
   const resultRunId = shallowRef<string | null>(null)
   const anchor = shallowRef<ReaderAnchor | null>(null)
+  const latestState = shallowRef<ReaderUpdate['latest']>()
   const hasLaterMessages = shallowRef(false)
   let port: MessagePort | undefined
   const projection = new ReaderProjection()
@@ -112,10 +119,11 @@ export function useReaderBridge() {
         outputs.value = update.outputs ?? {}
       if (update.toolImages || next.reset)
         toolImages.value = update.toolImages ?? []
-      runs.value = (update.runs ?? []).map(run => ({ ...run, generation: Number(run.generation) }))
+      runs.value = (update.runs ?? []).filter(run => run.executionKind !== 'maintenance' && run.purpose !== 'conversation.compaction').map(run => ({ ...run, generation: Number(run.generation) }))
       transcripts.value = next.transcripts
       topic.value = update.topic
       anchor.value = next.anchor
+      latestState.value = update.latest
       hasLaterMessages.value = update.hasLaterMessages ?? false
       resultRunId.value = update.resultRunId ?? null
       dark.value = update.dark
@@ -135,5 +143,5 @@ export function useReaderBridge() {
     window.removeEventListener('message', connect)
     port?.close()
   })
-  return { entries, turnWindow, history, runs, transcripts, outputs, branches, selectedBranchId, topic, dark, fontScale, appearance, typography, language, resultRunId, anchor, hasLaterMessages, send }
+  return { entries, turnWindow, history, runs, transcripts, outputs, branches, selectedBranchId, topic, dark, fontScale, appearance, typography, language, resultRunId, anchor, hasLaterMessages, latestState, send }
 }

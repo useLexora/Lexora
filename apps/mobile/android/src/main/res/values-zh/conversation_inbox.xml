@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="inbox_undelivered_results">未送达的结果</string>
+    <string name="inbox_redelivery_requested">已请求重新投递</string>
+    <plurals name="inbox_unanswered">
+        <item quantity="other">待回答 %1$d 组</item>
+    </plurals>
+    <plurals name="inbox_undelivered">
+        <item quantity="other">%1$d 组结果未送达</item>
+    </plurals>
+    <plurals name="inbox_approval">
+        <item quantity="other">待审批 %1$d 项</item>
+    </plurals>
+    <plurals name="inbox_waiting">
+        <item quantity="other">等候 %1$d 条</item>
+    </plurals>
+    <plurals name="inbox_paused">
+        <item quantity="other">已暂停 %1$d 条</item>
+    </plurals>
+</resources>

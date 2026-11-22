@@ -9,7 +9,7 @@ import { useReaderBranch } from './useReaderBranches'
 import { useReaderCopyFeedback } from './useReaderCopyFeedback'
 
 const props = defineProps<{ message: ReaderMessage, language?: string }>()
-const emit = defineEmits<{ copy: [], more: [event: MouseEvent], followup: [], regenerate: [], edit: [], branch: [id: string] }>()
+const emit = defineEmits<{ copy: [], more: [event: MouseEvent], edit: [], branch: [id: string] }>()
 const copiedMessageId = useReaderCopyFeedback()
 const copied = computed(() => copiedMessageId.value === props.message.id)
 const labels = useReaderStrings()
@@ -30,16 +30,10 @@ const timestamp = computed(() => {
     <button v-if="message.returnToComposer" class="return-to-composer" @click="emit('edit')">
       {{ labels.returnToComposer }}
     </button>
-    <button v-else-if="message.canEdit" :aria-label="labels.edit" @click="emit('edit')">
+    <button v-else-if="message.returnToComposer === undefined && message.canEdit" :aria-label="labels.edit" @click="emit('edit')">
       <DesktopIcon name="edit" :size="15" />
     </button>
-    <button v-if="message.canRegenerate" :aria-label="labels.regenerate" @click="emit('regenerate')">
-      <DesktopIcon name="messageRetry" :size="15" />
-    </button>
-    <button v-if="message.canFollowup" :aria-label="labels.branch" @click="emit('followup')">
-      <DesktopIcon name="messageBranch" :size="15" />
-    </button>
-    <button v-if="message.returnToComposer === undefined" :aria-label="labels.more" @click="emit('more', $event)">
+    <button v-if="message.returnToComposer === undefined && (message.canRegenerate || message.canFollowup)" :aria-label="labels.more" @click="emit('more', $event)">
       <MoreHorizontal20Regular class="reader-icon" />
     </button>
 
@@ -52,7 +46,7 @@ const timestamp = computed(() => {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  min-height: 28px;
+  min-height: 44px;
   gap: 0;
   margin-top: 4px;
   color: var(--reader-muted);
@@ -66,10 +60,9 @@ const timestamp = computed(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  flex: 0 0 28px;
-  min-height: 28px;
-  height: 28px;
+  width: 44px;
+  flex: 0 0 44px;
+  min-height: 44px;
   padding: 6px;
   color: inherit;
   border-radius: 6px;

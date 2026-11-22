@@ -36,12 +36,14 @@ class QuestionRetryInstrumentedTest {
     @Test fun rejectedSkipReturnsToThePreservedAnswerPanel() = failureFlow("questions.cancel", false)
     @Test fun failedDeliveryRetryStaysInTheResponsePanel() = failureFlow("questions.retry", false)
 
-    private fun failureFlow(method: String, unknown: Boolean) {
+    @Test fun failedSkipRetryUsesOriginalRequestWithoutAnswers() = failureFlow("questions.retry", false, skipped = true)
+
+    private fun failureFlow(method: String, unknown: Boolean, skipped: Boolean = false) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val schemas = ProtocolSchemas(JSONObject(context.assets.open("protocol-schema.json").bufferedReader().use { it.readText() }))
         val worker = Executors.newSingleThreadExecutor()
         val errors = CopyOnWriteArrayList<Throwable>()
-        Fixture(schemas, method, unknown).use { fixture -> LocalStore(context).use { store ->
+        Fixture(schemas, method, unknown, skipped).use { fixture -> LocalStore(context).use { store ->
             val partition = fixture.client.identity!!.partition
             val key = "$partition:request"
             val preferences = context.getSharedPreferences("question-inputs", android.content.Context.MODE_PRIVATE)
@@ -74,7 +76,11 @@ class QuestionRetryInstrumentedTest {
                     val failure = mobileText(if (unknown) R.string.error_command_result_unknown else R.string.error_question_answer_invalid)
                     MobileUiTestDriver.waitUntil { MobileUiTestDriver.contains(failure) }
                     assertTrue(MobileUiTestDriver.contains("Choose the scope"))
-                    if (method != "questions.retry") {
+                    if (method == "questions.retry") {
+                        val resultLabel = mobileText(if (skipped) R.string.question_skip_response else R.string.question_answers)
+                        assertTrue(MobileUiTestDriver.contains(mobileText(R.string.question_response_saved, resultLabel)))
+                        assertEquals(!skipped, MobileUiTestDriver.contains("Saved answer"))
+                    } else {
                         assertTrue(MobileUiTestDriver.contains("Keep this local response"))
                         assertTrue(preferences.getString(key, null)!!.contains("Keep this local response"))
                     }
@@ -89,6 +95,13 @@ class QuestionRetryInstrumentedTest {
                     val records = store.outbox(partition)
                     assertEquals(if (unknown) 1 else 2, records.size)
                     assertTrue(records.all { it.method == method })
+                    if (method == "questions.retry") for (request in fixture.requests) {
+                        val intent = request.getJSONObject("intent")
+                        assertEquals(fixture.question.getString("id"), intent.getString("requestId"))
+                        assertEquals(fixture.question.getString("conversationId"), intent.getString("conversationId"))
+                        assertEquals(fixture.question.getString("branchId"), intent.getString("branchId"))
+                        assertFalse(intent.has("answers"))
+                    }
                     if (unknown) assertEquals(fixture.requests.single().getString("commandId"), records.single().id)
                     if (method == "questions.answer") assertNull(preferences.getString(key, null))
                     if (method == "questions.cancel") assertTrue(preferences.getString(key, null)!!.contains("Keep this local response"))
@@ -119,7 +132,7 @@ class QuestionRetryInstrumentedTest {
         }
     }
 
-    private class Fixture(private val schemas: ProtocolSchemas, private val method: String, private val unknown: Boolean) : AutoCloseable {
+    private class Fixture(private val schemas: ProtocolSchemas, private val method: String, private val unknown: Boolean, skipped: Boolean) : AutoCloseable {
         private val token = UUID.randomUUID().toString()
         private val certificate = HeldCertificate.Builder().addSubjectAlternativeName("localhost").build()
         private val server = MockWebServer().apply {
@@ -129,11 +142,15 @@ class QuestionRetryInstrumentedTest {
         val requests = CopyOnWriteArrayList<JSONObject>()
         private var decided: JSONObject? = null
         val question = JSONObject().put("id", "request").put("conversationId", "task").put("branchId", "branch").put("runId", "run")
-            .put("buddyName", "Fixture").put("status", if (method == "questions.retry") "answered" else "pending")
+            .put("buddyName", "Fixture").put("status", when {
+                skipped -> "cancelled"
+                method == "questions.retry" -> "answered"
+                else -> "pending"
+            })
             .put("createdAt", "2026-11-09T00:00:00.000Z").put("resolvedAt", if (method == "questions.retry") "2026-11-09T00:00:01.000Z" else JSONObject.NULL)
             .put("questions", JSONArray().put(JSONObject().put("id", "scope").put("question", "Choose the scope").put("kind", "text").put("options", JSONArray())))
-            .put("response", if (method == "questions.retry") JSONObject().put("answers", JSONArray().put(JSONObject().put("questionId", "scope").put("selectedOptionIds", JSONArray()).put("text", "Saved answer"))) else JSONObject.NULL)
-            .apply { if (method == "questions.retry") put("delivery", JSONObject().put("state", "failed").put("targetRunId", "run")) }
+            .put("response", if (method == "questions.retry" && !skipped) JSONObject().put("answers", JSONArray().put(JSONObject().put("questionId", "scope").put("selectedOptionIds", JSONArray()).put("text", "Saved answer"))) else JSONObject.NULL)
+            .apply { if (method == "questions.retry") put("delivery", JSONObject().put("state", "failed").put("targetRunId", JSONObject.NULL)) }
         val client: ProductClient
         init {
             server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {

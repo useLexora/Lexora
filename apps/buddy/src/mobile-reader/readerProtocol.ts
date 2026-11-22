@@ -84,6 +84,7 @@ export const readerUpdateSchema = schema.object({
   anchorMessageId: id.nullable().optional(),
   anchorRequestId: id.nullable().optional(),
   hasLaterMessages: schema.boolean().optional(),
+  latest: schema.object({ loading: schema.boolean(), error: schema.string().nullable() }).strict().optional(),
   turnWindow: schema.boolean().optional(),
   history: schema.object({ page: schema.number().int().nonnegative().optional(), available: schema.boolean(), loading: schema.boolean(), error: schema.string().nullable() }).strict().optional(),
   bodyPage: schema.object({ id, revision: id, before: schema.number().int().positive().optional(), after: schema.number().int().nonnegative().optional(), page: productReadLiveTextResultSchema.nullable() }).strict().optional(),

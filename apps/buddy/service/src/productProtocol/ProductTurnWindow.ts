@@ -74,6 +74,27 @@ export class ProductTurnWindow {
     return { id: row.id, role: row.role, conversationId: scope.conversationId, runId: row.runId, branchId: row.branchId, createdAt: row.createdAt, content: JSON.parse(String(source.content_json)) as unknown }
   }
 
+  replyTarget(scope: Scope & { messageId: string }) {
+    const segments = this.#segments(scope)
+    const row = this.#header(scope.conversationId, scope.messageId)
+    if (!row?.runId || row.role !== 'assistant' || row.rootId !== row.runId || !this.#visible(row, segments))
+      return { resultRunId: null }
+    const final = this.database.prepare(`SELECT id FROM messages WHERE run_id = ? AND role = 'assistant'
+      ORDER BY created_at DESC, id DESC LIMIT 1`).get(row.runId)
+    if (final?.id !== row.id)
+      return { resultRunId: null }
+    const source = this.database.prepare(`SELECT e.event_type AS type, json_extract(e.payload_json,'$.phase') AS phase,
+      json_extract(e.payload_json,'$.stopReason') AS stop FROM conversation_publications p
+      JOIN messages m ON m.id = p.message_id AND (length(trim(json_extract(m.content_json,'$.text'))) > 0
+        OR json_array_length(m.content_json,'$.attachmentIds') > 0 OR json_extract(m.content_json,'$.state') = 'interrupted')
+      JOIN run_events e ON e.run_id = p.run_id AND e.sequence = p.source_sequence
+      WHERE p.message_id = ? AND p.kind = 'message' AND p.run_id = ? AND p.branch_id = ? AND p.conversation_id = ?
+        AND json_extract(e.payload_json,'$.messageId') = p.message_id`).get(row.id, row.runId, row.branchId, scope.conversationId)
+    const reply = source?.type === 'message.interrupted' || (source?.type === 'message.completed'
+      && (source.phase === 'final_answer' || (!source.phase && ['completed', 'length', 'failed'].includes(String(source.stop)))))
+    return { resultRunId: reply ? row.runId : null }
+  }
+
   readSavedText(input: ProductReadSavedTextInput) {
     const segments = this.#segments(input)
     const row = this.#header(input.conversationId, input.messageId)

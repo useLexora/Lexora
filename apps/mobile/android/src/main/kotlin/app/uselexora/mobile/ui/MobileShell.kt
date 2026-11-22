@@ -35,7 +35,6 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
@@ -52,7 +51,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import org.json.JSONObject
 import java.time.Instant
 
-private enum class MobileSheet { Task, TaskMore, Queue, Attachments, InputSettings, Devices, Questions, Approvals, Runs, Branches }
+private enum class MobileSheet { Task, TaskMore, Queue, Attachments, InputSettings, Devices, Questions, PendingQuestions, UndeliveredResults, Approvals, Runs }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class, ExperimentalLayoutApi::class)
 @Composable
@@ -70,7 +69,7 @@ fun MobileShell(
     var fullscreenInput by rememberSaveable(deviceId, state.screen, state.topic) { mutableStateOf(false) }
     val savedPages = rememberSaveableStateHolder()
     val conversation = state.screen == MobileScreen.Conversation
-    val act: (MobileAction) -> Unit = { if (it == MobileAction.TaskBranches) sheet = MobileSheet.Branches; onAction(it, null) }
+    val act: (MobileAction) -> Unit = { onAction(it, null) }
     val tasks = remember(state.tasks, state.selectedSpaceId) { scopedTasks(state.tasks, state.selectedSpaceId) }
     LaunchedEffect(state.screen, deviceId, state.topic) { sheet = null; state.modelPickerOpen = false; state.executionPickerOpen = false; state.messageMenu = null }
     BackHandler(state.screen != MobileScreen.Workbench && sheet == null && !taskSettings && !appearanceSettings && !state.modelPickerOpen && !fullscreenInput) { act(MobileAction.Back) }
@@ -102,7 +101,6 @@ fun MobileShell(
             val noTranscript = state.messages.isEmpty() && state.runs.isEmpty() && state.activityGroups.isEmpty()
             val conversationStatus = when {
                 state.connected && state.syncFailure.isNotBlank() -> state.syncFailure
-                state.historyDetached -> mobileText(R.string.mobile_reading_previous_window)
                 state.viewingArchived -> mobileText(R.string.mobile_archived_read_only)
                 !state.connected && !noTranscript && !state.showingAcceptedInput -> mobileText(R.string.mobile_offline_conversation_snapshot)
                 state.connected && state.readingCached && !noTranscript && !state.showingAcceptedInput -> mobileText(R.string.mobile_showing_phone_content_updating)
@@ -110,18 +108,13 @@ fun MobileShell(
             }
             if (conversation && (state.viewBranchId != null || state.selectedTask != null) && conversationStatus != null) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(conversationStatus, Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = if (tightInput) 1 else 3, overflow = TextOverflow.Ellipsis)
-                if (state.historyDetached && state.conversationReady) TextButton(onClick = { act(MobileAction.ReturnLatest) }) { Text(mobileText(R.string.mobile_return_latest)) }
-                else if (!state.viewingArchived && state.syncFailure.isNotBlank()) TextButton(onClick = { act(MobileAction.Refresh) }) { Text(mobileText(R.string.label_retry)) }
+                if (!state.viewingArchived && state.syncFailure.isNotBlank()) TextButton(onClick = { act(MobileAction.Refresh) }) { Text(mobileText(R.string.label_retry)) }
             }
             Box(Modifier.fillMaxWidth().then(if (fullscreenInput) Modifier.height(0.dp).clipToBounds().clearAndSetSemantics {} else Modifier.weight(1f))) {
                 if (conversation) {
                     if (state.selectedTask == null && state.viewBranchId == null && state.messages.isEmpty()) NewTaskIntro(state, act)
                     else Column(Modifier.fillMaxSize()) {
-                        if (!tightInput && state.historyPinned && !state.historyDetached) Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            TextButton(enabled = !state.historyLoading, onClick = { act(MobileAction.ReturnLatest) }) { Text(mobileText(R.string.mobile_return_latest)) }
-                            if (state.latestError.isNotBlank()) Text(state.latestError, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                        }
-                        if (noTranscript && !state.conversationReady) {
+                        if (noTranscript && !state.conversationReady && !state.historyPinned && !state.historyDetached) {
                             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                                 if (conversationStatus == null) {
                                     if (state.connected) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
@@ -152,8 +145,15 @@ fun MobileShell(
                     TextButton(onClick = { act(MobileAction.ExitHistoryInput) }) { Text(mobileText(R.string.mobile_exit_history_input)) }
                 }
                 if (!fullscreenInput) {
-                    if (tightInput) CompactConversationActions(state, onAction, { sheet = MobileSheet.Attachments }, { sheet = MobileSheet.Questions }, { sheet = MobileSheet.Approvals })
-                    else ConversationActions(state, onAction, { sheet = MobileSheet.Questions }, { sheet = MobileSheet.Approvals })
+                    val openGroup: (ConversationTodo) -> Unit = { group ->
+                        sheet = when (group) {
+                            ConversationTodo.Unanswered -> MobileSheet.PendingQuestions
+                            ConversationTodo.Undelivered -> MobileSheet.UndeliveredResults
+                            ConversationTodo.Approval -> MobileSheet.Approvals
+                        }
+                    }
+                    if (tightInput) CompactConversationActions(state, onAction, openGroup)
+                    else ConversationActions(state, onAction, openGroup)
                 }
                 ComposerBar(state, composer, { action, payload ->
                     if (action == MobileAction.Send) fullscreenInput = false
@@ -186,11 +186,12 @@ fun MobileShell(
                             MobileSheet.Task -> mobileText(R.string.mobile_task_options)
                             MobileSheet.TaskMore -> mobileText(R.string.more_options)
                             MobileSheet.Queue -> mobileText(R.string.label_queued_messages)
-                            MobileSheet.Branches -> mobileText(R.string.label_branches)
                             MobileSheet.Attachments -> mobileText(R.string.label_add_to_input)
                             MobileSheet.InputSettings -> mobileText(R.string.label_input_settings)
                             MobileSheet.Devices -> mobileText(R.string.label_switch_service)
-                            MobileSheet.Questions -> mobileText(R.string.label_needs_your_answer)
+                            MobileSheet.Questions -> mobileText(R.string.label_questions_answers)
+                            MobileSheet.PendingQuestions -> mobileText(R.string.label_needs_your_answer)
+                            MobileSheet.UndeliveredResults -> mobileText(R.string.inbox_undelivered_results)
                             MobileSheet.Approvals -> mobileText(R.string.label_needs_your_approval)
                             MobileSheet.Runs -> mobileText(R.string.label_choose_a_run_to_stop)
                         },
@@ -199,31 +200,21 @@ fun MobileShell(
                     )
                 }
                 when (current) {
-                    MobileSheet.Branches -> {
-                        if (state.branchesLoading && state.branches.isEmpty()) item { Text(mobileText(R.string.label_loading_branches), Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                        if (state.branchesFailed) item { ActionRow(mobileText(R.string.label_could_not_load_branches_tap_to_retry), Icons.Outlined.Refresh) { act(MobileAction.TaskBranches) } }
-                        items(state.branches, key = { it.getString("id") }) { branch ->
-                            val progress = buildList {
-                                if (branch.optInt("runningCount") > 0) add(mobileQuantity(R.plurals.mobile_runs, branch.optInt("runningCount")))
-                                if (branch.optInt("pendingQuestionCount") > 0) add(mobileQuantity(R.plurals.mobile_questions, branch.optInt("pendingQuestionCount")))
-                                if (branch.optInt("pendingApprovalCount") > 0) add(mobileQuantity(R.plurals.mobile_pending_confirmations, branch.optInt("pendingApprovalCount")))
-                                if (branch.optInt("queuedCount") > 0) add(mobileQuantity(R.plurals.mobile_queued_inputs, branch.optInt("queuedCount")))
-                            }
-                            ActionRow(branchLabel(state, branch.getString("id")), Icons.Outlined.AccountTree,
-                                subtitle = (progress + listOfNotNull(branchCreatedLabel(branch))).takeIf { it.isNotEmpty() }?.joinToString(" · "),
-                                checked = branch.optString("id") == state.viewBranchId,
-                                tag = "branch:${branch.getString("id")}") {
-                                sheet = null; onAction(MobileAction.SelectBranch, branch)
+                    MobileSheet.Questions, MobileSheet.PendingQuestions, MobileSheet.UndeliveredResults -> {
+                        val requests = when (current) {
+                            MobileSheet.PendingQuestions -> ConversationTodo.Unanswered.items(state)
+                            MobileSheet.UndeliveredResults -> ConversationTodo.Undelivered.items(state)
+                            else -> state.questions
+                        }
+                        items(requests.sortedByDescending { it.optString("createdAt") }, key = { it.getString("id") }) { question ->
+                            ActionRow(questionSummary(question), Icons.Outlined.ChatBubbleOutline, enabled = state.connected, tag = "question:${question.getString("id")}",
+                                subtitle = listOfNotNull(questionStateLabel(question), question.optString("buddyName").takeIf { it.isNotBlank() }).joinToString(" · ")) {
+                                sheet = null; onAction(MobileAction.AnswerQuestion, question)
                             }
                         }
                     }
-                    MobileSheet.Questions -> items(state.questions.sortedByDescending { it.optString("createdAt") }, key = { it.getString("id") }) { question ->
-                        ActionRow(questionSummary(question), Icons.Outlined.ChatBubbleOutline, subtitle = listOfNotNull(questionStateLabel(question), question.optString("buddyName").takeIf { it.isNotBlank() }).joinToString(" · ")) {
-                            sheet = null; onAction(MobileAction.AnswerQuestion, question)
-                        }
-                    }
-                    MobileSheet.Approvals -> items(state.approvalItems.filter { it.optString("status") == "pending" }, key = { it.getString("id") }) { approval ->
-                        ActionRow(approval.optString("summary"), Icons.Outlined.FactCheck) { sheet = null; onAction(MobileAction.ReviewApproval, approval) }
+                    MobileSheet.Approvals -> items(ConversationTodo.Approval.items(state), key = { it.getString("id") }) { approval ->
+                        ActionRow(approval.optString("summary"), Icons.Outlined.FactCheck, enabled = state.connected, tag = "approval:${approval.getString("id")}") { sheet = null; onAction(MobileAction.ReviewApproval, approval) }
                     }
                     MobileSheet.Runs -> items(activeRuns(state), key = { it.getString("id") }) { run ->
                         ActionRow(if (run.optString("status") == "queued") mobileText(R.string.label_queued_run) else mobileText(R.string.label_running), Icons.Outlined.StopCircle,
@@ -486,51 +477,16 @@ private fun NewTaskIntro(state: MobileUiState, act: (MobileAction) -> Unit) {
 }
 
 @Composable
-private fun ConversationActions(state: MobileUiState, onAction: (MobileAction, JSONObject?) -> Unit, questions: () -> Unit, approvals: () -> Unit) {
-    val pendingQuestions = if (state.questionsSupported) state.questions.filter { it.optString("status") == "pending" || it.optJSONObject("delivery")?.optString("state") == "failed" } else emptyList()
-    val pendingApprovals = state.approvalItems.filter { it.optString("status") == "pending" }
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-        if (state.queueItems.any { it.optString("status") == "queued" }) TextButton(onClick = { onAction(MobileAction.TaskQueue, null) }, modifier = Modifier.heightIn(min = 48.dp)) {
-            Icon(Icons.Outlined.PlaylistPlay, null, Modifier.size(20.dp))
-            Text(mobileQuantity(R.plurals.queued_inputs, state.queueItems.count { it.optString("status") == "queued" }), Modifier.padding(start = 8.dp))
-        }
-        pendingQuestions.firstOrNull()?.let { question ->
-            ConversationPrompt(questionStateLabel(question), questionSummary(question), if (pendingQuestions.size > 1) mobileText(R.string.mobile_view, pendingQuestions.size) else questionActionLabel(question), MaterialTheme.colorScheme.primaryContainer, state.connected, "answer-question") {
-                if (pendingQuestions.size > 1) questions() else onAction(MobileAction.AnswerQuestion, question)
-            }
-        }
-        pendingApprovals.firstOrNull()?.let { approval ->
-            ConversationPrompt(mobileText(R.string.label_needs_approval), approval.optString("summary"), mobileText(R.string.label_review), MaterialTheme.colorScheme.primaryContainer, state.connected, "review-approval") {
-                if (pendingApprovals.size > 1) approvals() else onAction(MobileAction.ReviewApproval, approval)
-            }
-        }
+private fun ConversationActions(state: MobileUiState, onAction: (MobileAction, JSONObject?) -> Unit, openGroup: (ConversationTodo) -> Unit) {
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        ConversationInboxActions(state, false, onAction, openGroup)
     }
 }
 
 @Composable
-private fun ConversationPrompt(title: String, summary: String, actionLabel: String, color: Color, enabled: Boolean, tag: String, action: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().padding(bottom = 4.dp).background(color, PaintedShape).padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, style = MaterialTheme.typography.labelMedium)
-            if (summary.isNotBlank()) Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        TextButton(onClick = action, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp).testTag(tag)) { Text(actionLabel) }
-    }
-}
-
-@Composable
-private fun CompactConversationActions(state: MobileUiState, onAction: (MobileAction, JSONObject?) -> Unit, attachments: () -> Unit, questions: () -> Unit, approvals: () -> Unit) {
-    val pendingQuestions = if (state.questionsSupported) state.questions.filter { it.optString("status") == "pending" || it.optJSONObject("delivery")?.optString("state") == "failed" } else emptyList()
-    val pendingApprovals = state.approvalItems.filter { it.optString("status") == "pending" }
+private fun CompactConversationActions(state: MobileUiState, onAction: (MobileAction, JSONObject?) -> Unit, openGroup: (ConversationTodo) -> Unit) {
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp).testTag("compact-context"), verticalAlignment = Alignment.CenterVertically) {
-        if (state.attachments.isNotEmpty() || state.attachmentCount > 0) TextButton(onClick = attachments) { Text(mobileText(R.string.compact_attachments, maxOf(state.attachments.size, state.attachmentCount))) }
-        if (pendingQuestions.isNotEmpty()) TextButton(onClick = { if (pendingQuestions.size == 1) onAction(MobileAction.AnswerQuestion, pendingQuestions.first()) else questions() }, enabled = state.connected) { Text(mobileText(R.string.compact_questions, pendingQuestions.size)) }
-        if (pendingApprovals.isNotEmpty()) TextButton(onClick = { if (pendingApprovals.size == 1) onAction(MobileAction.ReviewApproval, pendingApprovals.first()) else approvals() }, enabled = state.connected) { Text(mobileText(R.string.compact_approvals, pendingApprovals.size)) }
-        if (state.queueItems.any { it.optString("status") == "queued" }) TextButton(onClick = { onAction(MobileAction.TaskQueue, null) }) { Text(mobileText(R.string.compact_queued)) }
-        if (state.selectedTask != null) TextButton(onClick = { onAction(MobileAction.Files, null) }) { Text(mobileText(R.string.label_task_files)) }
+        ConversationInboxActions(state, true, onAction, openGroup)
     }
 }
 
@@ -558,7 +514,7 @@ private fun AttachmentStrip(state: MobileUiState, onAction: (MobileAction, JSONO
                 }
             }
         }
-    } else if (state.attachmentCount > 0) TextButton(onClick = { onAction(MobileAction.Files, null) }, modifier = Modifier.heightIn(min = 48.dp)) {
+    } else if (state.attachmentCount > 0) TextButton(onClick = { onAction(MobileAction.DraftAttachments, null) }, modifier = Modifier.heightIn(min = 48.dp)) {
         Icon(Icons.Outlined.AttachFile, null, Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text(mobileQuantity(R.plurals.mobile_view_attachments, state.attachmentCount))
     }
 }
@@ -569,24 +525,13 @@ private fun ComposerBar(state: MobileUiState, composer: EditText, onAction: (Mob
     val active = activeRuns(state)
     val stopping = active.any { it.optString("id") == state.stoppingRunId }
     Column(modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(top = if (tight) 2.dp else 4.dp, bottom = if (tight) 2.dp else 8.dp)) {
-        if (!tight && active.isNotEmpty()) Row(Modifier.fillMaxWidth().height(28.dp).testTag("streaming-status"), verticalAlignment = Alignment.CenterVertically) {
-            CircularProgressIndicator(Modifier.size(12.dp), color = MaterialTheme.colorScheme.primary, strokeWidth = 1.5.dp)
-            Spacer(Modifier.width(8.dp))
-            Text(if (stopping) mobileText(R.string.label_stopping) else if (active.all { it.optString("status") == "queued" }) mobileText(R.string.label_queued) else mobileText(R.string.label_replying), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        if (!tight && active.isEmpty()) {
-            val latest = state.runs.maxByOrNull { it.optString("startedAt") }
-            if (latest?.optString("status") == "failed") Text(
-                mobileText(R.string.label_the_reply_did_not_complete_try_another_model_and_resend),
-                Modifier.padding(horizontal = 8.dp, vertical = 6.dp).testTag("reply-failed"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
-        }
         Surface(modifier = if (fullscreen) Modifier.weight(1f) else Modifier, shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainer,
             border = BorderStroke(1.dp, if (focused.value) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else MaterialTheme.colorScheme.outlineVariant)) {
             Column(Modifier.fillMaxWidth().then(if (fullscreen) Modifier.fillMaxHeight() else Modifier).padding(if (tight) 0.dp else 6.dp)) {
                 if (!tight) AttachmentStrip(state, onAction)
                 NativeComposerInput(composer, state.inputEnabled, inputMaxHeight, fullscreen, onToggleFullscreen,
                     modifier = if (fullscreen) Modifier.weight(1f) else Modifier) { focused.value = it }
-                ComposerToolbar(state, onAction, attachments, stopping, active, runs)
+                ComposerToolbar(state, onAction, attachments, stopping, active, runs, compact = tight)
             }
         }
     }
@@ -627,14 +572,18 @@ private fun RowDivider() = HorizontalDivider(Modifier.padding(horizontal = 20.dp
 private data class SheetEntry(val title: String, val icon: ImageVector, val action: MobileAction? = null, val next: MobileSheet? = null)
 
 private fun sheetEntries(sheet: MobileSheet, state: MobileUiState): List<SheetEntry> = when (sheet) {
-    MobileSheet.Attachments -> listOf(SheetEntry(mobileText(R.string.label_choose_file), Icons.Outlined.AttachFile, MobileAction.AttachFile), SheetEntry(mobileText(R.string.label_take_photo), Icons.Outlined.PhotoCamera, MobileAction.TakePhoto), SheetEntry(mobileText(R.string.mobile_browse_task_files), Icons.Outlined.FolderOpen, MobileAction.Files))
+    MobileSheet.Attachments -> buildList {
+        add(SheetEntry(mobileText(R.string.label_choose_file), Icons.Outlined.AttachFile, MobileAction.AttachFile))
+        add(SheetEntry(mobileText(R.string.label_take_photo), Icons.Outlined.PhotoCamera, MobileAction.TakePhoto))
+        if (state.selectedTask != null) add(SheetEntry(mobileText(R.string.mobile_browse_task_files), Icons.Outlined.FolderOpen, MobileAction.Files))
+        add(SheetEntry(mobileText(R.string.mobile_local_files_and_uploads), Icons.Outlined.History, MobileAction.LocalFileRecords))
+    }
     MobileSheet.Task -> buildList {
         add(SheetEntry(mobileText(R.string.label_task_files), Icons.Outlined.FolderOpen, MobileAction.Files))
         if (state.selectedTask != null) {
             if (state.questionsSupported && state.questions.isNotEmpty()) add(SheetEntry(mobileText(R.string.label_questions_answers), Icons.Outlined.ChatBubbleOutline, next = MobileSheet.Questions))
             add(SheetEntry(mobileText(R.string.label_approvals), Icons.Outlined.FactCheck, MobileAction.Approvals))
             add(SheetEntry(mobileText(R.string.label_runs_stop), Icons.Outlined.Tune, MobileAction.TaskControls))
-            add(SheetEntry(mobileText(R.string.label_branches), Icons.Outlined.AccountTree, MobileAction.TaskBranches))
             add(SheetEntry(mobileText(R.string.label_queued_messages), Icons.AutoMirrored.Outlined.ListAlt, next = MobileSheet.Queue))
         }
         add(SheetEntry(mobileText(R.string.more_options), Icons.Outlined.MoreHoriz, next = MobileSheet.TaskMore))
@@ -696,7 +645,6 @@ private fun taskTime(task: JSONObject): String? {
 
 private fun modelLabel(state: MobileUiState) = state.modelLabel.takeUnless { it.isBlank() || it == mobileText(R.string.label_choose_model) } ?: mobileText(R.string.label_choose_model)
 internal fun activeRuns(state: MobileUiState) = state.runs.filter { it.optString("executionKind") != "maintenance" && it.optString("status") in setOf("queued", "running") }.sortedByDescending { it.optString("startedAt") }
-private fun questionSummary(request: JSONObject) = request.optJSONArray("questions")?.optJSONObject(0)?.optString("question")?.takeIf { it.isNotBlank() } ?: mobileText(R.string.label_view_and_answer)
 private fun runStartedLabel(run: JSONObject): String? {
     val value = run.opt("startedAt")
     val time = when (value) {
@@ -707,31 +655,10 @@ private fun runStartedLabel(run: JSONObject): String? {
     return mobileText(R.string.mobile_started, java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT, MobileStrings.locale).format(java.util.Date(time)))
 }
 
-private fun branchCreatedLabel(branch: JSONObject): String? {
-    val value = branch.opt("createdAt")
-    val time = when (value) {
-        is Number -> value.toLong()
-        is String -> runCatching { Instant.parse(value).toEpochMilli() }.getOrNull()
-        else -> null
-    } ?: return null
-    return java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT, MobileStrings.locale).format(java.util.Date(time))
-}
-
-internal fun branchLabel(state: MobileUiState, id: String): String {
-    val index = state.branches.indexOfFirst { it.optString("id") == id }
-    if (index < 0) return mobileText(R.string.label_branches)
-    return if (state.branches[index].isNull("parentBranchId")) mobileText(R.string.label_original_branch) else mobileText(R.string.mobile_branch, index + 1)
-}
-
 private fun questionStateLabel(question: JSONObject) = when (question.optString("status")) {
     "pending" -> mobileText(R.string.label_needs_an_answer)
     "answered" -> when (question.optJSONObject("delivery")?.optString("state")) { "failed" -> mobileText(R.string.mobile_answer_not_delivered); "pending" -> mobileText(R.string.mobile_answer_awaiting_delivery); else -> mobileText(R.string.label_answered) }
     "cancelled" -> when (question.optJSONObject("delivery")?.optString("state")) { "failed" -> mobileText(R.string.mobile_skip_result_not_delivered); "pending" -> mobileText(R.string.mobile_skip_result_awaiting_delivery); else -> mobileText(R.string.label_skipped) }
     "interrupted" -> mobileText(R.string.label_question_interrupted)
     else -> mobileText(R.string.label_question_history)
-}
-private fun questionActionLabel(question: JSONObject) = when {
-    question.optString("status") == "pending" -> mobileText(R.string.question_answers)
-    question.optJSONObject("delivery")?.optString("state") == "failed" -> mobileText(R.string.label_retry)
-    else -> mobileText(R.string.label_view)
 }

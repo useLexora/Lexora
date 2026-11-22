@@ -4,6 +4,7 @@ import { ChevronRight20Regular } from '@vicons/fluent'
 import { watch } from 'vue'
 import { useChatTranscriptValue } from '../modules/tasks/reader'
 import ReaderLiveStepDetail from './ReaderLiveStepDetail.vue'
+import ReaderProgress from './ReaderProgress.vue'
 import { useReaderStrings } from './readerStrings'
 
 type StepPage = NonNullable<ReaderWireEntry['steps']>
@@ -49,9 +50,7 @@ function toggle(step: StepPage['items'][number]) {
       <ReaderLiveStepDetail v-if="!step.messageId && expanded.has(step.id)" :run-id="runId" :group-id="groupId" :step-id="step.id" :send="send" />
       <div v-if="step.messageId && expanded.has(step.id)" class="tool-call-detail">
         <pre v-if="step.detail?.text" class="tool-output">{{ step.detail.text }}</pre>
-        <p v-if="step.detail?.loading" class="message-meta" role="status">
-          {{ labels.loadingOutput }}
-        </p>
+        <ReaderProgress v-if="!step.detail || step.detail.loading" :label="labels.loadingOutput" />
         <p v-else-if="step.detail?.error" class="message-error">
           {{ step.detail.error }}
         </p>
@@ -61,21 +60,19 @@ function toggle(step: StepPage['items'][number]) {
         <p v-if="step.detail?.notice" class="message-meta">
           {{ step.detail.notice }}
         </p>
-        <button v-if="!step.detail || step.detail.error" type="button" class="tool-detail-action" @click="send({ action: 'detail', id: step.messageId })">
-          {{ step.detail?.error ? labels.retry : labels.viewOutput }}
+        <button v-if="step.detail?.error && !step.detail.loading" type="button" class="tool-detail-action" @click="send({ action: 'detail', id: step.messageId })">
+          {{ labels.retry }}
         </button>
         <button v-if="step.detail?.resourceId" type="button" class="tool-detail-action" @click="send({ action: 'resource', id: step.messageId, resourceId: step.detail.resourceId })">
           {{ labels.openFull }}
         </button>
       </div>
     </article>
-    <p v-if="!steps || steps.loading" class="message-meta" role="status">
-      {{ labels.loadingSteps }}
-    </p>
+    <ReaderProgress v-if="!steps || steps.loading" :label="labels.loadingSteps" />
     <button v-if="steps?.stale && !steps.loading" class="transcript-retry" type="button" @click="load()">
       {{ labels.refreshSteps }}
     </button>
-    <button v-if="steps && !steps.loading && (steps.failed || steps.nextCursor)" class="transcript-retry" type="button" @click="load(steps.nextCursor)">
+    <button v-else-if="steps && !steps.loading && (steps.failed || steps.nextCursor)" class="transcript-retry" type="button" @click="load(steps.nextCursor)">
       {{ steps.failed ? labels.retrySteps : labels.moreSteps }}
     </button>
   </div>

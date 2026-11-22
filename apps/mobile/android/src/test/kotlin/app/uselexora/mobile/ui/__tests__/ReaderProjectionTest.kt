@@ -27,6 +27,22 @@ class ReaderProjectionTest {
         (0 until array.length()).map(array::getString)
     }
 
+    @Test fun onlyLiveRangedTextIsReplyingInATurnWindow() {
+        val run = JSONObject("""{"id":"run","buddyId":"actor","approvalPolicy":"manual","branchId":"branch","completedAt":null,"conversationId":"task","errorCode":null,"executionProfile":"read_only","generation":"1","lastEventSequence":"10","modelId":"model","providerId":"provider","purpose":"chat","reasoningLevel":null,"startedAt":"2026-11-11T05:00:00Z","status":"running","triggeringMessageId":"user"}""")
+        fun reply(revision: String?) = message("reply", "Text").put("runId", "run").apply {
+            if (revision != null) put("textRange", JSONObject().put("start", 0).put("end", 4).put("total", 4).put("revision", revision))
+        }
+        fun isFinal(revision: String?, compact: Boolean = true, history: Boolean = false): Boolean {
+            val data = snapshot("topic", listOf(reply(revision))).copy(runs = listOf(run), turn = ReaderTurnContext(enabled = compact), hasLaterMessages = history)
+            return encode(ReaderProjection(), data).getJSONArray("entries").getJSONObject(0).getJSONArray("messages").getJSONObject(0).getBoolean("final")
+        }
+        assertFalse(isFinal("10"))
+        assertTrue(isFinal(null))
+        assertTrue(isFinal("s:" + "a".repeat(64)))
+        assertTrue(isFinal("10", history = true))
+        assertFalse(isFinal(null, compact = false))
+    }
+
     @Test fun changedMessagesAreIncrementalAndRestartResendsFullSnapshot() {
         val projection = ReaderProjection()
         val first = message("a", "first")

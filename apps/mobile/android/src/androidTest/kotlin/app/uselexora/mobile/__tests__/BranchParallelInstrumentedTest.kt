@@ -97,12 +97,13 @@ class BranchParallelInstrumentedTest {
                         scenario.onActivity { it.findViewById<EditText>(MainActivity.INPUT_ID).setText(text) }
                         waitUntil { input() == text && (branch == null || draft(branch) == text) }
                     }
-                    fun select(branch: String, expected: String) {
-                        MobileUiTestDriver.selectBranch(branch)
-                        waitUntil { tag("branch:$branch") == null && input() == expected && MobileUiTestDriver.exists("任务设置") }
+                    val baselineA = "Parallel baseline A $token"
+                    val baselineB = "Parallel baseline B $token"
+                    fun select(from: String, step: BranchStep, to: String, draft: String) {
+                        MobileUiTestDriver.selectBranch(scenario, from, step, to, draft)
                         assertEquals(0, store.outbox(identity.partition).count { it.method == "conversations.activateBranch" })
                     }
-                    select(branchA, "")
+                    waitUntil { MobileUiTestDriver.contains(baselineA) && MobileUiTestDriver.composerText() == "" }
                     write("Parallel branch A main $token", branchA)
                     click("发送")
                     waitUntil(30000) { store.outbox(identity.partition).any { it.method == "chat.submitInput" && it.state == "accepted" && it.receipt?.optJSONObject("target")?.optString("branchId") == branchA } }
@@ -128,11 +129,11 @@ class BranchParallelInstrumentedTest {
                     assertEquals(draftA, input())
                     assertEquals(draftA, draft(branchA))
                     waitUntil { MobileUiTestDriver.contains("只回答分支 A 的问题") }
-                    select(branchB, "")
+                    select(baselineA, BranchStep.Next, baselineB, "")
                     waitUntil { MobileUiTestDriver.contains("只回答分支 B 的问题") }
                     assertFalse(MobileUiTestDriver.contains("只回答分支 A 的问题"))
                     write(draftB, branchB)
-                    select(branchA, draftA)
+                    select(baselineB, BranchStep.Previous, baselineA, draftA)
                     waitUntil { MobileUiTestDriver.contains("只回答分支 A 的问题") }
                     scenario.recreate()
                     waitUntil { input() == draftA && MobileUiTestDriver.contains("只回答分支 A 的问题") }
@@ -166,7 +167,8 @@ class BranchParallelInstrumentedTest {
                     assertEquals(draftA, draft(branchA)); assertEquals(draftB, draft(branchB))
                     signal("edited-a", edited)
                     awaitSignal("restore-a")
-                    select(branchA, draftA)
+                    select("Parallel edited A $token", BranchStep.Previous, baselineB, draftB)
+                    select(baselineB, BranchStep.Previous, baselineA, draftA)
                     scenario.moveToState(Lifecycle.State.CREATED)
                     scenario.moveToState(Lifecycle.State.RESUMED)
                     MobileUiTestDriver.openTaskSettings(); MobileUiTestDriver.awaitConnected(); MobileUiTestDriver.returnToConversation()
@@ -176,10 +178,9 @@ class BranchParallelInstrumentedTest {
                     awaitSignal("b-finished")
                     assertEquals(draftA, input())
                     assertFalse(MobileUiTestDriver.contains("B 并行完成"))
-                    select(branchB, draftB)
-                    waitUntil { MobileUiTestDriver.contains("B 队列独立完成") }
+                    select(baselineA, BranchStep.Next, "B 队列独立完成 $token", draftB)
                     assertFalse(MobileUiTestDriver.contains("A 已收到本分支回答"))
-                    select(branchA, draftA)
+                    select(baselineB, BranchStep.Previous, baselineA, draftA)
                     assertEquals("paused", queue(branchA).single { it.getString("id") == queuedA.getString("id") }.getString("state"))
                     assertEquals(0, store.outbox(identity.partition).count { it.method == "conversations.activateBranch" })
                     capture(context, token, "restored")
