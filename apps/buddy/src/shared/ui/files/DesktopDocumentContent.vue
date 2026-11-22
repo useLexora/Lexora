@@ -4,17 +4,29 @@ import type { FileDocumentMode } from './fileDocumentPresentation'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { MarkdownImageResolver } from '@/shared/ui/markdown/markdownImage'
 import type { PrepareResourceQuote } from '@/shared/ui/selection/useResourceSelectionQuote'
-import { computed, useTemplateRef } from 'vue'
+import { computed, shallowRef, useTemplateRef, watch } from 'vue'
 import DesktopMarkdownContent from '@/shared/ui/markdown/DesktopMarkdownContent.vue'
 import DesktopMediaPreview from '@/shared/ui/media/DesktopMediaPreview.vue'
 import { readResourceTextSelection } from '@/shared/ui/selection/resourceQuoteSelection'
 import { useQuoteHighlight } from '@/shared/ui/selection/useQuoteHighlight'
 import DesktopMonacoFile from './DesktopMonacoFile.vue'
 
-const props = withDefaults(defineProps<{ mode: FileDocumentMode | null, name: string, text?: string | null, imageUrl?: string | null, mediaKind?: 'audio' | 'video' | null, mediaUrl?: string | null, resolveImage?: MarkdownImageResolver, visible?: boolean, language: BuddyLocale, writeClipboardText: (text: string) => Promise<void>, wrap?: boolean, sourceReady?: boolean, revealSource?: (quote: BuddyTextQuote) => boolean, quoteSource?: BuddyTextQuote['source'], prepareQuote?: PrepareResourceQuote }>(), { wrap: true, visible: true })
+const props = withDefaults(defineProps<{ mode: FileDocumentMode | null, name: string, text?: string | null, imageUrl?: string | null, imageCrossOrigin?: boolean, mediaKind?: 'audio' | 'video' | null, mediaUrl?: string | null, resolveImage?: MarkdownImageResolver, visible?: boolean, language: BuddyLocale, writeClipboardText: (text: string) => Promise<void>, wrap?: boolean, sourceReady?: boolean, revealSource?: (quote: BuddyTextQuote) => boolean, quoteSource?: BuddyTextQuote['source'], prepareQuote?: PrepareResourceQuote }>(), { wrap: true, visible: true, imageCrossOrigin: false })
 defineEmits<{ previewError: [] }>()
-defineSlots<{ source?: () => unknown, preview?: () => unknown }>()
+defineSlots<{ source?: () => unknown, preview?: () => unknown, imageOverlay?: () => unknown }>()
 const markdown = useTemplateRef<HTMLElement>('markdown')
+const image = useTemplateRef<HTMLImageElement>('image')
+const corsImage = useTemplateRef<HTMLImageElement>('corsImage')
+const corsFailed = shallowRef(false)
+watch(() => props.imageUrl, () => corsFailed.value = false, { flush: 'sync' })
+watch([corsImage, () => props.imageUrl], ([element, src]) => {
+  if (!element || !src)
+    return
+  const url = new URL(src)
+  url.searchParams.set('v', crypto.randomUUID())
+  element.crossOrigin = 'anonymous'
+  element.src = url.href
+}, { flush: 'post' })
 const monaco = useTemplateRef<InstanceType<typeof DesktopMonacoFile>>('monaco')
 const highlight = useQuoteHighlight('buddy-resource-quote')
 const ready = computed(() => props.mode === 'preview' ? !!markdown.value : props.sourceReady ?? monaco.value?.ready ?? false)
@@ -23,7 +35,11 @@ function reveal(quote: BuddyTextQuote) {
     return !!markdown.value && highlight.show(markdown.value, quote, markdown.value)
   return props.revealSource?.(quote) ?? monaco.value?.reveal(quote) ?? false
 }
-defineExpose({ ready, reveal })
+function onCorsImageError(event: Event) {
+  if (event.currentTarget === corsImage.value)
+    corsFailed.value = true
+}
+defineExpose({ ready, reveal, getImageElement: () => corsImage.value ?? image.value })
 function quoteText(event: MouseEvent) {
   if (!props.quoteSource || !props.prepareQuote || !(event.currentTarget instanceof HTMLElement))
     return
@@ -45,8 +61,10 @@ function quoteText(event: MouseEvent) {
     <article v-else-if="mode === 'preview' && text != null" ref="markdown" class="desktop-document-content__markdown flex-1 min-h-0 overflow-auto pt-[20px] pr-[24px] pb-[32px] pl-[24px] text-fg font-sans [overflow-wrap:anywhere]" @contextmenu="quoteText">
       <DesktopMarkdownContent :content="text" :resolve-image="resolveImage" code-overflow="scroll" :language="language" :write-clipboard-text="writeClipboardText" />
     </article>
-    <div v-else-if="mode === 'preview' && imageUrl" class="desktop-document-content__image grid flex-1 min-h-0 overflow-auto p-[16px] place-items-center">
-      <img :key="imageUrl" :src="imageUrl" :alt="name" @error="$emit('previewError')">
+    <div v-else-if="mode === 'preview' && imageUrl" class="desktop-document-content__image relative grid flex-1 min-h-0 overflow-auto p-[16px] place-items-center">
+      <img v-if="imageCrossOrigin && !corsFailed" ref="corsImage" :key="imageUrl" :alt="name" draggable="false" @error="onCorsImageError">
+      <img v-else ref="image" :key="imageUrl" :src="imageUrl" :alt="name" draggable="false" @error="$emit('previewError')">
+      <slot name="imageOverlay" />
     </div>
     <template v-else-if="(mode === 'source' || mode === 'edit') && text != null">
       <slot name="source">

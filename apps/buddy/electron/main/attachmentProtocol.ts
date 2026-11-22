@@ -68,7 +68,7 @@ export function installAttachmentProtocol(runtime: Pick<BuddyServiceSupervisor, 
 
   void protocol.handle(ARTIFACT_PROTOCOL, allowRendererRead(request => handleMediaRequest(request, runtime, fileReader)))
 
-  void protocol.handle(FILE_PROTOCOL, request => handleMediaRequest(request, runtime, fileReader))
+  void protocol.handle(FILE_PROTOCOL, allowRendererRead(request => handleMediaRequest(request, runtime, fileReader)))
 
   return () => {
     previews.clear()
