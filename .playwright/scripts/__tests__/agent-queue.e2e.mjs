@@ -97,7 +97,7 @@ for (const mode of ['idle-follow-up', 'native-wait-steer']) {
               content: { version: 1, body: [{ type: 'paragraph', content: [{ type: 'text', text }] }], panelResourceIds: [] },
               executionConfig: source.executionConfig,
               modelSelection: source.modelSelection,
-            })
+            }, source.scope)
             await api.chat.enqueue({ draftId: draft.draftId, expectedRevision: draft.revision, requestId: crypto.randomUUID() })
           }, { text: input, parentId })
         }

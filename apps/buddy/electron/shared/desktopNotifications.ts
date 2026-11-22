@@ -16,7 +16,10 @@ export interface DesktopRecoveryNotification {
   readonly attention: 'seen' | 'unseen'
   readonly action: { readonly type: 'review-operation', readonly recoveryId: string }
   readonly presentation: {
-    readonly title: 'desktop.recovery.title'
+    readonly title: 'desktop.recovery.title' | 'desktop.recovery.unsavedInput'
+    readonly sourceKind?: ProductRecoveryItem['sourceKind']
+    readonly sourceTitle?: string
+    readonly preview?: string
     readonly description: `desktop.recovery.${ProductRecoveryItem['state']}`
     readonly icon: 'messageRetry'
   }

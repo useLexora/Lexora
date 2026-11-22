@@ -36,7 +36,7 @@ const title = computed(() => {
 })
 const description = computed(() => {
   if ('presentation' in props.notification)
-    return t(props.notification.presentation.description)
+    return props.notification.presentation.preview || t(props.notification.presentation.description)
   if (props.notification.kind === 'app.update-available')
     return t('desktop.update.notificationDescription')
   if (props.notification.kind === 'model.source-parameters-updated')
@@ -44,6 +44,19 @@ const description = computed(() => {
   return t(props.notification.kind === 'automation.run.completed'
     ? 'desktop.notifications.automationCompletedDescription'
     : 'desktop.notifications.automationFailedDescription')
+})
+const source = computed(() => {
+  const notification = props.notification
+  if (notification.kind === 'operation.recovery') {
+    const { sourceTitle, sourceKind } = notification.presentation
+    if (sourceTitle)
+      return sourceTitle
+    if (sourceKind === 'draft')
+      return t('desktop.tasks.newTask')
+    if (sourceKind === 'conversation')
+      return ''
+  }
+  return t(`desktop.notifications.origin.${notification.origin}`)
 })
 const icon = computed(() => {
   if (props.notification.kind === 'app.update-available')
@@ -73,9 +86,12 @@ const icon = computed(() => {
     <span class="desktop-notification-item__copy grid min-w-0">
       <strong>{{ title }}</strong>
       <span>{{ description }}</span>
-      <small>
-        {{ t(`desktop.notifications.origin.${notification.origin}`) }}
-        · {{ dateFormatter.format(new Date(notification.occurredAt)) }}
+      <small class="flex items-baseline gap-1">
+        <template v-if="source">
+          <span class="min-w-0 truncate" :title="source">{{ source }}</span>
+          ·
+        </template>
+        <time class="shrink-0" :datetime="notification.occurredAt">{{ dateFormatter.format(new Date(notification.occurredAt)) }}</time>
       </small>
     </span>
     <i v-if="notification.attention === 'unseen'" aria-hidden="true" />

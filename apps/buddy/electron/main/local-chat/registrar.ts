@@ -1,4 +1,5 @@
 import type { BrowserWindow, IpcMainInvokeEvent } from 'electron'
+import type { BuddyComposerDraftScope } from '../../../shared/conversation/composerDraft'
 import type { ApplicationDiagnostic, ApplicationDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { RuntimeRequestContract, RuntimeRequestInput, RuntimeRequestResult } from '../../../shared/runtime/apiContract'
 import type { LocalChatErrorCode } from '../../../shared/runtime/localChatError'
@@ -25,7 +26,7 @@ export interface DesktopRuntimeGateway {
   request: (
     method: string,
     params: unknown,
-    options?: { timeoutMs?: number, requestId?: string },
+    options?: { timeoutMs?: number, requestId?: string, recoveryScope?: BuddyComposerDraftScope },
   ) => Promise<unknown>
   restart: () => Promise<void>
 }
@@ -58,13 +59,13 @@ export function createLocalChatIpcContext(options: RegisterLocalChatIpcOptions) 
       }
     })
   }
-  const request = async <Contract extends RuntimeRequestContract>(contract: Contract, params: RuntimeRequestInput<Contract>, timeoutMs = 30_000): Promise<RuntimeRequestResult<Contract>> => {
+  const request = async <Contract extends RuntimeRequestContract>(contract: Contract, params: RuntimeRequestInput<Contract>, timeoutMs = 30_000, recoveryScope?: BuddyComposerDraftScope): Promise<RuntimeRequestResult<Contract>> => {
     const context = { method: contract.method, operationId: randomUUID(), ...requestIdentity(params) }
     const startedAt = performance.now()
     if (!isRoutineRpc(contract.method))
       record({ ...context, event: 'rpc.request.started', level: 'info' })
     try {
-      const result = contract.response.safeParse(await options.runtime.request(contract.method, params, { timeoutMs, requestId: context.operationId }))
+      const result = contract.response.safeParse(await options.runtime.request(contract.method, params, { timeoutMs, requestId: context.operationId, ...(recoveryScope ? { recoveryScope } : {}) }))
       if (!result.success)
         throw new DesktopRuntimeResponseError()
       const durationMs = Math.round(performance.now() - startedAt)

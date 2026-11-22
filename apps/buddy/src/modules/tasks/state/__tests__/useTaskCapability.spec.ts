@@ -504,9 +504,9 @@ describe('useTaskCapability', () => {
     const saving = deferred<void>()
     const accepting = deferred<void>()
     const saveDraft = vi.mocked(api.localChat.composerDrafts.save).getMockImplementation()!
-    vi.mocked(api.localChat.composerDrafts.save).mockImplementation(async (value) => {
+    vi.mocked(api.localChat.composerDrafts.save).mockImplementation(async (...args) => {
       await saving.promise
-      return saveDraft(value)
+      return saveDraft(...args)
     })
     const startTurn = vi.mocked<LexoraDesktopApi['localChat']['chat']['startTurn']>(api.localChat.chat.startTurn).getMockImplementation()!
     let submitted: LocalComposerDraft | null = null
@@ -805,9 +805,9 @@ describe('useTaskCapability', () => {
     await chat.initialize()
     const pendingDraftSave = deferred<void>()
     const saveDraft = api.localChat.composerDrafts.save
-    api.localChat.composerDrafts.save = vi.fn(async (input) => {
+    api.localChat.composerDrafts.save = vi.fn<typeof saveDraft>(async (...args) => {
       await pendingDraftSave.promise
-      return saveDraft(input)
+      return saveDraft(...args)
     })
 
     const updating = chat.workspace.composer.setPermissionMode('full_access')

@@ -33,7 +33,7 @@ export function createComposerApi(): Pick<LocalChatApi, 'composerResources' | 'c
       list: () => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.composerDraftsList),
       get: draftId => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.composerDraftsGet, { draftId }),
       open: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.composerDraftsOpen, input),
-      save: input => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.composerDraftsSave, input),
+      save: (input, recoveryScope) => ipcRenderer.invoke(LOCAL_CHAT_IPC_CHANNELS.composerDraftsSave, { ...input, recoveryScope }),
     }),
   }
 }

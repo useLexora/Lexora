@@ -316,6 +316,12 @@ const navigation = useDesktopNavigation({
   },
   onError: () => message.error(translateBuddy(stores.applicationSettings.language.value, 'desktop.command.failed')),
 })
+const recoveryWorkspace = computed(() => router.currentRoute.value.path === '/tasks' ? workbench.focusedTask.value?.workspace ?? null : null)
+async function openRecoveryTask(id: string, branchId: string, signal: AbortSignal) {
+  await ready
+  if (!signal.aborted)
+    await workbench.openTask(id, { branchId, signal })
+}
 const { notificationTarget } = navigation
 onScopeDispose(api.app.onOpenTarget(navigation.openTarget))
 const browserGuestHost = useTemplateRef<DesktopBrowserGuestSurfaceHost>('browserGuestHost')
@@ -462,7 +468,7 @@ watch(() => stores.applicationSettings.config.value?.desktop.language, (language
   <DesktopSkillReviewHost />
   <DesktopRecoveryHost
     :language="stores.applicationSettings.language.value" :register-action="navigation.registerNotificationAction" :notifications="stores.notifications.items.value"
-    @open-task="workbench.openTask" @open-draft="workbench.openDraft"
+    :workspace="recoveryWorkspace" :open-task="openRecoveryTask" :open-draft="workbench.openRecoveredDraft"
   />
   <DesktopUpdateHost v-if="!onboarding.pending.value" :language="stores.applicationSettings.language.value" />
   <slot :shell="shellBindings" />

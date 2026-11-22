@@ -1,18 +1,11 @@
 import type { ProductRecoveryItem } from '../../../shared/runtime/productRecovery'
 import type { DesktopNotificationInbox } from '../notifications/DesktopNotificationInbox'
-import type { DesktopCommandOutcome } from './DesktopProductCommands'
+import { buddyUserContentToText } from '../../../shared/conversation/buddyUserContent'
 import { recoveryNotificationPrefix } from '../../shared/desktopNotifications'
-import { productOutboxRecordId } from './ProductOutboxStore'
-
-export function recoveryState(outcome: DesktopCommandOutcome): ProductRecoveryItem['state'] {
-  if (outcome.state === 'decided')
-    return outcome.record.receipt!.decision
-  return outcome.state === 'connection_replaced' ? 'unknown' : outcome.state
-}
 
 export class ProductRecoveryNotifications {
   readonly #inbox: DesktopNotificationInbox
-  readonly #outcomes: () => Promise<DesktopCommandOutcome[]>
+  readonly #items: () => Promise<ProductRecoveryItem[]>
   readonly #onError: (error: unknown) => void
   readonly #published = new Set<string>()
   #version = 0
@@ -20,28 +13,26 @@ export class ProductRecoveryNotifications {
   #recheck: ReturnType<typeof setTimeout> | undefined
   #disposed = false
 
-  constructor(inbox: DesktopNotificationInbox, outcomes: () => Promise<DesktopCommandOutcome[]>, onError: (error: unknown) => void) {
+  constructor(inbox: DesktopNotificationInbox, items: () => Promise<ProductRecoveryItem[]>, onError: (error: unknown) => void) {
     this.#inbox = inbox
-    this.#outcomes = outcomes
+    this.#items = items
     this.#onError = onError
   }
 
-  publish(outcome: DesktopCommandOutcome) {
-    if (this.#disposed)
-      return
-    this.#version++
-    const recoveryId = productOutboxRecordId(outcome.record)
-    const state = recoveryState(outcome)
-    this.#published.add(recoveryId)
+  #publish(item: ProductRecoveryItem) {
+    const { id, state, sourceKind, sourceTitle } = item
+    const unsaved = item.method === 'composerDrafts.save' && (state === 'rejected' || state === 'not_accepted')
+    const preview = unsaved && item.content ? [...buddyUserContentToText(item.content).replace(/\s+/gu, ' ').trim()].slice(0, 100).join('') : undefined
+    this.#published.add(id)
     this.#inbox.publish({
-      id: recoveryNotificationPrefix + recoveryId,
+      id: recoveryNotificationPrefix + id,
       kind: 'operation.recovery',
       revision: state,
-      occurredAt: outcome.record.createdAt,
+      occurredAt: item.createdAt,
       origin: 'desktop',
       lifecycle: 'active',
-      action: { type: 'review-operation', recoveryId },
-      presentation: { title: 'desktop.recovery.title', description: `desktop.recovery.${state}`, icon: 'messageRetry' },
+      action: { type: 'review-operation', recoveryId: id },
+      presentation: { title: unsaved ? 'desktop.recovery.unsavedInput' : 'desktop.recovery.title', sourceKind, sourceTitle, preview, description: `desktop.recovery.${state}`, icon: 'messageRetry' },
     })
     if (state === 'unknown' && !this.#recheck) {
       this.#recheck = setTimeout(() => {
@@ -52,39 +43,63 @@ export class ProductRecoveryNotifications {
     }
   }
 
+  replace(items: ProductRecoveryItem[]) {
+    if (this.#disposed)
+      return
+    this.#version++
+    const active = new Set(items.map(item => item.id))
+    for (const id of this.#published) {
+      if (!active.has(id) && this.#published.delete(id))
+        this.#inbox.withdraw(recoveryNotificationPrefix + id)
+    }
+    for (const item of items)
+      this.#publish(item)
+  }
+
   withdraw(id: string) {
-    if (this.#refreshing || this.#published.has(id))
-      this.#version++
+    this.#version++
     if (this.#published.delete(id))
       this.#inbox.withdraw(recoveryNotificationPrefix + id)
   }
 
+  reset() {
+    this.#version++
+    for (const id of this.#published)
+      this.withdraw(id)
+    clearTimeout(this.#recheck)
+    this.#recheck = undefined
+  }
+
   reconcile(): Promise<void> {
     this.#version++
-    return this.#refreshing ??= this.#restore().catch(this.#onError).finally(() => {
-      this.#refreshing = undefined
-    })
+    return this.#refreshing ??= this.#restore()
   }
 
   async #restore() {
-    while (!this.#disposed) {
-      const version = this.#version
-      const outcomes = await this.#outcomes()
-      if (this.#disposed)
-        return
-      if (version !== this.#version)
-        continue
-      const active = new Set(outcomes.map(outcome => productOutboxRecordId(outcome.record)))
-      for (const id of this.#published) {
-        if (!active.has(id))
-          this.withdraw(id)
+    try {
+      while (!this.#disposed) {
+        const version = this.#version
+        const items = await this.#items().catch((error: unknown) => {
+          if (this.#disposed || version !== this.#version)
+            return []
+          throw error
+        })
+        if (this.#disposed)
+          return
+        if (version !== this.#version)
+          continue
+        this.replace(items)
+        const publishedVersion = this.#version
+        await this.#inbox.reconcileReadState(recoveryNotificationPrefix)
+        if (publishedVersion === this.#version)
+          return
       }
-      for (const outcome of outcomes)
-        this.publish(outcome)
-      const publishedVersion = this.#version
-      await this.#inbox.reconcileReadState(recoveryNotificationPrefix)
-      if (publishedVersion === this.#version)
-        return
+    }
+    catch (error) {
+      this.#onError(error)
+    }
+    finally {
+      this.#refreshing = undefined
     }
   }
 

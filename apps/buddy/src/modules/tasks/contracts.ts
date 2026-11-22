@@ -18,6 +18,7 @@ import type { LocalApproval } from '@buddy-shared/permissions/approvalApi'
 import type { BuddyPermissionMode } from '@buddy-shared/permissions/permissionMode'
 import type { LocalProvider, LocalRuntimeModelOption } from '@buddy-shared/providers/providerApi'
 import type { LocalRun, LocalRunEvent, LocalRunOutput } from '@buddy-shared/runs/runApi'
+import type { ProductRecoveryItem } from '@buddy-shared/runtime/productRecovery'
 import type { LocalBuddyServiceSupervisorState } from '@buddy-shared/runtime/serviceState'
 import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
 import type { JSONContent } from '@tiptap/core'
@@ -253,7 +254,7 @@ export interface TaskDraftRestoration {
   state: State<DraftRestorationState>
   conflict: State<DraftRestorationConflict | null>
   restore: () => Promise<void>
-  resolveConflict: (targetKey: string, choice: DraftRestorationChoice) => Promise<boolean>
+  resolveConflict: (targetKey: string, choice: DraftRestorationChoice, reviewed?: ProductRecoveryItem) => Promise<boolean>
 }
 
 export interface TaskConversationTree {

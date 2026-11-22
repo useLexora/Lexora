@@ -86,6 +86,8 @@ export class DesktopProductCommands {
       return { state: 'trust_changed', record }
     if (record.state === 'decided')
       return { state: 'decided', record }
+    if (record.state === 'not_accepted' && !record.envelope && !record.recovery)
+      return { state: 'not_accepted', record }
     try {
       const result = productCommandLookupSchema.parse(await connection.request('commands.get', { dataGeneration: record.owner.dataGeneration, commandId: record.commandId }))
       if (this.#connection !== connection)

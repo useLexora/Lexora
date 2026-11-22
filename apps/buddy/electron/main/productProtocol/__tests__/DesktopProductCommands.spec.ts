@@ -8,6 +8,7 @@ import { DesktopNotificationInbox } from '../../notifications/DesktopNotificatio
 import { DesktopProductCommands } from '../DesktopProductCommands'
 import { ProductOutboxStore } from '../ProductOutboxStore'
 import { ProductRecoveryNotifications } from '../ProductRecoveryNotifications'
+import { reviewProductRecoveries } from '../ProductRecoveryReview'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -77,7 +78,7 @@ describe('desktop durable command delivery', () => {
     const { store, client } = await fixture()
     const attentionPath = join(store.directory, 'notification-attention.json')
     const inbox = new DesktopNotificationInbox(attentionPath, () => {})
-    const notifications = new ProductRecoveryNotifications(inbox, () => client.recover(), (error) => {
+    const notifications = new ProductRecoveryNotifications(inbox, async () => (await reviewProductRecoveries({ outcomes: await client.recover(), connection: null, assertCurrent() {}, readLocalDraft: async () => null, outbox: store })).map(review => review.item), (error) => {
       throw error
     })
     try {
@@ -86,7 +87,7 @@ describe('desktop durable command delivery', () => {
       }))
       const outcome = await client.execute(command)
       const { record } = outcome
-      notifications.publish(outcome)
+      await notifications.reconcile()
       const [unknown] = await inbox.markAllSeen()
       expect(unknown).toMatchObject({ revision: 'unknown', attention: 'seen' })
       client.attach(connection(async () => ({ lookup: 'not_found' })))

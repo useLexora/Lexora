@@ -2,6 +2,7 @@ import type zhCN from '../zh-CN/chat'
 
 export default {
   'desktop.recovery.title': 'Operation recovery',
+  'desktop.recovery.unsavedInput': 'Draft not saved',
   'desktop.recovery.accepted': 'Operation accepted',
   'desktop.recovery.rejected': 'Operation was not performed',
   'desktop.recovery.not_accepted': 'No acceptance record found',

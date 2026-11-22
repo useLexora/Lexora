@@ -341,7 +341,7 @@ export interface LocalChatApi {
     list: () => Promise<LocalComposerDraft[]>
     get: (draftId: string) => Promise<LocalComposerDraft>
     open: (input: LocalComposerDraftOpen) => Promise<LocalComposerDraft>
-    save: (input: LocalComposerDraftSave) => Promise<LocalComposerDraft>
+    save: (input: LocalComposerDraftSave, recoveryScope: LocalComposerDraft['scope']) => Promise<LocalComposerDraft>
   }
   artifacts: {
     onChanged: (listener: (event: ArtifactChangeNotice) => void) => () => void

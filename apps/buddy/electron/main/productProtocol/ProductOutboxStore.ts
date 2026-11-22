@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import { isMissing, readStorageJson, syncStorageDirectory, writeStorageJson } from '../../../platform/storage/storageFiles'
 import { buddyUserContentV1Schema } from '../../../shared/conversation/buddyUserContent'
-import { buddyComposerDraftExecutionConfigSchema, buddyComposerDraftModelSelectionSchema, buddyDraftParticipantsSchema } from '../../../shared/conversation/composerDraft'
+import { buddyComposerDraftExecutionConfigSchema, buddyComposerDraftModelSelectionSchema, buddyComposerDraftScopeSchema, buddyDraftParticipantsSchema } from '../../../shared/conversation/composerDraft'
 import { productIdentitySchema } from '../../../shared/productProtocol/identity'
 import { PRODUCT_LIMITS } from '../../../shared/productProtocol/limits'
 import { getProductMethod } from '../../../shared/productProtocol/methods'
@@ -16,7 +16,7 @@ import { productIdSchema, productRevisionSchema } from '../../../shared/productP
 
 const ownerSchema = productIdentitySchema.pick({ serviceId: true, profileId: true, dataGeneration: true, deviceId: true })
 const envelopeSchema = z.object({ dataGeneration: productIdSchema, commandId: productIdSchema, expectedServiceInstanceId: productIdSchema, intent: z.unknown() }).strict()
-const recoverySchema = z.object({ draftId: productIdSchema, editSequence: productRevisionSchema, content: buddyUserContentV1Schema, executionConfig: buddyComposerDraftExecutionConfigSchema.optional(), modelSelection: buddyComposerDraftModelSelectionSchema.nullable().optional(), participants: buddyDraftParticipantsSchema.nullable().optional() }).strict()
+const recoverySchema = z.object({ draftId: productIdSchema, scope: buddyComposerDraftScopeSchema.optional(), editSequence: productRevisionSchema, content: buddyUserContentV1Schema, executionConfig: buddyComposerDraftExecutionConfigSchema.optional(), modelSelection: buddyComposerDraftModelSelectionSchema.nullable().optional(), participants: buddyDraftParticipantsSchema.nullable().optional() }).strict()
 const recordSchema = z.object({
   version: z.literal(1),
   owner: ownerSchema,
@@ -27,6 +27,7 @@ const recordSchema = z.object({
   state: z.enum(['prepared', 'uncertain', 'not_accepted', 'decided']),
   envelope: envelopeSchema.nullable(),
   recovery: recoverySchema.nullable(),
+  mergedCommandIds: z.array(productIdSchema).optional(),
   receipt: productCommandReceiptSchema.nullable(),
 }).strict().refine(record => (record.state === 'decided') === (record.receipt !== null))
 export type ProductOutboxRecord = z.infer<typeof recordSchema>
@@ -110,23 +111,56 @@ export class ProductOutboxStore {
     })
   }
 
+  async mergeRecovery(representative: ProductOutboxRecord, duplicates: ProductOutboxRecord[]): Promise<ProductOutboxRecord> {
+    return this.#serial(async () => {
+      const retained = await this.#currentRecovery(representative)
+      const members = []
+      for (const duplicate of duplicates)
+        members.push(await this.#currentRecovery(duplicate))
+      const ids = new Set(retained.mergedCommandIds)
+      for (const member of members) {
+        ids.add(member.commandId)
+        for (const id of member.mergedCommandIds ?? [])
+          ids.add(id)
+      }
+      const merged = { ...retained, mergedCommandIds: [...ids].sort() }
+      await this.#write(merged)
+      for (const member of members)
+        await this.#archive(member)
+      return merged
+    })
+  }
+
+  async #currentRecovery(record: ProductOutboxRecord) {
+    const current = await this.#read(record.owner, record.commandId)
+    if (!current?.recovery || current.fingerprint !== record.fingerprint || current.state !== record.state || digest(current.recovery) !== digest(record.recovery) || digest(current.receipt) !== digest(record.receipt))
+      throw new Error('OUTBOX_RECORD_CHANGED')
+    return current
+  }
+
   archive(record: ProductOutboxRecord): Promise<ProductOutboxRecord> {
     return this.#serial(async () => {
       const current = await this.#read(record.owner, record.commandId)
       if (!current || current.fingerprint !== record.fingerprint)
         throw new Error('OUTBOX_RECORD_CHANGED')
-      if (current.state !== 'decided' && current.state !== 'not_accepted')
-        throw new Error('OUTBOX_NOT_RECONCILED')
-      const archived = recordSchema.parse({ ...current, envelope: null, recovery: null })
-      const name = recordName(current.owner, current.commandId)
-      await writeStorageJson(join(this.directory, 'archive', name), archived)
-      await unlink(join(this.directory, name)).catch((error) => {
-        if (!isMissing(error))
-          throw error
-      })
-      await syncStorageDirectory(this.directory)
-      return archived
+      if (!current.envelope && !current.recovery)
+        return current
+      if (current.state !== record.state || digest(current.recovery) !== digest(record.recovery) || digest(current.receipt) !== digest(record.receipt))
+        throw new Error('OUTBOX_RECORD_CHANGED')
+      return this.#archive(current)
     })
+  }
+
+  async #archive(current: ProductOutboxRecord): Promise<ProductOutboxRecord> {
+    if (current.state !== 'decided' && current.state !== 'not_accepted')
+      throw new Error('OUTBOX_NOT_RECONCILED')
+    const { mergedCommandIds: _, ...original } = current
+    const archived = recordSchema.parse({ ...original, envelope: null, recovery: null })
+    const name = recordName(current.owner, current.commandId)
+    await writeStorageJson(join(this.directory, 'archive', name), archived)
+    await unlink(join(this.directory, name))
+    await syncStorageDirectory(this.directory)
+    return archived
   }
 
   #update(record: ProductOutboxRecord, update: (current: ProductOutboxRecord) => ProductOutboxRecord): Promise<ProductOutboxRecord> {
@@ -188,6 +222,9 @@ function validateRecord(record: ProductOutboxRecord): void {
 function recordName(owner: ProductOutboxOwner, commandId: string): string {
   return `${digest({ ...owner, commandId })}.json`
 }
+export function productRecoveryDigest(value: unknown): string {
+  return digest(value)
+}
 function digest(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex')
 }
@@ -199,6 +236,6 @@ function canonical(value: unknown): unknown {
   return value
 }
 
-export function productOutboxRecordId(record: ProductOutboxRecord): string {
+export function productOutboxRecordId(record: Pick<ProductOutboxRecord, 'owner' | 'commandId'>): string {
   return digest({ owner: record.owner, commandId: record.commandId })
 }

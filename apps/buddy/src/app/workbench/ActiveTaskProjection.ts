@@ -7,6 +7,7 @@ export class ActiveTaskProjection {
   readonly #taskId = shallowRef<string | null>(null)
   readonly taskId = computed(() => this.#taskId.value)
   readonly #active = shallowRef<TaskCapability | null>(null)
+  readonly focused = computed(() => this.#active.value)
   readonly current = computed(() => this.#active.value?.workspace.restoration.state.value === 'ready' ? this.#active.value : null)
   readonly #subscriptions: (() => void)[]
 
