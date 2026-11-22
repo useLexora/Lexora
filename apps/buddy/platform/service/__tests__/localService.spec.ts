@@ -78,10 +78,11 @@ it('isolates oversized RPC failures and reassembles simultaneous history reads o
   const body = { text: '界🙂'.repeat(180000) }
   const serverPeer = f.peers[0]!
   serverPeer.onRequest('large', () => body)
+  serverPeer.onRequest('conversations.getHistoryEntries', () => body)
   serverPeer.onRequest('conversations.listTimeline', () => body)
   await expect(client.request('large', {})).rejects.toMatchObject({ data: { code: 'RPC_PAYLOAD_TOO_LARGE' } })
   await expect(client.request('echo', body)).rejects.toMatchObject({ code: 'RPC_PAYLOAD_TOO_LARGE' })
-  const values = await Promise.all([client.request('conversations.listTimeline', {}), client.request('echo', 17), client.request('conversations.listTimeline', {})])
+  const values = await Promise.all([client.request('conversations.listTimeline', {}), client.request('echo', 17), client.request('conversations.getHistoryEntries', {})])
   expect(values).toEqual([body, 17, body])
   expect(client.closed).toBe(false)
 })

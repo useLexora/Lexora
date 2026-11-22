@@ -268,15 +268,17 @@ describe('progressive task history', () => {
     const f = fixture()
     await f.history.ensureScope(null)
     const pending = deferred<readonly LocalConversationHistoryItem[]>()
+    const started = deferred<void>()
     let intercepted = false
     f.interceptLookup((ids) => {
       if (ids.includes('task-0') && !intercepted) {
         intercepted = true
+        started.resolve()
         return pending.promise
       }
     })
     const pinning = f.setPinnedIds(['task-0'])
-    await Promise.resolve()
+    await started.promise
     const next = { ...item(0), markState: { ...item(0).markState, resultRunId: 'new-result', unread: true } }
     f.replace(next)
     await f.refreshAttention()

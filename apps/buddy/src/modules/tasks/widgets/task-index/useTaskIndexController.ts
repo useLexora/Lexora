@@ -24,7 +24,7 @@ interface UseTaskIndexControllerOptions extends TaskIndexManagementOptions {
   activities: () => TaskIndex['activities']['value']
   activeConversationId: () => string | null
   history: () => TaskIndex['history']
-  onHistoryError: () => void
+  onHistoryError: (operation: 'active' | 'scope' | 'more' | 'reveal', error: unknown) => void
   markStates: () => ReadonlyMap<string, LocalTaskMarkState>
   onUpdatePinnedItems: (items: DesktopTaskPinnedItem[]) => void
   pinnedItems: Readonly<Ref<ReadonlyArray<DesktopTaskPinnedItem>>>
@@ -82,9 +82,9 @@ export function useTaskIndexController(options: UseTaskIndexControllerOptions) {
 
   watch(options.activeConversationId, (id) => {
     const version = ++revealVersion
-    void options.history().setActiveTask(id).catch(() => {
+    void options.history().setActiveTask(id).catch((error) => {
       if (!disposed && version === revealVersion)
-        options.onHistoryError()
+        options.onHistoryError('active', error)
     })
   }, { immediate: true })
 
@@ -143,10 +143,10 @@ export function useTaskIndexController(options: UseTaskIndexControllerOptions) {
           await options.history().ensureScope(spaceId)
         return true
       }
-      catch {
+      catch (error) {
         if (!disposed) {
           failedHistoryScopes.value = new Set([...failedHistoryScopes.value, key])
-          options.onHistoryError()
+          options.onHistoryError(more ? 'more' : 'scope', error)
         }
         return false
       }
@@ -190,9 +190,9 @@ export function useTaskIndexController(options: UseTaskIndexControllerOptions) {
       revealTarget.value = { rowKey: `conversation:${task.id}` }
       return true
     }
-    catch {
+    catch (error) {
       if (!disposed && version === revealVersion)
-        options.onHistoryError()
+        options.onHistoryError('reveal', error)
       return false
     }
   }

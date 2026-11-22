@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { isLocalChatErrorCode } from '../runtime/localChatError'
 import { applicationDiagnosticSchema } from './applicationDiagnostic'
 
 export const rendererDiagnosticSchema = applicationDiagnosticSchema.pick({
@@ -13,6 +14,10 @@ export const rendererDiagnosticSchema = applicationDiagnosticSchema.pick({
   count: true,
 }).extend({
   event: z.enum([
+    'workbench.history.active_failed',
+    'workbench.history.scope_failed',
+    'workbench.history.more_failed',
+    'workbench.history.reveal_failed',
     'workbench.copy.registered',
     'workbench.copy.restored',
     'workbench.copy.released',
@@ -41,6 +46,7 @@ export const rendererDiagnosticSchema = applicationDiagnosticSchema.pick({
     'workbench.contributions.registered',
     'workbench.contributions.removed',
   ]),
+  errorCode: z.string().refine(isLocalChatErrorCode).optional(),
   operationId: z.uuid().optional(),
   sourceSequence: z.number().int().positive(),
   occurredAt: z.iso.datetime(),

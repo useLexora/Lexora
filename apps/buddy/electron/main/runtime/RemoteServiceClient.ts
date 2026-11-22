@@ -1,3 +1,4 @@
+import type { ApplicationDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { RuntimeLifecycleChange, RuntimeLifecycleSnapshot } from '../../../shared/lifecycle/runtimeLifecycle'
 import type { DesktopClientRequestMethod, DesktopHostRequestMethod } from '../../../shared/runtime/desktopHostRequests'
 import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
@@ -17,6 +18,7 @@ function reconnecting(cause?: unknown) {
 export class RemoteServiceClient {
   readonly #bootstrap: ServiceHostBootstrap
   readonly #host: RuntimeRpcPeerContract
+  readonly #report: ApplicationDiagnosticReporter
   readonly #changes = new Emitter<BuddyServiceSupervisorState>(() => {})
   readonly #lifecycle = new Emitter<RuntimeLifecycleChange>(() => {})
   readonly #notifications = new Emitter<BuddyServiceNotification>(() => {})
@@ -31,7 +33,8 @@ export class RemoteServiceClient {
   #closed = false
   #transitioning = false
 
-  constructor(bootstrap: ServiceHostBootstrap, host: RuntimeRpcPeerContract) {
+  constructor(bootstrap: ServiceHostBootstrap, host: RuntimeRpcPeerContract, report: ApplicationDiagnosticReporter) {
+    this.#report = report
     this.#bootstrap = bootstrap
     this.#host = host
     this.#snapshot = { revision: 0, generation: bootstrap.identity.serviceInstanceId, status: 'stopped', maintenance: null, errorCode: null, connection: null, services: null }
@@ -222,10 +225,12 @@ export class RemoteServiceClient {
       if (peer.closed || this.#closed || !this.#daemonReady)
         throw new Error('SERVICE_CONNECTION_CLOSED')
       this.#peer = peer
-      peer.onDidClose(() => {
+      peer.onDidClose((rpcDisconnect) => {
         this.#peer = undefined
-        if (!this.#closed && this.#daemonReady && !this.#transitioning)
+        if (!this.#closed && this.#daemonReady && !this.#transitioning) {
           this.#setState('offline')
+          this.#report({ event: 'management.connection_closed', component: 'desktop.management', level: 'warn', generation: attached.generation, rpcDisconnect })
+        }
         this.#scheduleReconnect()
       })
       clearTimeout(this.#retry)

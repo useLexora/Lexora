@@ -7,13 +7,15 @@ import type { LocalSpace } from '@buddy-shared/spaces/spaceApi'
 import type { TaskIndex, TaskMarks } from '../../contracts'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { TaskSpaceInput } from '@/modules/tasks/state/task-index/typing'
+import { parseLocalChatPublicError } from '@buddy-shared/runtime/localChatError'
 import { Add20Regular, Tag20Regular } from '@vicons/fluent'
 import { NAlert, NButton, NInput, NModal, NTooltip, useMessage } from 'naive-ui'
-import { computed, shallowRef, toRef } from 'vue'
+import { computed, inject, shallowRef, toRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopSpaceDialog from '@/modules/tasks/widgets/task-index/DesktopSpaceDialog.vue'
 import DesktopTaskSearchDialog from '@/modules/tasks/widgets/task-index/DesktopTaskSearchDialog.vue'
 import { useTaskIndexController } from '@/modules/tasks/widgets/task-index/useTaskIndexController'
+import { rendererDiagnosticKey } from '@/platform/runtime/RendererDiagnostics'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopWorkspaceSidebarIdentity from '@/shared/ui/workspace-sidebar/DesktopWorkspaceSidebarIdentity.vue'
 import DesktopTaskArchiveAction from './DesktopTaskArchiveAction.vue'
@@ -54,6 +56,7 @@ const marksOpen = shallowRef(false)
 const searchOpen = shallowRef(false)
 const archiveTarget = shallowRef<LocalConversationSummary | null>(null)
 const message = useMessage()
+const report = inject(rendererDiagnosticKey, null)
 const taskMoveTargetId = shallowRef<string | null>(null)
 const taskMoveTarget = computed(() => props.tasks.find(task => task.id === taskMoveTargetId.value) ?? null)
 const taskMoveBusy = computed(() => Boolean(taskMoveTargetId.value && props.pendingConversationIds?.includes(taskMoveTargetId.value)))
@@ -73,7 +76,10 @@ const controller = useTaskIndexController({
   activities: () => props.activities,
   activeConversationId: () => props.activeConversationId,
   history: () => props.history,
-  onHistoryError: () => message.error(t('desktop.tasks.historyLoadFailed')),
+  onHistoryError: (operation, error) => {
+    report?.({ event: `workbench.history.${operation}_failed`, level: 'error', errorCode: error instanceof Error ? parseLocalChatPublicError(error.message)?.code : undefined })
+    message.error(t('desktop.tasks.historyLoadFailed'))
+  },
   getUntitledLabel: () => t('desktop.tasks.untitled'),
   markStates: () => props.marks.states.value,
   onCreateSpace: input => props.createSpace(input),
