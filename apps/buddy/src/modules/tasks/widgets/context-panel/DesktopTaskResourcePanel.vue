@@ -5,7 +5,7 @@ import type { TaskChatWorkspace } from '@/modules/tasks/contracts'
 import type { ContextPanelTab } from '@/modules/tasks/model/context-panel/taskContextPanel'
 import type { TaskResourcePanel } from '@/modules/tasks/state/context-panel/useTaskResourcePanel'
 import { useMessage } from 'naive-ui'
-import { computed } from 'vue'
+import { computed, shallowRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { useTaskEnvironment } from '@/modules/tasks/taskContext'
 import { useWorkbenchLaunchers } from '@/workbench/browser/useWorkbenchLaunchers'
@@ -30,6 +30,8 @@ const { actions, launch } = useWorkbenchLaunchers(controller)
 const { browser, browserGuests, clipboard } = useTaskEnvironment()
 const browserApi: DesktopBrowserApi = { ...browser, ensureSession: (conversationId, key) => props.panel.ensureBrowserSession(conversationId, key) }
 const activeTab = computed(() => props.panel.activeTab.value)
+const presentedBrowserTab = shallowRef<string | null>(null)
+const presentationPending = computed(() => activeTab.value?.kind === 'browser' && activeTab.value.id !== presentedBrowserTab.value)
 const tabs = computed<ContextPanelTab[]>(() => props.panel.tabs.value.map((tab) => {
   if (tab.kind === 'view')
     return { id: tab.id, pinned: tab.pinned, title: tab.label, dirty: tab.dirty, icon: 'file' }
@@ -57,7 +59,7 @@ async function add(id: string) {
 
 <template>
   <DesktopFileSpacePicker :show="panel.fileSpacePickerOpen.value" :spaces="panel.filePickerSpaces.value" :language="language" @update:show="panel.setFileSpacePickerOpen" @select="panel.openFiles" />
-  <DesktopTaskContextPanel :active-tab-id="activeTab?.id ?? null" :tabs="tabs" :language="language" :actions="actions" @add="add" @close-tab="panel.closeTab" @close-tabs="panel.closeTabs" @pin-tab="panel.setTabPinned" @select-tab="panel.selectTab">
+  <DesktopTaskContextPanel :active-tab-id="activeTab?.id ?? null" :presentation-pending="presentationPending" :tabs="tabs" :language="language" :actions="actions" @add="add" @close-tab="panel.closeTab" @close-tabs="panel.closeTabs" @pin-tab="panel.setTabPinned" @select-tab="panel.selectTab">
     <template v-if="$slots['header-actions']" #header-actions>
       <slot name="header-actions" />
     </template>
@@ -70,7 +72,7 @@ async function add(id: string) {
       </template>
     </DesktopFilesContextSurface>
     <DesktopChangesContextSurface :tab="activeTab?.kind === 'changes' ? activeTab : null" :context="context" :has-tab="panel.hasTab" :language="language" />
-    <DesktopBrowserContextSurface :tab="activeTab?.kind === 'browser' ? activeTab : null" :api="browserApi" :guest-host="browserGuests" :state="panel.activeBrowserState.value" :update-state="panel.updateBrowserState" :session-ready="panel.retainBrowserSession" :language="language" :visible="visible && activeTab?.kind === 'browser'" />
+    <DesktopBrowserContextSurface :tab="activeTab?.kind === 'browser' ? activeTab : null" :api="browserApi" :guest-host="browserGuests" :state="panel.activeBrowserState.value" :update-state="panel.updateBrowserState" :session-ready="panel.retainBrowserSession" :language="language" :visible="visible && activeTab?.kind === 'browser'" @presented="presentedBrowserTab = $event" />
     <DesktopArtifactContextSurface v-if="activeTab?.kind === 'artifact'" :key="activeTab.id" :artifact="activeTab.artifact" :provider-id="activeTab.providerId" :tab-id="activeTab.id" :visible="visible" :language="language" :view-mode="activeTab.viewMode" :read-artifact-text="context.readArtifactText" :write-clipboard-text="clipboard.writeText" @update:view-mode="panel.setArtifactViewMode(activeTab.id, $event)" />
     <slot v-if="activeTab?.kind === 'view'" name="view" :view-id="activeTab.viewId" />
   </DesktopTaskContextPanel>

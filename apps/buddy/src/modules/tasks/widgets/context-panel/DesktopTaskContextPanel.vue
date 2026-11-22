@@ -9,6 +9,7 @@ import WorkbenchResourcePanel from '@/workbench/browser/WorkbenchResourcePanel.v
 
 defineProps<{
   activeTabId: string | null
+  presentationPending?: boolean
   actions: readonly WorkbenchLauncherAction[]
   language: BuddyLocale
   tabs: readonly ContextPanelTab[]
@@ -24,7 +25,7 @@ defineSlots<{ 'default'?: () => unknown, 'header-actions'?: () => unknown, 'tool
 </script>
 
 <template>
-  <WorkbenchResourcePanel :active-tab-id="activeTabId" :tabs="tabs" :language="language" :actions="actions" @add="emit('add', $event)" @close-tab="emit('closeTab', $event)" @close-tabs="emit('closeTabs', $event)" @pin-tab="(id, pinned) => emit('pinTab', id, pinned)" @select-tab="emit('selectTab', $event)">
+  <WorkbenchResourcePanel :active-tab-id="activeTabId" :presentation-pending="presentationPending" :tabs="tabs" :language="language" :actions="actions" @add="emit('add', $event)" @close-tab="emit('closeTab', $event)" @close-tabs="emit('closeTabs', $event)" @pin-tab="(id, pinned) => emit('pinTab', id, pinned)" @select-tab="emit('selectTab', $event)">
     <template #icon="{ tab }">
       <FileIcon v-if="tab.icon === 'file'" :name="tab.fileName ?? tab.title" />
       <FolderIcon v-else-if="tab.icon === 'folder'" class="desktop-task-context-panel__folder-icon w-4 h-4 flex-none" />

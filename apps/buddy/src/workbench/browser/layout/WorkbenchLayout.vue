@@ -103,7 +103,7 @@ const {
     </div>
     <div
       v-if="sidebarResizable && sidebarVisible()"
-      class="desktop-workbench-layout__resizer desktop-workbench-layout__sidebar-resizer relative z-11 w-[1px] h-full cursor-col-resize mr-[-1px] flex-[0_0_1px] outline-0 touch-none after:bg-transparent hover:after:bg-accent focus-visible:after:bg-accent"
+      class="desktop-workbench-layout__resizer desktop-workbench-layout__sidebar-resizer relative z-11 w-[1px] h-full cursor-col-resize mr-px flex-[0_0_1px] outline-0 touch-none after:bg-transparent hover:after:bg-accent focus-visible:after:bg-accent"
       :class="{ 'is-active after:bg-accent': activePanel === 'sidebar' }"
       data-testid="workbench-sidebar-resizer"
       role="separator"
@@ -120,7 +120,7 @@ const {
     />
     <div
       v-else-if="sidebarResizable && sidebarCollapsible && sidebarToggleVisible"
-      class="desktop-workbench-layout__sidebar-collapsed-boundary relative z-12 w-[1px] h-full mr-[-1px]"
+      class="desktop-workbench-layout__sidebar-collapsed-boundary relative z-12 w-[1px] h-full mr-px"
       @pointerenter="updateSidebarTogglePosition"
       @pointermove="updateSidebarTogglePosition"
     />
@@ -155,7 +155,7 @@ const {
       </aside>
       <div
         v-if="index === 0 && $slots.context && contextVisible && !maximized"
-        class="desktop-workbench-layout__resizer relative z-11 w-[1px] h-full cursor-col-resize mr-[-1px] flex-[0_0_1px] outline-0 touch-none after:bg-transparent hover:after:bg-accent focus-visible:after:bg-accent"
+        class="desktop-workbench-layout__resizer relative z-11 w-[1px] h-full cursor-col-resize mr-px flex-[0_0_1px] outline-0 touch-none after:bg-transparent hover:after:bg-accent focus-visible:after:bg-accent"
         :class="{ 'is-active after:bg-accent': activePanel === 'context' }"
         data-testid="workbench-context-resizer"
         role="separator"

@@ -30,6 +30,7 @@ const props = defineProps<{
   language: BuddyLocale
   visible: boolean
 }>()
+const emit = defineEmits<{ presented: [tabId: string | null] }>()
 const { t } = useBuddyI18n(() => props.language)
 const message = useMessage()
 const browserTab = toRef(() => props.tab)
@@ -49,6 +50,8 @@ const browserView = useBrowserContextSurface({
 const { address, openAddress, updateAddress } = useBrowserAddress(browserView.state, browserView.navigate)
 const browserState = browserView.state
 const browserFailed = computed(() => browserView.failed.value || browserState.value?.status === 'error')
+const displayReady = computed(() => browserView.presented.value || browserFailed.value)
+watch(() => displayReady.value ? browserTab.value?.id ?? null : null, id => emit('presented', id), { flush: 'sync' })
 const selectionReferences = useSelectionReferences()
 const browserViewId = computed(() => `browser:${browserTab.value?.id ?? ''}`)
 const pickerOwner = computed(() => JSON.stringify([browserTab.value?.scope, browserState.value?.sessionId, browserState.value?.pageId, browserState.value?.documentVersion, browserState.value?.url]))
@@ -90,13 +93,17 @@ watch(() => browserState.value?.controller, (controller, previous) => {
   else if (previous === 'agent')
     controlAnnouncement.value = t('desktop.context.browserAgentPaused')
 })
-const busyAction = computed<BrowserToolbarBusyAction | null>(() => browserView.isSwitchingProfile.value
-  ? 'profile'
-  : browserView.isCapturingScreenshot.value
-    ? 'screenshot'
-    : browserView.isOpeningExternal.value
-      ? 'external'
-      : browserView.isShowingFileInFolder.value ? 'folder' : browserView.isSettingZoom.value ? 'zoom' : null)
+const busyAction = computed<BrowserToolbarBusyAction | null>(() => {
+  if (browserView.isSwitchingProfile.value)
+    return 'profile'
+  if (browserView.isCapturingScreenshot.value)
+    return 'screenshot'
+  if (browserView.isOpeningExternal.value)
+    return 'external'
+  if (browserView.isShowingFileInFolder.value)
+    return 'folder'
+  return browserView.isSettingZoom.value ? 'zoom' : null
+})
 async function captureScreenshot() {
   const result = await browserView.captureScreenshot()
   if (result === 'saved' || result === 'copied')
@@ -125,7 +132,7 @@ function browserMenu(action: BrowserToolbarMenuActionKey) {
 <template>
   <WorkbenchPanelContent v-if="browserTab">
     <template #toolbar>
-      <div class="relative min-w-0 flex-1">
+      <div v-if="displayReady" class="relative min-w-0 flex-1">
         <DesktopBrowserToolbar :picking="picker.picking.value" :pick-label="t('desktop.context.browserPickElement')" :pick-disabled="!selectionReferences || browserState?.status !== 'ready' || browserState?.controller === 'agent' || busyAction !== null" :address="address" :busy-action="busyAction" :language="language" :state="browserState" @back="browserView.goBack" @forward="browserView.goForward" @navigate="openAddress" @reload="browserView.reload" @stop="browserView.stop" @update:address="updateAddress" @menu="browserMenu" @zoom="setZoom" @pick="picker.toggle" />
         <DesktopBrowserLoadingBar :key="browserTab.id" :loading="browserView.isLoading.value" :failed="browserFailed" :language="language" />
       </div>
@@ -174,7 +181,7 @@ function browserMenu(action: BrowserToolbarMenuActionKey) {
         data-testid="browser-guest-surface"
         role="group"
         :aria-label="t('desktop.context.browserViewport')"
-        :aria-busy="browserView.isLoading.value"
+        :aria-busy="!displayReady || browserView.isLoading.value"
       >
         <DesktopBrowserErrorPage v-if="browserFailed" :state="browserState" :initialization-failed="browserView.failed.value" :language="language" @retry="browserView.retry" />
         <div v-else ref="surfaceElement" class="absolute inset-0" />

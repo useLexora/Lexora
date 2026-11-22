@@ -53,8 +53,8 @@ export function useBrowserContextSurface(options: UseBrowserContextSurfaceOption
     lifecycle += 1
   })
 
-  useBrowserSurface({
-    api: options.api,
+  const presented = useBrowserSurface({
+    pageId: computed(() => state.value?.pageId ?? null),
     element: options.surfaceElement,
     visible: options.visible,
     guestHost: options.guestHost,
@@ -299,6 +299,7 @@ export function useBrowserContextSurface(options: UseBrowserContextSurfaceOption
     isTakingControl: readonly(isTakingControl),
     navigate,
     openExternal,
+    presented,
     reload,
     retry,
     setProfileMode,

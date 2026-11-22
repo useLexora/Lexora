@@ -4,7 +4,7 @@ import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { Add20Regular, Dismiss16Regular, Pin16Regular } from '@vicons/fluent'
 import { useResizeObserver } from '@vueuse/core'
 import { NDropdown, NPopover } from 'naive-ui'
-import { nextTick, shallowRef, useId, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, shallowRef, useId, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { scrollWheelHorizontally } from '@/shared/lib/scrollWheelHorizontally'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
@@ -13,6 +13,7 @@ import WorkbenchLauncherIcon from './WorkbenchLauncherIcon.vue'
 
 const props = defineProps<{
   activeTabId: string | null
+  presentationPending?: boolean
   actions: readonly WorkbenchLauncherAction[]
   language: BuddyLocale
   tabs: readonly Tab[]
@@ -26,6 +27,7 @@ const emit = defineEmits<{
 }>()
 defineSlots<{ 'default'?: () => unknown, 'header-actions'?: () => unknown, 'toolbar'?: () => unknown, 'icon'?: (props: { tab: Tab }) => unknown }>()
 const { t } = useBuddyI18n(() => props.language)
+const selectedTabId = computed(() => props.presentationPending ? null : props.activeTabId)
 const panelId = `context-${useId()}`
 const menuOpen = shallowRef(false)
 const tabMenu = useResourcePanelMenu({
@@ -68,7 +70,7 @@ async function revealActiveTab() {
   await nextTick()
   tabsScrollRoot.value?.querySelector('[aria-selected="true"]')?.closest('.desktop-task-context-panel__tab')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
 }
-watch(() => [props.activeTabId, props.tabs.length], revealActiveTab)
+watch(() => [selectedTabId.value, props.tabs.length], revealActiveTab)
 useResizeObserver(tabsScrollRoot, revealActiveTab)
 </script>
 
@@ -78,13 +80,13 @@ useResizeObserver(tabsScrollRoot, revealActiveTab)
     <header class="desktop-task-context-panel__header flex min-w-0 flex-none items-stretch border-b-1 border-b-solid border-b-border bg-surface h-region-header" :style="{ '--tab-count': tabs.length }" data-theme-surface="header">
       <div v-if="tabs.length" ref="tabsScrollRoot" class="desktop-task-context-panel__tabs-scroll min-w-0 overflow-x-auto" @wheel="scrollWheelHorizontally">
         <div class="desktop-task-context-panel__tabs flex w-full min-w-[calc(var(--tab-count)_*_7.5rem)] h-full items-center gap-1 py-0 px-[0.375rem]" role="tablist" :aria-label="t('desktop.context.tabCount', { count: tabs.length })">
-          <div v-for="(tab, index) in tabs" :key="tab.id" :data-pinned="!!tab.pinned" class="desktop-task-context-panel__tab relative flex h-8 min-w-30 max-w-56 items-center overflow-hidden border-0 rounded-icon" :class="tab.id === activeTabId ? 'is-active bg-nav-selected text-nav-foreground hover:bg-nav-selected-hover active:bg-nav-pressed' : 'bg-transparent text-muted hover:(bg-hover text-strong) active:bg-pressed'" @contextmenu.prevent="tabMenu.open(tab.id, $event)">
-            <button :id="`${panelId}-${tab.id}`" class="desktop-task-context-panel__tab-select flex min-w-0 h-full flex-1 items-center gap-[0.375rem] border-0 bg-transparent text-inherit cursor-pointer pt-0 pr-[0.2rem] pb-0 pl-[0.625rem] text-left ui-focus-ring" role="tab" type="button" :tabindex="tab.id === activeTabId ? 0 : -1" :aria-controls="panelId" :aria-selected="tab.id === activeTabId" @keydown="navigateTab($event, index)" @auxclick.middle.prevent="emit('closeTab', tab.id)" @click="emit('selectTab', tab.id)">
+          <div v-for="(tab, index) in tabs" :key="tab.id" :data-pinned="!!tab.pinned" class="desktop-task-context-panel__tab relative flex h-8 min-w-30 max-w-56 items-center overflow-hidden border-0 rounded-icon" :class="tab.id === selectedTabId ? 'is-active bg-nav-selected text-nav-foreground hover:bg-nav-selected-hover active:bg-nav-pressed' : 'bg-transparent text-muted hover:(bg-hover text-strong) active:bg-pressed'" @contextmenu.prevent="tabMenu.open(tab.id, $event)">
+            <button :id="`${panelId}-${tab.id}`" class="desktop-task-context-panel__tab-select flex min-w-0 h-full flex-1 items-center gap-[0.375rem] border-0 bg-transparent text-inherit cursor-pointer pt-0 pr-[0.2rem] pb-0 pl-[0.625rem] text-left ui-focus-ring" role="tab" type="button" :tabindex="tab.id === activeTabId ? 0 : -1" :aria-controls="panelId" :aria-selected="tab.id === selectedTabId" @keydown="navigateTab($event, index)" @auxclick.middle.prevent="emit('closeTab', tab.id)" @click="emit('selectTab', tab.id)">
               <slot name="icon" :tab="tab" />
               <span>{{ tab.title }}</span>
               <span v-if="tab.dirty" class="flex-none" data-document-dirty :aria-label="language === 'en-US' ? 'Unsaved' : '未保存'">●</span>
             </button>
-            <button class="desktop-task-context-panel__tab-close grid flex-none place-items-center border-0 rounded-icon bg-transparent cursor-pointer w-6 h-6 mr-1 ui-focus-ring" :class="tab.id === activeTabId ? 'text-inherit hover:bg-nav-selected-hover' : 'text-muted hover:(bg-hover text-strong)'" type="button" :aria-label="tab.pinned ? t('desktop.context.unpin') : t('desktop.context.closeTab', { name: tab.title })" @click="tab.pinned ? emit('pinTab', tab.id, false) : emit('closeTab', tab.id)">
+            <button class="desktop-task-context-panel__tab-close grid flex-none place-items-center border-0 rounded-icon bg-transparent cursor-pointer w-6 h-6 mr-1 ui-focus-ring" :class="tab.id === selectedTabId ? 'text-inherit hover:bg-nav-selected-hover' : 'text-muted hover:(bg-hover text-strong)'" type="button" :aria-label="tab.pinned ? t('desktop.context.unpin') : t('desktop.context.closeTab', { name: tab.title })" @click="tab.pinned ? emit('pinTab', tab.id, false) : emit('closeTab', tab.id)">
               <DesktopIcon :component="tab.pinned ? Pin16Regular : Dismiss16Regular" />
             </button>
           </div>
@@ -109,7 +111,7 @@ useResizeObserver(tabsScrollRoot, revealActiveTab)
     <div v-if="$slots.toolbar" class="flex min-w-0 flex-none min-h-[var(--buddy-context-toolbar-height)] items-center border-b-1 border-b-solid border-b-border">
       <slot name="toolbar" />
     </div>
-    <div v-show="activeTabId" :id="panelId" class="flex flex-1 min-w-0 min-h-0 overflow-hidden" role="tabpanel" :aria-labelledby="activeTabId ? `${panelId}-${activeTabId}` : undefined">
+    <div v-show="activeTabId" :id="panelId" class="flex flex-1 min-w-0 min-h-0 overflow-hidden" role="tabpanel" :aria-busy="presentationPending || undefined" :aria-labelledby="activeTabId ? `${panelId}-${activeTabId}` : undefined">
       <slot />
     </div>
     <div v-if="!activeTabId" class="grid min-w-0 min-h-0 flex-1 place-items-center">
