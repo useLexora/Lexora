@@ -84,7 +84,7 @@ export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP
     instances.push(instance)
     return instance
 
-    async function launch({ maintenance = false, profileRoot = home, expectedRoot = profileRoot, startupStatus = 'ready', storageAuthority = 'legacy_jsonl', serviceMode = 'utility' } = {}) {
+    async function launch({ maintenance = false, profileRoot = home, expectedRoot = profileRoot, startupStatus = 'ready', storageAuthority = 'legacy_jsonl', serviceMode = 'utility', beforeDesktopOpen } = {}) {
       assert(['ready', 'failed'].includes(startupStatus), 'Unsupported startup expectation')
       assert(contains(instancesRoot, await canonicalPath(expectedRoot)), 'Expected root must stay in this isolated test run')
       const { _electron: electron, expect } = await import('@playwright/test')
@@ -107,7 +107,7 @@ export async function createBuddyTestRun({ appPath = process.env.LEXORA_TEST_APP
       try {
         const args = [...(process.platform === 'linux' ? ['--ozone-platform=x11', '--disable-setuid-sandbox'] : []), ...(passwordStore ? [`--password-store=${passwordStore}`] : []), '--disable-gpu']
         application = serviceMode === 'daemon'
-          ? await launchDaemonDesktop({ home: profileRoot, buddyRoot, hostExecutable: require('electron'), hostArguments: args, environment, artifactDirectory })
+          ? await launchDaemonDesktop({ home: profileRoot, buddyRoot, hostExecutable: require('electron'), hostArguments: args, environment, artifactDirectory, beforeDesktopOpen })
           : instanceExecutablePath
             ? await launchInstalled(instanceExecutablePath, args, environment, { maintenance, artifactDirectory, launchNumber })
             : await electron.launch({ executablePath: require('electron'), args: [...args, path.resolve(appPath)], chromiumSandbox: true, cwd: repoRoot, env: environment, timeout: 45000 })
