@@ -46,7 +46,7 @@ test('Legacy local Android content remains intact and read only while unsupporte
     quotes: [{ id: 'frozen-quote', text: '引用原文😀', textOffset: 2, source: { conversationId: 'archived-task', branchId: 'archived-branch', messageId: 'archived-reply', role: 'assistant', runId: null } }],
     sessionReferences: [{ id: 'historical-session', title: '原来的任务' }],
   }
-  const saved = await page.evaluate(({ draft, content }) => window.lexoraDesktop.localChat.composerDrafts.save({ draftId: draft.draftId, expectedRevision: draft.revision, content, modelSelection: draft.modelSelection, executionConfig: draft.executionConfig, participants: draft.participants ?? null }), { draft, content })
+  const saved = await page.evaluate(({ draft, content }) => window.lexoraDesktop.localChat.composerDrafts.save({ draftId: draft.draftId, expectedRevision: draft.revision, content, modelSelection: draft.modelSelection, executionConfig: draft.executionConfig, participants: draft.participants ?? null }, draft.scope), { draft, content })
   const large = await page.evaluate(async (executionConfig) => {
     const id = crypto.randomUUID()
     return window.lexoraDesktop.localChat.composerDrafts.open({ draftId: id, scope: { kind: 'task', draftId: id, spaceId: null }, initialContent: { version: 1, body: [{ type: 'paragraph', content: [{ type: 'text', text: '大段内容'.repeat(30000) }] }], panelResourceIds: [] }, initialModelSelection: null, initialExecutionConfig: executionConfig })

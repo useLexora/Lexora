@@ -262,15 +262,16 @@ describe('buddy runtime cross-subsystem contract', () => {
     })
     try {
       await harness.invoke('providers.upsertCustom', offlineProviderConfig(provider.baseUrl))
+      const scope = { kind: 'global' } as const
       const opened = await gateway.request('composerDrafts.open', {
         draftId: 'desktop-draft',
-        scope: { kind: 'global' },
+        scope,
         initialContent: createBuddyUserContent('Original input'),
         initialExecutionConfig: { approvalPolicy: 'policy', executionProfile: 'workspace_write' },
         initialModelSelection: { modelId: 'offline-model', providerId: 'offline-provider', reasoning: null, serviceTier: null },
       }) as { draftId: string, revision: number }
       expect(opened).toMatchObject({ draftId: 'desktop-draft', revision: 0 })
-      const draft = await gateway.request('composerDrafts.save', { draftId: opened.draftId, expectedRevision: 0, content: createBuddyUserContent('Desktop committed input'), modelSelection: { modelId: 'offline-model', providerId: 'offline-provider', reasoning: null, serviceTier: null }, executionConfig: { approvalPolicy: 'policy', executionProfile: 'workspace_write' } }) as { draftId: string, revision: number }
+      const draft = await gateway.request('composerDrafts.save', { draftId: opened.draftId, expectedRevision: 0, content: createBuddyUserContent('Desktop committed input'), modelSelection: { modelId: 'offline-model', providerId: 'offline-provider', reasoning: null, serviceTier: null }, executionConfig: { approvalPolicy: 'policy', executionProfile: 'workspace_write' } }, { recoveryScope: scope }) as { draftId: string, revision: number }
       expect(draft.revision).toBe(1)
       const input = { draftId: draft.draftId, expectedRevision: draft.revision, requestId: 'desktop-start' }
       const turn = await gateway.request('chat.startTurn', input) as LocalTurnStart
@@ -286,11 +287,14 @@ describe('buddy runtime cross-subsystem contract', () => {
       expect(recovery).toMatchObject([{ state: 'rejected', method: 'conversations.rename', canRestore: false }])
       await gateway.acknowledgeRecovery(recovery[0]!.id)
       expect(await gateway.recover()).toEqual([])
-      await expect(gateway.request('composerDrafts.save', { draftId: draft.draftId, expectedRevision: 0, content: createBuddyUserContent('Recovered local input'), executionConfig: { approvalPolicy: 'policy', executionProfile: 'workspace_write' }, modelSelection: null })).rejects.toMatchObject({ code: 'DRAFT_CONFLICT' })
+      await expect(gateway.request('composerDrafts.save', { draftId: draft.draftId, expectedRevision: 0, content: createBuddyUserContent('Recovered local input'), executionConfig: { approvalPolicy: 'policy', executionProfile: 'workspace_write' }, modelSelection: null }, { recoveryScope: scope })).rejects.toMatchObject({ code: 'DRAFT_CONFLICT' })
       const [recoverable] = await gateway.recover()
       expect(recoverable).toMatchObject({ state: 'rejected', canRestore: true })
       const restoredId = await gateway.restoreRecovery(recoverable!.id)
       expect(createComposerDraftRepository(database).findById(restoredId)?.content.body).toEqual(createBuddyUserContent('Recovered local input').body)
+      expect(await gateway.recover(recoverable!.id)).toHaveLength(1)
+      expect(await gateway.restoreRecovery(recoverable!.id)).toBe(restoredId)
+      await gateway.acknowledgeRecovery(recoverable!.id)
       expect(await gateway.recover()).toEqual([])
     }
     finally {

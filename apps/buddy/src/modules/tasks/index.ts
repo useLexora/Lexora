@@ -1,10 +1,11 @@
-export type { TaskCapability, TaskChatWorkspace } from './contracts'
+export type { TaskCapability, TaskChatWorkspace, TaskDraftRestoration } from './contracts'
 export type { TaskContextTab } from './model/context-panel/taskContextPanel'
 export { createChatAgentActivityProjector } from './model/transcript/chatAgentActivities'
 export { createChatAgentTurnReducer } from './model/transcript/chatAgentTurn'
 export { projectDesktopTerminalTranscript } from './model/transcript/terminalTranscript'
 export { createFileLinkMenu } from './state/artifacts/createFileLinkMenu'
 export { useTaskResourcePanel } from './state/context-panel/useTaskResourcePanel'
+export { matchesDraftRecovery } from './state/drafts/matchedDraftRecovery'
 
 export { provideExecutionEnvironment } from './state/runs/chatExecutionContext'
 export { createUserQuestionInteractionState } from './state/runs/useUserQuestions'

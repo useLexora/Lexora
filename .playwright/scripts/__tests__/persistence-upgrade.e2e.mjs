@@ -150,7 +150,7 @@ async function createAttachmentDraft(page, text, attachment, draftId = randomUUI
     await api.composerResources.accept({ draftId, resources: [{ resourceId, name: '迁移附件.txt', mimeType: 'text/plain', sizeBytes: bytes.length }] })
     await api.composerResources.complete({ draftId, resourceId, bytes })
     draft = await api.composerDrafts.get(draftId)
-    return api.composerDrafts.save({ draftId, expectedRevision: draft.revision, content: { ...content, panelResourceIds: [resourceId] }, modelSelection: draft.modelSelection, executionConfig: draft.executionConfig })
+    return api.composerDrafts.save({ draftId, expectedRevision: draft.revision, content: { ...content, panelResourceIds: [resourceId] }, modelSelection: draft.modelSelection, executionConfig: draft.executionConfig }, draft.scope)
   }, { text, attachment, draftId, resourceId: randomUUID() })
 }
 

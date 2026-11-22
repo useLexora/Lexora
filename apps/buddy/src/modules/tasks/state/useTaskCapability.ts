@@ -42,14 +42,16 @@ import { useChatConversations } from './conversations/useChatConversations'
 import { useChatSession } from './conversations/useChatSession'
 import { useConversationTree } from './conversations/useConversationTree'
 import { useTaskMembers } from './conversations/useTaskMembers'
+import { createDraftConflictResolver } from './drafts/matchedDraftRecovery'
 import { useChatDrafts } from './drafts/useChatDrafts'
 import { useChatPermissionSettings } from './drafts/useChatPermissionSettings'
 import { useTaskActorModel } from './drafts/useTaskActorModel'
 import { useTaskDraftModelBinding } from './drafts/useTaskDraftModelBinding'
-import { useTaskModelPersistence } from './drafts/useTaskModelPersistence'
 
+import { useTaskModelPersistence } from './drafts/useTaskModelPersistence'
 import { useTaskModelSelection } from './drafts/useTaskModelSelection'
 import { useTaskWorkspacePersistence } from './drafts/useTaskWorkspacePersistence'
+
 import { useTaskLifecycle } from './useTaskLifecycle'
 
 export interface UseTaskCapabilityOptions {
@@ -747,7 +749,13 @@ export function useTaskCapability(options: UseTaskCapabilityOptions): TaskCapabi
       state: workspacePersistence.restorationState,
       conflict: workspacePersistence.restorationConflict,
       restore: lifecycle.refreshRuntimeDependentState,
-      resolveConflict: workspacePersistence.resolveConflict,
+      resolveConflict: createDraftConflictResolver({
+        conflict: workspacePersistence.restorationConflict,
+        resolve: workspacePersistence.resolveConflict,
+        runtime: api.localChat.runtime,
+        source: () => ({ conversationId: activeConversationId.value, branchId: activeBranchId.value, spaceId: spaceId.value }),
+        onError: setError,
+      }),
     },
     status: {
       isClosing: readonly(isClosing),

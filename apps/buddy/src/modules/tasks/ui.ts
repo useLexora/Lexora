@@ -8,6 +8,7 @@ export { default as BuddyChatPanelGroup } from './widgets/transcript/BuddyChatPa
 export { default as BuddyChatRunActivity } from './widgets/transcript/BuddyChatRunActivity.vue'
 
 export type { ChatReadingPositions } from './widgets/transcript/chatMessageViewport'
+export { default as DesktopDraftConflictDialog } from './widgets/workspace/DesktopDraftConflictDialog.vue'
 export { default as DesktopTaskEditor } from './widgets/workspace/DesktopTaskEditor.vue'
 export { default as DesktopTaskIndexView } from './widgets/workspace/DesktopTaskIndexView.vue'
 export { default as DesktopTaskViewProvider } from './widgets/workspace/DesktopTaskViewProvider.vue'

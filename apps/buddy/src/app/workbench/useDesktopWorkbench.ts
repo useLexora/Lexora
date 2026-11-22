@@ -175,8 +175,18 @@ export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: s
     const { branchId, ...placement } = destination
     return activateTask(taskResource(id, branchId), options.taskIndex.index.tasks.value.find(task => task.id === id)?.title ?? labels().tasks, placement)
   }
-  function openDraft(id: string): Promise<void> {
-    return activateTask(draftResource(id), labels().newTask, { direction: 'right' })
+  async function openRecoveredDraft(id: string, signal: AbortSignal): Promise<boolean> {
+    await activateTask(draftResource(id), labels().newTask, { direction: 'right', signal })
+    const opened = () => {
+      const view = controller.context.view
+      return !signal.aborted && router.currentRoute.value.path === '/tasks'
+        && view?.resource.scheme === 'draft' && view.resource.id === id
+        && activeTask.value?.workspace.composer.draftId.value === id
+    }
+    if (!opened())
+      return false
+    await persistence.flush()
+    return opened()
   }
   function newTask(destination: { spaceId?: string | null, paneId?: string, direction?: SplitDirection } = {}): Promise<void> {
     const { spaceId = null, paneId = center(), direction } = destination
@@ -470,7 +480,7 @@ export function useDesktopWorkbench(options: { beforeExtensionClose?: (viewId: s
     return saved
   }
   const selectionReferences = createDesktopSelectionReferences({ controller, pool, language, openFile: (target, current) => createFile(target, undefined, current), browser: api.browser, resources: options.resources, ready: () => initialized.value, independent: () => stores.applicationSettings.config.value?.desktop.contextPanelMode === 'independent', locateFile: target => api.localChat.spaces.readFile(target), navigationVersion: () => navigation.version })
-  return { selectionReferences, api, renderers, fileOperations, fileToolbarTargets, fileView, closeContextFiles, readingPositions, discardTask, prepareTaskDeletion, activeTask, activeTaskId, backupError, controller, copies, models, editors, pool, persistence, initialize, flush, dispose, openTask, openDraft, newTask, prepareNewTaskInput, showTaskInput, showReferencePage, startTaskWithSkill, openFile, dropResource, language, get initialized() {
+  return { selectionReferences, api, renderers, fileOperations, fileToolbarTargets, fileView, closeContextFiles, readingPositions, discardTask, prepareTaskDeletion, focusedTask: activity.focused, activeTask, activeTaskId, backupError, controller, copies, models, editors, pool, persistence, initialize, flush, dispose, openTask, openRecoveredDraft, newTask, prepareNewTaskInput, showTaskInput, showReferencePage, startTaskWithSkill, openFile, dropResource, language, get initialized() {
     return initialized.value
   }, get navigationVersion() {
     return navigation.version

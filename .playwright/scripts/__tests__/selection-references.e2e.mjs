@@ -170,7 +170,7 @@ test('mixed input materials preserve exact draft snapshots, resource bytes and a
       quotes: [{ id: 'message-snapshot', text: '    Frozen reply 文本\r\nKeep whitespace\n', textOffset: 7, source: { conversationId: 'source-conversation', branchId: 'source-branch', messageId: 'source-message', runId: null, role: 'assistant', author: { buddyId: 'original-author', name: '原作者' } } }],
       resourceQuotes: [{ id: 'file-snapshot', text: '    Frozen file snapshot\n', range: { startLineNumber: 2, startColumn: 3, endLineNumber: 3, endColumn: 7 }, source: { kind: 'file', title: 'source.md', file: { spaceId: 'source-space', directoryId: 'source-directory', revision: 3, path: 'source.md' }, format: 'source' } }],
     }
-    const saved = await api.composerDrafts.save({ draftId, expectedRevision: draft.revision, content, executionConfig: draft.executionConfig, modelSelection: draft.modelSelection })
+    const saved = await api.composerDrafts.save({ draftId, expectedRevision: draft.revision, content, executionConfig: draft.executionConfig, modelSelection: draft.modelSelection }, draft.scope)
     return { content: saved.content, resources: await api.composerResources.list(draftId) }
   }, { draftId, text })
   await page.reload()

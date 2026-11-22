@@ -12,21 +12,23 @@ import { conversationRequestSchemas, conversationResponseSchemas } from '../../.
 import { conversationArchivePolicySchema } from '../../../shared/conversation/conversationArchiveApi'
 import { APPROVAL_REVIEW_KINDS } from '../../../shared/permissions/approvalReviewPayload'
 import { productCommandIntents } from '../../../shared/productProtocol/methods'
-import { productConversationArchivePageSchema } from '../../../shared/productProtocol/queries'
+import { productConversationArchivePageSchema, productDraftSchema } from '../../../shared/productProtocol/queries'
 import { decodeSafeProductRevision, encodeProductRevision } from '../../../shared/productProtocol/scalars'
 import { desktopProductContentProject } from '../../../shared/productProtocol/transport'
 import { userQuestionRpc } from '../../../shared/questions/userQuestionApi'
 import { runsResponseSchemas } from '../../../shared/runs/runApi'
-import { DesktopProductCommands, isStaleReadReceipt } from './DesktopProductCommands'
+import { DesktopProductCommands } from './DesktopProductCommands'
 import { DesktopTaskSynchronization } from './DesktopTaskSynchronization'
-import { isProductOutboxOwner, productOutboxRecordId, ProductOutboxStore } from './ProductOutboxStore'
-import { ProductRecoveryNotifications, recoveryState } from './ProductRecoveryNotifications'
+import { isProductOutboxOwner, productOutboxRecordId, ProductOutboxStore, productRecoveryDigest } from './ProductOutboxStore'
+import { ProductRecoveryNotifications } from './ProductRecoveryNotifications'
+import { findRecoveryReview, recoveryRecordIds, reviewProductRecoveries } from './ProductRecoveryReview'
 import { ProductRpcClient } from './ProductRpcClient'
 
 const turnMethods = new Set(['chat.startTurn', 'chat.editUserMessage', 'chat.regenerateAssistant', 'chat.executeCommand'])
 const draftMethods = new Set(['composerDrafts.open', 'composerDrafts.save'])
 const questionMethods = new Set(['questions.answer', 'questions.cancel', 'questions.retry'])
 type Receipt = z.infer<typeof productCommandReceiptSchema>
+type RequestOptions = NonNullable<Parameters<DesktopRuntimeGateway['request']>[2]>
 
 export class ProductDesktopGateway implements DesktopRuntimeGateway {
   readonly #runtime: DesktopRuntimeGateway
@@ -39,6 +41,8 @@ export class ProductDesktopGateway implements DesktopRuntimeGateway {
   #current: ProductRpcClient | null = null
   readonly #delivering = new Set<{ client: ProductRpcClient, commandId: string }>()
   readonly #recoveryNotifications: ProductRecoveryNotifications
+  #recoveryTail: Promise<unknown> = Promise.resolve()
+  readonly #saving = new Set<Promise<unknown>>()
   #generation = 0
   #detach: (() => void) | null = null
 
@@ -46,7 +50,7 @@ export class ProductDesktopGateway implements DesktopRuntimeGateway {
     this.#runtime = runtime
     this.#version = version
     this.#commands = new DesktopProductCommands(new ProductOutboxStore(directory))
-    this.#recoveryNotifications = new ProductRecoveryNotifications(inbox, () => this.#recoveryOutcomes(), onNotificationError)
+    this.#recoveryNotifications = new ProductRecoveryNotifications(inbox, () => this.#serialRecovery(async () => (await this.#reviews()).map(review => review.item)), onNotificationError)
     const onStateChange = (state: unknown) => {
       if (state && typeof state === 'object' && 'status' in state && state.status === 'ready')
         void this.#recoveryNotifications.reconcile()
@@ -73,7 +77,21 @@ export class ProductDesktopGateway implements DesktopRuntimeGateway {
   onStateChange: DesktopRuntimeGateway['onStateChange'] = listener => this.#runtime.onStateChange(listener)
   restart: DesktopRuntimeGateway['restart'] = () => this.#runtime.restart()
 
-  async request(method: string, params: unknown, options?: { timeoutMs?: number, requestId?: string }): Promise<unknown> {
+  async request(method: string, params: unknown, options?: RequestOptions): Promise<unknown> {
+    const result = this.#request(method, params, options)
+    if (method === 'composerDrafts.save') {
+      this.#saving.add(result)
+      try {
+        return await result
+      }
+      finally {
+        this.#saving.delete(result)
+      }
+    }
+    return result
+  }
+
+  async #request(method: string, params: unknown, options?: RequestOptions, requiredClient?: ProductRpcClient): Promise<unknown> {
     if (method === 'conversations.listArchived' || method === 'conversations.getArchivePolicy') {
       const client = await this.#connect()
       const result = await client.request(method, params)
@@ -87,15 +105,20 @@ export class ProductDesktopGateway implements DesktopRuntimeGateway {
     const productMethod = method === 'approvals.approve' || method === 'approvals.deny' ? 'approvals.resolve' : method
     if (!Object.hasOwn(productCommandIntents, productMethod))
       return this.#runtime.request(method, params, options)
-    const client = await this.#connect()
+    const client = requiredClient ?? await this.#connect()
+    this.#assertClient(client)
     const input = objectInput(params)
     const intent = { ...input }
     const commandId = !questionMethods.has(method) && typeof intent.requestId === 'string' ? intent.requestId : options?.requestId ?? randomUUID()
+    if (!requiredClient && /^recovery-[a-f0-9]{64}$/.test(commandId))
+      throw gatewayError('VALIDATION_FAILED')
     if (!questionMethods.has(method))
       delete intent.requestId
     if (method === 'composerDrafts.open') {
       const current = objectInput(await client.request('composerDrafts.find', { scope: input.scope }))
       if (current.draft) {
+        if (requiredClient)
+          throw gatewayError('DRAFT_CONFLICT')
         const draft = objectInput(current.draft)
         return this.#runtime.request('composerDrafts.get', { draftId: draft.draftId }, options)
       }
@@ -130,32 +153,31 @@ export class ProductDesktopGateway implements DesktopRuntimeGateway {
       const active = objectInput(intent.expectedActiveRun)
       intent.expectedActiveRun = { ...active, generation: encodeProductRevision(Number(active.generation)) }
     }
-    const recovery = await this.#recoveryInput(method, input, client, commandId)
+    const recovery = await this.#recoveryInput(method, input, client, commandId, options?.recoveryScope)
+    this.#assertClient(client)
     const delivery = { client, commandId }
     this.#delivering.add(delivery)
     let outcome: DesktopCommandOutcome | undefined
     const finish = (needsReview: boolean) => {
       this.#delivering.delete(delivery)
-      if (!outcome || (needsReview && (this.#current !== client || isStaleReadReceipt(outcome.record)))) {
+      if (needsReview || method === 'composerDrafts.save')
         void this.#recoveryNotifications.reconcile()
-      }
-      else if (needsReview && (outcome.record.envelope || outcome.record.recovery)) {
-        this.#recoveryNotifications.publish(outcome)
-      }
-      else {
+      else if (outcome)
         this.#recoveryNotifications.withdraw(productOutboxRecordId(outcome.record))
-      }
     }
     try {
       outcome = await this.#commands.execute({ method: actualMethod as ProductCommandMethod, commandId, intent, recovery })
       if (outcome.state !== 'decided' || !outcome.record.receipt)
         throw gatewayError(outcome.state === 'trust_changed' ? 'AUTHENTICATION_REQUIRED' : 'COMMAND_RESULT_UNKNOWN')
       const receipt = outcome.record.receipt
-      if (receipt.decision === 'rejected')
+      if (receipt.decision === 'rejected') {
+        if (requiredClient)
+          await this.#commands.outbox.archive(outcome.record)
         throw gatewayError(receipt.errorCode ?? 'LOCAL_CHAT_OPERATION_FAILED')
+      }
       if (this.#current !== client)
         throw gatewayError('COMMAND_RESULT_UNKNOWN')
-      const result = await this.#projectResult(method, input, receipt, options)
+      const result = await this.#projectResult(method, input, receipt, options, Boolean(requiredClient))
       if (this.#current !== client)
         throw gatewayError('COMMAND_RESULT_UNKNOWN')
       void this.#commands.outbox.archive(outcome.record).then(() => finish(false), () => finish(true))
@@ -171,104 +193,149 @@ export class ProductDesktopGateway implements DesktopRuntimeGateway {
     return (await this.#connect()).identity
   }
 
-  async #recoveryOutcomes(id?: string) {
-    const available = (record: ProductOutboxRecord) => !Array.from(this.#delivering).some(delivery =>
-      delivery.commandId === record.commandId && isProductOutboxOwner(record.owner, delivery.client.identity))
-    const records = (await this.#commands.outbox.list()).filter(record => available(record) && (!id || productOutboxRecordId(record) === id))
-    if (!records.length)
-      return []
-    await this.#connect().catch(() => {})
-    return (await this.#commands.recover(records)).filter(outcome => available(outcome.record))
+  #serialRecovery<T>(operation: () => Promise<T>): Promise<T> {
+    const pending = this.#recoveryTail.then(operation, operation)
+    this.#recoveryTail = pending.catch(() => {})
+    return pending
   }
 
-  async recover(id?: string): Promise<ProductRecoveryItem[]> {
-    const outcomes = await this.#recoveryOutcomes(id)
-    if (id) {
-      if (outcomes[0])
-        this.#recoveryNotifications.publish(outcomes[0])
-      else
-        this.#recoveryNotifications.withdraw(id)
+  #assertClient(client: ProductRpcClient) {
+    if (this.#current !== client)
+      throw gatewayError('COMMAND_RESULT_UNKNOWN')
+  }
+
+  async #reviews() {
+    const generation = this.#generation
+    const assertCurrent = () => {
+      if (generation !== this.#generation)
+        throw gatewayError('COMMAND_RESULT_UNKNOWN')
     }
-    return outcomes.map((outcome) => {
-      const record = outcome.record
-      const state = recoveryState(outcome)
-      return {
-        id: productOutboxRecordId(record),
-        commandId: record.commandId,
-        method: record.method,
-        createdAt: record.createdAt,
-        state,
-        conversationId: record.receipt?.target.conversationId ?? null,
-        content: record.recovery?.content ?? null,
-        canRestore: (state === 'rejected' || state === 'not_accepted') && Boolean(record.recovery?.executionConfig) && this.#current !== null && isProductOutboxOwner(record.owner, this.#current.identity),
-      }
+    const available = (record: ProductOutboxRecord) => !Array.from(this.#delivering).some(delivery =>
+      delivery.commandId === record.commandId && isProductOutboxOwner(record.owner, delivery.client.identity))
+    const records = (await this.#commands.outbox.list()).filter(record => available(record) && (record.method !== 'composerDrafts.save' || record.recovery?.scope))
+    if (!records.length)
+      return []
+    const connection = await this.#connect().catch(() => null)
+    assertCurrent()
+    const outcomes = (await this.#commands.recover(records)).filter(outcome => available(outcome.record))
+    return reviewProductRecoveries({ outcomes, connection, assertCurrent, outbox: this.#commands.outbox, readLocalDraft: draftId => this.#runtime.request('composerDrafts.get', { draftId }) })
+  }
+
+  recover(id?: string): Promise<ProductRecoveryItem[]> {
+    return this.#serialRecovery(async () => {
+      const reviews = await this.#reviews()
+      this.#recoveryNotifications.replace(reviews.map(review => review.item))
+      if (!id)
+        return reviews.map(review => review.item)
+      const review = findRecoveryReview(reviews, id)
+      return review ? [review.item] : []
     })
   }
 
-  async acknowledgeRecovery(id: string): Promise<void> {
-    const [outcome] = await this.#recoveryOutcomes(id)
-    if (!outcome)
-      throw gatewayError('OBJECT_DELETED')
-    if (outcome.state !== 'decided' && outcome.state !== 'not_accepted')
-      throw gatewayError('COMMAND_RESULT_UNKNOWN')
-    await this.#commands.outbox.archive(outcome.record)
-    this.#recoveryNotifications.withdraw(id)
+  acknowledgeRecovery(id: string): Promise<void> {
+    const pending = [...this.#saving]
+    return this.#serialRecovery(async () => {
+      await Promise.allSettled(pending)
+      const client = await this.#connect()
+      const review = findRecoveryReview(await this.#reviews(), id)
+      this.#assertClient(client)
+      if (!review) {
+        this.#recoveryNotifications.withdraw(id)
+        return
+      }
+      if (!isProductOutboxOwner(review.record.owner, client.identity) || !['accepted', 'rejected', 'not_accepted'].includes(review.item.state))
+        throw gatewayError('COMMAND_RESULT_UNKNOWN')
+      await this.#commands.outbox.archive(review.record)
+      this.#recoveryNotifications.withdraw(review.item.id)
+    })
   }
 
-  async restoreRecovery(id: string): Promise<string> {
+  restoreRecovery(id: string): Promise<string> {
+    const pending = [...this.#saving]
+    return this.#serialRecovery(async () => {
+      await Promise.allSettled(pending)
+      return this.#restoreRecovery(id)
+    })
+  }
+
+  async #restoreRecovery(id: string): Promise<string> {
     const client = await this.#connect()
-    const outcome = await this.#commands.reconcile(await this.#recoveryRecord(id))
-    const source = outcome.record.recovery
-    if (!isProductOutboxOwner(outcome.record.owner, client.identity) || !source?.executionConfig
-      || !(outcome.state === 'not_accepted' || (outcome.state === 'decided' && outcome.record.receipt?.decision === 'rejected'))) {
+    const review = findRecoveryReview(await this.#reviews(), id)
+    this.#assertClient(client)
+    if (!review)
+      throw gatewayError('OBJECT_DELETED')
+    const { record, item } = review
+    const source = record.recovery
+    if (!isProductOutboxOwner(record.owner, client.identity) || !item.canRestore || !source?.executionConfig)
       throw gatewayError('COMMAND_RESULT_UNKNOWN')
-    }
-    const commandId = `recovery-${id}`
-    const previous = await this.#commands.outbox.read(outboxOwner(client), commandId)
-    if (previous) {
-      const recovered = await this.#commands.reconcile(previous)
-      if (recovered.state !== 'decided' || recovered.record.receipt?.decision !== 'accepted' || !recovered.record.receipt.target.draftId)
+    const getDraft = async (draftId: string) => {
+      const draft = productDraftSchema.nullable().parse(await client.request('composerDrafts.get', { draftId }))
+      this.#assertClient(client)
+      if (draft && (draft.draftId !== draftId || !draft.writable || draft.ownerDeviceId !== client.identity.deviceId))
         throw gatewayError('COMMAND_RESULT_UNKNOWN')
-      await this.#commands.outbox.archive(outcome.record)
-      this.#recoveryNotifications.withdraw(id)
-      return recovered.record.receipt.target.draftId
+      return draft
     }
-    const current = await client.request('composerDrafts.get', { draftId: source.draftId }) as { revision: string } | null
+    let commandId = `recovery-${item.id}`
+    for (const legacyId of recoveryRecordIds(record)) {
+      let attempt = `recovery-${legacyId}`
+      for (;;) {
+        const previous = await this.#commands.outbox.read(outboxOwner(client), attempt)
+        if (!previous)
+          break
+        const recovered = await this.#commands.reconcile(previous)
+        this.#assertClient(client)
+        if (!['composerDrafts.copy', 'composerDrafts.open'].includes(previous.method) || !['decided', 'not_accepted'].includes(recovered.state))
+          throw gatewayError('COMMAND_RESULT_UNKNOWN')
+        if (recovered.record.receipt?.decision === 'accepted') {
+          const target = recovered.record.receipt.target.draftId
+          if (!target || (previous.method === 'composerDrafts.copy' && recovered.record.receipt.target.sourceDraftId !== source.draftId)
+            || (previous.method === 'composerDrafts.open' && target !== `recovered-${attempt.slice(9, 41)}`)) {
+            throw gatewayError('COMMAND_RESULT_UNKNOWN')
+          }
+          const draft = await getDraft(target)
+          if (draft) {
+            if (draft.scope.kind !== 'task' || draft.scope.draftId !== target)
+              throw gatewayError('COMMAND_RESULT_UNKNOWN')
+            if (draft.revision === recovered.record.receipt.result.revision)
+              return target
+          }
+        }
+        await this.#commands.outbox.archive(recovered.record)
+        // Never overwrite an edited copy. An explicit retry may create a new one.
+        attempt = `recovery-${productRecoveryDigest({ previous: attempt })}`
+      }
+      if (legacyId === item.id)
+        commandId = attempt
+    }
+    const current = await getDraft(source.draftId)
+    const originalSpace = source.scope && 'spaceId' in source.scope ? source.scope.spaceId : null
+    const spaceId = item.draftInput?.spaceId === undefined ? originalSpace : item.draftInput.spaceId
     let draftId: string
     if (current) {
-      const draft = buddyComposerDraftSchema.parse(await this.request('composerDrafts.copy', {
+      const draft = buddyComposerDraftSchema.parse(await this.#request('composerDrafts.copy', {
         sourceDraftId: source.draftId,
         expectedSourceRevision: current.revision,
-        targetScope: { kind: 'task', spaceId: null },
+        targetScope: { kind: 'task', spaceId },
         expectedSlotRevision: '0',
-        recoveredInput: { content: source.content, executionConfig: source.executionConfig, modelSelection: source.modelSelection ?? null, ...(source.participants ? { participants: source.participants } : {}) },
-      }, { requestId: commandId }))
+        recoveredInput: { content: source.content, executionConfig: source.executionConfig, modelSelection: source.modelSelection ?? null, participants: source.participants ?? null },
+      }, { requestId: commandId }, client))
       draftId = draft.draftId
     }
     else {
-      draftId = `recovered-${id.slice(0, 32)}`
-      await this.request('composerDrafts.open', {
+      draftId = `recovered-${commandId.slice(9, 41)}`
+      await this.#request('composerDrafts.open', {
         draftId,
-        scope: { kind: 'task', draftId, spaceId: null },
+        scope: { kind: 'task', draftId, spaceId },
         initialContent: source.content,
         initialExecutionConfig: source.executionConfig,
         initialModelSelection: source.modelSelection ?? null,
         ...(source.participants ? { initialParticipants: source.participants } : {}),
-      }, { requestId: commandId })
+      }, { requestId: commandId }, client)
     }
-    await this.#commands.outbox.archive(outcome.record)
-    this.#recoveryNotifications.withdraw(id)
     return draftId
   }
 
-  async #recoveryRecord(id: string): Promise<ProductOutboxRecord> {
-    const record = (await this.#commands.outbox.list()).find(record => productOutboxRecordId(record) === id)
-    if (!record)
-      throw gatewayError('OBJECT_DELETED')
-    return record
-  }
-
-  async #recoveryInput(method: string, input: Record<string, unknown>, client: ProductRpcClient, commandId: string): Promise<ProductRecoveryInput | undefined> {
+  async #recoveryInput(method: string, input: Record<string, unknown>, client: ProductRpcClient, commandId: string, recoveryScope?: RequestOptions['recoveryScope']): Promise<ProductRecoveryInput | undefined> {
     const existing = await this.#commands.outbox.read(outboxOwner(client), commandId)
     if (existing)
       return existing.recovery ?? undefined
@@ -280,16 +347,19 @@ export class ProductDesktopGateway implements DesktopRuntimeGateway {
         modelSelection: input[opening ? 'initialModelSelection' : 'modelSelection'],
         executionConfig: input[opening ? 'initialExecutionConfig' : 'executionConfig'],
         participants: input[opening ? 'initialParticipants' : 'participants'],
-        scope: input.scope ?? { kind: 'global' },
+        scope: opening ? input.scope : recoveryScope,
         revision: input.expectedRevision ?? 0,
         updatedAt: new Date().toISOString(),
       })
-      return { draftId: draft.draftId, editSequence: String(draft.revision), content: draft.content, executionConfig: draft.executionConfig, modelSelection: draft.modelSelection, participants: draft.participants }
+      const { scope } = draft
+      if (scope.kind === 'task' && scope.draftId !== draft.draftId)
+        throw gatewayError('VALIDATION_FAILED')
+      return { draftId: draft.draftId, scope, editSequence: String(draft.revision), content: draft.content, executionConfig: draft.executionConfig, modelSelection: draft.modelSelection, participants: draft.participants }
     }
     if (typeof input.draftId === 'string' && (turnMethods.has(method) || method === 'chat.queue.enqueue')) {
       const draft = buddyComposerDraftSchema.parse(await this.#runtime.request('composerDrafts.get', { draftId: input.draftId }))
       if (draft.revision === input.expectedRevision)
-        return { draftId: draft.draftId, editSequence: String(draft.revision), content: draft.content, executionConfig: draft.executionConfig, modelSelection: draft.modelSelection, participants: draft.participants }
+        return { draftId: draft.draftId, scope: draft.scope, editSequence: String(draft.revision), content: draft.content, executionConfig: draft.executionConfig, modelSelection: draft.modelSelection, participants: draft.participants }
     }
     return undefined
   }
@@ -297,11 +367,13 @@ export class ProductDesktopGateway implements DesktopRuntimeGateway {
   dispose(): void {
     this.#recoveryNotifications.dispose()
     this.#stopState()
-    this.#reset()
+    this.#reset(false)
   }
 
-  #reset(): void {
+  #reset(withdraw = true): void {
     this.#generation += 1
+    if (withdraw)
+      this.#recoveryNotifications.reset()
     this.#synchronization?.close()
     this.#synchronization = null
     this.#detach?.()
@@ -348,7 +420,7 @@ export class ProductDesktopGateway implements DesktopRuntimeGateway {
     return this.#client
   }
 
-  async #projectResult(method: string, input: Record<string, unknown>, receipt: Receipt, options?: { timeoutMs?: number, requestId?: string }): Promise<unknown> {
+  async #projectResult(method: string, input: Record<string, unknown>, receipt: Receipt, options?: { timeoutMs?: number, requestId?: string }, restoring = false): Promise<unknown> {
     const read = (method: string, params: unknown) => this.#runtime.request(method, params, options)
     if (questionMethods.has(method)) {
       const questions = userQuestionRpc.list.response.parse(await read('questions.list', { conversationId: input.conversationId, branchId: input.branchId }))
@@ -373,8 +445,10 @@ export class ProductDesktopGateway implements DesktopRuntimeGateway {
     }
     if (draftMethods.has(method) || method === 'composerDrafts.copy') {
       const draft = buddyComposerDraftSchema.parse(await read('composerDrafts.get', { draftId: receipt.target.draftId }))
-      if (method === 'composerDrafts.save' && draft.revision !== decodeSafeProductRevision(receipt.result.revision!))
+      if (draft.draftId !== receipt.target.draftId || (restoring && (draft.scope.kind !== 'task' || draft.scope.draftId !== draft.draftId))
+        || ((method === 'composerDrafts.save' || restoring) && draft.revision !== decodeSafeProductRevision(receipt.result.revision!))) {
         throw gatewayError('DRAFT_CONFLICT')
+      }
       return draft
     }
     if (method === 'composerDrafts.discard')

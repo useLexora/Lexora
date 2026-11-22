@@ -1,5 +1,6 @@
 export default {
   'desktop.recovery.title': '操作恢复',
+  'desktop.recovery.unsavedInput': '草稿未保存',
   'desktop.recovery.accepted': '操作已受理',
   'desktop.recovery.rejected': '操作未执行',
   'desktop.recovery.not_accepted': '未找到受理记录',

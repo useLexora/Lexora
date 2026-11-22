@@ -272,7 +272,7 @@ for (const workspaceKind of ['managed', 'bound']) {
           const executionConfig = { approvalPolicy: 'policy', executionProfile: 'workspace_write' }
           const modelSelection = { providerId: 'capture-fixture', modelId: 'capture-fixture', reasoning: null, serviceTier: null }
           const opened = await api.composerDrafts.open({ draftId: requestId, initialContent: content, initialExecutionConfig: executionConfig, initialModelSelection: modelSelection, scope: previous ? { kind: 'conversation_branch', conversationId: previous.conversationId, branchId: previous.branchId } : { kind: 'task', draftId: requestId, spaceId } })
-          const saved = await api.composerDrafts.save({ draftId: opened.draftId, expectedRevision: opened.revision, content, executionConfig, modelSelection })
+          const saved = await api.composerDrafts.save({ draftId: opened.draftId, expectedRevision: opened.revision, content, executionConfig, modelSelection }, opened.scope)
           return api.chat.startTurn({ draftId: saved.draftId, expectedRevision: saved.revision, requestId })
         }, { label, previous, requestId: randomUUID(), spaceId })
         previous = turn

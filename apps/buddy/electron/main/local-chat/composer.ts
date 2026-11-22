@@ -1,8 +1,11 @@
 import type { LocalChatIpcContext } from './registrar'
 import { composerDraftsRpc, composerRequestSchemas, composerResourcesRpc } from '../../../shared/conversation/composerApi'
+import { buddyComposerDraftScopeSchema } from '../../../shared/conversation/composerDraft'
 import { LOCAL_CHAT_IPC_CHANNELS } from '../../shared/localChatApi'
 import { translateDesktopNative } from '../desktopNativeI18n'
 import { selectPaths } from './nativeSelection'
+
+const desktopDraftSaveSchema = composerRequestSchemas.composerDraftSave.unwrap().extend({ recoveryScope: buddyComposerDraftScopeSchema })
 
 export function registerComposerIpc(context: LocalChatIpcContext): void {
   const { handle, request, options } = context
@@ -14,7 +17,10 @@ export function registerComposerIpc(context: LocalChatIpcContext): void {
   handle(LOCAL_CHAT_IPC_CHANNELS.composerDraftsDiscard, (_event, input) => request(composerDraftsRpc.discard, composerDraftsRpc.discard.input.parse(input)))
   handle(LOCAL_CHAT_IPC_CHANNELS.composerDraftsOpen, (_event, input) => request(composerDraftsRpc.open, composerRequestSchemas.composerDraftOpen.parse(input)))
   handle(LOCAL_CHAT_IPC_CHANNELS.composerDraftsGet, (_event, input) => request(composerDraftsRpc.get, composerRequestSchemas.composerDraftTarget.parse(input)))
-  handle(LOCAL_CHAT_IPC_CHANNELS.composerDraftsSave, (_event, input) => request(composerDraftsRpc.save, composerRequestSchemas.composerDraftSave.parse(input)))
+  handle(LOCAL_CHAT_IPC_CHANNELS.composerDraftsSave, (_event, input) => {
+    const { recoveryScope, ...command } = desktopDraftSaveSchema.parse(input)
+    return request(composerDraftsRpc.save, command, undefined, recoveryScope)
+  })
 
   handle(LOCAL_CHAT_IPC_CHANNELS.composerResourcesComplete, (_event, input) => request(composerResourcesRpc.complete, composerRequestSchemas.composerResourceComplete.parse(input)))
   handle(LOCAL_CHAT_IPC_CHANNELS.composerResourcesFail, (_event, input) => request(composerResourcesRpc.fail, composerRequestSchemas.composerResourceTarget.parse(input)))
