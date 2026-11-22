@@ -145,6 +145,7 @@ export const browserPresentationInputSchema = z.object({
   sessionId: browserSessionIdSchema,
   pageId: z.uuid(),
   visible: z.boolean(),
+  previewOnly: z.boolean().optional(),
   bounds: browserPresentationRectSchema,
   clip: browserPresentationRectSchema,
 }).strict()

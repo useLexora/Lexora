@@ -80,6 +80,8 @@ export interface DesktopBrowserPresentationInput {
   sessionId: string
   pageId: string
   visible: boolean
+  /** Read a frame for an overlapping workbench menu without changing the native view. */
+  previewOnly?: boolean
   bounds: { x: number, y: number, width: number, height: number }
   clip: { x: number, y: number, width: number, height: number }
 }
