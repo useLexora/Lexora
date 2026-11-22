@@ -41,6 +41,9 @@ const updates = useDesktopUpdatesContext()
 const { t } = useBuddyI18n(() => props.language)
 const message = useMessage()
 const platform = computed(() => props.appInfo?.platform ?? 'linux')
+const isWindows = computed(() => platform.value === 'win32')
+const isMacOS = computed(() => platform.value === 'darwin')
+const usesNativeWindowControls = computed(() => isWindows.value || isMacOS.value)
 const maximizeLabel = computed(() => isMaximized.value
   ? t('desktop.window.restore')
   : t('desktop.window.maximize'))
@@ -152,8 +155,17 @@ function applyWindowState(state: DesktopWindowState) {
 </script>
 
 <template>
-  <header class="desktop-title-bar relative h-[var(--buddy-titlebar-height)] flex-none border-b-1 border-b-solid border-b-border bg-canvas text-strong select-none" data-theme-surface="header" @dblclick="toggleMaximize">
-    <div class="absolute inset-0 flex items-center justify-between">
+  <header
+    class="desktop-title-bar relative h-[var(--buddy-titlebar-height)] flex-none border-b-1 border-b-solid border-b-border bg-canvas text-strong select-none"
+    :class="{
+      'is-native-controls': usesNativeWindowControls,
+      'is-win-native-controls': isWindows,
+      'is-mac-native-controls': isMacOS,
+    }"
+    data-theme-surface="header"
+    @dblclick="toggleMaximize"
+  >
+    <div class="desktop-title-bar__safe-area absolute inset-0 flex items-center justify-between">
       <span v-if="minimal" class="px-4 text-[12px] text-muted">{{ t('onboarding.welcome') }}</span>
       <DesktopWindowMenuBar
         v-else
@@ -184,39 +196,41 @@ function applyWindowState(state: DesktopWindowState) {
         >
           <DesktopIcon :name="contextOpen ? 'contextPanelActive' : 'contextPanel'" />
         </button>
-        <button
-          :aria-label="t('desktop.window.minimize')"
-          class="desktop-title-bar__control grid w-[var(--buddy-titlebar-height)] h-[var(--buddy-titlebar-height)] flex-none place-items-center border-0 rounded-micro bg-transparent text-muted cursor-default hover:(bg-hover text-strong) ui-focus-ring"
-          type="button"
-          @click="minimize"
-        >
-          <DesktopIcon data-window-control-icon="minimize" name="windowMinimize" />
-        </button>
-        <button
-          :aria-label="maximizeLabel"
-          class="desktop-title-bar__control grid w-[var(--buddy-titlebar-height)] h-[var(--buddy-titlebar-height)] flex-none place-items-center border-0 rounded-micro bg-transparent text-muted cursor-default hover:(bg-hover text-strong) ui-focus-ring"
-          type="button"
-          @click="toggleMaximize"
-        >
-          <DesktopIcon
-            v-if="isMaximized"
-            data-window-control-icon="restore"
-            name="windowRestore"
-          />
-          <DesktopIcon
-            v-else
-            data-window-control-icon="maximize"
-            name="windowMaximize"
-          />
-        </button>
-        <button
-          :aria-label="t('desktop.command.window.close')"
-          class="desktop-title-bar__control is-close grid w-[var(--buddy-titlebar-height)] h-[var(--buddy-titlebar-height)] flex-none place-items-center border-0 rounded-micro bg-transparent text-muted cursor-default hover:(bg-hover text-strong) ui-focus-ring"
-          type="button"
-          @click="executeDesktopCommand('window.close')"
-        >
-          <DesktopIcon data-window-control-icon="close" name="windowClose" />
-        </button>
+        <template v-if="!usesNativeWindowControls">
+          <button
+            :aria-label="t('desktop.window.minimize')"
+            class="desktop-title-bar__control grid w-[var(--buddy-titlebar-height)] h-[var(--buddy-titlebar-height)] flex-none place-items-center border-0 rounded-micro bg-transparent text-muted cursor-default hover:(bg-hover text-strong) ui-focus-ring"
+            type="button"
+            @click="minimize"
+          >
+            <DesktopIcon data-window-control-icon="minimize" name="windowMinimize" />
+          </button>
+          <button
+            :aria-label="maximizeLabel"
+            class="desktop-title-bar__control grid w-[var(--buddy-titlebar-height)] h-[var(--buddy-titlebar-height)] flex-none place-items-center border-0 rounded-micro bg-transparent text-muted cursor-default hover:(bg-hover text-strong) ui-focus-ring"
+            type="button"
+            @click="toggleMaximize"
+          >
+            <DesktopIcon
+              v-if="isMaximized"
+              data-window-control-icon="restore"
+              name="windowRestore"
+            />
+            <DesktopIcon
+              v-else
+              data-window-control-icon="maximize"
+              name="windowMaximize"
+            />
+          </button>
+          <button
+            :aria-label="t('desktop.command.window.close')"
+            class="desktop-title-bar__control is-close grid w-[var(--buddy-titlebar-height)] h-[var(--buddy-titlebar-height)] flex-none place-items-center border-0 rounded-micro bg-transparent text-muted cursor-default hover:(bg-hover text-strong) ui-focus-ring"
+            type="button"
+            @click="executeDesktopCommand('window.close')"
+          >
+            <DesktopIcon data-window-control-icon="close" name="windowClose" />
+          </button>
+        </template>
       </div>
     </div>
 
@@ -231,6 +245,17 @@ function applyWindowState(state: DesktopWindowState) {
 <style scoped lang="scss">
 .desktop-title-bar {
   -webkit-app-region: drag;
+}
+
+.desktop-title-bar.is-win-native-controls .desktop-title-bar__safe-area {
+  left: env(titlebar-area-x, 0px);
+  right: auto;
+  width: env(titlebar-area-width, calc(100% - 138px));
+}
+
+.desktop-title-bar.is-mac-native-controls .desktop-title-bar__safe-area {
+  left: env(titlebar-area-x, 76px);
+  right: 0;
 }
 
 .desktop-title-bar__controls {
