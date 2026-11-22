@@ -6,6 +6,7 @@ import fs from 'node:fs/promises'
 import net from 'node:net'
 import path from 'node:path'
 import process from 'node:process'
+import { createInterface } from 'node:readline'
 import { chromium, expect } from '@playwright/test'
 
 export async function connectLocalService(discovery, secret, role = 'management') {
@@ -48,7 +49,7 @@ export async function connectLocalService(discovery, secret, role = 'management'
   }
 }
 
-export async function launchDaemonDesktop({ home, buddyRoot, hostExecutable, hostArguments, environment, artifactDirectory }) {
+export async function launchDaemonDesktop({ home, buddyRoot, hostExecutable, hostArguments, environment, artifactDirectory, beforeDesktopOpen }) {
   assert.equal(process.platform, 'linux', 'Daemon Desktop fixture currently requires Linux')
   assert.equal(environment.LEXORA_BUDDY_PROFILE, 'test')
   environment = { ...environment, XDG_SESSION_ID: process.env.XDG_SESSION_ID }
@@ -77,7 +78,22 @@ export async function launchDaemonDesktop({ home, buddyRoot, hostExecutable, hos
   await fs.writeFile(launchFile, JSON.stringify(config), { mode: 0o600 })
   const core = spawn(config.nodeExecutable, [config.coreEntry, '--config', launchFile], { cwd: buddyRoot, env: environment, stdio: ['ignore', 'pipe', 'pipe'] })
   let log = ''
+  const alerts = []
   for (const stream of [core.stdout, core.stderr]) {
+    if (beforeDesktopOpen) {
+      createInterface({ input: stream }).on('line', (line) => {
+        if (line.startsWith('Lexora service unavailable:') || /^SERVICE_\w+FAILED$/.test(line))
+          alerts.push(line)
+        if (!line.startsWith('{'))
+          return
+        try {
+          const record = JSON.parse(line)
+          if (['warn', 'error'].includes(record.level) || record.rpcDisconnect)
+            alerts.push(record)
+        }
+        catch { alerts.push('Malformed daemon diagnostic') }
+      })
+    }
     stream.on('data', (chunk) => {
       log = `${log}${chunk}`.slice(-1024 * 1024)
     })
@@ -112,8 +128,9 @@ export async function launchDaemonDesktop({ home, buddyRoot, hostExecutable, hos
   try {
     await expect.poll(async () => {
       assert(core.exitCode === null && core.signalCode === null, `Node service exited: ${log}`)
-      return (await readJson(path.join(runtimeDirectory, 'service.json')))?.phase
-    }, { timeout: 120000 }).toBe('ready')
+      const phase = (await readJson(path.join(runtimeDirectory, 'service.json')))?.phase
+      return phase === 'ready' || (!!beforeDesktopOpen && phase === 'starting')
+    }, { timeout: 120000 }).toBe(true)
     const discovery = await readJson(path.join(runtimeDirectory, 'service.json'))
     expect(discovery.process.pid).toBe(core.pid)
     expect(await fs.realpath(`/proc/${core.pid}/exe`)).toBe(await fs.realpath(config.nodeExecutable))
@@ -125,12 +142,18 @@ export async function launchDaemonDesktop({ home, buddyRoot, hostExecutable, hos
     inspector = await connectInspector(log.match(/Debugger listening on (ws:\/\/\S+)/)[1])
     hostPid = await inspector.evaluate(() => process.pid)
     expect(hostPid).not.toBe(core.pid)
+    if (beforeDesktopOpen) {
+      const [context] = browser.contexts()
+      assert(!context.pages().some(page => page.url().startsWith('lexora-app:')), 'Startup observation requires an unopened Desktop')
+      await beforeDesktopOpen({ context, evaluate: inspector.evaluate })
+    }
     const opened = await client.request('service.openDesktop', { expectedServiceInstanceId: discovery.serviceInstanceId, intent: { kind: 'tasks' } })
     expect(opened).toMatchObject({ accepted: true, uiReady: true, targetVisible: true, visible: true })
     const page = browser.contexts().flatMap(context => context.pages()).find(page => page.url().startsWith('lexora-app:'))
     assert(page, 'Service did not open Desktop')
-    await fs.writeFile(path.join(artifactDirectory, 'daemon.json'), JSON.stringify({ corePid: core.pid, hostPid, buildId: release.buildId, nodeExecutable: config.nodeExecutable }, null, 2))
-    return { serviceMode: 'daemon', context: () => page.context(), firstWindow: async () => page, process: () => core, evaluate: inspector.evaluate, detachMain: () => inspector.close(), close }
+    const daemonIdentity = { corePid: core.pid, hostPid, serviceInstanceId: discovery.serviceInstanceId, buildId: release.buildId, nodeExecutable: config.nodeExecutable }
+    await fs.writeFile(path.join(artifactDirectory, 'daemon.json'), JSON.stringify(daemonIdentity, null, 2))
+    return { serviceMode: 'daemon', daemonIdentity, context: () => page.context(), firstWindow: async () => page, process: () => core, evaluate: inspector.evaluate, daemonAlerts: () => [...alerts], detachMain: () => inspector.close(), close }
   }
   catch (error) {
     await close()

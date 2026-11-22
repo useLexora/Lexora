@@ -345,7 +345,10 @@ export class DesktopRuntimeHost {
     } satisfies ConstructorParameters<typeof BuddyServiceSupervisor>[0]
     if (environment.platformHost) {
       this.#subscriptions.push(bindPeer(environment.platformHost.peer))
-      this.#service = new RemoteServiceClient(environment.platformHost.bootstrap, environment.platformHost.peer, environment.events.publish)
+      this.#service = new RemoteServiceClient(environment.platformHost.bootstrap, environment.platformHost.peer, {
+        reportDesktop: environment.events.publish,
+        recordCore: supervisorOptions.onDiagnostic,
+      })
     }
     else {
       this.#service = new BuddyServiceSupervisor(supervisorOptions)

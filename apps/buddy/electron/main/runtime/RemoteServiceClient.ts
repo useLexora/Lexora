@@ -3,10 +3,11 @@ import type { RuntimeLifecycleChange, RuntimeLifecycleSnapshot } from '../../../
 import type { DesktopClientRequestMethod, DesktopHostRequestMethod } from '../../../shared/runtime/desktopHostRequests'
 import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
 import type { ServiceHostBootstrap } from '../../../shared/service/localServiceProtocol'
-import type { BuddyServiceNotification, BuddyServiceRequestOptions, BuddyServiceSupervisorState } from './BuddyServiceSupervisor'
+import type { BuddyServiceNotification, BuddyServiceRequestOptions, BuddyServiceSupervisorOptions, BuddyServiceSupervisorState } from './BuddyServiceSupervisor'
 import { randomUUID } from 'node:crypto'
 import { connectLocalService } from '../../../platform/service/connectLocalService'
 import { ServiceRpcChannel } from '../../../platform/service/ServiceRpcChannel'
+import { APPLICATION_DIAGNOSTIC_METHOD, applicationDiagnosticSchema, safeDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import { Emitter } from '../../../shared/events/Emitter'
 import { SERVICE_LIFECYCLE_METHOD, serviceLifecycleChangeSchema } from '../../../shared/lifecycle/serviceLifecycle'
 import { serviceMaintenanceTicketSchema, serviceRuntimeStateSchema } from '../../../shared/service/localServiceProtocol'
@@ -15,10 +16,16 @@ function reconnecting(cause?: unknown) {
   return Object.assign(new Error('Desktop is reconnecting to the local service', { cause }), { code: 'RUNTIME_RECONNECTING' })
 }
 
+interface RemoteServiceDiagnostics {
+  reportDesktop: ApplicationDiagnosticReporter
+  recordCore: NonNullable<BuddyServiceSupervisorOptions['onDiagnostic']>
+}
+
 export class RemoteServiceClient {
   readonly #bootstrap: ServiceHostBootstrap
   readonly #host: RuntimeRpcPeerContract
   readonly #report: ApplicationDiagnosticReporter
+  readonly #stopHostNotifications: () => void
   readonly #changes = new Emitter<BuddyServiceSupervisorState>(() => {})
   readonly #lifecycle = new Emitter<RuntimeLifecycleChange>(() => {})
   readonly #notifications = new Emitter<BuddyServiceNotification>(() => {})
@@ -29,25 +36,36 @@ export class RemoteServiceClient {
   #snapshot: RuntimeLifecycleSnapshot
   #retry: NodeJS.Timeout | undefined
   #retryDelay = 250
-  #daemonReady = true
+  #daemonStatus: BuddyServiceSupervisorState['status'] | undefined
   #closed = false
   #transitioning = false
 
-  constructor(bootstrap: ServiceHostBootstrap, host: RuntimeRpcPeerContract, report: ApplicationDiagnosticReporter) {
-    this.#report = report
+  constructor(bootstrap: ServiceHostBootstrap, host: RuntimeRpcPeerContract, diagnostics: RemoteServiceDiagnostics) {
+    this.#report = safeDiagnosticReporter(diagnostics.reportDesktop)
     this.#bootstrap = bootstrap
     this.#host = host
     this.#snapshot = { revision: 0, generation: bootstrap.identity.serviceInstanceId, status: 'stopped', maintenance: null, errorCode: null, connection: null, services: null }
-    host.onNotification((method, params) => {
+    const recordCore = safeDiagnosticReporter(event => diagnostics.recordCore({ ...event, sourceId: bootstrap.identity.serviceInstanceId, sourcePid: this.#state.pid ?? undefined }))
+    this.#stopHostNotifications = host.onNotification((method, params) => {
+      if (method === APPLICATION_DIAGNOSTIC_METHOD) {
+        const parsed = applicationDiagnosticSchema.safeParse(params)
+        recordCore(parsed.success ? parsed.data : { event: 'runtime.diagnostic_invalid', level: 'warn' })
+        return
+      }
       if (method === 'service.runtimeState') {
         const state = serviceRuntimeStateSchema.parse(params)
         if (this.#closed)
           return
         const generationChanged = state.generation !== this.#snapshot.generation
         const changed = generationChanged || state.maintenance !== this.#snapshot.maintenance
-        this.#daemonReady = state.status === 'ready'
+        this.#daemonStatus = state.status
         this.#snapshot = { ...this.#snapshot, generation: state.generation, maintenance: state.maintenance, services: generationChanged ? null : this.#snapshot.services }
-        if (this.#daemonReady) {
+        if (generationChanged && this.#peer) {
+          const previous = this.#peer
+          this.#peer = undefined
+          previous.close(new Error('SERVICE_GENERATION_CHANGED'))
+        }
+        if (state.status === 'ready') {
           if (this.#peer)
             this.#setState('ready', changed)
           else
@@ -87,7 +105,7 @@ export class RemoteServiceClient {
   }
 
   start(): void {
-    void this.#connect().catch(() => {})
+    void this.#connect(true).catch(() => {})
   }
 
   requestHost(method: DesktopHostRequestMethod, params: unknown, options: BuddyServiceRequestOptions = {}): Promise<unknown> {
@@ -100,7 +118,7 @@ export class RemoteServiceClient {
       return await peer.request(method, params, options.timeoutMs, options.signal, options.requestId)
     }
     catch (error) {
-      if (peer.closed && this.#daemonReady && !this.#closed && !this.#transitioning && !options.signal?.aborted)
+      if (peer.closed && this.#daemonStatus === 'ready' && !this.#closed && !this.#transitioning && !options.signal?.aborted)
         throw reconnecting(error)
       throw error
     }
@@ -181,25 +199,30 @@ export class RemoteServiceClient {
     if (this.#closed)
       return
     this.#closed = true
+    this.#stopHostNotifications()
     clearTimeout(this.#retry)
     this.#peer?.close(new Error('DESKTOP_CLIENT_CLOSED'))
     this.#setState('stopped')
   }
 
-  #connect(): Promise<ServiceRpcChannel> {
+  #assertAvailable(allowStarting: boolean): void {
     if (this.#closed)
-      return Promise.reject(new Error('SERVICE_CLIENT_STOPPED'))
-    if (this.#snapshot.maintenance || this.#state.status === 'stopping')
-      return Promise.reject(new Error('SERVICE_MAINTENANCE'))
-    if (!this.#daemonReady)
-      return Promise.reject(new Error('SERVICE_NOT_READY'))
+      throw new Error('SERVICE_CLIENT_STOPPED')
+    if (this.#snapshot.maintenance || this.#daemonStatus === 'stopping')
+      throw new Error('SERVICE_MAINTENANCE')
+    if (this.#daemonStatus !== 'ready' && !(allowStarting && (this.#daemonStatus === undefined || this.#daemonStatus === 'starting')))
+      throw new Error('SERVICE_NOT_READY')
+  }
+
+  async #connect(allowStarting = false): Promise<ServiceRpcChannel> {
+    this.#assertAvailable(allowStarting)
     if (this.#peer)
-      return Promise.resolve(this.#peer)
+      return this.#peer
     if (this.#retry)
-      return Promise.reject(reconnecting())
+      throw reconnecting()
     if (!this.#connecting) {
       this.#connecting = Promise.resolve().then(() => this.#attach()).catch((error) => {
-        if (!this.#closed && this.#daemonReady && !this.#transitioning) {
+        if (!this.#closed && this.#daemonStatus === 'ready' && !this.#transitioning) {
           this.#setState('offline')
           throw reconnecting(error)
         }
@@ -209,25 +232,33 @@ export class RemoteServiceClient {
         this.#scheduleReconnect()
       })
     }
-    return this.#connecting
+    const peer = await this.#connecting
+    this.#assertAvailable(allowStarting)
+    return peer
   }
 
   async #attach(): Promise<ServiceRpcChannel> {
+    this.#assertAvailable(true)
     if (this.#state.status !== 'offline')
       this.#setState('starting')
     const { frames } = await connectLocalService(this.#bootstrap.managementEndpoint, { ...this.#bootstrap.identity, type: 'hello', role: 'management', secret: this.#bootstrap.managementSecret })
     const peer = new ServiceRpcChannel(frames)
     try {
-      if (this.#closed || !this.#daemonReady)
-        throw new Error('SERVICE_CONNECTION_CLOSED')
-      peer.onNotification((method, params) => this.#notifications.fire({ method, params }))
+      this.#assertAvailable(true)
+      peer.onNotification((method, params) => {
+        if (method !== APPLICATION_DIAGNOSTIC_METHOD)
+          this.#notifications.fire({ method, params })
+      })
       const attached = await peer.request('service.attachDesktop', { expectedServiceInstanceId: this.#bootstrap.identity.serviceInstanceId }, 120000) as { pid: number, generation: string }
-      if (peer.closed || this.#closed || !this.#daemonReady)
+      this.#assertAvailable(true)
+      if (peer.closed || (this.#daemonStatus !== undefined && attached.generation !== this.#snapshot.generation))
         throw new Error('SERVICE_CONNECTION_CLOSED')
       this.#peer = peer
       peer.onDidClose((rpcDisconnect) => {
+        if (this.#peer !== peer)
+          return
         this.#peer = undefined
-        if (!this.#closed && this.#daemonReady && !this.#transitioning) {
+        if (!this.#closed && this.#daemonStatus === 'ready' && !this.#transitioning) {
           this.#setState('offline')
           this.#report({ event: 'management.connection_closed', component: 'desktop.management', level: 'warn', generation: attached.generation, rpcDisconnect })
         }
@@ -238,7 +269,8 @@ export class RemoteServiceClient {
       this.#retryDelay = 250
       this.#snapshot = { ...this.#snapshot, generation: attached.generation }
       this.#state.pid = attached.pid
-      this.#setState('ready')
+      if (this.#daemonStatus === 'ready')
+        this.#setState('ready')
       return peer
     }
     catch (error) {
@@ -248,7 +280,7 @@ export class RemoteServiceClient {
   }
 
   #scheduleReconnect(): void {
-    if (this.#peer || this.#connecting || this.#retry || this.#closed || this.#transitioning || !this.#daemonReady)
+    if (this.#peer || this.#connecting || this.#retry || this.#closed || this.#transitioning || this.#daemonStatus !== 'ready')
       return
     this.#retry = setTimeout(() => {
       this.#retry = undefined

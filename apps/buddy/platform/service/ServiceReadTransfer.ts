@@ -8,11 +8,16 @@ export const readPartMethod = 'service.readResultPart'
 export const releaseReadMethod = 'service.releaseReadResult'
 export const pagedServiceReads = new Set<string>([
   attachmentHostRpc.readPreview,
+  'context.usageSnapshot',
   'conversations.getHistoryEntries',
+  'conversations.listHistory',
   'conversations.listTimeline',
   'conversations.getNodeDetail',
   'conversations.getTree',
   'conversations.listMessages',
+  'providers.getModelSnapshot',
+  'providers.listModels',
+  'runs.metrics',
   'runs.listEvents',
   'runs.readEventPage',
   'executions.detail',
