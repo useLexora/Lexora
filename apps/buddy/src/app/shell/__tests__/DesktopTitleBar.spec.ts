@@ -79,15 +79,8 @@ vi.mock('@/platform/desktop/desktopApi', () => ({
 
 function createAppInfo(platform: DesktopAppInfo['platform']): DesktopAppInfo {
   return {
-    arch: 'x64',
-    chromeVersion: '134.0.0',
-    electronVersion: '35.0.0',
-    isPackaged: false,
-    name: 'Lexora Buddy',
-    nodeVersion: '22.0.0',
     platform,
-    version: '0.20.0',
-  }
+  } as DesktopAppInfo
 }
 
 function mountTitleBar(options: {
