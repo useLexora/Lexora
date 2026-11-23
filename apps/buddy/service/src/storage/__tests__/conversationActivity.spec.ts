@@ -42,7 +42,12 @@ function fixture(sqlite: boolean, databasePath = ':memory:') {
       VALUES (?, ?, ?, ?, 0, ?, ?, ?)`).run(id, source, ++sequence, target, JSON.stringify(payload), id, time(minute))
     return sequence
   }
-  const activity = () => conversations.getHistoryEntries(['old'])[0]!.conversation.lastActivityAt
+  function activity() {
+    const task = conversations.getHistoryEntries(['old'])[0]!.conversation
+    const listed = conversations.listHistory({ kind: 'search', query: task.title! }).items.find(item => item.conversation.id === task.id)
+    expect(listed?.conversation.lastActivityAt).toBe(task.lastActivityAt)
+    return task.lastActivityAt
+  }
   const queries = sqlite ? new ProductQueries(database, 'desktop-local', 'instance') : null
   return { database, conversations, runs, run, message, mailbox, activity, queries }
 }

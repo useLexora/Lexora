@@ -8,7 +8,7 @@ import { z } from 'zod'
 import { conversationHistoryEntriesSchema, conversationHistoryQuerySchema } from '../../../shared/conversation/conversationHistoryApi'
 import { idSchema, timestampSchema } from '../../../shared/runtime/apiValidation'
 import { BuddyServiceError, parse } from '../rpc/runtimeRequest'
-import { CONVERSATION_LAST_ACTIVITY_SQL } from './conversationActivity'
+import { CONVERSATION_LAST_ACTIVITY_SQL, HISTORY_CANDIDATE_ACTIVITY_SQL } from './conversationActivity'
 import { CONVERSATION_CURRENT_MODEL_SELECTION_SQL, toConversationRecord } from './conversationRecord'
 import { createTaskMarkRepository } from './taskMarkRepository'
 
@@ -50,18 +50,22 @@ const CONVERSATION_ACTIVITY_SQL = `CASE
   ELSE 'idle'
 END`
 
-const SUMMARY_SELECT = `
-  SELECT conversations.*, ${CONVERSATION_CURRENT_MODEL_SELECTION_SQL} AS actor_model_selection_json,
-    ${CONVERSATION_LAST_ACTIVITY_SQL} AS last_activity_at,
-    automation_occurrences.id AS automation_occurrence_id,
-    automation_occurrences.automation_id AS automation_id,
-    automation_occurrences.scheduled_for AS automation_scheduled_for,
-    ${CONVERSATION_ACTIVITY_SQL} AS activity
-  FROM conversations
-  LEFT JOIN automation_occurrences
-    ON automation_occurrences.conversation_id = conversations.id
-    AND automation_occurrences.deleted_at IS NULL
-`
+const HISTORY_ACTIVITY_SQL = 'MAX(history_candidates.created_at, COALESCE(task_activity.latest_fact_at, history_candidates.created_at))'
+
+function summarySelect(lastActivity = CONVERSATION_LAST_ACTIVITY_SQL) {
+  return `
+    SELECT conversations.*, ${CONVERSATION_CURRENT_MODEL_SELECTION_SQL} AS actor_model_selection_json,
+      ${lastActivity} AS last_activity_at,
+      automation_occurrences.id AS automation_occurrence_id,
+      automation_occurrences.automation_id AS automation_id,
+      automation_occurrences.scheduled_for AS automation_scheduled_for,
+      ${CONVERSATION_ACTIVITY_SQL} AS activity
+    FROM conversations
+    LEFT JOIN automation_occurrences
+      ON automation_occurrences.conversation_id = conversations.id
+      AND automation_occurrences.deleted_at IS NULL
+  `
+}
 
 const ATTENTION_SQL = `(
   attention.mark_id IS NOT NULL OR COALESCE(attention.forced_unread, 0) = 1
@@ -117,7 +121,7 @@ export function createConversationIndexRepository(
     : 'conversations.deleted_at IS NULL'
   const marks = createTaskMarkRepository(database)
   const listRecent = database.prepare(`
-    ${SUMMARY_SELECT}
+    ${summarySelect()}
     WHERE ${visiblePredicate}
       AND (? = 0 OR conversations.space_id IS ?)
       AND instr(lower(COALESCE(conversations.title, '')), lower(?)) > 0
@@ -157,19 +161,30 @@ export function createConversationIndexRepository(
         conditions.push(`conversations.id NOT IN (${ids.map(() => '?').join(', ')})`)
         parameters.push(...ids)
       }
-      if (cursor) {
-        conditions.push('(last_activity_at, conversations.created_at, conversations.id) < (?, ?, ?)')
-        parameters.push(cursor.lastActivityAt, cursor.createdAt, cursor.id)
-      }
+      const cursorValues = cursor ? [cursor.lastActivityAt, cursor.createdAt, cursor.id] : []
+      // The creation time is the lower bound for every task's activity clock.
+      const candidateCursor = cursor ? 'AND (conversations.created_at, conversations.created_at, conversations.id) < (?, ?, ?)' : ''
       const limit = query.limit ?? 10
       const rows = database.prepare(`
-        ${SUMMARY_SELECT}
-        LEFT JOIN task_attention AS attention ON attention.conversation_id = conversations.id
-        ${query.kind === 'search' ? 'LEFT JOIN spaces ON spaces.id = conversations.space_id AND spaces.revoked_at IS NULL' : ''}
-        WHERE ${conditions.join(' AND ')}
-        ORDER BY last_activity_at DESC, conversations.created_at DESC, conversations.id DESC
-        LIMIT ?
-      `).all(...parameters, limit + 1) as unknown as ConversationSummaryRow[]
+        WITH history_candidates AS MATERIALIZED (
+          SELECT conversations.id, conversations.created_at FROM conversations
+          ${query.kind === 'search'
+            ? 'LEFT JOIN spaces ON spaces.id = conversations.space_id AND spaces.revoked_at IS NULL'
+            : 'LEFT JOIN task_attention AS attention ON attention.conversation_id = conversations.id'}
+          WHERE ${conditions.join(' AND ')} ${candidateCursor}
+        ), task_activity AS MATERIALIZED (${HISTORY_CANDIDATE_ACTIVITY_SQL}),
+        history_page AS MATERIALIZED (
+          SELECT history_candidates.id, ${HISTORY_ACTIVITY_SQL} AS activity_at
+          FROM history_candidates
+          LEFT JOIN task_activity ON task_activity.conversation_id = history_candidates.id
+          ${cursor ? `WHERE (${HISTORY_ACTIVITY_SQL}, history_candidates.created_at, history_candidates.id) < (?, ?, ?)` : ''}
+          ORDER BY activity_at DESC, history_candidates.created_at DESC, history_candidates.id DESC
+          LIMIT ?
+        )
+        ${summarySelect('history_page.activity_at')}
+        JOIN history_page ON history_page.id = conversations.id
+        ORDER BY history_page.activity_at DESC, conversations.created_at DESC, conversations.id DESC
+      `).all(...parameters, ...cursorValues, ...cursorValues, limit + 1) as unknown as ConversationSummaryRow[]
       const visible = rows.slice(0, limit)
       const last = visible.at(-1)
       return {
@@ -185,7 +200,7 @@ export function createConversationIndexRepository(
       if (unique.length === 0)
         return []
       const rows = database.prepare(`
-        ${SUMMARY_SELECT}
+        ${summarySelect()}
         WHERE ${visiblePredicate} AND conversations.id IN (${unique.map(() => '?').join(', ')})
       `).all(...unique) as unknown as ConversationSummaryRow[]
       const entries = new Map(withMarks(rows).map(entry => [entry.conversation.id, entry]))
