@@ -16,7 +16,6 @@ import android.widget.Toast
 import android.widget.TextView
 import android.view.Gravity
 import android.view.View
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.IntRect
@@ -59,13 +58,14 @@ fun WebMessageTimeline(
     turn: ReaderTurnContext = ReaderTurnContext(),
     onOlder: (Boolean) -> Unit = {},
 ) {
-    val dark = MobileAppearance.isDark(isSystemInDarkTheme())
+    val dark = LocalMobileDarkTheme.current
     val fontScale = LocalConfiguration.current.fontScale
     val language = MobileAppearance.language
+    val skinId = MobileAppearance.skinId
     AndroidView(
         factory = { ReaderView(it) }, modifier = modifier.testTag("message-list"),
         onRelease = { it.dispose() },
-        update = { it.update(messages, topic, details, runs, dark, fontScale, onMessageAction, onResource, onLoadDetail, onQuickAction, language, transcripts, onLoadTranscript, resultRunId, onReadResult, avatarContext, anchorMessageId, anchorRequestId, hasLaterMessages, onLatest, artifactContext, onResourceActions, branches, selectedBranchId, onBranch, onMessageMenu, turn, onOlder) },
+        update = { it.update(messages, topic, details, runs, dark, fontScale, onMessageAction, onResource, onLoadDetail, onQuickAction, language, transcripts, onLoadTranscript, resultRunId, onReadResult, avatarContext, anchorMessageId, anchorRequestId, hasLaterMessages, onLatest, artifactContext, onResourceActions, branches, selectedBranchId, onBranch, onMessageMenu, turn, onOlder, skinId) },
     )
 }
 
@@ -90,6 +90,8 @@ class ReaderView(context: Context) : FrameLayout(context) {
     private val steps = ReaderActivitySteps { schedulePublish() }
     private val stepReads = ReaderStepDetailReads()
     private var dark = false
+    private var appearanceRevision = ""
+    private var appearanceSkin: BuiltinSkin? = null
     private var fontScale = 1f
     private var messageAction: (JSONObject) -> Unit = {}
     private var messageMenu: ((JSONObject, IntRect?, Boolean) -> Unit)? = null
@@ -240,7 +242,10 @@ class ReaderView(context: Context) : FrameLayout(context) {
         onMessageMenu: ((JSONObject, IntRect?, Boolean) -> Unit)? = null,
         turn: ReaderTurnContext = ReaderTurnContext(),
         onOlder: (Boolean) -> Unit = {},
+        skinId: String = MobileAppearance.skinId,
     ) {
+        val skin = BuiltinSkins.get(context, skinId)
+        val appearanceRevision = "${skin.id}@${skin.version}"
         if (avatarContext != null) {
             val created = avatars == null
             if (created) avatars = ReaderAvatars(context, avatarContext.schemas) { schedulePublish() }
@@ -279,7 +284,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
         readResult = onReadResult
         quickAction = onQuickAction
         messageAction = onMessageAction; resourceAction = onResource; detailAction = onLoadDetail
-        if (!turnChanged && this.messages === messages && this.topic == topic && this.details === details && this.runs === runs && this.dark == dark && this.fontScale == fontScale && this.language == language && this.transcripts === transcripts && this.resultRunId == resultRunId && this.anchorMessageId == anchorMessageId && this.anchorRequestId == anchorRequestId && this.hasLaterMessages == hasLaterMessages && this.branches === branches && this.selectedBranchId == selectedBranchId) return
+        if (!turnChanged && this.messages === messages && this.topic == topic && this.details === details && this.runs === runs && this.dark == dark && this.appearanceRevision == appearanceRevision && this.fontScale == fontScale && this.language == language && this.transcripts === transcripts && this.resultRunId == resultRunId && this.anchorMessageId == anchorMessageId && this.anchorRequestId == anchorRequestId && this.hasLaterMessages == hasLaterMessages && this.branches === branches && this.selectedBranchId == selectedBranchId) return
         this.branches = branches
         this.selectedBranchId = selectedBranchId
         this.anchorMessageId = anchorMessageId
@@ -288,7 +293,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
         this.resultRunId = resultRunId
         this.transcripts = transcripts
         this.messages = messages; this.topic = topic; this.details = details; this.runs = runs
-        this.dark = dark; this.fontScale = fontScale; this.language = language
+        this.dark = dark; this.appearanceRevision = appearanceRevision; this.appearanceSkin = skin; this.fontScale = fontScale; this.language = language
         if (!ready && !loadFailed) showInitialMessage()
         schedulePublish()
     }
@@ -303,8 +308,8 @@ class ReaderView(context: Context) : FrameLayout(context) {
     private fun publish(bodyPage: JSONObject? = null) {
         if (!ready || disposed) return
         val snapshot = ReaderSnapshot(messages, topic, details, runs, transcripts, dark, fontScale, language,
-            resultRunId?.takeIf { hasWindowFocus() && isShown }, avatars?.sources ?: emptyMap(), anchorMessageId, anchorRequestId, hasLaterMessages, artifacts?.imageEpoch, turn, steps.wire)
-        val update = projection.encode(snapshot, { MobileTheme.palette(context, dark) }, { MobileTheme.typography(context) }) {
+            resultRunId?.takeIf { hasWindowFocus() && isShown }, avatars?.sources ?: emptyMap(), anchorMessageId, anchorRequestId, hasLaterMessages, artifacts?.imageEpoch, turn, steps.wire, appearanceRevision)
+        val update = projection.encode(snapshot, { (appearanceSkin ?: BuiltinSkins.current(context)).variant(dark).palette }, { MobileTheme.typography(context) }) {
             artifacts?.photoState(it) ?: ReaderPhotoState("unavailable")
         }
         if (update.optBoolean("reset") || branches !== sentBranches || selectedBranchId != sentSelectedBranchId) {

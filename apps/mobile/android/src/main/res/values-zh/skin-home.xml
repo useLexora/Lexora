@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="skin_home_brand">Lexora</string>
+    <string name="skin_home_prompt">想做些什么？</string>
+    <string name="skin_home_settings">设置</string>
+</resources>

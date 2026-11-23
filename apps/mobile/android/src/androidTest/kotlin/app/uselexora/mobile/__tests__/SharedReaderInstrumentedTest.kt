@@ -92,6 +92,33 @@ class SharedReaderInstrumentedTest {
         fail("Reader condition failed: $script; page=${js("document.body.innerText")}")
     }
 
+    @Test fun sameModeSkinChangesUpdateReaderWithoutReplacingContentOrScroll() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val original = app.uselexora.mobile.ui.MobileAppearance.skinId
+        try {
+            compose.runOnUiThread { app.uselexora.mobile.ui.MobileAppearance.selectSkin(context, "paper") }
+            messages = (1..30).map { message("skin-history-$it", "Reading position $it. ".repeat(30)) }
+            show()
+            until("document.querySelector('.reader-content')?.dataset.messageCount === '30'")
+            until("(()=>{const v=document.querySelector('.reader-viewport');return v.scrollHeight > v.clientHeight})()")
+            js("window.skinContent=document.querySelector('.reader-content');document.querySelector('.reader-viewport').scrollTop=80")
+            until("document.querySelector('.latest-button') !== null")
+            Thread.sleep(300)
+            val before = js("document.querySelector('.reader-viewport').scrollTop").toDouble()
+            for (id in listOf("color-play", "mecha-armor", "paper")) {
+                compose.runOnUiThread { app.uselexora.mobile.ui.MobileAppearance.selectSkin(context, id) }
+                update()
+                val palette = app.uselexora.mobile.ui.BuiltinSkins.get(context, id).variant(false).palette
+                val canvas = JSONObject.quote(palette.getJSONObject("variables").getString("--buddy-surface-canvas"))
+                until("getComputedStyle(document.querySelector('main')).getPropertyValue('--buddy-surface-canvas').trim() === $canvas")
+                assertEquals("true", js("window.skinContent === document.querySelector('.reader-content') && window.skinContent.dataset.messageCount === '30' && !document.querySelector('main.dark')"))
+                assertEquals(before, js("document.querySelector('.reader-viewport').scrollTop").toDouble(), 2.0)
+            }
+        } finally {
+            compose.runOnUiThread { app.uselexora.mobile.ui.MobileAppearance.selectSkin(context, original) }
+        }
+    }
+
     @Test fun acceptedFirstInputStaysVisibleWhileTheConversationSynchronizes() {
         val body = "只显示这条输入"
         val first = message("user-1", body, "user")

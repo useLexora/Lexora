@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="skin_home_brand">Lexora</string>
+    <string name="skin_home_prompt">What\'s next?</string>
+    <string name="skin_home_settings">Settings</string>
+</resources>

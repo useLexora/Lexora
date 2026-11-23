@@ -13,9 +13,15 @@ function catalog(source) {
 }
 const parameters = text => [...new Set(text.match(/%\d+\$[dsf]/g) ?? [])].sort()
 
+async function resourceCatalog(directory) {
+  const root = join(main, 'res', directory)
+  const names = (await readdir(root)).filter(name => name.endsWith('.xml')).sort()
+  return catalog((await Promise.all(names.map(name => readFile(join(root, name), 'utf8')))).join('\n'))
+}
+
 test('all mobile resources have matching translations and format parameters', async () => {
-  const english = catalog(await readFile(join(main, 'res/values/strings.xml'), 'utf8'))
-  const chinese = catalog(await readFile(join(main, 'res/values-zh/strings.xml'), 'utf8'))
+  const english = await resourceCatalog('values')
+  const chinese = await resourceCatalog('values-zh')
   assert.deepEqual([...english.keys()].sort(), [...chinese.keys()].sort())
   for (const [name, value] of english) {
     const translated = chinese.get(name)

@@ -63,6 +63,7 @@ internal fun PaperWorkbench(
     settings: () -> Unit,
 ) {
     val palette = paperPalette()
+    val skinHome = currentSkinHome()
     var connectionPrompt by remember { mutableStateOf(false) }
     fun connectedAction(action: MobileAction, payload: JSONObject? = null) {
         val cachedDiscovery = state.tasksLoaded && action == MobileAction.ShowTaskFilter
@@ -75,6 +76,10 @@ internal fun PaperWorkbench(
     if (connectionPrompt) PaperConnectionPrompt(palette, { connectionPrompt = false }) {
         connectionPrompt = false
         if (state.devices.isEmpty()) onAction(MobileAction.ScanDevice, null) else devices()
+    }
+    if (skinHome != null) {
+        SkinnedWorkbench(skinHome, state, tasks, { connectedAction(MobileAction.NewTask) }, filter, devices, settings) { onAction(it, null) }
+        return
     }
     fun count(value: MobileTaskFilter) = taskFilterCount(tasks, value, state.tasksLoaded, state.markedTaskIds, state.marksLoaded)
     LazyColumn(
@@ -222,7 +227,7 @@ private fun PaperSettingsButton(palette: PaperPalette, onClick: () -> Unit) {
 }
 
 @Composable
-private fun NewTaskPaper(onClick: () -> Unit) {
+internal fun NewTaskPaper(onClick: (() -> Unit)? = null) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val narrow = maxWidth < 320.dp
         PaperSurface(
@@ -243,7 +248,21 @@ private fun NewTaskPaper(onClick: () -> Unit) {
 }
 
 @Composable
-private fun FolderAction(label: String, count: Int?, meaning: Int, tag: String, palette: PaperPalette, modifier: Modifier, onClick: () -> Unit) {
+internal fun PaperCoverArt() {
+    val palette = paperPalette()
+    Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Image(painterResource(R.mipmap.ic_lexora), null, Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)))
+        NewTaskPaper()
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            FolderAction(mobileText(R.string.label_approvals), 1, R.plurals.approval_tasks, "cover-approvals", palette, Modifier.weight(1f), null)
+            FolderAction(mobileText(R.string.question_answers), 0, R.plurals.question_tasks, "cover-questions", palette, Modifier.weight(1f).padding(top = 12.dp), null)
+        }
+        PaperShortcut(mobileText(R.string.label_unread), 2, R.plurals.unread_tasks, "cover-unread", Icons.Outlined.Inbox, palette.ribbon, RoundedCornerShape(10.dp), null)
+    }
+}
+
+@Composable
+private fun FolderAction(label: String, count: Int?, meaning: Int, tag: String, palette: PaperPalette, modifier: Modifier, onClick: (() -> Unit)?) {
     PaperSurface(
         PaperFolderShape,
         modifier.heightIn(min = 116.dp).testTag(tag).semantics { stateDescription = count?.let { mobileQuantity(meaning, it) } ?: mobileText(R.string.label_count_unavailable) },
@@ -261,7 +280,7 @@ private fun FolderAction(label: String, count: Int?, meaning: Int, tag: String, 
 }
 
 @Composable
-private fun PaperShortcut(label: String, count: Int?, meaning: Int, tag: String, icon: ImageVector, colors: List<Color>, shape: androidx.compose.ui.graphics.Shape, onClick: () -> Unit) {
+private fun PaperShortcut(label: String, count: Int?, meaning: Int, tag: String, icon: ImageVector, colors: List<Color>, shape: androidx.compose.ui.graphics.Shape, onClick: (() -> Unit)?) {
     PaperSurface(shape, Modifier.fillMaxWidth().heightIn(min = 52.dp).testTag(tag).semantics { stateDescription = count?.let { mobileQuantity(meaning, it) } ?: mobileText(R.string.label_count_unavailable) }, colors, 3.dp, onClick = onClick) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -275,9 +294,9 @@ private fun PaperShortcut(label: String, count: Int?, meaning: Int, tag: String,
 }
 
 @Composable
-private fun HomeStatus(text: String, action: String? = null, modifier: Modifier = Modifier, onClick: () -> Unit = {}) {
+internal fun HomeStatus(text: String, action: String? = null, modifier: Modifier = Modifier, color: Color? = null, onClick: () -> Unit = {}) {
     Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(text, modifier.weight(1f).semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (action != null) TextButton(onClick = onClick, modifier = Modifier.heightIn(min = 48.dp)) { Text(action) }
+        Text(text, modifier.weight(1f).semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }, style = MaterialTheme.typography.bodySmall, color = color ?: MaterialTheme.colorScheme.onSurfaceVariant)
+        if (action != null) TextButton(onClick = onClick, modifier = Modifier.heightIn(min = 48.dp), colors = ButtonDefaults.textButtonColors(contentColor = color ?: MaterialTheme.colorScheme.primary)) { Text(action) }
     }
 }

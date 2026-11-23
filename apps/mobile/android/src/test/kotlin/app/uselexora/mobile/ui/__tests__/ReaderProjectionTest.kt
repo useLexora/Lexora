@@ -27,6 +27,24 @@ class ReaderProjectionTest {
         (0 until array.length()).map(array::getString)
     }
 
+    @Test fun skinChangesPublishAppearanceWithoutResettingMessagesOrHistory() {
+        val projection = ReaderProjection()
+        val base = snapshot("task:branch", listOf(message("reply", "Preserve the current reply")))
+            .copy(appearanceRevision = "paper@1", hasLaterMessages = true)
+        assertTrue(encode(projection, base).has("appearance"))
+        assertFalse(encode(projection, base).has("appearance"))
+
+        val changed = encode(projection, base.copy(appearanceRevision = "color-play@1"))
+        assertTrue(changed.has("appearance"))
+        assertTrue(changed.has("typography"))
+        assertFalse(changed.getBoolean("reset"))
+        assertFalse(changed.has("order"))
+        assertEquals(0, changed.getJSONArray("entries").length())
+        assertTrue(changed.getBoolean("hasLaterMessages"))
+        assertTrue(encode(projection, base).has("appearance"))
+        assertTrue(encode(projection, base.copy(dark = true)).has("appearance"))
+    }
+
     @Test fun onlyLiveRangedTextIsReplyingInATurnWindow() {
         val run = JSONObject("""{"id":"run","buddyId":"actor","approvalPolicy":"manual","branchId":"branch","completedAt":null,"conversationId":"task","errorCode":null,"executionProfile":"read_only","generation":"1","lastEventSequence":"10","modelId":"model","providerId":"provider","purpose":"chat","reasoningLevel":null,"startedAt":"2026-11-11T05:00:00Z","status":"running","triggeringMessageId":"user"}""")
         fun reply(revision: String?) = message("reply", "Text").put("runId", "run").apply {

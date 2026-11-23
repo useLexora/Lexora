@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
@@ -23,6 +24,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.core.view.WindowCompat
+
+internal val LocalMobileDarkTheme = staticCompositionLocalOf { false }
 
 private fun typography(bodySize: Int, bodyLineHeight: Int) = Typography(
     headlineMedium = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold, fontSize = 24.sp, lineHeight = 32.sp, letterSpacing = (-0.6).sp),
@@ -42,7 +45,7 @@ fun LexoraTheme(darkTheme: Boolean = MobileAppearance.isDark(isSystemInDarkTheme
     val view = LocalView.current
     val windowFocused = LocalWindowInfo.current.isWindowFocused
     val context = LocalContext.current
-    val colors = remember(darkTheme) {
+    val colors = remember(context, darkTheme, MobileAppearance.skinId) {
         val palette = MobileTheme.palette(context, darkTheme)
         fun c(name: String) = MobileTheme.color(palette, name)
         (if (darkTheme) darkColorScheme() else lightColorScheme()).copy(
@@ -83,6 +86,6 @@ fun LexoraTheme(darkTheme: Boolean = MobileAppearance.isDark(isSystemInDarkTheme
             extraSmall = RoundedCornerShape(4.dp), small = RoundedCornerShape(8.dp),
             medium = RoundedCornerShape(12.dp), large = RoundedCornerShape(16.dp), extraLarge = RoundedCornerShape(22.dp),
         ),
-        content = { CompositionLocalProvider(LocalContentColor provides colors.onSurface, content = content) },
+        content = { CompositionLocalProvider(LocalMobileDarkTheme provides darkTheme, LocalContentColor provides colors.onSurface, content = content) },
     )
 }

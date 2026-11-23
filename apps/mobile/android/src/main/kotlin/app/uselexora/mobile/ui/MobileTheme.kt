@@ -7,7 +7,7 @@ import org.json.JSONObject
 internal object MobileTheme {
     private var document: JSONObject? = null
     @Synchronized private fun document(context: Context): JSONObject = document ?: context.assets.open("reader/appearance.json").bufferedReader().use { JSONObject(it.readText()) }.also { document = it }
-    fun palette(context: Context, dark: Boolean): JSONObject = document(context).getJSONObject(if (dark) "dark" else "light")
+    fun palette(context: Context, dark: Boolean): JSONObject = BuiltinSkins.current(context).variant(dark).palette
     fun typography(context: Context): JSONObject = document(context).getJSONObject("typography")
     fun color(palette: JSONObject, key: String): Color {
         val hex = palette.getJSONObject("colors").getString(key).removePrefix("#")

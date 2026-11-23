@@ -37,6 +37,11 @@ internal fun AppearanceSettings(close: () -> Unit) {
     val context = LocalContext.current
     var languagePicker by remember { mutableStateOf(false) }
     var aboutOpen by rememberSaveable { mutableStateOf(false) }
+    var skinsOpen by rememberSaveable { mutableStateOf(false) }
+    if (skinsOpen) {
+        BuiltinSkinSettings { skinsOpen = false }
+        return
+    }
     if (aboutOpen) {
         AboutSettings { aboutOpen = false }
         return
@@ -55,6 +60,9 @@ internal fun AppearanceSettings(close: () -> Unit) {
                             ThemeOption(mode, mobileText(label), Modifier.weight(1f).fillMaxHeight()) { MobileAppearance.selectTheme(context, mode) }
                         }
                     }
+                    SettingsRow(mobileText(R.string.label_skin), Icons.Outlined.Palette,
+                        BuiltinSkins.current(context).label(MobileAppearance.language),
+                        kind = SettingsRowKind.Navigation, tag = "skin-settings", divider = false) { skinsOpen = true }
                 }
                 SettingsSection(mobileText(R.string.label_language)) {
                     SettingsRow(mobileText(R.string.label_language), Icons.Outlined.Language,
@@ -114,10 +122,11 @@ private fun ThemeOption(mode: String, label: String, modifier: Modifier, click: 
 }
 
 @Composable
-private fun ThemePreview(mode: String, modifier: Modifier) {
+internal fun ThemePreview(mode: String, modifier: Modifier, skinId: String = MobileAppearance.skinId) {
     val context = LocalContext.current
-    val light = remember { MobileTheme.palette(context, false) }
-    val dark = remember { MobileTheme.palette(context, true) }
+    val skin = remember(context, skinId) { BuiltinSkins.get(context, skinId) }
+    val light = skin.variant(false).palette
+    val dark = skin.variant(true).palette
     Canvas(modifier) {
         fun drawPreview(darkMode: Boolean) {
             val palette = if (darkMode) dark else light
