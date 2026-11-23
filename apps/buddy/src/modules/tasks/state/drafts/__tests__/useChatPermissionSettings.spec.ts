@@ -42,6 +42,7 @@ describe('useChatPermissionSettings', () => {
       buddyId: 'default',
       activeBranchId: 'branch-1',
       activity: 'running',
+      lastActivityAt: timestamp,
       automationOccurrence: null,
       createdAt: timestamp,
       deletedAt: null,

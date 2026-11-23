@@ -105,7 +105,7 @@ describe('durable product question commands', () => {
     const handlers = { ...f.queries.handlers(), ...createProductCommandHandlers({ commands, assertOwner: () => {}, resolveQuote: () => {
       throw new Error('Unexpected quote')
     }, allowedActions: new Set() }) }
-    const initialize = { protocol: { major: 1, minMinor: 0, maxMinor: 0 }, client: { kind: 'mobile', version: 'test' }, supportedContentKinds: [], supportedReviewKinds: [] }
+    const initialize = { protocol: { major: 1, minMinor: 1, maxMinor: 1 }, client: { kind: 'mobile', version: 'test' }, supportedContentKinds: [], supportedReviewKinds: [] }
     const context: TrustedProductContext = { serviceId: 'service', profileId: 'profile', dataGeneration: f.command(request.id, 'x').dataGeneration, serviceInstanceId: 'instance', connectionId: 'connection', clientSessionId: 'session', deviceId: 'phone', ownerPrincipalId: 'owner', credentialId: 'credential', grantGeneration: '1', role: 'reader' }
     for (const role of ['reader', 'owner'] as const) {
       const frames: any[] = []
@@ -130,8 +130,6 @@ describe('durable product question commands', () => {
         expect(frames.at(-1).result.receipt).toMatchObject({ decision: 'accepted', target: { questionId: request.id }, result: { questionStatus: 'answered', questionDelivery: 'pending' } })
         expect(f.queries.views.question(request.id)).toMatchObject({ status: 'answered', response: { answers }, delivery: { state: 'delivered' } })
         expect(f.countDeliveries()).toBe(1)
-        await send('commands.get', { dataGeneration: context.dataGeneration, commandId: 'answer' })
-        expect(frames.at(-1).result).toMatchObject({ lookup: 'decided', receipt: { decision: 'accepted' } })
       }
       connection.close()
     }

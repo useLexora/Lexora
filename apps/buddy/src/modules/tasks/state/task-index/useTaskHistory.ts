@@ -29,7 +29,7 @@ function needsAttention(item: LocalConversationHistoryItem) {
 }
 
 function compareTasks(left: LocalConversationSummary, right: LocalConversationSummary) {
-  return right.updatedAt.localeCompare(left.updatedAt)
+  return right.lastActivityAt.localeCompare(left.lastActivityAt)
     || right.createdAt.localeCompare(left.createdAt)
     || right.id.localeCompare(left.id)
 }
@@ -401,6 +401,7 @@ export function useTaskHistory(api: Pick<LocalChatApi['conversations'], 'listHis
     if (previous && !conversation.deletedAt && !conversation.archivedAt
       && previous.conversation.spaceId === conversation.spaceId
       && previous.conversation.updatedAt === conversation.updatedAt
+      && (conversation.lastActivityAt === undefined || previous.conversation.lastActivityAt === conversation.lastActivityAt)
       && previous.conversation.activeBranchId === conversation.activeBranchId) {
       merge([{ ...previous, conversation: { ...previous.conversation, ...conversation } }])
       publish()

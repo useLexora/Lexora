@@ -31,7 +31,7 @@ function fixture(initialConversation?: LocalConversation) {
   const lookup = deferred<LocalConversation>()
   const errors: unknown[] = []
   const persisted: (string | null)[] = []
-  const conversations = shallowRef([{ ...conversation('indexed'), activity: 'idle' as const, automationOccurrence: null }])
+  const conversations = shallowRef([{ ...conversation('indexed'), lastActivityAt: '2026-09-08T00:00:00.000Z', activity: 'idle' as const, automationOccurrence: null }])
   const owner = scope.run(() => useChatConversations({
     initialConversation,
     api: { conversations: { get: () => lookup.promise, listBranches: async () => [], listMessages: async () => ({ items: [], nextCursor: null }) } },

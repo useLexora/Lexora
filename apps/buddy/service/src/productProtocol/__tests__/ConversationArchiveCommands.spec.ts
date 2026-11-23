@@ -35,7 +35,7 @@ afterEach(async () => {
   for (const dispose of cleanup.splice(0)) await dispose()
 })
 const now = '2026-11-07T00:00:00.000Z'
-const initialize = { protocol: { major: 1, minMinor: 0, maxMinor: 0 }, client: { kind: 'mobile', version: '1' }, supportedContentKinds: ['buddy-user-content-v1'], supportedReviewKinds: [] }
+const initialize = { protocol: { major: 1, minMinor: 1, maxMinor: 1 }, client: { kind: 'mobile', version: '1' }, supportedContentKinds: ['buddy-user-content-v1'], supportedReviewKinds: [] }
 
 function fixture(prepare: () => Promise<number> = async () => 0) {
   const directory = mkdtempSync(join(tmpdir(), 'lexora-archive-protocol-'))
@@ -122,9 +122,15 @@ describe('archive product commands', () => {
   it('keeps asynchronous preparation outside the receipt transaction and publishes only committed archive facts', async () => {
     const started = Promise.withResolvers<void>()
     const release = Promise.withResolvers<number>()
+    const stalePrepared = Promise.withResolvers<void>()
+    const staleRelease = Promise.withResolvers<number>()
     const f = fixture(() => {
       started.resolve()
       return release.promise
+    })
+    const second = fixture(() => {
+      stalePrepared.resolve()
+      return staleRelease.promise
     })
     const client = await f.connect()
     const initialRevision = f.revision()
@@ -152,6 +158,16 @@ describe('archive product commands', () => {
     expect(restored.result?.receipt.result).toEqual({ restored: true })
     expect((await client.send('conversations.archive', request)).result?.receipt).toEqual(accepted.result?.receipt)
     expect(f.conversations.findById('task')?.archivedAt).toBeNull()
+    const staleClient = await second.connect()
+    const staleRequest = second.envelope('stale', { conversationId: 'task', expectedRevision: String(second.revision()) })
+    const stale = staleClient.send('conversations.archive', staleRequest)
+    await stalePrepared.promise
+    second.database.prepare('UPDATE conversations SET metadata_revision = metadata_revision + 1 WHERE id = ?').run('task')
+    staleRelease.resolve(0)
+    const rejected = await stale
+    expect(rejected.result?.receipt).toMatchObject({ decision: 'rejected', errorCode: 'SOURCE_CHANGED' })
+    expect(second.conversations.findById('task')?.archivedAt).toBeNull()
+    expect((await staleClient.send('conversations.archive', staleRequest)).result?.receipt).toEqual(rejected.result?.receipt)
     const reopened = new DatabaseSync(f.path, { readOnly: true })
     try {
       const admission = new CommandAdmissionService({ database: reopened, principal: createLocalCommandPrincipal(reopened), sourceInstanceId: 'reopened-instance' })
@@ -187,25 +203,6 @@ describe('archive product commands', () => {
     expect((await client.send('conversations.listMessages', { conversationId: 'task', branchId: 'branch' })).error?.code).toBe('OBJECT_DELETED')
     expect((await client.send('runs.get', { runId: 'historical-run' })).result).toBeNull()
     expect((await client.send('sync.subscribe', { subscriptionId: 'deleted-detail', topic: 'conversation:task:branch' })).error?.code).toBe('OBJECT_DELETED')
-  })
-
-  it('rejects stale revisions after preparation without committing an archive or changing the fixed rejection', async () => {
-    const started = Promise.withResolvers<void>()
-    const release = Promise.withResolvers<number>()
-    const f = fixture(() => {
-      started.resolve()
-      return release.promise
-    })
-    const client = await f.connect()
-    const request = f.envelope('stale', { conversationId: 'task', expectedRevision: String(f.revision()) })
-    const pending = client.send('conversations.archive', request)
-    await started.promise
-    f.database.prepare('UPDATE conversations SET metadata_revision = metadata_revision + 1 WHERE id = ?').run('task')
-    release.resolve(0)
-    const rejected = await pending
-    expect(rejected.result?.receipt).toMatchObject({ decision: 'rejected', errorCode: 'SOURCE_CHANGED' })
-    expect(f.conversations.findById('task')?.archivedAt).toBeNull()
-    expect((await client.send('conversations.archive', request)).result?.receipt).toEqual(rejected.result?.receipt)
   })
 
   it('requires owner role and an explicit decimal revision for optional archive capabilities', async () => {

@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { createHash } from 'node:crypto'
 import { encodeProductRevision, PRODUCT_INTEGER_MAX } from '../../../shared/productProtocol/scalars'
+import { USER_ACTIVITY_MAILBOX_SQL } from '../storage/conversationActivity'
 import { createConversationHistoryStore } from '../storage/conversationHistoryRepository'
 
 export function productQueryRevision(database: DatabaseSync, method: string, input: Record<string, unknown>): string {
@@ -18,9 +19,14 @@ export function productQueryRevision(database: DatabaseSync, method: string, inp
     case 'conversations.search':
       add('', 'conversations', 'messages', 'conversation_publications', 'run_history')
       break
-    case 'conversations.list':
-      add('', 'conversations', 'approvals', 'run_summaries', 'automation_occurrences', 'user_questions', 'task_attention', 'publication_summaries', 'message_summaries')
+    case 'conversations.list': {
+      add('', 'conversations', 'approvals', 'run_summaries', 'automation_occurrences', 'user_questions', 'task_attention', 'publication_summaries', 'message_summaries', 'chat_queue')
+      const activity = database.prepare(`SELECT runs.conversation_id, MAX(activity_mailbox.created_at) AS last_activity_at
+        FROM execution_mailbox_sources activity_mailbox JOIN runs ON runs.id = activity_mailbox.target_run_id
+        WHERE ${USER_ACTIVITY_MAILBOX_SQL} GROUP BY runs.conversation_id ORDER BY runs.conversation_id`).iterate()
+      for (const row of activity) fingerprint.update(JSON.stringify(row))
       break
+    }
     case 'conversations.listMessages': {
       addVisibility(input.conversationId)
       const segments = createConversationHistoryStore(database).lineage.listVisibleSegments(String(input.conversationId), String(input.branchId))

@@ -186,7 +186,7 @@ async function loadMore(row: Extract<TaskHistoryRow, { kind: 'more' }>, event: M
             :drop-position="item.pinnedTopLevel ? controller.getPinnedDropPosition(item.pinKey) : undefined"
             :language="language"
             :now="controller.relativeTimeNow.value"
-            :occurred-at="item.task.automationOccurrence?.scheduledFor ?? item.task.updatedAt"
+            :occurred-at="item.task.lastActivityAt"
             :pin-mode="item.pinnedTopLevel ? 'unpin' : item.spaceTask ? undefined : 'pin'"
             :space-task="item.spaceTask"
             :reorderable="item.pinnedTopLevel"

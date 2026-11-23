@@ -191,7 +191,7 @@ class QuestionRetryInstrumentedTest {
             val limits = JSONObject()
             val properties = schemas.document.getJSONObject("initialize").getJSONObject("output").getJSONObject("properties").getJSONObject("limits").getJSONObject("properties")
             for (key in properties.keys()) limits.put(key, properties.getJSONObject(key).get("const"))
-            return result.put("protocol", JSONObject().put("major", 1).put("minor", 0)).put("phase", "ready").put("serverTime", Instant.now().toString())
+            return result.put("protocol", JSONObject().put("major", 1).put("minor", 1)).put("phase", "ready").put("serverTime", Instant.now().toString())
                 .put("capabilities", JSONArray(listOf("questions.list", "questions.answer", "questions.cancel", "questions.retry"))).put("limits", limits)
         }
         override fun close() { client.close(); server.close() }

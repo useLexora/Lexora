@@ -9,6 +9,7 @@ import { executionPhaseSchema } from '../executions/executionApi'
 import { userQuestionRequestSchema } from '../questions/userQuestionApi'
 import { publicRunEventSchema } from '../runs/publicRunEvent'
 import { runStatusSchema } from '../runs/runApi'
+import { timestampSchema } from '../runtime/apiValidation'
 import { productReadActivityStepDetailInputSchema, productReadActivityStepDetailResultSchema } from './activityStepDetail'
 import { productBuddyAvatarSchema } from './avatars'
 import { productContentSchema } from './content'
@@ -24,7 +25,7 @@ export const productPageInputSchema = z.object({ limit: z.number().int().min(1).
 export function productPageSchema<T extends ZodType>(item: T) {
   return z.object({ items: z.array(item).max(PRODUCT_LIMITS.pageItems), nextCursor: z.string().max(4096).nullable() }).strict()
 }
-export const productTaskSchema = conversationSchema.omit({ metadataRevision: true, titleRevision: true, archivedAt: true }).extend({ revision, titleRevision: revision }).strict()
+export const productTaskSchema = conversationSchema.omit({ metadataRevision: true, titleRevision: true, archivedAt: true }).extend({ revision, titleRevision: revision, lastActivityAt: timestampSchema }).strict()
 export const productTaskSummarySchema = conversationSummarySchema.omit({ metadataRevision: true, titleRevision: true, archivedAt: true }).extend({ revision, titleRevision: revision, unread: z.boolean().optional(), previewText: z.string().max(240).optional(), previewBranchId: id.optional(), resultBranchId: id.optional(), resultRunId: id.optional(), lastRunStatus: runStatusSchema.nullable().optional(), pendingQuestionCount: z.number().int().nonnegative().optional() }).strict()
 export const productBranchSchema = conversationBranchSchema.extend({ pendingQuestionCount: z.number().int().nonnegative().optional(), pendingApprovalCount: z.number().int().nonnegative().optional(), runningCount: z.number().int().nonnegative().optional(), queuedCount: z.number().int().nonnegative().optional() }).strict()
 export const productQuestionSchema = userQuestionRequestSchema.omit({ toolCallId: true, rootRunId: true }).strict()

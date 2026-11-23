@@ -66,7 +66,7 @@ export function resolveTaskIndexProjection(input: {
   const compareTasks = (left: LocalConversationSummary, right: LocalConversationSummary) => (
     Number(input.markedTaskIds.has(right.id)) - Number(input.markedTaskIds.has(left.id))
     || Number(input.unreadTaskIds.has(right.id)) - Number(input.unreadTaskIds.has(left.id))
-    || right.updatedAt.localeCompare(left.updatedAt)
+    || right.lastActivityAt.localeCompare(left.lastActivityAt)
   )
   globalTasks.sort(compareTasks)
   for (const tasks of tasksBySpace.values())

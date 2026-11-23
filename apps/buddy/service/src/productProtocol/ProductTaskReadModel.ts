@@ -4,6 +4,7 @@ import type { MessageRecord } from '../storage/conversationHistoryRepository'
 import type { ConversationRecord, ConversationRow } from '../storage/conversationRecord'
 import { productTaskSchema, productTaskSummarySchema } from '../../../shared/productProtocol/queries'
 import { encodeProductRevision } from '../../../shared/productProtocol/scalars'
+import { CONVERSATION_LAST_ACTIVITY_SQL } from '../storage/conversationActivity'
 import { CONVERSATION_CURRENT_MODEL_SELECTION_SQL, toConversationRecord } from '../storage/conversationRecord'
 import { createTaskMarkRepository } from '../storage/taskMarkRepository'
 
@@ -22,7 +23,7 @@ export class ProductTaskReadModel {
   }
 
   get(id: string) {
-    const row = this.#database.prepare(`SELECT conversations.*, ${CONVERSATION_CURRENT_MODEL_SELECTION_SQL} AS actor_model_selection_json FROM conversations WHERE id = ? AND deleted_at IS NULL`).get(id) as ConversationRow | undefined
+    const row = this.#database.prepare(`SELECT conversations.*, ${CONVERSATION_LAST_ACTIVITY_SQL} AS last_activity_at, ${CONVERSATION_CURRENT_MODEL_SELECTION_SQL} AS actor_model_selection_json FROM conversations WHERE id = ? AND deleted_at IS NULL`).get(id) as ConversationRow | undefined
     return row ? this.#project(toConversationRecord(row)) : null
   }
 
@@ -30,7 +31,7 @@ export class ProductTaskReadModel {
     if (!ids.length)
       return new Map()
     const selected = JSON.stringify([...new Set(ids)])
-    const tasks = this.#database.prepare(`SELECT conversations.*, ${CONVERSATION_CURRENT_MODEL_SELECTION_SQL} AS actor_model_selection_json FROM conversations
+    const tasks = this.#database.prepare(`SELECT conversations.*, ${CONVERSATION_LAST_ACTIVITY_SQL} AS last_activity_at, ${CONVERSATION_CURRENT_MODEL_SELECTION_SQL} AS actor_model_selection_json FROM conversations
       WHERE id IN (SELECT value FROM json_each(?)) AND deleted_at IS NULL AND archived_at IS NULL`).all(selected) as unknown as ConversationRow[]
     const states = new Map(this.#marks.states(tasks.map(task => task.id)).map(state => [state.conversationId, state]))
     const facts = new Map(this.#database.prepare(`SELECT c.id,

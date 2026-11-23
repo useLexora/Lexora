@@ -25,12 +25,14 @@ describe('localChatResponseSchemas', () => {
     expect(conversationResponseSchemas.conversations.parse([{
       ...conversation,
       activity: 'awaiting_approval',
+      lastActivityAt: conversation.updatedAt,
       automationOccurrence: null,
     }])).toMatchObject([{ activity: 'awaiting_approval' }])
     expect(() => conversationResponseSchemas.conversations.parse([conversation])).toThrow()
     expect(() => conversationResponseSchemas.conversations.parse([{
       ...conversation,
       activity: 'failed',
+      lastActivityAt: conversation.updatedAt,
     }])).toThrow()
   })
 

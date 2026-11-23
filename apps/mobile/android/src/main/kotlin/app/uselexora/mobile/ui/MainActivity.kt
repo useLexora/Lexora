@@ -436,7 +436,7 @@ class MainActivity : ComponentActivity() {
         ui.conversationReady = demo || (ui.connected && !ui.readingCached && (conversationTarget == null || (session.isSynchronized && readyContext == liveContext())))
         ui.historyInput = scope.startsWith("message-edit:") || scope.startsWith("message-followup:")
         ui.questionsSupported = client?.supports("questions.list") == true
-        if (sortedTaskSource !== taskItems) { sortedTaskSource = taskItems; ui.tasks = taskItems.sortedByDescending { it.optString("updatedAt") } }
+        if (sortedTaskSource !== taskItems) { sortedTaskSource = taskItems; ui.tasks = taskItems.sortedWith(compareByDescending<JSONObject> { it.optString("lastActivityAt", it.optString("updatedAt")) }.thenByDescending { it.optString("createdAt") }.thenByDescending { it.optString("id") }) }
         if (localEcho?.belongsTo(operationOwner()) == false) localEcho = null
         localEcho?.takeIf { it.failure != null }?.let { echo ->
             val detail = details[echo.id]

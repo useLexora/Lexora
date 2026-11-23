@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { PRODUCT_LIMITS } from './limits'
 import { productIdSchema, productRevisionSchema } from './scalars'
 
-export const PRODUCT_PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 0 })
+export const PRODUCT_PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 1 })
 export const productInitializeSchema = z.object({
   protocol: z.object({ major: z.number().int().nonnegative(), minMinor: z.number().int().nonnegative(), maxMinor: z.number().int().nonnegative() }).strict().refine(value => value.minMinor <= value.maxMinor),
   client: z.object({ kind: z.enum(['desktop', 'mobile']), version: z.string().min(1).max(80) }).strict(),
@@ -27,7 +27,7 @@ export interface TrustedProductContext extends ProductIdentity {
 }
 export const productPhaseSchema = z.enum(['starting', 'recovering', 'ready', 'stopping'])
 export const productInitializeResultSchema = productIdentitySchema.extend({
-  protocol: z.object({ major: z.literal(1), minor: z.literal(0) }).strict(),
+  protocol: z.object({ major: z.literal(PRODUCT_PROTOCOL_VERSION.major), minor: z.literal(PRODUCT_PROTOCOL_VERSION.minor) }).strict(),
   serverTime: z.iso.datetime(),
   phase: productPhaseSchema,
   capabilities: z.array(z.string()),

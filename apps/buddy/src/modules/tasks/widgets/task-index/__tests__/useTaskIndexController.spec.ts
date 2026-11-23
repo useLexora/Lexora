@@ -121,7 +121,7 @@ describe('task index presentation', () => {
       sidebar,
       history,
       spaces: shallowRef([space('a')]),
-      tasks: shallowRef([{ id: 'attention', spaceId: 'a', updatedAt: '2026-09-08T00:00:00.000Z', activity: 'idle' } as LocalConversationSummary]),
+      tasks: shallowRef([{ id: 'attention', spaceId: 'a', lastActivityAt: '2026-09-08T00:00:00.000Z', updatedAt: '2026-09-08T00:00:00.000Z', activity: 'idle' } as LocalConversationSummary]),
       onHistoryError: () => errorCount += 1,
     })
     await controller.ensureHistoryScope('a')
@@ -142,7 +142,7 @@ describe('task index presentation', () => {
     await sidebar.setSectionExpanded('pinned', false)
     const history = historyFixture()
     const tasks = shallowRef<readonly LocalConversationSummary[]>([])
-    const oldTask = { id: 'old', spaceId: 'a', updatedAt: '2020-01-01T00:00:00.000Z', activity: 'idle' } as LocalConversationSummary
+    const oldTask = { id: 'old', spaceId: 'a', lastActivityAt: '2020-01-01T00:00:00.000Z', updatedAt: '2020-01-01T00:00:00.000Z', activity: 'idle' } as LocalConversationSummary
     history.setActiveTask = async (id) => {
       if (id === oldTask.id)
         tasks.value = [oldTask]
@@ -185,7 +185,7 @@ describe('task index presentation', () => {
       ['global-new', null],
       ['global-marked', null],
       ['global-pinned', null],
-    ].map(([id, spaceId]) => ({ id, spaceId, activity: 'idle', updatedAt: '2026-09-08T00:00:00.000Z' } as LocalConversationSummary)))
+    ].map(([id, spaceId]) => ({ id, spaceId, activity: 'idle', lastActivityAt: '2026-09-08T00:00:00.000Z', updatedAt: '2026-09-08T00:00:00.000Z' } as LocalConversationSummary)))
     const state = (conversationId: string, markId: string | null = null, unread = false): LocalTaskMarkState => ({
       conversationId,
       markId,

@@ -12,7 +12,7 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 function task(id: string, activity: LocalConversationSummary['activity']): LocalConversationSummary {
-  return { id, title: id, activity, buddyId: 'default', activeBranchId: `branch-${id}`, spaceId: null, createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-01T00:00:00Z', deletedAt: null, archivedAt: null, approvalPolicy: 'policy', executionProfile: 'workspace_write', modelSelection: null, automationOccurrence: null, metadataRevision: 4 }
+  return { id, title: id, activity, lastActivityAt: '2026-09-01T00:00:00Z', buddyId: 'default', activeBranchId: `branch-${id}`, spaceId: null, createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-01T00:00:00Z', deletedAt: null, archivedAt: null, approvalPolicy: 'policy', executionProfile: 'workspace_write', modelSelection: null, automationOccurrence: null, metadataRevision: 4 }
 }
 async function mount(activity: LocalConversationSummary['activity']) {
   vi.stubGlobal('matchMedia', (media: string) => ({ matches: false, media, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent: () => true }))

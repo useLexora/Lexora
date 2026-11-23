@@ -31,7 +31,7 @@ describe('product service transport ownership', () => {
         if (method === 'product.frame')
           frames.push(JSON.parse((params as { frame: string }).frame))
       })
-      await peer.client.request('product.exchange', { frame: JSON.stringify({ jsonrpc: '2.0', id: 'initialize', method: 'initialize', params: { protocol: { major: 1, minMinor: 0, maxMinor: 0 }, client: { kind: 'desktop', version: 'test' }, supportedContentKinds: [], supportedReviewKinds: [] } }) })
+      await peer.client.request('product.exchange', { frame: JSON.stringify({ jsonrpc: '2.0', id: 'initialize', method: 'initialize', params: { protocol: { major: 1, minMinor: 1, maxMinor: 1 }, client: { kind: 'desktop', version: 'test' }, supportedContentKinds: [], supportedReviewKinds: [] } }) })
       expect(frames).toMatchObject([{ result: { profileId: 'test-profile', capabilities: expect.arrayContaining(['chat.getNewTaskDefaults']) } }])
       await peer.client.request('product.exchange', { frame: JSON.stringify({ jsonrpc: '2.0', id: 'info', method: 'service.info', params: {} }) })
       expect(Object.keys((frames.at(-1) as { result: object }).result)).toEqual(['name'])
@@ -46,7 +46,7 @@ describe('product service transport ownership', () => {
       let hostMode: string = 'read_only'
       f.peer.client.onRequest(runtimePreferencesRpc.getDefaultPermissionMode, () => hostMode)
       const reader = await f.connect('remote-reader', 'reader')
-      expect(reader.result()).toMatchObject({ protocol: { major: 1, minor: 0 }, capabilities: expect.arrayContaining(['chat.getNewTaskDefaults', 'conversations.getRecentWindow', 'conversations.getTurnWindow', 'conversations.listActivitySteps', 'conversations.readLiveText']) })
+      expect(reader.result()).toMatchObject({ protocol: { major: 1, minor: 1 }, capabilities: expect.arrayContaining(['chat.getNewTaskDefaults', 'conversations.getRecentWindow', 'conversations.getTurnWindow', 'conversations.listActivitySteps', 'conversations.readLiveText']) })
       await reader.send('conversations.getTurnWindow', { conversationId: 'missing', branchId: 'missing' })
       expect(reader.error()).toMatchObject({ code: 'OBJECT_DELETED' })
       for (const [mode, executionProfile, approvalPolicy] of [
@@ -212,7 +212,7 @@ async function fixture(platform?: Partial<RuntimePlatform>) {
       })
       let requestId = 0
       const send = (method: string, params: unknown) => connection.receive(JSON.stringify({ jsonrpc: '2.0', id: String(++requestId), method, params }))
-      await send('initialize', { protocol: { major: 1, minMinor: 0, maxMinor: 0 }, client: { kind: 'mobile', version: 'test' }, supportedContentKinds: [], supportedReviewKinds: [] })
+      await send('initialize', { protocol: { major: 1, minMinor: 1, maxMinor: 1 }, client: { kind: 'mobile', version: 'test' }, supportedContentKinds: [], supportedReviewKinds: [] })
       return { send, connection, result: () => frames.at(-1)?.result, error: () => frames.at(-1)?.error }
     },
     async close() {

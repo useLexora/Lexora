@@ -76,7 +76,7 @@ describe('durable device authorization', () => {
       return response.result
     }
     try {
-      await request('initialize', { protocol: { major: 1, minMinor: 0, maxMinor: 0 }, client: { kind: 'mobile', version: '1' }, supportedContentKinds: ['buddy-user-content-v1'], supportedReviewKinds: [] })
+      await request('initialize', { protocol: { major: 1, minMinor: 1, maxMinor: 1 }, client: { kind: 'mobile', version: '1' }, supportedContentKinds: ['buddy-user-content-v1'], supportedReviewKinds: [] })
       const tasks = await request('conversations.list', { limit: 1, cursor: null })
       const input = { conversationId: 'first', branchId: 'branch-first', limit: 1, cursor: null }
       const messages = await request('conversations.listMessages', input)
