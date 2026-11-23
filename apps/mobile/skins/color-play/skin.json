@@ -1,0 +1,1119 @@
+{
+  "schemaVersion": 1,
+  "id": "color-play",
+  "version": 5,
+  "name": {
+    "zh": "色块拼图",
+    "en": "Colorblock"
+  },
+  "variants": {
+    "light": {
+      "colors": {
+        "canvas": "#FCF8F2",
+        "app-sidebar": "#FCF8F2",
+        "workspace-sidebar": "#FCF8F2",
+        "surface": "#FCF8F2",
+        "reading": "#FCF8F2",
+        "editor": "#FCF8F2",
+        "raised": "#FFFFFF",
+        "composer": "#FFFFFF",
+        "fg": "#182137",
+        "reading-fg": "#182137",
+        "composer-fg": "#182137",
+        "app-sidebar-fg": "#182137",
+        "workspace-sidebar-fg": "#182137",
+        "editor-fg": "#182137",
+        "hover-fg": "#182137",
+        "pressed-fg": "#182137",
+        "selected-fg": "#182137",
+        "code-fg": "#182137",
+        "strong": "#121B2C",
+        "muted": "#566071",
+        "disabled": "#707C90",
+        "subtle": "#E5EDF9",
+        "user-message": "#DCEAFF",
+        "hover": "#E5EDF9",
+        "pressed": "#C9DAF4",
+        "selected": "#DCEAFF",
+        "selected-hover": "#C9DAF4",
+        "nav-hover": "#E5EDF9",
+        "nav-selected": "#DCEAFF",
+        "nav-selected-hover": "#C9DAF4",
+        "nav-pressed": "#C9DAF4",
+        "nav-foreground": "#063CE8",
+        "border": "#B6C0CF",
+        "border-strong": "#7F8B9E",
+        "on-accent": "#FFFFFF",
+        "accent": "#063CE8",
+        "accent-hover": "#0031BD",
+        "accent-pressed": "#00278E",
+        "accent-text": "#063CE8",
+        "focus": "#063CE8",
+        "text-selection": "#C9DAF4",
+        "text-selection-inactive": "#E5EDF9",
+        "text-selection-match": "#DCEAFF",
+        "accent-subtle": "#E5EDF9",
+        "accent-surface": "#DCEAFF",
+        "accent-surface-hover": "#C9DAF4",
+        "accent-surface-pressed": "#C9DAF4",
+        "accent-border": "#063CE8",
+        "accent-border-hover": "#0031BD",
+        "accent-on-surface": "#063CE8",
+        "link": "#063CE8",
+        "quote": "#566071",
+        "quote-border": "#063CE8",
+        "inline-code": "#DCEAFF",
+        "inline-code-fg": "#182137",
+        "code": "#EBEFF6",
+        "code-header": "#E5EDF9",
+        "code-border": "#B6C0CF",
+        "code-line-number": "#566071",
+        "table-header": "#DCEAFF",
+        "table-border": "#B6C0CF",
+        "table-stripe": "#E5EDF9",
+        "table-hover": "#C9DAF4",
+        "avatar": "#DCEAFF",
+        "avatar-foreground": "#182137",
+        "gold": "#936200",
+        "gold-surface": "#DCEAFF",
+        "data-violet": "#7150B5",
+        "data-cyan": "#006B88",
+        "data-blue": "#063CE8",
+        "success": "#17633D",
+        "success-solid": "#187847",
+        "success-surface": "#E0F3E8",
+        "success-surface-hover": "#E0F3E8",
+        "success-border": "#7AAF90",
+        "warning": "#7D4700",
+        "warning-solid": "#9A5900",
+        "warning-surface": "#FFF0D8",
+        "warning-surface-hover": "#FFF0D8",
+        "warning-border": "#C49A5B",
+        "danger": "#A92D37",
+        "danger-solid": "#B22E39",
+        "danger-surface": "#FFE3E4",
+        "danger-surface-hover": "#FFE3E4",
+        "danger-border": "#CD8B90"
+      },
+      "home": {
+        "schemaVersion": 1,
+        "iconStyle": "rounded",
+        "layout": {
+          "headerFlow": "stacked",
+          "heroAlignment": "leading",
+          "actionArrangement": "stacked",
+          "pageInset": 0,
+          "gap": 0,
+          "pageTop": 0,
+          "pageBottom": 0,
+          "headerHeight": 76,
+          "headerPadding": [
+            20,
+            0,
+            14,
+            10
+          ],
+          "connectionMinHeight": 100,
+          "connectionPadding": [
+            16,
+            0,
+            16,
+            0
+          ],
+          "connectionGap": 4,
+          "serviceLayout": "compact",
+          "serviceWidth": 0.65,
+          "spaceWidth": 0.44,
+          "serviceHeight": 48,
+          "spaceHeight": 48,
+          "spaceVerticalAlignment": "center",
+          "settingsLabel": false,
+          "settingsWidth": 48,
+          "heroMinHeight": 128,
+          "heroPromptBounds": [
+            0.14,
+            0.24,
+            0.64,
+            0.18
+          ],
+          "heroActionBounds": [
+            0.14,
+            0.43,
+            0.72,
+            0.41
+          ],
+          "actionMinHeight": 150,
+          "actionPadding": [
+            30,
+            27,
+            16,
+            18
+          ],
+          "actionsPadding": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "actionsGap": 4,
+          "shortcutsPadding": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "shortcutGap": 4,
+          "shortcutMinHeight": 68,
+          "footerHeight": 32,
+          "heroIconSize": 48,
+          "shortcutBadge": "badge",
+          "heroAspectRatio": 2.074468085106383,
+          "brandIconSize": 42,
+          "serviceContentBounds": [
+            0.055,
+            0.12,
+            0.89,
+            0.76
+          ],
+          "spaceContentBounds": [
+            0.13,
+            0.15,
+            0.74,
+            0.7
+          ],
+          "actionIconGap": 8,
+          "actionCountGap": 6
+        },
+        "typography": {
+          "brandSize": 28,
+          "titleSize": 54,
+          "labelSize": 26,
+          "weight": 750,
+          "brandWeight": 650,
+          "brandItalic": false,
+          "promptSize": 20,
+          "serviceSize": 14,
+          "countSize": 18,
+          "fontFamily": "fonts/rounded.otf",
+          "brandFontFamily": "fonts/rounded.otf",
+          "countAspectRatio": 1,
+          "titleWeight": 900,
+          "spaceSize": 16
+        },
+        "surfaces": {
+          "background": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#F9F6F2"
+              ],
+              "angle": 90
+            },
+            "foreground": "#1C2532",
+            "muted": "#1C2532",
+            "layers": [
+              {
+                "bounds": [
+                  0,
+                  0,
+                  1,
+                  1
+                ],
+                "shape": {
+                  "type": "path",
+                  "commands": [
+                    {
+                      "op": "M",
+                      "values": [
+                        0.464,
+                        0
+                      ]
+                    },
+                    {
+                      "op": "C",
+                      "values": [
+                        0.452,
+                        0.15,
+                        0.64,
+                        0.28,
+                        1,
+                        0.32
+                      ]
+                    },
+                    {
+                      "op": "L",
+                      "values": [
+                        1,
+                        0
+                      ]
+                    },
+                    {
+                      "op": "Z",
+                      "values": []
+                    }
+                  ]
+                },
+                "fill": {
+                  "colors": [
+                    "#FFDA00",
+                    "#FFBF00"
+                  ],
+                  "angle": 75
+                },
+                "opacity": 1
+              }
+            ]
+          },
+          "header": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#F9F6F2"
+              ],
+              "angle": 90
+            },
+            "foreground": "#001898",
+            "muted": "#001898",
+            "layers": [],
+            "image": {
+              "path": "images/header-light.webp"
+            }
+          },
+          "service": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#F9F6F2"
+              ],
+              "angle": 90
+            },
+            "foreground": "#111A30",
+            "muted": "#111A30",
+            "layers": [],
+            "image": {
+              "path": "images/service-light.webp",
+              "insets": [
+                45,
+                20,
+                45,
+                20
+              ]
+            },
+            "icon": "#073CE0"
+          },
+          "space": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#F9F6F2"
+              ],
+              "angle": 90
+            },
+            "foreground": "#1C2532",
+            "muted": "#1C2532",
+            "layers": [],
+            "image": {
+              "path": "images/space-light.webp",
+              "insets": [
+                45,
+                53,
+                45,
+                53
+              ]
+            }
+          },
+          "hero": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#F9F6F2"
+              ],
+              "angle": 90
+            },
+            "foreground": "#FFFFFF",
+            "muted": "#BADFFF",
+            "layers": [],
+            "image": {
+              "path": "images/hero-light.webp"
+            }
+          },
+          "approvals": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#F9F6F2"
+              ],
+              "angle": 90
+            },
+            "foreground": "#111A30",
+            "muted": "#111A30",
+            "layers": [],
+            "image": {
+              "path": "images/approvals-light.webp"
+            },
+            "icon": "#073CE0"
+          },
+          "questions": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#F9F6F2"
+              ],
+              "angle": 90
+            },
+            "foreground": "#111A30",
+            "muted": "#111A30",
+            "layers": [],
+            "image": {
+              "path": "images/questions-light.webp"
+            },
+            "icon": "#073CE0"
+          },
+          "unread": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#F9F6F2"
+              ],
+              "angle": 90
+            },
+            "foreground": "#1C2532",
+            "muted": "#1C2532",
+            "layers": [],
+            "image": {
+              "path": "images/unread-light.webp",
+              "insets": [
+                75,
+                28,
+                75,
+                28
+              ]
+            },
+            "icon": "#073CE0"
+          },
+          "marked": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#F9F6F2"
+              ],
+              "angle": 90
+            },
+            "foreground": "#111A30",
+            "muted": "#111A30",
+            "layers": [],
+            "image": {
+              "path": "images/marked-light.webp",
+              "insets": [
+                75,
+                28,
+                75,
+                28
+              ]
+            },
+            "icon": "#073CE0"
+          },
+          "all": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#F9F6F2"
+              ],
+              "angle": 90
+            },
+            "foreground": "#FFFFFF",
+            "muted": "#FFFFFF",
+            "layers": [],
+            "image": {
+              "path": "images/all-light.webp",
+              "insets": [
+                75,
+                28,
+                75,
+                28
+              ]
+            }
+          },
+          "footer": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#F9F6F2"
+              ],
+              "angle": 90
+            },
+            "foreground": "#1C2532",
+            "muted": "#1C2532",
+            "layers": [],
+            "image": {
+              "path": "images/footer-light.webp"
+            }
+          },
+          "settings": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#00000000"
+              ],
+              "angle": 90
+            },
+            "foreground": "#001898",
+            "muted": "#001898",
+            "layers": []
+          },
+          "heroAction": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#00000000"
+              ],
+              "angle": 90
+            },
+            "foreground": "#FFFFFF",
+            "muted": "#FFFFFF",
+            "layers": []
+          },
+          "heroIcon": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#00000000"
+              ],
+              "angle": 90
+            },
+            "foreground": "#0524A0",
+            "muted": "#0524A0",
+            "layers": []
+          },
+          "badge": {
+            "shape": {
+              "type": "rounded",
+              "radius": 80
+            },
+            "fill": {
+              "colors": [
+                "#FF7464",
+                "#FF5649"
+              ],
+              "angle": 90
+            },
+            "foreground": "#FFFFFF",
+            "muted": "#FFFFFF",
+            "layers": []
+          },
+          "allBadge": {
+            "shape": {
+              "type": "rounded",
+              "radius": 80
+            },
+            "fill": {
+              "colors": [
+                "#FFF9F3"
+              ],
+              "angle": 90
+            },
+            "foreground": "#06239A",
+            "muted": "#06239A",
+            "layers": []
+          }
+        }
+      }
+    },
+    "dark": {
+      "colors": {
+        "canvas": "#171D32",
+        "app-sidebar": "#171D32",
+        "workspace-sidebar": "#171D32",
+        "surface": "#171D32",
+        "reading": "#171D32",
+        "editor": "#171D32",
+        "raised": "#232D49",
+        "composer": "#232D49",
+        "fg": "#F4F7FF",
+        "reading-fg": "#F4F7FF",
+        "composer-fg": "#F4F7FF",
+        "app-sidebar-fg": "#F4F7FF",
+        "workspace-sidebar-fg": "#F4F7FF",
+        "editor-fg": "#F4F7FF",
+        "hover-fg": "#F4F7FF",
+        "pressed-fg": "#F4F7FF",
+        "selected-fg": "#F4F7FF",
+        "code-fg": "#F4F7FF",
+        "strong": "#FFFFFF",
+        "muted": "#BAC9E0",
+        "disabled": "#8995AD",
+        "subtle": "#2D3750",
+        "user-message": "#303F61",
+        "hover": "#2D3750",
+        "pressed": "#3B4A68",
+        "selected": "#303F61",
+        "selected-hover": "#3B4A68",
+        "nav-hover": "#2D3750",
+        "nav-selected": "#303F61",
+        "nav-selected-hover": "#3B4A68",
+        "nav-pressed": "#3B4A68",
+        "nav-foreground": "#82B2FF",
+        "border": "#566078",
+        "border-strong": "#79869C",
+        "on-accent": "#101C36",
+        "accent": "#82B2FF",
+        "accent-hover": "#A9CBFF",
+        "accent-pressed": "#6198F0",
+        "accent-text": "#82B2FF",
+        "focus": "#82B2FF",
+        "text-selection": "#3B4A68",
+        "text-selection-inactive": "#2D3750",
+        "text-selection-match": "#303F61",
+        "accent-subtle": "#2D3750",
+        "accent-surface": "#303F61",
+        "accent-surface-hover": "#3B4A68",
+        "accent-surface-pressed": "#3B4A68",
+        "accent-border": "#82B2FF",
+        "accent-border-hover": "#A9CBFF",
+        "accent-on-surface": "#82B2FF",
+        "link": "#82B2FF",
+        "quote": "#BAC9E0",
+        "quote-border": "#82B2FF",
+        "inline-code": "#303F61",
+        "inline-code-fg": "#F4F7FF",
+        "code": "#101625",
+        "code-header": "#2D3750",
+        "code-border": "#566078",
+        "code-line-number": "#BAC9E0",
+        "table-header": "#303F61",
+        "table-border": "#566078",
+        "table-stripe": "#2D3750",
+        "table-hover": "#3B4A68",
+        "avatar": "#303F61",
+        "avatar-foreground": "#F4F7FF",
+        "gold": "#FFD624",
+        "gold-surface": "#303F61",
+        "data-violet": "#BAA6FF",
+        "data-cyan": "#70D6F6",
+        "data-blue": "#82B2FF",
+        "success": "#81DEAE",
+        "success-solid": "#218D56",
+        "success-surface": "#163D2C",
+        "success-surface-hover": "#163D2C",
+        "success-border": "#3E8060",
+        "warning": "#FFC280",
+        "warning-solid": "#D98B32",
+        "warning-surface": "#49301A",
+        "warning-surface-hover": "#49301A",
+        "warning-border": "#9B6C35",
+        "danger": "#FFAAAA",
+        "danger-solid": "#D35C5C",
+        "danger-surface": "#48272D",
+        "danger-surface-hover": "#48272D",
+        "danger-border": "#A2666C"
+      },
+      "home": {
+        "schemaVersion": 1,
+        "iconStyle": "rounded",
+        "layout": {
+          "headerFlow": "stacked",
+          "heroAlignment": "leading",
+          "actionArrangement": "stacked",
+          "pageInset": 0,
+          "gap": 0,
+          "pageTop": 0,
+          "pageBottom": 0,
+          "headerHeight": 76,
+          "headerPadding": [
+            20,
+            0,
+            14,
+            10
+          ],
+          "connectionMinHeight": 100,
+          "connectionPadding": [
+            16,
+            0,
+            16,
+            0
+          ],
+          "connectionGap": 4,
+          "serviceLayout": "compact",
+          "serviceWidth": 0.65,
+          "spaceWidth": 0.44,
+          "serviceHeight": 48,
+          "spaceHeight": 48,
+          "spaceVerticalAlignment": "center",
+          "settingsLabel": false,
+          "settingsWidth": 48,
+          "heroMinHeight": 128,
+          "heroPromptBounds": [
+            0.14,
+            0.24,
+            0.64,
+            0.18
+          ],
+          "heroActionBounds": [
+            0.14,
+            0.43,
+            0.72,
+            0.41
+          ],
+          "actionMinHeight": 150,
+          "actionPadding": [
+            30,
+            27,
+            16,
+            18
+          ],
+          "actionsPadding": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "actionsGap": 4,
+          "shortcutsPadding": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "shortcutGap": 4,
+          "shortcutMinHeight": 68,
+          "footerHeight": 32,
+          "heroIconSize": 48,
+          "shortcutBadge": "badge",
+          "heroAspectRatio": 2.074468085106383,
+          "brandIconSize": 42,
+          "serviceContentBounds": [
+            0.055,
+            0.12,
+            0.89,
+            0.76
+          ],
+          "spaceContentBounds": [
+            0.13,
+            0.15,
+            0.74,
+            0.7
+          ],
+          "actionIconGap": 8,
+          "actionCountGap": 6
+        },
+        "typography": {
+          "brandSize": 28,
+          "titleSize": 54,
+          "labelSize": 26,
+          "weight": 750,
+          "brandWeight": 650,
+          "brandItalic": false,
+          "promptSize": 20,
+          "serviceSize": 14,
+          "countSize": 18,
+          "fontFamily": "fonts/rounded.otf",
+          "brandFontFamily": "fonts/rounded.otf",
+          "countAspectRatio": 1,
+          "titleWeight": 900,
+          "spaceSize": 16
+        },
+        "surfaces": {
+          "background": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#18293A"
+              ],
+              "angle": 90
+            },
+            "foreground": "#E9EEF6",
+            "muted": "#E9EEF6",
+            "layers": [
+              {
+                "bounds": [
+                  0,
+                  0,
+                  1,
+                  1
+                ],
+                "shape": {
+                  "type": "path",
+                  "commands": [
+                    {
+                      "op": "M",
+                      "values": [
+                        0.464,
+                        0
+                      ]
+                    },
+                    {
+                      "op": "C",
+                      "values": [
+                        0.452,
+                        0.15,
+                        0.64,
+                        0.28,
+                        1,
+                        0.32
+                      ]
+                    },
+                    {
+                      "op": "L",
+                      "values": [
+                        1,
+                        0
+                      ]
+                    },
+                    {
+                      "op": "Z",
+                      "values": []
+                    }
+                  ]
+                },
+                "fill": {
+                  "colors": [
+                    "#8C600B",
+                    "#70500A"
+                  ],
+                  "angle": 75
+                },
+                "opacity": 1
+              }
+            ]
+          },
+          "header": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#18293A"
+              ],
+              "angle": 90
+            },
+            "foreground": "#DCE8FF",
+            "muted": "#DCE8FF",
+            "layers": [],
+            "image": {
+              "path": "images/header-dark.webp"
+            }
+          },
+          "service": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#18293A"
+              ],
+              "angle": 90
+            },
+            "foreground": "#111A30",
+            "muted": "#111A30",
+            "layers": [],
+            "image": {
+              "path": "images/service-dark.webp",
+              "insets": [
+                45,
+                20,
+                45,
+                20
+              ]
+            },
+            "icon": "#073CE0"
+          },
+          "space": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#18293A"
+              ],
+              "angle": 90
+            },
+            "foreground": "#E9EEF6",
+            "muted": "#E9EEF6",
+            "layers": [],
+            "image": {
+              "path": "images/space-dark.webp",
+              "insets": [
+                45,
+                53,
+                45,
+                53
+              ]
+            }
+          },
+          "hero": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#18293A"
+              ],
+              "angle": 90
+            },
+            "foreground": "#FFFFFF",
+            "muted": "#BADFFF",
+            "layers": [],
+            "image": {
+              "path": "images/hero-dark.webp"
+            }
+          },
+          "approvals": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#18293A"
+              ],
+              "angle": 90
+            },
+            "foreground": "#111A30",
+            "muted": "#111A30",
+            "layers": [],
+            "image": {
+              "path": "images/approvals-dark.webp"
+            },
+            "icon": "#073CE0"
+          },
+          "questions": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#18293A"
+              ],
+              "angle": 90
+            },
+            "foreground": "#111A30",
+            "muted": "#111A30",
+            "layers": [],
+            "image": {
+              "path": "images/questions-dark.webp"
+            },
+            "icon": "#073CE0"
+          },
+          "unread": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#18293A"
+              ],
+              "angle": 90
+            },
+            "foreground": "#E9EEF6",
+            "muted": "#E9EEF6",
+            "layers": [],
+            "image": {
+              "path": "images/unread-dark.webp",
+              "insets": [
+                75,
+                28,
+                75,
+                28
+              ]
+            },
+            "icon": "#A9CBFF"
+          },
+          "marked": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#18293A"
+              ],
+              "angle": 90
+            },
+            "foreground": "#111A30",
+            "muted": "#111A30",
+            "layers": [],
+            "image": {
+              "path": "images/marked-dark.webp",
+              "insets": [
+                75,
+                28,
+                75,
+                28
+              ]
+            },
+            "icon": "#073CE0"
+          },
+          "all": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#18293A"
+              ],
+              "angle": 90
+            },
+            "foreground": "#FFFFFF",
+            "muted": "#FFFFFF",
+            "layers": [],
+            "image": {
+              "path": "images/all-dark.webp",
+              "insets": [
+                75,
+                28,
+                75,
+                28
+              ]
+            }
+          },
+          "footer": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#18293A"
+              ],
+              "angle": 90
+            },
+            "foreground": "#E9EEF6",
+            "muted": "#E9EEF6",
+            "layers": [],
+            "image": {
+              "path": "images/footer-dark.webp"
+            }
+          },
+          "settings": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#00000000"
+              ],
+              "angle": 90
+            },
+            "foreground": "#DCE8FF",
+            "muted": "#DCE8FF",
+            "layers": []
+          },
+          "heroAction": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#00000000"
+              ],
+              "angle": 90
+            },
+            "foreground": "#FFFFFF",
+            "muted": "#FFFFFF",
+            "layers": []
+          },
+          "heroIcon": {
+            "shape": {
+              "type": "rounded",
+              "radius": 0
+            },
+            "fill": {
+              "colors": [
+                "#00000000"
+              ],
+              "angle": 90
+            },
+            "foreground": "#0524A0",
+            "muted": "#0524A0",
+            "layers": []
+          },
+          "badge": {
+            "shape": {
+              "type": "rounded",
+              "radius": 80
+            },
+            "fill": {
+              "colors": [
+                "#FF7464",
+                "#FF5649"
+              ],
+              "angle": 90
+            },
+            "foreground": "#FFFFFF",
+            "muted": "#FFFFFF",
+            "layers": []
+          },
+          "allBadge": {
+            "shape": {
+              "type": "rounded",
+              "radius": 80
+            },
+            "fill": {
+              "colors": [
+                "#FFF9F3"
+              ],
+              "angle": 90
+            },
+            "foreground": "#06239A",
+            "muted": "#06239A",
+            "layers": []
+          }
+        }
+      }
+    }
+  }
+}

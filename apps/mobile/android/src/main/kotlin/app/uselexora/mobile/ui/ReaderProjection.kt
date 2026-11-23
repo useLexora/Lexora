@@ -16,6 +16,7 @@ internal data class ReaderSnapshot(
     val anchorMessageId: String? = null, val anchorRequestId: String? = null, val hasLaterMessages: Boolean = false,
     val photoEpoch: Any? = null,
     val turn: ReaderTurnContext = ReaderTurnContext(), val stepPages: Map<String, JSONObject> = emptyMap(),
+    val appearanceRevision: String = "",
 )
 
 internal class ReaderProjection {
@@ -23,7 +24,7 @@ internal class ReaderProjection {
     private var anchorRequest: String? = null
     private var anchorTopic: String? = null
     private var sentLanguage: String? = null
-    private var sentAppearance: Boolean? = null
+    private var sentAppearance: Pair<Boolean, String>? = null
     private var sentTranscripts: Map<String, JSONObject>? = null
     private data class TranscriptPosition(val count: Int, val first: Any?, val last: Any?)
     private val transcriptPositions = mutableMapOf<String, TranscriptPosition>()
@@ -146,9 +147,10 @@ internal class ReaderProjection {
             .put("anchorMessageId", if (anchor != null) anchorMessageId else JSONObject.NULL)
             .put("anchorRequestId", anchor ?: JSONObject.NULL).put("hasLaterMessages", hasLaterMessages)
             .put("entries", JSONArray(changed)).put("runs", JSONArray(runs))
-        if (reset || sentAppearance != dark) {
+        val appearanceKey = dark to appearanceRevision
+        if (reset || sentAppearance != appearanceKey) {
             update.put("appearance", appearance()).put("typography", typography())
-            sentAppearance = dark
+            sentAppearance = appearanceKey
         }
         val avatarSources = avatars
         if (reset || sentAvatars !== avatarSources) { update.put("avatars", JSONObject(avatarSources)); sentAvatars = avatarSources }

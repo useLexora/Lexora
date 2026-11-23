@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "paper",
+  "version": 1,
+  "name": {
+    "zh": "默认",
+    "en": "Default"
+  },
+  "variants": {
+    "light": {
+      "colors": {},
+      "home": null
+    },
+    "dark": {
+      "colors": {},
+      "home": null
+    }
+  }
+}

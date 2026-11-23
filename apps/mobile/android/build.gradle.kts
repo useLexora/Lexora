@@ -59,6 +59,7 @@ android {
     buildFeatures { buildConfig = true; compose = true }
     sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/protocol").get().asFile)
     sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/reader").get().asFile)
+    sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/skins").get().asFile)
     sourceSets["main"].res.srcDir(layout.buildDirectory.dir("generated/brand").get().asFile)
 }
 
@@ -83,6 +84,27 @@ val syncProtocol by tasks.registering(Exec::class) {
     inputs.file(rootProject.file("../../pnpm-lock.yaml"))
     outputs.dir(layout.buildDirectory.dir("generated/protocol"))
 }
+val verifySkins by tasks.registering(Exec::class) {
+    workingDir(rootProject.projectDir)
+    commandLine("node", "--test", "tools/__tests__/skins.spec.mjs")
+}
+val syncSkins by tasks.registering(Exec::class) {
+    dependsOn(verifySkins)
+    workingDir(rootProject.projectDir)
+    commandLine("node", "tools/export-skins.mjs", layout.buildDirectory.dir("generated/skins").get().asFile.absolutePath)
+    inputs.dir(rootProject.file("skins"))
+    inputs.files(rootProject.file("tools/export-skins.mjs"), rootProject.file("tools/skins-source.ts"))
+    inputs.dir(rootProject.file("../buddy/shared/theme"))
+    inputs.file(rootProject.file("../buddy/shared/extensions/extensionPath.ts"))
+    inputs.file(rootProject.file("../buddy/shared/workbench/workbenchRegions.ts"))
+    inputs.file(rootProject.file("../buddy/src/theme/markdownTheme.ts"))
+    for (mode in listOf("light", "dark")) inputs.file(rootProject.file("../buddy/extensions/bundled/lexora.themes/themes/classic-$mode.json"))
+    inputs.file(rootProject.file("../buddy/package.json"))
+    inputs.file(rootProject.file("../../pnpm-lock.yaml"))
+    outputs.dir(layout.buildDirectory.dir("generated/skins"))
+}
+tasks.withType<Test>().configureEach { dependsOn(syncSkins) }
+
 val syncBrand by tasks.registering(Sync::class) {
     from(rootProject.file("../../packages/assets/brand/app-icon.png")) {
         into("mipmap-nodpi")
@@ -108,7 +130,7 @@ val syncReader by tasks.registering(Sync::class) {
     from(readerDirectory) { into("reader") }
     into(layout.buildDirectory.dir("generated/reader"))
 }
-tasks.named("preBuild").configure { dependsOn(syncProtocol, syncBrand, syncReader) }
+tasks.named("preBuild").configure { dependsOn(syncProtocol, syncBrand, syncReader, syncSkins) }
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2025.08.01")
