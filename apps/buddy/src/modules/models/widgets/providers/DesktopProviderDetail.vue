@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import type { ComponentPublicInstance } from 'vue'
 import type { ModelProvidersStore } from '@/modules/models/state/typing'
 import { Add20Regular, Info20Regular, Search20Regular } from '@vicons/fluent'
 import { NButton, NInput, NPopconfirm, NSpace, NSwitch, NTooltip } from 'naive-ui'
-import { computed, ref } from 'vue'
+import { computed, ref, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import DesktopManualModelDialog from '@/modules/models/widgets/providers/DesktopManualModelDialog.vue'
 import DesktopModelCapabilityTags from '@/modules/models/widgets/providers/DesktopModelCapabilityTags.vue'
@@ -11,10 +12,13 @@ import DesktopProviderConnectionDialog from '@/modules/models/widgets/providers/
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import DesktopSegmentedControl from '@/shared/ui/segmented-control/DesktopSegmentedControl.vue'
 import { useProviderDetail } from './useProviderDetail'
+import { providerModelRowKey, useProviderModelVirtualList } from './useProviderModelVirtualList'
 
 const props = defineProps<{
   providerSettings: ModelProvidersStore
   providerId: string
+  /** Page scrollport. `undefined` keeps the full list for callers without a settings viewport. */
+  scrollElement?: HTMLElement | null
 }>()
 const emit = defineEmits<{
   continueSetup: [providerId: string, startAtConnection?: boolean]
@@ -48,6 +52,52 @@ const visibleModels = computed(() => {
   return models.value.filter(model => (typeFilter.value === 'all' || model.type === typeFilter.value)
     && (!search || [model.displayName, model.modelId].some(value => value.toLocaleLowerCase().includes(search))))
 })
+const virtualized = computed(() => props.scrollElement !== undefined)
+const resultsSection = useTemplateRef<HTMLElement>('resultsSection')
+const modelsAnchor = useTemplateRef<HTMLElement>('modelsAnchor')
+const {
+  measureRow,
+  releaseFocusedRow,
+  rememberFocusedRow,
+  revealPageStart,
+  revealResults,
+  totalHeight,
+  virtualRows,
+} = useProviderModelVirtualList({
+  enabled: () => virtualized.value,
+  scrollElement: () => props.scrollElement ?? null,
+  providerId: () => props.providerId,
+  models: () => visibleModels.value,
+  anchor: () => modelsAnchor.value,
+})
+const showModelRows = computed(() => visibleModels.value.length > 0 && (!virtualized.value || !!props.scrollElement))
+const showEmpty = computed(() => visibleModels.value.length === 0 && (!virtualized.value || !!props.scrollElement))
+const renderedRows = computed(() => {
+  if (!virtualized.value || !props.scrollElement) {
+    return visibleModels.value.map((model, index) => ({
+      model,
+      index,
+      key: providerModelRowKey(props.providerId, model.modelId),
+      offset: null as number | null,
+    }))
+  }
+  return virtualRows.value
+})
+
+function bindMeasuredRow(node: ComponentPublicInstance | Element | null) {
+  if (virtualized.value && props.scrollElement)
+    measureRow(node instanceof Element ? node : null)
+}
+
+watch([query, typeFilter], () => {
+  if (props.scrollElement)
+    revealResults(resultsSection.value)
+})
+watch(() => props.providerId, () => {
+  if (props.scrollElement !== undefined)
+    revealPageStart()
+})
+
 function managePlugin() {
   showModelDetailDialog.value = false
   emit('managePlugin')
@@ -131,7 +181,7 @@ function managePlugin() {
       </div>
     </section>
 
-    <section v-if="!provider.plugin || models.length" class="desktop-provider-detail__section">
+    <section v-if="!provider.plugin || models.length" ref="resultsSection" class="desktop-provider-detail__section">
       <div class="desktop-provider-detail__section-heading flex items-start gap-[0.8rem] justify-between">
         <div class="grid min-w-0 flex-1 gap-[0.2rem]">
           <h3>{{ t('desktop.providers.models') }}</h3>
@@ -175,11 +225,24 @@ function managePlugin() {
           </template>
         </NInput>
       </div>
-      <div v-if="visibleModels.length" class="overflow-hidden border border-solid border-border rounded-[0.65rem]">
+      <div
+        v-if="showModelRows"
+        ref="modelsAnchor"
+        class="overflow-hidden border border-solid border-border rounded-[0.65rem]"
+        :class="{ relative: virtualized }"
+        :style="virtualized ? { height: `${totalHeight}px` } : undefined"
+        @focusin="rememberFocusedRow"
+        @focusout="releaseFocusedRow"
+      >
         <div
-          v-for="model in visibleModels"
-          :key="model.modelId"
-          class="desktop-provider-detail__row desktop-provider-detail__model-row min-h-16 border-b-1 border-b-solid border-b-border py-[0.7rem] px-[0.9rem] last:border-b-0"
+          v-for="{ model, index, key, offset } in renderedRows"
+          :key="key"
+          :ref="bindMeasuredRow"
+          class="desktop-provider-detail__row desktop-provider-detail__model-row min-h-16 border-b-solid border-b-border py-[0.7rem] px-[0.9rem]"
+          :class="[offset === null ? undefined : 'absolute top-0 left-0 w-full', index === visibleModels.length - 1 ? 'border-b-0' : 'border-b-1']"
+          :data-index="virtualized ? index : undefined"
+          :data-provider-model-key="key"
+          :style="offset === null ? undefined : { transform: `translateY(${offset}px)`, overflowAnchor: 'none' }"
         >
           <div class="desktop-provider-detail__row-copy grid min-w-0 flex-1 gap-[0.2rem]">
             <strong>{{ model.displayName }}</strong>
@@ -241,7 +304,7 @@ function managePlugin() {
           </div>
         </div>
       </div>
-      <p v-else class="m-0 py-8 text-center text-muted text-sm" role="status">
+      <p v-if="showEmpty" class="m-0 py-8 text-center text-muted text-sm" role="status">
         {{ t(models.length ? 'desktop.chat.noMatchingModels' : 'desktop.providers.noModels') }}
       </p>
     </section>
