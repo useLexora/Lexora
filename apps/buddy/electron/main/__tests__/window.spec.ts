@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { createDesktopWindow } from '../window'
+import { applyDesktopWindowAppearance, createDesktopWindow } from '../window'
 
 const electron = vi.hoisted(() => {
   class FakeBrowserWindow {
@@ -10,7 +10,9 @@ const electron = vi.hoisted(() => {
     readonly loadURL = vi.fn().mockResolvedValue(undefined)
     readonly maximize = vi.fn()
     readonly removeMenu = vi.fn()
+    readonly setBackgroundColor = vi.fn()
     readonly setTitle = vi.fn()
+    readonly setTitleBarOverlay = vi.fn()
     readonly show = vi.fn()
     readonly webContents = {
       isDestroyed: () => false,
@@ -129,5 +131,59 @@ describe('desktop font permissions', () => {
     expect(permits(window.webContents, 'local-fonts', { ...details, isMainFrame: false })).toEqual([false, false])
     for (const url of [undefined, '', 'https://example.com', 'lexora-extension://plugin/index.html', `${requestingUrl.split('#')[0]}?other=1`])
       expect(permits(window.webContents, 'local-fonts', { ...details, requestingUrl: url })).toEqual([false, false])
+  })
+})
+
+describe('native title bar controls', () => {
+  it('enables native titleBarOverlay on win32, native traffic lights on darwin, and frameless mode on linux', () => {
+    createDesktopWindow({
+      appName: 'Lexora Buddy Dev',
+      iconPath: '/tmp/icon.png',
+      isQuitting: () => false,
+      platform: 'win32',
+      rendererUrl: null,
+    })
+    const winWindow = electron.FakeBrowserWindow.instances.at(-1)!
+    expect(winWindow.options.titleBarStyle).toBe('hidden')
+    expect(winWindow.options.titleBarOverlay).toEqual({
+      color: '#00000000',
+      symbolColor: '#666e69',
+      height: 31,
+    })
+    expect(winWindow.options.frame).toBeUndefined()
+
+    applyDesktopWindowAppearance(winWindow as unknown as Parameters<typeof applyDesktopWindowAppearance>[0], true)
+    expect(winWindow.setTitleBarOverlay).toHaveBeenCalledWith({
+      color: '#00000000',
+      symbolColor: '#aab1ab',
+      height: 31,
+    })
+
+    createDesktopWindow({
+      appName: 'Lexora Buddy Dev',
+      iconPath: '/tmp/icon.png',
+      isQuitting: () => false,
+      platform: 'darwin',
+      rendererUrl: null,
+    })
+    const macWindow = electron.FakeBrowserWindow.instances.at(-1)!
+    expect(macWindow.options.titleBarStyle).toBe('hidden')
+    expect(macWindow.options.trafficLightPosition).toEqual({ x: 12, y: 10 })
+    expect(macWindow.options.titleBarOverlay).toBeUndefined()
+    expect(macWindow.options.frame).toBeUndefined()
+
+    applyDesktopWindowAppearance(macWindow as unknown as Parameters<typeof applyDesktopWindowAppearance>[0], true)
+    expect(macWindow.setTitleBarOverlay).not.toHaveBeenCalled()
+
+    createDesktopWindow({
+      appName: 'Lexora Buddy Dev',
+      iconPath: '/tmp/icon.png',
+      isQuitting: () => false,
+      platform: 'linux',
+      rendererUrl: null,
+    })
+    const linuxWindow = electron.FakeBrowserWindow.instances.at(-1)!
+    expect(linuxWindow.options.frame).toBe(false)
+    expect(linuxWindow.options.titleBarOverlay).toBeUndefined()
   })
 })
