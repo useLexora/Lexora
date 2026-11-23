@@ -77,6 +77,8 @@ export interface ChatTranscriptAgentTurnRow {
   kind: 'agent-turn'
   ownsResultActions?: true
   turn: ChatAgentTurn
+  turnChanges?: LocalChangeSetSummary
+  turnOutputs?: ChatTranscriptTurnOutputs
 }
 
 export type ChatTranscriptExecutionStatus = Pick<ChatAgentTurn, 'status' | 'startedAt' | 'completedAt'>

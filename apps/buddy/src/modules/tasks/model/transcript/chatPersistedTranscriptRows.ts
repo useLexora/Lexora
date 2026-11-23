@@ -36,24 +36,7 @@ export function projectPersistedChatTranscriptRows(
   const changesByRunId = new Map(changeSets
     .filter(changeSet => changeSet.fileCount > 0)
     .map(changeSet => [changeSet.runId, changeSet]))
-  const renderedResultRunIds = new Set(items.flatMap((item) => {
-    if (
-      item.kind !== 'message'
-      || !item.runId
-      || !isFinalTurnMessage(item, turnsByRunId)
-      || (
-        !isVisibleChatMessage(item)
-        && !outputsByRunId.has(item.runId)
-        && !changesByRunId.has(item.runId)
-      )
-    ) {
-      return []
-    }
-    return [item.runId]
-  }))
-  const standaloneResultRunIds = new Set(turns.filter(turn => turn.status === 'completed' || (
-    (turn.status === 'failed' || turn.status === 'cancelled') && !renderedResultRunIds.has(turn.runId)
-  )).map(turn => turn.runId))
+
   const processMessageIds = new Set(turns.flatMap(turn => turn.processMessageIds))
   const timelineMessageIds = new Set(items.filter(item => item.kind === 'message').map(item => item.id))
   const visibleActions = items.filter(isVisibleExtensionAction)
@@ -63,16 +46,17 @@ export function projectPersistedChatTranscriptRows(
     items.filter(item => item.kind === 'message'),
     executions,
   )
+  const interruptedRunIds = new Set(activities.turns.filter(turn => turn.status === 'failed' || turn.status === 'cancelled').map(turn => turn.runId))
   const independentActionIds = new Set(activities.independentActions.map(action => action.id))
   for (const turn of activities.turns) {
-    if (!shouldShowAgentTurn(turn) && !standaloneResultRunIds.has(turn.runId))
+    if (!shouldShowAgentTurn(turn) && turn.status !== 'completed')
       continue
     if (includeUnanchoredTurns && !timelineMessageIds.has(turn.triggeringMessageId)) {
       rows.push({
         key: `agent-turn:${turn.runId}`,
         kind: 'agent-turn',
         turn,
-        ...(standaloneResultRunIds.has(turn.runId) ? { ownsResultActions: true as const } : {}),
+        ...(turn.status === 'completed' || interruptedRunIds.has(turn.runId) ? { ownsResultActions: true as const } : {}),
       })
       continue
     }
@@ -99,7 +83,7 @@ export function projectPersistedChatTranscriptRows(
     }
     if (processMessageIds.has(item.id))
       continue
-    const ownsResult = isFinalTurnMessage(item, turnsByRunId) && item.runId
+    const ownsResult = isFinalTurnMessage(item, turnsByRunId) && item.runId && !interruptedRunIds.has(item.runId)
       && !['queued', 'running'].includes(turnsByRunId.get(item.runId)!.status)
     const turnOutputs = ownsResult && item.runId
       ? outputsByRunId.get(item.runId) ?? null
@@ -132,7 +116,7 @@ export function projectPersistedChatTranscriptRows(
     if (!questionReply || !userQuestions.some(request => request.id === questionReply.requestId))
       rows.push(row)
     rows.push(...(turnsByTrigger.get(item.id) ?? []).map((turn) => {
-      const ownsResultActions = standaloneResultRunIds.has(turn.runId)
+      const ownsResultActions = turn.status === 'completed' || interruptedRunIds.has(turn.runId)
       return {
         ...(ownsResultActions ? { ownsResultActions: true as const } : {}),
         key: `agent-turn:${turn.runId}`,
@@ -148,8 +132,13 @@ export function projectPersistedChatTranscriptRows(
       rows.push({ kind: 'user-question', key: `user-question:${request.id}`, request: history })
   }
   return interleaveChatTranscriptSegments(rows, new Map(turns.flatMap(turn => Object.entries(turn.messageStartedAt ?? {}))), executions).flatMap<PresentedChatTranscriptRow | ChatTranscriptTurnResultRow>((row) => {
-    if (row.kind !== 'agent-turn' || !row.ownsResultActions || row.turn.status !== 'completed')
+    if (row.kind !== 'agent-turn' || !row.ownsResultActions)
       return [row]
+    if (interruptedRunIds.has(row.turn.runId)) {
+      const turnChanges = changesByRunId.get(row.turn.runId)
+      const turnOutputs = outputsByRunId.get(row.turn.runId)
+      return [{ ...row, ...(turnChanges ? { turnChanges } : {}), ...(turnOutputs ? { turnOutputs } : {}) }]
+    }
     return [
       ...(row.turn.nodes.length ? [{ ...row, ownsResultActions: undefined, showOutcome: false as const }] : []),
       { key: `turn-result:${row.turn.runId}`, kind: 'turn-result', turn: row.turn },
