@@ -626,7 +626,7 @@ private fun taskSpaceLabel(task: JSONObject, spaces: List<JSONObject>): String {
     return spaces.firstOrNull { it.optString("id") == id }?.optString("name")?.takeIf { it.isNotBlank() } ?: mobileText(R.string.label_space_task)
 }
 private fun taskTime(task: JSONObject): String? {
-    val time = when (val value = task.opt("updatedAt")) {
+    val time = when (val value = task.opt("lastActivityAt") ?: task.opt("updatedAt")) {
         is Number -> value.toLong()
         is String -> runCatching { Instant.parse(value).toEpochMilli() }.getOrNull()
         else -> null

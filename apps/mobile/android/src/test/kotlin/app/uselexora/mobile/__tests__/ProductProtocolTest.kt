@@ -11,6 +11,17 @@ import java.io.File
 class ProductProtocolTest {
     private val schemas = ProtocolSchemas(JSONObject(File("build/generated/protocol/protocol-schema.json").readText()))
     private val vectors = JSONObject(File("build/generated/protocol/vectors.json").readText())
+    @Test fun initializationRequiresProtocol11WithoutLegacyProjection() {
+        val request = ProductProtocol.initialize("test")
+        assertTrue(schemas.request("initialize", request))
+        val protocol = request.getJSONObject("protocol")
+        assertEquals(1, protocol.getInt("major"))
+        assertEquals(1, protocol.getInt("minMinor"))
+        assertEquals(1, protocol.getInt("maxMinor"))
+        val outputProtocol = schemas.document.getJSONObject("initialize").getJSONObject("output").getJSONObject("properties").getJSONObject("protocol")
+        assertTrue(schemas.valid(JSONObject().put("major", 1).put("minor", 1), outputProtocol))
+        assertFalse(schemas.valid(JSONObject().put("major", 1).put("minor", 0), outputProtocol))
+    }
     @Test fun supportedObjectAndExclusiveBoundsAreEnforced() {
         val bounded = JSONObject("""{"type":"number","exclusiveMinimum":0,"exclusiveMaximum":2}""")
         assertFalse(schemas.valid(0, bounded)); assertFalse(schemas.valid(2, bounded)); assertTrue(schemas.valid(1, bounded))

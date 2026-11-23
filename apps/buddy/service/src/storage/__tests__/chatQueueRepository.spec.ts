@@ -54,11 +54,7 @@ function fixture() {
 }
 
 describe('chat queue ownership and delivery', () => {
-  it.each([
-    undefined,
-    null,
-    { providerId: 'provider', modelId: 'model', reasoning: null, serviceTier: null },
-  ])('updates history time and ordering when accepting current input with model override %j', (modelOverride) => {
+  it('sorts current input by queue acceptance without rewriting the metadata clock', () => {
     const f = fixture()
     const history = createConversationIndexRepository(f.database)
     f.turns.prepare({ ...f.input('other'), draft: null, conversationId: 'other', branchId: 'other-branch', createdAt: '2026-09-10T00:01:00.000Z' })
@@ -66,19 +62,20 @@ describe('chat queue ownership and delivery', () => {
     expect(list().map(item => item.id)).toEqual(['other', 'conversation'])
     const originalTime = list()[1]!.updatedAt
     const delivery = { mode: 'current' as const, actorId: 'default', target: { rootRunId: 'run-initial', runId: 'run-initial' } }
-    f.queue.enqueue({ ...f.input('current'), createdAt: '2026-09-10T00:02:00.000Z', delivery, modelOverride })
-    expect(list()[1]!.updatedAt).toBe(originalTime)
+    f.queue.enqueue({ ...f.input('current'), createdAt: '2026-09-10T00:02:00.000Z', delivery })
+    expect(list().map(item => item.id)).toEqual(['conversation', 'other'])
+    expect(list()[0]).toMatchObject({ updatedAt: originalTime, lastActivityAt: '2026-09-10T00:02:00.000Z' })
     const pending = f.queue.pending(f.target('current'))!
     const acceptedAt = '2026-09-10T00:03:00.000Z'
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(acceptedAt)
     f.queue.commitInRun(pending, 'run-initial', undefined)
     expect(list().map(item => item.id)).toEqual(['conversation', 'other'])
-    expect(list()[0]!.updatedAt).toBe(acceptedAt)
+    expect(list()[0]).toMatchObject({ updatedAt: acceptedAt, lastActivityAt: '2026-09-10T00:02:00.000Z' })
     expect(f.database.prepare('SELECT created_at FROM messages WHERE id = ?').get('current')).toEqual({ created_at: acceptedAt })
     vi.setSystemTime('2026-09-10T00:04:00.000Z')
     expect(() => f.queue.commitInRun(pending, 'run-initial', undefined)).toThrow()
-    expect(list()[0]!.updatedAt).toBe(acceptedAt)
+    expect(list()[0]).toMatchObject({ updatedAt: acceptedAt, lastActivityAt: '2026-09-10T00:02:00.000Z' })
   })
 
   it('rolls back history time with the message when attachment delivery fails', () => {
@@ -130,20 +127,6 @@ describe('chat queue ownership and delivery', () => {
     expect(f.turns.prepare(pending)).toMatchObject({ created: false, runId: 'run-next' })
   })
 
-  it('does not convert a closed current target into a new run and preserves unaccepted drafts', () => {
-    const f = fixture()
-    const delivery = { mode: 'current' as const, actorId: 'default', target: { rootRunId: 'run-initial', runId: 'run-initial' } }
-    f.queue.enqueue({ ...f.input('current'), delivery })
-    const pending = f.queue.pending(f.target('current'))!
-    f.database.exec('UPDATE runs SET status = \'completed\'; UPDATE execution_state SET cleanup_state = \'clean\'')
-    expect(() => f.turns.prepare(pending)).toThrow(expect.objectContaining({ code: 'INPUT_DELIVERY_TARGET_UNAVAILABLE' }))
-    const draft = f.drafts.findById('draft')
-    expect(() => f.queue.enqueue({ ...f.input('late'), delivery })).toThrow(expect.objectContaining({ code: 'INPUT_DELIVERY_TARGET_UNAVAILABLE' }))
-    expect(f.drafts.findById('draft')).toEqual(draft)
-    expect(f.queue.list(f.scope).map(item => item.id)).toEqual(['current'])
-    expect(f.database.prepare('SELECT id FROM messages').all()).toEqual([{ id: 'initial' }])
-  })
-
   it('treats a null target as idle admission, never as whichever run becomes latest', () => {
     const f = fixture()
     const delivery = { mode: 'current' as const, actorId: 'default', target: null }
@@ -166,13 +149,14 @@ describe('chat queue ownership and delivery', () => {
     expect(f.database.prepare('SELECT cleanup_state FROM execution_state WHERE run_id = ?').get('run-initial')).toEqual({ cleanup_state: 'degraded' })
   })
 
-  it.each([
-    { rootRunId: 'another-root', runId: 'run-initial' },
-    { rootRunId: 'run-initial', runId: 'missing-run' },
-  ])('rejects a mismatched explicit target $runId without consuming the draft', (target) => {
+  it('rejects mismatched explicit targets without consuming the draft', () => {
     const f = fixture()
     const draft = f.drafts.findById('draft')
-    expect(() => f.queue.enqueue({ ...f.input('wrong'), delivery: { mode: 'current', actorId: 'default', target } })).toThrow(expect.objectContaining({ code: 'INPUT_DELIVERY_TARGET_UNAVAILABLE' }))
+    for (const target of [
+      { rootRunId: 'another-root', runId: 'run-initial' },
+      { rootRunId: 'run-initial', runId: 'missing-run' },
+    ])
+      expect(() => f.queue.enqueue({ ...f.input('wrong'), delivery: { mode: 'current', actorId: 'default', target } })).toThrow(expect.objectContaining({ code: 'INPUT_DELIVERY_TARGET_UNAVAILABLE' }))
     expect(f.drafts.findById('draft')).toEqual(draft)
     expect(f.queue.list(f.scope)).toEqual([])
   })

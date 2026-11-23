@@ -12,6 +12,7 @@ import { ProductProtocolError } from '../../../shared/productProtocol/errors'
 import { PRODUCT_LIMITS } from '../../../shared/productProtocol/limits'
 import { encodeProductRevision } from '../../../shared/productProtocol/scalars'
 import { formatProductTopic, parseProductTopic, PRODUCT_TOPIC_SCHEMAS } from '../../../shared/productProtocol/topics'
+import { USER_ACTIVITY_MAILBOX_SQL } from '../storage/conversationActivity'
 import { createConversationRepository } from '../storage/conversationRepository'
 import { ProductSyncPublisher } from './ProductSyncPublisher'
 import { projectProductTurnChange } from './projectProductTurnChange'
@@ -124,7 +125,9 @@ export function createProductSynchronization(options: {
         return
       const conversationId = String(row.conversation_id)
       const branchId = String(row.branch_id)
-      if (['run.queued', 'run.started', 'run.completed', 'run.failed', 'run.cancelled', 'message.created', 'message.completed', 'message.block.completed', 'approval.requested', 'approval.resolved'].includes(type))
+      const userInput = type === 'execution.mailbox.sent' && database.prepare(`SELECT 1 FROM execution_mailbox_sources activity_mailbox
+        WHERE activity_mailbox.source_run_id = ? AND activity_mailbox.source_sequence = ? AND ${USER_ACTIVITY_MAILBOX_SQL}`).get(runId, sequence)
+      if (userInput || ['run.queued', 'run.started', 'run.completed', 'run.failed', 'run.cancelled', 'message.created', 'message.completed', 'message.block.completed', 'approval.requested', 'approval.resolved'].includes(type))
         publishTask(conversationId, false)
       publish(turnTopic(conversationId, branchId), () => projectProductTurnChange(queries, database, { conversationId, branchId, executionKind: String(row.execution_kind) }, committed))
       publishConversation(conversationId, branchId, () => {
@@ -190,6 +193,7 @@ export function createProductSynchronization(options: {
   }
   if (options.queue) {
     subscriptions.push(options.queue.onDidChange(({ scope, committed }) => {
+      publishTask(scope.conversationId, false)
       if (!committed?.queueId) {
         for (const name of [...branchTopics(scope.conversationId, scope.branchId), turnTopic(scope.conversationId, scope.branchId)]) publisher.invalidate(name)
         return

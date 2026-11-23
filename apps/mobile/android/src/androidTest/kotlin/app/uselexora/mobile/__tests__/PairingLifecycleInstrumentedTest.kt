@@ -56,7 +56,7 @@ class PairingLifecycleInstrumentedTest {
         for (key in properties.keys()) limits.put(key, properties.getJSONObject(key).get("const"))
         val initialized = JSONObject(identity.toString()).put("serviceInstanceId", "instance").put("connectionId", "connection")
             .put("clientSessionId", "session").put("phase", "ready").put("serverTime", Instant.now().toString())
-            .put("protocol", JSONObject().put("major", 1).put("minor", 0)).put("capabilities", JSONArray()).put("limits", limits)
+            .put("protocol", JSONObject().put("major", 1).put("minor", 1)).put("capabilities", JSONArray()).put("limits", limits)
         val unavailable = "https://127.0.0.1:1"
         val saved = JSONObject(identity.toString()).put("stage", "active").put("endpoint", unavailable)
             .put("credential", "existing-credential").put("spkiPin", pin)

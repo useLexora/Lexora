@@ -26,7 +26,7 @@ beforeEach(() => {
 afterEach(() => cleanups.splice(0).forEach(cleanup => cleanup()))
 
 function task(): LocalConversationSummary {
-  return { id: 'task-one', title: 'A task to keep', buddyId: 'buddy-one', activeBranchId: 'branch-one', approvalPolicy: 'manual', executionProfile: 'workspace_write', modelSelection: null, spaceId: null, activity: 'idle', automationOccurrence: null, createdAt: '2026-09-08T00:00:00.000Z', updatedAt: '2026-09-08T00:00:00.000Z', deletedAt: null }
+  return { id: 'task-one', title: 'A task to keep', lastActivityAt: '2026-09-08T00:00:00.000Z', buddyId: 'buddy-one', activeBranchId: 'branch-one', approvalPolicy: 'manual', executionProfile: 'workspace_write', modelSelection: null, spaceId: null, activity: 'idle', automationOccurrence: null, createdAt: '2026-09-08T00:00:00.000Z', updatedAt: '2026-09-08T00:00:00.000Z', deletedAt: null }
 }
 
 async function mount(metadataRevision?: number) {

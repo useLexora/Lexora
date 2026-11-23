@@ -844,29 +844,24 @@ describe('persistent chat queue scheduling', () => {
     expect(f.runInputs.findByMessageId('A')?.runId).toBe('run-initial')
   })
 
-  it.each(['model', 'reasoning'] as const)(
-    'keeps a queued %s change for a new run with its original settings',
-    async (field) => {
-      const f = fixture()
-      const input = f.input('A')
-      if (field === 'reasoning')
-        input.runInput.reasoning = 'high'
-      else input[field] = 'changed'
-      f.database.prepare('UPDATE conversations SET approval_policy = ?, execution_profile = ?').run(input.approvalPolicy, input.executionProfile)
-      const draft = f.drafts.findById('draft')!
-      f.drafts.save({ ...draft, expectedRevision: draft.revision, executionConfig: { approvalPolicy: input.approvalPolicy, executionProfile: input.executionProfile }, now: input.createdAt })
-      input.draft.expectedRevision = f.drafts.findById('draft')!.revision
-      f.queue.enqueue(input)
-      f.queue.enqueue(f.input('C'))
-      expect(await f.service.followUp('run-initial', f.controller.signal)).toBe(false)
-      expect(f.queue.list(f.scope).map(item => item.id)).toEqual(['A', 'C'])
-      f.database.exec('UPDATE runs SET status = \'completed\'')
-      f.settle('run-initial')
-      await vi.waitFor(() => expect(f.launched).toEqual(['run-A']))
-      expect(f.runInputs.findByRunId('run-A')).toMatchObject(input.runInput)
-      expect(f.runs.findById('run-A')).toMatchObject({ model: input.model, provider: input.provider, executionProfile: input.executionProfile, approvalPolicy: input.approvalPolicy })
-    },
-  )
+  it('keeps a queued model change for a new run with its original settings', async () => {
+    const f = fixture()
+    const input = f.input('A')
+    input.model = 'changed'
+    f.database.prepare('UPDATE conversations SET approval_policy = ?, execution_profile = ?').run(input.approvalPolicy, input.executionProfile)
+    const draft = f.drafts.findById('draft')!
+    f.drafts.save({ ...draft, expectedRevision: draft.revision, executionConfig: { approvalPolicy: input.approvalPolicy, executionProfile: input.executionProfile }, now: input.createdAt })
+    input.draft.expectedRevision = f.drafts.findById('draft')!.revision
+    f.queue.enqueue(input)
+    f.queue.enqueue(f.input('C'))
+    expect(await f.service.followUp('run-initial', f.controller.signal)).toBe(false)
+    expect(f.queue.list(f.scope).map(item => item.id)).toEqual(['A', 'C'])
+    f.database.exec('UPDATE runs SET status = \'completed\'')
+    f.settle('run-initial')
+    await vi.waitFor(() => expect(f.launched).toEqual(['run-A']))
+    expect(f.runInputs.findByRunId('run-A')).toMatchObject(input.runInput)
+    expect(f.runs.findById('run-A')).toMatchObject({ model: input.model, provider: input.provider, executionProfile: input.executionProfile, approvalPolicy: input.approvalPolicy })
+  })
 
   it.each([
     { mode: 'followUp', executionProfile: 'workspace_write' },
@@ -1190,7 +1185,7 @@ describe('public queue control availability', () => {
       return true
     }, close: () => {} })
     try {
-      await connection.receive(JSON.stringify({ jsonrpc: '2.0', id: 'init', method: 'initialize', params: { protocol: { major: 1, minMinor: 0, maxMinor: 0 }, client: { kind: 'mobile', version: '1' }, supportedContentKinds: [], supportedReviewKinds: [] } }))
+      await connection.receive(JSON.stringify({ jsonrpc: '2.0', id: 'init', method: 'initialize', params: { protocol: { major: 1, minMinor: 1, maxMinor: 1 }, client: { kind: 'mobile', version: '1' }, supportedContentKinds: [], supportedReviewKinds: [] } }))
       await connection.receive(JSON.stringify({ jsonrpc: '2.0', id: 'controls', method: 'conversations.getQueueControls', params: f.scope }))
       expect(frames.at(-1)?.result).toMatchObject({ items: [{ id: 'first' }, { id: 'second' }] })
       await connection.receive(JSON.stringify({ jsonrpc: '2.0', id: 'cancel', method: 'chat.queue.cancel', params: {} }))

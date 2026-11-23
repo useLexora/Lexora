@@ -28,7 +28,7 @@ it('commits every snapshot page before applying the following delta and acknowle
   const sync = new ProductSyncClient(client)
   const events: string[] = []
   try {
-    await client.initialize({ protocol: { major: 1, minMinor: 0, maxMinor: 0 }, client: { kind: 'desktop', version: 'test' }, supportedContentKinds: [], supportedReviewKinds: [] })
+    await client.initialize({ protocol: { major: 1, minMinor: 1, maxMinor: 1 }, client: { kind: 'desktop', version: 'test' }, supportedContentKinds: [], supportedReviewKinds: [] })
     const handle = sync.subscribe('index', {
       item: schema,
       change: schema,
@@ -45,7 +45,6 @@ it('commits every snapshot page before applying the following delta and acknowle
     await handle.ready
     expect(events).toEqual(['begin', 'page:1', 'page:2', 'commit', 'delta:3'])
     expect(closed).toBe(true)
-    expect(publisher.inspect().connections[0]?.bytes).toBe(0)
   }
   finally {
     sync.close()

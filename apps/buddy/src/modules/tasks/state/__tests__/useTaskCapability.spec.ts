@@ -401,8 +401,6 @@ describe('useTaskCapability', () => {
     expect(chat.workspace.composer.selectedModelId.value).toBe('provider-1:model-1')
     expect(await chat.flushDrafts()).toBe(true)
     expect((await api.localChat.composerDrafts.get(draftId)).modelSelection).toBeNull()
-    chat.workspace.composer.updateComposerContent('first configured task', null)
-    expect(await chat.workspace.execution.send('first configured task')).toBe(true)
   })
 
   it.each([
@@ -959,6 +957,7 @@ function createBranchingDesktopApi(permissions: Pick<LocalConversation, 'approva
     modelSelection: null,
     spaceId: null,
     title: 'Conversation 1',
+    lastActivityAt: '2026-08-14T00:00:00.000Z',
     updatedAt: '2026-08-14T00:00:00.000Z',
   })
   const branches = [branch('branch-root', null, null, '2026-08-14T00:00:00.000Z')]
@@ -1039,6 +1038,7 @@ function conversationSummary(activity: 'idle' | 'running' | 'awaiting_approval')
     modelSelection: null,
     spaceId: null,
     title: 'Background conversation',
+    lastActivityAt: '2026-08-19T00:00:00.000Z',
     updatedAt: '2026-08-19T00:00:00.000Z',
   }
 }

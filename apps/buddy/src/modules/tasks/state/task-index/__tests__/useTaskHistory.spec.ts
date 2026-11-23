@@ -7,7 +7,7 @@ function item(index: number, spaceId: string | null = null): LocalConversationHi
   const id = `task-${index}`
   const time = new Date(Date.UTC(2026, 8, 1, 0, index)).toISOString()
   return {
-    conversation: { id, title: id, spaceId, createdAt: time, updatedAt: time, deletedAt: null, buddyId: 'default', activeBranchId: `${id}-branch`, approvalPolicy: 'policy', executionProfile: 'workspace_write', modelSelection: null, activity: 'idle', automationOccurrence: null },
+    conversation: { id, title: id, spaceId, createdAt: time, updatedAt: time, lastActivityAt: time, deletedAt: null, buddyId: 'default', activeBranchId: `${id}-branch`, approvalPolicy: 'policy', executionProfile: 'workspace_write', modelSelection: null, activity: 'idle', automationOccurrence: null },
     markState: { conversationId: id, markId: null, resultRunId: null, unread: false, readRevision: 0 },
   }
 }
@@ -24,7 +24,7 @@ function fixture() {
       : query.kind === 'search'
         ? entry.conversation.title?.includes(query.query ?? '')
         : entry.conversation.spaceId === query.spaceId && !attention(entry) && !query.excludeIds?.includes(entry.conversation.id))
-      .sort((a, b) => b.conversation.updatedAt.localeCompare(a.conversation.updatedAt))
+      .sort((a, b) => b.conversation.lastActivityAt.localeCompare(a.conversation.lastActivityAt))
     const offset = query.cursor ? Number(query.cursor) : 0
     const end = offset + (query.limit ?? 10)
     return { items: filtered.slice(offset, end).map(entry => structuredClone(entry)), nextCursor: end < filtered.length ? String(end) : null }
@@ -52,6 +52,16 @@ function fixture() {
 const ids = (f: ReturnType<typeof fixture>) => f.conversations.value.map(task => task.id)
 
 describe('progressive task history', () => {
+  it('refreshes and reorders a completed task when only its activity clock changes', async () => {
+    const f = fixture()
+    await f.refreshConversations()
+    const completed = { ...item(0), conversation: { ...item(0).conversation, lastActivityAt: '2026-09-02T00:00:00.000Z' } }
+    f.replace(completed)
+    await f.applyConversation(completed.conversation)
+    expect(ids(f)[0]).toBe('task-0')
+    expect(f.conversations.value[0]).toMatchObject({ lastActivityAt: completed.conversation.lastActivityAt, updatedAt: item(0).conversation.updatedAt })
+  })
+
   it('hides archived tasks from normal, pinned, active and search projections and restores them explicitly', async () => {
     const f = fixture()
     await f.setPinnedIds(['task-39'])
@@ -251,7 +261,7 @@ describe('progressive task history', () => {
     expect(ids(f)).toHaveLength(20)
   })
 
-  it('refills both the original and destination scope after moving a visible task', async () => {
+  it('refills both scopes without promoting an older task after moving it', async () => {
     const f = fixture()
     await f.refreshConversations()
     await f.history.ensureScope('space')
@@ -261,7 +271,7 @@ describe('progressive task history', () => {
     expect(f.conversations.value.filter(task => task.spaceId === null)).toHaveLength(10)
     expect(f.conversations.value.filter(task => task.spaceId === 'space')).toHaveLength(5)
     expect(ids(f)).toContain('task-29')
-    expect(f.conversations.value.find(task => task.id === 'task-39')?.spaceId).toBe('space')
+    expect(ids(f)).not.toContain('task-39')
   })
 
   it('does not overwrite a new unread result with an earlier in-flight pinned lookup', async () => {

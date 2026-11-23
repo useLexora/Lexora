@@ -12,22 +12,13 @@ function createTask(
     spaceId,
     title: id,
     updatedAt: '2026-09-29T00:00:00.000Z',
+    lastActivityAt: '2026-09-29T00:00:00.000Z',
     activity,
   } as LocalConversationSummary
 }
 
 describe('resolveSpaceActivities', () => {
-  it('prioritizes approval, then user answers, then running regardless of task order', () => {
-    const tasks = [createTask('working', 'space', 'running'), createTask('waiting', 'space', 'running')]
-    const activities = new Map([['waiting', 'awaiting_answer' as const]])
-    expect(resolveSpaceActivities(tasks, activities).get('space')).toBe('awaiting_answer')
-    expect(resolveSpaceActivities(tasks.toReversed(), activities).get('space')).toBe('awaiting_answer')
-    const approval = createTask('approval', 'space', 'awaiting_approval')
-    expect(resolveSpaceActivities([...tasks, approval], activities).get('space')).toBe('awaiting_approval')
-    expect(resolveSpaceActivities([approval, ...tasks], activities).get('space')).toBe('awaiting_approval')
-  })
-
-  it('summarizes each Space with its most urgent activity', () => {
+  it('summarizes each Space with its most urgent activity regardless of task order', () => {
     const tasks = [
       createTask('task-a1', 'space-a', 'running'),
       createTask('task-a2', 'space-a', 'awaiting_approval'),
@@ -38,11 +29,14 @@ describe('resolveSpaceActivities', () => {
       createTask('task-d1', 'space-d', 'idle'),
       createTask('task-global', null, 'awaiting_approval'),
     ]
-
-    expect(Object.fromEntries(resolveSpaceActivities(tasks))).toEqual({
+    const activities = new Map([['task-b1', 'awaiting_answer' as const]])
+    const expected = {
       'space-a': 'awaiting_approval',
-      'space-b': 'running',
+      'space-b': 'awaiting_answer',
       'space-c': 'awaiting_approval',
-    })
+    }
+
+    expect(Object.fromEntries(resolveSpaceActivities(tasks, activities))).toEqual(expected)
+    expect(Object.fromEntries(resolveSpaceActivities(tasks.toReversed(), activities))).toEqual(expected)
   })
 })

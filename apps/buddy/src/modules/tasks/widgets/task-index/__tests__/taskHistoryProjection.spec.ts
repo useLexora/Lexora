@@ -11,7 +11,7 @@ function space(id: string): LocalSpace {
 }
 
 function task(id: string, spaceId: string | null = 'a', updatedAt = '2026-09-01T00:00:00.000Z'): LocalConversationSummary {
-  return { id, spaceId, updatedAt, activity: 'idle' } as LocalConversationSummary
+  return { id, spaceId, updatedAt, lastActivityAt: updatedAt, activity: 'idle' } as LocalConversationSummary
 }
 
 function projection(input: { pinnedItems?: DesktopTaskPinnedItem[], expanded?: boolean } = {}) {
@@ -26,6 +26,23 @@ function projection(input: { pinnedItems?: DesktopTaskPinnedItem[], expanded?: b
 }
 
 describe('task history projection', () => {
+  it('uses the same activity clock within spaces and global tasks without replacing explicit pins', () => {
+    const result = resolveTaskIndexProjection({
+      expandedSpaceIds: new Set(['a']),
+      markedTaskIds: new Set(),
+      unreadTaskIds: new Set(),
+      pinnedItems: [{ kind: 'conversation', id: 'pinned' }],
+      spaces: [space('a')],
+      tasks: ['a', null].flatMap(spaceId => [
+        { ...task(`finished-${spaceId}`, spaceId), lastActivityAt: '2026-09-04T00:00:00.000Z' },
+        { ...task(`renamed-${spaceId}`, spaceId), updatedAt: '2026-09-05T00:00:00.000Z' },
+      ]).concat(task('pinned', null)),
+    })
+    expect(result.spaceRows.filter(row => row.kind === 'task').map(row => row.task.id)).toEqual(['finished-a', 'renamed-a'])
+    expect(result.globalTasks.map(task => task.id)).toEqual(['finished-null', 'renamed-null'])
+    expect(result.pinnedRows.map(row => row.key)).toEqual(['conversation:pinned'])
+  })
+
   it('sorts attention before recent activity without cutting the supplied logical window', () => {
     const tasks = Array.from({ length: 40 }, (_, index) => task(`task-${index}`))
     const result = resolveTaskIndexProjection({

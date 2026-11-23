@@ -25,6 +25,7 @@ export interface ConversationRecord {
   archivedAt?: string | null
   deletedAt: string | null
   updatedAt: string
+  lastActivityAt?: string
 }
 
 export interface ConversationRow {
@@ -43,6 +44,7 @@ export interface ConversationRow {
   archived_at?: string | null
   deleted_at: string | null
   updated_at: string
+  last_activity_at?: string
 }
 
 export const CONVERSATION_CURRENT_MODEL_SELECTION_SQL = '(SELECT model_selection_json FROM conversation_members WHERE conversation_id = conversations.id AND actor_id = conversations.buddy_id)'
@@ -72,5 +74,6 @@ export function toConversationRecord(row: ConversationRow): ConversationRecord {
     archivedAt: row.archived_at ?? null,
     deletedAt: row.deleted_at,
     updatedAt: row.updated_at,
+    ...(row.last_activity_at !== undefined ? { lastActivityAt: row.last_activity_at } : {}),
   }
 }

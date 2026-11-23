@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { ProductConnection } from '../../../../service/src/productProtocol/ProductConnection'
 import { ProductRpcClient } from '../ProductRpcClient'
 
-const initialize = { protocol: { major: 1, minMinor: 0, maxMinor: 0 }, client: { kind: 'desktop' as const, version: '0.20.0' }, supportedContentKinds: ['buddy.user.v1'], supportedReviewKinds: [] }
+const initialize = { protocol: { major: 1, minMinor: 1, maxMinor: 1 }, client: { kind: 'desktop' as const, version: '0.20.0' }, supportedContentKinds: ['buddy.user.v1'], supportedReviewKinds: [] }
 const context = { serviceId: 'service', profileId: 'profile', dataGeneration: 'generation', serviceInstanceId: 'instance', connectionId: 'connection', clientSessionId: 'session', deviceId: 'desktop', ownerPrincipalId: 'desktop-local', credentialId: 'local', grantGeneration: '1', role: 'owner' as const }
 
 function fixture() {
@@ -35,14 +35,30 @@ function fixture() {
 
 describe('product JSON transport client', () => {
   it('negotiates with the real server connection and preserves the restricted error and query contracts', async () => {
-    const { client, server, frames } = fixture()
+    const { client, server } = fixture()
     try {
       await expect(client.request('commands.get', { dataGeneration: 'generation', commandId: 'command' })).rejects.toThrow('PRODUCT_NOT_INITIALIZED')
       const result = await client.initialize(initialize)
-      expect(result).toMatchObject({ dataGeneration: 'generation', profileId: 'profile', capabilities: ['commands.get'] })
+      expect(result).toMatchObject({ protocol: { major: 1, minor: 1 }, dataGeneration: 'generation', profileId: 'profile', capabilities: ['commands.get'] })
       expect(await client.request('commands.get', { dataGeneration: 'generation', commandId: 'command' })).toEqual({ lookup: 'not_found' })
       await expect(client.request('chat.cancel', { dataGeneration: 'generation', commandId: 'cancel', expectedServiceInstanceId: 'instance', intent: { runId: 'run', expectedRunGeneration: '1' } })).rejects.toMatchObject({ code: 'METHOD_NOT_AVAILABLE', acceptance: 'not_accepted' })
-      expect(JSON.parse(frames[2]!).params.intent.expectedRunGeneration).toBe('1')
+    }
+    finally {
+      client.close()
+      server.close()
+    }
+  })
+
+  it('preserves an incompatible handshake error and stops before any product request', async () => {
+    const { client, server, frames, disconnected } = fixture()
+    try {
+      const legacy = { ...initialize, protocol: { major: 1, minMinor: 0, maxMinor: 0 } }
+      await expect(client.initialize(legacy)).rejects.toMatchObject({ code: 'PROTOCOL_INCOMPATIBLE', acceptance: 'not_accepted', recovery: 'refresh' })
+      expect(disconnected()).toBe(true)
+      expect(() => client.identity).toThrow('PRODUCT_NOT_INITIALIZED')
+      await expect(client.request('commands.get', { dataGeneration: 'generation', commandId: 'command' })).rejects.toThrow('PRODUCT_NOT_INITIALIZED')
+      await expect(client.initialize(legacy)).rejects.toMatchObject({ code: 'PROTOCOL_INCOMPATIBLE' })
+      expect(frames.map(frame => JSON.parse(frame).method)).toEqual(['initialize'])
     }
     finally {
       client.close()

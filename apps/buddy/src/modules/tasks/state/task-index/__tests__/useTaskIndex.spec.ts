@@ -35,6 +35,7 @@ function fixture() {
     spaceId: null,
     deletedAt: null,
     createdAt: '2026-09-18T00:00:00Z',
+    lastActivityAt: '2026-09-18T00:00:00Z',
     updatedAt: '2026-09-18T00:00:00Z',
     approvalPolicy: 'policy',
     executionProfile: 'workspace_write',

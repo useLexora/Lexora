@@ -201,7 +201,7 @@ for (const { storageAuthority, sessionService } of cases) {
       expect(await live(hostPid)).toBe(true)
       if (storageAuthority === 'sqlite') {
         product = await management(discovery, credentials.productSecret, 'product')
-        const initialized = await product.request('initialize', { protocol: { major: 1, minMinor: 0, maxMinor: 0 }, client: { kind: 'mobile', version: 'test' }, supportedContentKinds: ['buddy-user-content-v1'], supportedReviewKinds: [] })
+        const initialized = await product.request('initialize', { protocol: { major: 1, minMinor: 1, maxMinor: 1 }, client: { kind: 'mobile', version: 'test' }, supportedContentKinds: ['buddy-user-content-v1'], supportedReviewKinds: [] })
         const command = { dataGeneration: initialized.dataGeneration, commandId: randomUUID(), expectedServiceInstanceId: initialized.serviceInstanceId, intent: { kind: 'settings' } }
         const result = await product.request('desktop.open', command)
         expect(result.receipt).toMatchObject({ decision: 'accepted', result: { desktop: { uiReady: true, targetVisible: true, visible: true } } })

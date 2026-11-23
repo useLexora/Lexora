@@ -232,7 +232,7 @@ class SubscriptionInstrumentedTest {
             val limits = JSONObject()
             val properties = schemas.document.getJSONObject("initialize").getJSONObject("output").getJSONObject("properties").getJSONObject("limits").getJSONObject("properties")
             for (key in properties.keys()) limits.put(key, properties.getJSONObject(key).get("const"))
-            return result.put("protocol", JSONObject().put("major", 1).put("minor", 0)).put("phase", "ready")
+            return result.put("protocol", JSONObject().put("major", 1).put("minor", 1)).put("phase", "ready")
                 .put("serverTime", "2026-11-09T00:00:00.000Z").put("capabilities", JSONArray().apply { if (windowCapability) put("conversations.getRecentWindow") }).put("limits", limits)
         }
         override fun close() { timers.shutdownNow(); client.close(); server.close() }

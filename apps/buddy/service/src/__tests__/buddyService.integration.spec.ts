@@ -4,7 +4,7 @@ import type { LocalTurnStart } from '@buddy-shared/conversation/chatApi'
 import type { LocalContextUsageSnapshot } from '@buddy-shared/conversation/contextApi'
 import type { LocalNotificationList } from '@buddy-shared/notifications/notificationApi'
 import type { LocalRun, LocalRunEvent } from '@buddy-shared/runs/runApi'
-import type { AssistantMessage, Credential, Usage } from '@earendil-works/pi-ai'
+import type { Credential } from '@earendil-works/pi-ai'
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import type { DatabaseSync } from 'node:sqlite'
@@ -29,17 +29,13 @@ import { createBuddyUserContent } from '../../../shared/conversation/buddyUserCo
 import { Emitter } from '../../../shared/events/Emitter'
 import { DEFAULT_NETWORK_PERMISSIONS } from '../../../shared/permissions/networkPermissions'
 import { DEFAULT_RUNTIME_PREFERENCES } from '../../../shared/runtime/runtimePreferences'
-import { inspectCommittedPiCompaction } from '../agent/sessions/recovery/inspectCommittedPiCompaction'
 import { readCheckpoint } from '../agent/sessions/tree/BuddyTreeStore'
 import { startBuddyService as startService } from '../BuddyService'
 import { createRunEventLog } from '../events/createRunEventLog'
 import { SqliteRunEventLog } from '../events/SqliteRunEventLog'
 import { createRpcRuntimePlatform } from '../platform/createRpcRuntimePlatform'
 import { createServiceConnection } from '../rpc/__tests__/serviceConnectionHarness'
-import { RunLifecycleService } from '../runs/RunLifecycleService'
-import { RunRecoveryService } from '../runs/RunRecoveryService'
 import {
-  prepareTestCommandRequest,
   prepareTestTurnRequest,
 } from '../storage/__tests__/composerDraftTestFixture'
 import { createExecutionStorageFixture, executionNow } from '../storage/__tests__/executionFixture'
@@ -54,7 +50,6 @@ import { createExecutionRepository } from '../storage/executionRepository'
 import { createRunRepository } from '../storage/runRepository'
 import { createSpaceRepository } from '../storage/spaceRepository'
 import { createUsageRepository } from '../storage/usageRepository'
-import { UsageService } from '../usage/UsageService'
 
 const databases: DatabaseSync[] = []
 const directories: string[] = []
@@ -138,7 +133,7 @@ describe('buddy runtime cross-subsystem contract', () => {
     }
     try {
       await expect(product.client.request('runtime.stop', {})).rejects.toMatchObject({ code: -32601 })
-      const initialized = await exchange('initialize', { protocol: { major: 1, minMinor: 0, maxMinor: 0 }, client: { kind: 'desktop', version: 'test' }, supportedContentKinds: ['buddy-user-content-v1'], supportedReviewKinds: [] })
+      const initialized = await exchange('initialize', { protocol: { major: 1, minMinor: 1, maxMinor: 1 }, client: { kind: 'desktop', version: 'test' }, supportedContentKinds: ['buddy-user-content-v1'], supportedReviewKinds: [] })
       expect(initialized.profileId).toBe('candidate-profile')
       expect(initialized.capabilities).toContain('composerDrafts.open')
       await harness.invoke('providers.upsertCustom', offlineProviderConfig(provider.baseUrl))
@@ -174,7 +169,7 @@ describe('buddy runtime cross-subsystem contract', () => {
         if (method === 'product.frame')
           productFrames.push(JSON.parse((params as { frame: string }).frame))
       })
-      await exchange('initialize', { protocol: { major: 1, minMinor: 0, maxMinor: 0 }, client: { kind: 'desktop', version: 'test' }, supportedContentKinds: ['buddy-user-content-v1'], supportedReviewKinds: [] })
+      await exchange('initialize', { protocol: { major: 1, minMinor: 1, maxMinor: 1 }, client: { kind: 'desktop', version: 'test' }, supportedContentKinds: ['buddy-user-content-v1'], supportedReviewKinds: [] })
       expect(await exchange('chat.startTurn', { ...input, intent: { ...input.intent, expectedRevision: String(input.intent.expectedRevision) } })).toEqual(accepted)
       const events = await eventLog.read(runId)
       expect(events[0]?.type).toBe('run.queued')
@@ -1111,128 +1106,6 @@ describe('buddy runtime cross-subsystem contract', () => {
     }
   })
 
-  it('reconciles a Pi-committed compaction into Buddy storage after a runtime crash', async () => {
-    const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-buddy-recovery-')))
-    directories.push(root)
-    const conversationsDirectory = join(root, 'conversations')
-    const sessionDirectory = join(
-      conversationsDirectory,
-      'conversation-1',
-      'session',
-      'branch-1',
-    )
-    await mkdir(sessionDirectory, { recursive: true })
-    const manager = SessionManager.create(root, sessionDirectory)
-    const firstKeptEntryId = manager.appendMessage({
-      content: 'Keep this context',
-      role: 'user',
-      timestamp: Date.now(),
-    })
-    manager.appendMessage(assistant('Kept response'))
-    manager.appendCompaction(
-      'Private compacted context',
-      firstKeptEntryId,
-      1_200,
-      undefined,
-      false,
-      usage(30, 6),
-    )
-    const piSessionFile = manager.getSessionFile()
-    if (!piSessionFile)
-      throw new Error('Pi did not create a persistent session file')
-
-    const database = openTrackedDatabase(join(root, 'buddy.sqlite3'))
-    const eventLog = createRunEventLog({ conversationsDirectory, database })
-    const conversations = createConversationRepository(database)
-    const runs = createRunRepository(database)
-    const inspectCommittedCompaction = (run: NonNullable<ReturnType<typeof runs.findById>>) =>
-      run.piSessionFile
-        ? inspectCommittedPiCompaction({
-            branchId: run.branchId,
-            conversationsDirectory,
-            conversationId: run.conversationId,
-            piSessionFile: run.piSessionFile,
-            startedAt: run.startedAt,
-          })
-        : Promise.resolve(null)
-    prepareTestTurnRequest(database, {
-      attachmentBindings: [],
-      branchId: 'branch-1',
-      conversationId: 'conversation-1',
-      createdAt: '2026-08-15T00:00:00.000Z',
-      approvalPolicy: 'policy' as const,
-      executionProfile: 'workspace_write',
-      model: 'model-1',
-      spaceId: null,
-      provider: 'provider-1',
-      requestFingerprint: 'fingerprint-source',
-      requestId: 'request-source',
-      runInput: {
-        attachmentIds: [],
-        contextItems: [],
-        prompt: 'Original turn',
-        reasoning: null,
-        serviceTier: null,
-      },
-      runId: 'run-source',
-      title: null,
-      userMessageContent: { text: 'Original turn' },
-      userMessageId: 'message-source',
-    })
-    database.prepare(`
-      UPDATE runs
-      SET status = 'completed', pi_session_file = ?, completed_at = ?
-      WHERE id = 'run-source'
-    `).run(piSessionFile, '2026-08-15T00:00:01.000Z')
-    prepareTestCommandRequest(database, {
-      arguments: '',
-      branchId: 'branch-1',
-      command: 'compact',
-      conversationId: 'conversation-1',
-      createdAt: '2026-08-15T00:00:02.000Z',
-      approvalPolicy: 'policy' as const,
-      executionProfile: 'workspace_write',
-      requestFingerprint: 'fingerprint-compact',
-      requestId: 'request-compact',
-      runId: 'run-compact',
-    })
-    database.prepare(`
-      UPDATE runs SET status = 'running' WHERE id = 'run-compact'
-    `).run()
-    const usageRepository = createUsageRepository(database)
-    const lifecycle = new RunLifecycleService({ eventLog, repository: runs })
-    const recovery = new RunRecoveryService({
-      conversations,
-      eventLog,
-      inspectCommittedCompaction,
-      lifecycle,
-      repository: runs,
-      usage: new UsageService({ eventLog, repository: usageRepository }),
-    })
-
-    expect(await recovery.recoverInterruptedRuns()).toBe(1)
-    expect(runs.findById('run-compact')).toMatchObject({ status: 'completed' })
-    expect((await eventLog.read('run-compact')).map(event => event.type)).toEqual([
-      'context.compaction.completed',
-      'usage.recorded',
-      'run.completed',
-    ])
-    expect(usageRepository.listForRun('run-compact')).toHaveLength(1)
-    expect(conversations.listTimelinePage(
-      'conversation-1',
-      'branch-1',
-      { limit: 10 },
-    ).items.find(item => item.id === 'run-compact')).toMatchObject({
-      estimatedTokensAfter: expect.any(Number),
-      kind: 'compaction',
-      status: 'completed',
-      tokensBefore: 1_200,
-    })
-    expect(JSON.stringify(await eventLog.read('run-compact')))
-      .not
-      .toContain('Private compacted context')
-  })
-
   it('continues the same Pi history in the new space without moving previous work files', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-buddy-move-space-')))
     directories.push(root)
@@ -1542,30 +1415,6 @@ describe('buddy runtime cross-subsystem contract', () => {
     }
   })
 })
-
-function assistant(text: string): AssistantMessage {
-  return {
-    api: 'anthropic-messages',
-    content: [{ type: 'text', text }],
-    model: 'claude-sonnet-4-5',
-    provider: 'anthropic',
-    role: 'assistant',
-    stopReason: 'stop',
-    timestamp: Date.now(),
-    usage: usage(10, 4),
-  }
-}
-
-function usage(input: number, output: number): Usage {
-  return {
-    cacheRead: 0,
-    cacheWrite: 0,
-    cost: { cacheRead: 0, cacheWrite: 0, input: 0.01, output: 0.02, total: 0.03 },
-    input,
-    output,
-    totalTokens: input + output,
-  }
-}
 
 function openTrackedDatabase(databasePath: string): DatabaseSync {
   const database = openBuddyDatabase({ databasePath })

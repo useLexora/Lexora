@@ -8,12 +8,14 @@ import { z } from 'zod'
 import { conversationHistoryEntriesSchema, conversationHistoryQuerySchema } from '../../../shared/conversation/conversationHistoryApi'
 import { idSchema, timestampSchema } from '../../../shared/runtime/apiValidation'
 import { BuddyServiceError, parse } from '../rpc/runtimeRequest'
+import { CONVERSATION_LAST_ACTIVITY_SQL } from './conversationActivity'
 import { CONVERSATION_CURRENT_MODEL_SELECTION_SQL, toConversationRecord } from './conversationRecord'
 import { createTaskMarkRepository } from './taskMarkRepository'
 
 export type ConversationActivity = 'idle' | 'running' | 'awaiting_approval'
 
 export interface ConversationSummaryRecord extends ConversationRecord {
+  lastActivityAt: string
   activity: ConversationActivity
   automationOccurrence: {
     automationId: string
@@ -29,6 +31,7 @@ export interface ConversationIndexRepository {
 }
 
 interface ConversationSummaryRow extends ConversationRow {
+  last_activity_at: string
   activity: ConversationActivity
   automation_id: string | null
   automation_occurrence_id: string | null
@@ -49,6 +52,7 @@ END`
 
 const SUMMARY_SELECT = `
   SELECT conversations.*, ${CONVERSATION_CURRENT_MODEL_SELECTION_SQL} AS actor_model_selection_json,
+    ${CONVERSATION_LAST_ACTIVITY_SQL} AS last_activity_at,
     automation_occurrences.id AS automation_occurrence_id,
     automation_occurrences.automation_id AS automation_id,
     automation_occurrences.scheduled_for AS automation_scheduled_for,
@@ -74,9 +78,9 @@ const ATTENTION_SQL = `(
 )`
 
 const historyCursorSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   identity: z.string().regex(/^[a-f\d]{64}$/),
-  updatedAt: timestampSchema,
+  lastActivityAt: timestampSchema,
   createdAt: timestampSchema,
   id: idSchema,
 }).strict()
@@ -118,7 +122,7 @@ export function createConversationIndexRepository(
       AND (? = 0 OR conversations.space_id IS ?)
       AND instr(lower(COALESCE(conversations.title, '')), lower(?)) > 0
       AND (? IS NULL OR conversations.id != ?)
-    ORDER BY conversations.updated_at DESC, conversations.created_at DESC
+    ORDER BY last_activity_at DESC, conversations.created_at DESC, conversations.id DESC
     LIMIT ?
   `)
 
@@ -154,8 +158,8 @@ export function createConversationIndexRepository(
         parameters.push(...ids)
       }
       if (cursor) {
-        conditions.push('(conversations.updated_at, conversations.created_at, conversations.id) < (?, ?, ?)')
-        parameters.push(cursor.updatedAt, cursor.createdAt, cursor.id)
+        conditions.push('(last_activity_at, conversations.created_at, conversations.id) < (?, ?, ?)')
+        parameters.push(cursor.lastActivityAt, cursor.createdAt, cursor.id)
       }
       const limit = query.limit ?? 10
       const rows = database.prepare(`
@@ -163,7 +167,7 @@ export function createConversationIndexRepository(
         LEFT JOIN task_attention AS attention ON attention.conversation_id = conversations.id
         ${query.kind === 'search' ? 'LEFT JOIN spaces ON spaces.id = conversations.space_id AND spaces.revoked_at IS NULL' : ''}
         WHERE ${conditions.join(' AND ')}
-        ORDER BY conversations.updated_at DESC, conversations.created_at DESC, conversations.id DESC
+        ORDER BY last_activity_at DESC, conversations.created_at DESC, conversations.id DESC
         LIMIT ?
       `).all(...parameters, limit + 1) as unknown as ConversationSummaryRow[]
       const visible = rows.slice(0, limit)
@@ -171,7 +175,7 @@ export function createConversationIndexRepository(
       return {
         items: withMarks(visible),
         nextCursor: rows.length > limit && last
-          ? Buffer.from(JSON.stringify({ version: 1, identity, id: last.id, updatedAt: last.updated_at, createdAt: last.created_at } satisfies HistoryCursor)).toString('base64url')
+          ? Buffer.from(JSON.stringify({ version: 2, identity, id: last.id, lastActivityAt: last.last_activity_at, createdAt: last.created_at } satisfies HistoryCursor)).toString('base64url')
           : null,
       }
     },
@@ -197,6 +201,7 @@ export function createConversationIndexRepository(
 function toConversationSummary(row: ConversationSummaryRow): ConversationSummaryRecord {
   return {
     ...toConversationRecord(row),
+    lastActivityAt: row.last_activity_at,
     activity: row.activity,
     automationOccurrence: row.automation_occurrence_id
       && row.automation_id

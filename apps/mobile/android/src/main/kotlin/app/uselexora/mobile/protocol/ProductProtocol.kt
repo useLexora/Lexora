@@ -17,7 +17,7 @@ data class ProductIdentity(val serviceId: String, val profileId: String, val dat
 object ProductProtocol {
     val supportedContentKinds = JSONArray(listOf("buddy-user-content-v1"))
     fun initialize(version: String) = JSONObject()
-        .put("protocol", JSONObject().put("major", 1).put("minMinor", 0).put("maxMinor", 0))
+        .put("protocol", JSONObject().put("major", 1).put("minMinor", 1).put("maxMinor", 1))
         .put("client", JSONObject().put("kind", "mobile").put("version", version))
         .put("supportedContentKinds", supportedContentKinds)
         .put("supportedReviewKinds", JSONArray(ApprovalReview.supportedKinds))

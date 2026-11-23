@@ -11,6 +11,7 @@ import { buddyComposerDraftSchema } from '../../../shared/conversation/composerD
 import { conversationRequestSchemas, conversationResponseSchemas } from '../../../shared/conversation/conversationApi'
 import { conversationArchivePolicySchema } from '../../../shared/conversation/conversationArchiveApi'
 import { APPROVAL_REVIEW_KINDS } from '../../../shared/permissions/approvalReviewPayload'
+import { PRODUCT_PROTOCOL_VERSION } from '../../../shared/productProtocol/identity'
 import { productCommandIntents } from '../../../shared/productProtocol/methods'
 import { productConversationArchivePageSchema, productDraftSchema } from '../../../shared/productProtocol/queries'
 import { decodeSafeProductRevision, encodeProductRevision } from '../../../shared/productProtocol/scalars'
@@ -399,7 +400,7 @@ export class ProductDesktopGateway implements DesktopRuntimeGateway {
       close: () => {},
     })
     this.#current = client
-    this.#client = client.initialize({ protocol: { major: 1, minMinor: 0, maxMinor: 0 }, client: { kind: 'desktop', version: this.#version }, supportedContentKinds: ['buddy-user-content-v1'], supportedReviewKinds: [...APPROVAL_REVIEW_KINDS] }).then(() => {
+    this.#client = client.initialize({ protocol: { major: PRODUCT_PROTOCOL_VERSION.major, minMinor: PRODUCT_PROTOCOL_VERSION.minor, maxMinor: PRODUCT_PROTOCOL_VERSION.minor }, client: { kind: 'desktop', version: this.#version }, supportedContentKinds: ['buddy-user-content-v1'], supportedReviewKinds: [...APPROVAL_REVIEW_KINDS] }).then(() => {
       if (generation !== this.#generation) {
         client.close()
         throw gatewayError('RUNTIME_UNAVAILABLE')

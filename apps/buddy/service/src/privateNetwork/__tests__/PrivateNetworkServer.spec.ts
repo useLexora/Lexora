@@ -100,7 +100,7 @@ describe('private TLS transport', () => {
     socket.send(JSON.stringify({ jsonrpc: '2.0', id: 'before', method: 'conversations.list', params: {} }))
     expect(await response).toMatchObject({ error: { code: 'NOT_INITIALIZED' } })
     response = receive()
-    socket.send(JSON.stringify({ jsonrpc: '2.0', id: 'init', method: 'initialize', params: { protocol: { major: 1, minMinor: 0, maxMinor: 0 }, client: { kind: 'desktop', version: 'fixture' }, supportedContentKinds: [], supportedReviewKinds: [] } }))
+    socket.send(JSON.stringify({ jsonrpc: '2.0', id: 'init', method: 'initialize', params: { protocol: { major: 1, minMinor: 1, maxMinor: 1 }, client: { kind: 'desktop', version: 'fixture' }, supportedContentKinds: [], supportedReviewKinds: [] } }))
     expect(await response).toMatchObject({ result: { deviceId: redeemed.body.deviceId, profileId: 'profile' } })
     response = receive()
     socket.send(JSON.stringify({ jsonrpc: '2.0', id: 'list', method: 'conversations.list', params: {} }))

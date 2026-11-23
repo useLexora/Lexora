@@ -117,7 +117,7 @@ describe('product discovery read contracts', () => {
         frames.push(JSON.parse(frame))
         return true
       }, close: () => {} })
-      await connection.receive(JSON.stringify({ jsonrpc: '2.0', id: 'init', method: 'initialize', params: { protocol: { major: 1, minMinor: 0, maxMinor: 0 }, client: { kind: 'mobile', version: '1' }, supportedContentKinds: [], supportedReviewKinds: [] } }))
+      await connection.receive(JSON.stringify({ jsonrpc: '2.0', id: 'init', method: 'initialize', params: { protocol: { major: 1, minMinor: 1, maxMinor: 1 }, client: { kind: 'mobile', version: '1' }, supportedContentKinds: [], supportedReviewKinds: [] } }))
       await connection.receive(JSON.stringify({ jsonrpc: '2.0', id: 'search', method: 'conversations.search', params: { query: 'archive-needle', scope: 'archived' } }))
       if (role === 'reader')
         expect(frames.at(-1)?.error?.code).toBe('NOT_AUTHORIZED')

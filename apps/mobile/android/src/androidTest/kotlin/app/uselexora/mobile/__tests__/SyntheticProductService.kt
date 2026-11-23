@@ -67,7 +67,7 @@ internal class SyntheticProductService(
             .put("serviceId", serviceId).put("profileId", "fixture-profile").put("dataGeneration", "fixture-generation")
             .put("serviceInstanceId", "$serviceId-instance").put("deviceId", "fixture-device")
             .put("connectionId", "connection-$connection").put("clientSessionId", "session-$connection")
-            .put("protocol", JSONObject().put("major", 1).put("minor", 0)).put("phase", "ready")
+            .put("protocol", JSONObject().put("major", 1).put("minor", 1)).put("phase", "ready")
             .put("serverTime", Instant.now().toString()).put("limits", limits).put("capabilities", JSONArray(capabilities))
     }
 

@@ -124,7 +124,7 @@ describe('bounded conversation history index', () => {
       { ...query, cursor, spaceId: 'archive' },
       { ...query, cursor, excludeIds: [] },
       { kind: 'attention', cursor },
-      { ...query, cursor: Buffer.from(JSON.stringify({ ...JSON.parse(Buffer.from(cursor, 'base64url').toString()), version: 2 })).toString('base64url') },
+      { ...query, cursor: Buffer.from(JSON.stringify({ ...JSON.parse(Buffer.from(cursor, 'base64url').toString()), version: 1 })).toString('base64url') },
     ]
     for (const input of invalidQueries)
       expect(() => f.conversations.listHistory(input as ConversationHistoryQuery)).toThrowError(expect.objectContaining({ code: 'VALIDATION_FAILED' }))

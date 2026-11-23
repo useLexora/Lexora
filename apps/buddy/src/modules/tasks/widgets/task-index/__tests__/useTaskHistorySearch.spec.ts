@@ -13,7 +13,7 @@ afterEach(() => {
 function page(id: string, nextCursor: string | null = null): LocalConversationHistoryPage {
   return {
     items: [{
-      conversation: { id, title: id, buddyId: 'default', activeBranchId: null, approvalPolicy: 'policy', createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z', deletedAt: null, executionProfile: 'workspace_write', spaceId: null, activity: 'idle', modelSelection: null, automationOccurrence: null },
+      conversation: { id, title: id, lastActivityAt: '2026-09-01T00:00:00.000Z', buddyId: 'default', activeBranchId: null, approvalPolicy: 'policy', createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z', deletedAt: null, executionProfile: 'workspace_write', spaceId: null, activity: 'idle', modelSelection: null, automationOccurrence: null },
       markState: { conversationId: id, markId: null, resultRunId: null, unread: false, readRevision: 0 },
     }],
     nextCursor,
