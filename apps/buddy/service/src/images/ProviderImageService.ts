@@ -4,7 +4,7 @@ import { imageOutputOptionsSchema } from '../../../shared/images/imagePreference
 import { ImageGenerationError } from './ImageGenerationGateway'
 import { supportsImageRequest } from './imageGenerationSupport'
 import { imageHttpFailure, imageResponseDiagnostic, imageTransportFailure } from './imageHttpDiagnostic'
-import { decodePng, readBoundedResponse } from './imageResponseBody'
+import { decodePng, readBoundedResponse, readGeneratedImageUrl, readProviderImageItem } from './imageResponseBody'
 import { resolveProviderImageAdapter } from './providerImageAdapters'
 
 export class ProviderImageService {
@@ -54,27 +54,42 @@ export class ProviderImageService {
     }
     const endpoint = `${request.baseUrl.replace(/\/+$/, '')}/${prepared.path}`
     const diagnostic: ImageGenerationErrorDiagnostic = { stage: 'submitting', localRequestId: input.requestId }
+    const fallbackBody = omitResponseFormat(body)
     await input.onSubmitting?.()
     input.signal.throwIfAborted()
     try {
-      const response = await this.fetch(endpoint, { method: 'POST', headers, body, signal: input.signal, redirect: 'error' })
-      Object.assign(diagnostic, imageResponseDiagnostic(response))
-      if (!response.ok)
-        throw await imageHttpFailure(response, input.signal)
-      const responseId = diagnostic.requestId ?? null
-      if (responseId) {
-        try {
-          await input.onSubmitted?.(responseId)
+      let payload = body
+      let usedFallback = false
+      while (true) {
+        const response = await this.fetch(endpoint, { method: 'POST', headers, body: payload, signal: input.signal, redirect: 'error' })
+        clearResponseDiagnostic(diagnostic)
+        Object.assign(diagnostic, imageResponseDiagnostic(response))
+        if (!response.ok) {
+          const failure = await imageHttpFailure(response, input.signal)
+          if (!usedFallback && fallbackBody !== undefined && failure.diagnostic?.providerParameter === 'response_format') {
+            payload = fallbackBody
+            usedFallback = true
+            continue
+          }
+          throw failure
         }
-        catch (cause) {
-          await response.body?.cancel().catch(() => {})
-          throw cause
+        const responseId = diagnostic.requestId ?? null
+        if (responseId) {
+          try {
+            await input.onSubmitted?.(responseId)
+          }
+          catch (cause) {
+            await response.body?.cancel().catch(() => {})
+            throw cause
+          }
         }
-      }
-      const result = JSON.parse(await readBoundedResponse(response, input.signal))
-      if (!Array.isArray(result?.data) || result.data.length !== 1 || typeof result.data[0]?.b64_json !== 'string')
+        const image = readProviderImageItem(JSON.parse(await readBoundedResponse(response, input.signal)))
+        if (image?.b64_json)
+          return { images: [{ bytes: decodePng(image.b64_json), mimeType: 'image/png' }], responseId }
+        if (image?.url)
+          return { images: [{ bytes: await readGeneratedImageUrl(this.fetch, image.url, input.signal), mimeType: 'image/png' }], responseId }
         throw new ImageGenerationError('IMAGE_GENERATION_INVALID_RESPONSE')
-      return { images: [{ bytes: decodePng(result.data[0].b64_json), mimeType: 'image/png' }], responseId }
+      }
     }
     catch (cause) {
       input.signal.throwIfAborted()
@@ -83,4 +98,31 @@ export class ProviderImageService {
       throw imageTransportFailure(cause, diagnostic)
     }
   }
+}
+
+function clearResponseDiagnostic(diagnostic: ImageGenerationErrorDiagnostic) {
+  delete diagnostic.httpStatus
+  delete diagnostic.responseType
+  delete diagnostic.providerCode
+  delete diagnostic.providerParameter
+  delete diagnostic.requestId
+  delete diagnostic.responseId
+}
+
+function omitResponseFormat(body: string | FormData): string | FormData | undefined {
+  if (typeof body === 'string') {
+    const parsed = JSON.parse(body) as Record<string, unknown>
+    if (!Object.hasOwn(parsed, 'response_format'))
+      return undefined
+    delete parsed.response_format
+    return JSON.stringify(parsed)
+  }
+  if (!body.has('response_format'))
+    return undefined
+  const copy = new FormData()
+  for (const [key, value] of body.entries()) {
+    if (key !== 'response_format')
+      copy.append(key, value)
+  }
+  return copy
 }

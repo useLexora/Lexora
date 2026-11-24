@@ -22,6 +22,7 @@ const openAiImages: ProviderImageAdapter = {
       prompt: input.prompt,
       n: 1,
       output_format: 'png',
+      response_format: 'b64_json',
       ...Object.fromEntries(Object.entries({ size: output.size, quality: output.quality, background: output.background }).filter(([, value]) => value !== 'auto')),
     }
     if (!input.inputImages.length)
