@@ -95,6 +95,8 @@ module.exports = withDesktopNativeVersion({
   win: {
     extraResources: (target.platform === OPERATING_SYSTEM.Windows ? resources : []),
     executableName: displayName,
+    // WinPackager completes PE resource editing and emits afterSign even without a certificate.
+    signAndEditExecutable: true,
     icon: 'resources/icons/app-icon.png',
     target: [{ target: packageFormat === 'windows-zip' ? 'zip' : 'nsis', arch: [target.architecture] }],
   },

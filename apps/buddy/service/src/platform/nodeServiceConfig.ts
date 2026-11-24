@@ -23,7 +23,9 @@ export const nodeServiceConfigSchema = z.object({
 }).strict()
 export type NodeServiceConfig = z.infer<typeof nodeServiceConfigSchema>
 
-export async function prepareNodeService(config: NodeServiceConfig): Promise<readonly string[]> {
+type LocalNodeConfig = Pick<NodeServiceConfig, 'profile' | 'buddyHome' | 'resourcesRoot'>
+
+export async function inspectNodeServiceResources(config: LocalNodeConfig, signal?: AbortSignal) {
   const target = resolveBuddyTarget(process.platform, process.arch)
   const native = createBuddyNativeEnvironment({ serviceResourcesRoot: config.resourcesRoot })
   const searchDirectory = resolveBuddySearchToolsDirectory({ serviceResourcesRoot: config.resourcesRoot })
@@ -31,6 +33,7 @@ export async function prepareNodeService(config: NodeServiceConfig): Promise<rea
   const skills = [...BUDDY_BUILTIN_SKILLS, ...platform.features.flatMap(id => BUDDY_FEATURES[id].skills)]
     .map(name => join(config.resourcesRoot, 'skills', name))
   for (const file of [...Object.values(native), ...Object.values(searchTools.tools).map(tool => join(searchDirectory, tool.targets[target.id].binary)), ...skills.map(directory => join(directory, 'SKILL.md'))]) {
+    signal?.throwIfAborted()
     try {
       await access(file)
     }
@@ -38,14 +41,27 @@ export async function prepareNodeService(config: NodeServiceConfig): Promise<rea
       throw new Error(`SERVICE_RESOURCE_MISSING: ${file}`)
     }
   }
-  Object.assign(process.env, native, {
-    LEXORA_BUDDY_HOME: config.buddyHome,
-    LEXORA_BUDDY_PROFILE: config.profile,
-    PI_CODING_AGENT_DIR: join(config.buddyHome, 'agent'),
-    PI_TOOLS_DIR: searchDirectory,
-  })
+  signal?.throwIfAborted()
+  return {
+    skills,
+    environment: {
+      ...native,
+      LEXORA_BUDDY_HOME: config.buddyHome,
+      LEXORA_BUDDY_PROFILE: config.profile,
+      PI_CODING_AGENT_DIR: join(config.buddyHome, 'agent'),
+      PI_TOOLS_DIR: searchDirectory,
+    },
+  }
+}
+
+export async function activateNodeService(resources: Awaited<ReturnType<typeof inspectNodeServiceResources>>): Promise<readonly string[]> {
+  Object.assign(process.env, resources.environment)
   if (process.platform === 'win32')
     await establishWindowsRuntimeGuard()
   await prepareRuntimeEnvironment()
-  return skills
+  return resources.skills
+}
+
+export async function prepareNodeService(config: NodeServiceConfig): Promise<readonly string[]> {
+  return activateNodeService(await inspectNodeServiceResources(config))
 }

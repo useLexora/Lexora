@@ -4,6 +4,7 @@ import type { ConversationHistoryQuery, LocalConversationHistoryItem } from '@bu
 import type { LocalTaskMarkState } from '@buddy-shared/conversation/taskMarkApi'
 import type { TaskHistory, TaskHistoryScopeState } from '../../contracts'
 import { CONVERSATION_HISTORY_LOOKUP_LIMIT } from '@buddy-shared/conversation/conversationHistoryApi'
+import { Emitter } from '@buddy-shared/events/Emitter'
 import { readonly, shallowRef } from 'vue'
 
 const ENTRY_BATCH_WINDOW_MS = 16
@@ -39,6 +40,8 @@ export function useTaskHistory(api: Pick<LocalChatApi['conversations'], 'listHis
   const markStates = shallowRef<ReadonlyMap<string, LocalTaskMarkState>>(new Map())
   const scopes = shallowRef<ReadonlyMap<string, TaskHistoryScopeState>>(new Map())
   const anchors = shallowRef<TaskHistory['anchors']['value']>({ pinned: null, spaces: null, tasks: null })
+  const firstGlobalPageReceived = new Emitter<number>(() => {})
+  let awaitingFirstGlobalPage = true
   const entries = new Map<string, LocalConversationHistoryItem>()
   const signatures = new Map<string, string>()
   const records = new Map<string, HistoryScope>()
@@ -150,6 +153,7 @@ export function useTaskHistory(api: Pick<LocalChatApi['conversations'], 'listHis
         let hasMore = scope.hasMore
         try {
           do {
+            const startedAt = awaitingFirstGlobalPage && scope.spaceId === null && cursor === null ? performance.now() : undefined
             const page = await api.listHistory({
               kind: 'ordinary',
               spaceId: scope.spaceId,
@@ -161,6 +165,10 @@ export function useTaskHistory(api: Pick<LocalChatApi['conversations'], 'listHis
               return
             if (generation !== scope.generation)
               break
+            if (startedAt !== undefined) {
+              awaitingFirstGlobalPage = false
+              firstGlobalPageReceived.fire(Math.round(performance.now() - startedAt))
+            }
             if (ordinaryQuota === 0) {
               hasMore = page.items.length > 0
               cursor = null
@@ -463,6 +471,7 @@ export function useTaskHistory(api: Pick<LocalChatApi['conversations'], 'listHis
 
   function dispose() {
     disposed = true
+    firstGlobalPageReceived.dispose()
     if (entryFlush !== null)
       clearTimeout(entryFlush)
     queuedEntries.clear()
@@ -485,5 +494,5 @@ export function useTaskHistory(api: Pick<LocalChatApi['conversations'], 'listHis
     },
     recordAnchor: (section, value) => anchors.value = { ...anchors.value, [section]: value },
   }
-  return { history, conversations: readonly(conversations), markStates: readonly(markStates), dispose, applyConversation, applyMarkState, ensureConversation, refreshAttention, refreshConversations, setPinnedIds, updateConversationBranch }
+  return { history, onDidReceiveFirstGlobalPage: firstGlobalPageReceived.event, conversations: readonly(conversations), markStates: readonly(markStates), dispose, applyConversation, applyMarkState, ensureConversation, refreshAttention, refreshConversations, setPinnedIds, updateConversationBranch }
 }

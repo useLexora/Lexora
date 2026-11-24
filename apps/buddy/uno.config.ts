@@ -39,6 +39,6 @@ export default defineConfig({
   },
   content: {
     filesystem: ['src/**/*.{vue,ts,tsx,js,jsx}', '!src/**/__tests__/**'],
-    pipeline: { include: [/[\\/]src[\\/].*\.(vue|[jt]sx?)($|\?)/, /[\\/]index\.html$/] },
+    pipeline: { include: ['src/**/*.{vue,ts,tsx,js,jsx}', 'src/**/*.{vue,ts,tsx,js,jsx}[?]*', 'index.html'] },
   },
 })

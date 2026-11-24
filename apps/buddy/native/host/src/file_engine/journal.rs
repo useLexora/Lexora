@@ -8,6 +8,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+const JOURNAL_VERSION: u32 = 2;
+
 pub struct Journal(Connection);
 
 impl Journal {
@@ -23,10 +25,13 @@ impl Journal {
             "PRAGMA locking_mode=EXCLUSIVE; PRAGMA synchronous=FULL; BEGIN EXCLUSIVE; COMMIT;",
         )?;
         let version: u32 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version > 2 {
+        if version > JOURNAL_VERSION {
             return Err(Error::Invalid);
         }
-        connection.execute_batch("CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, record TEXT NOT NULL, claims TEXT NOT NULL, status TEXT NOT NULL, source TEXT NOT NULL, destination TEXT); CREATE INDEX IF NOT EXISTS operations_source ON operations(source); CREATE INDEX IF NOT EXISTS operations_destination ON operations(destination); CREATE INDEX IF NOT EXISTS operations_status ON operations(status); CREATE TABLE IF NOT EXISTS leases (id TEXT PRIMARY KEY, claims TEXT NOT NULL, hazard INTEGER NOT NULL DEFAULT 0, external INTEGER NOT NULL); PRAGMA user_version=2;")?;
+        connection.execute_batch("CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, record TEXT NOT NULL, claims TEXT NOT NULL, status TEXT NOT NULL, source TEXT NOT NULL, destination TEXT); CREATE INDEX IF NOT EXISTS operations_source ON operations(source); CREATE INDEX IF NOT EXISTS operations_destination ON operations(destination); CREATE INDEX IF NOT EXISTS operations_status ON operations(status); CREATE TABLE IF NOT EXISTS leases (id TEXT PRIMARY KEY, claims TEXT NOT NULL, hazard INTEGER NOT NULL DEFAULT 0, external INTEGER NOT NULL);")?;
+        if version < JOURNAL_VERSION {
+            connection.pragma_update(None, "user_version", JOURNAL_VERSION)?;
+        }
         let mut journal = Self(connection);
         for mut record in journal.records(
             "SELECT record FROM operations WHERE status IN ('\"prepared\"','\"executing\"')",

@@ -1,6 +1,6 @@
 import type { ConversationHistoryQuery, LocalConversationHistoryItem, LocalConversationHistoryPage } from '@buddy-shared/conversation/conversationHistoryApi'
 import { deferred } from '@buddy-tests/deferred'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { useTaskHistory } from '../useTaskHistory'
 
 function item(index: number, spaceId: string | null = null): LocalConversationHistoryItem {
@@ -52,6 +52,68 @@ function fixture() {
 const ids = (f: ReturnType<typeof fixture>) => f.conversations.value.map(task => task.id)
 
 describe('progressive task history', () => {
+  it.each([false, true])('observes only the first successful global ordinary page (populated: %s)', async (populated) => {
+    const f = fixture()
+    const durations: number[] = []
+    f.onDidReceiveFirstGlobalPage(duration => durations.push(duration))
+    expect(f.queries).toHaveLength(0)
+    await f.refreshAttention()
+    await f.history.ensureScope('space')
+    await f.history.search('fixture')
+    f.intercept(() => Promise.reject(new Error('offline')))
+    await expect(f.history.ensureScope(null)).rejects.toThrow('offline')
+
+    const pending = deferred<LocalConversationHistoryPage>()
+    f.intercept(() => pending.promise)
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(700)
+    try {
+      const first = f.history.ensureScope(null)
+      await Promise.resolve()
+      expect(durations).toEqual([])
+      clock.mockReturnValue(713)
+      pending.resolve({ items: populated ? [item(1)] : [], nextCursor: null })
+      await first
+      expect(durations).toEqual([13])
+    }
+    finally {
+      clock.mockRestore()
+    }
+    f.intercept(undefined)
+    await f.history.ensureScope(null)
+    await f.refreshConversations()
+    expect(durations).toEqual([13])
+  })
+
+  it('does not report discarded pages after invalidation or disposal', async () => {
+    const f = fixture()
+    const durations: number[] = []
+    f.onDidReceiveFirstGlobalPage(duration => durations.push(duration))
+    const stale = deferred<LocalConversationHistoryPage>()
+    const retry = deferred<LocalConversationHistoryPage>()
+    const retryStarted = deferred<void>()
+    let initial = true
+    f.intercept((query) => {
+      if (query.kind !== 'ordinary')
+        return
+      if (initial) {
+        initial = false
+        return stale.promise
+      }
+      retryStarted.resolve()
+      return retry.promise
+    })
+    const reading = f.history.ensureScope(null)
+    await Promise.resolve()
+    const refresh = f.refreshConversations()
+    stale.resolve({ items: [item(1)], nextCursor: null })
+    await retryStarted.promise
+    expect(durations).toEqual([])
+    f.dispose()
+    retry.resolve({ items: [], nextCursor: null })
+    await Promise.all([reading, refresh])
+    expect(durations).toEqual([])
+  })
+
   it('refreshes and reorders a completed task when only its activity clock changes', async () => {
     const f = fixture()
     await f.refreshConversations()

@@ -77,12 +77,16 @@ export async function readPersistenceSourceManifest(candidateRoot: string): Prom
   return manifest
 }
 
-export async function preparePersistenceSources(input: {
+interface PersistenceCopyOptions {
+  signal: AbortSignal
+  report?: StorageReporter
+  privateDirectoriesExecutable?: string
+}
+
+export async function preparePersistenceSources(input: PersistenceCopyOptions & {
   sourceRoot: string
   candidateRoot: string
-  signal: AbortSignal
   scope?: PersistenceSourceManifest['scope']
-  report?: StorageReporter
 }): Promise<PersistenceSourceManifest> {
   const { signal } = input
   const scope = input.scope ?? 'profile'
@@ -142,14 +146,14 @@ export async function preparePersistenceSources(input: {
     await mkdir(candidateRoot, { mode: 0o700 })
     await writeStorageJson(manifestPath, manifest)
   }
-  await copyStorageTree(sourceRoot, join(candidateRoot, 'source'), { signal, report, plan, overwrite: !!previous })
+  await copyStorageTree(sourceRoot, join(candidateRoot, 'source'), { signal, report, plan, overwrite: !!previous, privateDirectoriesExecutable: input.privateDirectoriesExecutable })
   await verifyPersistenceSources(manifest, signal, report)
   manifest = { ...manifest, copied: true }
   await writeStorageJson(manifestPath, manifest)
   return manifest
 }
 
-export async function preparePersistenceWorkingCopy(manifest: PersistenceSourceManifest, signal: AbortSignal, report: StorageReporter = () => {}): Promise<string> {
+export async function preparePersistenceWorkingCopy(manifest: PersistenceSourceManifest, { signal, report = () => {}, privateDirectoriesExecutable }: PersistenceCopyOptions): Promise<string> {
   const profile = join(manifest.candidateRoot, 'profile')
   const source = join(manifest.candidateRoot, 'source')
   if (manifest.scope === 'upgrade') {
@@ -178,7 +182,7 @@ export async function preparePersistenceWorkingCopy(manifest: PersistenceSourceM
   }
   if (manifest.workingCopyReady)
     return profile
-  await copyStorageTree(source, profile, { signal, report, plan, overwrite: true })
+  await copyStorageTree(source, profile, { signal, report, plan, overwrite: true, privateDirectoriesExecutable })
   manifest.workingCopyReady = true
   await writeStorageJson(join(manifest.candidateRoot, MANIFEST_NAME), manifest)
   return profile

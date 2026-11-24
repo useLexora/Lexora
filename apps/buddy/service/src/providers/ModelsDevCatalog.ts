@@ -1,8 +1,8 @@
 import type { Api, Model } from '@earendil-works/pi-ai'
 import type { ProviderModelType } from '../../../shared/providers/providerModelType'
-import { BUDDY_THINKING_LEVELS } from '../../../shared/conversation/modelSelection'
-import { freezeEventSnapshot } from '../../../shared/events/eventSnapshot'
-import { modelCatalogFingerprint } from './modelResolution'
+import { BUDDY_THINKING_LEVELS } from '../../../shared/conversation/modelSelection.ts'
+import { freezeEventSnapshot } from '../../../shared/events/eventSnapshot.ts'
+import { modelCatalogFingerprint } from './modelResolution.ts'
 
 export interface CatalogModel {
   id: string
@@ -116,7 +116,7 @@ export class ModelsDevCatalog implements ModelMetadataCatalog {
     freezeEventSnapshot(this.#providers)
     freezeEventSnapshot(this.#models)
     freezeEventSnapshot(this.#mediaModels)
-    for (const models of this.#byProvider.values()) freezeEventSnapshot(models)
+    for (const models of this.#byProvider.values()) Object.freeze(models)
   }
 
   getProviders() {

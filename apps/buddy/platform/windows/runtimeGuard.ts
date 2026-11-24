@@ -35,6 +35,8 @@ export async function establishWindowsRuntimeGuard(): Promise<void> {
       if (output === 'ready\n') {
         settled = true
         clearTimeout(timeout)
+        child.stdout.destroy()
+        child.unref()
         resolve()
       }
       else if (!'ready\n'.startsWith(output)) {

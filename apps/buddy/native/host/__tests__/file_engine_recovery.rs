@@ -18,6 +18,24 @@ fn interrupt(journal: &std::path::Path, records: &mut [Value]) {
 }
 
 #[test]
+fn reopening_a_clean_journal_does_not_rewrite_the_database() {
+    let directory = tempfile::tempdir().unwrap();
+    let journal = directory.path().join("journal");
+    let open_and_list = || {
+        let mut engine = Engine::new(&journal);
+        assert_eq!(engine.call(json!({"type":"leases"}))["result"], json!([]));
+        engine.call(json!({"type":"shutdown"}));
+        assert!(engine.child.wait().unwrap().success());
+        std::fs::read(journal.join("operations.sqlite")).unwrap()
+    };
+    let original = open_and_list();
+    assert!(
+        open_and_list() == original,
+        "Clean journal contents changed"
+    );
+}
+
+#[test]
 fn legacy_unknown_records_and_protection_remain_diagnostic_after_restart() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("root");

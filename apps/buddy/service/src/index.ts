@@ -5,7 +5,6 @@ import process from 'node:process'
 import { z } from 'zod'
 import { ApplicationEvents } from '../../shared/observability/ApplicationEvents'
 import { BUDDY_SERVICE_PROTOCOL_VERSION } from '../../shared/runtime/runtimeProtocol'
-import { startLocalServiceSupervisor } from './LocalServiceSupervisor'
 import { createRpcRuntimePlatform } from './platform/createRpcRuntimePlatform'
 import { nodeServiceConfigSchema, prepareNodeService } from './platform/nodeServiceConfig'
 import { BuddyServiceRpcServer, notifyBuddyServiceReady } from './rpc/BuddyServiceRpcServer'
@@ -20,28 +19,12 @@ const incomingSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('rpc'), channel: z.string().min(1).max(128), message: z.unknown() }).strict(),
 ])
 
-if (process.argv[2] === '--check-runtime' && process.argv.length === 3) {
-  process.stdout.write('Lexora Server runtime ready\n')
-}
-else if (process.argv[2] === '--config' && process.argv.length === 4) {
-  const supervisor = startLocalServiceSupervisor(process.argv[3]!)
-  const stop = () => {
-    void supervisor.stop().catch(() => {
-      process.stderr.write('SERVICE_STOP_FAILED\n')
-    })
-  }
-  process.once('SIGINT', stop)
-  process.once('SIGTERM', stop)
-  void supervisor.ready.catch(() => {
-    process.stderr.write('SERVICE_START_FAILED\n')
+export function startInheritedService() {
+  if (!process.send) {
+    process.stderr.write('Lexora Server requires an inherited local IPC channel\n')
     process.exitCode = 1
-  })
-}
-else if (!process.send) {
-  process.stderr.write('Lexora Server requires an inherited local IPC channel\n')
-  process.exitCode = 1
-}
-else {
+    return
+  }
   const events = new ApplicationEvents()
   const channelIds = new Set<string>()
   const channels = new Map<string, { port: EventEmitter & BuddyServiceParentPort, peer: BuddyServiceRpcServer }>()

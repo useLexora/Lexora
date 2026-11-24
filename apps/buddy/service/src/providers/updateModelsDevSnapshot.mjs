@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import process from 'node:process'
+import { ModelsDevCatalog } from './ModelsDevCatalog.ts'
 
 async function update() {
   const response = await fetch('https://models.dev/experimental/v2.0/api.json', { signal: AbortSignal.timeout(15_000) })
@@ -14,7 +15,11 @@ async function update() {
   const directory = new URL('./data/', import.meta.url)
   await mkdir(directory, { recursive: true })
   const license = await readFile(new URL('LICENSE', directory), 'utf8')
-  await writeFile(new URL('models-dev.json', directory), `${JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), license, data })}\n`)
+  const updatedAt = new Date().toISOString()
+  const catalog = new ModelsDevCatalog(data)
+  const summary = { updatedAt, modelCount: catalog.getModels().length, providerCount: catalog.getProviders().length }
+  await writeFile(new URL('models-dev.json', directory), `${JSON.stringify({ version: 1, updatedAt, license, data })}\n`)
+  await writeFile(new URL('models-dev-summary.json', directory), `${JSON.stringify(summary, null, 2)}\n`)
   process.stdout.write(`Updated models.dev snapshot (${Object.keys(data).length} providers)\n`)
 }
 

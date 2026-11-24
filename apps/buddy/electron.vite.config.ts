@@ -37,7 +37,11 @@ export default defineConfig(({ mode }) => ({
     cacheDir: join(electronCacheRoot, 'main'),
     plugins: [extensionRuntimePlugin()],
     build: {
-      externalizeDeps: { exclude: ['typescript'], include: mode === 'desktop' ? [] : Object.keys(corePackage.dependencies) },
+      externalizeDeps: {
+        // Bundle the desktop Host's high-fan-out parsers without deferring their consumers.
+        exclude: mode === 'desktop' ? ['typescript', 'zod', 'semver', 'yaml'] : ['typescript'],
+        include: mode === 'desktop' ? [] : Object.keys(corePackage.dependencies),
+      },
       outDir: join(electronOutputRoot, 'main'),
       rollupOptions: {
         external: ['electron', 'original-fs', '@silvia-odwyer/photon-node', 'fflate/node', /^@earendil-works\/pi-/],

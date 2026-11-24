@@ -4,7 +4,6 @@ import { lstat, open, realpath, rename, rm } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import process from 'node:process'
 import { serviceLaunchSchema } from '../../shared/service/localServiceProtocol'
-import { ensurePrivateDirectories } from '../filesystem/privateDirectories'
 import { syncStorageDirectory } from '../storage/storageFiles'
 
 export async function readPrivateServiceJson(path: string): Promise<unknown> {
@@ -47,6 +46,5 @@ export async function readServiceLaunch(path: string) {
     if (path !== undefined && !isAbsolute(path))
       throw new Error('SERVICE_PATH_INVALID')
   }
-  await ensurePrivateDirectories([input.profileRoot], input.privateDirectoriesExecutable)
   return { ...input, profileRoot: await realpath(input.profileRoot) }
 }
