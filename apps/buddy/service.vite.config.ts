@@ -5,6 +5,12 @@ import { basename, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 
+const bundledPackages = ['typebox', 'turndown', '@mixmark-io/domino']
+
+function packageName(id: string) {
+  return id.startsWith('@') ? id.split('/').slice(0, 2).join('/') : id.split('/')[0]!
+}
+
 function serviceResources(): Plugin {
   return {
     name: 'lexora-service-resources',
@@ -25,7 +31,7 @@ function serviceResources(): Plugin {
         for (const id of [...file.imports, ...file.dynamicImports]) {
           if (isBuiltin(id) || id.startsWith('.') || Object.hasOwn(bundle, id))
             continue
-          dependencies.add(id.startsWith('@') ? id.split('/').slice(0, 2).join('/') : id.split('/')[0]!)
+          dependencies.add(packageName(id))
         }
       }
       this.emitFile({ type: 'asset', fileName: 'dependencies.json', source: `${JSON.stringify([...dependencies].sort(), null, 2)}\n` })
@@ -35,19 +41,20 @@ function serviceResources(): Plugin {
 
 export default defineConfig({
   plugins: [serviceResources()],
-  ssr: { noExternal: ['fflate'] },
+  ssr: { noExternal: ['fflate', ...bundledPackages] },
   build: {
     ssr: true,
     outDir: '.output/build/service',
     target: 'node26',
     minify: false,
+    license: { fileName: 'third-party/service-bundled.json' },
     ssrEmitAssets: true,
     rolldownOptions: {
       input: {
-        service: fileURLToPath(new URL('./service/src/index.ts', import.meta.url)),
+        service: fileURLToPath(new URL('./service/src/entry.ts', import.meta.url)),
         utility: fileURLToPath(new URL('./electron/main/runtime/serviceProcess.ts', import.meta.url)),
       },
-      external: id => id !== 'fflate/browser' && !id.startsWith('.') && !isAbsolute(id) && !id.startsWith('\0'),
+      external: id => !id.startsWith('.') && !isAbsolute(id) && !id.startsWith('\0') && id !== 'fflate/browser' && !bundledPackages.includes(packageName(id)),
       output: { entryFileNames: '[name].mjs', format: 'es' },
     },
   },

@@ -21,6 +21,16 @@ export const serviceLaunchSchema = z.object({
   profile: z.enum(['stable', 'development', 'test']),
   profileRoot: bounded,
   defaultRoot: bounded.optional(),
+  launcherVerification: z.object({
+    event: z.literal('startup.step.completed'),
+    level: z.literal('info'),
+    component: z.literal('launcher.installation_gate'),
+    releaseCheck: z.enum(['full_inventory', 'installed_identity']).optional(),
+    operationId: z.uuid(),
+    parentOperationId: z.uuid(),
+    durationMs: z.number().int().nonnegative(),
+    occurredAt: z.iso.datetime(),
+  }).strict().optional().catch(undefined),
   resourcesRoot: bounded,
   nodeExecutable: bounded,
   coreEntry: bounded,
@@ -63,6 +73,7 @@ export const desktopOpenIntentSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('settings') }).strict(),
 ])
 export const desktopOpenResultSchema = z.object({
+  reason: z.literal('locked').optional(),
   accepted: z.boolean(),
   uiReady: z.boolean(),
   targetVisible: z.boolean(),
@@ -87,6 +98,7 @@ export type ServiceManagementRequest = z.infer<typeof serviceManagementRequestSc
 
 export const platformHostReadySchema = z.object({
   hostInstanceId: z.uuid(),
+  windowsPowerShell: bounded.optional(),
   proxy: z.object({ httpProxy: z.string(), httpsProxy: z.string(), noProxy: z.string() }).strict(),
   preferences: runtimePreferencesSchema,
   display: z.boolean(),

@@ -42,6 +42,7 @@ const bundleRecordSchema = applicationLogRecordSchema.pick({
   turnId: true,
   requestId: true,
   durationMs: true,
+  releaseCheck: true,
   errorCode: true,
   errorType: true,
   failure: true,

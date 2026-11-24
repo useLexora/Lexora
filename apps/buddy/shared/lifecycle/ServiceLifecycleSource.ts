@@ -20,8 +20,9 @@ export class ServiceLifecycleSource {
   }
 
   update(component: LifecycleComponent): void {
-    this.#components.set(component.component, copyEventSnapshot(component))
-    this.#publish(component)
+    const next = copyEventSnapshot(component)
+    this.#components.set(next.component, next)
+    this.#publish(next)
   }
 
   updateProgress(id: string, operationId: string, progress: LifecycleProgress): void {
@@ -43,7 +44,7 @@ export class ServiceLifecycleSource {
   }
 
   #publish(component?: LifecycleComponent): void {
-    this.#snapshot = copyEventSnapshot({ ...this.#snapshot, revision: this.#snapshot.revision + 1, components: [...this.#components.values()] })
-    this.#changes.fire(copyEventSnapshot({ snapshot: this.#snapshot, ...(component ? { component } : {}) }))
+    this.#snapshot = Object.freeze({ ...this.#snapshot, revision: this.#snapshot.revision + 1, components: Object.freeze([...this.#components.values()]) })
+    this.#changes.fire(Object.freeze({ snapshot: this.#snapshot, ...(component ? { component } : {}) }))
   }
 }

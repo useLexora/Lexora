@@ -88,6 +88,7 @@ const taskIndex = useTaskIndex({
   onSpaceCreated,
 })
 const diagnostics = createRendererDiagnostics(api.app.logs)
+taskIndex.data.onDidReceiveFirstGlobalPage(durationMs => diagnostics.events.publish({ event: 'workbench.history.first_page_received', level: 'info', durationMs }))
 provide(rendererDiagnosticKey, diagnostics.events.publish)
 const fileOpening = useProvideFileOpening(api.extensions)
 const workbench = useDesktopWorkbench({ beforeExtensionClose: prepareExtensionClose, fileOpening, buddyCatalog: buddyDirectory.catalog, api, events: diagnostics.events, stores, taskIndex, router, resources: getResources, onError: () => message.error(translateBuddy(stores.applicationSettings.language.value, 'desktop.command.failed')) })

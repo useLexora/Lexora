@@ -57,7 +57,7 @@ async function importCandidate(input: PersistenceCandidateInput): Promise<{ prof
     await verifySparseCheckpoints(original, checkpoints, references, input.signal, report)
     reportUpgradeStep(report, 'databaseCopy')
     const resumingUpgrade = references.inPlace && manifest.workingCopyReady
-    const profileRoot = await preparePersistenceWorkingCopy(manifest, input.signal, input.report)
+    const profileRoot = await preparePersistenceWorkingCopy(manifest, input)
     await input.checkpoint?.('copied')
     reportUpgradeStep(report, 'schema')
     const sourceSchema = Number(original.prepare('PRAGMA user_version').get()!.user_version)

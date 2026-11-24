@@ -97,7 +97,7 @@ fn process_name(name: &str) -> &str {
     }
 }
 
-fn read_request(input: impl Read) -> Result<Request, ProcessError> {
+fn read_input<T: serde::de::DeserializeOwned>(input: impl Read) -> Result<T, ProcessError> {
     let mut bytes = Vec::new();
     input
         .take(MAX_REQUEST_BYTES + 1)
@@ -106,7 +106,11 @@ fn read_request(input: impl Read) -> Result<Request, ProcessError> {
     if bytes.len() as u64 > MAX_REQUEST_BYTES {
         return Err(ProcessError::Invalid);
     }
-    let request: Request = serde_json::from_slice(&bytes).map_err(|_| ProcessError::Invalid)?;
+    serde_json::from_slice(&bytes).map_err(|_| ProcessError::Invalid)
+}
+
+fn read_request(input: impl Read) -> Result<Request, ProcessError> {
+    let request: Request = read_input(input)?;
     if request.protected_pids().len() > 64 {
         return Err(ProcessError::Invalid);
     }
@@ -163,6 +167,9 @@ pub fn run(input: impl Read, output: impl Write) -> Result<(), ProcessError> {
         Err(ProcessError::Unavailable)
     }
 }
+
+#[cfg(windows)]
+pub use windows::wait_for_service_exit;
 
 #[cfg(windows)]
 pub fn executable_running(executable: &str) -> Result<bool, ProcessError> {

@@ -35,7 +35,7 @@ export const serviceLifecycleChangeSchema = z.object({
   snapshot: serviceLifecycleSnapshotSchema,
   component: lifecycleComponentSchema.optional(),
 }).strict().superRefine((change, context) => {
-  if (change.component && !change.snapshot.components.some(component => JSON.stringify(component) === JSON.stringify(change.component)))
+  if (change.component && JSON.stringify(change.snapshot.components.find(item => item.component === change.component!.component)) !== JSON.stringify(change.component))
     context.addIssue({ code: 'custom', message: 'Lifecycle change does not match its snapshot' })
 })
 export const rendererLifecycleReportSchema = z.object({

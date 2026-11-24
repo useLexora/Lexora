@@ -5,7 +5,6 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
 import { promisify } from 'node:util'
-import { z } from 'zod'
 import { createChildProcessEnvironment } from '../process/childProcessEnvironment'
 
 const execute = promisify(execFile)
@@ -19,8 +18,11 @@ async function run(command: string, args: string[]) {
 
 export async function readServiceSession(): Promise<ServiceSession> {
   if (process.platform === 'win32') {
-    const result = await run(windowsSystem('WindowsPowerShell/v1.0/powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', `[pscustomobject]@{userId=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;sessionId=[string][Diagnostics.Process]::GetProcessById(${process.pid}).SessionId}|ConvertTo-Json -Compress`])
-    return z.object({ userId: z.string().regex(/^S-1-[\d-]+$/), sessionId: z.string().regex(/^\d+$/) }).strict().parse(JSON.parse(result))
+    const result = await run(windowsSystem('WindowsPowerShell/v1.0/powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', `[Security.Principal.WindowsIdentity]::GetCurrent().User.Value + ':' + [Diagnostics.Process]::GetProcessById(${process.pid}).SessionId`])
+    const match = /^(S-1-\d+(?:-\d+)+):(\d+)$/.exec(result)
+    if (!match)
+      throw new Error('SERVICE_USER_SESSION_REQUIRED')
+    return { userId: match[1]!, sessionId: match[2]! }
   }
   const userId = String(process.getuid?.())
   if (!/^\d+$/.test(userId) || userId === '0')
@@ -76,7 +78,7 @@ export class SessionServiceRegistration {
       if (query && /<Enabled>false<\/Enabled>/i.test(query))
         throw new Error('SERVICE_SESSION_ENTRY_DISABLED')
       if (!query) {
-        await writeFile(xmlPath, windowsServiceTask(this.#launch.userId, this.#launcher, this.#configPath), { mode: 0o600 })
+        await writeFile(xmlPath, `\uFEFF${windowsServiceTask(this.#launch.userId, this.#launcher, this.#configPath)}`, { encoding: 'utf16le', mode: 0o600 })
         await run(windowsSystem('schtasks.exe'), ['/Create', '/TN', task, '/XML', xmlPath])
       }
       await run(windowsSystem('schtasks.exe'), ['/Run', '/TN', task])
@@ -114,7 +116,7 @@ function quoteWindows(value: string) {
   return `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`
 }
 export function windowsServiceTask(userId: string, executable: string, config: string): string {
-  return `<?xml version="1.0" encoding="UTF-8"?><Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Principals><Principal id="User"><UserId>${xml(userId)}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals><Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>true</AllowHardTerminate><Enabled>true</Enabled><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><RestartOnFailure><Interval>PT1M</Interval><Count>3</Count></RestartOnFailure></Settings><Actions Context="User"><Exec><Command>${xml(executable)}</Command><Arguments>--launch-service ${xml(quoteWindows(config))}</Arguments></Exec></Actions></Task>`
+  return `<?xml version="1.0" encoding="UTF-16"?><Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Principals><Principal id="User"><UserId>${xml(userId)}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals><Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>true</AllowHardTerminate><Enabled>true</Enabled><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><RestartOnFailure><Interval>PT1M</Interval><Count>3</Count></RestartOnFailure></Settings><Actions Context="User"><Exec><Command>${xml(executable)}</Command><Arguments>--launch-service ${xml(quoteWindows(config))}</Arguments></Exec></Actions></Task>`
 }
 export function macosServiceAgent(label: string, executable: string, config: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>${xml(label)}</string><key>ProgramArguments</key><array><string>${xml(executable)}</string><string>--launch-service</string><string>${xml(config)}</string></array><key>LimitLoadToSessionType</key><string>Aqua</string><key>RunAtLoad</key><true/><key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict><key>ThrottleInterval</key><integer>5</integer><key>ExitTimeOut</key><integer>30</integer></dict></plist>`

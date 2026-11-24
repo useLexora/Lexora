@@ -19,8 +19,7 @@ pub(super) fn executable(handle: &Handle) -> Result<String, ProcessError> {
         .map_err(|_| ProcessError::Failed)
 }
 
-pub(super) fn target(handle: &Handle, pid: u32) -> Result<Target, ProcessError> {
-    let executable = executable(handle)?;
+pub(super) fn creation_time(handle: &Handle) -> Result<(FILETIME, u64), ProcessError> {
     let mut creation = FILETIME::default();
     let mut exit = FILETIME::default();
     let mut kernel = FILETIME::default();
@@ -30,6 +29,12 @@ pub(super) fn target(handle: &Handle, pid: u32) -> Result<Target, ProcessError> 
         return Err(ProcessError::Failed);
     }
     let ticks = (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime);
+    Ok((creation, ticks))
+}
+
+pub(super) fn target(handle: &Handle, pid: u32) -> Result<Target, ProcessError> {
+    let executable = executable(handle)?;
+    let (creation, ticks) = creation_time(handle)?;
     let mut date = SYSTEMTIME::default();
     // SAFETY: Creation was initialized by GetProcessTimes; date is writable.
     if unsafe { FileTimeToSystemTime(&creation, &mut date) } == 0 {

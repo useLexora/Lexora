@@ -97,7 +97,7 @@ export const resolveWindowsPowerShell = createWindowsPowerShellResolver({
       '-NoProfile',
       '-NonInteractive',
       '-Command',
-      '[Console]::Out.Write((@{major=$PSVersionTable.PSVersion.Major;minor=$PSVersionTable.PSVersion.Minor;edition=$PSVersionTable.PSEdition} | ConvertTo-Json -Compress))',
+      '[Console]::Out.Write((\'{0}:{1}:{2}\' -f $PSVersionTable.PSVersion.Major,$PSVersionTable.PSVersion.Minor,$PSVersionTable.PSEdition))',
     ], {
       encoding: 'utf8',
       env: createWindowsHostEnvironment(path, process.env),
@@ -105,6 +105,9 @@ export const resolveWindowsPowerShell = createWindowsPowerShellResolver({
       timeout: 10_000,
       windowsHide: true,
     })
-    return JSON.parse(result.stdout)
+    const match = /^(\d+):(\d+):(Core|Desktop)$/.exec(result.stdout)
+    if (!match)
+      throw new PowerShellUnavailableError()
+    return { major: Number(match[1]), minor: Number(match[2]), edition: match[3]! }
   },
 })

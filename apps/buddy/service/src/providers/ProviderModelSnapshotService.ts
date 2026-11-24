@@ -6,6 +6,7 @@ import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { Emitter } from '../../../shared/events/Emitter'
 import { copyEventSnapshot } from '../../../shared/events/eventSnapshot'
+import bundledSummary from './data/models-dev-summary.json'
 import bundledSnapshotPath from './data/models-dev.json?asset'
 import { isRecord, ModelsDevCatalog } from './ModelsDevCatalog'
 
@@ -50,7 +51,6 @@ export class ProviderModelSnapshotService implements ModelMetadataCatalog {
   readonly onDidChange = this.#changes.event
   #revision = 0
   #catalogRevision = 0
-  #fingerprint: string
   #stopped = false
   readonly #controller = new AbortController()
   readonly #snapshotPath: string | undefined
@@ -58,7 +58,7 @@ export class ProviderModelSnapshotService implements ModelMetadataCatalog {
   readonly #now: () => Date
   readonly #generatedAt: string
   #updatedAt: string
-  #catalog: ModelsDevCatalog
+  #catalog?: ModelsDevCatalog
   #source: 'builtin' | 'remote' = 'builtin'
   #errorCount = 0
   #checkedAt: string | null = null
@@ -69,11 +69,19 @@ export class ProviderModelSnapshotService implements ModelMetadataCatalog {
     this.#snapshotPath = options.snapshotPath
     this.#fetch = options.fetch ?? globalThis.fetch
     this.#now = options.now ?? (() => new Date())
-    const snapshot = parseSnapshot(options.builtin ?? JSON.parse(readFileSync(bundledSnapshotPath, 'utf8')))
-    this.#generatedAt = snapshot.updatedAt
-    this.#updatedAt = snapshot.updatedAt
-    this.#catalog = new ModelsDevCatalog(snapshot.data)
-    this.#fingerprint = this.#catalog.getFingerprint()
+    if (options.builtin != null) {
+      const snapshot = parseSnapshot(options.builtin)
+      this.#catalog = new ModelsDevCatalog(snapshot.data)
+      this.#generatedAt = snapshot.updatedAt
+    }
+    else {
+      this.#generatedAt = bundledSummary.updatedAt
+    }
+    this.#updatedAt = this.#generatedAt
+  }
+
+  #currentCatalog(): ModelsDevCatalog {
+    return this.#catalog ??= new ModelsDevCatalog(parseSnapshot(JSON.parse(readFileSync(bundledSnapshotPath, 'utf8'))).data)
   }
 
   async initialize(): Promise<void> {
@@ -83,11 +91,8 @@ export class ProviderModelSnapshotService implements ModelMetadataCatalog {
       if ((await stat(this.#snapshotPath)).size > MAX_SNAPSHOT_BYTES)
         return
       const snapshot = parseSnapshot(JSON.parse(await readFile(this.#snapshotPath, 'utf8')))
-      const catalog = new ModelsDevCatalog(snapshot.data)
-      if (Date.parse(snapshot.updatedAt) >= Date.parse(this.#generatedAt)) {
-        if (!this.#stopped)
-          this.#accept(catalog, snapshot.updatedAt, randomUUID())
-      }
+      if (!this.#stopped && Date.parse(snapshot.updatedAt) >= Date.parse(this.#generatedAt))
+        this.#accept(new ModelsDevCatalog(snapshot.data), snapshot.updatedAt, randomUUID())
     }
     catch {
 
@@ -95,19 +100,19 @@ export class ProviderModelSnapshotService implements ModelMetadataCatalog {
   }
 
   getFingerprint(): string {
-    return this.#fingerprint
+    return this.#currentCatalog().getFingerprint()
   }
 
   getMediaModels(providerId?: string) {
-    return this.#catalog.getMediaModels(providerId)
+    return this.#currentCatalog().getMediaModels(providerId)
   }
 
   getModels(providerId?: string) {
-    return this.#catalog.getModels(providerId)
+    return this.#currentCatalog().getModels(providerId)
   }
 
   getProviders() {
-    return this.#catalog.getProviders()
+    return this.#currentCatalog().getProviders()
   }
 
   async getStatus(): Promise<ProviderModelSnapshotStatus> {
@@ -116,8 +121,7 @@ export class ProviderModelSnapshotService implements ModelMetadataCatalog {
       errorCount: this.#errorCount,
       generatedAt: this.#generatedAt,
       lastAttemptAt: this.#lastAttemptAt,
-      modelCount: this.getModels().length,
-      providerCount: this.getProviders().length,
+      ...this.#counts(),
       source: this.#source,
       updatedAt: this.#updatedAt,
     }
@@ -172,6 +176,8 @@ export class ProviderModelSnapshotService implements ModelMetadataCatalog {
       const catalog = new ModelsDevCatalog(data)
       const snapshot: Snapshot = { version: 1, updatedAt: this.#now().toISOString(), data }
       if (this.#snapshotPath) {
+        // The comparison in #accept must not need to open the bundled file after rename.
+        this.#currentCatalog()
         await mkdir(dirname(this.#snapshotPath), { recursive: true, mode: 0o700 })
         const temporaryPath = `${this.#snapshotPath}.${randomUUID()}.tmp`
         try {
@@ -211,10 +217,8 @@ export class ProviderModelSnapshotService implements ModelMetadataCatalog {
   }
 
   #accept(catalog: ModelsDevCatalog, updatedAt: string, operationId: string): void {
-    const fingerprint = catalog.getFingerprint()
-    const changed = fingerprint !== this.#fingerprint
+    const changed = catalog.getFingerprint() !== this.getFingerprint()
     const sourceChanged = this.#source !== 'remote'
-    this.#fingerprint = fingerprint
     this.#catalog = catalog
     this.#source = 'remote'
     this.#updatedAt = updatedAt
@@ -225,8 +229,14 @@ export class ProviderModelSnapshotService implements ModelMetadataCatalog {
       this.#publish('accepted', operationId)
   }
 
+  #counts(catalog = this.#catalog) {
+    return catalog
+      ? { modelCount: catalog.getModels().length, providerCount: catalog.getProviders().length }
+      : { modelCount: bundledSummary.modelCount, providerCount: bundledSummary.providerCount }
+  }
+
   #publish(kind: ModelMetadataChange['kind'], operationId: string, committed?: ModelsDevCatalog): void {
-    this.#changes.fire(copyEventSnapshot({ revision: ++this.#revision, catalogRevision: this.#catalogRevision, operationId, kind, source: committed ? 'remote' : this.#source, modelCount: (committed ?? this).getModels().length, providerCount: (committed ?? this).getProviders().length }))
+    this.#changes.fire(copyEventSnapshot({ revision: ++this.#revision, catalogRevision: this.#catalogRevision, operationId, kind, source: committed ? 'remote' : this.#source, ...this.#counts(committed) }))
   }
 }
 

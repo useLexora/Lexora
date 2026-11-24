@@ -28,12 +28,12 @@ export class PrivateDirectoryError extends Error {
   }
 }
 
-export async function ensureWindowsPrivateDirectories(paths: string[], executable?: string): Promise<void> {
+export async function ensureWindowsPrivateDirectories(paths: string[], executable?: string, purpose?: 'activation_receipt'): Promise<void> {
   if (!executable)
     throw new PrivateDirectoryError('PRIVATE_DIRECTORIES_UNAVAILABLE', { kind: 'private_directories', operation: 'process' })
   let result
   try {
-    result = await runNativeCommand(validateWindowsFilePath(executable), [], { paths: paths.map(validateWindowsFilePath) }, {
+    result = await runNativeCommand(validateWindowsFilePath(executable), [], { paths: paths.map(validateWindowsFilePath), purpose }, {
       env: { SystemRoot: process.env.SystemRoot },
       maxBytes: 1024,
     })

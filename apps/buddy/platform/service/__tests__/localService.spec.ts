@@ -3,24 +3,28 @@ import { Buffer } from 'node:buffer'
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { once } from 'node:events'
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import fs from 'node:fs'
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import process from 'node:process'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { attachmentHostRpc } from '../../../shared/runtime/attachmentHostProtocol'
 import { serviceLaunchSchema } from '../../../shared/service/localServiceProtocol'
 import { localTransports } from '../../ipc/localTransport'
 import { RuntimeRpcPeer } from '../../ipc/runtimeRpcPeer'
+import { storageBootstrapRoot } from '../../storage/StorageLocationStore'
 import { connectLocalService } from '../connectLocalService'
 import { HostConnection } from '../HostConnection'
 import { LocalServiceServer } from '../LocalServiceServer'
-import { verifyFileInventory } from '../releaseSet'
+import { activateRuntimeRelease, assertCurrentCore, readRuntimeRelease } from '../releaseActivation'
+import { createReleaseSet, verifyFileInventory, verifyReleaseSet } from '../releaseSet'
 import { readPrivateServiceJson } from '../serviceFiles'
 import { readServiceProcessIdentity, waitForServiceProcessExit } from '../serviceProcessIdentity'
 import { ServiceProfileOwner } from '../ServiceProfileOwner'
 import { ServiceRpcChannel } from '../ServiceRpcChannel'
+import { measureServiceStartupStep } from '../serviceStartupStep'
 
 const cleanup: Array<() => void | Promise<void>> = []
 afterEach(async () => {
@@ -40,6 +44,100 @@ it('verifies the complete release inventory across multiple batches', async () =
   await verifyFileInventory(inventory)
   await writeFile(join(directory, 'dependency-9.mjs'), 'modified')
   await expect(verifyFileInventory(inventory)).rejects.toThrow('SERVICE_RELEASE_CONTENT_CHANGED')
+})
+
+async function installedFixture() {
+  const root = await mkdtemp(join(tmpdir(), 'lexora-activation-'))
+  cleanup.push(() => rm(root, { recursive: true, force: true }))
+  const hash = (text: string) => createHash('sha256').update(text).digest('hex')
+  const profile = join(root, 'profile')
+  const core = join(root, 'core')
+  const entries = []
+  const files = ['service.mjs', 'deep/dependency.js', 'resources/native-host/lexora-buddy-process-control', 'resources/native-host/lexora-buddy-file-reader', 'resources/native-image/lexora-buddy-image-transform', 'resources/search-tools/fd', 'resources/search-tools/rg']
+  for (const path of files) {
+    const content = path.endsWith('process-control') ? '#!/bin/sh\nexit 0\n' : 'original'
+    await mkdir(dirname(join(core, path)), { recursive: true })
+    await writeFile(join(core, path), content, { mode: 0o700 })
+    entries.push({ path, sha256: hash(content), size: Buffer.byteLength(content) })
+  }
+  const inventory = JSON.stringify({ version: 1, files: entries })
+  const coreManifest = JSON.stringify({ entry: 'service.mjs', bundled: [entries[0]], inventory: { path: 'inventory.json', sha256: hash(inventory) } })
+  const release = createReleaseSet({ version: 1, target: process.arch === 'arm64' ? 'linux-arm64' : 'linux-x64', productVersion: '1.0', core: { manifest: 'core/resources.json', manifestSha256: hash(coreManifest), entry: 'core/service.mjs' }, host: { kind: 'asar', path: 'host.asar', sha256: hash('host') }, node: { version: '26.2.0', entry: 'node', archiveSha256: hash('archive'), binarySha256: hash('node') } })
+  const path = join(root, 'release-set.json')
+  await mkdir(profile)
+  await Promise.all([writeFile(join(profile, 'user-data'), 'untouched'), writeFile(join(root, 'node'), 'node'), writeFile(join(root, 'host.asar'), 'host'), writeFile(join(core, 'resources.json'), coreManifest), writeFile(join(core, 'inventory.json'), inventory), writeFile(path, JSON.stringify(release))])
+  const activate = async () => activateRuntimeRelease(await readRuntimeRelease(path), profile, '1000')
+  const receipt = join(storageBootstrapRoot(profile), 'activation/activation.json')
+  return { root, profile, core, path, receipt, release, activate }
+}
+
+it.skipIf(process.platform !== 'linux')('requires an installed full scan, never walks an inventory on a valid receipt, and does not authorize repair from a matching version', async () => {
+  const f = await installedFixture()
+  await expect(f.activate()).resolves.toBe('full_inventory')
+  const good = await readFile(f.receipt)
+  const noTraversal = {
+    createReadStream: () => { throw new Error('unexpected hash') },
+    promises: {
+      ...fs.promises,
+      readdir: () => { throw new Error('unexpected traversal') },
+    },
+  }
+  await expect(activateRuntimeRelease(await readRuntimeRelease(f.path, noTraversal), f.profile, '1000', noTraversal)).resolves.toBe('installed_identity')
+  await writeFile(join(f.core, 'deep/dependency.js'), 'modified')
+  await expect(verifyReleaseSet(await readRuntimeRelease(f.path))).rejects.toThrow('SERVICE_RELEASE_CONTENT_CHANGED')
+  await copyFile(f.path, `${f.path}.next`)
+  await rename(`${f.path}.next`, f.path)
+  await expect(f.activate()).rejects.toThrow('SERVICE_RELEASE_CONTENT_CHANGED')
+  expect(await readFile(f.receipt)).toEqual(good)
+  expect(await readFile(join(f.profile, 'user-data'), 'utf8')).toBe('untouched')
+  await writeFile(join(f.core, 'deep/dependency.js'), 'original')
+  await expect(f.activate()).resolves.toBe('full_inventory')
+  expect(await readFile(f.receipt)).not.toEqual(good)
+  for (const invalid of ['{', '{}']) {
+    await writeFile(f.receipt, invalid)
+    await expect(f.activate()).resolves.toBe('full_inventory')
+  }
+  await chmod(f.receipt, 0o666)
+  await expect(f.activate()).rejects.toThrow('SERVICE_PRIVATE_FILE_INVALID')
+})
+
+it.skipIf(process.platform !== 'linux')('rejects mismatched targets, invalid entry types, and a damaged process helper before executing it', async () => {
+  const f = await installedFixture()
+  await expect(f.activate()).resolves.toBe('full_inventory')
+  await expect(assertCurrentCore(await readRuntimeRelease(f.path))).rejects.toThrow('SERVICE_RELEASE_IDENTITY_CHANGED')
+  await writeFile(join(f.core, 'resources/native-host/lexora-buddy-process-control'), '#!/bin/sh\nexit 32\n')
+  await expect(f.activate()).rejects.toThrow('SERVICE_RELEASE_CONTENT_CHANGED')
+  await rm(join(f.root, 'node'))
+  await mkdir(join(f.root, 'node'))
+  await expect(f.activate()).rejects.toThrow('SERVICE_RELEASE_FILE_INVALID')
+  await rm(join(f.root, 'node'), { recursive: true })
+  await symlink(process.execPath, join(f.root, 'node'))
+  await expect(f.activate()).rejects.toThrow('SERVICE_RELEASE_FILE_INVALID')
+  await rm(join(f.root, 'node'))
+  await writeFile(join(f.root, 'node'), 'node')
+  const { buildId: _previous, ...content } = f.release
+  await writeFile(f.path, JSON.stringify(createReleaseSet({ ...content, target: 'darwin-arm64' })))
+  await expect(f.activate()).rejects.toThrow('SERVICE_RELEASE_TARGET_CHANGED')
+})
+
+it('keeps only bounded startup facts, without changing the underlying result when diagnostics fail', async () => {
+  const parentOperationId = randomUUID()
+  const reason = new Error('fixture-private-path and fixture-secret')
+  const sink = vi.spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    await expect(measureServiceStartupStep('runtime.process_installation_gate', parentOperationId, () => Promise.reject(reason))).rejects.toBe(reason)
+    expect(JSON.parse(sink.mock.calls[0]![0])).toEqual({ event: 'startup.step.failed', level: 'error', component: 'runtime.process_installation_gate', parentOperationId, operationId: expect.any(String), occurredAt: expect.any(String), durationMs: expect.any(Number) })
+    sink.mockImplementation(() => {
+      throw new Error('fixture sink unavailable')
+    })
+    const { record, value } = await measureServiceStartupStep('launcher.installation_gate', parentOperationId, async () => 7)
+    expect(value).toBe(7)
+    const handoff = serviceLaunchSchema.shape.launcherVerification
+    expect(handoff.parse(record)).toEqual(record)
+    expect(handoff.parse({ ...record, path: 'fixture-private-path' })).toBeUndefined()
+    await expect(measureServiceStartupStep('runtime.module_load', parentOperationId, () => Promise.reject(reason))).rejects.toBe(reason)
+  }
+  finally { sink.mockRestore() }
 })
 
 async function server(role: 'host' | 'management' | 'product' = 'host') {

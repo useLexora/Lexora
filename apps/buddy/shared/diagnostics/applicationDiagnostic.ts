@@ -46,6 +46,7 @@ export const applicationDiagnosticSchema = z.object({
   runId: diagnosticIdentitySchema.optional(),
   turnId: diagnosticIdentitySchema.optional(),
   requestId: diagnosticIdentitySchema.optional(),
+  releaseCheck: z.enum(['full_inventory', 'installed_identity']).optional(),
   durationMs: z.number().finite().nonnegative().optional(),
   errorCode: diagnosticCodeSchema.optional(),
   errorType: z.string().regex(/^[a-z]\w{0,95}$/i).optional(),

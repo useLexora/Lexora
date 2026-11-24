@@ -1,7 +1,8 @@
+import type { ApplicationDiagnostic } from '../../shared/diagnostics/applicationDiagnostic'
 import type { DesktopOpenIntent, ServiceLaunch, serviceRuntimeStateSchema } from '../../shared/service/localServiceProtocol'
 import type { startServiceRuntime } from './startServiceRuntime'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { dirname, join } from 'node:path'
+import { dirname, join, win32 } from 'node:path'
 import process from 'node:process'
 import { z } from 'zod'
 import { currentPlatform } from '../../platform/currentPlatform'
@@ -10,15 +11,17 @@ import { createBuddyNativeEnvironment, resolveBuddyProcessControl } from '../../
 import { createProxyEnvironment } from '../../platform/process/proxyEnvironment'
 import { HostConnection } from '../../platform/service/HostConnection'
 import { LocalServiceServer } from '../../platform/service/LocalServiceServer'
+import { createPrivateStartupRecord } from '../../platform/service/privateStartupRecord'
 import { ServiceChildProcess } from '../../platform/service/ServiceChildProcess'
 import { ServiceProfileOwner } from '../../platform/service/ServiceProfileOwner'
 import { ServiceRpcChannel } from '../../platform/service/ServiceRpcChannel'
+import { measureServiceStartupStep } from '../../platform/service/serviceStartupStep'
 import { writePlatformHostDiagnostic } from '../../platform/service/writePlatformHostDiagnostic'
+import { validateWindowsFilePath } from '../../platform/windows/filePath'
+import { APPLICATION_DIAGNOSTIC_METHOD, safeDiagnosticReporter } from '../../shared/diagnostics/applicationDiagnostic'
 import { ApplicationEvents } from '../../shared/observability/ApplicationEvents'
 import { desktopOpenIntentSchema, platformHostReadySchema, serviceIdentitySchema, serviceMaintenanceTicketSchema, serviceStopReasonSchema } from '../../shared/service/localServiceProtocol'
-import { createRpcRuntimePlatform } from './platform/createRpcRuntimePlatform'
-import { prepareNodeService } from './platform/nodeServiceConfig'
-import { startServiceRuntime as startRuntime } from './startServiceRuntime'
+import { writeServiceStderr } from './writeServiceStderr'
 
 type Runtime = Awaited<ReturnType<typeof startServiceRuntime>>
 interface ServiceMaintenance {
@@ -38,13 +41,35 @@ interface HostGeneration {
   cancelReady: () => void
 }
 
-export async function startLocalServiceDaemon(config: ServiceLaunch, options: { restartDesktop?: () => void, foreground?: boolean } = {}) {
+export class CancelledServiceStartup extends Error {
+  constructor() { super('SERVICE_STOPPING') }
+}
+
+export async function startLocalServiceDaemon(config: ServiceLaunch, options: { restartDesktop?: () => void, foreground?: boolean, signal?: AbortSignal, parentOperationId?: string, startupSteps?: readonly ApplicationDiagnostic[] } = {}) {
   const nativePaths = { serviceResourcesRoot: config.resourcesRoot }
   const processControl = resolveBuddyProcessControl(nativePaths)
   const owner = await ServiceProfileOwner.acquire(config, processControl)
+  const recordStartup = createPrivateStartupRecord(join(config.profileRoot, '.runtime'), 'core', config.buildId)
+  let hostBoundary: 'core_management' | 'host_spawn' | 'host_bootstrap' | 'host_handshake' = 'core_management'
+  let initialHostPid: number | undefined
+  let hostEvidenceWrite: Promise<void> | undefined
+  function hostEvidence(outcome: 'pending' | 'ready' | 'failed' | 'cancelled' | 'timeout') {
+    hostEvidenceWrite = recordStartup(hostBoundary, outcome, { hostPid: initialHostPid })
+  }
   const identity = serviceIdentitySchema.parse(serviceIdentitySchema.strip().parse(owner.discovery))
   const host = new HostConnection()
   const events = new ApplicationEvents()
+  const parent = options.parentOperationId ?? randomUUID()
+  const loadModules = () => measureServiceStartupStep('runtime.module_load', parent, () => import('./localServiceRuntime'))
+  const localChecks = new AbortController()
+  const checkResources = () => measureServiceStartupStep('runtime.node_resources', parent, async () => {
+    const { inspectNodeServiceResources } = await import('./platform/nodeServiceConfig')
+    return inspectNodeServiceResources({ profile: config.profile, buddyHome: join(config.profileRoot, 'buddy'), resourcesRoot: config.resourcesRoot }, localChecks.signal)
+  })
+  let resources: ReturnType<typeof checkResources>
+  const cancelStartup = Promise.withResolvers<never>()
+  void cancelStartup.promise.catch(() => {})
+  let modules: ReturnType<typeof loadModules>
   let runtime: Runtime | undefined
   let generation: HostGeneration | undefined
   let startup: Promise<void>
@@ -65,18 +90,32 @@ export async function startLocalServiceDaemon(config: ServiceLaunch, options: { 
     if (host.available)
       host.notify('service.runtimeState', { generation: runtimeGeneration, status, maintenance: maintenance?.kind === 'backup' ? 'backup' : null, errorCode })
   }
+  function assertCurrentHost(ready: z.infer<typeof platformHostReadySchema>) {
+    if (stopping)
+      throw new Error('SERVICE_STOPPING')
+    if (generation?.intentional || host.instanceId !== ready.hostInstanceId)
+      throw new Error('PLATFORM_HOST_UNAVAILABLE')
+  }
+  function bindReadyHost(ready: z.infer<typeof platformHostReadySchema>) {
+    assertCurrentHost(ready)
+    if (currentPlatform.shell === 'powershell') {
+      process.env.PI_POWERSHELL_PATH = hostPowerShell(ready.windowsPowerShell)
+    }
+    readyHost = ready
+    updateProxy(ready.proxy.httpProxy)
+  }
   async function createRuntime() {
-    const value = await startRuntime({ buddyHome: join(config.profileRoot, 'buddy'), builtinSkillsDirectories, proxy: readyHost!.proxy, platform: createRpcRuntimePlatform(host), events, serviceInstanceId: runtimeGeneration, storageAuthority: config.storageAuthority, forceEventRecovery: process.env.LEXORA_BUDDY_EVENT_RECOVERY === 'full', notify: (method, params) => {
+    const { value: { startServiceRuntime, createRpcRuntimePlatform } } = await modules
+    assertCurrentHost(readyHost!)
+    const value = await startServiceRuntime({ buddyHome: join(config.profileRoot, 'buddy'), builtinSkillsDirectories, proxy: readyHost!.proxy, platform: createRpcRuntimePlatform(host), events, serviceInstanceId: runtimeGeneration, storageAuthority: config.storageAuthority, forceEventRecovery: process.env.LEXORA_BUDDY_EVENT_RECOVERY === 'full', notify: (method, params) => {
       if (host.available)
         host.notify(method, params)
     }, onFatalFailure: (error) => {
       terminate(error)
     } })
-    if (stopping) {
-      await value.dispose()
-      throw new Error('SERVICE_STOPPING')
-    }
     runtime = value
+    if (stopping)
+      throw new Error('SERVICE_STOPPING')
     value.startMaintenance()
     return value
   }
@@ -250,7 +289,7 @@ export async function startLocalServiceDaemon(config: ServiceLaunch, options: { 
     return localTransports[currentPlatform.transport](address, { ownsProfileLease: () => true })
   }
   function reportFailure(error: unknown) {
-    process.stderr.write(`Lexora service unavailable: ${error instanceof Error && /^[A-Z_]+$/.test(error.message) ? error.message : 'SERVICE_FAILED'}\n`)
+    writeServiceStderr(`Lexora service unavailable: ${error instanceof Error && /^[A-Z_]+$/.test(error.message) ? error.message : 'SERVICE_FAILED'}\n`)
   }
   function failed(error: unknown) {
     reportFailure(error)
@@ -262,7 +301,7 @@ export async function startLocalServiceDaemon(config: ServiceLaunch, options: { 
       process.exitCode = 1
     }).catch(failed)
   }
-  async function launchHost() {
+  async function launchHost(afterBootstrap?: () => Promise<unknown>) {
     if (stopping)
       throw new Error('SERVICE_STOPPING')
     const id = randomUUID()
@@ -279,9 +318,9 @@ export async function startLocalServiceDaemon(config: ServiceLaunch, options: { 
     const timeout = setTimeout(() => reject(new Error('PLATFORM_HOST_READINESS_TIMEOUT')), 120000)
     let current: HostGeneration | undefined
     const server = new LocalServiceServer({ endpoint: endpoint(address), identity, role: 'host', secret, singleUse: true, connected(frames) {
-      const peer = new ServiceRpcChannel(frames)
-      if (!current)
+      if (stopping || !current || current !== generation || current.intentional)
         throw new Error('PLATFORM_HOST_CHANGED')
+      const peer = new ServiceRpcChannel(frames)
       current.peer = peer
       host.attach(id, peer)
       peer.onRequest('host.ready', (raw) => {
@@ -303,6 +342,7 @@ export async function startLocalServiceDaemon(config: ServiceLaunch, options: { 
             rpcDisconnect,
           })
         }
+        host.detach(id)
         reject(new Error('PLATFORM_HOST_UNAVAILABLE'))
         lost(connected)
       })
@@ -311,10 +351,15 @@ export async function startLocalServiceDaemon(config: ServiceLaunch, options: { 
       await server.listen()
       if (stopping)
         throw new Error('SERVICE_STOPPING')
-      const child = new ServiceChildProcess({ executable: config.hostExecutable, args: [...config.hostArguments, '--lexora-platform-host'], processControl, runtimeGuard: createBuddyNativeEnvironment(nativePaths).LEXORA_BUDDY_RUNTIME_GUARD, env: { ...process.env, ...createBuddyNativeEnvironment(nativePaths), LEXORA_HOME: config.defaultRoot ?? config.profileRoot, LEXORA_BUDDY_PROFILE: config.profile, LEXORA_BUDDY_STORAGE_AUTHORITY: config.storageAuthority }, output: (_stream, value) => process.stderr.write(value) })
+      const child = new ServiceChildProcess({ executable: config.hostExecutable, args: [...config.hostArguments, '--lexora-platform-host'], processControl, runtimeGuard: createBuddyNativeEnvironment(nativePaths).LEXORA_BUDDY_RUNTIME_GUARD, env: { ...process.env, ...createBuddyNativeEnvironment(nativePaths), LEXORA_HOME: config.defaultRoot ?? config.profileRoot, LEXORA_BUDDY_PROFILE: config.profile, LEXORA_BUDDY_STORAGE_AUTHORITY: config.storageAuthority }, output: (_stream, value) => writeServiceStderr(value) })
       const launched = { id, server, child, intentional: false, cancelReady: () => reject(new Error('SERVICE_STOPPING')) }
       current = launched
       generation = launched
+      if (afterBootstrap) {
+        initialHostPid = child.child.pid
+        hostBoundary = 'host_bootstrap'
+        hostEvidence('pending')
+      }
       void child.exited.then((exit) => {
         writePlatformHostDiagnostic({
           event: 'platform_host.process_exited',
@@ -329,9 +374,22 @@ export async function startLocalServiceDaemon(config: ServiceLaunch, options: { 
         lost(launched)
       }, reject)
       await child.ready({ version: 1, identity, profile: config.profile, profileRoot: config.profileRoot, resourcesRoot: config.resourcesRoot, endpoint: address, managementEndpoint: owner.discovery.managementEndpoint, managementSecret: owner.managementSecret, hostInstanceId: id, secret })
-      return await ready
+      if (stopping)
+        throw new Error('SERVICE_STOPPING')
+      if (launched.intentional)
+        throw new Error('PLATFORM_HOST_UNAVAILABLE')
+      if (afterBootstrap) {
+        hostBoundary = 'host_handshake'
+        hostEvidence('pending')
+        void afterBootstrap().catch(reject)
+      }
+      const input = await ready
+      bindReadyHost(input)
+      return input
     }
     catch (error) {
+      if (afterBootstrap)
+        hostEvidence(stopping ? 'cancelled' : error instanceof Error && error.message === 'PLATFORM_HOST_READINESS_TIMEOUT' ? 'timeout' : 'failed')
       if (current) {
         current.intentional = true
         host.detach(id)
@@ -358,8 +416,10 @@ export async function startLocalServiceDaemon(config: ServiceLaunch, options: { 
       terminate(new Error('PLATFORM_HOST_UNAVAILABLE'))
       return
     }
-    if (!runtime)
+    if (!runtime) {
+      localChecks.abort(new Error('PLATFORM_HOST_UNAVAILABLE'))
       return
+    }
     recovering = Promise.resolve().then(async () => {
       await owner.publish('recovering')
       updateProxy('http://127.0.0.1:0')
@@ -384,8 +444,7 @@ export async function startLocalServiceDaemon(config: ServiceLaunch, options: { 
         }
         if (stopping)
           return
-        readyHost = ready
-        updateProxy(ready.proxy.httpProxy)
+        assertCurrentHost(ready)
         await runtime!.resumePlatform(ready.proxy)
         if (host.instanceId !== ready.hostInstanceId)
           throw new Error('PLATFORM_HOST_UNAVAILABLE')
@@ -421,8 +480,11 @@ export async function startLocalServiceDaemon(config: ServiceLaunch, options: { 
           clearTimeout(timer)
         }
       }
+      desktopRequests.abort()
+      localChecks.abort(new Error('SERVICE_STOPPING'))
+      cancelStartup.reject(new Error('SERVICE_STOPPING'))
       generation?.cancelReady()
-      await phase(() => startup.catch(() => {}), 20000)
+      await phase(() => Promise.allSettled([startup, resources]), 20000)
       await owner.publish('stopping')
       await phase(() => product.dispose(), 2000)
       await phase(async () => recovering, 15000)
@@ -449,45 +511,96 @@ export async function startLocalServiceDaemon(config: ServiceLaunch, options: { 
         throw new AggregateError(errors, 'SERVICE_STOP_UNCONFIRMED')
       }
       await management.dispose()
+      await hostEvidenceWrite
       await owner.dispose()
     })()
   }
   startup = (async () => {
-    await management.listen()
-    await owner.publish('starting')
-    const ready = await launchHost()
-    updateProxy(ready.proxy.httpProxy)
-    readyHost = ready
+    hostEvidence('pending')
+    try {
+      await management.listen()
+      await owner.publish('starting')
+    }
+    catch (error) {
+      hostEvidence(stopping ? 'cancelled' : 'failed')
+      throw error
+    }
+    hostBoundary = 'host_spawn'
+    hostEvidence('pending')
+    const { value: ready, record: handshake } = await measureServiceStartupStep('runtime.host_handshake', parent, () => launchHost(() => {
+      resources = checkResources()
+      modules = loadModules()
+      return Promise.all([resources, modules])
+    }))
+    hostEvidence('ready')
+    const reportStartup = safeDiagnosticReporter(event => host.notify(APPLICATION_DIAGNOSTIC_METHOD, event))
+    options.startupSteps?.forEach(reportStartup)
+    reportStartup(handshake)
+    assertCurrentHost(ready)
     publishRuntime('starting')
     platformReady.resolve()
     if (options.foreground)
       void openDesktop({ kind: 'tasks' }).catch(() => {})
-    builtinSkillsDirectories = await prepareNodeService({ profile: config.profile, buddyHome: join(config.profileRoot, 'buddy'), resourcesRoot: config.resourcesRoot, preferences: ready.preferences, proxy: ready.proxy, display: ready.display, storageAuthority: config.storageAuthority })
-    if (stopping)
-      throw new Error('SERVICE_STOPPING')
-    await createRuntime()
-    if (host.instanceId !== ready.hostInstanceId)
-      throw new Error('PLATFORM_HOST_UNAVAILABLE')
-    if (stopping)
-      throw new Error('SERVICE_STOPPING')
-    resolveRuntime(runtime!)
-    await product.listen()
-    if (stopping)
-      throw new Error('SERVICE_STOPPING')
-    await owner.publish('ready')
+    const { record: admission } = await measureServiceStartupStep('runtime.product_ready', parent, async () => {
+      const [local, loaded] = await Promise.race([Promise.all([resources, modules]), cancelStartup.promise])
+      reportStartup(local.record)
+      reportStartup(loaded.record)
+      assertCurrentHost(ready)
+      const environment = await measureServiceStartupStep('runtime.node_environment', parent, () => loaded.value.activateNodeService(local.value))
+      builtinSkillsDirectories = environment.value
+      reportStartup(environment.record)
+      if (stopping)
+        throw new Error('SERVICE_STOPPING')
+      await createRuntime()
+      if (host.instanceId !== ready.hostInstanceId)
+        throw new Error('PLATFORM_HOST_UNAVAILABLE')
+      if (stopping)
+        throw new Error('SERVICE_STOPPING')
+      resolveRuntime(runtime!)
+      await product.listen()
+      if (stopping)
+        throw new Error('SERVICE_STOPPING')
+      await owner.publish('ready')
+    })
+    reportStartup(admission)
     if (!stopping)
       publishRuntime('ready')
   })()
+  const onAbort = () => {
+    void stop().catch(failed)
+  }
+  options.signal?.addEventListener('abort', onAbort, { once: true })
+  if (options.signal?.aborted)
+    onAbort()
   try {
     await startup
     return { config, discovery: owner.discovery, stop }
   }
   catch (error) {
+    const cancelled = stopping && error instanceof Error && error.message === 'SERVICE_STOPPING'
     platformReady.reject(error)
     rejectRuntime(error)
-    await stop().catch(failed)
+    await stop().catch((failure) => {
+      failed(failure)
+      throw failure
+    })
+    if (cancelled)
+      throw new CancelledServiceStartup()
     throw error
   }
+  finally {
+    options.signal?.removeEventListener('abort', onAbort)
+  }
+}
+
+function hostPowerShell(path: string | undefined): string {
+  try {
+    const executable = validateWindowsFilePath(path ?? '')
+    if (['pwsh.exe', 'powershell.exe'].includes(win32.basename(executable).toLowerCase()))
+      return executable
+  }
+  catch {}
+  throw new Error('PLATFORM_HOST_SHELL_INVALID')
 }
 
 function updateProxy(url: string): void {

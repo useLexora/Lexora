@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import nodeRuntime from '../../../apps/buddy/platform/native/nodeRuntime.json' with { type: 'json' }
-import { createReleaseSet, hashReleaseFile, readReleaseSet } from '../../../apps/buddy/platform/service/releaseSet.ts'
+import { createReleaseSet, hashReleaseFile, readReleaseSet, WINDOWS_DESKTOP_FILENAME, windowsDesktopIdentity } from '../../../apps/buddy/platform/service/releaseSet.ts'
 import { resolveBuildTarget } from './targets.mjs'
 
 export async function writeFileInventory(directory, output, excluded = []) {
@@ -49,11 +49,13 @@ export async function refreshCoreInventory(directory) {
 }
 
 export async function writeProductReleaseSet({ resourcesRoot, coreDirectory, hostPath, hostKind, nodeDirectory, target, productVersion }) {
+  const desktop = target.platform === 'win32' && hostKind === 'asar' ? await windowsDesktopIdentity(resourcesRoot) : undefined
   const coreManifest = join(coreDirectory, 'resources.json')
   const manifest = createReleaseSet({
     version: 1,
     productVersion,
     target: target.id,
+    ...(desktop && { desktop: { fileName: WINDOWS_DESKTOP_FILENAME, sha256: await hashReleaseFile(desktop.path) } }),
     core: { entry: relative(resourcesRoot, join(coreDirectory, 'service.mjs')).replaceAll('\\', '/'), manifest: relative(resourcesRoot, coreManifest).replaceAll('\\', '/'), manifestSha256: await hashReleaseFile(coreManifest) },
     node: { entry: relative(resourcesRoot, join(nodeDirectory, nodeRuntime.targets[target.id].binary)).replaceAll('\\', '/'), version: nodeRuntime.version, archiveSha256: nodeRuntime.targets[target.id].sha256, binarySha256: await hashReleaseFile(join(nodeDirectory, nodeRuntime.targets[target.id].binary)) },
     host: { kind: hostKind, path: relative(resourcesRoot, hostPath).replaceAll('\\', '/'), sha256: await hashReleaseFile(hostPath) },
@@ -70,7 +72,8 @@ function packagedResourcesRoot(context) {
 export async function packageDesktopService(context) {
   const source = join(context.packager.projectDir, '.output/build/service')
   await cp(source, join(packagedResourcesRoot(context), 'lexora-service'), { recursive: true, verbatimSymlinks: true })
-  await writePackagedReleaseSet(context)
+  if (context.electronPlatformName !== 'win32')
+    await writePackagedReleaseSet(context)
 }
 
 export async function writePackagedReleaseSet(context) {

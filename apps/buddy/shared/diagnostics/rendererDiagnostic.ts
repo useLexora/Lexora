@@ -14,6 +14,7 @@ export const rendererDiagnosticSchema = applicationDiagnosticSchema.pick({
   count: true,
 }).extend({
   event: z.enum([
+    'workbench.history.first_page_received',
     'workbench.history.active_failed',
     'workbench.history.scope_failed',
     'workbench.history.more_failed',

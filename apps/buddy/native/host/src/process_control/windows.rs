@@ -61,6 +61,49 @@ fn running(handle: &Handle, wait_ms: u32) -> Result<bool, ProcessError> {
     }
 }
 
+pub fn wait_for_service_exit(input: impl std::io::Read) -> Result<bool, ProcessError> {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct WaitRequest {
+        pid: std::num::NonZeroU32,
+        executable: String,
+        start_identity: String,
+        timeout_ms: u32,
+    }
+
+    let request: WaitRequest = super::read_input(input)?;
+    let ticks: std::num::NonZeroU64 = request
+        .start_identity
+        .parse()
+        .map_err(|_| ProcessError::Invalid)?;
+    if ticks.to_string() != request.start_identity
+        || !crate::windows_path::valid(&request.executable)
+        || request.timeout_ms == u32::MAX
+    {
+        return Err(ProcessError::Invalid);
+    }
+    let Some(handle) = open(request.pid.get(), None)? else {
+        return Ok(true);
+    };
+    let matches = || -> Result<bool, ProcessError> {
+        if identity::creation_time(&handle)?.1 != ticks.get() {
+            return Ok(false);
+        }
+        let canonical = |path| std::fs::canonicalize(path).map_err(|_| ProcessError::Failed);
+        if canonical(identity::executable(&handle)?)? != canonical(request.executable)? {
+            return Err(ProcessError::Failed);
+        }
+        Ok(true)
+    };
+    match matches() {
+        Ok(true) => Ok(!running(&handle, request.timeout_ms)?),
+        Ok(false) => Ok(true),
+        // Image queries can race exit. Only a signaled handle can turn a query failure into success.
+        Err(_) if !running(&handle, 0)? => Ok(true),
+        Err(error) => Err(error),
+    }
+}
+
 pub(super) fn executable_running(executable: &str) -> Result<bool, ProcessError> {
     let expected = match std::fs::canonicalize(executable) {
         Ok(path) => path,

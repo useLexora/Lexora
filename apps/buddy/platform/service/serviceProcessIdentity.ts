@@ -30,6 +30,17 @@ export async function readServiceProcessIdentity(pid = process.pid, helper?: str
 }
 
 export async function waitForServiceProcessExit(identity: z.infer<typeof serviceProcessIdentitySchema>, helper?: string, timeoutMs = 45000): Promise<void> {
+  if (process.platform === 'win32') {
+    if (!helper)
+      throw new Error('SERVICE_PROCESS_UNVERIFIABLE')
+    const result = await runNativeCommand(helper, ['--wait-for-service-exit'], { ...identity, timeoutMs }, { env: { SystemRoot: process.env.SystemRoot }, maxBytes: 1024, timeoutMs: timeoutMs + 5000 })
+    const status = result.stdout.toString('utf8').trim()
+    if (result.code === 0 && status === 'exited')
+      return
+    if (result.code === 0 && status === 'timeout')
+      throw new Error('SERVICE_STOP_UNCONFIRMED')
+    throw new Error('SERVICE_PROCESS_UNVERIFIABLE')
+  }
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     const current = await readServiceProcessIdentity(identity.pid, helper).catch((error) => {

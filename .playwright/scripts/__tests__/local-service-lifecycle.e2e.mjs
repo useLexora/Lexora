@@ -79,7 +79,7 @@ for (const { storageAuthority, sessionService } of cases) {
     let unit
     try {
       if (sessionService) {
-        const launcher = preparationModule.resolveBuddyProcessControl({ appPath: config.resourcesRoot, resourcesPath: config.resourcesRoot, isPackaged: true })
+        const launcher = preparationModule.resolveBuddyProcessControl({ serviceResourcesRoot: config.resourcesRoot })
         expect(launcher).toBeTruthy()
         const registration = new preparationModule.SessionServiceRegistration(config, launchFile, launcher)
         unit = `${registration.name}.service`

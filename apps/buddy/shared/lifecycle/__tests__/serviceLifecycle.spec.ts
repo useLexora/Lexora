@@ -20,6 +20,20 @@ describe('lifecycle transport snapshots', () => {
     expect(source.reader.snapshot.components[0]?.progress).toEqual({ completed: 2, total: 4 })
   })
 
+  it('keeps historic state and nested progress immutable after another revision', () => {
+    const source = new ServiceLifecycleSource()
+    const progress = { completed: 2, total: 4 }
+    const component = { component: 'runtime.event_replay', operationId: 'recovery-1', kind: 'operation', status: 'starting', progress } as const
+    source.update(component)
+    const previous = source.reader.snapshot
+    progress.completed = 4
+    source.update(component)
+    expect(previous.components[0]?.progress?.completed).toBe(2)
+    expect(source.reader.snapshot.components[0]?.progress?.completed).toBe(4)
+    expect(Object.isFrozen(previous.components)).toBe(true)
+    expect(Object.isFrozen(previous.components[0]?.progress)).toBe(true)
+  })
+
   it('accepts a complete current snapshot and rejects mismatched changes, duplicate components and diagnostic payloads', () => {
     const source = new ServiceLifecycleSource()
     const component = { component: 'renderer', kind: 'service', operationId: 'renderer-1', status: 'ready' } as const

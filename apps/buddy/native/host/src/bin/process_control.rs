@@ -11,7 +11,7 @@ fn main() -> ExitCode {
             let path = arguments.next();
             if let Some(path) = path.filter(|_| arguments.next().is_none()) {
                 return match lexora_buddy_host::service_launcher::run(std::path::Path::new(&path)) {
-                    Ok(code) => ExitCode::from(code.clamp(0, 255) as u8),
+                    Ok(never) => match never {},
                     Err(_) => {
                         eprintln!("SERVICE_LAUNCH_FAILED");
                         ExitCode::FAILURE
@@ -117,6 +117,21 @@ fn main() -> ExitCode {
                 Ok(true) => ExitCode::from(32),
                 Err(error) => {
                     eprintln!("INSTALLATION_CHECK_FAILED: {error}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+        #[cfg(windows)]
+        if command == "--wait-for-service-exit" && arguments.next().is_none() {
+            return match lexora_buddy_host::process_control::wait_for_service_exit(
+                io::stdin().lock(),
+            ) {
+                Ok(exited) => {
+                    println!("{}", if exited { "exited" } else { "timeout" });
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("{error}");
                     ExitCode::FAILURE
                 }
             };

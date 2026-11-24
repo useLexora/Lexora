@@ -421,7 +421,13 @@ export class DesktopRuntimeHost {
     const host = this.#environment.platformHost
     if (!host)
       return
-    await host.peer.request('host.ready', { hostInstanceId: host.bootstrap.hostInstanceId, preferences: this.#config!.runtime, display: true, proxy: { httpProxy: this.network.proxyUrl, httpsProxy: this.network.proxyUrl, noProxy: '' } }, 120000)
+    await host.peer.request('host.ready', {
+      hostInstanceId: host.bootstrap.hostInstanceId,
+      ...(this.#windowsPowerShell ? { windowsPowerShell: this.#windowsPowerShell } : {}),
+      preferences: this.#config!.runtime,
+      display: true,
+      proxy: { httpProxy: this.network.proxyUrl, httpsProxy: this.network.proxyUrl, noProxy: '' },
+    }, 120000)
   }
 
   async stop(): Promise<void> {

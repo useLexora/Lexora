@@ -167,6 +167,13 @@ impl DirectoryFailure {
 #[serde(deny_unknown_fields)]
 struct Request {
     paths: Vec<String>,
+    purpose: Option<DirectoryPurpose>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DirectoryPurpose {
+    ActivationReceipt,
 }
 
 fn read_request(input: impl Read) -> Result<Request, DirectoryError> {
@@ -219,7 +226,10 @@ pub fn run(input: impl Read, output: impl Write) -> Result<(), DirectoryFailure>
         .map_err(|code| DirectoryFailure::new(code, DirectoryOperation::Request))?;
     #[cfg(windows)]
     {
-        windows::ensure(&request.paths, windows::ExistingDirectoryPolicy::Preserve)?;
+        match request.purpose {
+            Some(DirectoryPurpose::ActivationReceipt) => ensure(&request.paths)?,
+            None => windows::ensure(&request.paths, windows::ExistingDirectoryPolicy::Preserve)?,
+        }
         let mut output = output;
         output.write_all(b"{\"ok\":true}").map_err(|_| {
             DirectoryFailure::new(DirectoryError::Failed, DirectoryOperation::Response)
@@ -227,7 +237,7 @@ pub fn run(input: impl Read, output: impl Write) -> Result<(), DirectoryFailure>
     }
     #[cfg(not(windows))]
     {
-        let _ = (request, output);
+        let _ = (request.purpose, output);
         Err(DirectoryFailure::new(
             DirectoryError::Unavailable,
             DirectoryOperation::Identity,

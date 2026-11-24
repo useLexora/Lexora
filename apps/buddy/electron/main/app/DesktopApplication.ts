@@ -228,19 +228,20 @@ class DesktopApplication {
   }
 
   async #openDesktopTarget(intent: z.infer<typeof desktopOpenIntentSchema>, signal?: AbortSignal) {
-    const available = () => !signal?.aborted && !this.#locked && powerMonitor.getSystemIdleState(1) !== 'locked' && !this.#quit.quitting && !this.#disposePromise && !this.#closingDesktop
-    const unavailable = { accepted: false, uiReady: false, targetVisible: false, visible: false, focused: false }
+    const locked = () => this.#locked || powerMonitor.getSystemIdleState(1) === 'locked'
+    const available = () => !signal?.aborted && !locked() && !this.#quit.quitting && !this.#disposePromise && !this.#closingDesktop
+    const unavailable = () => ({ accepted: false, uiReady: false, targetVisible: false, visible: false, focused: false, ...(locked() ? { reason: 'locked' as const } : {}) })
     if (!available())
-      return unavailable
+      return unavailable()
     try {
       const window = await this.#openDesktop(intent)
       const targetVisible = await requestDesktopTarget(window, this.#environment.startup, intent, undefined, { signal, available })
       if (!available() || window.isDestroyed())
-        return unavailable
+        return unavailable()
       return { accepted: true, uiReady: this.#environment.startup.state.status === 'ready', targetVisible, visible: window.isVisible(), focused: window.isFocused() }
     }
     catch {
-      return unavailable
+      return unavailable()
     }
   }
 

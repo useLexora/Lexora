@@ -86,6 +86,9 @@ Var /GLOBAL BuddyInstallMutex
       Quit
 
     buddy_request_exit:
+      UserInfo::GetAccountType
+      Pop $0
+      StrCmp $0 "User" 0 buddy_manual_exit
       StrCpy $4 1
       Exec '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" --quit-for-install --background'
       StrCpy $3 30
@@ -160,6 +163,35 @@ Var /GLOBAL BuddyInstallMutex
 !macroend
 
 !macro customInit
+  Push $0
+  UserInfo::GetAccountType
+  Pop $0
+  ${If} $0 != "User"
+    IfSilent 0 buddy_require_limited_install
+    ${If} ${isUpdated}
+    ${OrIf} ${isForceRun}
+      Goto buddy_require_limited_install
+    ${EndIf}
+    ReadRegStr $0 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
+    StrCmp $0 "" 0 buddy_require_limited_install
+    ReadRegStr $0 HKCU "${UNINSTALL_REGISTRY_KEY}" UninstallString
+    StrCmp $0 "" 0 buddy_require_limited_install
+    !ifdef UNINSTALL_REGISTRY_KEY_2
+      ReadRegStr $0 HKCU "${UNINSTALL_REGISTRY_KEY_2}" UninstallString
+      StrCmp $0 "" 0 buddy_require_limited_install
+    !endif
+    ${If} $INSTDIR != ""
+      IfFileExists "$INSTDIR\*.*" buddy_require_limited_install
+    ${EndIf}
+  ${EndIf}
+  Goto buddy_install_token_checked
+  buddy_require_limited_install:
+    IfSilent +2
+    MessageBox MB_OK|MB_ICONSTOP "请使用普通用户权限安装或修复 Lexora Buddy。$\r$\nRun this installer without administrator privileges."
+    SetErrorLevel 1603
+    Quit
+  buddy_install_token_checked:
+  Pop $0
   !insertmacro BuddyAcquireInstallationMutex
 !macroend
 
@@ -168,10 +200,31 @@ Var /GLOBAL BuddyInstallMutex
 !macroend
 
 !macro customInstall
+  Push $0
+  UserInfo::GetAccountType
+  Pop $0
+  ${If} $0 == "User"
+    DetailPrint "正在校验安装文件 / Verifying installed files..."
+    nsExec::Exec /TIMEOUT=300000 '"$INSTDIR\resources\lexora-runtime\node.exe" "$INSTDIR\resources\lexora-service\service.mjs" --verify-install'
+    Pop $0
+    ${If} $0 != "0"
+      Delete "$INSTDIR\resources\release-set.json"
+      DetailPrint "安装文件校验失败 / Installed file verification failed."
+      IfSilent +2
+      MessageBox MB_OK|MB_ICONSTOP "安装文件校验失败。请重新安装。$\r$\nInstalled file verification failed. Please reinstall."
+      SetErrorLevel 1603
+      Quit
+    ${EndIf}
+    StrCpy $0 "verified"
+  ${Else}
+    DetailPrint "文件已解包；首次以普通用户运行时完成全量校验。 / Files staged; full verification is required at first user activation."
+  ${EndIf}
   System::Call 'kernel32::ReleaseMutex(p $BuddyInstallMutex)'
   System::Call 'kernel32::CloseHandle(p $BuddyInstallMutex)'
-  ${If} ${Silent}
+  ${If} $0 == "verified"
+  ${AndIf} ${Silent}
   ${AndIf} ${isUpdated}
     Exec '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" --updated'
   ${EndIf}
+  Pop $0
 !macroend

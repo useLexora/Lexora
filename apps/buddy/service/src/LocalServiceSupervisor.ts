@@ -1,22 +1,27 @@
+import type { ApplicationDiagnostic } from '../../shared/diagnostics/applicationDiagnostic'
 import type { ServiceLaunch } from '../../shared/service/localServiceProtocol'
+import { randomUUID } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import process from 'node:process'
 import { createBuddyNativeEnvironment, resolveBuddyProcessControl } from '../../platform/native/nativeHost'
 import { ServiceChildProcess } from '../../platform/service/ServiceChildProcess'
 import { readServiceLaunch, writePrivateServiceJson } from '../../platform/service/serviceFiles'
+import { measureServiceStartupStep } from '../../platform/service/serviceStartupStep'
 import { assertStorageIdentity, storageBootstrapRoot, StorageLocationStore } from '../../platform/storage/StorageLocationStore'
-import { startLocalServiceDaemon } from './LocalServiceDaemon'
+import { CancelledServiceStartup, startLocalServiceDaemon } from './LocalServiceDaemon'
 import { validateServiceRelease } from './validateServiceRelease'
 
-export function startLocalServiceSupervisor(path: string) {
+export function startLocalServiceSupervisor(path: string, initial: { config: ServiceLaunch, validation: ApplicationDiagnostic, parent: string }) {
   let active: Awaited<ReturnType<typeof startLocalServiceDaemon>> | undefined
   let transition: Promise<void> | undefined
   let maintenance: ServiceChildProcess | undefined
+  const shutdown = new AbortController()
   let stopping = false
-  async function boot(openDesktop: boolean) {
-    const config = await readServiceLaunch(path)
-    await validateServiceRelease(config)
+  async function boot(openDesktop: boolean, cold?: typeof initial) {
+    const { launcherVerification, ...config } = cold?.config ?? await readServiceLaunch(path)
+    const parentOperationId = cold?.parent ?? randomUUID()
+    const validation = cold?.validation ?? (await measureServiceStartupStep('runtime.process_installation_gate', parentOperationId, () => validateServiceRelease(config), releaseCheck => ({ releaseCheck }))).record
     if (stopping)
       return
     const defaultRoot = config.defaultRoot ?? config.profileRoot
@@ -32,7 +37,17 @@ export function startLocalServiceSupervisor(path: string) {
     const profileRoot = await realpath(state.activeRoot)
     const activeConfig = { ...config, profileRoot, defaultRoot }
     await writePrivateServiceJson(path, activeConfig)
-    active = await startLocalServiceDaemon(activeConfig, { restartDesktop, foreground: openDesktop })
+    const startupSteps = [validation]
+    if (cold && launcherVerification)
+      startupSteps.unshift(launcherVerification)
+    try {
+      active = await startLocalServiceDaemon(activeConfig, { restartDesktop, foreground: openDesktop, startupSteps, parentOperationId, signal: shutdown.signal })
+    }
+    catch (error) {
+      if (error instanceof CancelledServiceStartup)
+        return
+      throw error
+    }
     if (stopping)
       await active.stop()
   }
@@ -64,11 +79,12 @@ export function startLocalServiceSupervisor(path: string) {
         process.exitCode = 1
     }).finally(() => { transition = undefined })
   }
-  const ready = boot(false)
+  const ready = boot(false, initial)
   return {
     ready,
     async stop() {
       stopping = true
+      shutdown.abort()
       await maintenance?.stopAndVerify()
       await Promise.allSettled([ready, transition])
       await active?.stop()

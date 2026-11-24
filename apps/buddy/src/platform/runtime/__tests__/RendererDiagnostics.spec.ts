@@ -15,14 +15,15 @@ describe('renderer diagnostic delivery', () => {
 
       return accepted.promise
     } })
-    diagnostics.events.publish(event)
+    const pageReceived = { event: 'workbench.history.first_page_received', level: 'info', durationMs: 13 } as const
+    diagnostics.events.publish(pageReceived)
     const closing = diagnostics.dispose()
     diagnostics.events.publish(event)
     await Promise.resolve()
     expect(reports).toHaveLength(1)
     accepted.resolve(true)
     expect(await closing).toEqual({ pending: 0, dropped: 0, failed: 0 })
-    expect(reports[0]!.diagnostic.sourceSequence).toBe(1)
+    expect(reports[0]!.diagnostic).toEqual({ ...pageReceived, sourceSequence: 1, occurredAt: expect.any(String) })
   })
 
   it('bounds pending records and shutdown wait while preserving later loss accounting', async () => {

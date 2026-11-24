@@ -12,7 +12,7 @@ struct Launch {
     core_entry: PathBuf,
 }
 
-pub fn run(path: &Path) -> io::Result<i32> {
+pub fn run(path: &Path) -> io::Result<std::convert::Infallible> {
     if !path.is_absolute() {
         return Err(io::ErrorKind::InvalidInput.into());
     }
@@ -94,6 +94,13 @@ pub fn run(path: &Path) -> io::Result<i32> {
     {
         let _job = crate::runtime_guard::guard_current_process()
             .map_err(|_| io::ErrorKind::PermissionDenied)?;
-        Ok(command.status()?.code().unwrap_or(1))
+        // Exit with the Core's full status while our kill-on-close Job is still held.
+        match command.status() {
+            Ok(status) => std::process::exit(status.code().unwrap_or(1)),
+            Err(_) => {
+                eprintln!("SERVICE_LAUNCH_FAILED");
+                std::process::exit(1)
+            }
+        }
     }
 }

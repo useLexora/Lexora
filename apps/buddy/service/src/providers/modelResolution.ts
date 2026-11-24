@@ -1,6 +1,6 @@
 import type { ModelMetadataCatalog } from './ModelsDevCatalog'
 import { createHash } from 'node:crypto'
-import { serializeModelMetadata } from './modelMetadata'
+import { serializeModelMetadata } from './modelMetadata.ts'
 
 export const MODEL_RESOLUTION_VERSION = 1
 
