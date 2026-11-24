@@ -52,7 +52,7 @@ internal fun TaskDiscoveryPage(state: MobileUiState, tasks: List<JSONObject>, on
     val categoryIds = base.map { it.getString("id") }.toSet()
     val searchResults = discovery.results.filter { discovery.archived || state.taskFilter == MobileTaskFilter.All || it.optString("conversationId") in categoryIds }
     LaunchedEffect(state.taskFilter, discovery.archived, state.tasksLoaded) {
-        if (!discovery.archived && state.taskFilter == MobileTaskFilter.All) onAction(MobileAction.InspectUnplacedInput, null)
+        if (!discovery.archived && state.taskFilter == MobileTaskFilter.All) onAction(MobileAction.InspectOrphanDownloads, null)
     }
     LaunchedEffect(query, discovery.archived, state.selectedSpaceId, state.connected) {
         if (query.isNotBlank() && discovery.supported && state.connected) {
@@ -65,9 +65,6 @@ internal fun TaskDiscoveryPage(state: MobileUiState, tasks: List<JSONObject>, on
             placeholder = { Text(mobileText(R.string.label_search_tasks)) }, leadingIcon = { Icon(Icons.Outlined.Search, null, Modifier.size(20.dp)) },
             trailingIcon = if (query.isNotEmpty()) ({ IconButton(onClick = { query = "" }) { Icon(Icons.Outlined.Close, mobileText(R.string.label_clear_search)) } }) else null,
             shape = MaterialTheme.shapes.medium, textStyle = MaterialTheme.typography.bodyMedium)
-        if (query.isBlank() && !discovery.archived && state.taskFilter == MobileTaskFilter.All && state.hasUnplacedInput) {
-            ActionRow(mobileText(R.string.recover_unsent_input), Icons.Outlined.EditNote, tag = "recover-unsent-input") { onAction(MobileAction.Recovery, null) }
-        }
         if (query.isBlank() && !discovery.archived && state.taskFilter == MobileTaskFilter.All && state.hasOrphanDownloads) {
             ActionRow(mobileText(R.string.recover_downloads), Icons.Outlined.FolderOpen) { onAction(MobileAction.RecoverDownloads, null) }
         }

@@ -16,12 +16,11 @@ import { useReaderResultRead } from './useReaderResultRead'
 import { useReaderTurns } from './useReaderTurns'
 import { useReaderViewport } from './useReaderViewport'
 
-const { entries: messages, history, turnWindow, runs, transcripts, outputs, branches, selectedBranchId, topic, dark, fontScale, appearance, typography, language, resultRunId, anchor, hasLaterMessages, latestState, send } = useReaderBridge()
+const { entries: messages, history, turnWindow, runs, buddyNames, transcripts, outputs, branches, selectedBranchId, topic, dark, fontScale, appearance, typography, language, resultRunId, anchor, hasLaterMessages, latestState, send } = useReaderBridge()
 provideReaderBranches(messages, runs, branches, selectedBranchId)
 const labels = useReaderStrings(language)
 const entries = useReaderTurns(messages, runs, transcripts, topic, anchor, turnWindow, outputs)
 const lastAssistantIds = computed(() => new Map(messages.value.flatMap(entry => entry.messages).filter(message => message.role === 'assistant' && message.runId).map(message => [message.runId, message.id])))
-const runBuddyIds = computed(() => new Map(runs.value.map(run => [run.id, run.buddyId])))
 provideChatTranscriptPresentation(() => topic.value, () => entries.value.map(entry => entry.id))
 const viewport = useTemplateRef('viewport')
 useReaderResultRead(viewport, resultRunId, topic, send)
@@ -43,6 +42,14 @@ function activateLatest() {
 }
 useReaderLatestPull(viewport, () => hasLaterMessages.value && !loadingLatest.value ? topic.value : null, activateLatest)
 const activeRuns = computed(() => runs.value.filter(run => run.status === 'running' || run.status === 'queued'))
+const liveTurnOwners = computed(() => {
+  const current = turnWindow.value || hasLaterMessages.value || anchor.value ? [] : activeRuns.value
+  return new Map(current.filter(run => !selectedBranchId.value || run.branchId === selectedBranchId.value)
+    .map(run => [run.id, {
+      id: run.buddyId,
+      name: run.executionKind === 'root' || run.executionKind === 'actor_child' ? buddyNames.value.get(run.buddyId) : undefined,
+    }]))
+})
 const visibleToolRuns = computed(() => new Set(hasLaterMessages.value
   ? []
   : visibleRows.value.flatMap(({ entry: { activityGroup: group } }) =>
@@ -126,7 +133,7 @@ watch(topic, () => {
           </button>
           <ReaderActivityGroup v-if="row.entry.activityGroup" :row-id="row.entry.id" :group="row.entry.activityGroup" :owner="row.entry.groupOwner" :historical="hasLaterMessages" :steps="row.entry.steps" :language="language" :send="send" @click="followsEnd = false" />
           <ReaderRunStatus v-else-if="row.entry.runStatus" :status="row.entry.runStatus" :row-id="row.entry.id" :output="outputs[row.entry.runStatus.run.id]" :send="send" @interact="followsEnd = false" />
-          <ReaderTurn v-else-if="row.entry.turn" :turn="row.entry.turn" :output="outputs[row.entry.turn.runId]" :buddy-id="runBuddyIds.get(row.entry.turn.runId)" :messages="row.entry.messages" :dark="dark" :language="language" :send="send" @interact="followsEnd = false" />
+          <ReaderTurn v-else-if="row.entry.turn" :turn="row.entry.turn" :output="outputs[row.entry.turn.runId]" :live-owner="liveTurnOwners.get(row.entry.turn.runId)" :messages="row.entry.messages" :dark="dark" :language="language" :send="send" @interact="followsEnd = false" />
           <template v-for="message in row.entry.messages" :key="message.id">
             <ReaderToolCall v-if="(!turnWindow || anchor || hasLaterMessages) && !row.entry.turn && message.role === 'tool'" :message="message" :language="language" :expanded="expanded.get(`message:${message.id}`) ?? (!turnWindow && (anchor?.messageId === message.id || message.toolError))" :send="send" @toggle="toggle(`message:${message.id}`, !turnWindow && (anchor?.messageId === message.id || message.toolError))" @interact="followsEnd = false" />
             <ReaderMessage v-else-if="!row.entry.turn && message.role !== 'tool'" :message="message" :replying="!hasLaterMessages && message.role === 'assistant' && !!message.runId && !visibleToolRuns.has(message.runId) && !message.final && !!message.text" :output="message.runId && lastAssistantIds.get(message.runId) === message.id ? outputs[message.runId] : undefined" :language="language" :dark="dark" :send="send" @interact="followsEnd = false" />

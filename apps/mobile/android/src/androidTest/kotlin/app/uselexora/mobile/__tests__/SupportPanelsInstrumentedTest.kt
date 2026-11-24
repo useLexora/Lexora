@@ -54,38 +54,6 @@ class SupportPanelsInstrumentedTest {
         compose.onNodeWithText("second.txt").assertIsEnabled()
     }
 
-    @Test fun unfinishedAttachmentOnlyInputRemainsRecoverableWithoutBeingMarkedReady() {
-        lateinit var activity: android.app.Activity
-        compose.setContent { activity = androidx.compose.ui.platform.LocalContext.current as android.app.Activity }
-        val partition = "pending-file-ui-${java.util.UUID.randomUUID()}"
-        val target = "draft:attachment-only"
-        val fileName = "pending-${java.util.UUID.randomUUID()}.txt"
-        val restored = java.util.concurrent.atomic.AtomicReference<app.uselexora.mobile.storage.LocalDraft>()
-        app.uselexora.mobile.storage.LocalStore(context).use { store ->
-            val draft = store.edit(partition, target, JSONObject()
-                .put("content", app.uselexora.mobile.protocol.MobileContentAdapter.textContent(""))
-                .put("modelSelection", JSONObject().put("providerId", "provider").put("modelId", "model")))
-            try {
-                compose.runOnIdle {
-                    DraftRecoveryPanel(activity, store, { partition }, { it() }, { it() }, { value, _ -> restored.set(value) },
-                        targetLabel = { if (it.partition == partition) "Pending task" else null },
-                        attachmentLookup = { { if (it.partition == partition && it.scope == target && it.value.optString("inputId") == draft.value.optString("inputId")) "$fileName · Upload incomplete" else null } }).local()
-                }
-                MobileUiTestDriver.waitUntil { MobileUiTestDriver.contains(fileName) }
-                MobileUiTestDriver.clickContaining(fileName)
-                MobileUiTestDriver.waitUntil { MobileUiTestDriver.contains("Upload incomplete") }
-                MobileUiTestDriver.click("CONTINUE EDITING")
-                MobileUiTestDriver.waitUntil { restored.get() != null }
-                assertEquals(target, restored.get().scope)
-                assertEquals(partition, restored.get().partition)
-                assertEquals(draft.value.getString("inputId"), restored.get().value.getString("inputId"))
-                assertEquals(0, restored.get().value.getJSONObject("content").getJSONArray("panelResourceIds").length())
-                assertEquals("model", restored.get().value.getJSONObject("modelSelection").getString("modelId"))
-                assertTrue(store.outbox(partition).isEmpty())
-            } finally { store.writableDatabase.delete("drafts", "partition=?", arrayOf(partition)) }
-        }
-    }
-
     @Test fun sameNamedServicesHaveDistinctAddressesAndClosingDoesNotSwitch() {
         val state = MobileUiState().apply {
             devices = listOf(

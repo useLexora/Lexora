@@ -1,5 +1,6 @@
 package app.uselexora.mobile
 
+import app.uselexora.mobile.protocol.DraftContext
 import app.uselexora.mobile.protocol.MobileContentAdapter
 import android.content.Intent
 import android.os.ParcelFileDescriptor
@@ -49,8 +50,7 @@ class ProcessRecoveryInstrumentedTest {
             val files = MobileFiles(context, transfers, store, connection)
             val owner = client.identity!!.partition
             if (phase == "prepare") {
-                val draftId = store.newId()
-                val scope = "draft:$draftId"
+                val scope = DraftContext.newTaskKey(null)
                 val snapshot = store.edit(owner, scope, JSONObject().put("content", MobileContentAdapter.textContent("终止后仍保留😀"))
                     .put("executionConfig", JSONObject().put("executionProfile", "read_only").put("approvalPolicy", "policy")))
                 store.edit(owner, "global", JSONObject().put("content", MobileContentAdapter.textContent("重启后当前输入保留😀")))
@@ -59,7 +59,7 @@ class ProcessRecoveryInstrumentedTest {
                 val bytes = "进程恢复😀\n".repeat(50000).toByteArray(Charsets.UTF_8)
                 val transfer = try {
                     source.writeBytes(bytes)
-                    files.stage(FileProvider.getUriForFile(context, "${context.packageName}.files", source), owner, scope, JSONObject().put("kind", "task").put("draftId", draftId).put("spaceId", JSONObject.NULL))
+                    files.stage(FileProvider.getUriForFile(context, "${context.packageName}.files", source), owner, scope, DraftContext.target(scope))
                 } finally { source.delete() }
                 val envelope = JSONObject().put("commandId", store.newId()).put("dataGeneration", client.identity!!.dataGeneration)
                     .put("expectedServiceInstanceId", client.identity!!.serviceInstanceId).put("intent", JSONObject(target.toString()).put("file", transfer.getJSONObject("file")))
@@ -107,17 +107,12 @@ class ProcessRecoveryInstrumentedTest {
                 val commands = store.outbox(owner).size
                 ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java)).use { scenario ->
                     fun input() : String { var value = ""; scenario.onActivity { value = it.findViewById<EditText>(MainActivity.INPUT_ID)?.text?.toString().orEmpty() }; return value }
-                    MobileUiTestDriver.openDrafts()
-                    MobileUiTestDriver.clickContaining("重启后当前输入保留😀")
-                    click("继续编辑")
-                    waitFor { input() == "重启后当前输入保留😀" }
-                    MobileUiTestDriver.openDrafts()
-                    MobileUiTestDriver.clickContaining("终止后仍保留😀")
-                    click("继续编辑")
-                    waitFor { input() == "终止后仍保留😀" }
+                    MobileUiTestDriver.awaitConnected()
+                    MobileUiTestDriver.openUnassignedNewTask()
+                    waitFor { input() == "终止后仍保留😀" && MobileUiTestDriver.contains("$token.txt") }
                     waitFor { MobileUiTestDriver.exists("权限：本机只读") }
                     scenario.recreate()
-                    waitFor { input() == "终止后仍保留😀" }
+                    waitFor { input() == "终止后仍保留😀" && MobileUiTestDriver.contains("$token.txt") }
                     assertEquals(commands, store.outbox(owner).size)
                     assertEquals("重启后当前输入保留😀", MobileContentAdapter.text(store.draft(owner, "global")!!.value.getJSONObject("content")))
                     assertEquals(1, store.draft(owner, scope)!!.value.getJSONObject("content").getJSONArray("panelResourceIds").length())
@@ -132,6 +127,5 @@ class ProcessRecoveryInstrumentedTest {
         client.close()
         if (phase == "verify" && arguments.getString("processRecoveryPairing") == "true") connection.description()?.let { connection.logout(it) }
     }
-    private fun click(value: String) = MobileUiTestDriver.click(value)
     private fun waitFor(condition: () -> Boolean) = MobileUiTestDriver.waitUntil(condition = condition)
 }

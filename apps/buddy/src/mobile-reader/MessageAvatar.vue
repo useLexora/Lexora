@@ -8,7 +8,7 @@ const source = useReaderAvatar(() => props.authorId)
 
 <template>
   <span class="message-avatar" aria-hidden="true">
-    <BuddyAvatar :buddy-id="authorId ?? undefined" :src="source" />
+    <BuddyAvatar v-if="source !== 'pending'" :buddy-id="authorId ?? undefined" :src="source" />
   </span>
 </template>
 

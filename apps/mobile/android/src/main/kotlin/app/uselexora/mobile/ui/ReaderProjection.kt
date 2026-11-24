@@ -17,6 +17,7 @@ internal data class ReaderSnapshot(
     val photoEpoch: Any? = null,
     val turn: ReaderTurnContext = ReaderTurnContext(), val stepPages: Map<String, JSONObject> = emptyMap(),
     val appearanceRevision: String = "",
+    val buddyNames: Map<String, String> = emptyMap(),
 )
 
 internal class ReaderProjection {
@@ -34,6 +35,7 @@ internal class ReaderProjection {
     private var order = emptyList<String>()
     private var sentGroups = emptyMap<String, Pair<JSONObject, JSONObject?>>()
     private var sentAvatars: Map<String, String>? = null
+    private var sentBuddyNames: Map<String, String>? = null
 
     fun reset() { sentTopic = null }
 
@@ -154,6 +156,7 @@ internal class ReaderProjection {
         }
         val avatarSources = avatars
         if (reset || sentAvatars !== avatarSources) { update.put("avatars", JSONObject(avatarSources)); sentAvatars = avatarSources }
+        if (reset || sentBuddyNames != buddyNames) { update.put("buddyNames", JSONObject(buddyNames)); sentBuddyNames = buddyNames }
         if (reset || sentTranscripts !== transcripts) {
             val changes = JSONObject()
             if (reset) transcriptPositions.clear()

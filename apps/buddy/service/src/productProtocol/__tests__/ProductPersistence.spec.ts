@@ -427,9 +427,11 @@ describe('product persistence projections', () => {
     writer.dispose()
   })
 
-  it('publishes a message before its live deltas and replaces it with one final message', () => {
+  it('keeps the same public author before the first delta, on reconnect and on the final message', () => {
     const { database } = fixture()
     seedSqliteRun(database, 'live-root')
+    const author = { id: 'actual-actor', name: '执行伙伴' }
+    database.prepare('UPDATE runs SET actor_snapshot_json = ? WHERE id = ?').run(JSON.stringify({ ...author, name: ` ${author.name} `, instructions: 'private-instructions' }), 'live-root')
     const writer = new SqliteRunEventWriter(database)
     const queries = new ProductQueries(database, 'desktop-local', 'instance')
     const idle = { onDidCommit: () => ({ dispose() {} }) }
@@ -449,23 +451,65 @@ describe('product persistence projections', () => {
         result.activate()
       }
       sync.publisher.ack('phone', { subscriptionId: 'live', ...result.snapshot.cursor })
+      writer.append({ runId: 'live-root', type: 'run.started', payload: {} })
       writer.append({ runId: 'live-root', type: 'message.started', payload: { messageId: 'reply', role: 'assistant' } })
       writer.append({ runId: 'live-root', type: 'message.delta', payload: { messageId: 'reply', delta: '现在可以看见😀' } })
       writer.append({ runId: 'live-root', type: 'message.block.delta', payload: { messageId: 'reply', kind: 'reasoning', contentIndex: 0, delta: 'private reasoning' } })
+      const reconnect = new ProductQueries(database, 'phone', 'reconnect')
+      for (const page of [reconnect.streaming.page('task-1', 'branch-task-1', null), reconnect.streaming.turnPage('task-1', 'branch-task-1', null)]) {
+        expect(page.items.map(item => item.author)).toEqual([author])
+        expect(JSON.stringify(page)).not.toContain('private-instructions')
+      }
       writer.append({ runId: 'live-root', type: 'message.completed', payload: { messageId: 'reply', role: 'assistant', content: { text: '现在可以看见😀' }, stopReason: 'completed' } })
       const changes = frames.flatMap(frame => frame.params.changes ?? [])
       const messages = changes.filter(change => change.kind === 'upsert' && change.item.entity === 'message')
       expect(messages.map(change => change.item.value.body.text)).toEqual(['', '现在可以看见😀'])
       expect(messages.map(change => change.item.value.id)).toEqual(['reply', 'reply'])
+      expect(messages.map(change => change.item.value.author)).toEqual([author, author])
+      expect(JSON.stringify(frames)).not.toContain('private-instructions')
       expect(changes.filter(change => change.event?.detail.kind === 'text_delta').map(change => change.event.detail.delta)).toEqual(['现在可以看见😀'])
       expect(JSON.stringify(frames)).not.toContain('private reasoning')
       expect(changes.indexOf(messages[0])).toBeLessThan(changes.findIndex(change => change.event?.detail.kind === 'text_delta'))
+      writer.append({ runId: 'live-root', type: 'run.completed', payload: {} })
+      expect(reconnect.turnMessage('task-1', 'branch-task-1', 'reply')?.author).toEqual(author)
+      expect(reconnect.streaming.turnPage('task-1', 'branch-task-1', null).items).toEqual([])
     }
     finally {
       disconnect()
       sync.dispose()
       writer.dispose()
     }
+  })
+
+  it.each([null, '{"id":"actor","name":" "}', '{"name":"no-id"}'])('omits author for absent or invalid snapshots (%s) without dropping the message', (snapshot) => {
+    const { database } = fixture()
+    seedSqliteRun(database, 'root')
+    database.prepare('UPDATE runs SET actor_snapshot_json = ? WHERE id = ?').run(snapshot, 'root')
+    const queries = new ProductQueries(database, 'phone', 'instance')
+    const record = createConversationRepository(database).createMessage({ id: 'saved', conversationId: 'task-1', branchId: 'branch-task-1', runId: 'root', role: 'assistant', content: { text: '正文' }, createdAt: '2026-10-01T00:00:00.000Z' })
+    const live = queries.streaming.start('root', 'live', record.createdAt)
+    expect(live?.id).toBe('live')
+    expect(live).not.toHaveProperty('author')
+    expect(queries.views.message(record)).not.toHaveProperty('author')
+  })
+
+  it('projects saved authors only for same-scope public assistants, without making child runs streamable', () => {
+    const { database } = fixture()
+    const author = { id: 'actor', name: '伙伴' }
+    for (const kind of ['root', 'actor_child', 'npc_child', 'maintenance']) {
+      seedSqliteRun(database, kind)
+      database.prepare('UPDATE runs SET actor_snapshot_json = ?, execution_kind = ? WHERE id = ?').run(JSON.stringify(author), kind, kind)
+    }
+    const queries = new ProductQueries(database, 'phone', 'instance')
+    const actor = createConversationRepository(database).createMessage({ id: 'actor-reply', conversationId: 'task-1', branchId: 'branch-task-1', runId: 'actor_child', role: 'assistant', content: { text: '公开说明' }, createdAt: '2026-10-01T00:00:00.000Z' })
+    expect(queries.views.message(actor).author).toEqual(author)
+    for (const runId of ['actor_child', 'npc_child', 'maintenance'])
+      expect(queries.streaming.start(runId, 'live', actor.createdAt)).toBeNull()
+    for (const patch of [{ runId: 'npc_child' }, { runId: 'maintenance' }, { conversationId: 'other-task' }, { branchId: 'other-branch' }, { runId: 'root', role: 'user' as const }, { runId: 'root', role: 'tool' as const }])
+      expect(queries.views.message({ ...actor, ...patch })).not.toHaveProperty('author')
+    database.prepare('UPDATE conversations SET deleted_at = ? WHERE id = ?').run(actor.createdAt, actor.conversationId)
+    expect(queries.streaming.start('root', 'live', actor.createdAt)).toBeNull()
+    expect(queries.views.message(actor)).not.toHaveProperty('author')
   })
 
   it('reads every UTF-16 unit of a versioned live reply across reconnect and rejects mismatched scopes or boundaries', () => {

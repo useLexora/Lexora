@@ -24,21 +24,21 @@ const labels = useReaderStrings()
 .message-branches {
   display: inline-flex;
   align-items: center;
-  margin-right: 6px;
+  flex: none;
+  margin-inline-end: 2px;
   color: var(--reader-muted);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 .message-branches span {
-  min-width: 24px;
-  text-align: center;
+  white-space: nowrap;
 }
 .message-branches button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  flex: 0 0 44px;
+  width: 32px;
+  flex: none;
   min-height: 44px;
   padding: 6px;
   color: inherit;

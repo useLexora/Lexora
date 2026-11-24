@@ -1,13 +1,22 @@
 {
   "schemaVersion": 1,
   "id": "color-play",
-  "version": 5,
+  "version": 1,
   "name": {
     "zh": "色块拼图",
     "en": "Colorblock"
   },
   "variants": {
     "light": {
+      "connectionSignal": "#173EC9",
+      "newTask": {
+        "illustration": "images/new-task-light.webp",
+        "widthFraction": 0.6,
+        "corners": "rounded",
+        "outline": "#283DB7",
+        "underlay": "#B5C7FF",
+        "offset": 4
+      },
       "colors": {
         "canvas": "#FCF8F2",
         "app-sidebar": "#FCF8F2",
@@ -562,6 +571,15 @@
       }
     },
     "dark": {
+      "connectionSignal": "#193EBE",
+      "newTask": {
+        "illustration": "images/new-task-dark.webp",
+        "widthFraction": 0.6,
+        "corners": "rounded",
+        "outline": "#9FAEFF",
+        "underlay": "#43588A",
+        "offset": 4
+      },
       "colors": {
         "canvas": "#171D32",
         "app-sidebar": "#171D32",

@@ -4,6 +4,7 @@ export interface ReaderAnchor { topic: string, messageId: string, requestId: str
 
 export class ReaderProjection {
   #topic = ''
+  #buddyNames = new Map<string, string>()
   #anchor: ReaderAnchor | null = null
   #items = new Map<string, ReaderWireEntry>()
   #order: string[] = []
@@ -16,6 +17,8 @@ export class ReaderProjection {
       this.#order = []
       this.#transcripts = {}
     }
+    if (reset || update.buddyNames)
+      this.#buddyNames = new Map(Object.entries(update.buddyNames ?? {}))
     this.#topic = update.topic
     if (update.anchorRequestId && update.anchorMessageId) {
       if (this.#anchor?.requestId !== update.anchorRequestId)
@@ -39,6 +42,7 @@ export class ReaderProjection {
       this.#items.set(entry.id, entry)
     return {
       reset,
+      buddyNames: this.#buddyNames,
       entries: this.#order.flatMap(id => this.#items.get(id) ?? []),
       transcripts: this.#transcripts,
       anchor: update.anchorRequestId && update.anchorMessageId && this.#anchor?.topic === update.topic ? this.#anchor : null,

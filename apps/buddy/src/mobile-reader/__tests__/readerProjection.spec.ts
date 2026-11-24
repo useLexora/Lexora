@@ -15,6 +15,16 @@ describe('reader projection', () => {
     expect(projection.apply(update('two', { order: ['a'], entries: [a] })).entries).toEqual([a])
     expect(projection.apply(update('two', { reset: true })).entries).toEqual([])
   })
+  it('replaces visible buddy names independently of message authors and clears them on reset', () => {
+    const projection = new ReaderProjection()
+    const names = (topic: string, fields = {}) => Object.fromEntries(projection.apply(update(topic, fields)).buddyNames)
+    expect(names('one', { buddyNames: { a: 'First', b: 'Second' } })).toEqual({ a: 'First', b: 'Second' })
+    expect(names('one')).toEqual({ a: 'First', b: 'Second' })
+    expect(names('one', { buddyNames: { a: 'Renamed' } })).toEqual({ a: 'Renamed' })
+    expect(names('two')).toEqual({})
+    names('two', { buddyNames: { a: 'Other topic' } })
+    expect(names('two', { reset: true })).toEqual({})
+  })
   it('binds an anchor request to its original topic and message until a new request arrives', () => {
     const projection = new ReaderProjection()
     const first = projection.apply(update('one', { anchorMessageId: 'old', anchorRequestId: 'search-1' })).anchor

@@ -18,7 +18,7 @@ enum class MobileAction {
     NewTask, OpenTask, OpenTaskQuestions, OpenRunningTask, OpenTaskResult, ShowTasks, ShowPending, ShowDevices,
     ShowWorkbench, ShowSpaces, OpenSpace, ChooseSpaceFilter, ShowTaskFilter, Back, ReviewTaskApproval,
     ScanDevice, SelectDevice, ManageDevice,
-    Approvals, InspectUnplacedInput, Recovery, RecoverDownloads, Files, DraftAttachments, LocalFileRecords, AttachFile, TakePhoto, OpenResource, ResourceActions, MoreFiles,
+    Approvals, InspectOrphanDownloads, RecoverDownloads, Files, DraftAttachments, LocalFileRecords, AttachFile, TakePhoto, OpenResource, ResourceActions, MoreFiles,
     ChooseModel, ToggleFast, ApplyModel, ChooseExecution, ApplyExecution, ChooseSpace, Send,
     MoreHistory, Refresh, Reconnect, TaskControls, TaskQueue,
     QueueInput, CheckInputReceipt, OpenOnDesktop, ReadState, Disconnect, MessageActions, DismissNotice,
@@ -112,6 +112,7 @@ class MobileUiState {
     var connected by mutableStateOf(false)
     var tasks by mutableStateOf<List<JSONObject>>(emptyList())
     var tasksLoaded by mutableStateOf(false)
+    var tasksNeedRefresh by mutableStateOf(false)
     var taskSyncFailed by mutableStateOf(false)
     var taskFilter by mutableStateOf(MobileTaskFilter.All)
     var markedTaskIds by mutableStateOf<Set<String>>(emptySet())
@@ -167,6 +168,5 @@ class MobileUiState {
     var sendFeedback by mutableStateOf("")
     var canCheckInputReceipt by mutableStateOf(false)
     var attachmentCount by mutableStateOf(0)
-    var hasUnplacedInput by mutableStateOf(false)
     var hasOrphanDownloads by mutableStateOf(false)
 }

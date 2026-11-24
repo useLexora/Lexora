@@ -44,7 +44,7 @@ fun WebMessageTimeline(
     onLoadTranscript: (String, Boolean) -> Unit = { _, _ -> },
     resultRunId: String? = null,
     onReadResult: (String) -> Unit = {},
-    avatarContext: ReaderAvatarContext? = null,
+    avatarContext: ReaderAvatars? = null,
     anchorMessageId: String? = null,
     anchorRequestId: String? = null,
     hasLaterMessages: Boolean = false,
@@ -131,6 +131,18 @@ class ReaderView(context: Context) : FrameLayout(context) {
     private var latest: () -> Unit = {}
     @Volatile private var avatars: ReaderAvatars? = null
     private var avatarAuthors = emptySet<String>()
+    @Volatile private var avatarUrls = emptySet<String>()
+    private var avatarSources = emptyMap<String, String>()
+    private var buddyNames = emptyMap<String, String>()
+
+    private fun updateAvatarSources() {
+        val next = if (avatars?.restoring == true) avatarAuthors.associateWith { "pending" }
+            else avatars?.sources.orEmpty().filterKeys { it in avatarAuthors }
+        val names = avatars?.names.orEmpty().filterKeys { it in avatarAuthors }
+        if (next == avatarSources && names == buddyNames) return
+        avatarSources = next; avatarUrls = next.values.toSet(); buddyNames = names
+        schedulePublish()
+    }
     @Volatile private var artifacts: ReaderArtifacts? = null
     private var sentOutputs: JSONObject? = null
     private var toolImages: ReaderToolImages? = null
@@ -203,7 +215,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
     }
 
     private fun localAsset(uri: Uri): WebResourceResponse {
-        avatars?.asset(uri)?.let { return it }
+        if (uri.toString() in avatarUrls) avatars?.asset(uri)?.let { return it }
         artifacts?.asset(uri)?.let { return it }
         val path = uri.path.orEmpty()
         val valid = uri.scheme == "https" && uri.host == "appassets.androidplatform.net" && uri.port == -1 &&
@@ -229,7 +241,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
         onLoadTranscript: (String, Boolean) -> Unit = { _, _ -> },
         resultRunId: String? = null,
         onReadResult: (String) -> Unit = {},
-        avatarContext: ReaderAvatarContext? = null,
+        avatarContext: ReaderAvatars? = null,
         anchorMessageId: String? = null,
         anchorRequestId: String? = null,
         hasLaterMessages: Boolean = false,
@@ -246,14 +258,17 @@ class ReaderView(context: Context) : FrameLayout(context) {
     ) {
         val skin = BuiltinSkins.get(context, skinId)
         val appearanceRevision = "${skin.id}@${skin.version}"
-        if (avatarContext != null) {
-            val created = avatars == null
-            if (created) avatars = ReaderAvatars(context, avatarContext.schemas) { schedulePublish() }
-            if (created || this.messages !== messages || this.runs !== runs) avatarAuthors =
-                (messages.mapNotNull { it.optJSONObject("author")?.optString("id")?.takeIf(String::isNotBlank) } +
-                    runs.mapNotNull { it.optString("buddyId").takeIf(String::isNotBlank) }).toSet()
-            avatars?.update(avatarContext.partition, topic, avatarContext.client, avatarAuthors)
-        } else if (avatars != null) { avatars?.close(); avatars = null; schedulePublish() }
+        val differentStore = avatars !== avatarContext
+        if (differentStore) { avatars?.remove(this); avatars = avatarContext }
+        if (differentStore || this.topic != topic || this.messages !== messages || this.runs !== runs || this.turn.enabled != turn.enabled || this.hasLaterMessages != hasLaterMessages) {
+            avatarAuthors = (messages.mapNotNull { it.optJSONObject("author")?.opt("id") as? String } +
+                runs.mapNotNull { it.opt("buddyId") as? String }).toSet()
+            val titles = if (turn.enabled || hasLaterMessages) emptySet() else runs.mapNotNull { run ->
+                (run.opt("buddyId") as? String)?.takeIf { run.optString("status") in setOf("queued", "running") && run.optString("executionKind") in setOf("root", "actor_child") }
+            }.toSet()
+            avatars?.observe(this, avatarAuthors, titles, ::updateAvatarSources)
+            updateAvatarSources()
+        }
         if (this.messages !== messages || this.turn.groups !== turn.groups || this.turn.enabled != turn.enabled)
             turnRunIds = if (turn.enabled) buildSet {
                 for (message in messages) (message.opt("runId") as? String)?.let(::add)
@@ -308,7 +323,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
     private fun publish(bodyPage: JSONObject? = null) {
         if (!ready || disposed) return
         val snapshot = ReaderSnapshot(messages, topic, details, runs, transcripts, dark, fontScale, language,
-            resultRunId?.takeIf { hasWindowFocus() && isShown }, avatars?.sources ?: emptyMap(), anchorMessageId, anchorRequestId, hasLaterMessages, artifacts?.imageEpoch, turn, steps.wire, appearanceRevision)
+            resultRunId?.takeIf { hasWindowFocus() && isShown }, avatarSources, anchorMessageId, anchorRequestId, hasLaterMessages, artifacts?.imageEpoch, turn, steps.wire, appearanceRevision, buddyNames = buddyNames)
         val update = projection.encode(snapshot, { (appearanceSkin ?: BuiltinSkins.current(context)).variant(dark).palette }, { MobileTheme.typography(context) }) {
             artifacts?.photoState(it) ?: ReaderPhotoState("unavailable")
         }
@@ -485,7 +500,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
 
     fun dispose() {
         disposed = true; ready = false; stepReads.reset(); steps.close()
-        avatars?.close(); avatars = null
+        avatars?.remove(this); avatars = null; avatarUrls = emptySet()
         toolImages?.close(); toolImages = null
         artifacts?.close(); artifacts = null
         handler.removeCallbacks(flush); handler.removeCallbacks(loadTimeout); port?.close(); port = null

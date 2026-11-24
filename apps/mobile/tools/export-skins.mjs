@@ -16,7 +16,21 @@ export function loadSkinCompiler() {
     const { runnerImport } = await import(require.resolve('vite'))
     const { z } = require('zod')
     const { module: source } = await runnerImport(fileURLToPath(new URL('./skins-source.ts', import.meta.url)), { configFile: false, root: resolve(root, 'apps/buddy') })
-    const variant = z.object({ colors: z.record(z.string(), z.string()), home: z.record(z.string(), z.unknown()).nullable() }).strict()
+    const color = z.string().regex(/^#[\da-f]{6}$/i)
+    const newTask = z.object({
+      illustration: z.string().min(1).max(192),
+      widthFraction: z.number().min(0.2).max(1),
+      corners: z.enum(['rounded', 'cut']),
+      outline: color,
+      underlay: color,
+      offset: z.number().min(0).max(4),
+    }).strict()
+    const variant = z.object({
+      connectionSignal: color.optional(),
+      colors: z.record(z.string(), z.string()),
+      home: z.record(z.string(), z.unknown()).nullable(),
+      newTask: newTask.optional(),
+    }).strict()
     const schema = z.object({
       schemaVersion: z.literal(1),
       id: z.string().max(80).regex(skinIdPattern),
@@ -30,7 +44,9 @@ export function loadSkinCompiler() {
         ...skin,
         variants: Object.fromEntries(['light', 'dark'].map(mode => [mode, {
           palette: source.resolveSkinPalette(mode, skin.variants[mode].colors),
+          ...(skin.variants[mode].connectionSignal ? { connectionSignal: skin.variants[mode].connectionSignal } : {}),
           home: skin.variants[mode].home,
+          ...(skin.variants[mode].newTask ? { newTask: skin.variants[mode].newTask } : {}),
         }])),
       }
     }
@@ -69,7 +85,9 @@ function validateAssetReferences(skin, files) {
     if (typeof path !== 'string' || !/^(?:[\w-][\w.-]*\/)*[\w-][\w.-]*$/.test(path) || !extension.test(path) || !available.has(path))
       throw new Error(`Missing or invalid skin asset in ${skin.id}: ${path}`)
   }
-  for (const { home } of Object.values(skin.variants)) {
+  for (const { home, newTask } of Object.values(skin.variants)) {
+    if (newTask)
+      validate(newTask.illustration, /\.(?:png|webp)$/i)
     for (const surface of Object.values(home?.surfaces ?? {})) {
       if (surface.image != null)
         validate(surface.image.path, /\.(?:png|jpe?g|webp)$/i)

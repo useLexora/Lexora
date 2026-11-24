@@ -256,11 +256,12 @@ object MobileUiTestDriver {
         openTaskSettings(); click("审批记录")
     }
 
-    fun openDrafts() {
+    fun openUnassignedNewTask() {
         openWorkbench()
-        clickTag("home-all-tasks")
-        clickTag("recover-unsent-input")
-        waitUntil { exists("手机草稿") }
+        clickTag("space-filter")
+        click("未分配空间")
+        clickTag("new-task")
+        waitUntil { existsTag("task-information") }
     }
 
     fun openExecution() { if (!existsTag("conversation-settings")) click("任务设置"); click("执行方式") }

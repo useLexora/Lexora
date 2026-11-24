@@ -6,7 +6,6 @@
     <string name="mobile_partner_model_explicit">Task model setting</string>
     <string name="mobile_partner_model_snapshot">Model snapshot from joining this task</string>
     <string name="mobile_pairing_close_hint">Closing only dismisses this page; saved connections are kept.</string>
-    <string name="recovery_pending_attachment">%1$s · %2$s</string>
     <string name="command_history_empty">No operation records on this connection.</string>
     <string name="command_no_record_hint">No receipt was found. This does not prove the operation never ran. Check the original receipt or task; nothing is resent automatically.</string>
     <string name="command_record_identifier">Original operation: %1$s</string>
@@ -44,8 +43,6 @@
     <string name="mobile_fullscreen_editor">Full screen input</string>
     <string name="mobile_permissions_unavailable">Permissions cannot be changed now. Restore the connection and wait for any pending operation to finish.</string>
     <string name="phone_copies">Phone copies</string>
-    <string name="phone_drafts_hint">Inputs kept on this phone. Accepted queued input and operation receipts are kept separately; unconfirmed operations are not resent automatically.</string>
-    <string name="phone_drafts_empty">No drafts saved on this phone</string>
     <string name="preview_empty_text">This text file is empty.</string>
     <string name="mobile_archived_tasks">Archived</string>
     <string name="mobile_filter_by_space">Filter by space: %1$s</string>
@@ -85,7 +82,6 @@
     <string name="mobile_view_original_input">View saved input</string>
     <string name="mobile_source_changed_input">The original source is no longer available. Review your saved input and choose a valid source; do not resend this operation.</string>
     <string name="mobile_browse_task_files">Browse task files</string>
-    <plurals name="draft_attachment_count"><item quantity="one">%1$d attachment</item><item quantity="other">%1$d attachments</item></plurals>
     <string name="mobile_phone_settings">Phone settings</string>
     <string name="label_fast_priority_processing">Fast priority processing</string>
     <string name="label_fast_off">Fast off</string>
@@ -93,7 +89,6 @@
     <string name="label_theme">Theme</string>
     <string name="label_ask_for_approval">Ask for approval</string>
     <string name="label_start_with_a_task">Start with a task</string>
-    <string name="label_continue_from_here">Continue from here</string>
     <string name="label_task_files">Task files</string>
     <string name="label_tasks_are_temporarily_unavailable">Tasks are temporarily unavailable</string>
     <string name="label_task_marks_could_not_sync_please_retry">Task marks could not sync. Please retry.</string>
@@ -443,7 +438,9 @@
     <string name="send_check_original">The result is unknown. Check the original task first.</string>
     <string name="error_command_result_unknown">Waiting for confirmation from the computer.</string>
     <string name="error_data_generation_changed">Service data has changed. Your input is retained; pair again.</string>
-    <string name="mobile_reconnecting_cached_tasks">Reconnecting · Showing previously synced tasks</string>
+    <string name="service_reconnecting">Reconnecting</string>
+    <string name="service_offline">Offline</string>
+    <string name="service_restored">Connection restored</string>
     <string name="mobile_task_update_failed">Task update failed</string>
     <string name="mobile_previously_synced_tasks">Previously synced tasks</string>
     <string name="mobile_connect_to_view_tasks">Connect to view tasks</string>
@@ -513,15 +510,6 @@
     <string name="mobile_paired_service">Paired service</string>
     <string name="mobile_photo_jpg">Photo-%1$s.jpg</string>
     <string name="mobile_language_chinese" translatable="false">简体中文</string>
-    <string name="mobile_phone_drafts">Phone drafts</string>
-    <string name="mobile_draft">Draft</string>
-    <string name="mobile_previous_connection">Previous connection</string>
-    <string name="mobile_previous_draft">Previous draft</string>
-    <string name="mobile_this_draft_belongs_to_a_previous_service_connection_you">\n\nThis draft belongs to a previous service connection. You can copy its text to a new task; select attachments again.</string>
-    <string name="mobile_continue_editing">Continue editing</string>
-    <string name="mobile_view_content">View content</string>
-    <string name="mobile_copy_text">Copy text</string>
-    <string name="mobile_new_draft_created">New draft created</string>
     <string name="mobile_attachments_only_draft">Attachments-only draft</string>
     <string name="mobile_phone_files_256_mib">Phone files · %1$s / 256 MiB</string>
     <string name="mobile_no_downloaded_files_or_upload_copies_inputs_and_send">No local files to manage.</string>
@@ -593,10 +581,8 @@
     <string name="mobile_the_service_received_this_operation_open_the_task_to">The service received this operation. Open the task to check its progress.</string>
     <string name="mobile_this_operation_was_not_executed_your_input_is_retained">This operation was not executed. Your input is retained. Check the current task before retrying.</string>
     <string name="mobile_the_service_has_not_found_this_operation_retrying_checks">The service has not found this operation. Retrying checks the original operation without creating a duplicate task.</string>
-    <string name="mobile_the_result_is_still_unknown_check_again_later_no">The result is still unknown. Check again later; no need to resend.</string>
     <string name="mobile_reload_approval">Reload approval</string>
     <string name="mobile_send_task">Send task</string>
-    <string name="mobile_edit_previous_input">Edit previous input</string>
     <string name="mobile_stop_run">Stop run</string>
     <string name="mobile_add_to_send_queue">Add to send queue</string>
     <string name="mobile_remove_queued_input">Remove queued input</string>
@@ -616,7 +602,6 @@
     <string name="mobile_not_executed">Not executed</string>
     <string name="mobile_waiting_to_send">Waiting to send</string>
     <string name="mobile_no_record_found">No record found</string>
-    <string name="mobile_result_unconfirmed">Result unconfirmed</string>
     <string name="mobile_demo_model">Demo model</string>
     <string name="mobile_the_service_updated_this_task_s_execution_mode">The service updated this task\'s execution mode</string>
     <string name="mobile_pairing_incomplete_scan_the_service_s_pairing_qr_code">Pairing incomplete. Scan the service\'s pairing QR code.</string>

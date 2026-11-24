@@ -216,6 +216,69 @@ it('keeps user editing separate from failed-input recovery and never offers an e
   }
 })
 
+it('uses the live buddy only on a current public legacy run header without replies', async () => {
+  const root = mountReader()
+  bridge.turnWindow.value = false
+  bridge.entries.value = [{ id: 'user', continuation: false, messages: [message('user', 'Go', 'user')] }]
+  const actor = { ...run, buddyId: 'npc-reviewer', executionKind: 'actor_child' as const }
+  bridge.buddyNames.value = new Map([[actor.buddyId, 'Reviewer']])
+  bridge.selectedBranchId.value = actor.branchId
+  bridge.runs.value = [actor]
+  const name = () => root.querySelector('.reader-turn .author-name')?.textContent
+  const photo = () => root.querySelector('.reader-turn .message-avatar img')?.getAttribute('src')
+  await nextTick()
+  expect(name()).toBe('Reviewer')
+  const liveAvatar = photo()
+  expect(liveAvatar).toBeTruthy()
+  bridge.runs.value = [{ ...actor, executionKind: 'root', status: 'queued' }]
+  bridge.buddyNames.value = new Map([[actor.buddyId, 'Renamed']])
+  await nextTick()
+  expect(name()).toBe('Renamed')
+  bridge.hasLaterMessages.value = true
+  await nextTick()
+  expect(name()).toBe('助手')
+  const neutralAvatar = photo()
+  expect(neutralAvatar).toBeTruthy()
+  expect(neutralAvatar).not.toBe(liveAvatar)
+  bridge.hasLaterMessages.value = false
+  bridge.language.value = 'en'
+  bridge.runs.value = [{ ...actor, executionKind: undefined }]
+  await nextTick()
+  expect([name(), photo()]).toEqual(['Assistant', liveAvatar])
+  for (const unproven of [{ ...actor, status: 'completed' as const }, { ...actor, branchId: 'other' }]) {
+    bridge.runs.value = [unproven]
+    await nextTick()
+    expect([name(), photo()]).toEqual(['Assistant', neutralAvatar])
+  }
+})
+
+it('keeps same-run message snapshots authoritative and never borrows a directory or previous author for a missing snapshot', async () => {
+  const root = mountReader()
+  bridge.turnWindow.value = false
+  bridge.runs.value = [{ ...run, buddyId: 'npc-reviewer', executionKind: 'root' }]
+  bridge.buddyNames.value = new Map([['npc-reviewer', 'Current reviewer'], ['npc-explorer', 'Current explorer']])
+  bridge.transcripts.value = { [run.id]: { loaded: true, events: [
+    { runId: run.id, createdAt: run.startedAt, sequence: 1, type: 'message.completed', payload: { messageId: 'final', phase: 'final_answer', content: { text: 'Done' } } },
+  ] } }
+  const unknown = { ...message('note', 'Progress', 'assistant'), author: '助手', showIdentity: true }
+  const saved = { ...message('final', 'Done', 'assistant'), authorId: 'npc-explorer', author: 'Explorer then', showIdentity: true }
+  const row = (reply: ReaderMessage) => ({ id: reply.id, continuation: false, messages: [reply] })
+  const name = () => root.querySelector('.reader-turn .author-name')?.textContent
+  const photo = () => root.querySelector('.reader-turn .message-avatar img')?.getAttribute('src')
+  bridge.entries.value = [row(unknown), row(saved)]
+  await nextTick()
+  expect(name()).toBe('Explorer then')
+  const savedAvatar = photo()
+  bridge.entries.value = [row({ ...saved, runId: 'previous' }), row(unknown)]
+  await nextTick()
+  expect(name()).toBe('助手')
+  expect(photo()).not.toBe(savedAvatar)
+  bridge.turnWindow.value = true
+  await nextTick()
+  expect(root.querySelector('[data-message-id="note"] .author-name')?.textContent).toBe('助手')
+  expect(root.querySelector('[data-message-id="final"] .author-name')?.textContent).toBe('Explorer then')
+})
+
 it('keeps the old transcript mixed narration selectable and its distinct result footer usable', async () => {
   const root = mountReader()
   bridge.turnWindow.value = false

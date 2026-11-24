@@ -8,10 +8,28 @@
   },
   "variants": {
     "light": {
+      "connectionSignal": "#73568C",
+      "newTask": {
+        "illustration": "images/new-task-light.webp",
+        "widthFraction": 0.41,
+        "corners": "rounded",
+        "outline": "#B8A0CF",
+        "underlay": "#E2DBEB",
+        "offset": 2
+      },
       "colors": {},
       "home": null
     },
     "dark": {
+      "connectionSignal": "#DDC0F4",
+      "newTask": {
+        "illustration": "images/new-task-dark.webp",
+        "widthFraction": 0.41,
+        "corners": "rounded",
+        "outline": "#A68FBA",
+        "underlay": "#4D415E",
+        "offset": 2
+      },
       "colors": {},
       "home": null
     }
