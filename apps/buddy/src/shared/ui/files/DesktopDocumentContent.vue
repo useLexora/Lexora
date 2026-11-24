@@ -4,19 +4,73 @@ import type { FileDocumentMode } from './fileDocumentPresentation'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import type { MarkdownImageResolver } from '@/shared/ui/markdown/markdownImage'
 import type { PrepareResourceQuote } from '@/shared/ui/selection/useResourceSelectionQuote'
-import { computed, useTemplateRef } from 'vue'
+import { computed, onScopeDispose, useTemplateRef, watch } from 'vue'
 import DesktopMarkdownContent from '@/shared/ui/markdown/DesktopMarkdownContent.vue'
 import DesktopMediaPreview from '@/shared/ui/media/DesktopMediaPreview.vue'
 import { readResourceTextSelection } from '@/shared/ui/selection/resourceQuoteSelection'
 import { useQuoteHighlight } from '@/shared/ui/selection/useQuoteHighlight'
 import DesktopMonacoFile from './DesktopMonacoFile.vue'
+import { documentFindRanges } from './documentFind'
+import { createDocumentFindHighlighter } from './documentFindHighlight'
 
-const props = withDefaults(defineProps<{ mode: FileDocumentMode | null, name: string, text?: string | null, imageUrl?: string | null, mediaKind?: 'audio' | 'video' | null, mediaUrl?: string | null, resolveImage?: MarkdownImageResolver, visible?: boolean, language: BuddyLocale, writeClipboardText: (text: string) => Promise<void>, wrap?: boolean, sourceReady?: boolean, revealSource?: (quote: BuddyTextQuote) => boolean, quoteSource?: BuddyTextQuote['source'], prepareQuote?: PrepareResourceQuote }>(), { wrap: true, visible: true })
-defineEmits<{ previewError: [] }>()
+const props = withDefaults(defineProps<{ mode: FileDocumentMode | null, name: string, text?: string | null, imageUrl?: string | null, mediaKind?: 'audio' | 'video' | null, mediaUrl?: string | null, resolveImage?: MarkdownImageResolver, visible?: boolean, language: BuddyLocale, writeClipboardText: (text: string) => Promise<void>, wrap?: boolean, sourceReady?: boolean, revealSource?: (quote: BuddyTextQuote) => boolean, quoteSource?: BuddyTextQuote['source'], prepareQuote?: PrepareResourceQuote, findOpen?: boolean, findQuery?: string, findIndex?: number, findPaused?: boolean }>(), { wrap: true, visible: true, findOpen: false, findQuery: '', findIndex: 0, findPaused: false })
+const emit = defineEmits<{ previewError: [], findResult: [result: { count: number, capped: boolean }] }>()
 defineSlots<{ source?: () => unknown, preview?: () => unknown }>()
 const markdown = useTemplateRef<HTMLElement>('markdown')
 const monaco = useTemplateRef<InstanceType<typeof DesktopMonacoFile>>('monaco')
 const highlight = useQuoteHighlight('buddy-resource-quote')
+const findHighlighter = createDocumentFindHighlighter()
+let findFrame = 0
+let findResultKey = ''
+function publishFind(count: number, capped: boolean) {
+  const key = `${count}:${capped}`
+  if (key === findResultKey)
+    return
+  findResultKey = key
+  emit('findResult', { count, capped })
+}
+function applyPreviewFind() {
+  if (props.mode !== 'preview' || !props.findOpen) {
+    findHighlighter.clear()
+    findResultKey = ''
+    return
+  }
+  if (props.findPaused)
+    return
+  const root = markdown.value
+  if (!root) {
+    publishFind(0, false)
+    return
+  }
+  const { ranges, capped } = documentFindRanges(root, props.findQuery)
+  findHighlighter.show(ranges, props.findIndex, root)
+  publishFind(ranges.length, capped)
+}
+function schedulePreviewFind() {
+  if (typeof requestAnimationFrame !== 'function') {
+    applyPreviewFind()
+    return
+  }
+  cancelAnimationFrame(findFrame)
+  findFrame = requestAnimationFrame(() => applyPreviewFind())
+}
+watch([markdown, () => props.findOpen, () => props.findQuery, () => props.findIndex, () => props.findPaused, () => props.mode, () => props.text], () => {
+  schedulePreviewFind()
+}, { flush: 'post' })
+watch([markdown, () => props.findOpen, () => props.mode], ([element, open, mode], _, onCleanup) => {
+  if (!element || !open || mode !== 'preview')
+    return
+  const observer = new MutationObserver(() => schedulePreviewFind())
+  observer.observe(element, { subtree: true, childList: true, characterData: true })
+  onCleanup(() => {
+    observer.disconnect()
+    cancelAnimationFrame(findFrame)
+  })
+})
+onScopeDispose(() => {
+  cancelAnimationFrame(findFrame)
+  findHighlighter.dispose()
+})
 const ready = computed(() => props.mode === 'preview' ? !!markdown.value : props.sourceReady ?? monaco.value?.ready ?? false)
 function reveal(quote: BuddyTextQuote) {
   if (props.mode === 'preview')
@@ -50,7 +104,7 @@ function quoteText(event: MouseEvent) {
     </div>
     <template v-else-if="(mode === 'source' || mode === 'edit') && text != null">
       <slot name="source">
-        <DesktopMonacoFile ref="monaco" :language="language" :text="text" :path="name" :wrap="wrap" :quote-source="quoteSource" :prepare-quote="prepareQuote" />
+        <DesktopMonacoFile ref="monaco" :language="language" :text="text" :path="name" :wrap="wrap" :quote-source="quoteSource" :prepare-quote="prepareQuote" :find-open="findOpen && (mode === 'source' || mode === 'edit')" :find-query="findQuery" :find-index="findIndex" @find-result="emit('findResult', $event)" />
       </slot>
     </template>
     <div v-else class="desktop-document-content__empty grid flex-1 min-h-0 p-[24px] [overflow-wrap:anywhere] text-muted text-[13px]">
