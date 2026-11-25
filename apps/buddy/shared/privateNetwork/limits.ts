@@ -19,6 +19,9 @@ export const PRIVATE_NETWORK_LIMITS = Object.freeze({
   uploadsPerDevice: 4,
   uploadChunkBytes: 1_048_576,
   uploadLifetimeMs: 24 * 60 * 60 * 1000,
+  resourceFileBytes: 16 * 1024 ** 3,
+  resourceDocumentBytes: 256 * 1024 ** 2,
+  resourceReservedBytes: 32 * 1024 ** 3,
   resourceStreams: 8,
   resourceLifetimeMs: 30 * 60 * 1000,
 })

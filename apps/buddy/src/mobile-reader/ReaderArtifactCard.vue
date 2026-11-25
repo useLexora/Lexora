@@ -13,11 +13,10 @@ const card = useTemplateRef('card')
 const imageFailed = shallowRef(false)
 const visible = shallowRef(false)
 useIntersectionObserver(card, entries => visible.value = entries.some(entry => entry.isIntersecting))
-watch([visible, () => props.item], ([inView, item]) => {
-  if (item.thumbnail)
-    imageFailed.value = false
-  else if (!turnWindow?.value && inView && item.image && item.available)
-    props.send({ action: 'artifact-thumbnail', runId: props.runId, resourceId: item.id })
+watch(() => props.item.thumbnail, () => imageFailed.value = false)
+watch([visible, () => props.item.thumbnail, () => props.item.image, () => props.item.available], ([inView, thumbnail, image, available]) => {
+  if (!turnWindow?.value && inView && !thumbnail && image && available)
+    props.send({ action: 'artifact-thumbnail', runId: props.runId, resourceId: props.item.id })
 })
 </script>
 
@@ -28,6 +27,7 @@ watch([visible, () => props.item], ([inView, item]) => {
         <img v-if="item.thumbnail && !imageFailed" :src="item.thumbnail" alt="" loading="lazy" @error="imageFailed = true">
         <Image20Regular v-else-if="item.image" class="artifact-icon" />
         <Document20Regular v-else class="artifact-icon" />
+        <span v-if="item.downloadLevel !== undefined" class="artifact-water" aria-hidden="true" :style="{ height: `${item.downloadLevel * 100}%` }" />
       </span>
       <span class="artifact-info">
         <span class="artifact-name">{{ item.name }}</span>
@@ -63,6 +63,7 @@ watch([visible, () => props.item], ([inView, item]) => {
   text-align: left;
 }
 .artifact-preview {
+  position: relative;
   display: grid;
   place-items: center;
   width: 40px;
@@ -79,7 +80,40 @@ watch([visible, () => props.item], ([inView, item]) => {
     object-fit: cover;
   }
 }
+.artifact-water {
+  position: absolute;
+  inset: auto 0 0;
+  pointer-events: none;
+  overflow: hidden;
+  background: var(--reader-accent);
+  opacity: .36;
+  transition: height 180ms ease-out;
+
+  &::before {
+    content: '';
+    position: absolute;
+    inset: -2px -20% auto;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--reader-panel);
+    opacity: .6;
+    animation: reader-ripple 2.8s ease-in-out infinite alternate;
+  }
+}
+@keyframes reader-ripple {
+  from { transform: translateX(-12%) rotate(-2deg); }
+  to { transform: translateX(12%) rotate(2deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .artifact-water {
+    transition: none;
+
+    &::before { animation: none; }
+  }
+}
 .artifact-icon {
+  position: relative;
+  z-index: 1;
   width: 26px;
   height: 26px;
 }

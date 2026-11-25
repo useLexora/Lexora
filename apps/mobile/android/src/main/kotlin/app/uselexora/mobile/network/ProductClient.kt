@@ -113,14 +113,29 @@ class ProductClient(private val transport: PinnedTransport, private val credenti
     fun exchange(method: String, params: JSONObject): JSONObject = exchangeValue(method, params) as? JSONObject ?: throw ProtocolFailure("PROTOCOL_INCOMPATIBLE")
     private fun exchangeValue(method: String, params: JSONObject): Any = try { exchangeAsync(method, params).get(30, TimeUnit.SECONDS) }
         catch (error: java.util.concurrent.ExecutionException) { throw error.cause ?: error }
-    fun exchangeAsync(method: String, params: JSONObject): CompletableFuture<Any> {
+    internal fun prepareDownload(params: JSONObject, check: () -> Unit): JSONObject {
+        val method = "resources.prepare"
+        check(); validateRequest(method, params)
+        val future = exchangeAsync(method, params, 600)
+        try {
+            while (true) {
+                check()
+                val result = try { future.get(250, TimeUnit.MILLISECONDS) } catch (_: TimeoutException) { continue }
+                if (result !is JSONObject || !schemas.response(method, result)) throw ProtocolFailure("PROTOCOL_INCOMPATIBLE")
+                return result
+            }
+        } catch (e: java.util.concurrent.ExecutionException) { throw e.cause ?: e }
+        finally { future.cancel(false) }
+    }
+    fun exchangeAsync(method: String, params: JSONObject): CompletableFuture<Any> = exchangeAsync(method, params, 30)
+    private fun exchangeAsync(method: String, params: JSONObject, timeoutSeconds: Long): CompletableFuture<Any> {
         if (pending.size >= 64) throw ProtocolFailure("TOO_MANY_REQUESTS")
         val id = UUID.randomUUID().toString()
         val response = CompletableFuture<JSONObject>()
         pending[id] = response
         response.whenComplete { _, _ -> pending.remove(id) }
         try {
-            val timeout = deadlines.schedule({ response.completeExceptionally(TimeoutException("Product request timed out")) }, 30, TimeUnit.SECONDS)
+            val timeout = deadlines.schedule({ response.completeExceptionally(TimeoutException("Product request timed out")) }, timeoutSeconds, TimeUnit.SECONDS)
             response.whenComplete { _, _ -> timeout.cancel(false) }
             val frame = JSONObject().put("jsonrpc", "2.0").put("id", id).put("method", method).put("params", params).toString()
             if (frame.toByteArray().size > 1_048_576) throw ProtocolFailure("FRAME_TOO_LARGE")
@@ -129,7 +144,7 @@ class ProductClient(private val transport: PinnedTransport, private val credenti
         return response.thenApply { received ->
             received.optJSONObject("error")?.let { error -> throw ProtocolFailure(error.optJSONObject("data")?.optString("code") ?: error.optString("message", "REQUEST_FAILED")) }
             if (received.has("result")) received.get("result") else throw ProtocolFailure("PROTOCOL_INCOMPATIBLE")
-        }
+        }.also { future -> future.whenComplete { _, _ -> if (future.isCancelled) response.cancel(false) } }
     }
     fun close() { ++connection; socket?.close(1000, null); socket = null; identity = null; fail(ProtocolFailure("CONNECTION_CLOSED")); transport.close(); deadlines.shutdownNow() }
     private fun fail(error: Throwable) { socketOpen = false; pending.values.forEach { it.completeExceptionally(error) }; pending.clear(); runCatching { onDisconnected() } }

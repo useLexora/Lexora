@@ -27,7 +27,7 @@ data class TaskFileTransferState(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun TaskFilesPanel(files: MobileTaskFiles, onAction: (MobileAction, JSONObject?) -> Unit, close: () -> Unit) {
-    ModalBottomSheet(onDismissRequest = close, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    ModalBottomSheet(onDismissRequest = close, containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         LazyColumn(Modifier.fillMaxWidth().testTag("task-files"), contentPadding = PaddingValues(16.dp, 0.dp, 16.dp, 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             item {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

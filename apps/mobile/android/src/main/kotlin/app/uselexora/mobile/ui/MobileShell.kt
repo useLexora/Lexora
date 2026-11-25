@@ -60,12 +60,14 @@ fun MobileShell(
     composer: EditText,
     onAction: (MobileAction, JSONObject?) -> Unit,
     avatarContext: ReaderAvatars? = null,
+    onDownloadAction: ((DownloadUiAction, String) -> Unit)? = null,
     timeline: @Composable (Modifier) -> Unit,
 ) {
     var sheet by remember { mutableStateOf<MobileSheet?>(null) }
     val deviceId = state.devices.firstOrNull { it.selected }?.id.orEmpty()
     var appearanceSettings by rememberSaveable(deviceId) { mutableStateOf(false) }
     var taskSettings by rememberSaveable(deviceId, state.screen, state.topic) { mutableStateOf(false) }
+    var downloadsOpen by rememberSaveable(deviceId, taskSettings, appearanceSettings) { mutableStateOf(false) }
     var fullscreenInput by rememberSaveable(deviceId, state.screen, state.topic) { mutableStateOf(false) }
     val savedPages = rememberSaveableStateHolder()
     val conversation = state.screen == MobileScreen.Conversation
@@ -175,10 +177,18 @@ fun MobileShell(
         }
         if (state.screen == MobileScreen.Workbench && !appearanceSettings && sheet == null)
             SnackbarHost(reconnectMessages, Modifier.align(Alignment.BottomCenter).padding(12.dp))
-        if (taskSettings && !state.newTaskOpening) ConversationSettings(state, onAction) { taskSettings = false }
-        if (appearanceSettings) AppearanceSettings { appearanceSettings = false }
+        if (downloadsOpen && (taskSettings || appearanceSettings)) {
+            DownloadsPage(state.downloadRecords, onDownloadAction) { downloadsOpen = false }
+        } else if (taskSettings && !state.newTaskOpening) {
+            ConversationSettings(state, onAction, openDownloads = { downloadsOpen = true }) { taskSettings = false }
+        } else if (appearanceSettings) {
+            AppearanceSettings(openDownloads = { downloadsOpen = true }) { appearanceSettings = false }
+        }
     }
     state.taskFiles?.let { TaskFilesPanel(it, onAction) { state.taskFiles = null } }
+    state.resourceMenu?.let { menu ->
+        ResourceActionsSheet(menu, state.downloadRecords, onDownloadAction) { state.resourceMenu = null }
+    }
     if (state.pairingPhase != null) PairingStatusPanel(state, act)
     if (state.membersOpen) TaskMembersPanel(state, avatarContext, onAction)
     if (state.executionPickerOpen) ConversationPermissionPicker(state, onAction)

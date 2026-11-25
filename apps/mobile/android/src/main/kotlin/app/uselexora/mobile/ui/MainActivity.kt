@@ -88,6 +88,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var connection: MobileConnection
     private lateinit var transfers: TransferStore
     private lateinit var files: MobileFiles
+    private lateinit var downloadActions: DownloadActions
     private val taskFileCopies by lazy { TaskFileCopies(this, transfers, store) }
     private val downloadingResources = mutableSetOf<String>()
     private lateinit var operations: TaskOperations
@@ -129,7 +130,7 @@ class MainActivity : ComponentActivity() {
         set(value) { conversationTarget = ConversationTarget.fromTopic(value) }
     private var partition: String
         get() = input.scope.partition
-        set(value) { input.select(value, input.scope.target) }
+        set(value) { input.select(value, input.scope.target); if (::downloadActions.isInitialized) downloadActions.bind(value) }
     private var scope: String
         get() = input.scope.target
         set(value) { input.select(input.scope.partition, value) }
@@ -177,6 +178,7 @@ class MainActivity : ComponentActivity() {
         transfers = TransferStore(this)
         input = MobileComposerSession(store, ComposerMemory(store, transfers), disk, streamHandler, ::onUi)
         files = MobileFiles(this, transfers, store, connection)
+        downloadActions = DownloadActions(this, ui, connection, taskFileCopies, app.uselexora.mobile.storage.SavedDownloadFiles(this, transfers, store), ::operationOwner, ::showNotice, state)
         pendingFileTarget = state?.getString("fileTarget")?.let { JSONObject(it) }
         pendingCapturePath = state?.getString("capturePath")
         pendingSave = state?.getString("pendingSave")?.let { JSONObject(it) }
@@ -315,14 +317,21 @@ class MainActivity : ComponentActivity() {
                 val connectedClient = if (ui.connected) client else null
                 val readerClient = connectedClient.takeUnless { ui.historyDetached }
                 ui.incomingMaterial?.let { IncomingMaterialPanel(it, ui, ::chooseMaterialDestination, ::dismissMaterial) }
-                MobileShell(ui, composer, ::handleAction, avatars) { modifier ->
+                MobileShell(ui, composer, ::handleAction, avatars, onDownloadAction = downloadActions::select) { modifier ->
                     WebMessageTimeline(ui.messages, ui.readerTopic, modifier, details, if (demo) ui.runs else ui.readerRuns,
                         anchorMessageId = ui.anchorMessageId, anchorRequestId = ui.anchorRequestId,
                         hasLaterMessages = ui.historyPinned || ui.historyDetached, onLatest = ::returnLatest,
                         avatarContext = avatars,
+                        artifactDownloadLevels = androidx.compose.runtime.remember(ui.downloadRecords) {
+                            ui.downloadRecords.orEmpty().mapNotNull { record ->
+                                val size = record.totalBytes ?: return@mapNotNull null
+                                if (record.state != app.uselexora.mobile.network.DownloadState.RUNNING || size <= 0) return@mapNotNull null
+                                ReaderArtifactKey(record.partition, record.resourceId, record.revision) to (record.bytes.toDouble() / size).coerceIn(0.0, 1.0)
+                            }.toMap()
+                        },
                         artifactContext = ui.viewBranchId?.let { branchId -> ReaderArtifactContext(partition, branchId, readerClient, schemas) { connection, resource ->
                             val owner = connection.identity?.partition ?: throw ProtocolFailure("NOT_CONNECTED")
-                            taskFileCopies.find(owner, resource) ?: files.download(connection, resource, previewOnly = true)
+                            taskFileCopies.forThumbnail(owner, resource) ?: files.download(connection, resource, previewOnly = true)
                         } }, onResourceActions = ::resourceActions,
                         branches = ui.branches, selectedBranchId = ui.viewBranchId, onBranch = ::selectBranch,
                         onMessageMenu = { message, anchor, contextual -> prepareMessageAction(message, null, anchor, contextual) },
@@ -1784,6 +1793,7 @@ class MainActivity : ComponentActivity() {
         state.putString("selectedSpaceId", ui.selectedSpaceId)
         state.putString("selectedSpaceLabel", ui.selectedSpaceLabel)
         state.putString("taskFilter", ui.taskFilter.name)
+        downloadActions.saveState(state)
         state.putString("fileTarget", pendingFileTarget?.toString())
         state.putString("capturePath", pendingCapturePath); state.putString("pendingSave", pendingSave?.toString())
         state.putString("pendingPreview", pendingPreview?.toString())
@@ -1938,14 +1948,30 @@ class MainActivity : ComponentActivity() {
                 } }.setNegativeButton(mobileText(R.string.review_close), null).show()
             return
         }
-        val record = transfers.list(owner).firstOrNull { it.optString("resourceId") == id && it.has("inputId") }
-        if (record == null) { showDraftFiles(); return }
+        val draft = store.draft(owner, targetScope) ?: return
+        inspectAttachment(draft, id, current)
+    }
+    private fun inspectAttachment(draft: LocalDraft, binding: String, current: ProductClient?) {
+        val ids = draft.value.getJSONObject("content").getJSONArray("panelResourceIds")
+        if ((0 until ids.length()).none { ids.getString(it) == binding }) return
+        val inputId = draft.value.optString("inputId")
         work {
-            if (current?.isConnected != true || current.identity?.partition != owner) throw ProtocolFailure("NOT_CONNECTED")
-            val state = current.call("uploads.get", JSONObject().put("uploadId", record.getString("uploadId")))
-            if (state.isNull("attachmentId")) throw ProtocolFailure("RESOURCE_UNAVAILABLE")
-            val resource = JSONObject(record.getJSONObject("file").toString()).put("resourceId", "attachment:${state.getString("attachmentId")}").put("revision", state.getString("contentVersion"))
-            onUi { if (owner == partition && targetScope == scope && client === current) resourceActions(resource) }
+            fun online() = current?.takeIf { it.isConnected && it.identity?.partition == draft.partition } ?: throw ProtocolFailure("NOT_CONNECTED")
+            val upload = transfers.list(draft.partition).singleOrNull {
+                inputId.isNotBlank() && it.optString("kind") == "upload" && it.optString("inputId") == inputId && it.optString("resourceId") == binding
+            }
+            val resource = if (upload != null) {
+                val record = if (upload.isNull("attachmentId") || upload.isNull("contentVersion")) files.refreshPreviewBinding(online(), upload) else upload
+                JSONObject(record.getJSONObject("file").toString()).put("resourceId", "attachment:${record.getString("attachmentId")}")
+                    .put("revision", record.getString("contentVersion")).put("bindingId", binding).put("localInputId", inputId).put("localScope", draft.scope)
+            } else {
+                val draftId = draft.value.optString("draftId").takeIf { it.isNotEmpty() } ?: throw ProtocolFailure("RESOURCE_UNAVAILABLE")
+                val old = online().callValue("composerDrafts.get", JSONObject().put("draftId", draftId)) as? JSONObject
+                old?.optJSONArray("resources")?.let { objects(it).singleOrNull { item -> item.optString("bindingId") == binding } }
+                    ?: throw ProtocolFailure("RESOURCE_UNAVAILABLE")
+            }
+            onUi { if (partition == draft.partition && scope == draft.scope && client === current &&
+                store.draft(partition, scope)?.value?.optString("inputId") == inputId) openResource(resource) }
         }
     }
     private fun removeAttachment(id: String) {
@@ -1962,51 +1988,51 @@ class MainActivity : ComponentActivity() {
         }
     }
     private fun showDraftFiles() {
-        val owner = partition
-        val targetScope = scope
-        val local = store.draft(owner, targetScope) ?: return
-        val resourceIds = local.value.getJSONObject("content").getJSONArray("panelResourceIds")
-        val ids = (0 until resourceIds.length()).map { resourceIds.getString(it) }.toSet()
+        val draft = store.draft(partition, scope) ?: return
+        val resources = draft.value.getJSONObject("content").getJSONArray("panelResourceIds")
+        val ids = (0 until resources.length()).map { resources.getString(it) }.distinct()
         if (ids.isEmpty()) { ui.notice = mobileText(R.string.mobile_no_attachments_in_the_current_input); return }
+        val current = client
         work {
-            val current = connected()
-            if (current.identity?.partition != owner) throw ProtocolFailure("DATA_GENERATION_CHANGED")
-            val items = transfers.list(owner).filter { it.optString("resourceId") in ids && it.has("inputId") }.map { transfer ->
-                val state = current.call("uploads.get", JSONObject().put("uploadId", transfer.getString("uploadId")))
-                if (state.isNull("attachmentId")) throw ProtocolFailure("RESOURCE_UNAVAILABLE")
-                JSONObject(transfer.getJSONObject("file").toString()).put("resourceId", "attachment:${state.getString("attachmentId")}").put("revision", state.getString("contentVersion"))
-            }.toMutableList()
-            local.value.optString("draftId").takeIf { it.isNotEmpty() }?.let { draftId ->
-                val old = current.callValue("composerDrafts.get", JSONObject().put("draftId", draftId)) as? JSONObject
-                old?.optJSONArray("resources")?.let { resources -> items.addAll(objects(resources).filter { it.optString("bindingId") in ids }) }
-            }
-            onUi { if (partition == owner && scope == targetScope) AlertDialog.Builder(this).setTitle(mobileText(R.string.mobile_current_input_attachments)).setItems(items.map { it.getString("name") }.toTypedArray()) { _, index -> resourceActions(items[index]) }.setNegativeButton(mobileText(R.string.review_close), null).show() }
+            val names = transfers.list(draft.partition).filter { it.optString("kind") == "upload" && ownsTransfer(it, draft) }
+                .associate { it.optString("resourceId") to it.optJSONObject("file")?.optString("name") }
+            val labels = ids.map { names[it]?.takeIf(String::isNotBlank) ?: mobileText(R.string.mobile_file_attached) }
+            onUi { if (partition == draft.partition && scope == draft.scope && client === current)
+                AlertDialog.Builder(this).setTitle(mobileText(R.string.mobile_current_input_attachments)).setItems(labels.toTypedArray()) { _, index ->
+                    if (partition == draft.partition && scope == draft.scope && client === current) inspectAttachment(draft, ids[index], current)
+                }.setNegativeButton(mobileText(R.string.review_close), null).show() }
         }
     }
     private fun openResource(resource: JSONObject) {
-        if (PreviewPolicy.kind(resource.getString("name"), resource.optString("mimeType")) != null) downloadFile(resource, R.string.preview_action)
+        val smallEnough = resource.optString("sizeBytes").toLongOrNull()?.let { it <= PreviewPolicy.MAX_FILE_BYTES } != false
+        val active = ui.downloadRecords.orEmpty().any { it.resourceId == resource.optString("resourceId") && it.revision == resource.optString("revision") &&
+            it.state !in setOf(app.uselexora.mobile.network.DownloadState.COMPLETED, app.uselexora.mobile.network.DownloadState.CANCELLED) }
+        if (!active && smallEnough && PreviewPolicy.kind(resource.getString("name"), resource.optString("mimeType")) != null) downloadFile(resource, R.string.preview_action)
         else resourceActions(resource)
     }
     private fun resourceActions(resource: JSONObject) {
-        val previewable = PreviewPolicy.kind(resource.getString("name"), resource.optString("mimeType")) != null
-        val actions = if (previewable) arrayOf(R.string.preview_action, R.string.save_to_files, R.string.share_file_title, R.string.open_other_app) else arrayOf(R.string.save_to_files, R.string.share_file_title)
-        AlertDialog.Builder(this).setTitle(resource.getString("name")).setItems(actions.map { mobileText(it) }.toTypedArray()) { _, index -> downloadFile(resource, actions[index]) }.setNegativeButton(mobileText(R.string.review_close), null).show()
+        val owner = operationOwner()
+        ui.resourceMenu = ResourceMenuUi(resource) { action ->
+            if (isCurrent(owner)) when (action) {
+                R.string.download_file, R.string.download_choose_folder -> downloadActions.download(resource, action == R.string.download_choose_folder)
+                else -> downloadFile(resource, action)
+            }
+        }
     }
     private fun downloadFile(resource: JSONObject, action: Int) {
         val owner = operationOwner()
         val resourceId = resource.getString("resourceId")
+        val saved = downloadActions.completedFor(resource)
+        if (saved != null && action != R.string.preview_action) { downloadActions.use(saved, action); return }
         val request = "${owner.partition}:$resourceId:${resource.getString("revision")}"
         if (!downloadingResources.add(request)) return
         val panel = ui.taskFiles?.takeIf { it.items.any { item -> item.optString("resourceId") == resourceId } }
         if (panel != null) ui.taskFiles = panel.copy(transfers = panel.transfers + (resourceId to (panel.transfers[resourceId] ?: TaskFileTransferState()).copy(loading = true, error = null, retryAction = action)))
-        var dismissed = false
-        val progress = if (panel == null) AlertDialog.Builder(this).setTitle(resource.getString("name"))
-            .setMessage(mobileText(R.string.file_preparing_copy)).setNegativeButton(mobileText(R.string.review_close)) { _, _ -> dismissed = true }
-            .setOnCancelListener { dismissed = true }.show() else null
+        if (panel == null) showNotice(mobileText(R.string.file_preparing_copy))
         val followup = if (selectedTask != null && composer.isEnabled) JSONObject().put("id", store.newId()).put("partition", partition).put("scope", scope) else null
         work {
             val result = runCatching {
-                taskFileCopies.find(owner.partition, resource, retain = action != R.string.preview_action) ?: run {
+                taskFileCopies.forAction(owner.partition, resource, retain = action != R.string.preview_action) ?: saved?.let(downloadActions::preview) ?: run {
                     if (!isCurrent(owner)) throw ProtocolFailure("SOURCE_CHANGED")
                     val target = owner.connection?.takeIf { it.isConnected && it.identity?.partition == owner.partition }
                         ?: throw ProtocolFailure("LOCAL_COPY_UNAVAILABLE")
@@ -2015,12 +2041,11 @@ class MainActivity : ComponentActivity() {
             }
             onUi {
                 downloadingResources.remove(request)
-                progress?.dismiss()
                 val failure = result.exceptionOrNull()?.let { MobileFailurePresentation.message(MobileOperationFailure.from(it)) }
                 val latest = ui.taskFiles
                 if (partition == owner.partition && panel != null && latest?.id == panel.id) ui.taskFiles = latest.copy(transfers = latest.transfers +
                     (resourceId to TaskFileTransferState(error = failure, localCopy = result.isSuccess, retryAction = action)))
-                if (!isCurrent(owner) || dismissed || panel != null && ui.taskFiles?.id != panel.id) return@onUi
+                if (!isCurrent(owner) || panel != null && ui.taskFiles?.id != panel.id) return@onUi
                 result.fold({ file ->
                     useFile(file, resource.getString("name"), resource.optString("mimeType").takeUnless { it.isBlank() || it == "null" } ?: "application/octet-stream", action, followup)
                 }, {
@@ -2207,6 +2232,6 @@ class MainActivity : ComponentActivity() {
     private fun dp(value: Int) = (resources.displayMetrics.density * value).toInt()
     override fun onStart() { super.onStart(); session.start(!demo) }
     override fun onStop() { input.flush(); readerBenchmark?.close(); readModel.flush(); rememberNavigation(); super.onStop(); ui.connected = false; session.stop(); avatars.bind(partition, null) }
-    override fun onDestroy() { destroyed = true; avatars.close(); input.close(); readerBenchmark?.close(); runTranscripts.close(); session.close(); streamHandler.removeCallbacksAndMessages(null); network.execute { disk.execute { store.close(); transfers.close() } }; network.shutdown(); readModel.close(); super.onDestroy() }
+    override fun onDestroy() { destroyed = true; downloadActions.close(); avatars.close(); input.close(); readerBenchmark?.close(); runTranscripts.close(); session.close(); streamHandler.removeCallbacksAndMessages(null); network.execute { disk.execute { store.close(); transfers.close() } }; network.shutdown(); readModel.close(); super.onDestroy() }
     companion object { private val disk = Executors.newSingleThreadExecutor(); const val INPUT_ID = 0x2101; const val EXECUTION_ID = 0x2102; const val SPACE_ID = 0x2103; const val SEND_ID = 0x2104; const val HISTORY_ID = 0x2105; const val FILE_REQUEST = 4001; const val CAMERA_REQUEST = 4002; const val PREVIEW_REQUEST = 4005; const val SAVE_REQUEST = 4003; const val CAMERA_PERMISSION = 4004 }
 }

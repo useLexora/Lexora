@@ -57,6 +57,7 @@ fun WebMessageTimeline(
     onMessageMenu: ((JSONObject, IntRect?, Boolean) -> Unit)? = null,
     turn: ReaderTurnContext = ReaderTurnContext(),
     onOlder: (Boolean) -> Unit = {},
+    artifactDownloadLevels: Map<ReaderArtifactKey, Double> = emptyMap(),
 ) {
     val dark = LocalMobileDarkTheme.current
     val fontScale = LocalConfiguration.current.fontScale
@@ -65,7 +66,7 @@ fun WebMessageTimeline(
     AndroidView(
         factory = { ReaderView(it) }, modifier = modifier.testTag("message-list"),
         onRelease = { it.dispose() },
-        update = { it.update(messages, topic, details, runs, dark, fontScale, onMessageAction, onResource, onLoadDetail, onQuickAction, language, transcripts, onLoadTranscript, resultRunId, onReadResult, avatarContext, anchorMessageId, anchorRequestId, hasLaterMessages, onLatest, artifactContext, onResourceActions, branches, selectedBranchId, onBranch, onMessageMenu, turn, onOlder, skinId) },
+        update = { it.update(messages, topic, details, runs, dark, fontScale, onMessageAction, onResource, onLoadDetail, onQuickAction, language, transcripts, onLoadTranscript, resultRunId, onReadResult, avatarContext, anchorMessageId, anchorRequestId, hasLaterMessages, onLatest, artifactContext, onResourceActions, branches, selectedBranchId, onBranch, onMessageMenu, turn, onOlder, skinId, artifactDownloadLevels) },
     )
 }
 
@@ -145,6 +146,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
         avatarSources = next; avatarUrls = next.values.toSet(); buddyNames = names
         schedulePublish()
     }
+    private var artifactDownloadLevels = emptyMap<ReaderArtifactKey, Double>()
     @Volatile private var artifacts: ReaderArtifacts? = null
     private var sentOutputs: JSONObject? = null
     private var toolImages: ReaderToolImages? = null
@@ -258,6 +260,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
         turn: ReaderTurnContext = ReaderTurnContext(),
         onOlder: (Boolean) -> Unit = {},
         skinId: String = MobileAppearance.skinId,
+        artifactDownloadLevels: Map<ReaderArtifactKey, Double> = emptyMap(),
     ) {
         val skin = BuiltinSkins.get(context, skinId)
         val appearanceRevision = "${skin.id}@${skin.version}"
@@ -304,7 +307,9 @@ class ReaderView(context: Context) : FrameLayout(context) {
         readResult = onReadResult
         quickAction = onQuickAction
         messageAction = onMessageAction; resourceAction = onResource; detailAction = onLoadDetail
-        if (!turnChanged && this.messages === messages && this.topic == topic && this.details === details && this.runs === runs && this.dark == dark && this.appearanceRevision == appearanceRevision && this.fontScale == fontScale && this.language == language && this.transcripts === transcripts && this.resultRunId == resultRunId && this.anchorMessageId == anchorMessageId && this.anchorRequestId == anchorRequestId && this.hasLaterMessages == hasLaterMessages && this.branches === branches && this.selectedBranchId == selectedBranchId) return
+        val levelsChanged = this.artifactDownloadLevels != artifactDownloadLevels
+        this.artifactDownloadLevels = artifactDownloadLevels
+        if (!levelsChanged && !turnChanged && this.messages === messages && this.topic == topic && this.details === details && this.runs === runs && this.dark == dark && this.appearanceRevision == appearanceRevision && this.fontScale == fontScale && this.language == language && this.transcripts === transcripts && this.resultRunId == resultRunId && this.anchorMessageId == anchorMessageId && this.anchorRequestId == anchorRequestId && this.hasLaterMessages == hasLaterMessages && this.branches === branches && this.selectedBranchId == selectedBranchId) return
         this.branches = branches
         this.selectedBranchId = selectedBranchId
         this.anchorMessageId = anchorMessageId
@@ -336,7 +341,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
             update.put("branches", JSONArray(branches)).put("selectedBranchId", selectedBranchId ?: JSONObject.NULL)
             sentBranches = branches; sentSelectedBranchId = selectedBranchId
         }
-        val outputs = artifacts?.wire()
+        val outputs = artifacts?.wire(artifactDownloadLevels)
         if (update.optBoolean("reset") || outputs !== sentOutputs) { update.put("outputs", outputs ?: JSONObject()); sentOutputs = outputs }
         val imageState = toolImages?.wire()
         if (update.optBoolean("reset") || imageState !== sentToolImages) { update.put("toolImages", imageState ?: JSONArray()); sentToolImages = imageState }

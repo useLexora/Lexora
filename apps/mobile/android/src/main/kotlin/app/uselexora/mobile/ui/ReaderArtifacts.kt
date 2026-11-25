@@ -23,6 +23,8 @@ import java.util.concurrent.Executors
 
 internal fun withinThumbnailLimit(resource: JSONObject) = (resource.optString("sizeBytes").toLongOrNull() ?: 0L) in 1..20L * 1024 * 1024
 
+data class ReaderArtifactKey(val partition: String, val resourceId: String, val revision: String)
+
 class ReaderArtifactContext(val partition: String, val branchId: String, val client: ProductClient?, val schemas: ProtocolSchemas, val download: (ProductClient, JSONObject) -> File)
 
 internal class ReaderArtifacts(private val context: Context, private val changed: () -> Unit) {
@@ -201,19 +203,26 @@ internal class ReaderArtifacts(private val context: Context, private val changed
         }
     }
 
-    fun wire(): JSONObject {
+    private var encodedLevels = emptyMap<ReaderArtifactKey, Double>()
+
+    fun wire(downloadLevels: Map<ReaderArtifactKey, Double>): JSONObject {
         val language = MobileAppearance.language
-        if (language == encodedLanguage) encoded?.let { return it }
+        if (language == encodedLanguage && downloadLevels == encodedLevels) encoded?.let { return it }
+        val partition = source?.partition
         val value = JSONObject(outputs.mapValues { (_, output) ->
-        JSONObject().put("failed", output.failed).put("items", JSONArray(output.items.map { resource ->
-            val label = MobileReadingPolicy.resource(resource)
-            JSONObject().put("id", resource.getString("resourceId")).put("name", label.name)
-                .put("revision", resource.getString("revision")).put("description", listOfNotNull(label.type, label.size, label.status.takeIf { !label.available }).joinToString(" · "))
-                .put("available", label.available).put("image", PreviewPolicy.kind(resource.getString("name"), resource.optString("mimeType")) == PreviewKind.IMAGE)
-                .put("thumbnail", imageKey(resource).takeIf { images.containsKey(it) } ?: JSONObject.NULL)
-        }))
+            JSONObject().put("failed", output.failed).put("items", JSONArray(output.items.map { resource ->
+                val label = MobileReadingPolicy.resource(resource)
+                val id = resource.getString("resourceId")
+                val revision = resource.getString("revision")
+                val level = partition?.let { downloadLevels[ReaderArtifactKey(it, id, revision)] }
+                JSONObject().put("id", id).put("revision", revision).put("name", label.name)
+                    .put("description", listOfNotNull(label.type, label.size).joinToString(" · "))
+                    .put("available", label.available).put("image", isImage(resource))
+                    .put("thumbnail", imageSource(resource) ?: JSONObject.NULL)
+                    .putOpt("downloadLevel", level?.takeIf { it in 0.0..1.0 })
+            }))
         })
-        encoded = value; encodedLanguage = language
+        encoded = value; encodedLanguage = language; encodedLevels = downloadLevels
         return value
     }
 

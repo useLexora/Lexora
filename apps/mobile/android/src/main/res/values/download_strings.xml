@@ -1,0 +1,34 @@
+<resources>
+    <string name="downloads_title">Downloads</string>
+    <string name="download_file">Download to phone</string>
+    <string name="download_choose_folder">Choose download folder…</string>
+    <string name="download_default_folder">Downloads / Lexora</string>
+    <string name="download_chosen_folder">Save in the Lexora subfolder of the selected folder</string>
+    <string name="downloads_empty">No downloads yet</string>
+    <string name="downloads_loading">Loading downloads…</string>
+    <string name="downloads_stopped">Stopped</string>
+    <string name="download_detail">Download details</string>
+    <string name="download_running">Downloading</string>
+    <string name="download_verifying">Verifying file</string>
+    <string name="download_failed">Download failed</string>
+    <string name="download_interrupted">Interrupted</string>
+    <string name="download_pause">Pause download</string>
+    <string name="download_resume">Resume download</string>
+    <string name="download_cancel">Cancel download</string>
+    <string name="download_keep">Keep download</string>
+    <string name="download_cancel_question">Cancel this download?</string>
+    <string name="download_cancel_message">The unfinished copy of “%1$s” will be discarded. The original file is not affected.</string>
+    <string name="download_open">Open downloaded file</string>
+    <string name="download_progress">%1$s of %2$s</string>
+    <string name="download_file_type">File type</string>
+    <string name="download_location">Save location</string>
+    <string name="download_selected_location">Lexora folder in the selected location</string>
+    <string name="download_group_count">%1$s %2$d</string>
+    <string name="download_file_actions">File actions</string>
+    <string name="download_destination_failed">Could not write to the download location. Check storage space and folder access.</string>
+    <string name="download_interrupted_help">The transfer stopped before the file was ready. Resume to continue downloading.</string>
+    <string name="download_error">Error</string>
+    <string name="download_progress_unknown">%1$s downloaded</string>
+    <string name="download_new_document_required">Choose a new, empty file. The existing document was not changed.</string>
+    <string name="download_saved_size">Downloaded · %1$s</string>
+</resources>

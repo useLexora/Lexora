@@ -33,6 +33,7 @@ object MobileFailurePresentation {
         "LOCAL_CACHE_FULL" -> mobileText(R.string.error_local_cache_full)
         "LOCAL_FILE_FAILED" -> mobileText(R.string.error_local_file_failed)
         "LOCAL_FILE_IN_USE" -> mobileText(R.string.error_local_file_in_use)
+        "DOWNLOAD_EMPTY_DESTINATION_REQUIRED" -> mobileText(R.string.download_new_document_required)
         "DOCUMENT_SAVE_FAILED" -> mobileText(R.string.error_document_save_failed)
         "UPLOAD_ALREADY_ADOPTED" -> mobileText(R.string.error_upload_already_adopted)
         "RESOURCE_UNAVAILABLE", "OBJECT_DELETED" -> mobileText(R.string.error_resource_unavailable)

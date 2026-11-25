@@ -103,6 +103,8 @@ class MobileUiState {
     var incomingMaterial by mutableStateOf<IncomingMaterial?>(null)
     var importingMaterial by mutableStateOf(false)
     var materialError by mutableStateOf("")
+    internal var downloadRecords by mutableStateOf<List<app.uselexora.mobile.network.DownloadRecord>?>(null)
+    internal var resourceMenu by mutableStateOf<ResourceMenuUi?>(null)
     var taskFiles by mutableStateOf<MobileTaskFiles?>(null)
     var messageMenu by mutableStateOf<MobileMessageMenu?>(null)
     var screen by mutableStateOf(MobileScreen.Workbench)

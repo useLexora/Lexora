@@ -18,6 +18,7 @@ import { resourceDownloadSchema } from '../../../shared/privateNetwork/resources
 import { createAttachmentPersistenceRepository } from '../storage/attachmentPersistenceRepository'
 import { createAttachmentRepository } from '../storage/attachmentRepository'
 import { withTransaction } from '../storage/transaction'
+import { indexSnapshot, snapshotFile, snapshotIdentity, verifiedRange } from './resourceSnapshot'
 
 interface ExportRow {
   id: string
@@ -31,6 +32,7 @@ interface ExportRow {
   sha256: string | null
   name: string
   mime_type: string
+  file_state: string
   state: 'preparing' | 'ready' | 'expired' | 'failed'
   expires_ms: number
 }
@@ -41,11 +43,16 @@ interface Options {
   views: (actorId: string) => ProductReadViews
   artifacts: Pick<ArtifactService, 'locate'>
 }
+const invalidExportGrant = `e.data_generation <> (SELECT data_generation FROM storage_profile WHERE id = 1)
+  OR NOT EXISTS (SELECT 1 FROM storage_actors a WHERE a.id = e.actor_id AND a.state = 'active')
+  OR EXISTS (SELECT 1 FROM remote_devices d WHERE d.id = e.actor_id AND (d.state <> 'active' OR d.grant_generation <> e.grant_generation))`
+
 export class RemoteResourceService {
   readonly #options: Options
   readonly #files: ReturnType<typeof createAttachmentPersistenceRepository>
   readonly #active = new Map<string, number>()
   readonly #operations = new Set<Promise<unknown>>()
+  readonly #proofs = new Map<string, { identity: string, blocks: string[] }>()
   readonly #reviews = new Map<string, number>()
   readonly #controllers = new Set<AbortController>()
   readonly #timer: ReturnType<typeof setInterval>
@@ -100,7 +107,7 @@ export class RemoteResourceService {
     const id = match[1]!
     const row = this.#row(id)
     this.#authorize(row, principal)
-    if (row.state !== 'ready' || row.expires_ms <= this.#now() || !row.sha256)
+    if (row.file_state !== 'ready' || row.state !== 'ready' || row.expires_ms <= this.#now() || !row.sha256)
       throw new PrivateNetworkError('RESOURCE_UNAVAILABLE')
     if (request.headers['if-match'] !== `"${row.sha256}"`)
       throw new PrivateNetworkError('VERSION_CHANGED')
@@ -133,18 +140,30 @@ export class RemoteResourceService {
     }, 250)
     let source: Awaited<ReturnType<typeof open>> | undefined
     try {
-      if (row.source_id.startsWith('artifact:'))
-        await this.#options.artifacts.locate(row.source_id.slice('artifact:'.length))
-      source = await open(row.path, constants.O_RDONLY | constants.O_NOFOLLOW)
-      const before = await source.stat()
-      if (!before.isFile() || before.size !== row.size_bytes)
+      if (row.source_id.startsWith('artifact:') && (await this.#options.artifacts.locate(row.source_id.slice('artifact:'.length))).kind !== 'file')
         throw new PrivateNetworkError('RESOURCE_UNAVAILABLE')
-      const hash = createHash('sha256')
-      for await (const bytes of source.createReadStream({ autoClose: false, start: 0, signal: controller.signal })) hash.update(bytes)
-      if (hash.digest('hex') !== row.sha256) {
+      source = await open(row.path, constants.O_RDONLY | constants.O_NOFOLLOW)
+      const before = await source.stat({ bigint: true })
+      if (!before.isFile() || before.size !== BigInt(row.size_bytes))
+        throw new PrivateNetworkError('RESOURCE_UNAVAILABLE')
+      const corrupt = (): never => {
         this.#files.unavailable(row.path)
         throw new PrivateNetworkError('VERSION_CHANGED')
       }
+      const check = () => {
+        controller.signal.throwIfAborted()
+        timeout.refresh()
+      }
+      const identity = snapshotIdentity(before)
+      let proof = this.#proofs.get(id)
+      if (!proof || proof.identity !== identity) {
+        const indexed = await indexSnapshot(source, row.size_bytes, check)
+        if (indexed.sha256 !== row.sha256 || snapshotIdentity(await source.stat({ bigint: true })) !== identity)
+          corrupt()
+        proof = { identity, blocks: indexed.blocks }
+        this.#proofs.set(id, proof)
+      }
+      check()
       this.#authorize(row, principal)
       response.setHeader('Content-Type', row.mime_type)
       response.setHeader('Content-Disposition', `attachment; filename="resource"; filename*=UTF-8''${encodeURIComponent(row.name)}`)
@@ -157,7 +176,7 @@ export class RemoteResourceService {
       }
       if (request.method === 'HEAD' || !row.size_bytes)
         response.end()
-      else await pipeline(source.createReadStream({ autoClose: false, start, end }), response, { signal: controller.signal })
+      else await pipeline(verifiedRange(source, row.size_bytes, proof.blocks, start, end, check, corrupt), response, { signal: controller.signal })
       if (request.method === 'GET' && start === 0 && end === row.size_bytes - 1 && row.source_id.startsWith('review:')) {
         if (this.#reviews.size >= 128)
           this.#reviews.delete(this.#reviews.keys().next().value!)
@@ -183,10 +202,7 @@ export class RemoteResourceService {
   sweep(): void {
     const { database } = this.#options
     withTransaction(database, () => {
-      database.prepare(`UPDATE remote_exports SET state = 'expired' WHERE state IN ('preparing','ready') AND
-        (expires_ms <= ? OR data_generation <> (SELECT data_generation FROM storage_profile WHERE id = 1)
-          OR NOT EXISTS (SELECT 1 FROM storage_actors a WHERE a.id = actor_id AND a.state = 'active')
-          OR EXISTS (SELECT 1 FROM remote_devices d WHERE d.id = actor_id AND (d.state <> 'active' OR d.grant_generation <> remote_exports.grant_generation)))`).run(this.#now())
+      database.prepare(`UPDATE remote_exports AS e SET state = 'expired' WHERE state IN ('preparing','ready') AND (expires_ms <= ? OR ${invalidExportGrant})`).run(this.#now())
       for (const entry of database.prepare(`SELECT id FROM remote_exports e WHERE state IN ('expired','failed') AND (
         EXISTS (SELECT 1 FROM file_references f WHERE f.kind = 'export' AND f.owner_id = e.id)
         OR EXISTS (SELECT 1 FROM file_preparations p WHERE p.id = e.file_id AND p.state IN ('preparing','published'))) LIMIT 128`).all()) {
@@ -194,6 +210,7 @@ export class RemoteResourceService {
         if (this.#active.has(id))
           continue
         const row = this.#row(id)
+        this.#proofs.delete(id)
         this.#files.releaseReference({ kind: 'export', ownerId: id, bindingId: id })
         this.#files.settle([row.path], 'rollback')
       }
@@ -222,12 +239,11 @@ export class RemoteResourceService {
     if (resource.revision !== input.expectedVersion)
       throw new PrivateNetworkError('VERSION_CHANGED')
     const size = Number(resource.sizeBytes)
-    if (!Number.isSafeInteger(size) || size > limits.uploadBytes)
+    const maxBytes = resource.kind === 'artifact' || resource.kind === 'attachment' ? limits.resourceFileBytes : limits.resourceDocumentBytes
+    if (!Number.isSafeInteger(size) || size < 0 || size > maxBytes)
       throw new PrivateNetworkError('LIMIT_EXCEEDED')
     const directory = join(this.#options.root, 'managed-files', 'exports')
     await mkdir(directory, { recursive: true, mode: 0o700 })
-    const capacity = await statfs(directory)
-    const available = Math.min(Number.MAX_SAFE_INTEGER, capacity.bavail * capacity.bsize)
     const id = randomUUID()
     const isAttachment = input.resourceId.startsWith('attachment:')
     const selected = isAttachment ? createAttachmentRepository(database).findVisibleById(input.resourceId.slice('attachment:'.length)) : null
@@ -244,12 +260,14 @@ export class RemoteResourceService {
       if (!document || document.revision !== input.expectedVersion || document.bytes.length !== size)
         throw new PrivateNetworkError('VERSION_CHANGED')
     }
+    const capacity = await statfs(directory)
+    const available = Math.min(Number.MAX_SAFE_INTEGER, capacity.bavail * capacity.bsize)
     const row = withTransaction(database, () => {
       principal.assertAuthenticated()
       if (views.resource(input.resourceId)?.revision !== input.expectedVersion)
         throw new PrivateNetworkError('VERSION_CHANGED')
       const totals = database.prepare('SELECT COALESCE(SUM(size_bytes),0) AS bytes, COALESCE(SUM(actor_id = ?),0) AS count FROM remote_exports WHERE state IN (\'preparing\',\'ready\')').get(principal.actorId)!
-      if (Number(totals.count) >= limits.resourceStreams || Number(totals.bytes) + size > limits.uploadReservedBytes)
+      if (Number(totals.count) >= limits.resourceStreams || Number(totals.bytes) + size > limits.resourceReservedBytes)
         throw new PrivateNetworkError('LIMIT_EXCEEDED')
       const file = selected ? this.#files.get(selected.storedPath)! : this.#files.prepare({ actorId: principal.actorId, operationId: id, availableBytes: available, stagingDirectory: join(directory, 'staging'), ownerInstance: this.#options.instanceId, kind: 'export', targetOwnerId: id, path: join(directory, id), sizeBytes: size })
       if (selected && (!file || file.state !== 'ready' || file.sha256 !== input.expectedVersion))
@@ -266,11 +284,19 @@ export class RemoteResourceService {
     try {
       if (!selected) {
         await mkdir(dirname(row.temporary_path!), { recursive: true, mode: 0o700 })
-        const digest = sourcePath ? await snapshotFile(sourcePath, row.temporary_path!, size, () => principal.assertAuthenticated()) : await snapshotDocument(document!.bytes, row.temporary_path!)
+        const fileProof = sourcePath
+          ? await snapshotFile(sourcePath, row.temporary_path!, size, () => {
+              if (this.#closed)
+                throw new PrivateNetworkError('RESOURCE_UNAVAILABLE')
+              principal.assertAuthenticated()
+            })
+          : undefined
+        const digest = fileProof?.sha256 ?? await snapshotDocument(document!.bytes, row.temporary_path!)
         principal.assertAuthenticated()
         if (sourcePath && (await this.#options.artifacts.locate(input.resourceId.slice('artifact:'.length))).path !== sourcePath)
           throw new PrivateNetworkError('VERSION_CHANGED')
         await fileStorage.replace(row.temporary_path!, row.path)
+        const identity = fileProof && snapshotIdentity(await stat(row.path, { bigint: true }))
         await fileStorage.syncDirectory(dirname(row.path))
         await fileStorage.syncDirectory(dirname(row.temporary_path!))
         withTransaction(database, () => {
@@ -282,6 +308,8 @@ export class RemoteResourceService {
           this.#files.settle([row.path], 'commit')
           database.prepare('UPDATE remote_exports SET state = \'ready\' WHERE id = ?').run(id)
         })
+        if (fileProof && identity)
+          this.#proofs.set(id, { identity, blocks: fileProof.blocks })
       }
       const current = this.#row(id)
       return resourceDownloadSchema.parse({ downloadId: id, resourceId: current.source_id, contentVersion: current.sha256, sizeBytes: String(size), mimeType: current.mime_type, name: current.name, expiresAt: new Date(current.expires_ms).toISOString() })
@@ -300,14 +328,14 @@ export class RemoteResourceService {
     principal.assertAuthenticated()
     if (row.actor_id !== principal.actorId)
       throw new PrivateNetworkError('NOT_AUTHORIZED')
-    if (row.expires_ms <= this.#now())
+    if (row.expires_ms <= this.#now() || !this.#options.database.prepare(`SELECT 1 FROM remote_exports e WHERE id = ? AND state IN ('preparing','ready') AND NOT (${invalidExportGrant})`).get(row.id))
       throw new PrivateNetworkError('RESOURCE_UNAVAILABLE')
     if (!this.#options.views(principal.actorId).resource(row.source_id))
       throw new PrivateNetworkError('RESOURCE_UNAVAILABLE')
   }
 
   #row(id: string): ExportRow {
-    const row = this.#options.database.prepare('SELECT e.*, f.path, f.temporary_path, f.sha256 FROM remote_exports e JOIN managed_files f ON f.id = e.file_id WHERE e.id = ?').get(id)
+    const row = this.#options.database.prepare('SELECT e.*, f.path, f.temporary_path, f.sha256, f.state AS file_state FROM remote_exports e JOIN managed_files f ON f.id = e.file_id WHERE e.id = ?').get(id)
     if (!row)
       throw new PrivateNetworkError('RESOURCE_UNAVAILABLE')
     return row as unknown as ExportRow
@@ -319,39 +347,4 @@ export class RemoteResourceService {
 async function snapshotDocument(bytes: Buffer, path: string) {
   await writeFile(path, bytes, { flag: 'wx', mode: 0o600, flush: true })
   return createHash('sha256').update(bytes).digest('hex')
-}
-async function snapshotFile(source: string, target: string, size: number, assertCurrent: () => void) {
-  const input = await open(source, constants.O_RDONLY | constants.O_NOFOLLOW)
-  try {
-    const before = await input.stat()
-    if (!before.isFile() || before.size !== size)
-      throw new PrivateNetworkError('VERSION_CHANGED')
-    const output = await open(target, 'wx', 0o600)
-    const hash = createHash('sha256')
-    let position = 0
-    try {
-      for await (const chunk of input.createReadStream({ autoClose: false })) {
-        assertCurrent()
-        if (position + chunk.length > size)
-          throw new PrivateNetworkError('VERSION_CHANGED')
-        hash.update(chunk)
-        let written = 0
-        while (written < chunk.length) {
-          const result = await output.write(chunk, written, chunk.length - written, position + written)
-          if (!result.bytesWritten)
-            throw new PrivateNetworkError('STORAGE_UNAVAILABLE')
-          written += result.bytesWritten
-        }
-        position += chunk.length
-      }
-      const after = await input.stat()
-      const current = await stat(source)
-      if (position !== size || after.mtimeMs !== before.mtimeMs || current.ino !== before.ino || current.dev !== before.dev || current.mtimeMs !== before.mtimeMs)
-        throw new PrivateNetworkError('VERSION_CHANGED')
-      await output.sync()
-    }
-    finally { await output.close() }
-    return hash.digest('hex')
-  }
-  finally { await input.close() }
 }

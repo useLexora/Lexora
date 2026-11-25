@@ -61,7 +61,7 @@ export const readerEntrySchema = schema.object({ id, continuation: schema.boolea
 export const readerTranscriptSchema = schema.object({ events: schema.array(publicRunEventSchema), loaded: schema.boolean().optional(), error: schema.string().nullable().optional(), append: schema.boolean().optional() }).strict()
 export const readerOutputSchema = schema.object({
   failed: schema.boolean(),
-  items: schema.array(schema.object({ id, revision: schema.string(), name: schema.string(), description: schema.string(), available: schema.boolean(), image: schema.boolean(), thumbnail: schema.string().nullable() }).strict()),
+  items: schema.array(schema.object({ id, revision: schema.string(), name: schema.string(), description: schema.string(), available: schema.boolean(), image: schema.boolean(), thumbnail: schema.string().nullable(), downloadLevel: schema.number().min(0).max(1).optional() }).strict()),
 }).strict()
 const toolImageIdentity = { runId: id, toolCallId: id, kind: schema.enum(['reference', 'artifact']), id }
 export const readerToolImageSchema = schema.object({
