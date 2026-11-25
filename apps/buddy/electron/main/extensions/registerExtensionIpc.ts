@@ -1,5 +1,6 @@
 import type { BrowserWindow, IpcMainEvent } from 'electron'
 import type { ExtensionInferencePorts } from '../../../platform/extensions/ExtensionInference'
+import type { ExtensionLaunchLocation } from '../../../platform/extensions/extensionLaunchDirectory'
 import type { ExtensionDocumentPorts } from '../../../platform/extensions/ExtensionWorkingCopyStore'
 import type { InferenceInvocation } from '../../../platform/extensions/NativeInferenceProcess'
 import type { FileIconThemeService } from '../../../platform/icons/FileIconThemeService'
@@ -50,6 +51,7 @@ export function registerExtensionIpc(options: {
   inferenceAdmission: ExtensionInferencePorts['admit']
   inferenceRequest: ExtensionInferencePorts['request']
   home: string
+  launchLocation: ExtensionLaunchLocation
   themes: ThemeService
   fileIcons: FileIconThemeService
   version: string
@@ -118,6 +120,7 @@ export function registerExtensionIpc(options: {
         await options.syncCapabilities?.(descriptors, clearExtensionId)
     },
     inference: {
+      ...options.launchLocation,
       hardware: createInferenceHardwareProvider({ getGPUInfo: () => app.getGPUInfo('basic'), getSystemMemoryInfo: () => process.getSystemMemoryInfo() }),
       bootstrap: inferenceBootstrap,
       executable: process.execPath,

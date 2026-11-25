@@ -2,15 +2,21 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { LocalRunTokenUsage } from '../../../shared/usage/runTokenUsage'
 import type { BuddyRunEvent } from '../events/BuddyRunEvent'
 import type { MessageRecord } from './conversationHistoryRepository'
+import type { RunModelFailureRow } from './runModelFailure'
 import type { RunRow } from './runRecord'
 import { createConversationPublicationRepository } from './conversationPublicationRepository'
 import { createExecutionWorkRepository } from './executionWorkRepository'
+import { runModelFailureColumns, storedModelFailure } from './runModelFailure'
 import { toRunRecord } from './runRecord'
 
 export function createConversationTreeRepository(database: DatabaseSync) {
+  const failed = database.prepare(`SELECT ${runModelFailureColumns} FROM runs
+    WHERE id = ? AND conversation_id = ? AND branch_id = ? AND thread_id = ? AND status = 'failed'`)
   const bind = database.prepare('INSERT INTO conversation_pi_trees (conversation_id, session_file, root_entry_id) VALUES (?, ?, ?) ON CONFLICT(conversation_id) DO UPDATE SET session_file = excluded.session_file, root_entry_id = excluded.root_entry_id')
   return {
     ...createConversationTreeReader(database),
+    findModelFailure: (runId: string, conversationId: string, branchId: string, threadId: string) =>
+      storedModelFailure(failed.get(runId, conversationId, branchId, threadId) as RunModelFailureRow | undefined),
     findWork: createExecutionWorkRepository(database).find,
     ...createConversationPublicationRepository(database),
     bind: (conversationId: string, sessionFile: string, rootEntryId: string) => {

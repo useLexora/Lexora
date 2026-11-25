@@ -1,4 +1,5 @@
 import type { ApplicationDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
+import type { ModelLaunchFailureRecord } from '../../../shared/providers/modelLaunchFailure'
 import type { AppendBuddyRunEventInput } from '../events/BuddyRunEvent'
 import type { RunEventAvailability, RunEventWriter } from '../events/RunEventPorts'
 import type { RunPurpose, RunRecord, RunStatus } from '../storage/runRecord'
@@ -31,6 +32,7 @@ export interface FinalizeRunInput {
   completedAt: string
   errorCode: string | null
   errorMessage?: string
+  launchFailure?: ModelLaunchFailureRecord
   precedingEvents?: readonly AppendBuddyRunEventInput[]
   runId: string
   status: TerminalRunStatus
@@ -123,6 +125,7 @@ export class RunLifecycleService {
       payload: {
         ...(errorCode ? { errorCode } : {}),
         ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
+        ...(status === 'failed' && input.launchFailure ? { launchFailure: input.launchFailure } : {}),
       },
       runId: input.runId,
       type: `run.${status}`,

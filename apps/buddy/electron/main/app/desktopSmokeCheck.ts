@@ -5,7 +5,7 @@ import process from 'node:process'
 import { app } from 'electron'
 import inferenceBootstrap from 'virtual:extension-runtime/inference'
 import { checkInferenceSmoke } from '../../../../../.playwright/scripts/fixtures/inference-smoke'
-import { resolveBuddyProcessControl } from '../../../platform/native/nativeHost'
+import { resolveBuddyPrivateDirectories, resolveBuddyProcessControl } from '../../../platform/native/nativeHost'
 import shellSandbox from '../../../platform/native/shellSandbox.json'
 import { currentTarget } from '../../../platform/target'
 import { resolveInferenceEnvironment } from '../../../shared/extensions/inferencePlatform'
@@ -46,6 +46,7 @@ export async function checkDesktopSmokeBridge(window: BrowserWindow): Promise<vo
     await checkInferenceSmoke({
       bootstrap: inferenceBootstrap,
       executable: process.execPath,
+      privateDirectoriesExecutable: resolveBuddyPrivateDirectories({ appPath: app.getAppPath(), isPackaged: app.isPackaged, resourcesPath: process.resourcesPath }),
       supervisor: resolveBuddyProcessControl({ appPath: app.getAppPath(), isPackaged: app.isPackaged, resourcesPath: process.resourcesPath }),
       sandbox: process.platform === 'linux' ? join(app.isPackaged ? process.resourcesPath : app.getAppPath(), app.isPackaged ? shellSandbox.resource.to : `${shellSandbox.resource.from}/${currentTarget.id}`, 'bwrap') : undefined,
       appVersion: app.getVersion(),

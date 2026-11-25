@@ -1,12 +1,20 @@
 import type { AssistantMessage } from '@earendil-works/pi-ai'
 import type { ProviderRequestDiagnostic } from '../../../shared/diagnostics/providerRequestDiagnostic'
+import type { ModelFailureFeedbackCode } from '../../../shared/providers/modelFailureFeedback'
+import type { ModelLaunchFailureRecord } from '../../../shared/providers/modelLaunchFailure'
+import { inferenceDiagnosticCodeSchema } from '../../../shared/diagnostics/inferenceDiagnostic'
 import { providerRequestDiagnosticSchema } from '../../../shared/diagnostics/providerRequestDiagnostic'
+import { pluginChatApi, pluginProviderId } from '../../../shared/extensions/extensionChat'
+import { launchLocationExtensionId } from '../../../shared/extensions/extensionLaunchLocation'
 import { redactSensitiveText } from '../../../shared/permissions/approvalReviewPayload'
+import { readModelLaunchFailure } from '../../../shared/providers/modelLaunchFailure'
 
+export const PLUGIN_LAUNCH_STORAGE_DIAGNOSTIC = 'plugin.launch-storage.failure'
 export const MODEL_REQUEST_FAILURE_DIAGNOSTIC = 'model.request.failure'
 
 const MAX_FAILURE_MESSAGE_LENGTH = 4 * 1024
-type FailureEvidence = Pick<ProviderRequestDiagnostic, 'status' | 'transportCode'>
+type FailureMessage = Pick<AssistantMessage, 'errorMessage' | 'diagnostics'> & Partial<Pick<AssistantMessage, 'api' | 'provider'>>
+type FailureEvidence = Pick<ProviderRequestDiagnostic, 'status' | 'transportCode'> & { pluginInference: boolean }
 
 export type ModelRequestFailureCode
   = 'MODEL_NOT_SUPPORTED'
@@ -21,10 +29,10 @@ export type ModelRequestFailureCode
     | 'MODEL_QUANTIZATION_UNSUPPORTED'
     | 'MODEL_DRIVER_INCOMPATIBLE'
     | 'MODEL_BACKEND_UNAVAILABLE'
+    | ModelFailureFeedbackCode
     | 'MODEL_RESOURCE_EXHAUSTED'
     | 'MODEL_PROCESS_EXITED'
     | 'MODEL_CONFIGURATION_CHANGED'
-    | 'MODEL_REQUEST_FAILED'
     | 'MODEL_STREAM_INCOMPLETE'
     | 'MODEL_REQUEST_TIMED_OUT'
     | 'MODEL_SERVICE_UNAVAILABLE'
@@ -33,9 +41,10 @@ export type ModelRequestFailureCode
     | 'PROVIDER_AUTHENTICATION_FAILED'
     | 'PROVIDER_RATE_LIMITED'
 
-export function normalizeModelRequestFailure(input: string | Pick<AssistantMessage, 'errorMessage' | 'diagnostics'> | undefined): {
+export function normalizeModelRequestFailure(input: string | FailureMessage | undefined): {
   code: ModelRequestFailureCode
   message?: string
+  launchFailure?: ModelLaunchFailureRecord
 } {
   const value = typeof input === 'object' ? input.errorMessage : input
   const details = typeof input === 'object'
@@ -54,13 +63,24 @@ export function normalizeModelRequestFailure(input: string | Pick<AssistantMessa
         )).trim()
     : ''
   const message = normalized ? normalized.slice(0, MAX_FAILURE_MESSAGE_LENGTH) : undefined
-  return {
-    code: classifyModelRequestFailure(message, {
-      status: typeof details?.status === 'number' ? details.status : undefined,
-      transportCode: transportCode.success ? transportCode.data : undefined,
-    }),
-    ...(message ? { message } : {}),
+  const pluginInference = typeof input === 'object' && input.api === pluginChatApi
+  const code = classifyModelRequestFailure(message, {
+    pluginInference,
+    status: typeof details?.status === 'number' ? details.status : undefined,
+    transportCode: transportCode.success ? transportCode.data : undefined,
+  })
+  if (pluginInference) {
+    const fact = input.diagnostics?.findLast(item => item.type === PLUGIN_LAUNCH_STORAGE_DIAGNOSTIC)?.details
+    const id = launchLocationExtensionId(fact?.location)
+    if (fact && fact.error === value && typeof fact.location === 'string' && id && pluginProviderId(id) === input.provider) {
+      const launchFailure = readModelLaunchFailure(code, { version: 1, code, location: fact.location })
+      if (launchFailure)
+        return { code, message: value, launchFailure }
+    }
+    if (!inferenceDiagnosticCodeSchema.safeParse(value).success)
+      return { code }
   }
+  return { code, ...(message ? { message } : {}) }
 }
 
 function classifyModelRequestFailure(message: string | undefined, evidence: FailureEvidence): ModelRequestFailureCode {
@@ -92,6 +112,18 @@ function classifyModelRequestFailure(message: string | undefined, evidence: Fail
     return 'MODEL_RESOURCES_CHANGED'
   if (message === 'EXTENSION_INFERENCE_RESOURCE_UNAVAILABLE' || message === 'EXTENSION_INFERENCE_RESOURCE_NOT_EXECUTABLE')
     return 'MODEL_RESOURCES_UNAVAILABLE'
+  if (evidence.pluginInference) {
+    if (message === 'EXTENSION_INFERENCE_LAUNCH_QUOTA_EXCEEDED')
+      return 'MODEL_LAUNCH_QUOTA_EXCEEDED'
+    if (message === 'EXTENSION_INFERENCE_LAUNCH_NO_SPACE')
+      return 'MODEL_LAUNCH_NO_SPACE'
+    if (message === 'EXTENSION_INFERENCE_STORAGE_QUOTA_EXCEEDED')
+      return 'MODEL_STORAGE_QUOTA_EXCEEDED'
+    if (message === 'EXTENSION_INFERENCE_STORAGE_NO_SPACE')
+      return 'MODEL_STORAGE_NO_SPACE'
+  }
+  if (message === 'EXTENSION_INFERENCE_STORAGE_FULL')
+    return 'MODEL_STORAGE_FULL'
   if (message === 'EXTENSION_INFERENCE_RESOURCE_EXHAUSTED')
     return 'MODEL_RESOURCE_EXHAUSTED'
   if (message === 'EXTENSION_INFERENCE_LOAD_FAILED')

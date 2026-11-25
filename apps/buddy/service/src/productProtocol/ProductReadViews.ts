@@ -237,6 +237,9 @@ export class ProductReadViews {
     if (!row)
       return null
     const event = toPublicRunEvent({ runId, sequence: Number(sequence), createdAt: String(row.created_at), type: String(row.event_type), payload: JSON.parse(String(row.payload_json)) })
+    // Protocol 1.1 transcript readers accept only the original failure payload.
+    if (event.type === 'run.failed')
+      delete event.payload.launchFailure
     const redact = (value: unknown): unknown => {
       if (typeof value === 'string')
         return redactSensitiveText(value)

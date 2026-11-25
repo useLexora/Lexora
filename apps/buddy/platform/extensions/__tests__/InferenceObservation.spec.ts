@@ -33,7 +33,7 @@ async function fixture(record?: ApplicationDiagnosticReporter) {
     native.push(current)
     return current.worker
   })
-  const runtime = new ExtensionInference(store, pkg, { bootstrap: '', executable: '', admit: async () => async () => {}, record }, {
+  const runtime = new ExtensionInference(store, pkg, { dataRoot: root, bootstrap: '', executable: '', admit: async () => async () => {}, record }, {
     response: async () => { throw new Error('Unexpected download') },
     openReference: async () => { throw new Error('Unexpected resource') },
   }, () => {}, () => changes.push('models-changed'))
@@ -124,7 +124,10 @@ it('requires an exact model ID for multi-model deployment declarations and never
 
 it('projects validated incremental diagnostics per instance and forwards the original report', async () => {
   const records: unknown[] = []
-  const f = await fixture(event => records.push(event))
+  const f = await fixture((event) => {
+    if (event.event.startsWith('chat.gpu.'))
+      records.push(event)
+  })
   await f.invoke()
   expect(f.observation()).toBeUndefined()
   f.emit({ event: 'chat.gpu.start', backend: { requested: 'cuda', observed: [] }, context: { requested: 4096 }, raw: 'private' })

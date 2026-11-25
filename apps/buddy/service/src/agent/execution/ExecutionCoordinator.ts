@@ -547,7 +547,7 @@ export class ExecutionCoordinator implements ExecutionLifecyclePort {
         runId: input.runId,
         status: outcome.status,
         errorCode,
-        ...(outcome.status === 'failed' && outcome.errorMessage ? { errorMessage: outcome.errorMessage } : {}),
+        ...(outcome.status === 'failed' ? { errorMessage: outcome.errorMessage, launchFailure: outcome.launchFailure } : {}),
         completedAt: new Date().toISOString(),
         precedingEvents,
       })

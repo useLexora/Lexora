@@ -1,10 +1,12 @@
 import type { AssistantMessage, ImageContent, ProviderStreams, TextContent } from '@earendil-works/pi-ai'
-import type { ExtensionChatCapabilities, ExtensionChatEvent, ExtensionChatRequest, ExtensionModel } from '../../../shared/extensions/extensionChat'
+import type { ExtensionChatCapabilities, ExtensionChatEvent, ExtensionChatFailure, ExtensionChatRequest, ExtensionModel } from '../../../shared/extensions/extensionChat'
 import type { InputModel } from './modelCapabilities'
 import type { CatalogModelDefaults } from './ProviderCatalogMatcher'
 import { Buffer } from 'node:buffer'
 import { createAssistantMessageEventStream, createProvider, getCurrentTools, getSystemMessageText, normalizeContext, resolveTranscript } from '@earendil-works/pi-ai'
+import { inferenceDiagnosticCodeSchema } from '../../../shared/diagnostics/inferenceDiagnostic'
 import { extensionChatMaxBytes, extensionChatRequestSchema, pluginChatApi, pluginProviderId } from '../../../shared/extensions/extensionChat'
+import { PLUGIN_LAUNCH_STORAGE_DIAGNOSTIC } from './modelRequestFailure'
 
 const cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
 export function createPluginModel(model: ExtensionModel, defaults: CatalogModelDefaults = {}): InputModel {
@@ -31,7 +33,7 @@ export function createPluginModel(model: ExtensionModel, defaults: CatalogModelD
   }
 }
 
-export function createPluginProvider(models: ExtensionModel[], invoke: (target: ExtensionModel, input: ExtensionChatRequest, signal: AbortSignal, emit: (event: ExtensionChatEvent) => void, capabilities: ExtensionChatCapabilities) => Promise<void>, resolveModel = createPluginModel) {
+export function createPluginProvider(models: ExtensionModel[], invoke: (target: ExtensionModel, input: ExtensionChatRequest, signal: AbortSignal, emit: (event: ExtensionChatEvent) => void, capabilities: ExtensionChatCapabilities) => Promise<void | ExtensionChatFailure>, resolveModel = createPluginModel) {
   const first = models[0]!
   const providerId = pluginProviderId(first.extensionId)
   const stream: ProviderStreams['streamSimple'] = (model, context, options) => {
@@ -103,7 +105,7 @@ export function createPluginProvider(models: ExtensionModel[], invoke: (target: 
           output.push({ type: 'thinking_end', contentIndex: thinkingIndex!, content: part.thinking, partial: message })
         thinkingIndex = undefined
       }
-      await invoke(target, request, signal, (event) => {
+      const failure = await invoke(target, request, signal, (event) => {
         signal.throwIfAborted()
         bytes += Buffer.byteLength(JSON.stringify(event))
         if (completed || bytes > 16 * 1024 * 1024)
@@ -157,12 +159,17 @@ export function createPluginProvider(models: ExtensionModel[], invoke: (target: 
         }
       }, capabilities)
       signal.throwIfAborted()
+      if (failure) {
+        if ('location' in failure)
+          message.diagnostics = [{ type: PLUGIN_LAUNCH_STORAGE_DIAGNOSTIC, timestamp: Date.now(), details: failure }]
+        throw new Error(failure.error)
+      }
       if (!completed)
         throw new Error('EXTENSION_INFERENCE_OUTPUT_INCOMPLETE')
       output.push({ type: 'done', reason: message.stopReason as 'stop' | 'length' | 'toolUse', message })
     })().catch((error: unknown) => {
       message.stopReason = signal.aborted ? 'aborted' : 'error'
-      message.errorMessage = error instanceof Error && /^EXTENSION_INFERENCE_[A-Z_]+$/.test(error.message) ? error.message : signal.aborted ? 'EXTENSION_INFERENCE_CANCELLED' : 'EXTENSION_INFERENCE_BACKEND_FAILED'
+      message.errorMessage = error instanceof Error && inferenceDiagnosticCodeSchema.safeParse(error.message).success ? error.message : signal.aborted ? 'EXTENSION_INFERENCE_CANCELLED' : 'EXTENSION_INFERENCE_BACKEND_FAILED'
       output.push({ type: 'error', reason: message.stopReason, error: message })
     })
     return output

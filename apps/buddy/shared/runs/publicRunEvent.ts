@@ -6,6 +6,7 @@ import {
   readBuddyInterruptedMessageContent,
 } from '../conversation/buddyMessageContent'
 import { approvalReviewPayloadSchema } from '../permissions/approvalReviewPayload'
+import { readModelLaunchFailure } from '../providers/modelLaunchFailure'
 import { buddyAssistantTextPhaseSchema } from './assistantTextPhase'
 import {
   buddyToolPresentationDeltaSchema,
@@ -72,7 +73,6 @@ const SCALAR_PAYLOAD_KEYS = new Map<string, readonly string[]>([
   ['message.started', ['messageId', 'role']],
   ['run.cancelled', ['errorCode']],
   ['run.completed', ['errorCode']],
-  ['run.failed', ['errorCode', 'errorMessage']],
   ['run.started', []],
   ['session.continuity.degraded', ['errorCode', 'source']],
   ['session.recovered', ['source']],
@@ -123,6 +123,13 @@ function publicPayload(type: string, value: unknown): Record<string, unknown> {
     return publicCompletedMessage(source)
   if (type === 'message.interrupted')
     return publicInterruptedMessage(source)
+  if (type === 'run.failed') {
+    const payload = selectScalars(source, ['errorCode', 'errorMessage'])
+    const launchFailure = readModelLaunchFailure(source.errorCode, source.launchFailure)
+    if (launchFailure)
+      payload.launchFailure = launchFailure
+    return payload
+  }
   if (type === 'run.progress')
     return publicRunProgress(source)
   if (type === 'desktop.panel.changed') {

@@ -2,13 +2,14 @@ import type { InferenceResourceLease } from '../ExtensionInferenceResources'
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
 import { link, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { build } from 'vite'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { inferenceBindingSchema, inferenceLimits } from '../../../shared/extensions/extensionInference'
 import { resolveInferenceEnvironment } from '../../../shared/extensions/inferencePlatform'
+import { resolveBuddyPrivateDirectories } from '../../native/nativeHost'
 import { readInferenceInitialization } from '../inferenceInitialization'
 import { NativeInferenceProcess } from '../NativeInferenceProcess'
 import { prepareSupervisedInferenceLaunch } from '../supervisedInferenceLaunch'
@@ -47,12 +48,13 @@ async function fixture() {
   cleanups.push(() => handle.close())
   const lease: InferenceResourceLease = { files: [{ path: 'nested/model.gguf', handle, hostPath: original }], release: async () => {} }
   const binding = inferenceBindingSchema.parse({ runtime: 'local', resources: [{ mount: 'model', id: 'model', revision: '0'.repeat(64) }] })
+  const location = { dataRoot: root, privateDirectoriesExecutable: resolveBuddyPrivateDirectories({ appPath: fileURLToPath(new URL('../../../', import.meta.url)), isPackaged: false, resourcesPath: '' }) }
   const start = async (target = runtime) => {
-    const launch = await prepareSupervisedInferenceLaunch('bootstrap', store, pkg, target, binding, [lease], new AbortController().signal)
+    const launch = await prepareSupervisedInferenceLaunch({ ...location, bootstrap: 'bootstrap' }, store, pkg, target, binding, [lease], new AbortController().signal)
     cleanups.push(launch.dispose)
     return launch
   }
-  return { root, store, pkg, original, handle, lease, runtime, binding, code, start }
+  return { root, location, store, pkg, original, handle, lease, runtime, binding, code, start }
 }
 
 async function buildWorkerBootstrap(): Promise<string> {
@@ -68,6 +70,10 @@ it('preserves external role names through a path map without copying, linking or
   const f = await fixture()
   const before = await f.handle.stat()
   const launch = await f.start()
+  const sibling = await f.start()
+  expect(dirname(launch.directory)).toBe(join(f.root, 'cache', 'extensions', f.pkg.manifest.id, 'launches'))
+  expect(basename(launch.directory)).toMatch(/^[\da-f-]{36}$/)
+  expect(sibling.directory).not.toBe(launch.directory)
   expect(launch.resourceFiles).toEqual({ model: { 'nested/model.gguf': f.original } })
   expect(await readInferenceInitialization(launch.directory)).toEqual({ configuration: {}, resources: launch.resources, resourceFiles: launch.resourceFiles })
   expect(await readdir(launch.resources.model!)).toEqual([])
@@ -76,6 +82,7 @@ it('preserves external role names through a path map without copying, linking or
   const after = await f.handle.stat()
   expect([after.ino, after.dev, after.mode, after.nlink]).toEqual([before.ino, before.dev, before.mode, before.nlink])
   await launch.dispose()
+  expect(await readFile(join(sibling.directory, 'runtime.mjs'), 'utf8')).toBe('bootstrap')
   await expect(readFile(join(launch.directory, 'runtime.mjs'))).rejects.toMatchObject({ code: 'ENOENT' })
 })
 
@@ -85,6 +92,7 @@ it('rejects a package changed after review and an unregistered native entry', as
   await expect(f.start({ ...f.runtime, entry: 'native/unregistered.mjs' })).rejects.toThrow('EXTENSION_INFERENCE_ENTRY_INVALID')
   await writeFile(join(f.store.packageRoot(f.pkg), f.runtime.entry), 'changed')
   await expect(f.start()).rejects.toThrow('EXTENSION_PACKAGE_CHANGED')
+  expect(await readdir(join(f.root, 'cache', 'extensions', f.pkg.manifest.id, 'launches'))).toEqual([])
 })
 
 it('fails closed when an external path no longer denotes the verified open file', async () => {
@@ -94,6 +102,18 @@ it('fails closed when an external path no longer denotes the verified open file'
   await expect(f.start()).rejects.toThrow('EXTENSION_INFERENCE_RESOURCE_CHANGED')
   f.lease.files[0]!.hostPath = undefined
   await expect(f.start()).rejects.toThrow('EXTENSION_INFERENCE_RESOURCE_PATH_UNAVAILABLE')
+})
+
+it('does not write into an absent resource view or attribute a source read failure to launch storage', async () => {
+  const f = await fixture()
+  f.lease.directory = join(f.root, 'missing-view')
+  await expect(f.start()).rejects.toMatchObject({ code: 'ENOENT' })
+  await expect(stat(f.lease.directory)).rejects.toMatchObject({ code: 'ENOENT' })
+  delete f.lease.directory
+  const readError = Object.assign(new Error('source device failed'), { code: 'ENOSPC' })
+  vi.spyOn(f.handle, 'stat').mockRejectedValueOnce(readError)
+  await expect(f.start()).rejects.toBe(readError)
+  expect(await readdir(join(f.root, 'cache', 'extensions', f.pkg.manifest.id, 'launches'))).toEqual([])
 })
 
 it('materializes supervised resource mappings with same-volume hardlinks (Darwin mapping on Linux)', async () => {
@@ -161,6 +181,7 @@ it.skipIf(resolveInferenceEnvironment(process.platform, process.arch).executionM
   const f = await fixture()
   expect(process.env.LEXORA_BUDDY_PROCESS_CONTROL, 'freshly built platform process-control helper').toBeTruthy()
   const worker = await NativeInferenceProcess.start({
+    ...f.location,
     executable: process.execPath,
     supervisor: process.env.LEXORA_BUDDY_PROCESS_CONTROL,
     sandbox: '',
@@ -190,6 +211,7 @@ it.skipIf(resolveInferenceEnvironment(process.platform, process.arch).executionM
     files.push({ path, hostPath, handle: f.handle })
   }
   f.lease.directory = join(f.root, 'external-view')
+  await mkdir(f.lease.directory)
   const managed: InferenceResourceLease = { directory, files, release: async () => {} }
   const binding = inferenceBindingSchema.parse({
     runtime: 'local',
@@ -206,6 +228,7 @@ it.skipIf(resolveInferenceEnvironment(process.platform, process.arch).executionM
   }
   expect(Buffer.byteLength(JSON.stringify(initialization))).toBeGreaterThan(inferenceLimits.controlBytes)
   const worker = await NativeInferenceProcess.start({
+    ...f.location,
     executable: process.execPath,
     supervisor: process.env.LEXORA_BUDDY_PROCESS_CONTROL,
     sandbox: '',

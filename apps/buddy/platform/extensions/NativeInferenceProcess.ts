@@ -4,17 +4,18 @@ import type { ApplicationDiagnosticReporter } from '../../shared/diagnostics/app
 import type { InferenceBinding, InferenceRuntime } from '../../shared/extensions/extensionInference'
 import type { JsonValue } from '../../shared/workbench/workbenchState'
 import type { InferenceResourceLease } from './ExtensionInferenceResources'
+import type { ExtensionLaunchLocation } from './extensionLaunchDirectory'
 import type { ExtensionPackage, ExtensionPackageStore } from './ExtensionPackageStore'
 import type { InferenceNetworkRequest } from './InferenceNetworkHost'
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { lstat, mkdtemp, open, readdir, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { lstat, open, readdir, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import process from 'node:process'
 import { inferenceLimits } from '../../shared/extensions/extensionInference'
 import { supportsInferenceRuntime } from '../../shared/extensions/inferencePlatform'
+import { createExtensionLaunchDirectory } from './extensionLaunchDirectory'
 import { observeInferenceDiagnostics } from './inferenceDiagnostics'
 import { InferenceNetworkHost } from './InferenceNetworkHost'
 import { enqueueInferenceFrame, readInferenceFrames, writeInferenceFrame } from './inferenceWire'
@@ -32,7 +33,7 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 function backendError(data: unknown): Error {
-  return new Error(typeof data === 'string' && /^EXTENSION_INFERENCE_[A-Z_]{1,80}$/.test(data) ? data : 'EXTENSION_INFERENCE_BACKEND_FAILED')
+  return new Error(typeof data === 'string' && /^EXTENSION_INFERENCE_(?!LAUNCH_)[A-Z_]{1,80}$/.test(data) ? data : 'EXTENSION_INFERENCE_BACKEND_FAILED')
 }
 export function waitForInference<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   signal.throwIfAborted()
@@ -67,7 +68,7 @@ interface Job {
   error?: unknown
   events: Set<Promise<void>>
 }
-export interface NativeInferenceOptions {
+export interface NativeInferenceOptions extends ExtensionLaunchLocation {
   sandbox?: string
   executable: string
   bootstrap: string
@@ -170,12 +171,12 @@ export class NativeInferenceProcess {
       return this.#startSupervised(options, store, pkg, runtime, binding, leases, signal)
     if (!options.sandbox)
       throw new Error('EXTENSION_INFERENCE_SANDBOX_UNAVAILABLE')
-    const temporary = await mkdtemp(join(tmpdir(), 'lexora-inference-'))
+    const launch = await createExtensionLaunchDirectory(options, pkg.manifest.id)
     const handles: FileHandle[] = []
     let worker: NativeInferenceProcess | undefined
     try {
-      const bootstrap = join(temporary, 'runtime.mjs')
-      await writeFile(bootstrap, options.bootstrap, { mode: 0o600 })
+      const bootstrap = join(launch.directory, 'runtime.mjs')
+      await launch.write(() => writeFile(bootstrap, options.bootstrap, { mode: 0o600 }))
       const mounts: Array<{
         target: string
         handle: FileHandle
@@ -225,14 +226,17 @@ export class NativeInferenceProcess {
       mounts.forEach((mount, index) => args.push('--ro-bind', `/proc/self/fd/${index + 3}`, mount.target))
       args.push('--remount-ro', '/plugin', '--remount-ro', '/resources')
       args.push(`/runtime/${basename(options.executable)}`, '/bootstrap.mjs', `/plugin/${runtime.entry}`)
+      await launch.beforeSpawn()
       signal.throwIfAborted()
       const child = spawn(options.sandbox, args, { stdio: ['pipe', 'pipe', 'pipe', ...mounts.map(mount => mount.handle.fd)], env: { PATH: '/usr/bin' } }) as ChildProcessWithoutNullStreams
-      worker = new NativeInferenceProcess(child, options.network, undefined, { extensionId: pkg.manifest.id, record: options.record })
+      worker = new NativeInferenceProcess(child, options.network, launch.dispose, { extensionId: pkg.manifest.id, record: options.record })
       const abort = () => {
-        void worker!.stop()
+        void worker!.stop().catch(() => {})
       }
       signal.addEventListener('abort', abort, { once: true })
       try {
+        await launch.spawned(child.pid)
+        signal.throwIfAborted()
         await writeInferenceFrame(child.stdin, { type: 'initialize', data: { configuration: binding.configuration, resources: Object.fromEntries(binding.resources.map(item => [item.mount, `/resources/${item.mount}`])) } })
         await waitForInference(worker.#ready.promise, signal)
       }
@@ -247,16 +251,18 @@ export class NativeInferenceProcess {
     }
     finally {
       await Promise.all(handles.map(handle => handle.close()))
-      await rm(temporary, { recursive: true, force: true })
+      if (!worker)
+        await launch.dispose()
     }
   }
 
   static async #startSupervised(options: NativeInferenceOptions, store: ExtensionPackageStore, pkg: ExtensionPackage, runtime: InferenceRuntime, binding: InferenceBinding, leases: InferenceResourceLease[], signal: AbortSignal): Promise<NativeInferenceProcess> {
     if (!options.supervisor || !isAbsolute(options.supervisor) || !isAbsolute(options.executable))
       throw new Error('EXTENSION_INFERENCE_SUPERVISION_UNAVAILABLE')
-    const launch = await prepareSupervisedInferenceLaunch(options.bootstrap, store, pkg, runtime, binding, leases, signal)
+    const launch = await prepareSupervisedInferenceLaunch(options, store, pkg, runtime, binding, leases, signal)
     let worker: NativeInferenceProcess | undefined
     try {
+      await launch.beforeSpawn()
       signal.throwIfAborted()
       const child = spawn(options.supervisor, ['--supervise-inference'], {
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -272,6 +278,8 @@ export class NativeInferenceProcess {
       }
       signal.addEventListener('abort', abort, { once: true })
       try {
+        await launch.spawned(child.pid)
+        signal.throwIfAborted()
         child.stdin.write(`${JSON.stringify({ executable: options.executable, directory: launch.directory, entry: runtime.entry, libraryPaths: launch.libraryPaths, parentPid: process.pid })}\n`)
         await writeInferenceFrame(child.stdin, { type: 'initialize' })
         await waitForInference(worker.#ready.promise, signal)

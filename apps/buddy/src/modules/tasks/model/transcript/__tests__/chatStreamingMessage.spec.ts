@@ -222,6 +222,14 @@ describe('projectStreamingAssistantMessage', () => {
     })])
   })
 
+  it('projects the host launch record independently of the human-readable error', () => {
+    const code = 'MODEL_LAUNCH_NO_SPACE'
+    const launchFailure = { version: 1, code, location: '<profile>/cache/extensions/fixture.local/launches' }
+    const events = [event(1, 'run.failed', { errorCode: code, errorMessage: 'EXTENSION_INFERENCE_LAUNCH_NO_SPACE', launchFailure })]
+    expect(projectChatAgentTurns(events, [{ ...run('failed'), errorCode: code }])[0]).toMatchObject({ failureCode: code, failureMessage: 'EXTENSION_INFERENCE_LAUNCH_NO_SPACE', launchFailure })
+    expect(projectChatAgentTurns(events, [run('completed')])[0]).not.toHaveProperty('launchFailure')
+  })
+
   it('shows a real thinking start before content but does not retain empty terminal blocks', () => {
     const events = [event(1, 'message.block.started', { contentIndex: 0, kind: 'reasoning', messageId: 'thought' })]
     expect(projectChatAgentTurns([], [run('running')])[0]?.nodes).toEqual([])

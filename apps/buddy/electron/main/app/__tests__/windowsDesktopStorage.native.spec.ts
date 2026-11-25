@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeAll, beforeEach, describe, it } from 'vitest'
+import { createExtensionLaunchDirectory } from '../../../../platform/extensions/extensionLaunchDirectory'
 import { inspectWindowsPrivateDirectory as inspect } from '../../../../platform/filesystem/__tests__/windowsPrivateDirectoryFixture'
 import { resolveBuddyPrivateDirectories } from '../../../../platform/native/nativeHost'
 import { readDiagnosticError } from '../../../../shared/diagnostics/applicationDiagnostic'
@@ -69,6 +70,25 @@ describe.skipIf(process.platform !== 'win32')('windows desktop storage', () => {
     assert.ok(!inspect(userData).allows.includes(additionalPrincipal))
     assert.equal(inspect(home).sddl, security.sddl)
     assert.equal(inspect(parent).sddl, parentSecurity.sddl)
+  }, 60_000)
+
+  it('creates private inference launch files below an existing relocated cache without altering ancestor ACLs', async () => {
+    const id = 'tests.storage'
+    const launches = join(root, 'cache', 'extensions', id, 'launches')
+    await mkdir(launches, { recursive: true })
+    const before = inspect(launches, inheritedAcl)
+    const launch = await createExtensionLaunchDirectory({ dataRoot: root, privateDirectoriesExecutable: helper }, id)
+    try {
+      const security = inspect(launch.directory)
+      assert.equal(security.protected, true)
+      assert.deepEqual(security.allows.sort(), [security.user, 'S-1-5-18', 'S-1-5-32-544'].sort())
+      const config = join(launch.directory, 'initialize.json')
+      await writeFile(config, '{}')
+      assert.ok(!inspect(config).allows.includes(additionalPrincipal))
+      assert.equal(inspect(launches).sddl, before.sddl)
+    }
+    finally { await launch.dispose() }
+    assert.deepEqual(await readdir(launches), [])
   }, 60_000)
 
   it('preserves inherited runtime directory ACLs and files without leaving probe files', async () => {

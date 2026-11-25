@@ -217,7 +217,9 @@ describe('product persistence projections', () => {
     expect(page.items).toMatchObject([{ sequence: 1, payload: { kind: 'reasoning', content: 'Checking file layout' } }, { sequence: 2, payload: { toolCallId: 'shell', isError: true, presentation: { card: 'terminal', command: 'uname -s' } } }])
     expect(JSON.stringify(page)).not.toMatch(/never-expose|fixture-private-token/)
     expect(page.nextCursor).not.toBeNull()
-    insert.run('transcript-root', 4, 'run.completed', '{}')
+    const failure = { errorCode: 'MODEL_LAUNCH_NO_SPACE', errorMessage: 'EXTENSION_INFERENCE_LAUNCH_NO_SPACE' }
+    insert.run('transcript-root', 4, 'run.failed', JSON.stringify({ ...failure, launchFailure: { version: 1, code: failure.errorCode, location: '<profile>/cache/extensions/fixture.local/launches' } }))
+    expect(read({ ...input, afterSequence: '3', throughSequence: '4' }).items[0]?.payload).toEqual(failure)
     expect(read({ ...input, cursor: page.nextCursor }).items).toMatchObject([{ sequence: 3, payload: { tokensBefore: 257111, estimatedTokensAfter: 45832 } }])
     expect(read({ ...input, afterSequence: '2' }).items.map(event => event.sequence)).toEqual([3])
     expect(read({ ...input, runId: 'transcript-private' })).toEqual({ items: [], nextCursor: null })

@@ -1,25 +1,26 @@
 import type { InferenceBinding, InferenceRuntime } from '../../shared/extensions/extensionInference'
 import type { InferenceResourceLease } from './ExtensionInferenceResources'
+import type { ExtensionLaunchLocation } from './extensionLaunchDirectory'
 import type { ExtensionPackage, ExtensionPackageStore } from './ExtensionPackageStore'
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
-import { mkdir, mkdtemp, open, rm, stat, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { lstat, mkdir, open, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
 import { extensionPathSchema } from '../../shared/extensions/extensionPath'
 import { verifyInferenceResourcePath } from './ExtensionInferenceResources'
+import { createExtensionLaunchDirectory } from './extensionLaunchDirectory'
 import { writeInferenceInitialization } from './inferenceInitialization'
 
-export async function prepareSupervisedInferenceLaunch(bootstrap: string, store: ExtensionPackageStore, pkg: ExtensionPackage, runtime: InferenceRuntime, binding: InferenceBinding, leases: InferenceResourceLease[], signal: AbortSignal) {
+export async function prepareSupervisedInferenceLaunch(options: ExtensionLaunchLocation & { bootstrap: string }, store: ExtensionPackageStore, pkg: ExtensionPackage, runtime: InferenceRuntime, binding: InferenceBinding, leases: InferenceResourceLease[], signal: AbortSignal) {
   if (!/^native\/.+\.mjs$/.test(runtime.entry) || !Object.hasOwn(pkg.hashes, runtime.entry))
     throw new Error('EXTENSION_INFERENCE_ENTRY_INVALID')
   extensionPathSchema.parse(runtime.entry)
   if (runtime.gpu && !pkg.manifest.permissions.inferenceGpu)
     throw new Error('EXTENSION_INFERENCE_GPU_DENIED')
-  const directory = await mkdtemp(join(tmpdir(), 'lexora-inference-'))
-  const dispose = () => rm(directory, { recursive: true, force: true })
+  const launch = await createExtensionLaunchDirectory(options, pkg.manifest.id)
+  const { directory, write } = launch
   try {
-    await writeFile(join(directory, 'runtime.mjs'), bootstrap, { mode: 0o600 })
+    await write(() => writeFile(join(directory, 'runtime.mjs'), options.bootstrap, { mode: 0o600 }))
     for (const [path, hash] of Object.entries(pkg.hashes)) {
       signal.throwIfAborted()
       extensionPathSchema.parse(path)
@@ -31,8 +32,10 @@ export async function prepareSupervisedInferenceLaunch(bootstrap: string, store:
         if (createHash('sha256').update(bytes).digest('hex') !== hash)
           throw new Error('EXTENSION_PACKAGE_CHANGED')
         const target = join(directory, 'plugin', path)
-        await mkdir(dirname(target), { recursive: true })
-        await writeFile(target, bytes, { flag: 'wx', mode: 0o600 })
+        await write(async () => {
+          await mkdir(dirname(target), { recursive: true })
+          await writeFile(target, bytes, { flag: 'wx', mode: 0o600 })
+        })
       }
       finally { await handle.close() }
     }
@@ -43,7 +46,13 @@ export async function prepareSupervisedInferenceLaunch(bootstrap: string, store:
     for (const [index, lease] of leases.entries()) {
       const mount = binding.resources[index]!.mount
       const root = lease.directory ?? join(directory, 'resources', mount)
-      await mkdir(root, { recursive: true })
+      if (lease.directory) {
+        if (!(await lstat(root)).isDirectory())
+          throw new Error('EXTENSION_INFERENCE_RESOURCE_CHANGED')
+      }
+      else {
+        await write(() => mkdir(root, { recursive: true }))
+      }
       resources[mount] = root
       const files: Record<string, string> = {}
       for (const file of lease.files) {
@@ -69,12 +78,12 @@ export async function prepareSupervisedInferenceLaunch(bootstrap: string, store:
       return directory
     }))
     signal.throwIfAborted()
-    await writeInferenceInitialization(directory, { configuration: binding.configuration, resources, resourceFiles })
+    await write(() => writeInferenceInitialization(directory, { configuration: binding.configuration, resources, resourceFiles }))
     signal.throwIfAborted()
-    return { directory, resources, resourceFiles, libraryPaths, dispose }
+    return { ...launch, resources, resourceFiles, libraryPaths }
   }
   catch (error) {
-    await dispose()
+    await launch.dispose()
     throw error
   }
 }

@@ -9,9 +9,11 @@ import { createHash, randomUUID } from 'node:crypto'
 import process from 'node:process'
 import { safeDiagnosticReporter } from '../../shared/diagnostics/applicationDiagnostic'
 import { inferenceDiagnosticCodeSchema, inferenceStderrDiagnosticSchema } from '../../shared/diagnostics/inferenceDiagnostic'
+import { InferenceInvocationDiagnostic } from '../../shared/diagnostics/inferenceInvocationDiagnostic'
 import { inferenceBindingSchema, inferenceLimits, inferenceNetworkOptionsSchema, inferenceObservationSchema } from '../../shared/extensions/extensionInference'
 import { ExtensionInvocationQueue } from '../../shared/extensions/ExtensionInvocationQueue'
 import { supportsInferenceRuntime } from '../../shared/extensions/inferencePlatform'
+import { inferenceStorageFailure } from './inferenceStorageFailure'
 import { NativeInferenceProcess, waitForInference } from './NativeInferenceProcess'
 
 export interface ExtensionInferencePorts extends NativeInferenceOptions {
@@ -24,6 +26,7 @@ interface Instance {
   abort: AbortController
   runtime: string
   ready: Promise<NativeInferenceProcess>
+  startup: { stage: 'resources' | 'worker.start' }
   worker?: NativeInferenceProcess
   observation: { current?: InferenceObservation }
   capacity: ExtensionInvocationQueue
@@ -268,12 +271,16 @@ export class ExtensionInference {
   }
 
   invoke(capability: InferenceCapability, input: InferenceInvocation): Promise<void> {
-    const pending = this.#invoke(capability, input).finally(() => this.#calls.delete(pending))
+    const diagnostic = new InferenceInvocationDiagnostic(this.ports.record, input.id, this.pkg.manifest.id)
+    const pending = this.#invoke(capability, input, diagnostic).catch((error) => {
+      diagnostic.failed(error, inferenceStorageFailure(error))
+      throw error
+    }).finally(() => this.#calls.delete(pending))
     this.#calls.add(pending)
     return pending
   }
 
-  async #invoke(capability: InferenceCapability, input: InferenceInvocation): Promise<void> {
+  async #invoke(capability: InferenceCapability, input: InferenceInvocation, diagnostic: InferenceInvocationDiagnostic): Promise<void> {
     const epoch = this.#epoch
     if (this.#resetting || this.#resourceChange || this.#rebinding.has(capability.runtime) || this.#runtimeLifetimes.get(capability.runtime)?.stopping)
       throw new Error('EXTENSION_INFERENCE_STOPPING')
@@ -288,8 +295,10 @@ export class ExtensionInference {
       throw new Error('EXTENSION_INFERENCE_CONFIGURATION_CHANGED')
     await this.#assertCredentials(binding)
     signal.throwIfAborted()
+    diagnostic.mark('admission')
     const release = await this.ports.admit(this.pkg.manifest.id, input.id, signal, input.parentInvocationId)
     try {
+      diagnostic.mark('admitted')
       signal.throwIfAborted()
       this.assertCurrent()
       if (epoch !== this.#epoch || this.#bindings.get(capability.runtime) !== binding)
@@ -312,10 +321,14 @@ export class ExtensionInference {
         const leases: InferenceResourceLease[] = []
         const observation: Instance['observation'] = {}
         const loading = AbortSignal.any([abort.signal, this.#stop.signal, AbortSignal.timeout(inferenceLimits.startTimeoutMs)])
+        const startup: Instance['startup'] = { stage: 'resources' }
         const ready = Promise.resolve().then(async () => {
+          diagnostic.mark('resources')
           for (const resource of binding.resources)
             leases.push(await this.store.inference.acquire(this.pkg.manifest.id, resource, this.source, loading))
           this.assertCurrent()
+          startup.stage = 'worker.start'
+          diagnostic.mark('worker.start')
           return NativeInferenceProcess.start({ ...this.ports, record: (event) => {
             safeDiagnosticReporter(this.ports.record)(event)
             if (abort.signal.aborted || this.#bindings.get(binding.runtime) !== binding || this.#instances.get(key)?.abort !== abort || event.component !== 'models.inference' || event.extensionId !== this.pkg.manifest.id || !inferenceStderrDiagnosticSchema.shape.event.safeParse(event.event).success)
@@ -360,7 +373,7 @@ export class ExtensionInference {
             return this.ports.request(endpoint.url, { method: 'POST', headers, body, signal })
           } }, this.store, this.pkg, runtime, binding, leases, loading)
         })
-        const created: Instance = { abort, runtime: runtime.id, ready, observation, capacity: new ExtensionInvocationQueue({ concurrent: runtime.capacity, concurrentPerExtension: runtime.capacity, queued: 1024 }), waiters: 0, active: 0, leases }
+        const created: Instance = { abort, runtime: runtime.id, ready, startup, observation, capacity: new ExtensionInvocationQueue({ concurrent: runtime.capacity, concurrentPerExtension: runtime.capacity, queued: 1024 }), waiters: 0, active: 0, leases }
         instance = created
         this.#instances.set(key, created)
         void ready.then((worker) => {
@@ -370,18 +383,39 @@ export class ExtensionInference {
           })
         })
       }
+      else if (!instance.worker) {
+        diagnostic.mark('worker.wait')
+      }
       clearTimeout(instance.idle)
       instance.waiters++
       const lifetime = AbortSignal.any([signal, instance.abort.signal])
       let capacity: (() => void) | undefined
       try {
-        const worker = await waitForInference(instance.ready, lifetime)
+        let worker: NativeInferenceProcess
+        try {
+          worker = await waitForInference(instance.ready, lifetime)
+        }
+        catch (error) {
+          diagnostic.stage = instance.startup.stage
+          throw error
+        }
+        diagnostic.operationId = worker.instanceId
+        diagnostic.mark('worker.ready')
+        diagnostic.stage = 'worker.capacity'
         capacity = await instance.capacity.acquire(this.pkg.manifest.id, input.id, lifetime)
         lifetime.throwIfAborted()
         this.assertCurrent()
         instance.active++
         try {
-          await worker.invoke({ ...input, signal: lifetime })
+          diagnostic.mark('invoke.awaiting_event')
+          await worker.invoke({ ...input, signal: lifetime, event: (data, bytes, signal) => {
+            if (diagnostic.stage === 'invoke.awaiting_event') {
+              diagnostic.mark('invoke.first_event')
+              diagnostic.stage = 'invoke.stream'
+            }
+            return input.event(data, bytes, signal)
+          } })
+          diagnostic.stage = 'cleanup'
         }
         finally {
           instance.active--
@@ -407,7 +441,10 @@ export class ExtensionInference {
       }
     }
     finally {
+      const stage = diagnostic.stage
+      diagnostic.stage = 'cleanup'
       await release()
+      diagnostic.stage = stage
     }
   }
 

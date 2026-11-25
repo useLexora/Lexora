@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createBuddyUserContent } from '../../../../shared/conversation/buddyUserContent'
+import { modelFailureFeedback } from '../../../../shared/providers/modelFailureFeedback'
 import { createBuddyInputReference, createBuddyInputReferenceMessage } from '../../agent/context/BuddyInputReference'
 import { ArtifactService } from '../../artifacts/ArtifactService'
 import { RunEventProjector } from '../../events/RunEventProjector'
@@ -41,7 +42,8 @@ async function fixture() {
   const artifacts = new ArtifactService({ repository: createArtifactRepository(database) })
   const publications = createConversationTreeRepository(database)
   const projector = new RunEventProjector(database)
-  const services = { conversations, attachments, artifacts, publications }
+  const references = createSessionReferenceRepository(database)
+  const services = { conversations, attachments, artifacts, publications, references }
   const service = new SessionReferenceService(services)
   const now = '2026-01-01T00:00:00.000Z'
   for (const id of ['current', 'source', 'other'])
@@ -81,7 +83,7 @@ async function fixture() {
     return { path, early, source: { kind: 'artifact' as const, artifactId: record!.id } }
   }
   const input = message({ userContent: { ...createBuddyUserContent('Use source.'), sessionReferences: [{ id: 'source', title: 'source' }] }, resourceSnapshots: [] }, { conversationId: 'current' })
-  const capability = createSessionReferenceCapability({ ...services, references: createSessionReferenceRepository(database), conversationId: 'current' })
+  const capability = createSessionReferenceCapability({ ...services, conversationId: 'current' })
   const tools = new Map<string, ToolDefinition>()
   const hooks = new Map<string, (input: unknown) => unknown>()
   await capability.extension.factory({
@@ -119,7 +121,23 @@ async function fixture() {
     const next = message({ userContent: createBuddyUserContent('Continue'), resourceSnapshots: [] }, { conversationId: 'current' })
     await hooks.get('context')!({ messages: [createBuddyInputReferenceMessage(createBuddyInputReference({ messageId: next.id, prompt: 'Continue', images: [] }), Date.now())] })
   }
-  return { nextInput, root, conversations, service, controller, call, read, message, inputResource, artifact, capability, tools, hooks }
+  function failedTurn(code: string, launchFailure?: { version: number, code: string, location: string }, errorMessage = 'PRIVATE_PROVIDER_EXCEPTION') {
+    const trigger = message('Try the local model')
+    const runId = `run-${trigger.id}`
+    const { branchId, conversationId, createdAt } = trigger
+    createRunRepository(database).create({ id: runId, conversationId, branchId, triggeringMessageId: trigger.id, provider: 'fixture', model: 'fixture', purpose: 'chat', status: 'running', piSessionFile: null, approvalPolicy: 'policy', executionProfile: 'read_only', startedAt: createdAt })
+    const reply = (sequence: number, text: string, stopReason: string) => {
+      const messageId = `${runId}-reply-${sequence}`
+      projector.project([{ runId, sequence, createdAt: new Date(Date.parse(createdAt) + sequence).toISOString(), type: 'message.completed', payload: { messageId, role: 'assistant', stopReason, content: { text } } }])
+      return { kind: 'message' as const, messageId }
+    }
+    const early = reply(1, 'Preparing the request.', 'tool_use')
+    const retried = reply(2, '', 'failed')
+    const terminal = reply(3, '', 'failed')
+    projector.project([{ runId, sequence: 4, createdAt: new Date(Date.parse(createdAt) + 4).toISOString(), type: 'run.failed', payload: { errorCode: code, errorMessage, ...(launchFailure ? { launchFailure } : {}) } }])
+    return { early, retried, terminal }
+  }
+  return { nextInput, root, conversations, references, service, controller, call, read, message, inputResource, artifact, capability, tools, hooks, failedTurn }
 }
 
 function textResult(result: Awaited<ReturnType<ToolDefinition['execute']>>) {
@@ -149,13 +167,70 @@ describe('referenced task materials', () => {
     await expect(f.read(output.source)).rejects.toThrow('SOURCE_UNAVAILABLE')
   })
 
+  it('discovers a terminal model failure without attributing a host diagnostic to model text or earlier attempts', async () => {
+    const f = await fixture()
+    const code = 'MODEL_LAUNCH_QUOTA_EXCEEDED'
+    const location = '<profile>/cache/extensions/referenced.plugin/launches'
+    const record = { version: 1, code, location }
+    const { early, retried, terminal } = f.failedTurn(code, record)
+    const hostFailure = modelFailureFeedback(code, record)
+    expect(hostFailure?.location).toBe(location)
+    const search = async (query?: string) => textResult(await f.call(SESSION_SEARCH_TOOL, { sessionId: 'source', query, kind: 'messages' }))
+    for (const query of [code, 'quota exceeded', '失败', location]) {
+      const result = await search(query)
+      expect(result.matches).toHaveLength(1)
+      expect(result.matches[0]).toMatchObject({ source: terminal, excerpt: '', offset: 0, hostFailure })
+    }
+    const nearby = textResult(await f.read(early))
+    expect(nearby).not.toHaveProperty('hostFailure')
+    expect(nearby.after[0].source).toEqual(retried)
+    expect(nearby.after[0]).not.toHaveProperty('hostFailure')
+    expect(nearby.after[1]).toMatchObject({ source: terminal, excerpt: '', hostFailure })
+    const failure = textResult(await f.read(terminal))
+    expect(failure).toMatchObject({ text: '', totalCharacters: 0, nextOffset: null, hostFailure })
+    expect(JSON.stringify(failure)).not.toContain('PRIVATE_PROVIDER_EXCEPTION')
+    expect((await search('PRIVATE_PROVIDER_EXCEPTION')).matches).toEqual([])
+    for (let i = 0; i < 8; i++) f.message(`Later note ${i}`)
+    const page = textResult(await f.call(SESSION_SEARCH_TOOL, { sessionId: 'source', kind: 'messages' }))
+    const next = textResult(await f.call(SESSION_SEARCH_TOOL, { sessionId: 'source', branchId: page.branchId, kind: 'messages', messageOffset: page.nextMessageOffset }))
+    expect(next.matches[0]).toMatchObject({ source: terminal, excerpt: '', hostFailure })
+    f.conversations.createBranch({ id: 'before-failure', conversationId: 'source', parentBranchId: 'source-branch', forkedFromMessageId: early.messageId, createdAt: '2026-02-01T00:00:00.000Z', activate: true })
+    await expect(f.read(terminal)).rejects.toThrow('BRANCH_CHANGED')
+    await f.nextInput()
+    expect((await search(code)).matches).toEqual([])
+    expect(textResult(await f.read(early))).not.toHaveProperty('hostFailure')
+    await expect(f.read(terminal)).rejects.toThrow('SOURCE_UNAVAILABLE')
+  })
+
+  it('does not derive a directory from a legacy launch code or arbitrary failure text', async () => {
+    const f = await fixture()
+    const code = 'MODEL_LAUNCH_NO_SPACE'
+    for (const detail of ['EXTENSION_INFERENCE_LAUNCH_NO_SPACE', 'PRIVATE_PROVIDER_EXCEPTION']) {
+      const { terminal } = f.failedTurn(code, undefined, detail)
+      const result = textResult(await f.read(terminal))
+      expect(result.hostFailure).toMatchObject({ stage: 'launch', reason: 'no_space', location: 'unknown' })
+      expect(JSON.stringify(result)).not.toContain(detail)
+    }
+  })
+
+  it('returns only the known legacy failure across a visible branch fork', async () => {
+    const f = await fixture()
+    const { terminal } = f.failedTurn('MODEL_REQUEST_FAILED')
+    f.conversations.createBranch({ id: 'after-failure', conversationId: 'source', parentBranchId: 'source-branch', forkedFromMessageId: terminal.messageId, createdAt: '2026-02-01T00:00:00.000Z', activate: true })
+    await f.nextInput()
+    const { hostFailure } = textResult(await f.read(terminal))
+    expect(hostFailure).toMatchObject({ code: 'MODEL_REQUEST_FAILED', stage: 'unknown', reason: 'unknown', location: 'unknown' })
+    expect(hostFailure.summary).not.toMatch(/launch|quota/i)
+    await expect(f.read(terminal, { sessionId: 'other' })).rejects.toThrow('NOT_AUTHORIZED')
+  })
+
   it('reads exact long message text across pages with visible neighbouring context', async () => {
     const f = await fixture()
     f.message('Original requirement')
     const text = `早期方案 ${'完整文本🎵'.repeat(6000)} FINAL_DECISION`
     const msg = f.message({ text }, { role: 'assistant' })
     const correction = f.message('Correction: use the revised version.')
-    const match = (await searchConversationHistory(f.conversations, f.service.requireSession('source'), { query: 'FINAL_DECISION' })).matches[0]!
+    const match = (await searchConversationHistory(f, f.service.requireSession('source'), { query: 'FINAL_DECISION' })).matches[0]!
     expect(textResult(await f.read(match.source, { offset: match.offset })).text).toContain('FINAL_DECISION')
     const source = { kind: 'message' as const, messageId: msg.id }
     let collected = ''

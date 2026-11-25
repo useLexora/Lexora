@@ -199,6 +199,7 @@ export class DesktopIntegrations {
       themes,
       record: this.#environment.events.publish,
       home: paths.buddyHome,
+      launchLocation: { dataRoot: paths.lexoraHome, privateDirectoriesExecutable: this.#environment.storage.privateDirectoriesExecutable },
       version: buddyVersion.version,
       developmentDirectory: !app.isPackaged && paths.profile === 'test' ? process.env.LEXORA_EXTENSION_DEVELOPMENT_PATH : undefined,
       getWindow: () => windows.window,

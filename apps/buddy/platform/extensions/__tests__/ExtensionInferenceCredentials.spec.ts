@@ -84,6 +84,7 @@ it('enforces origin permission and credential availability before inference, pre
   }
   const service = new ExtensionService(store, {
     inference: {
+      dataRoot: root,
       credentials,
       executable: 'unused',
       sandbox: 'unused',

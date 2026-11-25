@@ -1,6 +1,8 @@
+import type { ModelFailureFeedbackCode } from '@buddy-shared/providers/modelFailureFeedback'
 import type { LocalRun } from '@buddy-shared/runs/runApi'
 
 import type { BuddyI18nKey } from '@/i18n/buddyI18n'
+import { modelFailureFeedback } from '@buddy-shared/providers/modelFailureFeedback'
 
 export type ChatAgentTurnNotice
   = | { kind: 'activity', placement: 'process' }
@@ -12,6 +14,14 @@ export interface ChatAgentTurnFailurePresentation {
   message: string | null
   messageKey: BuddyI18nKey
 }
+
+const STORAGE_FAILURE_MESSAGE_KEYS = {
+  MODEL_LAUNCH_NO_SPACE: 'desktop.chat.modelLaunchNoSpace',
+  MODEL_LAUNCH_QUOTA_EXCEEDED: 'desktop.chat.modelLaunchQuotaExceeded',
+  MODEL_STORAGE_NO_SPACE: 'desktop.chat.modelStorageNoSpace',
+  MODEL_STORAGE_QUOTA_EXCEEDED: 'desktop.chat.modelStorageQuotaExceeded',
+  MODEL_STORAGE_FULL: 'desktop.chat.modelStorageFull',
+} satisfies Record<Exclude<ModelFailureFeedbackCode, 'MODEL_REQUEST_FAILED'>, BuddyI18nKey>
 
 const SPECIFIC_FAILURE_MESSAGE_KEYS: Readonly<Record<string, BuddyI18nKey>> = {
   AUTHENTICATION_REQUIRED: 'desktop.error.authenticationRequired',
@@ -57,7 +67,11 @@ export function resolveChatAgentTurnNotice(
 export function resolveChatAgentTurnFailurePresentation(
   errorCode: string | null,
   errorMessage: string | null,
+  launchFailure?: unknown,
 ): ChatAgentTurnFailurePresentation {
+  const feedback = modelFailureFeedback(errorCode, launchFailure)
+  if (feedback && feedback.code !== 'MODEL_REQUEST_FAILED')
+    return { detail: feedback.location === 'unknown' ? null : feedback.location, message: null, messageKey: STORAGE_FAILURE_MESSAGE_KEYS[feedback.code] }
   const detail = errorMessage?.trim() || null
   const messageKey = errorCode ? SPECIFIC_FAILURE_MESSAGE_KEYS[errorCode] : undefined
   if (messageKey) {
