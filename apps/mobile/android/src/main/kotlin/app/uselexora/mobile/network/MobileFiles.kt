@@ -39,12 +39,13 @@ class MobileFiles(private val context: Context, private val transfers: TransferS
         catch (error: SecurityException) { throw ProtocolFailure("LOCAL_FILE_FAILED", error) }
     }
     fun stageMaterial(uri: Uri, partition: String, scope: String, materialId: String, inputId: String, name: String? = null, mime: String? = null): JSONObject = synchronized(TransferStore.fileLock) {
-        transfers.list(partition).firstOrNull { it.optString("sourceMaterialId") == materialId && it.optString("scope") == scope }?.let { return@synchronized it }
+        transfers.list(partition).firstOrNull { it.optString("sourceMaterialId") == materialId && it.optString("scope") == scope && it.optString("inputId") == inputId }?.let { return@synchronized it }
         stageLocked(uri, partition, scope, app.uselexora.mobile.protocol.DraftContext.target(scope), materialId = materialId, suppliedName = name, suppliedMime = mime, inputId = inputId)
     }
     private fun stageLocked(uri: Uri, partition: String, scope: String, targetScope: JSONObject, capture: JSONObject? = null, materialId: String? = null, suppliedName: String? = null, suppliedMime: String? = null, inputId: String? = null): JSONObject {
         val id = UUID.randomUUID().toString()
-        val directory = File(context.filesDir, "staging").apply { mkdirs() }
+        val directory = File(context.filesDir, "staging")
+        if (java.nio.file.Files.isSymbolicLink(directory.toPath()) || !directory.isDirectory && !directory.mkdir()) throw ProtocolFailure("LOCAL_STORAGE_FAILED")
         val temporary = File(directory, "$id.part")
         val destination = File(directory, id)
         val name = suppliedName ?: context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null } ?: "attachment"
@@ -98,13 +99,13 @@ class MobileFiles(private val context: Context, private val transfers: TransferS
     fun upload(client: ProductClient, original: JSONObject, target: JSONObject): JSONObject = synchronized(TransferStore.fileLock) { uploadLocked(client, original, target) }
     private fun uploadLocked(client: ProductClient, original: JSONObject, target: JSONObject): JSONObject {
         val identity = client.identity ?: throw ProtocolFailure("NOT_CONNECTED")
-        val transfer = JSONObject(original.toString())
+        val transfer = currentTransfer(client, original)
         if (transfer.getString("partition") != identity.partition) throw ProtocolFailure("DATA_GENERATION_CHANGED")
         if (store.uploadSubmitted(transfer)) {
             transfer.put("state", "adopted"); transfers.save(transfer)
             return JSONObject().put("decision", "accepted").put("result", JSONObject().put("resourceId", transfer.getString("resourceId")))
         }
-        val file = File(transfer.getString("path"))
+        val file = localIO { stagedFile(context, transfer) } ?: throw ProtocolFailure("SOURCE_CHANGED")
         val metadata = transfer.getJSONObject("file")
         if (!file.isFile || file.length() != metadata.getLong("sizeBytes") || localIO { hash(file) } != metadata.getString("sha256")) throw ProtocolFailure("SOURCE_CHANGED")
         val localInput = transfer.optString("inputId").takeIf { it.isNotBlank() } ?: target.optString("inputId").takeIf { it.isNotBlank() }
@@ -119,12 +120,12 @@ class MobileFiles(private val context: Context, private val transfers: TransferS
         }
         val id = transfer.getString("uploadId")
         var state = client.call("uploads.get", JSONObject().put("uploadId", id))
-        if (state.getString("uploadId") != id || (if (transfer.has("inputId")) state.optString("inputId") != transfer.getString("inputId") else state.getString("draftId") != transfer.getString("draftId")) || state.getLong("sizeBytes") != metadata.getLong("sizeBytes") || state.getString("sha256") != metadata.getString("sha256")) throw ProtocolFailure("SOURCE_CHANGED")
+        checkUploadState(transfer, state)
         if (transfer.has("inputId") && state.getString("state") in setOf("expired", "failed")) {
             val local = store.drafts().firstOrNull { it.partition == identity.partition && store.inputId(it.partition, it.scope) == transfer.getString("inputId") } ?: throw ProtocolFailure("EMPTY_DRAFT")
             if (store.hasPendingDraftCommand(local)) throw ProtocolFailure("COMMAND_RESULT_UNKNOWN")
             transfer.optString("resourceId").takeIf { it.isNotEmpty() }?.let { transfer.put("replacedResourceId", it) }
-            transfer.remove("resourceId"); transfer.remove("uploadId")
+            transfer.remove("resourceId"); transfer.remove("uploadId"); transfer.remove("attachmentId"); transfer.remove("contentVersion")
             transfer.put("uploadAttemptId", store.newId()).put("state", "staged").put("confirmedBytes", 0)
             transfers.save(transfer)
             return uploadLocked(client, transfer, target)
@@ -150,20 +151,23 @@ class MobileFiles(private val context: Context, private val transfers: TransferS
             }
             command(client, transfer, "uploads.complete", JSONObject().put("uploadId", id))
             state = client.call("uploads.get", JSONObject().put("uploadId", id))
+            checkUploadState(transfer, state)
         }
         if (state.getString("state") !in setOf("ready", "adopted")) throw ProtocolFailure("RESOURCE_UNAVAILABLE")
         if (transfer.has("inputId")) {
             val resourceId = state.getString("resourceId")
+            bindPreview(transfer, state)
+            // Publish the verified binding before exposing its resource in the separate draft database.
+            transfers.save(transfer.put("state", state.getString("state")).put("resourceId", resourceId))
             if (state.getString("state") == "ready") {
                 store.attach(identity.partition, transfer.getString("inputId"), resourceId, transfer.optString("replacedResourceId").takeIf { it.isNotEmpty() })
-                transfer.remove("replacedResourceId")
+                if (transfer.remove("replacedResourceId") != null) transfers.save(transfer)
             }
-            transfers.save(transfer.put("state", state.getString("state")).put("resourceId", resourceId))
             return JSONObject().put("decision", "accepted").put("result", JSONObject().put("resourceId", resourceId))
         }
         if (state.getString("state") == "ready") { transfer.put("state", "ready"); transfers.save(transfer) }
         val adopted = command(client, transfer, "uploads.adopt", JSONObject().put("uploadId", id).put("draftId", transfer.getString("draftId")).put("expectedRevision", transfer.getString("expectedRevision")))
-        transfer.put("state", "adopted").put("resourceId", adopted.getJSONObject("result").getString("resourceId")); transfers.save(transfer)
+        rememberAdoption(transfer, adopted)
         return adopted
     }
     fun reviewAdoption(client: ProductClient, original: JSONObject): JSONObject = synchronized(TransferStore.fileLock) {
@@ -191,12 +195,38 @@ class MobileFiles(private val context: Context, private val transfers: TransferS
         uploadLocked(client, transfer, JSONObject().put("draftId", transfer.getString("draftId")).put("expectedRevision", current.getString("revision")))
     }
     private fun rememberAdoption(transfer: JSONObject, receipt: JSONObject) {
-        transfer.put("state", "adopted").put("resourceId", receipt.getJSONObject("result").getString("resourceId")); transfers.save(transfer)
+        val result = receipt.getJSONObject("result")
+        bindPreview(transfer, result)
+        transfer.put("state", "adopted").put("resourceId", result.getString("resourceId")); transfers.save(transfer)
+    }
+    private fun checkUploadState(transfer: JSONObject, state: JSONObject) {
+        val metadata = transfer.getJSONObject("file")
+        val ownerKey = if (transfer.has("inputId")) "inputId" else "draftId"
+        if (state.getString("uploadId") != transfer.getString("uploadId") || state.optString(ownerKey) != transfer.getString(ownerKey) ||
+            state.getLong("sizeBytes") != metadata.getLong("sizeBytes") || state.getString("sha256") != metadata.getString("sha256")) throw ProtocolFailure("SOURCE_CHANGED")
+    }
+    private fun bindPreview(transfer: JSONObject, result: JSONObject) {
+        if (result.isNull("attachmentId") || result.isNull("contentVersion")) return
+        if (result.getString("contentVersion") != transfer.getJSONObject("file").getString("sha256")) throw ProtocolFailure("SOURCE_CHANGED")
+        transfer.put("attachmentId", result.getString("attachmentId")).put("contentVersion", result.getString("contentVersion"))
+    }
+    internal fun refreshPreviewBinding(client: ProductClient, original: JSONObject): JSONObject = synchronized(TransferStore.fileLock) {
+        val transfer = currentTransfer(client, original)
+        for (key in listOf("inputId", "uploadId", "resourceId")) {
+            if (transfer.getString(key) != original.getString(key)) throw ProtocolFailure("SOURCE_CHANGED")
+        }
+        val state = client.call("uploads.get", JSONObject().put("uploadId", transfer.getString("uploadId")))
+        checkUploadState(transfer, state)
+        if (state.getString("state") !in setOf("ready", "adopted") || state.optString("resourceId") != transfer.getString("resourceId") ||
+            state.isNull("attachmentId") || state.isNull("contentVersion")) throw ProtocolFailure("RESOURCE_UNAVAILABLE")
+        bindPreview(transfer, state)
+        transfers.save(transfer)
+        transfer
     }
     private fun currentTransfer(client: ProductClient, original: JSONObject): JSONObject {
         val owner = original.getString("partition")
         if (client.identity?.partition != owner) throw ProtocolFailure("DATA_GENERATION_CHANGED")
-        return transfers.list(owner).firstOrNull { it.getString("id") == original.getString("id") } ?: throw ProtocolFailure("RESOURCE_UNAVAILABLE")
+        return transfers.get(original.getString("id"))?.takeIf { it.optString("partition") == owner && it.optString("kind") == "upload" } ?: throw ProtocolFailure("RESOURCE_UNAVAILABLE")
     }
     fun cancel(client: ProductClient, transfer: JSONObject): Unit = synchronized(TransferStore.fileLock) { cancelLocked(client, transfer) }
     private fun cancelLocked(client: ProductClient, transfer: JSONObject): Unit {
@@ -223,7 +253,7 @@ class MobileFiles(private val context: Context, private val transfers: TransferS
         }
         current.put("state", "cancelled"); transfers.save(current)
         val file = File(current.getString("path"))
-        if (file.exists() && !file.delete()) throw ProtocolFailure("LOCAL_STORAGE_FAILED")
+        if (file.exists() && stagedFile(context, current)?.delete() != true) throw ProtocolFailure("LOCAL_STORAGE_FAILED")
     }
 
     private fun command(client: ProductClient, transfer: JSONObject, method: String, intent: JSONObject): JSONObject {
@@ -291,6 +321,16 @@ class MobileFiles(private val context: Context, private val transfers: TransferS
         return complete
     }
     companion object {
+        internal fun stagedFile(context: Context, transfer: JSONObject): File? {
+            val id = transfer.optString("id")
+            val directory = File(context.filesDir, "staging")
+            if (transfer.optString("kind") != "upload" || !LocalFiles.validId(id) || java.nio.file.Files.isSymbolicLink(directory.toPath())) return null
+            val expected = File(directory, id)
+            val recorded = File(transfer.optString("path"))
+            if (java.nio.file.Files.isSymbolicLink(expected.toPath()) || java.nio.file.Files.isSymbolicLink(recorded.toPath()) ||
+                !expected.isFile || expected.canonicalFile != recorded.canonicalFile) return null
+            return expected.canonicalFile
+        }
         const val MAX_BYTES = 64L * 1024 * 1024
         const val CHUNK_BYTES = 1024 * 1024
         fun hex(bytes: ByteArray): String = bytes.joinToString("") { "%02x".format(it) }

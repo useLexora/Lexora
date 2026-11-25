@@ -27,7 +27,7 @@ import app.uselexora.mobile.protocol.ExecutionSettings
 import org.json.JSONObject
 
 @Composable
-internal fun ConversationSettings(state: MobileUiState, onAction: (MobileAction, JSONObject?) -> Unit, close: () -> Unit) {
+internal fun ConversationSettings(state: MobileUiState, onAction: (MobileAction, JSONObject?) -> Unit, openDownloads: (() -> Unit)? = null, close: () -> Unit) {
     BackHandler { if (state.executionPickerOpen) state.executionPickerOpen = false else close() }
     Surface(Modifier.fillMaxSize().testTag("conversation-settings"), color = MaterialTheme.colorScheme.background) {
         Column {
@@ -49,6 +49,10 @@ internal fun ConversationSettings(state: MobileUiState, onAction: (MobileAction,
                             value = state.executionLabel, tag = "execution", divider = hasMembers) { onAction(MobileAction.ChooseExecution, null) }
                         if (hasMembers) SettingsRow(mobileText(R.string.mobile_task_members), desktopSymbol(DesktopSymbol.Partners), tag = "task-partners", divider = false) { onAction(MobileAction.ShowMembers, null) }
                     }
+                }
+                if (openDownloads != null) {
+                    Spacer(Modifier.height(16.dp))
+                    DownloadsSettingsRow(openDownloads)
                 }
             }
         }

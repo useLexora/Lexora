@@ -1,0 +1,34 @@
+<resources>
+    <string name="downloads_title">下载</string>
+    <string name="download_file">下载到手机</string>
+    <string name="download_choose_folder">选择下载文件夹…</string>
+    <string name="download_default_folder">下载 / Lexora</string>
+    <string name="download_chosen_folder">保存到所选文件夹下的 Lexora 子文件夹</string>
+    <string name="downloads_empty">暂无下载记录</string>
+    <string name="downloads_loading">正在读取下载记录…</string>
+    <string name="downloads_stopped">已停止</string>
+    <string name="download_detail">下载详情</string>
+    <string name="download_running">正在下载</string>
+    <string name="download_verifying">正在校验文件</string>
+    <string name="download_failed">下载失败</string>
+    <string name="download_interrupted">已中断</string>
+    <string name="download_pause">暂停下载</string>
+    <string name="download_resume">继续下载</string>
+    <string name="download_cancel">取消下载</string>
+    <string name="download_keep">保留下载</string>
+    <string name="download_cancel_question">取消这次下载？</string>
+    <string name="download_cancel_message">将丢弃“%1$s”未完成的下载副本。原文件不受影响。</string>
+    <string name="download_open">打开已下载文件</string>
+    <string name="download_progress">%1$s / %2$s</string>
+    <string name="download_file_type">文件类型</string>
+    <string name="download_location">目标位置</string>
+    <string name="download_selected_location">所选位置的 Lexora 文件夹</string>
+    <string name="download_group_count">%1$s %2$d</string>
+    <string name="download_file_actions">文件操作</string>
+    <string name="download_destination_failed">无法写入下载位置。请检查剩余空间和文件夹访问权限。</string>
+    <string name="download_interrupted_help">文件尚未下载完成。可以继续下载。</string>
+    <string name="download_error">错误</string>
+    <string name="download_progress_unknown">已下载 %1$s</string>
+    <string name="download_new_document_required">请选择新的空文件。原有文档未被修改。</string>
+    <string name="download_saved_size">已下载 · %1$s</string>
+</resources>

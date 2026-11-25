@@ -33,7 +33,7 @@ import androidx.compose.ui.unit.dp
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun AppearanceSettings(close: () -> Unit) {
+internal fun AppearanceSettings(openDownloads: (() -> Unit)? = null, close: () -> Unit) {
     val context = LocalContext.current
     var languagePicker by remember { mutableStateOf(false) }
     var aboutOpen by rememberSaveable { mutableStateOf(false) }
@@ -69,6 +69,7 @@ internal fun AppearanceSettings(close: () -> Unit) {
                         mobileText(if (MobileAppearance.language == "zh") R.string.mobile_language_chinese else R.string.language_english),
                         kind = SettingsRowKind.Selection, tag = "language-selector", divider = false) { languagePicker = true }
                 }
+                if (openDownloads != null) DownloadsSettingsRow(openDownloads)
                 Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
                     SettingsRow(mobileText(R.string.mobile_about_lexora), Icons.Outlined.Info, tag = "about-lexora", divider = false) { aboutOpen = true }
                 }

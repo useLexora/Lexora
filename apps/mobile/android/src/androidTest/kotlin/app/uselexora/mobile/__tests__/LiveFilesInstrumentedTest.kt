@@ -68,6 +68,9 @@ class LiveFilesInstrumentedTest {
                 assertEquals("ready", remote.getString("state"))
                 val publicResourceId = "attachment:${remote.getString("attachmentId")}"
                 assertEquals(resourceId, remote.getString("resourceId"))
+                val bound = transfers.get(transfer.getString("id"))!!
+                assertEquals(remote.getString("attachmentId"), bound.getString("attachmentId"))
+                assertEquals(MobileFiles.hash(bytes), bound.getString("contentVersion"))
                 val resource = client.call("resources.get", JSONObject().put("resourceId", publicResourceId))
                 val prepared = client.call("resources.prepare", JSONObject().put("resourceId", publicResourceId).put("expectedVersion", resource.getString("revision")))
                 val downloadId = store.newId()

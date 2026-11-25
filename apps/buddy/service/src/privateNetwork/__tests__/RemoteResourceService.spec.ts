@@ -41,7 +41,12 @@ async function fixture() {
   artifacts.save({ id: 'artifact', conversationId: 'task-1', currentPath: source, directoryRoot: workspace, directoryGrantId: 'task-1', relativePath: 'result.txt', kind: 'file', name: 'result.txt', mimeType: 'text/plain', sizeBytes: 14, sourceArtifactId: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() })
   const artifactService = new ArtifactService({ repository: artifacts })
   const views = (actor: string) => new ProductQueries(database, actor, 'instance').views
-  const service = new RemoteResourceService({ database, root, instanceId: 'instance', views, artifacts: artifactService })
+  const options = { database, root, instanceId: 'instance', views, artifacts: artifactService }
+  let service = new RemoteResourceService(options)
+  const restart = async () => {
+    await service.close()
+    service = new RemoteResourceService(options)
+  }
   const prepare = (id = 'artifact:artifact') => service.prepare({ resourceId: id, expectedVersion: views(local.actorId).resource(id)!.revision }, principal)
   const server = createServer((request, response) => {
     void service.bytes(request, response, principal).catch((error) => {
@@ -57,7 +62,7 @@ async function fixture() {
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
   const endpoint = `http://127.0.0.1:${(server.address() as { port: number }).port}`
-  const get = (resource: { downloadId: string, contentVersion: string }, headers: Record<string, string> = {}) => fetch(`${endpoint}/v1/resources/${resource.downloadId}`, { headers: { 'If-Match': `"${resource.contentVersion}"`, ...headers } })
+  const get = (resource: { downloadId: string, contentVersion: string }, headers: Record<string, string> = {}, method = 'GET') => fetch(`${endpoint}/v1/resources/${resource.downloadId}`, { method, headers: { 'If-Match': `"${resource.contentVersion}"`, ...headers } })
   cleanups.push(async () => {
     server.closeAllConnections()
     await service.close()
@@ -66,7 +71,7 @@ async function fixture() {
     database.close()
     await rm(root, { recursive: true, force: true })
   })
-  return { database, root, source, service, prepare, get, revoke: () => active = false }
+  return { database, root, source, service, prepare, get, restart, revoke: () => active = false }
 }
 
 describe('immutable authorized resource downloads', () => {
