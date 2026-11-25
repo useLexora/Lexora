@@ -18,6 +18,7 @@ import { readerCopyFeedbackKey } from './useReaderCopyFeedback'
 export type { ReaderMessage } from './readerProtocol'
 export interface ReaderTranscript { events: LocalRunEvent[], loaded?: boolean, error?: string | null }
 export type ReaderRun = LocalRun & Pick<NonNullable<ReaderUpdate['runs']>[number], 'executionKind'>
+export interface ReaderTurnOwner { id: string, name?: string }
 export interface ReaderEntry extends ReaderWireEntry {
   transcriptError?: string | null
   turn?: ChatAgentTurn
@@ -33,6 +34,7 @@ export function useReaderBridge() {
   const typography = shallowRef({ bodySize: 15, bodyLineHeight: 24 })
   const avatars = shallowRef<Record<string, string>>({})
   provide(readerAvatarsKey, avatars)
+  const buddyNames = shallowRef(new Map<string, string>())
   const entries = shallowRef<ReaderEntry[]>([])
   const turnWindow = shallowRef(false)
   provide(readerTurnWindowKey, turnWindow)
@@ -111,6 +113,7 @@ export function useReaderBridge() {
         bodyPage.value = update.bodyPage
       if (update.avatars)
         avatars.value = update.avatars
+      buddyNames.value = next.buddyNames
       if (update.branches || next.reset)
         branches.value = update.branches ?? []
       if (update.selectedBranchId !== undefined || next.reset)
@@ -143,5 +146,5 @@ export function useReaderBridge() {
     window.removeEventListener('message', connect)
     port?.close()
   })
-  return { entries, turnWindow, history, runs, transcripts, outputs, branches, selectedBranchId, topic, dark, fontScale, appearance, typography, language, resultRunId, anchor, hasLaterMessages, latestState, send }
+  return { entries, turnWindow, history, runs, buddyNames, transcripts, outputs, branches, selectedBranchId, topic, dark, fontScale, appearance, typography, language, resultRunId, anchor, hasLaterMessages, latestState, send }
 }

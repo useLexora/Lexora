@@ -21,14 +21,15 @@ import org.json.JSONObject
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun TaskMembersPanel(state: MobileUiState, avatarContext: ReaderAvatarContext? = null, action: (MobileAction, JSONObject?) -> Unit) {
+internal fun TaskMembersPanel(state: MobileUiState, avatarContext: ReaderAvatars? = null, action: (MobileAction, JSONObject?) -> Unit) {
     val snapshot = state.members
     val array = snapshot?.optJSONArray("items")
     val members = if (array == null) emptyList() else (0 until array.length()).map { array.getJSONObject(it) }
     val ids = members.map { it.getString("actorId") }.toSet()
     val profiles = (members.map { it.getJSONObject("profile") } + state.buddyCatalog).distinctBy { it.getString("id") }
     val duplicateNames = profiles.groupingBy { it.getString("name") }.eachCount().filterValues { it > 1 }.keys
-    val (avatars, sources) = rememberPartnerAvatars(avatarContext, state.topic, profiles.map { it.getString("id") }.toSet())
+    val avatars = avatarContext
+    val sources = rememberPartnerAvatars(avatars, state.topic, profiles.map { it.getString("id") }.toSet())
     val canChange = state.connected && state.conversationReady && !state.membersChanging && !state.viewingArchived
     val candidates = state.buddyCatalog.filter { it.getString("id") !in ids && it.optBoolean("enabled") && !it.optBoolean("deleted") }
     ModalBottomSheet(onDismissRequest = { state.membersOpen = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = MaterialTheme.colorScheme.background) {

@@ -47,7 +47,7 @@ const timestamp = computed(() => {
   flex-wrap: wrap;
   align-items: center;
   min-height: 44px;
-  gap: 0;
+  column-gap: 2px;
   margin-top: 4px;
   color: var(--reader-muted);
 }
@@ -60,8 +60,7 @@ const timestamp = computed(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  flex: 0 0 44px;
+  flex: 0 0 32px;
   min-height: 44px;
   padding: 6px;
   color: inherit;
@@ -84,7 +83,7 @@ const timestamp = computed(() => {
   height: 15px;
 }
 .message-actions .message-time {
-  padding: 0 6px;
+  padding-inline: 4px;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }

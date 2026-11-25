@@ -331,6 +331,12 @@ class SharedReaderInstrumentedTest {
         until("document.querySelector('.message-branches')?.textContent.includes('2/2') === true")
         assertEquals("true", js("document.documentElement.scrollWidth<=innerWidth"))
         assertEquals("true", js("document.querySelector('[aria-label=下一个分支]').disabled && !document.querySelector('[aria-label=上一个分支]').disabled"))
+        assertEquals("true", js("""(() => {
+            const icon = document.querySelector('[aria-label=上一个分支] .desktop-icon');
+            const bounds = icon.getBoundingClientRect(), style = getComputedStyle(icon);
+            return bounds.width > 0 && bounds.height > 0 && style.backgroundColor === style.color
+                && style.backgroundColor !== 'rgba(0, 0, 0, 0)' && style.webkitMaskImage.startsWith('url(');
+        })()"""))
         js("document.querySelector('[aria-label=上一个分支]').click()")
         compose.waitUntil(5_000) { actions.contains("branch:branch") }
         selectedBranchId = "branch"
@@ -338,7 +344,13 @@ class SharedReaderInstrumentedTest {
         runs = listOf(JSONObject().put("id", "stream-run").put("status", "completed"))
         update()
         until("document.querySelector('.message-branches')?.textContent.includes('1/2') === true")
-        assertEquals("true", js("document.querySelector('[aria-label=下一个分支]').getBoundingClientRect().width>=44 && document.querySelector('.assistant [aria-label=更多消息操作]').getBoundingClientRect().height>=44"))
+        assertEquals("true", js("""(() => {
+            const footer = document.querySelector('.assistant .message-actions');
+            const bounds = label => footer.querySelector('[aria-label="' + label + '"]').getBoundingClientRect();
+            const next = bounds('下一个分支'), copy = bounds('复制消息'), more = bounds('更多消息操作');
+            return [next, copy, more].every(rect => rect.width === 32 && rect.height >= 44)
+                && copy.left - next.right === 4 && more.left - copy.right === 2;
+        })()"""))
         js("document.querySelector('[aria-label=下一个分支]').click(); document.querySelector('.assistant [aria-label=更多消息操作]').click()")
         compose.waitUntil(5_000) { actions.containsAll(listOf("branch:retry", "message:original")) }
         dark = true; scale = 1.5f; update()

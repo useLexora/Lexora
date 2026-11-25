@@ -25,6 +25,7 @@ import { ExecutionResourceQueries } from '../storage/ExecutionResourceQueries'
 
 import { readSavedTextPage, savedTextTail } from './ProductSavedText'
 import { readProductTurnCommentary, readProductTurnCommentaryPage } from './ProductTurnCommentary'
+import { projectProductMessageAuthor } from './projectProductMessageAuthor'
 
 const inlineBytes = 131_072
 const timestamp = '1970-01-01T00:00:00.000Z'
@@ -152,15 +153,7 @@ export class ProductReadViews {
       const run = this.#database.prepare(`SELECT r.actor_snapshot_json FROM runs r JOIN conversations c ON c.id = r.conversation_id
         WHERE r.id = ? AND r.conversation_id = ? AND r.branch_id = ? AND r.execution_kind IN ('root', 'actor_child') AND c.deleted_at IS NULL`)
         .get(message.runId, message.conversationId, message.branchId)
-      if (typeof run?.actor_snapshot_json === 'string') {
-        try {
-          const snapshot = JSON.parse(run.actor_snapshot_json) as Record<string, unknown> | null
-          const identity = productMessageSchema.shape.author.unwrap().safeParse({ id: snapshot?.id, name: snapshot?.name })
-          if (identity.success)
-            author = identity.data
-        }
-        catch {}
-      }
+      author = projectProductMessageAuthor(run?.actor_snapshot_json)
     }
     return productMessageSchema.parse({ id: message.id, conversationId: message.conversationId, branchId: message.branchId, runId: message.runId, role: message.role, createdAt: message.createdAt, body, resources, ...(tool ? { tool } : {}), ...(author ? { author } : {}) })
   }

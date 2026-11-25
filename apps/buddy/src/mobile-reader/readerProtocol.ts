@@ -76,6 +76,7 @@ export const readerUpdateSchema = schema.object({
   appearance: schema.object({ variables: schema.record(schema.string(), schema.string()), colors: schema.record(schema.string(), schema.string()).optional() }).strict().optional(),
   typography: schema.object({ bodySize: schema.number().positive(), bodyLineHeight: schema.number().positive() }).strict().optional(),
   avatars: schema.record(schema.string(), schema.string()).optional(),
+  buddyNames: schema.record(schema.string(), schema.string()).optional(),
   branches: schema.array(productBranchSchema).optional(),
   selectedBranchId: id.nullable().optional(),
   outputs: schema.record(schema.string(), readerOutputSchema).optional(),

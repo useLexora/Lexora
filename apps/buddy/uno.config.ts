@@ -1,6 +1,10 @@
+import { fileURLToPath } from 'node:url'
 import { defineConfig, presetWind3, transformerVariantGroup } from 'unocss'
+import { normalizePath } from 'vite'
 import { createUnoTheme } from './shared/theme/themeTokens'
 
+const buddyRoot = normalizePath(fileURLToPath(new URL('.', import.meta.url)))
+const sourceFiles = `${buddyRoot}src/**/*.{vue,ts,tsx,js,jsx}`
 const sharedTheme = createUnoTheme('buddy')
 const controlHeights = {
   'region-header': 'var(--buddy-region-header-height)',
@@ -38,7 +42,7 @@ export default defineConfig({
     'ui-menu-item': 'grid min-w-0 min-h-menu-row grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border-0 rounded-menu-item bg-transparent text-strong cursor-pointer px-2 py-[0.3rem] text-left ui-menu-state',
   },
   content: {
-    filesystem: ['src/**/*.{vue,ts,tsx,js,jsx}', '!src/**/__tests__/**'],
-    pipeline: { include: ['src/**/*.{vue,ts,tsx,js,jsx}', 'src/**/*.{vue,ts,tsx,js,jsx}[?]*', 'index.html'] },
+    filesystem: [sourceFiles, `!${buddyRoot}src/**/__tests__/**`],
+    pipeline: { include: [sourceFiles, `${sourceFiles}[?]*`, `${buddyRoot}index.html`, `${buddyRoot}src/mobile-reader/{index,document}.html`] },
   },
 })

@@ -24,21 +24,15 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 @Composable
-internal fun rememberPartnerAvatars(owner: ReaderAvatarContext?, topic: String, ids: Set<String>): Pair<ReaderAvatars?, Map<String, String>> {
-    val context = LocalContext.current
-    var sources by remember(owner?.partition) { mutableStateOf(emptyMap<String, String>()) }
-    val loader = remember(owner?.partition, owner?.schemas) {
-        owner?.let {
-            lateinit var result: ReaderAvatars
-            result = ReaderAvatars(context, it.schemas) { sources = result.sources }
-            result
-        }
+internal fun rememberPartnerAvatars(owner: ReaderAvatars?, topic: String, ids: Set<String>): Map<String, String> {
+    var sources by remember(owner, topic) { mutableStateOf(owner?.sources.orEmpty()) }
+    DisposableEffect(owner, topic, ids) {
+        val key = Any()
+        sources = owner?.sources.orEmpty()
+        owner?.observe(key, ids) { sources = owner.sources }
+        onDispose { owner?.remove(key) }
     }
-    DisposableEffect(loader) { onDispose { loader?.close() } }
-    LaunchedEffect(loader, owner?.client, topic, ids) {
-        if (owner != null) loader?.update(owner.partition, topic, owner.client, ids)
-    }
-    return loader to sources
+    return sources
 }
 
 @Composable

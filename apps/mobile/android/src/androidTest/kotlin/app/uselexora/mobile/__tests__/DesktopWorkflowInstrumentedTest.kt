@@ -1,5 +1,6 @@
 package app.uselexora.mobile
 
+import app.uselexora.mobile.protocol.DraftContext
 import app.uselexora.mobile.protocol.MobileContentAdapter
 import android.content.Intent
 import android.widget.EditText
@@ -40,9 +41,9 @@ class DesktopWorkflowInstrumentedTest {
         var primaryFailure: Throwable? = null
         try { LocalStore(context).use { store -> TransferStore(context).use { transfers ->
             val owner = client.identity!!.partition
-            val firstId = store.newId(); val scope = "draft:$firstId"
+            val scope = DraftContext.newTaskKey(null)
             val otherScope = "draft:${store.newId()}"
-            val targetScope = JSONObject().put("kind", "task").put("draftId", firstId).put("spaceId", JSONObject.NULL)
+            val targetScope = DraftContext.target(scope)
             val firstText = "Android 本地输入与附件😀"
             store.edit(owner, scope, JSONObject().put("content", MobileContentAdapter.textContent(firstText)).put("executionConfig", JSONObject().put("executionProfile", "read_only").put("approvalPolicy", "policy")))
             store.edit(owner, otherScope, JSONObject().put("content", MobileContentAdapter.textContent("另一个任务的未发送输入")))
@@ -78,10 +79,10 @@ class DesktopWorkflowInstrumentedTest {
                 }
                 fun input(): String { var value = ""; scenario.onActivity { value = it.findViewById<EditText>(MainActivity.INPUT_ID)?.text?.toString().orEmpty() }; return value }
                 MobileUiTestDriver.awaitConnected()
-                MobileUiTestDriver.openDrafts(); MobileUiTestDriver.clickContaining(firstText); click("继续编辑")
-                waitFor { input() == firstText }
+                MobileUiTestDriver.openUnassignedNewTask()
+                waitFor { input() == firstText && MobileUiTestDriver.contains("$token.txt") }
                 scenario.recreate()
-                waitFor { input() == firstText }
+                waitFor { input() == firstText && MobileUiTestDriver.contains("$token.txt") }
                 assertTrue(MobileUiTestDriver.exists("权限：本机只读"))
                 click("发送")
                 scenario.onActivity { it.findViewById<EditText>(MainActivity.INPUT_ID).setText("发送期间继续写的下一条😀") }

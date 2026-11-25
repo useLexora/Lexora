@@ -84,13 +84,13 @@ class MainActivity : ComponentActivity() {
     private lateinit var composer: EditText
     private lateinit var store: LocalStore
     private lateinit var schemas: ProtocolSchemas
+    private lateinit var avatars: ReaderAvatars
     private lateinit var connection: MobileConnection
     private lateinit var transfers: TransferStore
     private lateinit var files: MobileFiles
     private val taskFileCopies by lazy { TaskFileCopies(this, transfers, store) }
     private val downloadingResources = mutableSetOf<String>()
     private lateinit var operations: TaskOperations
-    private lateinit var recovery: DraftRecoveryPanel
     private lateinit var questions: MobileQuestions
     private var messageItems = listOf<JSONObject>()
     private val acceptedEchoes = mutableMapOf<String, AcceptedInputEcho>()
@@ -172,6 +172,7 @@ class MainActivity : ComponentActivity() {
         MobileAppearance.load(this)
         store = LocalStore(this)
         schemas = ProtocolSchemas(JSONObject(assets.open("protocol-schema.json").bufferedReader().use { it.readText() }))
+        avatars = ReaderAvatars(this, schemas)
         connection = MobileConnection(this, schemas, BuildConfig.VERSION_NAME)
         transfers = TransferStore(this)
         input = MobileComposerSession(store, ComposerMemory(store, transfers), disk, streamHandler, ::onUi)
@@ -204,7 +205,7 @@ class MainActivity : ComponentActivity() {
             context = { MobileTaskReadModel.Context(partition, activeTopic, client, connectionGeneration) }, work = ::work, onUi = ::onUi,
             catalogChanged = { ui.models = it.items; ui.modelProviders = it.providers; ui.modelsLoading = it.loading; ui.modelsError = it.error },
             marksChanged = { ui.markedTaskIds = it.ids; ui.marksLoaded = it.loaded; ui.marksFailed = it.failed },
-            cachedTasks = { ui.tasksLoaded = true },
+            cachedTasks = { ui.tasksLoaded = true; ui.tasksNeedRefresh = true },
             cachedConversation = { items, branches ->
                 branches?.let { if (ui.branches.isEmpty()) ui.branches = it }
                 if (items != null && !ui.historyPinned && !ui.historyDetached && readyContext != liveContext()) {
@@ -216,6 +217,7 @@ class MainActivity : ComponentActivity() {
         session = MobileConnectionSession(connection, schemas, getSystemService(ConnectivityManager::class.java), streamHandler,
             enabled = { !demo && !disconnecting }, topic = { activeTopic }, work = ::work, onUi = ::onUi,
             released = {
+                ui.tasksNeedRefresh = ui.tasksLoaded
                 historyRequest++; reading.disconnected(); ui.historyLoading = false
                 if (ui.latestLoading) ui.latestError = MobileFailurePresentation.NETWORK_UNAVAILABLE_NOTICE
                 latestRequest++; ui.latestLoading = false
@@ -234,6 +236,7 @@ class MainActivity : ComponentActivity() {
             },
             status = { label, phase ->
                 ui.connectionLabel = label; ui.connectionPhase = phase
+                if (client?.isConnected != true && ui.devices.any { it.connected }) ui.devices = ui.devices.map { it.copy(connected = false) }
                 if (ui.pairingPhase == "syncing") ui.pairingError = if (phase == app.uselexora.mobile.session.MobileConnectionPhase.Unavailable) label else ""
                 syncUi()
             },
@@ -243,7 +246,10 @@ class MainActivity : ComponentActivity() {
                 if (state == "SYNCHRONIZED") ui.connectionLabel = mobileText(R.string.connection_connected)
                 if (state != "SYNCHRONIZED") { readyContext = null; ui.conversationReady = false }
                 if (state == "SYNCING") ui.syncFailure = ""
-                if (activeTopic == "taskIndex") ui.taskSyncFailed = state == "UNSYNCHRONIZED"
+                if (activeTopic == "taskIndex") {
+                    ui.taskSyncFailed = state == "UNSYNCHRONIZED"
+                    if (ui.taskSyncFailed && ui.tasksLoaded) ui.tasksNeedRefresh = true
+                }
                 if (state == "UNSYNCHRONIZED" && ui.syncFailure.isBlank()) ui.syncFailure = mobileText(if (activeTopic == "taskIndex") R.string.mobile_task_update_failed else R.string.mobile_sync_failed_input)
                 if (state == "SYNCHRONIZED" && ui.pairingPhase == "syncing") ui.pairingPhase = "ready"
                 syncUi()
@@ -259,12 +265,6 @@ class MainActivity : ComponentActivity() {
         scope = savedState?.getString("scope") ?: "global"
         selectedTask = savedState?.getString("task")?.let { JSONObject(it) }
         conversationTarget = runCatching { ConversationTarget.fromTopic(savedState?.getString("topic") ?: "taskIndex") }.getOrNull()
-        recovery = DraftRecoveryPanel(this, store, { partition }, ::localWork, ::onUi, ::resumeDraft,
-            targetLabel = { draft ->
-                if (draft.partition != partition) null
-                else runCatching { DraftContext.conversation(draft.scope) }.getOrNull()?.let { recoveryTargetLabel(draft.partition, it.conversationId) }
-            },
-            attachmentLookup = ::recoveryAttachmentLookup)
         if (savedState == null && !demo && partition != "unpaired-local") { restoreNavigation(partition); activeTopic = "taskIndex" }
         savedState?.getStringArrayList("screenHistory")?.forEach { value -> MobileScreen.entries.firstOrNull { it.name == value }?.let(screenHistory::addLast) }
         buildLayout()
@@ -315,11 +315,11 @@ class MainActivity : ComponentActivity() {
                 val connectedClient = if (ui.connected) client else null
                 val readerClient = connectedClient.takeUnless { ui.historyDetached }
                 ui.incomingMaterial?.let { IncomingMaterialPanel(it, ui, ::chooseMaterialDestination, ::dismissMaterial) }
-                MobileShell(ui, composer, ::handleAction, ReaderAvatarContext(partition, connectedClient, schemas)) { modifier ->
+                MobileShell(ui, composer, ::handleAction, avatars) { modifier ->
                     WebMessageTimeline(ui.messages, ui.readerTopic, modifier, details, if (demo) ui.runs else ui.readerRuns,
                         anchorMessageId = ui.anchorMessageId, anchorRequestId = ui.anchorRequestId,
                         hasLaterMessages = ui.historyPinned || ui.historyDetached, onLatest = ::returnLatest,
-                        avatarContext = ReaderAvatarContext(partition, connectedClient, schemas),
+                        avatarContext = avatars,
                         artifactContext = ui.viewBranchId?.let { branchId -> ReaderArtifactContext(partition, branchId, readerClient, schemas) { connection, resource ->
                             val owner = connection.identity?.partition ?: throw ProtocolFailure("NOT_CONNECTED")
                             taskFileCopies.find(owner, resource) ?: files.download(connection, resource, previewOnly = true)
@@ -370,9 +370,8 @@ class MainActivity : ComponentActivity() {
             MobileAction.SelectDevice -> payload?.optString("id")?.let(::switchDevice)
             MobileAction.ManageDevice -> payload?.optString("id")?.let(::manageDevice)
             MobileAction.Approvals -> showApprovals()
-            MobileAction.InspectUnplacedInput -> inspectUnplacedInput()
+            MobileAction.InspectOrphanDownloads -> inspectOrphanDownloads()
             MobileAction.RecoverDownloads -> showLocalFiles()
-            MobileAction.Recovery -> showRecovery()
             MobileAction.Files -> selectedTask?.let { showTaskFiles(it.getString("id")) } ?: showDraftFiles()
             MobileAction.DraftAttachments -> showDraftFiles()
             MobileAction.LocalFileRecords -> showFileRecords()
@@ -428,6 +427,7 @@ class MainActivity : ComponentActivity() {
 
     private fun syncUi() {
         ui.connected = demo || client?.isConnected == true
+        avatars.bind(partition, client.takeIf { foreground })
         if (discoveryOwner != partition) { discoveryOwner = partition; ui.discovery = TaskDiscoveryState(); ui.membersOpen = false; ui.members = null }
         ui.discovery.supported = client?.supports("conversations.search") == true
         ui.discovery.archiveSupported = client?.supports("conversations.listArchived") == true
@@ -436,7 +436,11 @@ class MainActivity : ComponentActivity() {
         ui.conversationReady = demo || (ui.connected && !ui.readingCached && (conversationTarget == null || (session.isSynchronized && readyContext == liveContext())))
         ui.historyInput = scope.startsWith("message-edit:") || scope.startsWith("message-followup:")
         ui.questionsSupported = client?.supports("questions.list") == true
-        if (sortedTaskSource !== taskItems) { sortedTaskSource = taskItems; ui.tasks = taskItems.sortedWith(compareByDescending<JSONObject> { it.optString("lastActivityAt", it.optString("updatedAt")) }.thenByDescending { it.optString("createdAt") }.thenByDescending { it.optString("id") }) }
+        if (sortedTaskSource !== taskItems) {
+            sortedTaskSource = taskItems
+            ui.tasks = taskItems.sortedWith(compareByDescending<JSONObject> { it.optString("lastActivityAt", it.optString("updatedAt")) }.thenByDescending { it.optString("createdAt") }.thenByDescending { it.optString("id") })
+            avatars.warmRecent(ui.tasks.asSequence().mapNotNull { it.opt("buddyId") as? String }.distinct().take(8).toSet())
+        }
         if (localEcho?.belongsTo(operationOwner()) == false) localEcho = null
         localEcho?.takeIf { it.failure != null }?.let { echo ->
             val detail = details[echo.id]
@@ -579,7 +583,7 @@ class MainActivity : ComponentActivity() {
         conversationTarget = runCatching { ConversationTarget.fromTopic(saved?.optString("topic") ?: "taskIndex") }.getOrNull()
         clearConversationState()
         messageItems = emptyList(); taskItems = emptyList(); details = emptyMap()
-        ui.hasUnplacedInput = false; ui.hasOrphanDownloads = false
+        ui.hasOrphanDownloads = false
         ui.spaces = emptyList(); ui.tasksLoaded = false; ui.taskSyncFailed = false
         resetTaskMarks()
         ui.taskFilter = MobileTaskFilter.entries.firstOrNull { it.name == saved?.optString("taskFilter") } ?: MobileTaskFilter.All
@@ -958,7 +962,7 @@ class MainActivity : ComponentActivity() {
             } while (cursor != null)
             onUi {
                 if (generation != navigation || client !== current || partition != owner) return@onUi
-                taskItems = items; ui.tasksLoaded = true; selectedTask = null; refreshTaskMarks(); renderRows(); ui.notice = ""
+                taskItems = items; ui.tasksLoaded = true; ui.tasksNeedRefresh = false; selectedTask = null; refreshTaskMarks(); renderRows(); ui.notice = ""
             }
         }
     }
@@ -1068,7 +1072,7 @@ class MainActivity : ComponentActivity() {
         if (topic != activeTopic) return
         if (topic == "taskIndex") {
             taskItems = items
-            ui.tasksLoaded = true
+            ui.tasksLoaded = true; ui.tasksNeedRefresh = false
             refreshTaskMarks()
             renderRows()
         } else {
@@ -1262,11 +1266,6 @@ class MainActivity : ComponentActivity() {
                 dialog.show()
             }
         }
-    }
-    private fun recoveryTargetLabel(owner: String, taskId: String): String? {
-        if (partition != owner) return null
-        val task = taskItems.firstOrNull { it.optString("id") == taskId } ?: selectedTask?.takeIf { it.optString("id") == taskId }
-        return task?.optString("title")?.takeUnless { it.isBlank() || it == "null" }
     }
     private var modelPickerOwner: MobileOperationOwner? = null
     private var modelPickerTask: TaskModelTarget? = null
@@ -1710,72 +1709,15 @@ class MainActivity : ComponentActivity() {
             catch (error: Exception) { onUi { if (isCurrent(owner)) showNotice(MobileFailurePresentation.message(MobileOperationFailure.from(error))) } }
         }
     }
-    private fun recoveryAttachmentLookup(): (LocalDraft) -> String? {
-        val partitions = mutableMapOf<String, Map<String, List<JSONObject>>>()
-        return { draft ->
-            val byInput = partitions.getOrPut(draft.partition) {
-                transfers.list(draft.partition).filter { it.optString("kind") in setOf("upload", "capture") &&
-                    it.optString("state") in setOf("staged", "receiving", "captured") }
-                    .groupBy { it.optString("inputId").takeIf(String::isNotEmpty)?.let { id -> "id:$id" } ?: "scope:${it.optString("scope")}" }
-            }
-            val records = byInput["id:${draft.value.optString("inputId")}"].orEmpty() + byInput["scope:${draft.scope}"].orEmpty()
-            val ids = draft.value.optJSONObject("content")?.optJSONArray("panelResourceIds")
-            val names = records.filterNot { row -> ids != null && (0 until ids.length()).any { ids.optString(it) == row.optString("resourceId") } }
-            names.takeIf { it.isNotEmpty() }?.joinToString("\n") { row ->
-                mobileText(R.string.recovery_pending_attachment, row.getJSONObject("file").getString("name"),
-                    mobileText(if (row.optString("state") == "captured") R.string.mobile_photo_awaiting_attachment else R.string.mobile_upload_incomplete))
-            }
-        }
-    }
-
-    private fun reachableInputScopes(): Set<String> = buildSet {
-        if (demo || ui.devices.any { it.selected }) {
-            add(DraftContext.newTaskKey(null))
-            ui.spaces.forEach { add(DraftContext.newTaskKey(it.getString("id"))) }
-        }
-        taskItems.forEach { task ->
-            val id = task.optString("id")
-            val branch = task.optString("activeBranchId")
-            if (id.isNotBlank() && branch.isNotBlank()) add(ConversationTarget(id, branch).localKey)
-        }
-    }
-
-    private fun inspectUnplacedInput() {
+    private fun inspectOrphanDownloads() {
+        if (demo || ui.devices.any { it.selected }) { ui.hasOrphanDownloads = false; return }
         val owner = partition
-        val reachable = reachableInputScopes()
-        val noDevice = !demo && ui.devices.none { it.selected }
         localWork {
-            val available = recovery.hasUnplaced(owner, reachable)
-            val downloads = noDevice && LocalFiles(this, transfers, store).hasRetainedDownload()
-            onUi { if (partition == owner && ui.screen == MobileScreen.Tasks) {
-                ui.hasUnplacedInput = available
-                ui.hasOrphanDownloads = downloads
-            } }
+            val downloads = LocalFiles(this, transfers, store).hasRetainedDownload()
+            onUi { if (partition == owner && ui.screen == MobileScreen.Tasks && ui.devices.none { it.selected }) ui.hasOrphanDownloads = downloads }
         }
     }
 
-    private fun showRecovery() = recovery.local(reachableInputScopes())
-    private fun resumeDraft(draft: LocalDraft, message: String) {
-        if (partition != draft.partition) return
-        clearConversationState()
-        val target = DraftContext.target(draft.scope)
-        val generation = ++navigation
-        scope = draft.scope; navigate(MobileScreen.Conversation); selectedTask = null; messageItems = emptyList(); details = emptyMap(); syncUi()
-        val conversationId = target.optString("conversationId").takeIf { it.isNotEmpty() }
-        conversationTarget = DraftContext.conversation(draft.scope)
-        restoreInput(); if (message.isEmpty()) ui.notice = "" else showNotice(message)
-        subscription?.subscribe(activeTopic)
-        val connection = client?.takeIf { it.isConnected && it.identity?.partition == draft.partition } ?: return
-        if (conversationId != null) work {
-            val task = connection.callValue("conversations.get", JSONObject().put("conversationId", conversationId)) as? JSONObject ?: throw ProtocolFailure("OBJECT_DELETED")
-            onUi {
-                if (generation == navigation && partition == draft.partition && scope == draft.scope) {
-                    acceptTaskProjection(task)
-                    refreshModelContext(); bindQuestions(); renderSpace()
-                }
-            }
-        }
-    }
     private fun showLocalFiles() = LocalFilesPanel(this, LocalFiles(this, transfers, store) { setOfNotNull(pendingCapturePath, pendingSave?.optString("path")) },
         ::work, ::onUi) { entry, action -> useFile(entry.file, entry.name, entry.mime, action) }.show(partition)
 
@@ -2261,7 +2203,7 @@ class MainActivity : ComponentActivity() {
     private fun objects(array: JSONArray) = (0 until array.length()).map { array.getJSONObject(it) }
     private fun dp(value: Int) = (resources.displayMetrics.density * value).toInt()
     override fun onStart() { super.onStart(); session.start(!demo) }
-    override fun onStop() { input.flush(); readerBenchmark?.close(); readModel.flush(); rememberNavigation(); super.onStop(); ui.connected = false; session.stop() }
-    override fun onDestroy() { destroyed = true; input.close(); readerBenchmark?.close(); runTranscripts.close(); session.close(); streamHandler.removeCallbacksAndMessages(null); network.execute { disk.execute { store.close(); transfers.close() } }; network.shutdown(); readModel.close(); super.onDestroy() }
+    override fun onStop() { input.flush(); readerBenchmark?.close(); readModel.flush(); rememberNavigation(); super.onStop(); ui.connected = false; session.stop(); avatars.bind(partition, null) }
+    override fun onDestroy() { destroyed = true; avatars.close(); input.close(); readerBenchmark?.close(); runTranscripts.close(); session.close(); streamHandler.removeCallbacksAndMessages(null); network.execute { disk.execute { store.close(); transfers.close() } }; network.shutdown(); readModel.close(); super.onDestroy() }
     companion object { private val disk = Executors.newSingleThreadExecutor(); const val INPUT_ID = 0x2101; const val EXECUTION_ID = 0x2102; const val SPACE_ID = 0x2103; const val SEND_ID = 0x2104; const val HISTORY_ID = 0x2105; const val FILE_REQUEST = 4001; const val CAMERA_REQUEST = 4002; const val PREVIEW_REQUEST = 4005; const val SAVE_REQUEST = 4003; const val CAMERA_PERMISSION = 4004 }
 }

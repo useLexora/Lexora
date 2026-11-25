@@ -2,7 +2,31 @@ package app.uselexora.mobile.ui
 
 import org.json.JSONObject
 
-internal data class BuiltinSkinVariant(val palette: JSONObject, val home: JSONObject?)
+internal data class NewTaskStyle(
+    val illustration: SkinSurfaceImage,
+    val widthFraction: Float,
+    val cutCorners: Boolean,
+    val outline: Long,
+    val underlay: Long,
+    val offset: Float,
+) {
+    companion object {
+        fun parse(value: JSONObject, id: String) = NewTaskStyle(
+            SkinSurfaceImage(resolveSkinAsset("skins/$id/", value.getString("illustration"), setOf("png", "webp")), null),
+            value.getDouble("widthFraction").toFloat().also { require(it in .2f..1f) },
+            when (value.getString("corners")) {
+                "rounded" -> false
+                "cut" -> true
+                else -> error("Unknown composer corners")
+            },
+            value.getString("outline").skinColor(),
+            value.getString("underlay").skinColor(),
+            value.getDouble("offset").toFloat().also { require(it in 0f..4f) },
+        )
+    }
+}
+
+internal data class BuiltinSkinVariant(val palette: JSONObject, val home: JSONObject?, val connectionSignal: Long, val newTask: NewTaskStyle?)
 
 internal data class BuiltinSkin(
     val id: String,
@@ -33,7 +57,10 @@ internal data class BuiltinSkin(
                 validatePalette(palette)
                 val home = variant.get("home")
                 require(home === JSONObject.NULL || home is JSONObject) { "Skin home must be an object or null" }
-                BuiltinSkinVariant(palette, home as? JSONObject)
+                val signal = variant.optString("connectionSignal", palette.getJSONObject("colors").getString("accent").take(7))
+                require(Regex("#[0-9a-fA-F]{6}").matches(signal)) { "Invalid connection signal color" }
+                BuiltinSkinVariant(palette, home as? JSONObject, 0xFF000000L or signal.drop(1).toLong(16),
+                    variant.optJSONObject("newTask")?.let { NewTaskStyle.parse(it, id) })
             })
         }
     }

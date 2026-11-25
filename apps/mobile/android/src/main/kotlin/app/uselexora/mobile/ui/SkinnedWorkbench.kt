@@ -1,11 +1,9 @@
 package app.uselexora.mobile.ui
 
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -36,7 +34,6 @@ import androidx.compose.ui.unit.sp
 import app.uselexora.mobile.R
 import app.uselexora.mobile.i18n.mobileQuantity
 import app.uselexora.mobile.i18n.mobileText
-import app.uselexora.mobile.session.MobileConnectionPhase
 import org.json.JSONObject
 import kotlin.math.ceil
 import kotlin.math.roundToInt
@@ -78,6 +75,7 @@ internal fun SkinnedWorkbench(
             SkinWorkbenchPage(home, upper = {
                 SkinWorkbenchHeader(home, state, devices, settings, act)
                 SkinNewTask(home, newTask)
+                WorkbenchTaskStatus(state, Modifier.padding(horizontal = 20.dp, vertical = 4.dp), Color(home["background"].foreground)) { act(MobileAction.Refresh) }
                 SkinSection(home, "actions", Modifier.fillMaxWidth()) {
                     BoxWithConstraints(Modifier.fillMaxWidth().padding(home.layout.actionsPadding.paddingValues())) {
                         val pending: @Composable (Modifier) -> Unit = { cell ->
@@ -173,7 +171,8 @@ private fun SkinWorkbenchHeader(home: SkinHome, state: MobileUiState, devices: (
                 val fontScale = LocalDensity.current.fontScale
                 val stacked = home.layout.stackHeader(maxWidth.value, fontScale)
                 val minimum = (home.layout.connectionMinHeight - padding.top - padding.bottom).coerceAtLeast(0f).dp
-                val serviceWidth = maxWidth * if (fontScale > 1.2f) 1f else home.layout.serviceWidth
+                val singlePanel = !state.connected && home.layout.serviceLayout == "panel"
+                val serviceWidth = maxWidth * if (fontScale > 1.2f || singlePanel) 1f else home.layout.serviceWidth
                 val spaceWidth = maxWidth * if (fontScale > 1.2f) 1f else home.layout.spaceWidth
                 if (stacked) {
                     Column(Modifier.fillMaxWidth().heightIn(min = minimum), verticalArrangement = Arrangement.spacedBy(home.layout.connectionGap.dp)) {
@@ -192,28 +191,6 @@ private fun SkinWorkbenchHeader(home: SkinHome, state: MobileUiState, devices: (
                 }
             }
         }
-        SkinConnectionStatus(home["service"], state, act)
-    }
-}
-
-@Composable
-private fun SkinConnectionStatus(style: SkinSurfaceStyle, state: MobileUiState, act: (MobileAction) -> Unit) {
-    if (state.connected && !state.taskSyncFailed && state.tasksLoaded && !state.marksFailed) return
-    SkinSurface(style, Modifier.fillMaxWidth()) {
-        Box(Modifier.padding(horizontal = 14.dp, vertical = 4.dp)) {
-            val color = Color(style.foreground)
-            when {
-                !state.connected -> {
-                    val reconnecting = state.connectionPhase == MobileConnectionPhase.Connecting || state.connectionPhase == MobileConnectionPhase.Retrying
-                    val message = if (reconnecting && state.tasksLoaded) mobileText(R.string.mobile_reconnecting_cached_tasks) else state.connectionLabel
-                    val canReconnect = !reconnecting && state.devices.any { it.selected }
-                    HomeStatus(message, if (canReconnect) mobileText(R.string.label_reconnect) else null, Modifier.testTag("connection-detail"), color) { act(MobileAction.Reconnect) }
-                }
-                state.taskSyncFailed -> HomeStatus(mobileText(R.string.mobile_task_update_failed), mobileText(R.string.label_retry), color = color) { act(MobileAction.Refresh) }
-                !state.tasksLoaded -> HomeStatus(mobileText(R.string.label_syncing_tasks), color = color)
-                state.marksFailed -> HomeStatus(mobileText(R.string.label_task_marks_could_not_sync_please_retry), mobileText(R.string.label_retry), color = color) { act(MobileAction.Refresh) }
-            }
-        }
     }
 }
 
@@ -222,11 +199,6 @@ private fun SkinServiceSelector(home: SkinHome, state: MobileUiState, modifier: 
     val style = home["service"]
     val fonts = LocalSkinTypefaces.current
     val compact = home.layout.serviceLayout == "compact"
-    val status = when {
-        state.connected -> MaterialTheme.colorScheme.secondary
-        state.connectionPhase != MobileConnectionPhase.Idle -> MaterialTheme.colorScheme.tertiary
-        else -> Color(style.muted)
-    }
     SkinSurface(style, modifier.heightIn(min = home.layout.serviceHeight.dp).testTag("service-selector")
         .semantics { contentDescription = listOf(state.deviceLabel, state.connectionLabel).joinToString(" · ") }, onClick) {
         SkinContentRegion(home.layout.serviceContentBounds, home.layout.serviceHeight, Modifier.testTag("service-selector-surface")) {
@@ -235,18 +207,19 @@ private fun SkinServiceSelector(home: SkinHome, state: MobileUiState, modifier: 
                     SkinIcon(SkinGlyph.Service, home.iconStyle, Modifier.size(20.dp), Color(style.icon))
                     Text(state.deviceLabel, Modifier.weight(1f), fontFamily = fonts.body, fontSize = home.typography.serviceSize.sp,
                         fontWeight = FontWeight(home.typography.weight), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Box(Modifier.size(7.dp).clip(CircleShape).background(status))
-                    if (state.connected) Text(mobileText(R.string.label_connected), color = Color(style.muted), fontFamily = fonts.body, fontSize = home.typography.serviceSize.sp)
+                    ServiceConnectionMark(state, muted = Color(style.muted), technical = home.iconStyle == "technical")
+                    Text(mobileText(state.workbenchServiceLabel), Modifier.testTag("service-state-label"), color = Color(style.muted),
+                        fontFamily = fonts.body, fontSize = (home.typography.serviceSize - 1).coerceAtLeast(12f).sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             } else {
                 Column(Modifier.fillMaxWidth().testTag("service-selector-content"), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Box(Modifier.size(8.dp).clip(CircleShape).background(status))
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        ServiceConnectionMark(state, muted = Color(style.muted), technical = home.iconStyle == "technical")
                         Text(state.deviceLabel, Modifier.testTag("service-host-label"), fontFamily = fonts.body, fontSize = home.typography.serviceSize.sp, lineHeight = (home.typography.serviceSize * 1.25f).sp,
                             fontWeight = FontWeight(home.typography.weight), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    Text(if (state.connected) mobileText(R.string.label_connected) else state.connectionLabel,
-                        Modifier.padding(start = 20.dp).testTag("service-state-label"), color = Color(style.muted), fontFamily = fonts.body,
+                    Text(mobileText(state.workbenchServiceLabel),
+                        Modifier.padding(start = ServiceMarkSize + 6.dp).testTag("service-state-label"), color = Color(style.muted), fontFamily = fonts.body,
                         fontSize = (home.typography.serviceSize - 2).coerceAtLeast(12f).sp, lineHeight = (home.typography.serviceSize * 1.25f).sp)
                 }
             }

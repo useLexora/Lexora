@@ -1,5 +1,6 @@
 package app.uselexora.mobile
 
+import app.uselexora.mobile.protocol.DraftContext
 import app.uselexora.mobile.protocol.MobileContentAdapter
 import android.content.ContentValues
 import android.content.Intent
@@ -25,7 +26,7 @@ class AttachmentComposerInstrumentedTest {
         val token = UUID.randomUUID().toString()
         val partition = "fixture:service:profile:generation:device"
         val otherPartition = "attachment-other-$token"
-        val scope = "draft:$token"
+        val scope = DraftContext.newTaskKey(null)
         val legacyScope = "draft:legacy-$token"
         val inputId = UUID.randomUUID().toString()
         val body = "附件草稿 $token 中文😀"
@@ -74,9 +75,7 @@ class AttachmentComposerInstrumentedTest {
                         scenario.onActivity { text = it.findViewById<EditText>(MainActivity.INPUT_ID)?.text?.toString().orEmpty() }
                         return text
                     }
-                    MobileUiTestDriver.openDrafts()
-                    MobileUiTestDriver.clickContaining(body)
-                    MobileUiTestDriver.click("继续编辑")
+                    MobileUiTestDriver.openUnassignedNewTask()
                     MobileUiTestDriver.waitUntil { input() == body && MobileUiTestDriver.exists("要移除的资料.txt") }
                     assertTrue(MobileUiTestDriver.enabled("移除附件 要移除的资料.txt"))
                     assertFalse(MobileUiTestDriver.exists("其他服务的资料.txt"))
@@ -91,6 +90,8 @@ class AttachmentComposerInstrumentedTest {
                     for ((file, text) in contents) assertEquals(text, file.readText())
                     assertEquals("adopted", transfers.list(partition).single { it.getString("id") == removed.getString("id") }.getString("state"))
 
+                    MobileUiTestDriver.openUnassignedNewTask()
+                    MobileUiTestDriver.waitUntil { input() == body && MobileUiTestDriver.exists("继续保留的资料.txt") }
                     scenario.recreate()
                     MobileUiTestDriver.waitUntil { input() == body && MobileUiTestDriver.exists("继续保留的资料.txt") }
                     assertFalse(MobileUiTestDriver.exists("要移除的资料.txt"))

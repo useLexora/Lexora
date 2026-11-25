@@ -134,7 +134,7 @@ private object SkinBitmapCache {
 }
 
 @Composable
-private fun skinBitmap(image: SkinSurfaceImage?): ImageBitmap? {
+internal fun skinBitmap(image: SkinSurfaceImage?): ImageBitmap? {
     val assets = LocalContext.current.assets
     val bitmap by produceState<Bitmap?>(null, assets, image) {
         value = null

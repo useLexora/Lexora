@@ -9,7 +9,6 @@ import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.EditText
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -37,6 +36,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.Role
@@ -59,7 +59,7 @@ fun MobileShell(
     state: MobileUiState,
     composer: EditText,
     onAction: (MobileAction, JSONObject?) -> Unit,
-    avatarContext: ReaderAvatarContext? = null,
+    avatarContext: ReaderAvatars? = null,
     timeline: @Composable (Modifier) -> Unit,
 ) {
     var sheet by remember { mutableStateOf<MobileSheet?>(null) }
@@ -69,6 +69,16 @@ fun MobileShell(
     var fullscreenInput by rememberSaveable(deviceId, state.screen, state.topic) { mutableStateOf(false) }
     val savedPages = rememberSaveableStateHolder()
     val conversation = state.screen == MobileScreen.Conversation
+    val isNewTask = conversation && state.selectedTask == null && state.viewBranchId == null && state.messages.isEmpty()
+    val newTaskStyle = if (isNewTask) BuiltinSkins.current(LocalContext.current).variant(LocalMobileDarkTheme.current).newTask else null
+    val reconnectMessages = remember(deviceId, state.screen) { SnackbarHostState() }
+    var manualReconnect by remember(deviceId, state.screen) { mutableStateOf(false) }
+    LaunchedEffect(deviceId, state.screen, state.connected, state.connectionPhase) {
+        if (manualReconnect && state.connected) {
+            manualReconnect = false
+            reconnectMessages.showSnackbar(mobileText(R.string.service_restored))
+        } else if (state.connectionPhase == app.uselexora.mobile.session.MobileConnectionPhase.Unavailable) manualReconnect = false
+    }
     val act: (MobileAction) -> Unit = { onAction(it, null) }
     val tasks = remember(state.tasks, state.selectedSpaceId) { scopedTasks(state.tasks, state.selectedSpaceId) }
     LaunchedEffect(state.screen, deviceId, state.topic) { sheet = null; state.modelPickerOpen = false; state.executionPickerOpen = false; state.messageMenu = null }
@@ -112,7 +122,7 @@ fun MobileShell(
             }
             Box(Modifier.fillMaxWidth().then(if (fullscreenInput) Modifier.height(0.dp).clipToBounds().clearAndSetSemantics {} else Modifier.weight(1f))) {
                 if (conversation) {
-                    if (state.selectedTask == null && state.viewBranchId == null && state.messages.isEmpty()) NewTaskIntro(state, act)
+                    if (isNewTask) NewTaskIntro(state, newTaskStyle) { act(MobileAction.ChooseSpace) }
                     else Column(Modifier.fillMaxSize()) {
                         if (noTranscript && !state.conversationReady && !state.historyPinned && !state.historyDetached) {
                             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -159,10 +169,12 @@ fun MobileShell(
                     if (action == MobileAction.Send) fullscreenInput = false
                     onAction(action, payload)
                 }, inputMaxHeight, tightInput, { sheet = MobileSheet.Attachments }, { sheet = MobileSheet.Runs },
-                    fullscreen = fullscreenInput, onToggleFullscreen = { fullscreenInput = !fullscreenInput },
+                    newTaskStyle = newTaskStyle, fullscreen = fullscreenInput, onToggleFullscreen = { fullscreenInput = !fullscreenInput },
                     modifier = if (fullscreenInput) Modifier.weight(1f) else Modifier)
             }
         }
+        if (state.screen == MobileScreen.Workbench && !appearanceSettings && sheet == null)
+            SnackbarHost(reconnectMessages, Modifier.align(Alignment.BottomCenter).padding(12.dp))
         if (taskSettings && !state.newTaskOpening) ConversationSettings(state, onAction) { taskSettings = false }
         if (appearanceSettings) AppearanceSettings { appearanceSettings = false }
     }
@@ -172,7 +184,10 @@ fun MobileShell(
     if (state.executionPickerOpen) ConversationPermissionPicker(state, onAction)
     if (state.modelPickerOpen) ConversationModelPicker(state, onAction)
     state.messageMenu?.let { ConversationMessageMenu(it, state.connected, onAction) { state.messageMenu = null } }
-    if (sheet == MobileSheet.Devices) ServiceSwitcher(state, onAction) { sheet = null }
+    if (sheet == MobileSheet.Devices) ServiceSwitcher(state, { action, payload ->
+        manualReconnect = state.screen == MobileScreen.Workbench && !state.connected && action == MobileAction.SelectDevice && payload?.optString("id") == deviceId
+        onAction(action, payload)
+    }) { sheet = null }
     else sheet?.let { current ->
         ModalBottomSheet(
             onDismissRequest = { sheet = null },
@@ -460,23 +475,6 @@ private fun DeviceList(state: MobileUiState, onAction: (MobileAction, JSONObject
 }
 
 @Composable
-private fun NewTaskIntro(state: MobileUiState, act: (MobileAction) -> Unit) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 28.dp, vertical = 24.dp), verticalArrangement = Arrangement.Center) {
-        PaperSurface(PaperFoldShape(18.dp), Modifier.size(64.dp), listOf(MaterialTheme.colorScheme.surfaceContainer, MaterialTheme.colorScheme.primaryContainer), 2.dp) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.EditNote, null, Modifier.size(30.dp), tint = MaterialTheme.colorScheme.primary) }
-        }
-        if (state.spaceVisible) {
-            Spacer(Modifier.height(14.dp))
-            TextButton(onClick = { act(MobileAction.ChooseSpace) }, enabled = state.spaceEnabled, contentPadding = PaddingValues(0.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("space")) {
-                Icon(Icons.Outlined.FolderOpen, null, Modifier.size(17.dp)); Spacer(Modifier.width(8.dp))
-                Text(state.spaceLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp))
-            }
-        }
-    }
-}
-
-@Composable
 private fun ConversationActions(state: MobileUiState, onAction: (MobileAction, JSONObject?) -> Unit, openGroup: (ConversationTodo) -> Unit) {
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         ConversationInboxActions(state, false, onAction, openGroup)
@@ -520,13 +518,12 @@ private fun AttachmentStrip(state: MobileUiState, onAction: (MobileAction, JSONO
 }
 
 @Composable
-private fun ComposerBar(state: MobileUiState, composer: EditText, onAction: (MobileAction, JSONObject?) -> Unit, inputMaxHeight: Dp, tight: Boolean, attachments: () -> Unit, runs: () -> Unit, fullscreen: Boolean, onToggleFullscreen: () -> Unit, modifier: Modifier = Modifier) {
+private fun ComposerBar(state: MobileUiState, composer: EditText, onAction: (MobileAction, JSONObject?) -> Unit, inputMaxHeight: Dp, tight: Boolean, attachments: () -> Unit, runs: () -> Unit, newTaskStyle: NewTaskStyle?, fullscreen: Boolean, onToggleFullscreen: () -> Unit, modifier: Modifier = Modifier) {
     val focused = remember(composer) { mutableStateOf(composer.hasFocus()) }
     val active = activeRuns(state)
     val stopping = active.any { it.optString("id") == state.stoppingRunId }
     Column(modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(top = if (tight) 2.dp else 4.dp, bottom = if (tight) 2.dp else 8.dp)) {
-        Surface(modifier = if (fullscreen) Modifier.weight(1f) else Modifier, shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainer,
-            border = BorderStroke(1.dp, if (focused.value) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else MaterialTheme.colorScheme.outlineVariant)) {
+        ComposerSurface(newTaskStyle, focused.value, if (fullscreen) Modifier.weight(1f) else Modifier) {
             Column(Modifier.fillMaxWidth().then(if (fullscreen) Modifier.fillMaxHeight() else Modifier).padding(if (tight) 0.dp else 6.dp)) {
                 if (!tight) AttachmentStrip(state, onAction)
                 NativeComposerInput(composer, state.inputEnabled, inputMaxHeight, fullscreen, onToggleFullscreen,

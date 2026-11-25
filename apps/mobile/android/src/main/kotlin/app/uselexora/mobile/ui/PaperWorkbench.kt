@@ -3,7 +3,6 @@ package app.uselexora.mobile.ui
 import app.uselexora.mobile.i18n.mobileQuantity
 import app.uselexora.mobile.i18n.mobileText
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -34,14 +33,12 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import app.uselexora.mobile.session.MobileConnectionPhase
 import app.uselexora.mobile.R
 import org.json.JSONObject
 
@@ -93,6 +90,7 @@ internal fun PaperWorkbench(
         }
         item { NewTaskPaper { connectedAction(MobileAction.NewTask) } }
         item {
+            WorkbenchTaskStatus(state, Modifier.padding(top = 8.dp)) { onAction(MobileAction.Refresh, null) }
             Spacer(Modifier.height(24.dp))
             Box(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
                 PaperSurface(RoundedCornerShape(14.dp), Modifier.matchParentSize().offset(y = 9.dp).rotate(2f), palette.sheet, 3.dp) {}
@@ -130,17 +128,6 @@ private fun PaperWorkbenchHeader(state: MobileUiState, palette: PaperPalette, de
                 PaperServiceSelector(state, Modifier.weight(1f), devices)
                 if (state.connected) PaperSpaceFilter(state, palette, Modifier.widthIn(max = spaceWidth)) { act(MobileAction.ChooseSpaceFilter) }
             }
-            when {
-                !state.connected -> {
-                    val reconnecting = state.connectionPhase == MobileConnectionPhase.Connecting || state.connectionPhase == MobileConnectionPhase.Retrying
-                    val message = if (reconnecting && state.tasksLoaded) mobileText(R.string.mobile_reconnecting_cached_tasks) else state.connectionLabel
-                    val canReconnect = !reconnecting && state.devices.any { it.selected }
-                    HomeStatus(message, if (canReconnect) mobileText(R.string.label_reconnect) else null, Modifier.testTag("connection-detail")) { act(MobileAction.Reconnect) }
-                }
-                state.taskSyncFailed -> HomeStatus(mobileText(R.string.mobile_task_update_failed), mobileText(R.string.label_retry)) { act(MobileAction.Refresh) }
-                !state.tasksLoaded -> HomeStatus(mobileText(R.string.label_syncing_tasks))
-                state.marksFailed -> HomeStatus(mobileText(R.string.label_task_marks_could_not_sync_please_retry), mobileText(R.string.label_retry)) { act(MobileAction.Refresh) }
-            }
         }
     }
 }
@@ -148,11 +135,6 @@ private fun PaperWorkbenchHeader(state: MobileUiState, palette: PaperPalette, de
 @Composable
 private fun PaperServiceSelector(state: MobileUiState, modifier: Modifier, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
-    val statusColor = when {
-        state.connected -> MaterialTheme.colorScheme.secondary
-        state.connectionPhase != MobileConnectionPhase.Idle -> MaterialTheme.colorScheme.tertiary
-        else -> MaterialTheme.colorScheme.outline
-    }
     Box(modifier.heightIn(min = 48.dp).testTag("service-selector")
         .semantics { contentDescription = listOf(state.deviceLabel, state.connectionLabel).joinToString(" · ") }
         .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClick = onClick),
@@ -162,7 +144,9 @@ private fun PaperServiceSelector(state: MobileUiState, modifier: Modifier, onCli
             ServiceIcon(Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(state.deviceLabel, Modifier.weight(1f, fill = false), style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Box(Modifier.size(6.dp).clip(androidx.compose.foundation.shape.CircleShape).background(statusColor))
+            ServiceConnectionMark(state, muted = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (!state.connected) Text(mobileText(state.workbenchServiceLabel), Modifier.testTag("service-state-label"), style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Icon(Icons.Outlined.ExpandMore, null, Modifier.size(12.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
@@ -290,13 +274,5 @@ private fun PaperShortcut(label: String, count: Int?, meaning: Int, tag: String,
             Spacer(Modifier.width(10.dp))
             Icon(Icons.Outlined.ChevronRight, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-    }
-}
-
-@Composable
-internal fun HomeStatus(text: String, action: String? = null, modifier: Modifier = Modifier, color: Color? = null, onClick: () -> Unit = {}) {
-    Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(text, modifier.weight(1f).semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }, style = MaterialTheme.typography.bodySmall, color = color ?: MaterialTheme.colorScheme.onSurfaceVariant)
-        if (action != null) TextButton(onClick = onClick, modifier = Modifier.heightIn(min = 48.dp), colors = ButtonDefaults.textButtonColors(contentColor = color ?: MaterialTheme.colorScheme.primary)) { Text(action) }
     }
 }

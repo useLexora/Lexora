@@ -1,13 +1,22 @@
 {
   "schemaVersion": 1,
   "id": "mecha-armor",
-  "version": 6,
+  "version": 1,
   "name": {
     "zh": "机甲重装",
     "en": "Titanium"
   },
   "variants": {
     "light": {
+      "connectionSignal": "#9AE1FF",
+      "newTask": {
+        "illustration": "images/new-task-light.webp",
+        "widthFraction": 0.37,
+        "corners": "cut",
+        "outline": "#8E8B86",
+        "underlay": "#C6C1B9",
+        "offset": 1.5
+      },
       "colors": {
         "canvas": "#E8E5DF",
         "app-sidebar": "#E8E5DF",
@@ -219,8 +228,8 @@
               ],
               "angle": 90
             },
-            "foreground": "#1C2532",
-            "muted": "#1C2532",
+            "foreground": "#E9EEF6",
+            "muted": "#C4CEDA",
             "layers": []
           },
           "header": {
@@ -551,6 +560,15 @@
       }
     },
     "dark": {
+      "connectionSignal": "#B9EDFF",
+      "newTask": {
+        "illustration": "images/new-task-dark.webp",
+        "widthFraction": 0.37,
+        "corners": "cut",
+        "outline": "#777F8A",
+        "underlay": "#151921",
+        "offset": 1.5
+      },
       "colors": {
         "canvas": "#1B2028",
         "app-sidebar": "#1B2028",

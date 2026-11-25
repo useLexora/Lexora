@@ -1,4 +1,3 @@
 <resources>
-    <string name="recover_unsent_input">Recover unsent input</string>
     <string name="recover_downloads">View downloaded files</string>
 </resources>

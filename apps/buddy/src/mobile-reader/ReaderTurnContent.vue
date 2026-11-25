@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ChatAgentTurn } from '../modules/tasks/contracts'
-import type { ReaderMessage as Message } from './readerBridge'
+import type { ReaderMessage as Message, ReaderTurnOwner } from './readerBridge'
 import type { ReaderOutput, ReaderSend } from './readerProtocol'
 import { computed, provide } from 'vue'
 import { BuddyChatActivityGroup, BuddyChatCompactionRow, BuddyChatPanelGroup, BuddyChatRunActivity, createChatAgentActivityProjector, useChatTranscriptValue, useProvideChatContent } from '../modules/tasks/reader'
@@ -15,7 +15,7 @@ import { readerToolImageHostKey } from './readerToolImages'
 import ReaderToolImages from './ReaderToolImages.vue'
 import { useReaderTurnBranch } from './useReaderBranches'
 
-const props = defineProps<{ turn: ChatAgentTurn, buddyId?: string, messages: Message[], dark: boolean, language: string, output?: ReaderOutput, send: ReaderSend }>()
+const props = defineProps<{ turn: ChatAgentTurn, liveOwner?: ReaderTurnOwner, messages: Message[], dark: boolean, language: string, output?: ReaderOutput, send: ReaderSend }>()
 const emit = defineEmits<{ interact: [] }>()
 const locale = computed(() => props.language === 'en' ? 'en-US' : 'zh-CN')
 const labels = useReaderStrings()
@@ -34,7 +34,13 @@ const groupActive = computed(() => rows.value.some(row => row.kind === 'activity
 const replying = computed(() => props.turn.status === 'running' && !groupActive.value && props.messages.some(message => message.role === 'assistant' && !message.final && message.text))
 const showRunActivity = computed(() => props.turn.status === 'queued' || (props.turn.status === 'running' && (props.turn.progress?.retry || (!groupActive.value && !replying.value))))
 const openEntries = useChatTranscriptValue('agent-turn:open-entries', new Map<string, boolean>())
-const author = computed(() => props.messages.find(message => message.role === 'assistant'))
+const owner = computed(() => {
+  const replies = props.messages.filter(message => message.role === 'assistant' && message.runId === props.turn.runId)
+  if (!replies.length)
+    return props.liveOwner
+  const saved = replies.find(message => message.authorId && message.author.trim())
+  return saved ? { id: saved.authorId, name: saved.author } : undefined
+})
 const results = computed(() => {
   const narrationIds = new Set([...props.turn.processMessageIds, ...props.turn.nodes.flatMap(node => node.kind === 'text' ? [node.messageId] : [])])
   return props.messages.filter(message => message.role === 'assistant' && (message.id === props.turn.finalMessageId || !narrationIds.has(message.id)))
@@ -54,8 +60,8 @@ useProvideChatContent({ terminalRenderer: ReaderTerminal, toolImageRenderer: Rea
 <template>
   <article class="reader-turn" :data-run-id="turn.runId" @click="emit('interact')">
     <div class="message-author">
-      <MessageAvatar role="assistant" :author-id="author?.authorId ?? buddyId ?? null" />
-      <span class="author-name">{{ author?.author ?? 'Lexora' }}</span>
+      <MessageAvatar role="assistant" :author-id="owner?.id ?? null" />
+      <span class="author-name">{{ owner?.name || labels.assistant }}</span>
       <span v-if="replying && !showRunActivity" class="stream-status" role="status"><i /><i /><i /><span>{{ labels.replying }}</span></span>
     </div>
     <div class="reader-turn-flow">

@@ -66,7 +66,13 @@ test('built-in packages contain complete native and reader palettes for both app
       const classic = await json(resolve(root, `apps/buddy/extensions/bundled/lexora.themes/themes/classic-${mode}.json`))
       const { palette, home } = output.variants[mode]
       assert.deepEqual(home, input.variants[mode].home)
+      assert.equal(output.variants[mode].connectionSignal, input.variants[mode].connectionSignal)
+      const newTask = output.variants[mode].newTask
+      assert.deepEqual(newTask, input.variants[mode].newTask)
+      if (['paper', 'color-play', 'mecha-armor'].includes(id))
+        assert.notEqual(newTask.illustration, output.variants[mode === 'light' ? 'dark' : 'light'].newTask.illustration)
       const assets = [
+        ...(newTask ? [newTask.illustration] : []),
         ...Object.values(home?.surfaces ?? {}).flatMap(surface => surface.image ? [surface.image.path] : []),
         ...['fontFamily', 'brandFontFamily'].flatMap(key => home?.typography?.[key] ? [home.typography[key], 'fonts/OFL.txt'] : []),
       ]
@@ -98,6 +104,7 @@ test('source schema rejects unsupported versions, unsafe ids, malformed variants
     skin => skin.variants.light.home = [],
     skin => skin.variants.light.home = 'layout',
     skin => delete skin.variants.light.home,
+    skin => skin.variants.light.connectionSignal = 'red',
     skin => skin.variants.light.colors = null,
     skin => skin.variants.light.colors.accent = '#123',
     skin => skin.variants.light.colors['not-a-token'] = '#112233',
@@ -165,6 +172,11 @@ test('invalid packages fail before replacing generated assets', async (t) => {
     await assert.rejects(run, /Missing or invalid skin asset/)
     assert.equal(await readFile(resolve(output, 'previous'), 'utf8'), 'keep')
   }
+  const missingArt = fixture()
+  missingArt.variants.light.newTask = { illustration: 'images/missing.webp', widthFraction: 0.5, corners: 'cut', outline: '#889099', underlay: '#171B21', offset: 1 }
+  await writeFile(resolve(paperPath, 'skin.json'), JSON.stringify(missingArt))
+  await assert.rejects(run, /Missing or invalid skin asset/)
+  assert.equal(await readFile(resolve(output, 'previous'), 'utf8'), 'keep')
   await writeFile(resolve(paperPath, 'skin.json'), JSON.stringify(fixture('different-id')))
   await assert.rejects(run, /must match directory/)
   await rm(paperPath, { recursive: true })

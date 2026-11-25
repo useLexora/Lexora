@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
 import app.uselexora.mobile.i18n.mobileText
 import app.uselexora.mobile.i18n.mobileQuantity
+import app.uselexora.mobile.session.MobileConnectionPhase
 import app.uselexora.mobile.ui.*
 import org.json.JSONObject
 import org.junit.After
@@ -57,8 +58,8 @@ class BuiltinSkinInstrumentedTest {
     }
 
     private fun state() = MobileUiState().apply {
-        connected = true; connectionLabel = mobileText(R.string.connection_connected); deviceLabel = "Design studio"
-        devices = listOf(MobileDeviceItem("fixture", "Design studio", "fixture.invalid", selected = true, connected = true))
+        connected = true; connectionLabel = mobileText(R.string.connection_connected); deviceLabel = "工作室电脑"
+        devices = listOf(MobileDeviceItem("studio", deviceLabel, "studio.invalid", selected = true, connected = true))
         tasksLoaded = true; marksLoaded = true; markedTaskIds = setOf("approval", "reading")
         tasks = listOf(
             JSONObject().put("id", "approval").put("activity", "awaiting_approval").put("pendingQuestionCount", 0).put("unread", true),
@@ -67,14 +68,15 @@ class BuiltinSkinInstrumentedTest {
         )
     }
 
-    private fun capture(name: String) {
+    private fun capture(name: String, workbench: Boolean = false) {
         compose.waitUntil(5_000) {
-            compose.onAllNodes(SemanticsMatcher.keyIsDefined(SkinImageReady), useUnmergedTree = true)
-                .fetchSemanticsNodes().all { it.config[SkinImageReady] }
+            val surfaces = compose.onAllNodes(SemanticsMatcher.keyIsDefined(SkinImageReady), useUnmergedTree = true).fetchSemanticsNodes()
+            (!workbench || surfaces.isNotEmpty()) && surfaces.all { it.config[SkinImageReady] }
         }
         compose.waitForIdle()
-        val bitmap = compose.onRoot().captureToImage().asAndroidBitmap()
-        try { File(context.filesDir, name).outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) } }
+        val target = if (workbench) compose.onNodeWithTag("workbench-list") else compose.onRoot()
+        val bitmap = target.captureToImage().asAndroidBitmap()
+        try { File(context.filesDir, name).outputStream().use { assertTrue(name, bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)) } }
         finally { bitmap.recycle() }
     }
 
@@ -144,6 +146,56 @@ class BuiltinSkinInstrumentedTest {
         } finally { bitmap.recycle() }
     }
 
+    @Test fun reconnectSignalAnimatesInPlaceAcrossBuiltinSkins() {
+        val state = state()
+        compose.setContent {
+            LexoraTheme { Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) { PaperWorkbench(state, state.tasks, { _, _ -> }, {}, {}) } }
+        }
+        val signal = compose.onNodeWithTag("service-signal", useUnmergedTree = true)
+        val label = compose.onNodeWithTag("service-state-label", useUnmergedTree = true)
+        for (skin in BuiltinSkins.list(context)) {
+            compose.runOnIdle { MobileAppearance.selectSkin(context, skin.id) }
+            compose.waitForIdle()
+            if (skin.variant(false).home != null) compose.waitUntil(5_000) {
+                val surfaces = compose.onAllNodes(SemanticsMatcher.keyIsDefined(SkinImageReady), useUnmergedTree = true).fetchSemanticsNodes()
+                surfaces.isNotEmpty() && surfaces.all { it.config[SkinImageReady] }
+            }
+            compose.mainClock.autoAdvance = false
+            try {
+                compose.runOnUiThread {
+                    state.connected = false
+                    state.devices = state.devices.map { it.copy(label = state.deviceLabel, connected = false) }
+                    state.connectionPhase = MobileConnectionPhase.Retrying
+                    state.connectionLabel = mobileText(R.string.connection_reconnecting)
+                }
+                compose.mainClock.advanceTimeBy(64)
+                label.assertTextEquals(mobileText(R.string.service_reconnecting))
+                val anchor = label.fetchSemanticsNode().boundsInRoot
+                val before = signal.captureToImage().asAndroidBitmap()
+                compose.mainClock.advanceTimeBy(480)
+                val after = signal.captureToImage().asAndroidBitmap()
+                try { assertFalse("${skin.id} signal must change between frames", before.sameAs(after)) }
+                finally { before.recycle(); after.recycle() }
+                assertEquals(anchor, label.fetchSemanticsNode().boundsInRoot)
+                capture("reconnecting-${skin.id}.png", workbench = skin.variant(false).home != null)
+                if (InstrumentationRegistry.getArguments().getString("captureScreenshots") == "true") {
+                    val chip = compose.onNodeWithTag("service-selector-surface", useUnmergedTree = true)
+                    repeat(15) { frame ->
+                        val bitmap = chip.captureToImage().asAndroidBitmap()
+                        try { File(context.filesDir, "signal-${skin.id}-$frame.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) } }
+                        finally { bitmap.recycle() }
+                        compose.mainClock.advanceTimeBy(100, ignoreFrameDuration = true)
+                    }
+                }
+            } finally { compose.mainClock.autoAdvance = true }
+            compose.runOnIdle { state.connectionPhase = MobileConnectionPhase.Unavailable }
+            signal.assertDoesNotExist()
+            label.assertTextEquals(mobileText(R.string.service_offline))
+            compose.runOnIdle { state.connected = true; state.devices = state.devices.map { it.copy(connected = true) }; state.connectionLabel = mobileText(R.string.connection_connected) }
+            signal.assertDoesNotExist()
+        }
+    }
+
     @Test fun bundledMaterialsAndTypefacesDecodeOnAndroid() {
         val testedFonts = mutableSetOf<String>()
         for (skin in BuiltinSkins.list(context)) for (dark in listOf(false, true)) {
@@ -185,7 +237,8 @@ class BuiltinSkinInstrumentedTest {
             MobileAppearance.selectTheme(context, if (dark) "dark" else "light")
             MobileAppearance.selectLanguage(context, language)
             state.connectionLabel = mobileText(R.string.connection_connected)
-            if (large) state.deviceLabel = "A very long studio service name that must not cover the settings button"
+            if (large) state.deviceLabel = if (language == "en") "Studio editing workstation" else "工作室的剪辑工作站"
+            state.devices = state.devices.map { it.copy(label = state.deviceLabel) }
         }
         compose.setContent {
             CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, if (large) 1.5f else 1f)) {
@@ -196,8 +249,39 @@ class BuiltinSkinInstrumentedTest {
                 }
             }
         }
-        capture("skin-$skinId-${if (dark) "dark" else "light"}${if (large) "-large" else ""}${if (language == "en") "-en" else ""}.png")
+        capture("skin-$skinId-${if (dark) "dark" else "light"}${if (large) "-large" else ""}${if (language == "en") "-en" else ""}.png", workbench = true)
         val skinHome = requireNotNull(decodeSkinHome(BuiltinSkins.get(context, skinId).variant(dark).home, "skins/$skinId/"))
+        if (!dark) {
+            compose.runOnIdle {
+                state.connected = false
+                state.devices = state.devices.map { it.copy(connected = false) }
+                state.connectionPhase = MobileConnectionPhase.Retrying
+                state.connectionLabel = mobileText(R.string.connection_reconnecting)
+            }
+            val status = compose.onNode(hasTestTag("service-state-label") and hasAnyAncestor(hasTestTag("service-selector")), useUnmergedTree = true)
+            status.assertIsDisplayed().assertTextEquals(mobileText(R.string.service_reconnecting))
+            val layouts = mutableListOf<TextLayoutResult>()
+            status.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            assertSingleLineFits(layouts.single(), "$skinId/$language reconnecting")
+            compose.onNodeWithTag("space-filter").assertDoesNotExist()
+            if (skinHome.layout.serviceLayout == "panel") {
+                val header = compose.onNodeWithTag("service-status-bar", useUnmergedTree = true).getUnclippedBoundsInRoot()
+                val panel = compose.onNodeWithTag("service-selector").getUnclippedBoundsInRoot()
+                val padding = skinHome.layout.connectionPadding
+                assertEquals("single service panel starts at the content edge", header.left.value + padding.left, panel.left.value, 1f)
+                assertEquals("single service panel fills the row", header.right.value - padding.right, panel.right.value, 1f)
+            }
+            compose.onNodeWithTag("connection-detail", useUnmergedTree = true).assertDoesNotExist()
+            compose.onNodeWithTag("home-unread").assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, mobileQuantity(R.plurals.unread_tasks, 3)))
+            capture("skin-$skinId-light-$language-reconnecting-cached.png", workbench = true)
+            compose.runOnIdle {
+                state.connected = true
+                state.devices = state.devices.map { it.copy(connected = true) }
+                state.connectionPhase = MobileConnectionPhase.Idle
+                state.connectionLabel = mobileText(R.string.connection_connected)
+            }
+            status.assertTextEquals(mobileText(R.string.label_connected))
+        }
         if (skinId == "mecha-armor" && !large) {
             val first = compose.onNodeWithTag("home-unread").getUnclippedBoundsInRoot()
             val last = compose.onNodeWithTag("home-all-tasks").getUnclippedBoundsInRoot()

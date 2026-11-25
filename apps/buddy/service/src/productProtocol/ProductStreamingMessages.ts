@@ -6,6 +6,7 @@ import { PRODUCT_LIMITS, productByteLength } from '../../../shared/productProtoc
 import { productMessageSchema } from '../../../shared/productProtocol/views'
 
 import { ProductLiveText } from './ProductLiveText'
+import { projectProductMessageAuthor } from './projectProductMessageAuthor'
 
 type Message = z.infer<typeof productMessageSchema>
 
@@ -19,11 +20,12 @@ export class ProductStreamingMessages {
   }
 
   start(runId: string, messageId: string, createdAt: string): z.infer<typeof productMessageSchema> | null {
-    const run = this.#database.prepare(`SELECT r.conversation_id, r.branch_id FROM runs r JOIN conversations c ON c.id = r.conversation_id
+    const run = this.#database.prepare(`SELECT r.conversation_id, r.branch_id, r.actor_snapshot_json FROM runs r JOIN conversations c ON c.id = r.conversation_id
       WHERE r.id = ? AND r.execution_kind = 'root' AND r.status IN ('queued', 'running') AND c.deleted_at IS NULL`).get(runId)
     if (!run || this.#database.prepare('SELECT 1 FROM messages WHERE id = ?').get(messageId))
       return null
-    return productMessageSchema.parse({ id: messageId, conversationId: run.conversation_id, branchId: run.branch_id, runId, role: 'assistant', createdAt, body: { kind: 'text', text: '', interrupted: false, truncated: false }, resources: [] })
+    const author = projectProductMessageAuthor(run.actor_snapshot_json)
+    return productMessageSchema.parse({ id: messageId, conversationId: run.conversation_id, branchId: run.branch_id, runId, role: 'assistant', createdAt, body: { kind: 'text', text: '', interrupted: false, truncated: false }, resources: [], ...(author ? { author } : {}) })
   }
 
   turnStart(runId: string, messageId: string, createdAt: string, sequence: number) {

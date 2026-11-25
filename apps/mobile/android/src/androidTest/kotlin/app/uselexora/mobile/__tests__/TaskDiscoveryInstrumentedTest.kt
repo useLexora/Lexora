@@ -37,7 +37,6 @@ class TaskDiscoveryInstrumentedTest {
         compose.onNodeWithText("Private task title").assertDoesNotExist()
         compose.onNodeWithTag("home-all-tasks").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(listOf(MobileAction.ShowTaskFilter), actions) }
-        compose.onNodeWithTag("connection-detail").assertIsDisplayed()
     }
 
     @Test fun offlineConversationShowsCachedContentOrOneConnectionHint() {

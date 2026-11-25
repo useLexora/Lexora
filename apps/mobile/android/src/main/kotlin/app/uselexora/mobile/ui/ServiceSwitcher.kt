@@ -95,6 +95,9 @@ internal fun ServiceSwitcher(state: MobileUiState, onAction: (MobileAction, JSON
                                         if (device.selected) Icon(Icons.Outlined.Check, mobileText(R.string.mobile_current_connection), Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
                                         Text(device.label, Modifier.weight(1f).testTag("service-name-${device.id}"), style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                     }
+                                    if (device.selected && !device.connected && state.connectionPhase == MobileConnectionPhase.Unavailable) {
+                                        Text(state.connectionLabel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
                                     if (state.devices.count { it.label == device.label } > 1) {
                                         Text(device.address, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                     }
