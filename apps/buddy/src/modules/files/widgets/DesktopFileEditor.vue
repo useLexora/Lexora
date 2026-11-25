@@ -12,8 +12,12 @@ import { computed, onScopeDispose, shallowRef, useTemplateRef, watch } from 'vue
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import WorkbenchMenu from '@/shared/ui/contributions/WorkbenchMenu.vue'
 import DesktopDocumentContent from '@/shared/ui/files/DesktopDocumentContent.vue'
+import DesktopDocumentFindBar from '@/shared/ui/files/DesktopDocumentFindBar.vue'
 import DesktopDocumentToolbar from '@/shared/ui/files/DesktopDocumentToolbar.vue'
+import { handleDocumentFindKey } from '@/shared/ui/files/documentFind'
 import { fileDocumentModes, resolveFileDocumentMode } from '@/shared/ui/files/fileDocumentPresentation'
+import { renderMonacoFind } from '@/shared/ui/files/monacoDocumentFind'
+import { useDocumentFind } from '@/shared/ui/files/useDocumentFind'
 import { observeDesktopMonacoLayout } from '@/shared/ui/monaco/desktopMonacoLayout'
 import ResourceSelectionQuoteMenu from '@/shared/ui/selection/ResourceSelectionQuoteMenu.vue'
 import { revealMonacoQuote } from '@/shared/ui/selection/revealMonacoQuote'
@@ -22,11 +26,12 @@ import { useResourceQuoteReveal } from '@/shared/ui/selection/useResourceQuoteRe
 import { useResourceSelectionQuote } from '@/shared/ui/selection/useResourceSelectionQuote'
 import { desktopTypography } from '@/theme/desktopTypography'
 import { useWorkbench } from '@/workbench/browser/workbenchContext'
-
 import { spaceFileImageResolver } from '../model/documentImageResolver'
+
 import { fileOpeningHandler } from '../model/fileOpeningHandlers'
 import { useFileOpening } from '../state/fileOpeningContext'
 import { filePreviewRenderer } from './filePreviewRenderers'
+import '@/shared/ui/files/documentFind.css'
 
 const props = withDefaults(defineProps<{ view: WorkbenchView, models: TextModelPool, editors: TextEditorPool, language: 'zh-CN' | 'en-US', writeClipboardText: (text: string) => Promise<void>, toolbarTarget?: HTMLElement | null, visible?: boolean }>(), { visible: true })
 const { copies, controller, labels } = useWorkbench()
@@ -50,11 +55,52 @@ const mode = computed({
   get: () => resolveFileDocumentMode(props.view.state.mode ?? (props.view.state.preview === false ? 'edit' : undefined), modes.value),
   set: value => controller.updateView(props.view.id, { state: { ...props.view.state, mode: value } }),
 })
+const searchable = computed(() => {
+  if (!copy.value?.etag)
+    return false
+  if (mode.value === 'preview' && previewRenderer.value)
+    return false
+  return mode.value === 'preview' || mode.value === 'source' || mode.value === 'edit'
+})
+const find = useDocumentFind()
+const editorHandle = shallowRef<Monaco.editor.IStandaloneCodeEditor>()
+let findDecorations: Monaco.editor.IEditorDecorationsCollection | null = null
+let revealedFind = ''
+function onFindKey(event: KeyboardEvent, phase: 'capture' | 'bubble') {
+  if (phase === 'capture' ? event.key.toLowerCase() !== 'f' : event.key.toLowerCase() === 'f')
+    return
+  handleDocumentFindKey(event, { open: find.open.value, searchable: searchable.value, show: find.show, close: find.close, next: find.next, previous: find.previous })
+}
 function resourceIdentity(resource: ResourceRef): string {
   const { scheme, id, data } = resource
   return JSON.stringify([scheme, id, data.spaceId, data.directoryId, data.revision, data.path])
 }
 const identity = computed(() => resourceIdentity(props.view.resource))
+watch([identity, mode], () => {
+  find.index.value = 0
+})
+watch(searchable, (value) => {
+  if (!value)
+    find.setResult(0, false)
+})
+watch([() => find.open.value, () => find.query.value, () => find.index.value, () => find.composing.value, mode, () => copy.value?.text, editorHandle], () => {
+  const source = mode.value === 'source' || mode.value === 'edit'
+  if (!find.open.value || !source || find.composing.value) {
+    if (!find.open.value || !source) {
+      findDecorations?.clear()
+      revealedFind = ''
+    }
+    return
+  }
+  const current = editorHandle.value
+  if (!current?.getModel || !current.createDecorationsCollection)
+    return
+  const key = `${find.query.value}:${find.index.value}`
+  const rendered = renderMonacoFind(current, find.query.value, find.index.value, key !== revealedFind, findDecorations)
+  revealedFind = key
+  findDecorations = rendered.collection
+  find.setResult(rendered.count, rendered.capped)
+}, { flush: 'post' })
 const selection = useResourceSelectionQuote({
   viewId: () => props.view.id,
   ownerKey: () => JSON.stringify([props.view.id, identity.value, mode.value]),
@@ -112,6 +158,9 @@ watch([container, attempt, viewId, identity, () => props.visible], async ([eleme
     finally {
       if (editor === ownedEditor) {
         editor = undefined
+        if (editorHandle.value === ownedEditor)
+          editorHandle.value = undefined
+        findDecorations = null
         editorReady.value = false
       }
       for (const subscription of subscriptions)
@@ -155,6 +204,7 @@ watch([container, attempt, viewId, identity, () => props.visible], async ([eleme
     releaseEditor = editorLease.release
     ownedEditor = editorLease.editor
     editor = ownedEditor
+    editorHandle.value = ownedEditor
     stopLayout = observeDesktopMonacoLayout(element, size => ownedEditor?.layout(size))
     if (selection.enabled)
       subscriptions.push(registerMonacoResourceQuote(ownedEditor, { label: () => t('desktop.chat.quoteSelection'), source: () => quoteSource(), prepare: selection.prepare }))
@@ -203,9 +253,9 @@ onScopeDispose(controller.configuration.subscribe(() => editor?.updateOptions({ 
 </script>
 
 <template>
-  <div class="file-editor flex flex-1 min-h-0 min-w-0 flex-col" :data-dirty="copy?.dirty">
+  <div class="file-editor flex flex-1 min-h-0 min-w-0 flex-col" :data-dirty="copy?.dirty" @keydown.capture="onFindKey($event, 'capture')" @keydown="onFindKey($event, 'bubble')">
     <Teleport v-if="visible" :to="toolbarTarget ?? 'body'" :disabled="!toolbarTarget">
-      <DesktopDocumentToolbar v-model="mode" :name="String(view.resource.data.path)" :modes="modes" :language="language" :embedded="!!toolbarTarget">
+      <DesktopDocumentToolbar v-model="mode" :name="String(view.resource.data.path)" :modes="modes" :language="language" :embedded="!!toolbarTarget" :searchable="searchable" :search-open="find.open.value" @toggle-search="find.toggle()">
         <template #actions>
           <WorkbenchMenu target="resource.actions" :values="{ 'resource.scheme': view.resource.scheme }" :capture="captureResource" />
           <NButton v-if="mode === 'edit' || copy?.dirty" size="tiny" secondary :loading="copy?.saving" :disabled="!copy || copy.loading || copy.saving || copy.blocked || !!copy.conflict || !copy.dirty" @click="copies.save(view.resource)">
@@ -230,18 +280,21 @@ onScopeDispose(controller.configuration.subscribe(() => editor?.updateOptions({ 
       </button>
     </div>
     <ResourceSelectionQuoteMenu v-if="selection.enabled" :selection="selection" :language="language" />
-    <DesktopDocumentContent
-      ref="document" :source-ready="editorReady" :reveal-source="revealSource"
-      :mode="mode" :name="view.title" :text="copy?.text ?? ''" :resolve-image="imageResolver" :language="language" :write-clipboard-text="writeClipboardText"
-      :quote-source="selection.enabled ? quoteSource('markdown') : undefined" :prepare-quote="selection.prepare" @scroll.capture="selection.close"
-    >
-      <template v-if="previewRenderer" #preview>
-        <component :is="previewRenderer.component" v-bind="previewRenderer.props" @error="failed = true" />
-      </template>
-      <template #source>
-        <div ref="container" class="file-editor__surface flex-1 min-h-0 min-w-0" data-testid="workbench-text-editor" />
-      </template>
-    </DesktopDocumentContent>
+    <div class="relative flex flex-1 min-h-0 min-w-0 flex-col">
+      <DesktopDocumentFindBar v-if="find.open.value" v-model="find.query.value" :count="find.count.value" :index="find.index.value" :capped="find.capped.value" :focus-token="find.focusToken.value" :language="language" @next="find.next()" @previous="find.previous()" @close="find.close()" @composing="find.composing.value = $event" />
+      <DesktopDocumentContent
+        ref="document" :source-ready="editorReady" :reveal-source="revealSource"
+        :mode="mode" :name="view.title" :text="copy?.text ?? ''" :resolve-image="imageResolver" :language="language" :write-clipboard-text="writeClipboardText"
+        :quote-source="selection.enabled ? quoteSource('markdown') : undefined" :prepare-quote="selection.prepare" :find-open="find.open.value && searchable && mode === 'preview'" :find-query="find.query.value" :find-index="find.index.value" :find-paused="find.composing.value" @find-result="find.setResult($event.count, $event.capped)" @scroll.capture="selection.close"
+      >
+        <template v-if="previewRenderer" #preview>
+          <component :is="previewRenderer.component" v-bind="previewRenderer.props" @error="failed = true" />
+        </template>
+        <template #source>
+          <div ref="container" class="file-editor__surface flex-1 min-h-0 min-w-0" data-testid="workbench-text-editor" />
+        </template>
+      </DesktopDocumentContent>
+    </div>
     <footer v-if="mode === 'edit' || copy?.dirty" class="flex-none py-[3px] px-[12px] text-muted border-t-1 border-t-solid border-t-border text-[10px]">
       {{ copy?.loading ? labels.loading : copy?.dirty ? labels.dirty : labels.saved }} · UTF-8
     </footer>

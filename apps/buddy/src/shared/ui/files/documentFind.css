@@ -1,0 +1,8 @@
+.monaco-editor .document-find-match {
+  background: var(--buddy-accent-surface);
+}
+
+.monaco-editor .document-find-current {
+  background: var(--buddy-accent-solid) !important;
+  color: var(--buddy-text-on-accent) !important;
+}

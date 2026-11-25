@@ -1,11 +1,16 @@
 <script setup lang="ts">
 import type { FileDocumentMode } from './fileDocumentPresentation'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
+import { Search20Regular } from '@vicons/fluent'
+import { useBuddyI18n } from '@/i18n/buddyI18n'
+import DesktopContextAction from './DesktopContextAction.vue'
 import DesktopDocumentModes from './DesktopDocumentModes.vue'
 
-defineProps<{ name: string, path?: string, detail?: string, modes: readonly FileDocumentMode[], language: BuddyLocale, embedded?: boolean }>()
+const props = defineProps<{ name: string, path?: string, detail?: string, modes: readonly FileDocumentMode[], language: BuddyLocale, embedded?: boolean, searchable?: boolean, searchOpen?: boolean }>()
+defineEmits<{ toggleSearch: [] }>()
 defineSlots<{ actions?: () => unknown }>()
 const mode = defineModel<FileDocumentMode | null>({ required: true })
+const { t } = useBuddyI18n(() => props.language)
 </script>
 
 <template>
@@ -14,6 +19,7 @@ const mode = defineModel<FileDocumentMode | null>({ required: true })
       <strong class="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[12px] font-600 text-strong">{{ name }}</strong>
       <div class="flex flex-none items-center gap-[6px]">
         <DesktopDocumentModes v-model="mode" :modes="modes" :language="language" />
+        <DesktopContextAction v-if="searchable" data-testid="document-find-toggle" :icon="Search20Regular" :label="t('desktop.context.find')" :active="searchOpen === true" @click="$emit('toggleSearch')" />
         <slot name="actions" />
       </div>
     </div>

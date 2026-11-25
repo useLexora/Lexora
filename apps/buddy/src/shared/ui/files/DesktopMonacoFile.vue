@@ -7,13 +7,28 @@ import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { loadDesktopMonaco, observeDesktopMonacoTheme } from '@/shared/ui/monaco/desktopMonaco'
 import { revealMonacoQuote } from '@/shared/ui/selection/revealMonacoQuote'
 import { registerMonacoResourceQuote } from '@/shared/ui/selection/useMonacoResourceQuote'
+import { renderMonacoFind } from './monacoDocumentFind'
+import './documentFind.css'
 
-const props = defineProps<{ text: string, path: string, wrap: boolean, language: 'zh-CN' | 'en-US', quoteSource?: BuddyTextQuote['source'], prepareQuote?: PrepareResourceQuote }>()
+const props = withDefaults(defineProps<{ text: string, path: string, wrap: boolean, language: 'zh-CN' | 'en-US', quoteSource?: BuddyTextQuote['source'], prepareQuote?: PrepareResourceQuote, findOpen?: boolean, findQuery?: string, findIndex?: number }>(), { findOpen: false, findQuery: '', findIndex: 0 })
+const emit = defineEmits<{ findResult: [result: { count: number, capped: boolean }] }>()
 const { t } = useBuddyI18n(() => props.language)
 const activeEditor = shallowRef<Monaco.editor.IStandaloneCodeEditor>()
+let findDecorations: Monaco.editor.IEditorDecorationsCollection | null = null
+function applyMonacoFind() {
+  const editor = activeEditor.value
+  if (!editor || !props.findOpen) {
+    findDecorations?.clear()
+    return
+  }
+  const rendered = renderMonacoFind(editor, props.findQuery, props.findIndex, true, findDecorations)
+  findDecorations = rendered.collection
+  emit('findResult', { count: rendered.count, capped: rendered.capped })
+}
 defineExpose({ ready: computed(() => !!activeEditor.value), reveal: (quote: BuddyTextQuote) => !!activeEditor.value && revealMonacoQuote(activeEditor.value, quote) })
 const container = useTemplateRef<HTMLElement>('container')
 const failed = shallowRef(false)
+watch([activeEditor, () => props.findOpen, () => props.findQuery, () => props.findIndex], () => applyMonacoFind(), { flush: 'post' })
 const languages: Record<string, string> = {
   css: 'css',
   html: 'html',
@@ -93,6 +108,8 @@ watch(container, async (element, _previous, onCleanup) => {
       editor.updateOptions({ wordWrap: wrap ? 'on' : 'off' })
       if (path !== previous?.[1])
         editor.setScrollTop(0)
+      if (!previous || text !== previous[0] || path !== previous[1])
+        applyMonacoFind()
     }, { immediate: true })
   }
   catch {

@@ -10,8 +10,11 @@ import { spaceFileTargetSchema } from '@buddy-shared/spaces/spaceFileApi'
 import { computed, shallowRef, useTemplateRef, watch } from 'vue'
 import WorkbenchMenu from '@/shared/ui/contributions/WorkbenchMenu.vue'
 import DesktopDocumentContent from '@/shared/ui/files/DesktopDocumentContent.vue'
+import DesktopDocumentFindBar from '@/shared/ui/files/DesktopDocumentFindBar.vue'
 import DesktopDocumentToolbar from '@/shared/ui/files/DesktopDocumentToolbar.vue'
+import { handleDocumentFindKey } from '@/shared/ui/files/documentFind'
 import { fileDocumentModes, resolveFileDocumentMode } from '@/shared/ui/files/fileDocumentPresentation'
+import { useDocumentFind } from '@/shared/ui/files/useDocumentFind'
 import DesktopFileLoading from '@/shared/ui/loading/DesktopFileLoading.vue'
 import ResourceSelectionQuoteMenu from '@/shared/ui/selection/ResourceSelectionQuoteMenu.vue'
 import { useResourceQuoteReveal } from '@/shared/ui/selection/useResourceQuoteReveal'
@@ -43,6 +46,20 @@ const provider = computed(() => {
 const previewRenderer = computed(() => filePreviewRenderer({ provider: provider.value, ownerId: props.view.id, target: target.value, source: 'file', resourceReady: true, text: preview.value?.text ?? undefined, name: props.view.title, visible: props.visible, language: props.language }))
 const modes = computed(() => fileDocumentModes({ preview: !!fileOpeningHandler(provider.value)?.preview, source: preview.value?.kind === 'text', edit: false }))
 const mode = computed({ get: () => resolveFileDocumentMode(props.view.state.mode, modes.value), set: value => controller.updateView(props.view.id, { state: { ...props.view.state, mode: value } }) })
+const searchable = computed(() => {
+  const value = preview.value
+  if (!value || directory.value || failed.value || value.kind !== 'text')
+    return false
+  if (mode.value === 'preview' && previewRenderer.value)
+    return false
+  return mode.value === 'preview' || mode.value === 'source'
+})
+const find = useDocumentFind()
+function onFindKey(event: KeyboardEvent, phase: 'capture' | 'bubble') {
+  if (phase === 'capture' ? event.key.toLowerCase() !== 'f' : event.key.toLowerCase() === 'f')
+    return
+  handleDocumentFindKey(event, { open: find.open.value, searchable: searchable.value, show: find.show, close: find.close, next: find.next, previous: find.previous })
+}
 const quoteSource = computed<BuddyFileQuote['source'] | undefined>(() => target.value
   ? ({
       kind: 'file',
@@ -54,6 +71,13 @@ const quoteSource = computed<BuddyFileQuote['source'] | undefined>(() => target.
 const identity = computed(() => {
   const { scheme, id, data } = props.view.resource
   return JSON.stringify([scheme, id, data.conversationId, data.spaceId, data.directoryId, data.revision, data.path])
+})
+watch([identity, mode], () => {
+  find.index.value = 0
+})
+watch(searchable, (value) => {
+  if (!value)
+    find.setResult(0, false)
 })
 const selection = useResourceSelectionQuote({
   viewId: () => props.view.id,
@@ -102,9 +126,9 @@ function captureResource() {
 </script>
 
 <template>
-  <div class="file-preview flex flex-1 flex-col min-h-0 overflow-auto">
+  <div class="file-preview flex flex-1 flex-col min-h-0 overflow-auto" @keydown.capture="onFindKey($event, 'capture')" @keydown="onFindKey($event, 'bubble')">
     <Teleport v-if="visible" :to="toolbarTarget ?? 'body'" :disabled="!toolbarTarget">
-      <DesktopDocumentToolbar v-model="mode" :name="String(view.resource.data.path)" :modes="modes" :language="language" :embedded="!!toolbarTarget">
+      <DesktopDocumentToolbar v-model="mode" :name="String(view.resource.data.path)" :modes="modes" :language="language" :embedded="!!toolbarTarget" :searchable="searchable" :search-open="find.open.value" @toggle-search="find.toggle()">
         <template #actions>
           <WorkbenchMenu v-if="target" target="resource.actions" :values="{ 'resource.scheme': view.resource.scheme }" :capture="captureResource" />
         </template>
@@ -124,15 +148,17 @@ function captureResource() {
     <p v-else-if="!(mode === 'preview' && previewRenderer) && (preview?.kind === 'binary' || preview?.kind === 'oversized')" class="p-[16px] text-muted text-[13px]" role="status">
       {{ language === 'en-US' ? (preview.kind === 'oversized' ? 'This file is too large for the built-in preview.' : 'No available reader supports this file.') : (preview.kind === 'oversized' ? '文件超出内置预览的大小限制。' : '暂无可用阅读器支持此文件。') }}
     </p>
-    <DesktopDocumentContent
-      v-else
-      ref="document" :mode="mode" :name="view.title" :text="preview?.text" :image-url="preview?.imageUrl" :media-kind="preview?.kind === 'audio' || preview?.kind === 'video' ? preview.kind : null" :media-url="preview?.mediaUrl" :resolve-image="imageResolver" :visible="visible" :wrap="view.state.wrap !== false" :language="language" :write-clipboard-text="writeClipboardText"
-      :quote-source="selection.enabled ? quoteSource : undefined" :prepare-quote="selection.prepare" @preview-error="failed = true" @scroll.capture="selection.close"
-    >
-      <template v-if="previewRenderer" #preview>
-        <component :is="previewRenderer.component" v-bind="previewRenderer.props" @error="failed = true" />
-      </template>
-    </DesktopDocumentContent>
+    <div v-else class="relative flex flex-1 flex-col min-w-0 min-h-0">
+      <DesktopDocumentFindBar v-if="find.open.value" v-model="find.query.value" :count="find.count.value" :index="find.index.value" :capped="find.capped.value" :focus-token="find.focusToken.value" :language="language" @next="find.next()" @previous="find.previous()" @close="find.close()" @composing="find.composing.value = $event" />
+      <DesktopDocumentContent
+        ref="document" :mode="mode" :name="view.title" :text="preview?.text" :image-url="preview?.imageUrl" :media-kind="preview?.kind === 'audio' || preview?.kind === 'video' ? preview.kind : null" :media-url="preview?.mediaUrl" :resolve-image="imageResolver" :visible="visible" :wrap="view.state.wrap !== false" :language="language" :write-clipboard-text="writeClipboardText"
+        :quote-source="selection.enabled ? quoteSource : undefined" :prepare-quote="selection.prepare" :find-open="find.open.value && searchable" :find-query="find.query.value" :find-index="find.index.value" :find-paused="find.composing.value" @find-result="find.setResult($event.count, $event.capped)" @preview-error="failed = true" @scroll.capture="selection.close"
+      >
+        <template v-if="previewRenderer" #preview>
+          <component :is="previewRenderer.component" v-bind="previewRenderer.props" @error="failed = true" />
+        </template>
+      </DesktopDocumentContent>
+    </div>
     <ResourceSelectionQuoteMenu v-if="selection.enabled" :selection="selection" :language="language" />
   </div>
 </template>
