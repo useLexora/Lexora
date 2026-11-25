@@ -1,16 +1,15 @@
 <script setup lang="ts">
 import type { ReaderSend, ReaderWireEntry } from './readerProtocol'
-import { ChevronRight20Regular } from '@vicons/fluent'
 import { watch } from 'vue'
 import { useChatTranscriptValue } from '../modules/tasks/reader'
+import ReaderActivityStepHeading from './ReaderActivityStepHeading.vue'
 import ReaderLiveStepDetail from './ReaderLiveStepDetail.vue'
 import ReaderProgress from './ReaderProgress.vue'
 import { useReaderStrings } from './readerStrings'
 
 type StepPage = NonNullable<ReaderWireEntry['steps']>
-const props = defineProps<{ runId: string, groupId: string, steps?: StepPage, send: ReaderSend }>()
+const props = defineProps<{ runId: string, groupId: string, language: string, steps?: StepPage, send: ReaderSend }>()
 const labels = useReaderStrings()
-const statuses = { running: 'running', interrupted: 'stopped', failed: 'failed', completed: 'done' } as const
 const expanded = useChatTranscriptValue('activity:expanded-steps', new Set<string>())
 function load(cursor?: string | null) {
   if (!props.steps?.loading)
@@ -41,12 +40,8 @@ function toggle(step: StepPage['items'][number]) {
 
 <template>
   <div class="activity-steps">
-    <article v-for="step in steps?.items" :key="step.id" class="reader-tool" :class="{ expanded: expanded.has(step.id), failed: step.status === 'failed' }" :data-step-id="step.id">
-      <button type="button" class="tool-call-header" :aria-expanded="expanded.has(step.id)" @click="toggle(step)">
-        <span class="tool-call-heading tool-call-title">{{ step.toolName }}</span>
-        <span class="tool-call-status">{{ labels[statuses[step.status]] }}</span>
-        <ChevronRight20Regular class="reader-icon tool-call-chevron" aria-hidden="true" />
-      </button>
+    <article v-for="step in steps?.items" :key="step.id" :data-step-id="step.id">
+      <ReaderActivityStepHeading :step="step" :language="language" :open="expanded.has(step.id)" @toggle="toggle(step)" />
       <ReaderLiveStepDetail v-if="!step.messageId && expanded.has(step.id)" :run-id="runId" :group-id="groupId" :step-id="step.id" :send="send" />
       <div v-if="step.messageId && expanded.has(step.id)" class="tool-call-detail">
         <pre v-if="step.detail?.text" class="tool-output">{{ step.detail.text }}</pre>
@@ -72,8 +67,18 @@ function toggle(step: StepPage['items'][number]) {
     <button v-if="steps?.stale && !steps.loading" class="transcript-retry" type="button" @click="load()">
       {{ labels.refreshSteps }}
     </button>
-    <button v-else-if="steps && !steps.loading && (steps.failed || steps.nextCursor)" class="transcript-retry" type="button" @click="load(steps.nextCursor)">
+    <button v-else-if="steps && !steps.loading && (steps.failed || steps.nextCursor)" :class="steps.failed ? 'transcript-retry' : 'activity-load-more'" type="button" @click="load(steps.nextCursor)">
       {{ steps.failed ? labels.retrySteps : labels.moreSteps }}
     </button>
   </div>
 </template>
+
+<style scoped>
+.activity-load-more {
+  min-height: 44px;
+  padding: 4px;
+  font-size: .8em;
+  color: var(--reader-muted);
+  opacity: .92;
+}
+</style>

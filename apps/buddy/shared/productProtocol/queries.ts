@@ -16,7 +16,7 @@ import { productContentSchema } from './content'
 import { PRODUCT_LIMITS } from './limits'
 import { productReadLiveTextInputSchema, productReadLiveTextResultSchema, productReadSavedTextInputSchema } from './messageText'
 import { productIdSchema as id, productRevisionSchema as revision } from './scalars'
-import { productActivityStepsInputSchema, productActivityStepsPageSchema, productTurnWindowInputSchema, productTurnWindowSchema } from './turns'
+import { productActivityStepsInputSchema, productActivityStepsPageSchema, productOrderedActivityStepsPageSchema, productTurnWindowInputSchema, productTurnWindowSchema } from './turns'
 import { productApprovalDecisionSchema, productApprovalSchema, productMessageSchema, productModelSchema, productModelSnapshotSchema, productProviderSchema, productQueueItemSchema, productResourceSchema, productRunEventSchema, productRunSchema } from './views'
 
 export { productRunSchema } from './views'
@@ -77,6 +77,7 @@ export const PRODUCT_QUERY_METHODS = {
   'conversations.readActivityStepDetail': query(productReadActivityStepDetailInputSchema, productReadActivityStepDetailResultSchema),
   'conversations.getTurnWindow': query(productTurnWindowInputSchema, productTurnWindowSchema),
   'conversations.listActivitySteps': query(productActivityStepsInputSchema, productActivityStepsPageSchema),
+  'conversations.listOrderedActivitySteps': query(productActivityStepsInputSchema, productOrderedActivityStepsPageSchema),
   'conversations.getModelControls': query(productModelControlsInputSchema, productModelControlsSchema),
   'conversations.getQueueControls': query(productQueueControlsInputSchema, productQueueControlsPageSchema),
   'buddies.list': query(productPageInputSchema, productBuddyPageSchema),

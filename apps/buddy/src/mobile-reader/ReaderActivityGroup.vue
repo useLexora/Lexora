@@ -38,9 +38,9 @@ const summary = computed<ChatAgentActivitySummary>(() => {
 <template>
   <div>
     <span v-if="owner" class="author-name group-owner">{{ owner.name ?? labels.rootActivity }}</span>
-    <BuddyChatActivityGroup :group="summary" :language="language === 'en' ? 'en-US' : 'zh-CN'" :active-label="historical ? null : group.activeToolName">
+    <BuddyChatActivityGroup :group="summary" :language="language === 'en' ? 'en-US' : 'zh-CN'" hide-live-status>
       <template #steps>
-        <ReaderActivitySteps :run-id="group.runId" :group-id="group.id" :steps="steps" :send="send" />
+        <ReaderActivitySteps :run-id="group.runId" :group-id="group.id" :language="language" :steps="steps" :send="send" />
       </template>
     </BuddyChatActivityGroup>
   </div>

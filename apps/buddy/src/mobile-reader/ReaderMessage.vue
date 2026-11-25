@@ -12,7 +12,6 @@ import { useReaderStrings } from './readerStrings'
 
 const props = defineProps<{
   message: ReaderMessage
-  replying?: boolean
   output?: ReaderOutput
   dark: boolean
   language?: string
@@ -45,10 +44,9 @@ async function copy(text: string) {
 
 <template>
   <article class="reader-message" :class="[message.role, { intermediate: message.intermediate }]" :data-message-id="message.id" @contextmenu="openActions">
-    <div v-if="message.showIdentity || replying" class="message-author">
+    <div v-if="message.showIdentity" class="message-author">
       <MessageAvatar :role="message.role" :author-id="message.authorId" />
       <span class="author-name">{{ message.author }}</span>
-      <span v-if="replying" class="stream-status" role="status"><i /><i /><i /><span>{{ labels.replying }}</span></span>
     </div>
     <div v-if="message.role === 'assistant' && message.commentary" class="reader-narration" @contextmenu.stop>
       <ReaderLiveBody :message="{ id: message.id, text: message.commentary.text, textRange: message.commentary.range }" :send="send" @interact="emit('interact')" />

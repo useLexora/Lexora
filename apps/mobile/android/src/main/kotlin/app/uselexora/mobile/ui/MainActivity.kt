@@ -328,7 +328,8 @@ class MainActivity : ComponentActivity() {
                         onMessageMenu = { message, anchor, contextual -> prepareMessageAction(message, null, anchor, contextual) },
                         turn = ReaderTurnContext(conversationTarget, readerClient, ui.turnWindow, ui.activityGroups,
                             ui.historyHasMore && ui.connected && ui.conversationReady, ui.historyLoading, ui.historyError.ifBlank { null }, ui.historyPage,
-                            latestLoading = ui.latestLoading, latestError = ui.latestError.ifBlank { null }),
+                            latestLoading = ui.latestLoading, latestError = ui.latestError.ifBlank { null },
+                            composer = ui.composerSource, onComposerActivity = { ui.composerActivity = it }),
                         onOlder = { retry -> if (retry || ui.historyError.isBlank()) moreHistory() },
                         transcripts = if (ui.turnWindow) emptyMap() else transcriptRecords, onLoadTranscript = runTranscripts::request,
                         resultRunId = ui.resultRunId.takeUnless { ui.historyDetached }, onReadResult = ::readVisibleResult, onMessageAction = ::messageActions, onQuickAction = ::messageQuickAction, onResource = ::openResource, onLoadDetail = ::loadMessageDetail)
@@ -772,6 +773,7 @@ class MainActivity : ComponentActivity() {
         acceptedEchoes.clear(); displayedMessages = null; ui.syncFailure = ""
         historyRequest++; ui.membersChanging = false; ui.membersLoading = false; ui.membersError = ""
         reading = ConversationReadingWindow(); ui.activityGroups = emptyList(); ui.readerRuns = emptyList()
+        ui.composerSources = emptyList(); ui.composerActivity = null
         projectedTurnWindow = false; ui.historyDetached = false; latestRequest++; ui.latestLoading = false; ui.latestError = ""
         ui.historyPinned = false; ui.historyCursor = null; ui.historyHasMore = false; ui.historyLoading = false; ui.historyError = ""
         ui.anchorMessageId = null; ui.anchorRequestId = null; ui.membersOpen = false; ui.members = null
@@ -1082,6 +1084,7 @@ class MainActivity : ComponentActivity() {
             ui.runs = entities(items, "run")
             val rows = ConversationPage(visibleMessages(entities(items, "message")).sortedWith(compareBy<JSONObject> { it.optString("createdAt") }.thenBy { it.getString("id") }),
                 entities(items, "activityGroup"), ui.runs, window?.opt("nextCursor") as? String)
+            ui.composerSources = conversationTarget?.let { projectComposerRuns(rows, it.conversationId, it.branchId) }.orEmpty()
             if (reading.project(serial, rows)) {
                 ui.historyPage++
                 historyRequest++; ui.historyLoading = false; ui.historyError = ""

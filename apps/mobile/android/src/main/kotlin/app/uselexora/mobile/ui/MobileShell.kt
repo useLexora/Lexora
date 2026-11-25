@@ -523,6 +523,7 @@ private fun ComposerBar(state: MobileUiState, composer: EditText, onAction: (Mob
     val active = activeRuns(state)
     val stopping = active.any { it.optString("id") == state.stoppingRunId }
     Column(modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(top = if (tight) 2.dp else 4.dp, bottom = if (tight) 2.dp else 8.dp)) {
+        ComposerPhase(state)
         ComposerSurface(newTaskStyle, focused.value, if (fullscreen) Modifier.weight(1f) else Modifier) {
             Column(Modifier.fillMaxWidth().then(if (fullscreen) Modifier.fillMaxHeight() else Modifier).padding(if (tight) 0.dp else 6.dp)) {
                 if (!tight) AttachmentStrip(state, onAction)

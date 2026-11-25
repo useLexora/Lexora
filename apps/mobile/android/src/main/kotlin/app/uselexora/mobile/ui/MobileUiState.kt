@@ -70,6 +70,8 @@ data class MobileTaskFiles(
 
 class MobileUiState {
     var discovery by mutableStateOf(TaskDiscoveryState())
+    internal var composerSources by mutableStateOf<List<ComposerRun>>(emptyList())
+    internal var composerActivity by mutableStateOf<ComposerActivity?>(null)
     var readerTopic by mutableStateOf("")
     var membersOpen by mutableStateOf(false)
     var membersLoading by mutableStateOf(false)

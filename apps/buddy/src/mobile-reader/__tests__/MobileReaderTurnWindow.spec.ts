@@ -97,50 +97,28 @@ it.each([180, 600])('uses one latest control for a previous window at height %i,
   expect(requests()).toHaveLength(2)
 })
 
-it('keeps state at its visible owner and never lets another run or overscan consume the only hint', async () => {
+it('keeps author identity and tool records in the transcript without duplicating the composer phase', async () => {
   const root = mountReader(180)
   const user = { id: 'user', continuation: false, messages: [message('user', 'Build', 'user')] }
-  const body = { id: 'body', continuation: true, messages: [{ ...message('body', 'First line', 'assistant'), final: false }] }
-  const activityGroup = { id: 'group', runId: run.id, afterMessageId: 'user', createdAt: run.startedAt, toolCount: 1, reasoningCount: 0, runningReasoningCount: 0, interruptedReasoningCount: 0, failedCount: 0, interruptedCount: 0, runningCount: 1, activeToolName: 'read', counts: [{ category: 'read' as const, count: 1 }] }
-  const tool = { id: activityGroup.id, continuation: true, messages: [], activityGroup }
-  const hint = () => root.querySelector('.run-hint')?.textContent
-  bridge.runs.value = [{ ...run, status: 'queued' }]
-  bridge.entries.value = [user]
-  await nextTick()
-  expect(hint()).toBe('已排队')
-  bridge.runs.value = [run]
+  const body = { id: 'body', continuation: false, messages: [{ ...message('body', 'First line', 'assistant'), showIdentity: true, final: false }] }
   bridge.entries.value = [user, body]
   await nextTick()
-  expect(root.querySelector('[data-message-id="body"] .message-author .stream-status')?.textContent).toBe('正在回复')
+  expect(root.querySelector('[data-message-id="body"] .message-author')?.textContent?.trim()).toBe('Lexora')
+  expect(root.querySelector('[data-message-id="body"] .message-body')?.textContent).toContain('First line')
   expect(root.querySelector('[data-entry-id^="run-status:"]')).toBeNull()
-  expect(hint()).toBeUndefined()
-  bridge.entries.value = [user, tool]
+
+  const activityGroup = { id: 'group', runId: run.id, afterMessageId: 'user', createdAt: run.startedAt, toolCount: 12, reasoningCount: 0, runningReasoningCount: 0, interruptedReasoningCount: 0, failedCount: 4, interruptedCount: 0, runningCount: 1, activeToolName: 'bash', counts: [{ category: 'command' as const, count: 12 }] }
+  bridge.entries.value = [user, { id: activityGroup.id, continuation: true, messages: [], activityGroup }]
   await nextTick()
-  expect(root.querySelector('[data-activity-id]')?.textContent).toContain('运行中 · read')
-  expect(root.querySelector('.stream-status')).toBeNull()
-  expect(hint()).toBeUndefined()
-  bridge.entries.value = [body, tool]
-  await nextTick()
-  expect(root.querySelector('.stream-status')).toBeNull()
+  const group = root.querySelector('[data-activity-id]')!
+  const header = group.querySelector('[aria-expanded]')!
+  expect(header.textContent?.trim()).toBe('运行 12 条命令')
+  expect(header.getAttribute('aria-label')).toBe('运行 12 条命令')
+  expect(group.textContent).toContain('4 项异常')
   bridge.hasLaterMessages.value = true
   await nextTick()
-  expect(hint()).toBe('运行中')
   expect(root.querySelector('[data-activity-id]')?.textContent).not.toContain('运行中')
-  bridge.hasLaterMessages.value = false
-  bridge.entries.value = [user, tool]
-  bridge.runs.value = [run, { ...run, id: 'other', status: 'queued', triggeringMessageId: 'not-on-page' }]
-  await nextTick()
-  expect(hint()).toBe('另有任务排队中')
-  bridge.entries.value = [user, { ...user, id: 'older', messages: [message('older', 'Past input', 'user')] }, { ...user, id: 'nearby', messages: [message('nearby', 'Past input', 'user')] }, tool]
-  await nextTick()
-  expect(root.querySelector('[data-activity-id]')).not.toBeNull() // mounted by overscan but outside the reading area
-  expect(hint()).toBe('运行中')
-  expect(root.querySelectorAll('.run-hint')).toHaveLength(1)
-  bridge.topic.value = 'other-branch'
-  bridge.runs.value = []
-  bridge.entries.value = [user]
-  await nextTick()
-  expect(hint()).toBeUndefined()
+  expect(root.querySelector('.run-hint')).toBeNull()
 })
 
 it('keeps no-reply outputs on their run through the terminal state and does not duplicate a successful reply', async () => {
@@ -307,7 +285,7 @@ it('shows private thinking as a summary and keeps public narration read-only aft
     { id: group.id, continuation: true, messages: [], activityGroup: { ...group, toolCount: 0, failedCount: 0, runningCount: 0, runningReasoningCount: 1, activeToolName: null, counts: [] } },
   ]
   await nextTick()
-  expect(root.querySelector('[data-activity-id]')?.textContent).toContain('正在思考')
+  expect(root.querySelector('[data-activity-id]')?.textContent?.trim()).toBe('思考')
   expect(root.querySelector('[data-activity-id] button')).toBeNull()
   bridge.entries.value = [...bridge.entries.value.slice(0, 2), { ...bridge.entries.value[2]!, activityGroup: group }]
   await nextTick()

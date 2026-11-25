@@ -11,20 +11,25 @@ import { useReaderStrings } from './readerStrings'
 import ReaderToolCall from './ReaderToolCall.vue'
 import ReaderTurn from './ReaderTurn.vue'
 import { provideReaderBranches } from './useReaderBranches'
+import { useReaderComposerActivity } from './useReaderComposerActivity'
 import { useReaderLatestPull } from './useReaderLatestPull'
 import { useReaderResultRead } from './useReaderResultRead'
 import { useReaderTurns } from './useReaderTurns'
 import { useReaderViewport } from './useReaderViewport'
 
-const { entries: messages, history, turnWindow, runs, buddyNames, transcripts, outputs, branches, selectedBranchId, topic, dark, fontScale, appearance, typography, language, resultRunId, anchor, hasLaterMessages, latestState, send } = useReaderBridge()
+const { entries: messages, composerActivity, history, turnWindow, runs, buddyNames, transcripts, outputs, branches, selectedBranchId, topic, dark, fontScale, appearance, typography, language, resultRunId, anchor, hasLaterMessages, latestState, send } = useReaderBridge()
 provideReaderBranches(messages, runs, branches, selectedBranchId)
 const labels = useReaderStrings(language)
 const entries = useReaderTurns(messages, runs, transcripts, topic, anchor, turnWindow, outputs)
+const legacyActivity = computed(() => !turnWindow.value && !hasLaterMessages.value && composerActivity.value
+  ? entries.value.find(entry => entry.turn?.runId === composerActivity.value!.runId)?.turn
+  : undefined)
+useReaderComposerActivity(composerActivity, () => legacyActivity.value, language, send)
 const lastAssistantIds = computed(() => new Map(messages.value.flatMap(entry => entry.messages).filter(message => message.role === 'assistant' && message.runId).map(message => [message.runId, message.id])))
 provideChatTranscriptPresentation(() => topic.value, () => entries.value.map(entry => entry.id))
 const viewport = useTemplateRef('viewport')
 useReaderResultRead(viewport, resultRunId, topic, send)
-const { rows, visibleRows, height, nearHistoryStart, retryOlder, followsEnd, showLatest, anchorStatus, locatedMessageId, latest, scroll, touch, measure } = useReaderViewport(viewport, entries, topic, anchor, hasLaterMessages, {
+const { rows, height, nearHistoryStart, retryOlder, followsEnd, showLatest, anchorStatus, locatedMessageId, latest, scroll, touch, measure } = useReaderViewport(viewport, entries, topic, anchor, hasLaterMessages, {
   state: history,
   load: retry => send(retry ? { action: 'older', retry: true } : { action: 'older' }),
 })
@@ -49,28 +54,6 @@ const liveTurnOwners = computed(() => {
       id: run.buddyId,
       name: run.executionKind === 'root' || run.executionKind === 'actor_child' ? buddyNames.value.get(run.buddyId) : undefined,
     }]))
-})
-const visibleToolRuns = computed(() => new Set(hasLaterMessages.value
-  ? []
-  : visibleRows.value.flatMap(({ entry: { activityGroup: group } }) =>
-      group && (group.runningCount || group.runningReasoningCount) ? [group.runId] : [])))
-const runHint = computed(() => {
-  if (!activeRuns.value.length)
-    return null
-  const owners = new Set(visibleToolRuns.value)
-  for (const { entry } of visibleRows.value) {
-    if (entry.turn)
-      owners.add(entry.turn.runId)
-    for (const message of entry.messages) {
-      if (!hasLaterMessages.value && message.role === 'assistant' && message.runId && !message.final && message.text)
-        owners.add(message.runId)
-    }
-  }
-  const missing = activeRuns.value.filter(run => !owners.has(run.id))
-  if (!missing.length)
-    return null
-  const other = missing.length !== activeRuns.value.length
-  return missing.some(run => run.status === 'running') ? (other ? labels.value.otherRunning : labels.value.running) : (other ? labels.value.otherQueued : labels.value.queued)
 })
 const expanded = shallowRef(new Map<string, boolean>())
 const style = computed(() => ({
@@ -136,7 +119,7 @@ watch(topic, () => {
           <ReaderTurn v-else-if="row.entry.turn" :turn="row.entry.turn" :output="outputs[row.entry.turn.runId]" :live-owner="liveTurnOwners.get(row.entry.turn.runId)" :messages="row.entry.messages" :dark="dark" :language="language" :send="send" @interact="followsEnd = false" />
           <template v-for="message in row.entry.messages" :key="message.id">
             <ReaderToolCall v-if="(!turnWindow || anchor || hasLaterMessages) && !row.entry.turn && message.role === 'tool'" :message="message" :language="language" :expanded="expanded.get(`message:${message.id}`) ?? (!turnWindow && (anchor?.messageId === message.id || message.toolError))" :send="send" @toggle="toggle(`message:${message.id}`, !turnWindow && (anchor?.messageId === message.id || message.toolError))" @interact="followsEnd = false" />
-            <ReaderMessage v-else-if="!row.entry.turn && message.role !== 'tool'" :message="message" :replying="!hasLaterMessages && message.role === 'assistant' && !!message.runId && !visibleToolRuns.has(message.runId) && !message.final && !!message.text" :output="message.runId && lastAssistantIds.get(message.runId) === message.id ? outputs[message.runId] : undefined" :language="language" :dark="dark" :send="send" @interact="followsEnd = false" />
+            <ReaderMessage v-else-if="!row.entry.turn && message.role !== 'tool'" :message="message" :output="message.runId && lastAssistantIds.get(message.runId) === message.id ? outputs[message.runId] : undefined" :language="language" :dark="dark" :send="send" @interact="followsEnd = false" />
           </template>
         </section>
         <p v-if="topic && !entries.length && !history?.loading && !history?.error" class="reader-empty">
@@ -145,9 +128,6 @@ watch(topic, () => {
       </div>
     </div>
     <ReaderHistoryState v-if="history && nearHistoryStart && anchorStatus !== 'missing'" :key="topic" :history="history" @retry="retryOlder" />
-    <p v-if="runHint" class="run-hint" role="status">
-      {{ runHint }}
-    </p>
     <button v-if="hasLaterMessages || showLatest" type="button" class="latest-button" :class="{ 'latest-failed': latestError }" :disabled="loadingLatest" :aria-busy="loadingLatest" :aria-label="latestLabel" :title="latestLabel" @click="activateLatest">
       <span v-if="loadingLatest" class="latest-spinner" aria-hidden="true" />
       <ArrowClockwise20Regular v-else-if="latestError" class="reader-icon" aria-hidden="true" />
@@ -157,17 +137,6 @@ watch(topic, () => {
 </template>
 
 <style scoped lang="scss">
-.run-hint {
-  position: absolute;
-  inset: auto auto 4px 12px;
-  margin: 0;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: var(--reader-panel);
-  color: var(--reader-muted);
-  font-size: .8em;
-  pointer-events: none;
-}
 .latest-failed { color: var(--reader-accent); }
 .latest-spinner {
   width: 18px;

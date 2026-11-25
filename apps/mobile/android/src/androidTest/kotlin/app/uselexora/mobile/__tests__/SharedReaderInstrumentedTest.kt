@@ -11,6 +11,12 @@ import app.uselexora.mobile.ui.MobileUiState
 import app.uselexora.mobile.ui.MobileScreen
 import app.uselexora.mobile.ui.LexoraTheme
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.onRoot
+import app.uselexora.mobile.ui.ConversationPage
+import app.uselexora.mobile.ui.composerSource
+import app.uselexora.mobile.ui.projectComposerRuns
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.test.assertIsDisplayed
@@ -92,6 +98,212 @@ class SharedReaderInstrumentedTest {
         fail("Reader condition failed: $script; page=${js("document.body.innerText")}")
     }
 
+    private fun snapshot(name: String, paintedOnScreen: (android.graphics.Bitmap) -> Boolean = { true }) {
+        if (InstrumentationRegistry.getArguments().getString("captureScreenshots") != "true") return
+        until("!document.getAnimations().some(a => a.playState === 'running' && Number.isFinite(a.effect?.getTiming().iterations))")
+        val painted = CountDownLatch(1)
+        compose.runOnUiThread {
+            val web = host.getChildAt(0) as WebView
+            web.postVisualStateCallback(0, object : WebView.VisualStateCallback() {
+                override fun onComplete(requestId: Long) { web.postOnAnimation { web.postOnAnimation { painted.countDown() } } }
+            })
+        }
+        assertTrue(painted.await(5, TimeUnit.SECONDS))
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val deadline = android.os.SystemClock.uptimeMillis() + 5_000
+        do {
+            val bitmap = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
+            try {
+                if (paintedOnScreen(bitmap)) {
+                    File(instrumentation.targetContext.filesDir, "$name.png").outputStream().use { assertTrue(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)) }
+                    return
+                }
+            } finally { bitmap.recycle() }
+            Thread.sleep(100)
+        } while (android.os.SystemClock.uptimeMillis() < deadline)
+        fail("The system screenshot never contained both the group and composer phase: $name")
+    }
+
+    private fun tap(selector: String) {
+        val point = JSONArray(js("""(() => { const el = document.querySelector('$selector'); el.scrollIntoView({block:'nearest',behavior:'instant'});
+            const r=el.getBoundingClientRect(), x=r.left+r.width/2, y=r.top+r.height/2;
+            if (!el.closest('button')?.contains(document.elementFromPoint(x,y))) return [];
+            return [x/innerWidth,y/innerHeight] })()"""))
+        assertEquals("Hit target: $selector", 2, point.length())
+        val coords = IntArray(2)
+        compose.runOnUiThread {
+            val web = host.getChildAt(0) as WebView
+            web.getLocationOnScreen(coords)
+            coords[0] += (web.width * point.getDouble(0)).toInt(); coords[1] += (web.height * point.getDouble(1)).toInt()
+        }
+        val time = android.os.SystemClock.uptimeMillis()
+        for (action in listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP)) {
+            val event = android.view.MotionEvent.obtain(time, android.os.SystemClock.uptimeMillis(), action, coords[0].toFloat(), coords[1].toFloat(), 0)
+            try { event.source = android.view.InputDevice.SOURCE_TOUCHSCREEN; InstrumentationRegistry.getInstrumentation().sendPointerSync(event) }
+            finally { event.recycle() }
+        }
+    }
+
+
+    private fun assertFullWidthReader() {
+        val viewport = js("innerWidth").toDouble()
+        compose.runOnUiThread {
+            val web = host.getChildAt(0) as WebView
+            assertEquals("WebView must fill the activity window", web.rootView.width, web.width)
+            assertEquals(web.width / web.resources.displayMetrics.density.toDouble(), viewport, 1.0)
+        }
+    }
+
+    private fun assertGroupTitle(issueCount: Int, mustOverflow: Boolean, group: String = "", short: Boolean = false) {
+        val metrics = JSONObject(js("""(() => {
+            const h=document.querySelector('$group .buddy-chat-activity-group__header'), bar=h.parentElement, label=h.querySelector('.buddy-chat-activity-row__label'),
+                issue=Array.from(bar.children).find(el=>el.textContent.trim()==='$issueCount 项异常'), entry=h.closest('.reader-entry'), e=entry.getBoundingClientRect(), p=getComputedStyle(entry),
+                b=bar.getBoundingClientRect(), r=issue.getBoundingClientRect(), style=getComputedStyle(label),
+                lines=el=>{const range=document.createRange();range.selectNodeContents(el);return [...range.getClientRects()]},
+                text=lines(issue), summary=lines(label), full=h.getAttribute('aria-label'), arrow=h.querySelector('.buddy-chat-activity-group__toggle').getBoundingClientRect(),
+                lr=label.getBoundingClientRect(), hr=h.getBoundingClientRect();
+            return {left:hr.left-e.left-parseFloat(p.paddingLeft),right:e.right-parseFloat(p.paddingRight)-r.right,
+                gapToArrow:arrow.left-(label.scrollWidth>label.clientWidth?lr.right:summary.at(-1).right), centerOffset:(arrow.top+arrow.bottom-hr.top-hr.bottom)/2,
+                issueGap:r.left-hr.right, rowFits:b.right<=e.right+1&&hr.right<=r.left+1, arrowWidth:arrow.width,
+                issueFits:text.every(t=>t.left>=r.left-1&&t.right<=r.right+1),issueLines:new Set(text.map(t=>t.top)).size,
+                lines:new Set(summary.map(t=>t.top)).size,ellipsis:style.textOverflow==='ellipsis'&&style.whiteSpace==='nowrap'&&style.overflowX==='hidden',
+                overflow:label.scrollWidth-label.clientWidth,width:label.clientWidth,full,title:h.innerText,viewport:innerWidth,
+                arrow:getComputedStyle(h.querySelector('.buddy-chat-activity-row__chevron')).visibility};
+        })()"""))
+        android.util.Log.i("ReaderLayout", metrics.toString())
+        assertTrue(metrics.toString(), metrics.getBoolean("rowFits") && metrics.getDouble("left") >= -5.0 && metrics.getDouble("right") >= -1.0)
+        assertTrue(metrics.toString(), metrics.getDouble("gapToArrow") in -1.0..12.0 && metrics.getDouble("arrowWidth") in 8.0..32.0)
+        assertEquals(metrics.toString(), 0.0, metrics.getDouble("centerOffset"), 2.0)
+        assertTrue(metrics.toString(), metrics.getDouble("issueGap") in -1.0..16.0)
+        if (short) assertTrue("Short group must leave space unused: $metrics", metrics.getDouble("right") >= 24 && metrics.getInt("overflow") == 0)
+        assertTrue(metrics.toString(), metrics.getBoolean("issueFits") && metrics.getBoolean("ellipsis"))
+        assertEquals(metrics.toString(), 1, metrics.getInt("issueLines")); assertEquals(metrics.toString(), 1, metrics.getInt("lines"))
+        assertTrue(metrics.toString(), metrics.getInt("width") > 0)
+        if (mustOverflow && metrics.getInt("viewport") <= 420) assertTrue(metrics.toString(), metrics.getInt("overflow") > 0)
+        assertEquals(metrics.toString(), "visible", metrics.getString("arrow"))
+        assertFalse(metrics.toString(), Regex("运行中|正在执行|正在回复|bash").containsMatchIn(metrics.getString("full") + metrics.getString("title")))
+        if (issueCount == 4) assertTrue(metrics.toString(), listOf("创建 25 次", "编辑 35 次", "读取 40 次", "运行 100 条命令").all(metrics.getString("full")::contains))
+    }
+
+    private fun assertOrderedSteps(command: String) {
+        val m = JSONObject(js("""(() => {
+            const group=document.querySelector('[data-activity-id=build-tools]'), steps=Array.from(group.querySelectorAll('[data-step-id]')),
+                box=el=>el.getBoundingClientRect(), css=el=>getComputedStyle(el), titles=steps.map(s=>s.querySelector('.activity-step-heading')),
+                icons=steps.map(s=>s.querySelector('.activity-step-icon')), path=el=>el.querySelector('path')?.getAttribute('d')||css(el).getPropertyValue('mask-image'),
+                more=Array.from(group.querySelectorAll('button')).find(b=>b.textContent.trim()==='加载更多'), target=steps[2].querySelector('.activity-step-target'),
+                content=group.querySelector('.buddy-chat-activity-group__content'), entry=box(group.closest('.reader-entry')),
+                ancestors=[]; for(let el=steps[0]; el&&el!==group; el=el.parentElement) ancestors.push(el);
+            const r=box(target), range=document.createRange();range.selectNodeContents(target);
+            return {ids:steps.map(s=>s.dataset.stepId).join(','),thought:titles[0].innerText,tool:titles[1].innerText,shell:titles[2].innerText,
+                command:target.textContent.trim(),toolTarget:steps[1].querySelector('.activity-step-target').textContent.trim(),
+                safe:titles.every(t=>box(t).left>=entry.left&&box(t).right<=entry.right+1),
+                clip:range.getBoundingClientRect().width>r.width && css(target).textOverflow==='ellipsis',
+                inert:!steps[0].querySelector('button,a,[role=button]'),iconsVisible:icons.every(i=>box(i).width>=8&&box(i).height>=8&&css(i).visibility==='visible'),
+                iconCount:new Set(icons.map(path)).size,
+                line:ancestors.some(el=>parseFloat(css(el).borderLeftWidth)>0 || ['::before','::after'].some(p=>{const s=getComputedStyle(el,p);return !['none','normal'].includes(s.content)&&s.position==='absolute'&&parseFloat(s.width)<=3&&parseFloat(s.height)>20})),
+                pageWidth:box(more).width, contentWidth:box(content).width, pageFont:parseFloat(css(more).fontSize), titleFont:parseFloat(css(titles[1]).fontSize),
+                pageInk:css(more).color, titleInk:css(titles[1]).color,viewport:innerWidth};
+        })()"""))
+        android.util.Log.i("ReaderLayout", "steps=$m")
+        assertEquals("thought,partners,step-73", m.getString("ids"))
+        assertEquals("思考", m.getString("thought").trim()); assertTrue(m.toString(), m.getString("tool").contains("工具调用"))
+        assertEquals("Partners and NPCs", m.getString("toolTarget"))
+        assertTrue(m.toString(), m.getString("shell").contains("运行命令")); assertEquals(command, m.getString("command"))
+        assertTrue(m.toString(), m.getBoolean("safe") && m.getBoolean("inert"))
+        if (m.getInt("viewport") <= 420) assertTrue(m.toString(), m.getBoolean("clip"))
+        assertTrue(m.toString(), m.getBoolean("iconsVisible")); assertEquals(m.toString(), 3, m.getInt("iconCount"))
+        assertFalse("Step list has a left rail: $m", m.getBoolean("line"))
+        assertTrue("Pagination should be secondary: $m", m.getDouble("pageWidth") < m.getDouble("contentWidth") / 2 &&
+            (m.getDouble("pageFont") < m.getDouble("titleFont") || m.getString("pageInk") != m.getString("titleInk")))
+    }
+
+    private fun captureGroupAndPhase(name: String, group: String = "[data-activity-id=build-tools]") {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        if (InstrumentationRegistry.getArguments().getString("captureScreenshots") != "true") return
+        val header = "$group .buddy-chat-activity-group__header"
+        js("document.querySelector('$header').scrollIntoView({block:'nearest',behavior:'instant'})")
+        val screen = IntArray(2)
+        compose.runOnUiThread { host.rootView.getLocationOnScreen(screen) }
+        val phase = compose.onNodeWithTag("composerPhase").fetchSemanticsNode().boundsInWindow
+        val x = (phase.right - 4 * instrumentation.targetContext.resources.displayMetrics.density).toInt() + screen[0]
+        val y = phase.center.y.toInt() + screen[1]
+        val gapY = phase.bottom.toInt() + screen[1] + 3
+        snapshot(name) { bitmap ->
+            val issue = JSONArray(js("""(() => {const el=document.querySelector('$header').parentElement.lastElementChild, r=el.getBoundingClientRect();
+                if(r.top<0 || r.bottom>innerHeight) { el.scrollIntoView({block:'nearest',behavior:'instant'});return [] }
+                return [r.left/innerWidth,r.top/innerHeight,r.right/innerWidth,r.bottom/innerHeight,...getComputedStyle(el).color.match(/[0-9]+/g).map(Number)]})()"""))
+            if (issue.length() == 0) return@snapshot false
+            val region = android.graphics.Rect()
+            compose.runOnUiThread {
+                val web = host.getChildAt(0) as WebView
+                web.getLocationOnScreen(screen)
+                region.set(screen[0] + (issue.getDouble(0) * web.width).toInt(), screen[1] + (issue.getDouble(1) * web.height).toInt(),
+                    screen[0] + (issue.getDouble(2) * web.width).toInt(), screen[1] + (issue.getDouble(3) * web.height).toInt())
+            }
+            val color = android.graphics.Color.rgb(issue.getInt(4), issue.getInt(5), issue.getInt(6))
+            var paintedIssue = 0
+            for (v in region.top until region.bottom step 2) for (u in region.left until region.right step 2) {
+                if (bitmap.getPixel(u, v) == color) paintedIssue++
+            }
+            paintedIssue >= 4 && bitmap.getPixel(x, y) != bitmap.getPixel(x, gapY)
+        }
+    }
+
+    private fun assertSeparatePhase(label: String) {
+        compose.onNodeWithText(label).assertIsDisplayed()
+        val phase = compose.onNodeWithTag("composerPhase").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val frame = compose.onNodeWithTag("composerSurface").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val density = host.resources.displayMetrics.density
+        val gap = (frame.top - phase.bottom) / density
+        assertEquals("phase=$phase composer=$frame", 8.0, gap.toDouble(), 0.6)
+        val page = compose.onRoot().captureToImage().asAndroidBitmap()
+        try {
+            val x = (phase.right - 4 * density).toInt()
+            val fill = page.getPixel(x, phase.center.y.toInt())
+            val outside = page.getPixel(x, ((phase.bottom + frame.top) / 2).toInt())
+            assertNotEquals("Phase needs its own painted surface", outside, fill)
+            android.util.Log.i("ReaderLayout", "phase=$phase composer=$frame gapDp=$gap fill=$fill gapColor=$outside")
+        } finally { page.recycle() }
+    }
+
+
+    @Test fun artifactHeadingKeepsItsLabelCountAndIconsOnOneLineWhenToggled() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val schemas = ProtocolSchemas(JSONObject(context.assets.open("protocol-schema.json").bufferedReader().use { it.readText() }))
+        val resource = JSONObject("""{"resourceId":"artifact:report","kind":"artifact","name":"验收报告.txt","mimeType":"text/plain","sizeBytes":"18","revision":"1","availability":"ready"}""")
+        val page = JSONObject().put("items", JSONArray().put(resource)).put("nextCursor", JSONObject.NULL)
+        assertTrue(schemas.response("runs.listOutputs", page))
+        SyntheticProductService(schemas, listOf("runs.listOutputs")) { it.reply(page) }.use { service ->
+            val client = service.connect()
+            try {
+                messages = listOf(message("answer", "已生成验收报告。"))
+                runs = listOf(JSONObject().put("status", "completed"))
+                artifactContext = ReaderArtifactContext(client.identity!!.partition, "branch", client, schemas) { _, _ -> error("No content download expected") }
+                scale = 1.3f
+                show()
+                until("document.querySelector('.artifact-heading')?.getAttribute('aria-expanded') === 'true' && document.querySelector('.artifact-name')?.textContent === '验收报告.txt'")
+                assertFullWidthReader()
+                for ((index, expanded) in listOf(true, false, true).withIndex()) {
+                    val label = if (index == 2) "Files created" else "产物"
+                    if (index == 2) { language = "en"; update(); until("document.querySelector('.artifact-heading span')?.textContent === '$label'") }
+                    until("document.querySelector('.artifact-heading').getAttribute('aria-expanded') === '$expanded' && (document.querySelector('.artifact-strip').getBoundingClientRect().height > 0) === $expanded")
+                    val geometry = JSONObject(js("""(() => {
+                        const [icon,title,count,arrow]=document.querySelector('.artifact-heading').children, text=document.createRange(); text.selectNodeContents(title);
+                        const rects=Array.from(text.getClientRects()), c=count.getBoundingClientRect(), i=icon.getBoundingClientRect(), a=arrow.getBoundingClientRect(), t=rects[0];
+                        return {title:title.textContent,count:count.textContent,lines:rects.length,centerDelta:Math.max(...[c,i,a].map(r=>Math.abs((r.top+r.bottom-t.top-t.bottom)/2))), icon:i.width,arrow:a.width, ordered:i.right<=t.left && t.right<=c.left && c.right<=a.left};
+                    })()"""))
+                    snapshot(listOf("01-artifacts-open", "02-artifacts-closed", "08-artifacts-open-en")[index])
+                    assertEquals(geometry.toString(), label, geometry.getString("title")); assertEquals("1", geometry.getString("count"))
+                    assertEquals(geometry.toString(), 1, geometry.getInt("lines")); assertTrue(geometry.toString(), geometry.getDouble("centerDelta") <= 2.0 && geometry.getBoolean("ordered"))
+                    assertTrue(geometry.toString(), geometry.getDouble("icon") in 8.0..32.0 && geometry.getDouble("arrow") in 8.0..32.0)
+                    if (index < 2) tap(".artifact-heading")
+                }
+                tap(".artifact-open"); compose.waitUntil(5_000) { actions.contains("resource:artifact:report") }
+                assertEquals("true", js("document.querySelector('.artifact-heading').getAttribute('aria-expanded') === 'true'"))
+            } finally { client.close() }
+        }
+    }
+
     @Test fun sameModeSkinChangesUpdateReaderWithoutReplacingContentOrScroll() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val original = app.uselexora.mobile.ui.MobileAppearance.skinId
@@ -151,27 +363,42 @@ class SharedReaderInstrumentedTest {
     @Test fun compactTurnKeepsNarrationAndFailedGroupWithoutLoadingItsStepsOrTranscript() {
         val question = message("user", "请修复构建", "user")
         val explanation = message("explanation", "失败发生在打包阶段")
-        val answer = message("answer", "已切换构建方式并修复")
+        val answer = message("answer", "正在检查剩余步骤。")
         val at = "2026-11-11T05:00:01.000Z"
         val group = JSONObject().put("id", "build-tools").put("runId", "stream-run").put("afterMessageId", "explanation").put("createdAt", at)
-            .put("toolCount", 200).put("runningCount", 0).put("failedCount", 1).put("interruptedCount", 0).put("activeToolName", JSONObject.NULL)
+            .put("toolCount", 200).put("runningCount", 1).put("failedCount", 4).put("interruptedCount", 0).put("activeToolName", "bash")
             .put("reasoningCount", 1).put("runningReasoningCount", 0).put("interruptedReasoningCount", 0)
-            .put("counts", JSONArray().put(JSONObject().put("category", "command").put("count", 200)))
+            .put("counts", JSONArray(listOf("create" to 25, "edit" to 35, "read" to 40, "command" to 100).map { (category, count) -> JSONObject().put("category", category).put("count", count) }))
         messages = listOf(question.put("createdAt", "2026-11-11T05:00:00.000Z"), explanation.put("createdAt", at), answer.put("createdAt", "2026-11-11T05:00:02.000Z"))
-        runs = listOf(JSONObject().put("status", "completed"))
+        runs = listOf(completeRun(JSONObject()))
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val schemas = ProtocolSchemas(JSONObject(context.assets.open("protocol-schema.json").bufferedReader().use { it.readText() }))
         val calls = java.util.concurrent.CopyOnWriteArrayList<String>()
-        val output = "仅此步骤的构建输出"
-        val liveCommand = "make synthetic-build"
-        val methods = listOf("conversations.listActivitySteps", "resources.get", "conversations.readActivityStepDetail")
+        val shortGroup = JSONObject(group.toString()).put("id", "quick-check").put("afterMessageId", "user").put("toolCount", 2)
+            .put("runningCount", 0).put("failedCount", 1).put("reasoningCount", 0).put("activeToolName", JSONObject.NULL)
+            .put("counts", JSONArray().put(JSONObject().put("category", "read").put("count", 2)))
+        val output = "仅此步骤的构建输出\n报告校验完成：4 项异常均已记录。"
+        val command = "git log --oneline --stat --all"
+        fun step(id: String, tool: String, message: String? = null, status: String = "completed") = JSONObject()
+            .put("id", id).put("toolName", tool).put("status", status).put("messageId", message ?: JSONObject.NULL)
+        val liveCommand = "pnpm lint:fix"
+        val methods = listOf("conversations.listOrderedActivitySteps", "resources.get", "conversations.readActivityStepDetail", "conversations.listActivitySteps")
         SyntheticProductService(schemas, methods) { call ->
             when (call.method) {
                 methods[0] -> {
-                    calls.add("steps:${call.params.getString("groupId")}")
-                    val step = JSONObject().put("id", "step-73").put("toolName", "bash").put("status", "failed").put("messageId", "result-73")
-                    val pending = JSONObject().put("id", "step-200").put("toolName", "bash").put("status", "running").put("messageId", JSONObject.NULL)
-                    call.reply(JSONObject().put("items", JSONArray().put(step).put(pending)).put("nextCursor", "next-page"))
+                    val id = call.params.getString("groupId")
+                    val cursor = call.params.opt("cursor") as? String
+                    calls.add("steps:$id:${cursor ?: "first"}")
+                    val items = when {
+                        id == "quick-check" && cursor == null -> listOf(step("quick-a", "read", "quick-result", "failed"), step("quick-b", "read", "quick-ok"))
+                        id == "build-tools" && cursor == null -> listOf(step("thought", "reasoning").put("kind", "reasoning"),
+                            step("partners", "lexora_agents", "result-partners", "failed").put("summary", "Partners and NPCs"),
+                            step("step-73", "bash", "result-73", "failed").put("summary", command))
+                        id == "build-tools" && cursor == "next-page" -> listOf(step("step-75", "read", "result-75", "failed"),
+                            step("step-76", "edit", "result-76", "failed"), step("step-200", "bash", status = "running").put("summary", liveCommand))
+                        else -> error("Unexpected group/cursor: $id/$cursor")
+                    }
+                    call.reply(JSONObject().put("items", JSONArray(items)).put("nextCursor", if (id == "build-tools" && cursor == null) "next-page" else JSONObject.NULL))
                 }
                 methods[1] -> {
                     val id = call.params.getString("resourceId")
@@ -192,23 +419,96 @@ class SharedReaderInstrumentedTest {
                 artifactContext = ReaderArtifactContext(client.identity!!.partition, "branch", client, schemas) { _, resource ->
                     calls.add("body:${resource.getString("resourceId")}"); file.apply { writeText(output) }
                 }
-                turn = ReaderTurnContext(ConversationTarget("conversation", "branch"), client, true, listOf(group))
-                show()
-                until("document.querySelector('[data-activity-id=build-tools] button[aria-expanded=false]') && document.body.innerText.includes('200') && document.body.innerText.includes('已切换构建方式并修复')")
-                assertEquals("true", js("(() => {const b=document.body.innerText; return b.indexOf('失败发生在打包阶段') >= 0 && b.indexOf('失败发生在打包阶段') < b.indexOf('200') && b.indexOf('200') < b.indexOf('已切换构建方式并修复')})()"))
+                val page = ConversationPage(messages, listOf(shortGroup, group), runs)
+                val state = MobileUiState().apply {
+                    screen = MobileScreen.Conversation; connected = true; conversationReady = true; sendEnabled = true
+                    selectedTask = JSONObject().put("id", "conversation").put("activeBranchId", "branch").put("title", "构建检查")
+                    readerTopic = this@SharedReaderInstrumentedTest.topic; messages = page.messages; runs = page.runs; activityGroups = page.groups
+                    composerSources = projectComposerRuns(page, "conversation", "branch")
+                }
+                dark = true; scale = 1.3f
+                turn = ReaderTurnContext(ConversationTarget("conversation", "branch"), client, true, page.groups,
+                    composer = state.composerSource, onComposerActivity = { state.composerActivity = it })
+                compose.setContent {
+                    val local = androidx.compose.ui.platform.LocalContext.current
+                    val input = androidx.compose.runtime.remember { EditText(local).apply { showSoftInputOnFocus = false } }
+                    LexoraTheme(darkTheme = true) { MobileShell(state, input, { _, _ -> }) { modifier ->
+                        AndroidView(factory = { ReaderView(it).also { view -> host = view } }, modifier = modifier, onRelease = { it.dispose() })
+                    } }
+                }
+                update()
+                until("document.querySelector('main.dark [data-activity-id=build-tools][data-status=running] button[aria-expanded=false]') && document.body.innerText.includes('4 项异常') && document.body.innerText.includes('正在检查剩余步骤。')")
+                compose.waitUntil(5_000) { state.composerActivity?.label == "正在执行" }
+                assertFullWidthReader()
+                assertEquals("true", js("(() => {const b=document.body.innerText; return b.indexOf('失败发生在打包阶段') >= 0 && b.indexOf('失败发生在打包阶段') < b.indexOf('4 项异常') && b.indexOf('4 项异常') < b.indexOf('正在检查剩余步骤。') && !b.includes('正在执行')})()"))
                 assertTrue(calls.isEmpty()); assertTrue(transcriptRequests.isEmpty())
-                js("document.querySelector('[data-activity-id=build-tools] button[aria-expanded]').click()")
-                until("document.querySelector('[data-step-id=step-73]') !== null")
-                assertEquals(listOf("steps:build-tools"), calls.toList())
-                js("document.querySelector('[data-step-id=step-73] button').click()")
-                until("document.body.innerText.includes('$output')")
-                assertEquals(listOf("steps:build-tools", "resource:message:result-73", "body:message:result-73"), calls.toList())
-                js("document.querySelector('[data-step-id=step-73] button').click(); document.querySelector('[data-step-id=step-200] button').click(); document.querySelector('[data-step-id=step-200]').scrollIntoView()")
+                val short = "[data-activity-id=quick-check]"; val long = "[data-activity-id=build-tools]"
+                val toggle = ".buddy-chat-activity-group__toggle"
+                assertSeparatePhase("正在执行"); assertGroupTitle(4, mustOverflow = true, group = long)
+                assertGroupTitle(1, mustOverflow = false, group = short, short = true)
+                captureGroupAndPhase("03-compact-group-closed")
+                tap("$short $toggle"); until("document.querySelector('[data-step-id=quick-a]') !== null")
+                assertGroupTitle(1, mustOverflow = false, group = short, short = true)
+                assertEquals("Short steps should leave their natural trailing space", "true", js("""(() => {
+                    const buttons=[...document.querySelectorAll('$short [data-step-id] button')], width=document.querySelector('$short .activity-steps').clientWidth;
+                    return buttons.length===2 && buttons.every(b=>b.getBoundingClientRect().width < width-16) })()"""))
+                captureGroupAndPhase("09-short-group-open", short)
+                tap("$short $toggle"); until("!document.querySelector('[data-step-id=quick-a]')")
+                tap("$long $toggle"); until("document.querySelector('[data-step-id=step-73]') !== null")
+                assertGroupTitle(4, mustOverflow = true, group = long)
+                assertOrderedSteps(command)
+                captureGroupAndPhase("04-compact-group-open")
+                tap("$long $toggle"); until("!document.querySelector('[data-step-id=step-73]')")
+                assertGroupTitle(4, mustOverflow = true, group = long)
+                tap("$long $toggle"); until("document.querySelector('[data-step-id=step-73]') !== null")
+                assertEquals(listOf("steps:quick-check:first", "steps:build-tools:first"), calls.toList())
+                tap("[data-step-id=step-73] button")
+                until("document.querySelector('[data-step-id=step-73] pre')?.textContent === ${JSONObject.quote(output)}")
+                assertEquals(listOf("resource:message:result-73", "body:message:result-73"), calls.takeLast(2))
+                tap("[data-step-id=step-73] button")
+                tap("$long .activity-load-more")
+                until("document.querySelector('[data-step-id=step-200]') !== null")
+                assertEquals(1, calls.count { it == "steps:build-tools:next-page" })
+                assertEquals(JSONObject.quote("thought,partners,step-73,step-75,step-76,step-200"), js("Array.from(document.querySelectorAll('$long [data-step-id]'),s=>s.dataset.stepId).join(',')"))
+                assertFalse(js("document.querySelector('$long').innerText").contains("加载更多"))
+                assertEquals("4", js("Array.from(document.querySelectorAll('$long [data-step-id]')).filter(s=>s.innerText.includes('失败')).length"))
+                js("document.querySelector('[data-step-id=step-200]').scrollIntoView({block:'center',behavior:'instant'})")
+                until("(() => {const b=document.querySelector('[data-step-id=step-200] button'),r=b.getBoundingClientRect();return b.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))})()")
+                snapshot("10-ordered-steps-next-page")
+                tap("[data-step-id=step-200] button")
                 until("document.body.innerText.includes('$liveCommand')")
                 until("document.querySelector('[data-step-id=step-200]').innerText.includes('Build succeeded')")
                 assertEquals(listOf("live:stream-run:build-tools:step-200", "live:stream-run:build-tools:step-200"), calls.filter { it.startsWith("live:") })
                 assertTrue(transcriptRequests.isEmpty())
             } finally { client.close(); file.delete() }
+        }
+    }
+
+    @Test fun legacyActivityCapabilityPagesToolOnlyRowsWithoutInventingReasoningOrCommands() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val schemas = ProtocolSchemas(JSONObject(context.assets.open("protocol-schema.json").bufferedReader().use { it.readText() }))
+        val old = "conversations.listActivitySteps"
+        val cursors = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val group = JSONObject("""{"id":"legacy-tools","runId":"stream-run","afterMessageId":"user","createdAt":"2026-11-11T05:00:01.000Z","toolCount":2,"runningCount":0,"failedCount":0,"interruptedCount":0,"activeToolName":null,"reasoningCount":1,"runningReasoningCount":0,"interruptedReasoningCount":0,"counts":[{"category":"other","count":2}]}""")
+        SyntheticProductService(schemas, listOf(old)) { call ->
+            assertEquals(old, call.method)
+            val cursor = call.params.opt("cursor") as? String; cursors.add(cursor ?: "first")
+            val tool = if (cursor == null) "lookup" else "bash"
+            val step = JSONObject().put("id", tool).put("toolName", tool).put("status", "completed").put("messageId", "result-$tool")
+            call.reply(JSONObject().put("items", JSONArray().put(step)).put("nextCursor", if (cursor == null) "old-next" else JSONObject.NULL))
+        }.use { service ->
+            val client = service.connect()
+            try {
+                messages = listOf(message("user", "旧版服务验收", "user")); runs = listOf(completeRun(JSONObject().put("status", "completed")))
+                turn = ReaderTurnContext(ConversationTarget("conversation", "branch"), client, true, listOf(group))
+                show(); until("document.querySelector('[data-activity-id=legacy-tools] button[aria-expanded=false]') !== null")
+                tap("[data-activity-id=legacy-tools] .buddy-chat-activity-group__toggle")
+                until("document.querySelector('[data-step-id=lookup] .activity-step-target')?.textContent === 'lookup'")
+                tap("[data-activity-id=legacy-tools] .activity-load-more")
+                until("document.querySelector('[data-step-id=bash] .activity-step-target')?.textContent === 'bash'")
+                assertEquals(listOf("first", "old-next"), cursors.toList())
+                assertEquals(JSONObject.quote("lookup,bash"), js("Array.from(document.querySelectorAll('[data-step-id]'), s=>s.dataset.stepId).join(',')"))
+            } finally { client.close() }
         }
     }
 
@@ -457,12 +757,21 @@ class SharedReaderInstrumentedTest {
         messages = listOf(message("answer", "已完成环境检查。"))
         runs = listOf(JSONObject("""{"id":"stream-run","branchId":"branch","triggeringMessageId":"user","generation":"1","status":"completed","startedAt":"2026-11-11T05:00:00Z","completedAt":"2026-11-11T05:01:00Z"}"""))
         transcripts = mapOf("stream-run" to JSONObject().put("events", events).put("loaded", true))
+        scale = 1.3f
         show()
         until("document.querySelector('.buddy-chat-activity-group__header') !== null")
+        assertFullWidthReader(); assertGroupTitle(1, mustOverflow = false)
         assertEquals("1", js("document.querySelectorAll('.message-author').length"))
         assertEquals("true", js("document.body.innerText.includes('2 条命令') && document.body.innerText.includes('1 项异常') && document.body.innerText.includes('257,111') && document.body.innerText.includes('45,832')"))
-        js("document.querySelector('.buddy-chat-activity-group__header').click()")
+        snapshot("05-transcript-group-closed")
+        tap(".buddy-chat-activity-group__toggle")
         until("document.querySelectorAll('.buddy-chat-tool__header').length === 4")
+        snapshot("06-transcript-group-open")
+        assertGroupTitle(1, mustOverflow = false)
+        tap(".buddy-chat-activity-group__toggle")
+        until("document.querySelector('.buddy-chat-activity-group__header').getAttribute('aria-expanded') === 'false' && !document.querySelector('[data-tool-detail-id=failed]')")
+        tap(".buddy-chat-activity-group__issues")
+        until("document.querySelector('[data-tool-detail-id=failed]')?.textContent.includes('No such file') === true")
         assertEquals("true", js("document.body.innerText.includes('uname -s') && document.body.innerText.includes('cat missing.txt')"))
         js("document.querySelector('.buddy-chat-reasoning-entry__header').click()")
         until("document.body.innerText.includes('Checking environment and file layout')")
@@ -629,8 +938,9 @@ class SharedReaderInstrumentedTest {
     @Test fun nativeComposerKeepsItsCompositionWhileSharedBodyStreams() {
         val state = MobileUiState().apply {
             screen = MobileScreen.Conversation
-            selectedTask = JSONObject().put("id", "input-task").put("activeBranchId", "input-branch").put("title", "输入与流式验收")
-            runs = listOf(JSONObject().put("id", "stream-run").put("status", "running").put("generation", "1"))
+            selectedTask = JSONObject().put("id", "conversation").put("activeBranchId", "branch").put("title", "输入与流式验收")
+            readerTopic = this@SharedReaderInstrumentedTest.topic
+            runs = listOf(completeRun(JSONObject()))
             connected = true
             conversationReady = true
             sendEnabled = true
@@ -649,10 +959,23 @@ class SharedReaderInstrumentedTest {
                 }
             }
         }
-        messages = listOf(message("stream", "# 输入与流式验收\n\n正文"))
-        runs = listOf(JSONObject().put("id", "stream-run").put("status", "running"))
-        update()
-        until("document.querySelector('.message-author .stream-status') !== null && !document.querySelector('.run-hint')")
+        fun liveMessage(text: String) = message("stream", text).put("textRange", JSONObject().put("revision", "1").put("start", 0).put("end", text.length).put("total", text.length))
+        messages = listOf(liveMessage("# 输入与流式验收\n\n正文"))
+        runs = state.runs
+        fun projectPhase() { compose.runOnUiThread {
+            state.runs = runs
+            state.composerSources = projectComposerRuns(ConversationPage(messages = messages, runs = runs), "conversation", "branch")
+            turn = ReaderTurnContext(enabled = true, composer = state.composerSource, onComposerActivity = { state.composerActivity = it })
+        }; update() }
+        projectPhase()
+        until("document.querySelector('.message-author .message-avatar') !== null && document.body.innerText.includes('输入与流式验收')")
+        compose.waitUntil(5_000) { state.composerActivity?.label == "正在回复" }
+        val phase = compose.onNodeWithTag("composerPhase").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithText("正在回复").assertIsDisplayed()
+        val input = compose.onNodeWithTag("input").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue("phase=$phase, input=$input", phase.height > 0 && phase.bottom <= input.top + 1)
+        snapshot("07-streaming-composer")
+        assertEquals("Avatar-side status: ${js("document.querySelector('.message-author').innerText")}", "true", js("!document.querySelector('.message-author [role=status], .message-author .stream-status, .run-hint')"))
         compose.onNodeWithTag("streaming-status").assertDoesNotExist()
         compose.onNodeWithTag("send").assertIsDisplayed()
         compose.onNodeWithTag("stop-run").assertIsDisplayed()
@@ -664,7 +987,7 @@ class SharedReaderInstrumentedTest {
         }
         repeat(25) { index ->
             compose.runOnUiThread { connection.setComposingText("拼音组合-$index", 1) }
-            messages = listOf(message("stream", "# 输入与流式验收\n\n" + "正在输出中文表格、代码和公式。".repeat(index + 1)))
+            messages = listOf(liveMessage("# 输入与流式验收\n\n" + "正在输出中文表格、代码和公式。".repeat(index + 1)))
             update(); Thread.sleep(40)
             assertSame(original, composer)
         }
@@ -674,8 +997,9 @@ class SharedReaderInstrumentedTest {
             assertEquals("中文输入保持连续😀", composer.text.toString())
             assertTrue(composer.hasFocus())
         }
-        runs = emptyList(); update()
+        runs = listOf(completeRun(JSONObject().put("status", "completed"))); projectPhase()
         until("document.body.innerText.includes('正在输出中文表格')")
+        compose.onNodeWithTag("composerPhase").assertDoesNotExist()
         if (android.os.Build.VERSION.SDK_INT >= 29) {
             val previous = AtomicReference<WebView>()
             compose.runOnUiThread { previous.set(host.getChildAt(0) as WebView); assertTrue(previous.get().webViewRenderProcess!!.terminate()) }

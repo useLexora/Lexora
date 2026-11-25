@@ -194,6 +194,7 @@ export class ProductQueries {
       case 'conversations.getReplyTarget': return this.turns.replyTarget({ conversationId: String(input.conversationId), branchId: String(input.branchId), messageId: String(input.messageId) })
       case 'conversations.getTurnWindow': return this.turns.page(productTurnWindowInputSchema.parse(input))
       case 'conversations.listActivitySteps': return this.turns.steps(productActivityStepsInputSchema.parse(input))
+      case 'conversations.listOrderedActivitySteps': return this.turns.steps(productActivityStepsInputSchema.parse(input), 'ordered')
       case 'conversations.readSavedText': return this.turns.readSavedText(productReadSavedTextInputSchema.parse(input))
       case 'conversations.readLiveText': return this.streaming.readBefore(productReadLiveTextInputSchema.parse(input))
       case 'conversations.getMessageWindow': return this.#messageWindow(input)

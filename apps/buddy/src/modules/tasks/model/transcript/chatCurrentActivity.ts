@@ -1,5 +1,5 @@
 import type { BuddyRunRetry } from '@buddy-shared/runs/runProgress'
-import type { ChatAgentTurn } from './chatAgentTurn'
+import type { ChatAgentToolNode, ChatAgentTurn } from './chatAgentTurn'
 import type { BuddyI18nKey, BuddyLocale } from '@/i18n/buddyI18n'
 import { translateBuddy } from '@/i18n/buddyI18n'
 import { getChatToolWaitPhase } from './chatToolDisplay'
@@ -11,7 +11,11 @@ export interface ChatCurrentActivity {
   retry?: BuddyRunRetry
 }
 
-export function describeChatCurrentActivity(turn: ChatAgentTurn, language: BuddyLocale, now = Date.now(), stopping = false): ChatCurrentActivity | null {
+type ActivityNode = Pick<ChatAgentToolNode, 'kind' | 'status' | 'executionPhase'>
+  | { kind: Exclude<ChatAgentTurn['nodes'][number]['kind'], 'tool'>, status?: string }
+export type ChatActivityInput = Pick<ChatAgentTurn, 'progress' | 'status'> & { nodes: readonly ActivityNode[] }
+
+export function describeChatCurrentActivity(turn: ChatActivityInput, language: BuddyLocale, now = Date.now(), stopping = false): ChatCurrentActivity | null {
   if (turn.status !== 'queued' && turn.status !== 'running')
     return null
   const t = (key: BuddyI18nKey, params?: Record<string, string | number>) => translateBuddy(language, key, params)

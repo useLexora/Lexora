@@ -46,7 +46,7 @@ describe('product service transport ownership', () => {
       let hostMode: string = 'read_only'
       f.peer.client.onRequest(runtimePreferencesRpc.getDefaultPermissionMode, () => hostMode)
       const reader = await f.connect('remote-reader', 'reader')
-      expect(reader.result()).toMatchObject({ protocol: { major: 1, minor: 1 }, capabilities: expect.arrayContaining(['chat.getNewTaskDefaults', 'conversations.getRecentWindow', 'conversations.getTurnWindow', 'conversations.listActivitySteps', 'conversations.readLiveText']) })
+      expect(reader.result()).toMatchObject({ protocol: { major: 1, minor: 1 }, capabilities: expect.arrayContaining(['chat.getNewTaskDefaults', 'conversations.getRecentWindow', 'conversations.getTurnWindow', 'conversations.listActivitySteps', 'conversations.listOrderedActivitySteps', 'conversations.readLiveText']) })
       await reader.send('conversations.getTurnWindow', { conversationId: 'missing', branchId: 'missing' })
       expect(reader.error()).toMatchObject({ code: 'OBJECT_DELETED' })
       for (const [mode, executionProfile, approvalPolicy] of [

@@ -3,6 +3,7 @@ import type { ProductActivityGroup, ProductActivityStep } from '../../../shared/
 import type { VisibleConversationBranchSegment } from '../storage/conversationHistoryRepository'
 import { createHash } from 'node:crypto'
 import { ProductProtocolError } from '../../../shared/productProtocol/errors'
+import { isActivityCommand, withActivityStepSummaries } from './ProductActivityStepSummaries'
 import { hasProductTurnCommentarySql } from './ProductTurnCommentary'
 
 export interface TurnRun { id: string, branchId: string, triggerId: string, status: string }
@@ -15,8 +16,9 @@ interface Fact {
   failed: number | null
   messageId: string | null
 }
-interface Bucket { summary: ProductActivityGroup, steps: ProductActivityStep[], active: Map<string, string>, openReasoning: Set<string> }
-interface IndexedStep { bucket: Bucket, step: ProductActivityStep, occurrence: number, toolCallId: string, fromSequence: number | null, toSequence: number | null }
+interface Bucket { summary: ProductActivityGroup, steps: ProductActivityStep[], ordered: ProductActivityStep[], active: Map<string, string>, openReasoning: Set<ProductActivityStep> }
+interface ReasoningBlock { bucket: Bucket, step: ProductActivityStep }
+interface IndexedStep { bucket: Bucket, step: ProductActivityStep, occurrence: number, toolCallId: string, fromSequence: number | null, toSequence: number | null, observationSequence: number | null }
 interface RunIndex {
   sequence: number
   revision: number
@@ -30,7 +32,7 @@ interface RunIndex {
   groups: Map<string, Bucket>
   latest: Map<string, IndexedStep>
   byStepId: Map<string, IndexedStep>
-  reasoning: Map<string, Map<number, Bucket>>
+  reasoning: Map<string, Map<number, ReasoningBlock>>
   settled: Map<string, Set<Bucket>>
 }
 export interface ActivityIndex {
@@ -42,7 +44,8 @@ export interface ActivityIndex {
   groupForCall: (key: string) => ProductActivityGroup | null
   groupForReasoning: (messageId: string, contentIndex: number) => ProductActivityGroup | null
   settled: (messageId: string) => ProductActivityGroup[]
-  steps: (groupId: string) => readonly ProductActivityStep[] | null
+  steps: (groupId: string, format: 'legacy' | 'ordered') => readonly ProductActivityStep[] | null
+  withSummaries: (page: ProductActivityStep[]) => ProductActivityStep[]
   resolveStep: (groupId: string, stepId: string) => { step: ProductActivityStep, toolCallId: string, fromSequence: number, toSequence: number | null } | null
 }
 export const visibleNarration = `(json_type(m.content_json) = 'text' AND length(trim(json_extract(m.content_json,'$'))) > 0
@@ -57,7 +60,7 @@ function safeName(name: unknown): string {
   return typeof name === 'string' && /^[\w.:-]{1,256}$/.test(name) ? name : 'tool'
 }
 function category(name: string): ProductActivityGroup['counts'][number]['category'] {
-  if (['bash', 'powershell', 'lexora_shell', 'lexora_host_shell'].includes(name))
+  if (isActivityCommand(name))
     return 'command'
   if (name === 'read' || name === 'lexora_session_read')
     return 'read'
@@ -71,7 +74,7 @@ function bucketFor(run: TurnRun, ix: RunIndex, f: Fact) {
   const id = turnKey(['activity', run.id, ix.after])
   let bucket = ix.groups.get(id)
   if (!bucket) {
-    bucket = { summary: { id, runId: run.id, afterMessageId: ix.after, createdAt: f.at, toolCount: 0, failedCount: 0, interruptedCount: 0, runningCount: 0, activeToolName: null, counts: [], reasoningCount: 0, runningReasoningCount: 0, interruptedReasoningCount: 0 }, steps: [], active: new Map(), openReasoning: new Set() }
+    bucket = { summary: { id, runId: run.id, afterMessageId: ix.after, createdAt: f.at, toolCount: 0, failedCount: 0, interruptedCount: 0, runningCount: 0, activeToolName: null, counts: [], reasoningCount: 0, runningReasoningCount: 0, interruptedReasoningCount: 0 }, steps: [], ordered: [], active: new Map(), openReasoning: new Set() }
     ix.groups.set(id, bucket)
     ix.lastGroup = bucket
   }
@@ -81,30 +84,33 @@ function apply(run: TurnRun, ix: RunIndex, f: Fact) {
   if (f.type === 'message.block.started' || f.type === 'message.block.completed') {
     if (!f.messageId || f.messageId.length > 256 || f.key === null || !Number.isSafeInteger(Number(f.key)) || Number(f.key) < 0)
       return
-    const blocks = ix.reasoning.get(f.messageId) ?? new Map<number, Bucket>()
-    const key = JSON.stringify([f.messageId, Number(f.key)])
-    let group = blocks.get(Number(f.key))
-    if (!group) {
+    const blocks = ix.reasoning.get(f.messageId) ?? new Map<number, ReasoningBlock>()
+    const index = Number(f.key)
+    let block = blocks.get(index)
+    if (!block) {
       if (ix.size >= maxCalls)
         throw new ProductProtocolError('PAGE_TOO_LARGE')
-      group = bucketFor(run, ix, f)
-      blocks.set(Number(f.key), group)
+      const bucket = bucketFor(run, ix, f)
+      const step: ProductActivityStep = { id: turnKey(['reasoning', run.id, f.messageId, index]), kind: 'reasoning', toolName: 'reasoning', status: 'running', messageId: null }
+      block = { bucket, step }
+      blocks.set(index, block)
       ix.reasoning.set(f.messageId, blocks)
-      group.summary.reasoningCount++
+      bucket.ordered.push(step)
+      bucket.openReasoning.add(step)
+      bucket.summary.reasoningCount++
       ix.size++
-      if (f.type === 'message.block.started')
-        group.openReasoning.add(key)
     }
-    if (f.type === 'message.block.completed')
-      group.openReasoning.delete(key)
+    if (f.type === 'message.block.completed' && block.bucket.openReasoning.delete(block.step))
+      block.step.status = 'completed'
     return
   }
   if (f.type === 'message.completed' || f.type === 'message.interrupted') {
     if (!f.messageId)
       return
-    for (const [index, group] of ix.reasoning.get(f.messageId) ?? []) {
-      if (!group.openReasoning.delete(JSON.stringify([f.messageId, index])))
+    for (const { bucket: group, step } of ix.reasoning.get(f.messageId)?.values() ?? []) {
+      if (!group.openReasoning.delete(step))
         continue
+      step.status = f.failed ? 'interrupted' : 'completed'
       if (f.failed)
         group.summary.interruptedReasoningCount++
       const settled = ix.settled.get(f.messageId) ?? new Set<Bucket>()
@@ -129,10 +135,11 @@ function apply(run: TurnRun, ix: RunIndex, f: Fact) {
     const step: ProductActivityStep = { id: turnKey([run.id, f.key, occurrence]), toolName: safeName(f.name), status: 'running', messageId: null }
     if (entry && entry.toSequence === null && f.seq > 0)
       entry.toSequence = f.seq - 1
-    entry = { bucket, step, occurrence, toolCallId: f.key, fromSequence: f.type.startsWith('tool.') ? f.seq : null, toSequence: null }
+    entry = { bucket, step, occurrence, toolCallId: f.key, fromSequence: f.type.startsWith('tool.') ? f.seq : null, toSequence: null, observationSequence: null }
     ix.byStepId.set(step.id, entry)
     ix.latest.set(f.key, entry)
     bucket.steps.push(step)
+    bucket.ordered.push(step)
     bucket.active.set(step.id, step.toolName)
     bucket.summary.toolCount++
     const kind = category(step.toolName)
@@ -143,6 +150,8 @@ function apply(run: TurnRun, ix: RunIndex, f: Fact) {
     ix.size++
   }
   const { bucket, step } = entry
+  if ((begin || f.type === 'tool.completed') && f.name === step.toolName)
+    entry.observationSequence = f.seq
   if (begin)
     return
   if (f.seq > 0)
@@ -285,11 +294,12 @@ export class ProductTurnActivities {
         return entry ? summary(entry.bucket) : null
       },
       groupForReasoning(messageId, contentIndex) {
-        const group = ix.reasoning.get(messageId)?.get(contentIndex)
-        return group ? summary(group) : null
+        const block = ix.reasoning.get(messageId)?.get(contentIndex)
+        return block ? summary(block.bucket) : null
       },
       settled(messageId) { return [...(ix.settled.get(messageId) ?? [])].map(summary) },
-      steps(id) { return ix.groups.get(id)?.steps ?? null },
+      steps(id, format) { return ix.groups.get(id)?.[format === 'ordered' ? 'ordered' : 'steps'] ?? null },
+      withSummaries: page => withActivityStepSummaries(db, run.id, page, ix.byStepId),
       resolveStep(groupId, stepId) {
         const entry = ix.byStepId.get(stepId)
         if (fork || !entry?.fromSequence || entry.bucket.summary.id !== groupId)

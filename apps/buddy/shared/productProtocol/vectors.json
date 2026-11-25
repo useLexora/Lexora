@@ -158,6 +158,81 @@
   ],
   "responses": [
     {
+      "name": "ordered-steps",
+      "method": "conversations.listOrderedActivitySteps",
+      "result": {
+        "items": [
+          {
+            "id": "block-1",
+            "kind": "reasoning",
+            "toolName": "reasoning",
+            "status": "completed",
+            "messageId": null
+          },
+          {
+            "id": "tool-1",
+            "toolName": "bash",
+            "status": "completed",
+            "messageId": "result-1",
+            "summary": "git status"
+          }
+        ],
+        "nextCursor": null
+      },
+      "valid": true
+    },
+    {
+      "name": "ordered-steps-reject-private-reasoning",
+      "method": "conversations.listOrderedActivitySteps",
+      "result": {
+        "items": [
+          {
+            "id": "block-1",
+            "kind": "reasoning",
+            "toolName": "reasoning",
+            "status": "completed",
+            "messageId": null,
+            "summary": "private"
+          }
+        ],
+        "nextCursor": null
+      },
+      "valid": false
+    },
+    {
+      "name": "legacy-steps-remain-strict",
+      "method": "conversations.listActivitySteps",
+      "result": {
+        "items": [
+          {
+            "id": "tool-1",
+            "toolName": "bash",
+            "status": "completed",
+            "messageId": "result-1",
+            "summary": "git status"
+          }
+        ],
+        "nextCursor": null
+      },
+      "valid": false
+    },
+    {
+      "name": "legacy-steps",
+      "method": "conversations.listActivitySteps",
+      "result": {
+        "items": [
+          {
+            "id": "tool-1",
+            "toolName": "bash",
+            "status": "completed",
+            "messageId": "result-1"
+          }
+        ],
+        "nextCursor": null
+      },
+      "valid": true
+    },
+    {
       "name": "receipt-over-js-safe-integer",
       "method": "composerDrafts.save",
       "result": {
