@@ -1,15 +1,19 @@
 import type { PairedDevice, PairingCode, PrivateNetworkStatus } from '@buddy-shared/privateNetwork/management'
+import { desktopVersionSchema } from '@buddy-electron/shared/desktopUpdates'
+import { REPOSITORY_URL } from '@buddy-electron/shared/productLinks'
 import { useIntervalFn, useNow } from '@vueuse/core'
 import { useMessage } from 'naive-ui'
 import { computed, onMounted, onScopeDispose, shallowRef } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
 import { requireDesktopApi } from '@/platform/desktop/desktopApi'
+import { loadDesktopAppInfo } from '@/platform/desktop/desktopCapabilities'
 import { useSettingsContext } from '../../settingsContext'
 
 export function usePrivateNetworkSettings() {
   const { applicationSettings: { language } } = useSettingsContext()
   const { t } = useBuddyI18n(language)
-  const api = requireDesktopApi().localChat.privateNetwork
+  const desktop = requireDesktopApi()
+  const api = desktop.localChat.privateNetwork
   const message = useMessage()
   const status = shallowRef<PrivateNetworkStatus | null>(null)
   const devices = shallowRef<PairedDevice[]>([])
@@ -85,6 +89,23 @@ export function usePrivateNetworkSettings() {
       else pairing.value = issued
     })
   }
+  const openingRelease = shallowRef(false)
+  async function openMobileRelease() {
+    if (openingRelease.value)
+      return
+    openingRelease.value = true
+    try {
+      const { version } = await loadDesktopAppInfo(desktop)
+      await desktop.app.openReleasePage(`${REPOSITORY_URL}/releases/tag/v${desktopVersionSchema.parse(version)}`)
+    }
+    catch {
+      if (!disposed)
+        message.error(t('desktop.command.failed'))
+    }
+    finally {
+      openingRelease.value = false
+    }
+  }
   onMounted(() => refresh())
   useIntervalFn(() => refresh(), 5000)
   onScopeDispose(() => {
@@ -92,5 +113,5 @@ export function usePrivateNetworkSettings() {
     void cancelPairing().catch(() => {})
   })
 
-  return { t, api, status, devices, pairing, busy, unavailable, seconds, qr, refresh, act, configure, cancelPairing, issuePairing }
+  return { t, api, status, devices, pairing, busy, unavailable, seconds, qr, refresh, act, configure, cancelPairing, issuePairing, openingRelease, openMobileRelease }
 }

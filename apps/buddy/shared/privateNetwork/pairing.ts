@@ -23,6 +23,14 @@ export const pairingRecoverySchema = z.object({ serviceId: id, profileId: id, at
 export const pairingRedeemSchema = pairingContextSchema.extend({ attemptId: id, recoverySecret: privateNetworkSecretSchema }).strict()
 export const deviceCredentialSchema = z.object({ deviceId: id, credentialId: id, credentialSecret: privateNetworkSecretSchema, grantGeneration: revision, expiresAt: z.iso.datetime(), absoluteExpiresAt: z.iso.datetime() }).strict()
 export const deviceStateSchema = z.object({ deviceId: id, name: z.string().max(80), state: z.enum(['pending', 'active', 'revoked', 'expired']), grantGeneration: revision, createdAt: z.iso.datetime(), confirmedAt: z.iso.datetime().nullable(), lastSeenAt: z.iso.datetime().nullable(), expiresAt: z.iso.datetime(), absoluteExpiresAt: z.iso.datetime() }).strict()
+const deviceProfileText = z.string().min(1).max(80)
+export const deviceProfileSchema = z.object({
+  platform: z.enum(['android', 'ios']),
+  manufacturer: deviceProfileText.optional(),
+  model: deviceProfileText.optional(),
+  osVersion: deviceProfileText.optional(),
+  appVersion: deviceProfileText,
+}).strict()
 export const pairingConfirmSchema = z.object({}).strict()
 export const PRIVATE_NETWORK_ROUTES = {
   prepare: { path: '/v1/pairing/prepare', input: pairingPrepareSchema, output: pairingPrepareResultSchema },

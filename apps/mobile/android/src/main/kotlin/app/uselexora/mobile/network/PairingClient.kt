@@ -63,6 +63,7 @@ class PairingClient(private val secrets: SecretStore, private val schemas: Proto
                 saved.saveEndpoints(transport.endpoint, qr.connectionEndpoints()).put("stage", "active").put("spkiPin", qr.getString("spkiPin")).put("serviceId", identity.serviceId).put("profileId", identity.profileId).put("dataGeneration", identity.dataGeneration).put("deviceId", identity.deviceId)
                 saved.remove("qr"); saved.remove("attempt")
                 devices.completePairing(pending, saved)
+                client.reportDeviceProfile(version)
                 return identity
             } finally { client.close() }
         } finally { transport.close() }

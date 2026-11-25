@@ -1,12 +1,12 @@
 import type { DatabaseSync } from 'node:sqlite'
-import type { z } from 'zod'
+import type { PairedDevice } from '../../../shared/privateNetwork/management'
 import type { TrustedProductContext } from '../../../shared/productProtocol/identity'
 import type { TrustedCommandPrincipal } from '../commands/CommandAdmissionService'
 import { Buffer } from 'node:buffer'
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { Emitter } from '../../../shared/events/Emitter'
 import { PRIVATE_NETWORK_LIMITS as limits } from '../../../shared/privateNetwork/limits'
-import { deviceCredentialSchema, deviceStateSchema, pairingPrepareResultSchema, pairingPrepareSchema, pairingQrSchema, pairingRecoverySchema, pairingRedeemSchema, PrivateNetworkError } from '../../../shared/privateNetwork/pairing'
+import { deviceCredentialSchema, deviceProfileSchema, deviceStateSchema, pairingPrepareResultSchema, pairingPrepareSchema, pairingQrSchema, pairingRecoverySchema, pairingRedeemSchema, PrivateNetworkError } from '../../../shared/privateNetwork/pairing'
 import { encodeProductRevision } from '../../../shared/productProtocol/scalars'
 import { CommandAdmissionError } from '../commands/CommandAdmissionError'
 import { requireSqliteAuthority } from '../storage/sqliteAuthority'
@@ -167,6 +167,21 @@ export class DeviceAuthorizationService {
     })
   }
 
+  reportProfile(identity: AuthenticatedDevice, raw: unknown): void {
+    const profile = deviceProfileSchema.parse(raw)
+    withTransaction(this.#database, () => {
+      this.assertCurrent(identity)
+      const now = this.#now()
+      this.#database.prepare(`
+        INSERT INTO remote_device_profiles (device_id, platform, manufacturer, model, os_version, app_version)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (device_id) DO UPDATE SET platform = excluded.platform, manufacturer = excluded.manufacturer,
+          model = excluded.model, os_version = excluded.os_version, app_version = excluded.app_version
+      `).run(identity.deviceId, profile.platform, profile.manufacturer ?? null, profile.model ?? null, profile.osVersion ?? null, profile.appVersion)
+      this.#database.prepare('UPDATE remote_devices SET last_seen_ms = ? WHERE id = ?').run(now, identity.deviceId)
+    })
+  }
+
   revoke(deviceId: string): void {
     this.sweep()
     withTransaction(this.#database, () => {
@@ -186,9 +201,18 @@ export class DeviceAuthorizationService {
     })
   }
 
-  list(): z.infer<typeof deviceStateSchema>[] {
+  list(): PairedDevice[] {
     this.sweep()
-    return this.#database.prepare('SELECT * FROM remote_devices ORDER BY created_ms DESC LIMIT 256').all().map(row => this.#publicDevice(row))
+    return this.#database.prepare(`
+      SELECT d.*, p.platform, p.manufacturer, p.model, p.os_version, p.app_version
+      FROM remote_devices d LEFT JOIN remote_device_profiles p ON d.id = p.device_id
+      ORDER BY d.created_ms DESC LIMIT 256
+    `).all().map(row => ({
+      ...this.#publicDevice(row),
+      ...(row.platform != null
+        ? { profile: deviceProfileSchema.parse({ platform: row.platform, manufacturer: row.manufacturer ?? undefined, model: row.model ?? undefined, osVersion: row.os_version ?? undefined, appVersion: row.app_version }) }
+        : {}),
+    }))
   }
 
   sweep(): void {

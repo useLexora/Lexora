@@ -32,6 +32,17 @@ class ProductClient(private val transport: PinnedTransport, private val credenti
     private var capabilities = emptySet<String>()
     fun supports(method: String) = isConnected && method in capabilities
     val endpoint: String get() = transport.endpoint
+    internal fun reportDeviceProfile(version: String) {
+        val profile = androidDeviceProfile(version)
+        val schema = schemas.document.getJSONObject("pairing").getJSONObject("deviceProfileSchema")
+        if (!schemas.valid(profile, schema)) return
+        try {
+            transport.request("/v1/device/profile", method = "POST", body = profile.toString().toByteArray(), credential = credential, timeoutMs = 1500).close()
+        } catch (_: java.io.IOException) {
+            // Profile reporting is optional and must not interrupt the session.
+        } catch (_: ProtocolFailure) {
+        }
+    }
     internal fun fetchConnectionEndpoints(): List<String> {
         return transport.request("/v1/device/endpoints", credential = credential, timeoutMs = 2500).use { response ->
             if (!response.isSuccessful) return emptyList()

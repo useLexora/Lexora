@@ -86,7 +86,14 @@ describe('private TLS transport', () => {
     const redeemed = await f.call('/v1/pairing/redeem', { ...context, attemptId: prepared.body.attemptId, recoverySecret: prepared.body.recoverySecret })
     const bearer = deviceBearer(redeemed.body)
     expect((await f.call('/v1/device', undefined, bearer)).status).toBe(401)
+    const profile = { platform: 'android', manufacturer: 'Example', model: 'Test Phone', osVersion: '15', appVersion: '0.1.0-beta.1' }
+    expect((await f.call('/v1/device/profile', profile, bearer)).status).toBe(401)
     expect((await f.call('/v1/pairing/confirm', {}, bearer)).body.state).toBe('active')
+    expect(f.auth.list()[0]).not.toHaveProperty('profile')
+    expect((await f.call('/v1/device/profile', { ...profile, serialNumber: 'not-collected' }, bearer)).status).toBe(400)
+    expect((await f.call('/v1/device/profile', profile, bearer)).status).toBe(204)
+    expect(f.auth.list()[0]).toMatchObject({ deviceId: redeemed.body.deviceId, name: 'Native fixture', profile })
+    expect((await f.call('/v1/device', undefined, bearer)).body).not.toHaveProperty('profile')
     const socket = new WebSocket(`${f.endpoint.replace('https:', 'wss:')}/v1/rpc`, { ca: f.tls.certificate, headers: { Authorization: `Bearer ${bearer}` } })
     await new Promise<void>((resolve, reject) => {
       socket.once('open', resolve)
@@ -109,6 +116,8 @@ describe('private TLS transport', () => {
     f.auth.revoke(redeemed.body.deviceId)
     await closed
     expect((await f.call('/v1/device', undefined, bearer)).status).toBe(401)
+    expect((await f.call('/v1/device/profile', { ...profile, appVersion: '0.2.0' }, bearer)).status).toBe(401)
+    expect(f.auth.list()[0]?.profile).toEqual(profile)
     expect((await f.call('/v1/device?token=forbidden', undefined, bearer)).status).toBe(400)
   })
 })
