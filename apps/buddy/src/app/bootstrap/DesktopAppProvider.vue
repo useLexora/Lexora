@@ -77,7 +77,11 @@ const cloudBackup = useCloudBackupFeedback({ api: api.sync, language: stores.app
 useDesktopTypography(() => stores.applicationSettings.config.value?.desktop.typography)
 useDesktopReadingWidth(() => stores.applicationSettings.config.value?.desktop.chat.readingWidth)
 useProvideDesktopUpdates(stores.updates)
-const buddyDirectory = useProvideBuddiesContext({ api: api.localChat.buddies, ready: computed(() => stores.runtimeSupervisor.runtimeState.value.status === 'ready') })
+const buddyDirectory = useProvideBuddiesContext({
+  api: api.localChat.buddies,
+  ready: computed(() => stores.runtimeSupervisor.runtimeState.value.status === 'ready'),
+  modelCatalog: { models: stores.modelProviders.models, providers: stores.modelProviders.providers },
+})
 const taskIndex = useTaskIndex({
   api: api.localChat,
   applicationSettings: stores.applicationSettings,

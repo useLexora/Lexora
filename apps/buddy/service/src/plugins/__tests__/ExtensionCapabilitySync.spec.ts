@@ -30,7 +30,7 @@ function descriptor(patch: Partial<ExtensionCapabilityDescriptor> = {}) {
 function fixture() {
   const database = openBuddyDatabase({ databasePath: ':memory:' })
   const sources = createManagedCapabilityRepository(database)
-  const buddies = new BuddiesService(createBuddyRepository(database))
+  const buddies = new BuddiesService(createBuddyRepository(database), { getModelType: () => null })
   const records = new Map<string, McpServerRecord>()
   const catalogs = new Map<string, string[]>()
   let descriptors = [descriptor()]

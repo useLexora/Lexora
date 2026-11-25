@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { ProviderModelType } from '../../../../shared/providers/providerModelType'
 import { afterEach, describe, expect, it } from 'vitest'
 import { BUILTIN_BUDDY_ID } from '../../../../shared/buddies/buddyApi'
 import { buddySettingsSchema, DEFAULT_BUDDY_SETTINGS } from '../../../../shared/buddies/buddySettings'
@@ -10,9 +11,11 @@ let database: DatabaseSync
 let service: BuddiesService
 let initialCatalog: ReturnType<BuddiesService['list']>
 
-function setup() {
+const unknownModel = () => null
+
+function setup(getModelType: (providerId: string, modelId: string) => ProviderModelType | null = unknownModel) {
   database = openBuddyDatabase({ databasePath: ':memory:' })
-  service = new BuddiesService(createBuddyRepository(database))
+  service = new BuddiesService(createBuddyRepository(database), { getModelType })
   initialCatalog = service.list()
   return service.get(BUILTIN_BUDDY_ID)
 }
@@ -41,7 +44,7 @@ describe('companion profiles', () => {
     const current = service.get(initial.id)
     await expect(service.update({ buddyId: initial.id, expectedRevision: current.revision, settings: { ...settings, tools: { mode: 'selected', ids: ['[\"builtin\",\"core\",\"read\"]', '[\"builtin\",\"core\",\"read\"]'] } } })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
     service.dispose()
-    service = new BuddiesService(createBuddyRepository(database))
+    service = new BuddiesService(createBuddyRepository(database), { getModelType: unknownModel })
     expect(service.get(initial.id).settings).toEqual(settings)
     expect(service.list().buddies.find(buddy => buddy.id === initial.id)?.settings).toEqual(settings)
     const other = await service.create({ name: 'Other' })
@@ -51,11 +54,33 @@ describe('companion profiles', () => {
     expect(service.get(other.id).settings).toEqual(settings)
   })
 
+  it('rejects newly pinned media models while preserving and clearing historical selections', async () => {
+    const types = new Map<string, ProviderModelType>([['reclassified', 'chat'], ['chat', 'chat'], ['image', 'image-generation'], ['speech', 'speech'], ['transcription', 'transcription']])
+    setup((providerId, modelId) => providerId === 'fixture' ? types.get(modelId) ?? null : null)
+    let npc = await service.create({ kind: 'npc', name: 'Researcher' })
+    const model = (modelId: string) => ({ providerId: 'fixture', modelId, reasoning: null, serviceTier: null })
+    const update = (settings: typeof npc.settings) => service.update({ buddyId: npc.id, expectedRevision: npc.revision, settings: buddySettingsSchema.parse(settings) })
+
+    npc = await update({ ...npc.settings, model: model('reclassified') })
+    types.set('reclassified', 'image-generation')
+    npc = await update({ ...npc.settings, instructions: 'Updated instructions' })
+    expect(npc.settings.model).toEqual(model('reclassified'))
+    for (const modelId of ['image', 'speech', 'transcription'])
+      await expect(update({ ...npc.settings, model: model(modelId) })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+    expect(service.get(npc.id)).toEqual(npc)
+
+    npc = await update({ ...npc.settings, model: null })
+    expect(npc.settings.model).toBeNull()
+    await expect(update({ ...npc.settings, model: model('reclassified') })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+    const saved = await update({ ...npc.settings, model: model('chat') })
+    expect(saved.settings.model).toEqual(model('chat'))
+  })
+
   it('preserves the identity and profile when the service is recreated', async () => {
     const initial = setup()
     const updated = await service.update({ buddyId: initial.id, expectedRevision: initial.revision, name: '小海' })
     service.dispose()
-    service = new BuddiesService(createBuddyRepository(database))
+    service = new BuddiesService(createBuddyRepository(database), { getModelType: unknownModel })
     expect(service.list()).toEqual({ buddies: initialCatalog.buddies.map(buddy => buddy.id === initial.id ? updated : buddy), defaultBuddyId: BUILTIN_BUDDY_ID, revision: initialCatalog.revision + 1 })
     expect(updated).toMatchObject({ id: initial.id, name: '小海', revision: initial.revision + 1, avatar: null })
   })
@@ -104,7 +129,7 @@ describe('companion profiles', () => {
     await expect(service.update({ buddyId: second.id, expectedRevision: 3, name: 'Revived' })).rejects.toMatchObject({ code: 'BUDDY_DELETED' })
     expect(() => service.setDefault({ buddyId: second.id, expectedCatalogRevision: service.list().revision })).toThrow(expect.objectContaining({ code: 'BUDDY_DELETED' }))
     service.dispose()
-    service = new BuddiesService(createBuddyRepository(database))
+    service = new BuddiesService(createBuddyRepository(database), { getModelType: unknownModel })
     expect(service.get(second.id)).toEqual(deleted)
     expect(service.list().defaultBuddyId).toBe('default')
     expect(service.list().buddies).toEqual(initialCatalog.buddies)

@@ -451,15 +451,6 @@ export async function startBuddyService(
     })
     const managedCapabilities = createManagedCapabilityRepository(options.database)
     managedCapabilities.suspendAll()
-    const buddies = await host.start('runtime.buddies', ({ defer }) => {
-      const service = new BuddiesService(createBuddyRepository(options.database), () => record({ event: 'buddies.observer.failed', level: 'warn' }))
-      const notices = service.onDidChange(event => notify(buddiesChanged.method, event))
-      defer(() => {
-        service.dispose()
-        notices.dispose()
-      })
-      return service
-    })
     const composerDrafts = createComposerDraftRepository(options.database)
     const personalDrafts = commandContext ? { findById: (id: string) => findPersonalComposerDraft(options.database, id) } : composerDrafts
     const commandRequests = createCommandRequestRepository(options.database)
@@ -697,6 +688,18 @@ export async function startBuddyService(
       defer(() => service.dispose())
       return service
     })
+    const buddies = await host.start('runtime.buddies', ({ defer }) => {
+      const service = new BuddiesService(createBuddyRepository(options.database), {
+        getModelType: (providerId, modelId) => providerService.getModelType(providerId, modelId),
+        onObserverError: () => record({ event: 'buddies.observer.failed', level: 'warn' }),
+      })
+      const notices = service.onDidChange(event => notify(buddiesChanged.method, event))
+      defer(() => {
+        service.dispose()
+        notices.dispose()
+      })
+      return service
+    }, ['runtime.providers'])
     const executionModels = providerService.executionModels
     const nativeImageGateway = new OpenAiImageGenerationService({
       modelRuntime: executionModels.getRuntime(),

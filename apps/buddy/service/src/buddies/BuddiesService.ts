@@ -1,4 +1,5 @@
 import type { BuddyCreate, BuddyDefaultUpdate, BuddyMutation, BuddyUpdate, LocalBuddy } from '../../../shared/buddies/buddyApi'
+import type { ProviderModelType } from '../../../shared/providers/providerModelType'
 import type { BuddyRepository } from '../storage/buddyRepository'
 import { Buffer } from 'node:buffer'
 import { BUDDY_AVATAR_MAX_BYTES, buddyCreateSchema, buddyDefaultUpdateSchema, buddyMutationSchema, buddyUpdateSchema } from '../../../shared/buddies/buddyApi'
@@ -9,15 +10,22 @@ import { BuddyServiceError, parse } from '../rpc/runtimeRequest'
 
 type BuddyChange = Readonly<{ buddyId: string, catalogRevision: number }>
 
+interface BuddiesServiceOptions {
+  getModelType: (providerId: string, modelId: string) => ProviderModelType | null
+  onObserverError?: (error: unknown) => void
+}
+
 export class BuddiesService {
   readonly #repository: BuddyRepository
+  readonly #getModelType: BuddiesServiceOptions['getModelType']
   readonly #changed: Emitter<BuddyChange>
   readonly onDidChange: Emitter<BuddyChange>['event']
   #disposed = false
 
-  constructor(repository: BuddyRepository, onObserverError: (error: unknown) => void = () => {}) {
+  constructor(repository: BuddyRepository, options: BuddiesServiceOptions) {
     this.#repository = repository
-    this.#changed = new Emitter(onObserverError)
+    this.#getModelType = options.getModelType
+    this.#changed = new Emitter(options.onObserverError ?? (() => {}))
     this.onDidChange = this.#changed.event
   }
 
@@ -52,6 +60,13 @@ export class BuddiesService {
     const existingAvatars = new Set([before.avatar, ...before.customAvatars])
     await this.#validateAvatars([request.avatar, ...request.customAvatars ?? []].filter(avatar => !existingAvatars.has(avatar ?? null)), signal)
     this.#check(signal)
+    const model = request.settings?.model
+    const previousModel = before.settings.model
+    if (model && (model.providerId !== previousModel?.providerId || model.modelId !== previousModel.modelId)) {
+      const type = this.#getModelType(model.providerId, model.modelId)
+      if (type !== null && type !== 'chat')
+        throw new BuddyServiceError('VALIDATION_FAILED')
+    }
     return this.#changeProfile(() => this.#repository.update(request))
   }
 

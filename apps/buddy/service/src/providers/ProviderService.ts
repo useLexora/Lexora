@@ -366,6 +366,10 @@ export class ProviderService {
     return this.#modelCatalog.list(providerId)
   }
 
+  getModelType(providerId: string, modelId: string): ProviderModelType | null {
+    return this.#modelCatalog.getModelType(providerId, modelId)
+  }
+
   async prepareModelRequest(providerId: string, signal?: AbortSignal): Promise<{ baseUrl: string, headers: Record<string, string> }> {
     const provider = await this.#requireListedProvider(providerId)
     if (!provider.enabled || !provider.baseUrl || provider.plugin)

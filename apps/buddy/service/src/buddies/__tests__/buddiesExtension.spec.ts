@@ -27,7 +27,7 @@ async function fixture() {
   const workspace = join(root, 'workspace')
   await mkdir(workspace)
   database = openBuddyDatabase({ databasePath: ':memory:' })
-  service = new BuddiesService(createBuddyRepository(database))
+  service = new BuddiesService(createBuddyRepository(database), { getModelType: () => null })
   const context = { conversationId: 'test', cwd: workspace, executionProfile: 'workspace_write' as const, grants: [{ kind: 'workspace' as const, root: workspace, canonicalRoot: workspace, grantId: 'test' }], getRunId: () => 'run', sessionMode: 'interactive' as const, signal: new AbortController().signal }
   const capability = createBuddiesCapability(context, service, () => 'default')
   const tools = new Map<string, ToolDefinition>()
