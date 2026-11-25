@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join } from 'node:path'
 import { DatabaseSync as NodeDatabaseSync } from 'node:sqlite'
 import { completeCommittedDraftSlots } from './migrations/committedDraftSlots'
 import { CONTENT_REFERENCE_OWNERSHIP_TRIGGER_NAMES } from './migrations/contentReferenceOwnershipSchema'
+import { completeDeviceProfileSchema } from './migrations/deviceProfileSchema'
 import { MANAGED_FILES_INDEX_NAMES, MANAGED_FILES_TRIGGER_NAMES } from './migrations/managedFilesSchema'
 import { PRIVATE_NETWORK_TABLE_COLUMNS, PRIVATE_NETWORK_TRIGGER_NAMES } from './migrations/privateNetworkSchema'
 import { PRODUCT_CONTENT_REFERENCES_TRIGGER_NAMES } from './migrations/productContentReferencesSchema'
@@ -250,6 +251,7 @@ function migrateBuddyDatabase(database: DatabaseSync, currentVersion: number, ta
   if (targetVersion >= BUDDY_MIGRATION_SCHEMA_VERSION) {
     assertMigrationSchema(database)
     completeCommittedDraftSlots(database)
+    completeDeviceProfileSchema(database)
     if (currentVersion < targetVersion || verifyExistingForeignKeys)
       assertForeignKeysIntact(database)
   }

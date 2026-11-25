@@ -9,7 +9,7 @@ import { CommandAdmissionService } from '../../commands/CommandAdmissionService'
 import { ProductConnection } from '../../productProtocol/ProductConnection'
 import { ProductQueries } from '../../productProtocol/ProductQueries'
 import { createConversationRepository } from '../../storage/conversationRepository'
-import { openBuddyMigrationCandidate } from '../../storage/database'
+import { openBuddyMigrationCandidate, openBuddySqliteDatabase } from '../../storage/database'
 import { DeviceAuthorizationService } from '../DeviceAuthorizationService'
 
 const directories: string[] = []
@@ -46,6 +46,32 @@ function fixture() {
 }
 
 describe('durable device authorization', () => {
+  it('preserves existing credentials when opening a database without device profiles and stores the next report', () => {
+    const f = fixture()
+    const { bearer, credential } = f.pair()
+    const original = f.auth.confirm(bearer)
+    f.database.exec('DROP TABLE remote_device_profiles')
+    f.database.close()
+    const reopen = () => {
+      const database = openBuddySqliteDatabase({ databasePath: f.path })
+      databases.push(database)
+      return { database, auth: new DeviceAuthorizationService({ database, serviceId: 'service', profileId: 'profile', serviceInstanceId: 'restarted', clock: f.clock }) }
+    }
+
+    const upgraded = reopen()
+    expect(upgraded.auth.list()).toEqual([original])
+    const identity = upgraded.auth.authenticate(bearer)
+    expect(identity.deviceId).toBe(credential.deviceId)
+    const profile = { platform: 'android', manufacturer: 'Example', model: 'Test Phone', osVersion: '15', appVersion: '0.1.0-beta.1' }
+    f.advance(60_000)
+    upgraded.auth.reportProfile(identity, profile)
+    upgraded.database.close()
+
+    const restarted = reopen()
+    expect(restarted.auth.authenticate(bearer)).toEqual(identity)
+    expect(restarted.auth.list()).toEqual([{ ...original, profile, lastSeenAt: new Date(f.clock()).toISOString() }])
+  })
+
   it('keeps task and message pagination valid across authenticated requests and authorization sweeps', async () => {
     const f = fixture()
     const conversations = createConversationRepository(f.database)

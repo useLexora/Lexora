@@ -241,6 +241,10 @@ export class PrivateNetworkServer {
       else if (route === '/v1/device/endpoints' && request.method === 'GET' && this.#options.endpoints) {
         this.#json(response, privateNetworkEndpointsSchema.parse({ endpoints: this.#options.endpoints() }))
       }
+      else if (route === '/v1/device/profile' && request.method === 'POST') {
+        this.#options.auth.reportProfile(identity, await readJson(request))
+        response.writeHead(204).end()
+      }
       else if (['/v1/device/renew', '/v1/device/logout'].includes(route) && request.method === 'POST') {
         pairingConfirmSchema.parse(await readJson(request))
         if (route.endsWith('/renew')) {

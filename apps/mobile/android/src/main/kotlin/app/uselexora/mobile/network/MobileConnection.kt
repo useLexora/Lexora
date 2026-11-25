@@ -38,6 +38,7 @@ class MobileConnection(context: Context, private val schemas: ProtocolSchemas, p
         val saved = devices.active() ?: return null
         val client = connectSaved(saved.credential)
         try {
+            client.reportDeviceProfile(version)
             val serviceName = if (client.supports("service.info")) client.call("service.info", JSONObject()).getString("name") else null
             val platform = if (client.supports("service.host")) client.call("service.host", JSONObject()).getString("platform") else null
             val available = runCatching { client.fetchConnectionEndpoints() }.getOrDefault(emptyList())
@@ -135,6 +136,6 @@ class MobileConnection(context: Context, private val schemas: ProtocolSchemas, p
         synchronized(connectionLock) { closeActive() }
         val pairing = PairingClient(secrets, schemas, version)
         val qr = pairing.readCode(code)
-        return refreshPairedDevice(qr) ?: pairing.start(qr, android.os.Build.MODEL.take(80))
+        return refreshPairedDevice(qr) ?: pairing.start(qr, androidDeviceName())
     }
 }
