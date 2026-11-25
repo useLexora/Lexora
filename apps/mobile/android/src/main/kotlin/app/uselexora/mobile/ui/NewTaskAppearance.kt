@@ -59,7 +59,7 @@ internal fun NewTaskIntro(state: MobileUiState, style: NewTaskStyle?, onChooseSp
 internal fun ComposerSurface(style: NewTaskStyle?, focused: Boolean, modifier: Modifier, content: @Composable () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val shape = if (style?.cutCorners == true) CutCornerShape(9.dp) else RoundedCornerShape(18.dp)
-    val frame = if (style == null) modifier else modifier.testTag("new-task-composer").drawWithCache {
+    val frame = if (style == null) modifier.testTag("composerSurface") else modifier.testTag("new-task-composer").drawWithCache {
         val edge = shape.createOutline(size, layoutDirection, this)
         val shift = style.offset.dp.toPx()
         onDrawBehind { translate(shift, shift) { drawOutline(edge, Color(style.underlay)) } }

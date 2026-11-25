@@ -72,6 +72,17 @@ export const readerToolImageSchema = schema.object({
   failed: schema.boolean(),
   available: schema.boolean(),
 }).strict()
+const composerActivity = schema.object({
+  requestId: id,
+  runId: id,
+  status: schema.enum(['running', 'queued']),
+  runningTool: schema.boolean(),
+  runningReasoning: schema.boolean(),
+  replying: schema.boolean(),
+  awaitingApproval: schema.boolean(),
+  awaitingAnswer: schema.boolean(),
+  stopping: schema.boolean(),
+}).strict()
 export const readerUpdateSchema = schema.object({
   appearance: schema.object({ variables: schema.record(schema.string(), schema.string()), colors: schema.record(schema.string(), schema.string()).optional() }).strict().optional(),
   typography: schema.object({ bodySize: schema.number().positive(), bodyLineHeight: schema.number().positive() }).strict().optional(),
@@ -86,6 +97,7 @@ export const readerUpdateSchema = schema.object({
   anchorRequestId: id.nullable().optional(),
   hasLaterMessages: schema.boolean().optional(),
   latest: schema.object({ loading: schema.boolean(), error: schema.string().nullable() }).strict().optional(),
+  composerActivity: composerActivity.nullable().optional(),
   turnWindow: schema.boolean().optional(),
   history: schema.object({ page: schema.number().int().nonnegative().optional(), available: schema.boolean(), loading: schema.boolean(), error: schema.string().nullable() }).strict().optional(),
   bodyPage: schema.object({ id, revision: id, before: schema.number().int().positive().optional(), after: schema.number().int().nonnegative().optional(), page: productReadLiveTextResultSchema.nullable() }).strict().optional(),
@@ -105,6 +117,7 @@ export type ReaderStepDetailReply = z.infer<typeof readerStepDetailReplySchema>
 const action = <T extends string, S extends schema.ZodRawShape>(name: T, fields: S) => schema.object({ action: schema.literal(name), topic: schema.string(), ...fields }).strict()
 export const readerActionSchema = schema.discriminatedUnion('action', [
   action('ready', {}),
+  action('composer-activity', { requestId: id, label: schema.string().min(1).max(160), active: schema.boolean(), warning: schema.boolean() }),
   action('latest', {}),
   action('older', { retry: schema.literal(true).optional() }),
   action('stop-step-detail', { requestId: id }),

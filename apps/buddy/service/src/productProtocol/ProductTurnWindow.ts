@@ -399,12 +399,12 @@ export class ProductTurnWindow {
     return this.#activity(input)?.index.resolveStep(input.groupId, input.stepId) ?? null
   }
 
-  steps(input: RunScope & { groupId: string, cursor?: string | null, limit?: number }) {
+  steps(input: RunScope & { groupId: string, cursor?: string | null, limit?: number }, format: 'legacy' | 'ordered' = 'legacy') {
     const activity = this.#activity(input)
-    const steps = activity?.index.steps(input.groupId)
+    const steps = activity?.index.steps(input.groupId, format)
     if (!steps || !activity)
       throw new ProductProtocolError('OBJECT_DELETED')
-    const scope = turnKey(['steps', this.instance, input.conversationId, input.branchId, input.runId, input.groupId])
+    const scope = turnKey([format === 'ordered' ? 'orderedSteps' : 'steps', this.instance, input.conversationId, input.branchId, input.runId, input.groupId])
     let start = 0
     let upperBound = steps.length
     if (input.cursor) {
@@ -418,7 +418,9 @@ export class ProductTurnWindow {
       catch { throw new ProductProtocolError('CURSOR_EXPIRED') }
     }
     const end = Math.min(upperBound, start + Math.max(1, Math.min(PRODUCT_LIMITS.pageItems, input.limit ?? 32)))
-    return { items: steps.slice(start, end).map(s => ({ ...s, status: !activity.live && s.status === 'running' ? 'interrupted' as const : s.status })), nextCursor: end < upperBound ? encodeProductCursor({ version: 1, scope, revision: '0', branchId: input.branchId, upperBound: String(upperBound), position: String(end), anchorId: steps[end - 1]!.id }) : null }
+    const page = steps.slice(start, end)
+    const items = (format === 'ordered' ? activity.index.withSummaries(page) : page).map(s => ({ ...s, status: !activity.live && s.status === 'running' ? 'interrupted' as const : s.status }))
+    return { items, nextCursor: end < upperBound ? encodeProductCursor({ version: 1, scope, revision: '0', branchId: input.branchId, upperBound: String(upperBound), position: String(end), anchorId: steps[end - 1]!.id }) : null }
   }
 }
 

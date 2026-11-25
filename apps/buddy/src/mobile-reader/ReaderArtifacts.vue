@@ -15,11 +15,11 @@ const bodyId = useId()
 
 <template>
   <section v-if="output?.items.length || output?.failed" class="reader-artifacts" :aria-label="labels.artifacts" :data-output-run-id="runId" @click="emit('interact')">
-    <button class="artifact-heading" :aria-expanded="open" :aria-controls="bodyId" @click="open = !open">
-      <DocumentMultiple20Regular class="h-3.5 w-3.5" aria-hidden="true" />
+    <button type="button" class="artifact-heading" :aria-expanded="open" :aria-controls="bodyId" @click="open = !open">
+      <DocumentMultiple20Regular aria-hidden="true" />
       <span>{{ labels.artifacts }}</span>
-      <span class="text-xs tabular-nums">{{ output.items.length }}</span>
-      <ChevronRight20Regular class="artifact-chevron h-3.5 w-3.5" :class="{ 'is-open': open }" aria-hidden="true" />
+      <span class="tabular-nums">{{ output.items.length }}</span>
+      <ChevronRight20Regular class="artifact-chevron" :class="{ 'is-open': open }" aria-hidden="true" />
     </button>
     <div v-show="open" :id="bodyId" class="artifact-strip">
       <ReaderArtifactCard v-for="item in output.items" :key="`${item.id}:${item.revision}`" :item="item" :run-id="runId" :send="send" />
@@ -36,17 +36,20 @@ const bodyId = useId()
   margin-top: 10px;
 }
 .artifact-heading {
-  display: flex;
+  display: inline-grid;
+  grid-template-columns: 14px max-content max-content 14px;
   align-items: center;
-  width: fit-content;
-  min-height: 28px;
+  column-gap: 6px;
+  min-height: 44px;
+  white-space: nowrap;
   padding: 2px 0;
   color: var(--reader-muted);
-  font-size: 13px;
-  line-height: 20px;
+  font-size: .8667em;
+  line-height: 1.5;
 
-  > * + * {
-    margin-left: 6px;
+  > svg {
+    width: 14px;
+    height: 14px;
   }
 }
 .artifact-chevron {

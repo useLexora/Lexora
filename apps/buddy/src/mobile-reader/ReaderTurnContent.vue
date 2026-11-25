@@ -3,7 +3,7 @@ import type { ChatAgentTurn } from '../modules/tasks/contracts'
 import type { ReaderMessage as Message, ReaderTurnOwner } from './readerBridge'
 import type { ReaderOutput, ReaderSend } from './readerProtocol'
 import { computed, provide } from 'vue'
-import { BuddyChatActivityGroup, BuddyChatCompactionRow, BuddyChatPanelGroup, BuddyChatRunActivity, createChatAgentActivityProjector, useChatTranscriptValue, useProvideChatContent } from '../modules/tasks/reader'
+import { BuddyChatActivityGroup, BuddyChatCompactionRow, BuddyChatPanelGroup, createChatAgentActivityProjector, useChatTranscriptValue, useProvideChatContent } from '../modules/tasks/reader'
 import ChatMarkdownBody from '../shared/ui/markdown/ChatMarkdownBody.vue'
 import MessageAvatar from './MessageAvatar.vue'
 import ReaderArtifacts from './ReaderArtifacts.vue'
@@ -30,9 +30,6 @@ const emptyResultStatus = computed(() => {
 })
 const projector = createChatAgentActivityProjector()
 const rows = computed(() => projector.project(props.turn.nodes))
-const groupActive = computed(() => rows.value.some(row => row.kind === 'activity-group' && row.status !== 'completed' && row.status !== 'interrupted'))
-const replying = computed(() => props.turn.status === 'running' && !groupActive.value && props.messages.some(message => message.role === 'assistant' && !message.final && message.text))
-const showRunActivity = computed(() => props.turn.status === 'queued' || (props.turn.status === 'running' && (props.turn.progress?.retry || (!groupActive.value && !replying.value))))
 const openEntries = useChatTranscriptValue('agent-turn:open-entries', new Map<string, boolean>())
 const owner = computed(() => {
   const replies = props.messages.filter(message => message.role === 'assistant' && message.runId === props.turn.runId)
@@ -62,11 +59,10 @@ useProvideChatContent({ terminalRenderer: ReaderTerminal, toolImageRenderer: Rea
     <div class="message-author">
       <MessageAvatar role="assistant" :author-id="owner?.id ?? null" />
       <span class="author-name">{{ owner?.name || labels.assistant }}</span>
-      <span v-if="replying && !showRunActivity" class="stream-status" role="status"><i /><i /><i /><span>{{ labels.replying }}</span></span>
     </div>
     <div class="reader-turn-flow">
       <template v-for="row in rows" :key="row.id">
-        <BuddyChatActivityGroup v-if="row.kind === 'activity-group'" :group="row" :language="locale" :open-entries="openEntries" @toggle-entry="toggle" @open-entry="id => toggle(id, true)" />
+        <BuddyChatActivityGroup v-if="row.kind === 'activity-group'" :group="row" :language="locale" hide-live-status :open-entries="openEntries" @toggle-entry="toggle" @open-entry="id => toggle(id, true)" />
         <BuddyChatPanelGroup v-else-if="row.kind === 'panel-group'" :group="row" :language="locale" />
         <BuddyChatCompactionRow v-else-if="row.kind === 'compaction'" :node="row" :language="locale" />
         <div v-else-if="row.kind === 'text'" class="reader-narration">
@@ -74,7 +70,6 @@ useProvideChatContent({ terminalRenderer: ReaderTerminal, toolImageRenderer: Rea
         </div>
       </template>
     </div>
-    <BuddyChatRunActivity v-if="showRunActivity" :turn="turn" :language="locale" />
     <ReaderMessage v-for="(message, index) in results" :key="message.id" :message="{ ...message, showIdentity: false }" :output="index === results.length - 1 ? output : undefined" :dark="dark" :language="language" :send="send" @interact="emit('interact')" />
     <template v-if="!results.length">
       <p v-if="emptyResultStatus" class="reader-turn-status" role="status">
@@ -94,7 +89,7 @@ useProvideChatContent({ terminalRenderer: ReaderTerminal, toolImageRenderer: Rea
 }
 
 .reader-turn {
-  :deep(.buddy-chat-activity-row) {
+  :deep(.buddy-chat-activity-row:not(.buddy-chat-activity-group__header)) {
     display: flex;
     width: fit-content;
     max-width: 100%;

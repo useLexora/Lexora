@@ -78,17 +78,17 @@ const builtins: Readonly<Record<string, ChatToolRegistration>> = {
   lexora_session_read: cards.session,
 }
 
-export function getChatToolRegistration(node: ChatAgentToolNode): ChatToolRegistration {
+export function getChatToolRegistration(node: { toolName: string, presentation?: ChatAgentToolNode['presentation'] }): ChatToolRegistration {
   if (!isRegisteredChatTool(node.toolName))
     return cards.generic
   const p = node.presentation
-  if (p.card === 'read' && /(?:^|[/\\])[^/\\]+[/\\]SKILL\.md$/.test(p.path))
+  if (p?.card === 'read' && /(?:^|[/\\])[^/\\]+[/\\]SKILL\.md$/.test(p.path))
     return skillRead
-  if (p.card === 'diff')
+  if (p?.card === 'diff')
     return fileOperations[p.operation]
-  if (p.card === 'web')
+  if (p?.card === 'web')
     return webOperations[p.operation]
-  if (p.card === 'browser')
+  if (p?.card === 'browser')
     return browserOperations[p.operation]
   return builtins[node.toolName]!
 }

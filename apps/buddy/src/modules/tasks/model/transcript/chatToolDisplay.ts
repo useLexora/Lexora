@@ -18,7 +18,7 @@ export function isChatToolActive(node: ChatAgentToolNode): boolean {
   return node.status === 'preparing' || node.status === 'running' || node.status === 'awaiting_approval'
 }
 
-export function getChatToolWaitPhase(node: ChatAgentToolNode): 'queued' | 'resource' | null {
+export function getChatToolWaitPhase(node: Pick<ChatAgentToolNode, 'status' | 'executionPhase'>): 'queued' | 'resource' | null {
   return (node.status === 'running' || node.status === 'preparing') && (node.executionPhase === 'queued' || node.executionPhase === 'resource') ? node.executionPhase : null
 }
 

@@ -22,12 +22,18 @@ export const productActivityGroupSchema = z.object({
   activeToolName: z.string().max(256).nullable(),
   counts: z.array(z.object({ category: z.enum(['command', 'read', 'edit', 'create', 'other']), count }).strict()).max(5),
 }).strict()
-export const productActivityStepSchema = z.object({
+const legacyActivityStep = z.object({
   id,
   toolName: z.string().min(1).max(256),
   status: z.enum(['running', 'completed', 'failed', 'interrupted']),
   messageId: id.nullable(),
 }).strict()
+const summary = z.string().min(1).max(240)
+export const productActivityStepSchema = legacyActivityStep.extend({ kind: z.literal('reasoning').optional(), summary: summary.optional() })
+const orderedActivityStep = z.union([
+  legacyActivityStep.extend({ summary: summary.optional() }),
+  legacyActivityStep.extend({ kind: z.literal('reasoning'), toolName: z.literal('reasoning'), messageId: z.null() }),
+])
 export const productTurnMessageSchema = productMessageSchema.omit({ tool: true }).extend({
   role: z.enum(['user', 'assistant']),
   textRange: productTextRangeSchema.optional(),
@@ -37,7 +43,8 @@ export const productTurnMessageSchema = productMessageSchema.omit({ tool: true }
 })
 export const productTurnWindowSchema = z.object({ items: z.array(productTurnMessageSchema).max(PRODUCT_LIMITS.topicItems), groups: z.array(productActivityGroupSchema).max(PRODUCT_LIMITS.topicItems), runs: z.array(productRunSchema).max(PRODUCT_LIMITS.topicItems), nextCursor: cursor }).strict()
 export const productActivityStepsInputSchema = productTurnWindowInputSchema.extend({ runId: id, groupId: id, limit: z.number().int().min(1).max(PRODUCT_LIMITS.pageItems).default(32) })
-export const productActivityStepsPageSchema = z.object({ items: z.array(productActivityStepSchema).max(PRODUCT_LIMITS.pageItems), nextCursor: cursor }).strict()
+export const productActivityStepsPageSchema = z.object({ items: z.array(legacyActivityStep).max(PRODUCT_LIMITS.pageItems), nextCursor: cursor }).strict()
+export const productOrderedActivityStepsPageSchema = productActivityStepsPageSchema.extend({ items: z.array(orderedActivityStep).max(PRODUCT_LIMITS.pageItems) })
 export type ProductActivityGroup = z.infer<typeof productActivityGroupSchema>
 export type ProductActivityStep = z.infer<typeof productActivityStepSchema>
 export type ProductTurnWindowPage = z.infer<typeof productTurnWindowSchema>

@@ -30,6 +30,7 @@ export function useReaderBridge() {
   const copiedMessageId = shallowRef<string | null>(null)
   provide(readerCopyFeedbackKey, copiedMessageId)
   const copiedReset = useTimeoutFn(() => copiedMessageId.value = null, 1_400, { immediate: false })
+  const composerActivity = shallowRef<ReaderUpdate['composerActivity']>()
   const appearance = shallowRef<Record<string, string>>({})
   const typography = shallowRef({ bodySize: 15, bodyLineHeight: 24 })
   const avatars = shallowRef<Record<string, string>>({})
@@ -105,6 +106,8 @@ export function useReaderBridge() {
         copiedReset.stop()
         avatars.value = {}
       }
+      if (update.composerActivity !== undefined || next.reset)
+        composerActivity.value = update.composerActivity
       if (update.turnWindow !== undefined || next.reset)
         turnWindow.value = update.turnWindow === true
       if (update.history || next.reset)
@@ -146,5 +149,5 @@ export function useReaderBridge() {
     window.removeEventListener('message', connect)
     port?.close()
   })
-  return { entries, turnWindow, history, runs, buddyNames, transcripts, outputs, branches, selectedBranchId, topic, dark, fontScale, appearance, typography, language, resultRunId, anchor, hasLaterMessages, latestState, send }
+  return { entries, composerActivity, turnWindow, history, runs, buddyNames, transcripts, outputs, branches, selectedBranchId, topic, dark, fontScale, appearance, typography, language, resultRunId, anchor, hasLaterMessages, latestState, send }
 }

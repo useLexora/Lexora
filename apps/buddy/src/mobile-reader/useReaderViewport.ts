@@ -243,9 +243,5 @@ export function useReaderViewport(viewport: Ref<HTMLElement | null>, entries: Re
     cancelAnimationFrame(fillFrame)
     cancelAnchor()
   })
-  const visibleRows = computed(() => {
-    const range = virtualizer.value.range
-    return range ? rows.value.filter(row => row.index >= range.startIndex && row.index <= range.endIndex) : []
-  })
-  return { rows, visibleRows, height, nearHistoryStart, retryOlder: () => requestOlder('retry'), followsEnd, showLatest, anchorStatus, locatedMessageId, latest, scroll, touch, measure }
+  return { rows, height, nearHistoryStart, retryOlder: () => requestOlder('retry'), followsEnd, showLatest, anchorStatus, locatedMessageId, latest, scroll, touch, measure }
 }

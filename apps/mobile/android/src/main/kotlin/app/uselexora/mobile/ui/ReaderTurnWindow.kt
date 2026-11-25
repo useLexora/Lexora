@@ -24,10 +24,12 @@ class ReaderTurnContext(
     val historyPage: Int = 0,
     val latestLoading: Boolean = false,
     val latestError: String? = null,
+    val composer: ComposerRun? = null,
+    val onComposerActivity: (ComposerActivity?) -> Unit = {},
 )
 
 internal data class ReaderStepPage(val items: List<JSONObject> = emptyList(), val cursor: String? = null,
-    val loading: Boolean = false, val failed: Boolean = false, val loaded: Boolean = false, val stale: Boolean = false) {
+    val loading: Boolean = false, val failed: Boolean = false, val loaded: Boolean = false, val stale: Boolean = false, val method: String? = null) {
     fun accepts(request: String?) = !loading && if (request == null) !loaded || stale else loaded && cursor == request
 
     fun append(result: JSONObject): ReaderStepPage {
@@ -36,7 +38,7 @@ internal data class ReaderStepPage(val items: List<JSONObject> = emptyList(), va
         if (next != null && next == cursor) throw ProtocolFailure("SYNC_INVALID")
         val merged = (items + (0 until values.length()).map(values::getJSONObject)).associateBy { it.getString("id") }
         if (merged.size > 10_000) throw ProtocolFailure("LIMIT_EXCEEDED")
-        return ReaderStepPage(merged.values.toList(), next, loaded = true)
+        return ReaderStepPage(merged.values.toList(), next, loaded = true, method = method)
     }
     fun wire(details: Map<String, MobileMessageDetail>): JSONObject = JSONObject()
         .put("items", JSONArray(items.map { step ->
@@ -84,7 +86,7 @@ internal class ReaderActivitySteps(private val changed: () -> Unit) {
         wire = wire + (id to page.wire(details)); changed()
     }
     fun request(groupId: String, runId: String, cursor: String?) {
-        val group = groups[groupId]?.takeIf { it.optString("runId") == runId && it.optInt("toolCount") > 0 } ?: return
+        val group = groups[groupId]?.takeIf { it.optString("runId") == runId && (it.optInt("toolCount") > 0 || it.optInt("reasoningCount") > 0) } ?: return
         val target = context.target ?: return
         if (!context.enabled) return
         val page = pages[groupId] ?: ReaderStepPage()
@@ -96,21 +98,27 @@ internal class ReaderActivitySteps(private val changed: () -> Unit) {
         worker.execute {
             if (captured != generation) return@execute
             val result = runCatching {
-                if (client?.supports("conversations.listActivitySteps") != true) throw ProtocolFailure("NOT_CONNECTED")
-                (if (cursor == null) ReaderStepPage() else page).append(client.call("conversations.listActivitySteps", target.params().put("runId", group.getString("runId"))
-                    .put("groupId", groupId).put("cursor", cursor ?: JSONObject.NULL).put("limit", 32)))
+                val method = when {
+                    client == null -> throw ProtocolFailure("NOT_CONNECTED")
+                    client.supports("conversations.listOrderedActivitySteps") -> "conversations.listOrderedActivitySteps"
+                    client.supports("conversations.listActivitySteps") -> "conversations.listActivitySteps"
+                    else -> throw ProtocolFailure("NOT_CONNECTED")
+                }
+                val base = if (cursor != null && page.method == method) page else ReaderStepPage(method = method)
+                base.append(client.call(method, target.params().put("runId", group.getString("runId"))
+                    .put("groupId", groupId).put("cursor", base.cursor ?: JSONObject.NULL).put("limit", 32)))
             }
             main.post {
                 if (captured != generation || pages[groupId] !== pending) return@post
                 val changed = group !== groups[groupId]
-                pages[groupId] = result.fold({ it.copy(stale = changed || cursor != null && page.stale) },
+                pages[groupId] = result.fold({ it.copy(stale = changed || cursor != null && page.method == it.method && page.stale) },
                     { page.copy(failed = true, stale = page.stale || changed || it is ProtocolFailure && it.code == "CURSOR_EXPIRED") })
                 publish(groupId)
             }
         }
     }
     fun hasPendingStep(runId: String, groupId: String, stepId: String): Boolean = groups[groupId]?.optString("runId") == runId &&
-        pages[groupId]?.items?.any { it.optString("id") == stepId && it.isNull("messageId") } == true
+        pages[groupId]?.items?.any { it.optString("id") == stepId && it.optString("kind") != "reasoning" && it.isNull("messageId") } == true
     fun settle(groupId: String, result: JSONObject) {
         if (result.optString("status") == "running") return
         val page = pages[groupId] ?: return

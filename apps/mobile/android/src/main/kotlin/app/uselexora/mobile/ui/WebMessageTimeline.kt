@@ -85,6 +85,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
     private var transcripts = emptyMap<String, JSONObject>()
     private var loadTranscript: (String, Boolean) -> Unit = { _, _ -> }
     private var turn = ReaderTurnContext()
+    private var composerRequest = 0L
     private var turnRunIds = emptySet<String>()
     private var older: (Boolean) -> Unit = {}
     private val steps = ReaderActivitySteps { schedulePublish() }
@@ -113,6 +114,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
     private var loadFailed = false
     private val loadTimeout = Runnable { if (!ready && !disposed) showLoadFailure() }
     private fun showLoadFailure() {
+        turn.onComposerActivity(null)
         loadFailed = true; status.gravity = Gravity.CENTER; status.visibility = View.VISIBLE
         status.text = mobileText(R.string.mobile_conversation_display_unavailable_tap_to_retry)
     }
@@ -199,6 +201,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
                 }
                 override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
                     if (view === browser) {
+                        turn.onComposerActivity(null)
                         stepReads.reset(); ready = false; port?.close(); port = null
                         removeView(view); view.destroy(); browser = null
                         if (recoveryAttempts++ == 0) post { createBrowser() }
@@ -292,7 +295,9 @@ class ReaderView(context: Context) : FrameLayout(context) {
         latest = onLatest
         if (topic != this.topic || this.turn.target != turn.target || !turn.enabled) stepReads.reset()
         steps.update(topic, turn, artifactContext)
-        val turnChanged = this.turn.enabled != turn.enabled || this.turn.groups !== turn.groups || this.turn.historyLoading != turn.historyLoading ||
+        val composerChanged = this.turn.composer != turn.composer || this.topic != topic || this.language != language
+        if (composerChanged) composerRequest++
+        val turnChanged = composerChanged || this.turn.enabled != turn.enabled || this.turn.groups !== turn.groups || this.turn.historyLoading != turn.historyLoading ||
             this.turn.historyAvailable != turn.historyAvailable || this.turn.historyError != turn.historyError || this.turn.historyPage != turn.historyPage || this.turn.client !== turn.client ||
             this.turn.latestLoading != turn.latestLoading || this.turn.latestError != turn.latestError
         this.turn = turn
@@ -335,6 +340,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
         if (update.optBoolean("reset") || outputs !== sentOutputs) { update.put("outputs", outputs ?: JSONObject()); sentOutputs = outputs }
         val imageState = toolImages?.wire()
         if (update.optBoolean("reset") || imageState !== sentToolImages) { update.put("toolImages", imageState ?: JSONArray()); sentToolImages = imageState }
+        update.put("composerActivity", turn.composer?.wire(composerRequest) ?: JSONObject.NULL)
         if (bodyPage != null) update.put("bodyPage", bodyPage)
         port?.postMessage(WebMessage(update.toString()))
     }
@@ -389,6 +395,12 @@ class ReaderView(context: Context) : FrameLayout(context) {
         if (!protocol.valid(data, protocol.document.getJSONObject("action"))) return
         if (data.optString("action") == "ready") { ready = true; handler.removeCallbacks(loadTimeout); status.visibility = View.GONE; publish(); return }
         if (data.optString("topic") != topic) return
+        if (data.optString("action") == "composer-activity") {
+            val source = turn.composer ?: return
+            if (data.getString("requestId") == composerRequest.toString())
+                turn.onComposerActivity(ComposerActivity(topic, source, data.getString("label"), data.getBoolean("active"), data.getBoolean("warning")))
+            return
+        }
         if (turn.enabled && data.optString("action") in setOf("photo-thumbnail", "artifact-thumbnail", "tool-image")) return
         if (data.optString("action") == "branch") {
             branches.firstOrNull { it.optString("id") == data.optString("branchId") }?.let(selectBranch)
@@ -499,6 +511,7 @@ class ReaderView(context: Context) : FrameLayout(context) {
     }
 
     fun dispose() {
+        turn.onComposerActivity(null)
         disposed = true; ready = false; stepReads.reset(); steps.close()
         avatars?.remove(this); avatars = null; avatarUrls = emptySet()
         toolImages?.close(); toolImages = null
