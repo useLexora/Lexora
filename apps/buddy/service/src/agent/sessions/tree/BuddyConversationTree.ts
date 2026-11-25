@@ -135,6 +135,9 @@ export class BuddyConversationTree {
         break
       }
     }
+    const feedback = checkpointFailureMessage(manager, options.repository, conversationId, targetThread)
+    if (feedback)
+      manager.appendCustomMessageEntry(feedback.customType, feedback.content, feedback.display, feedback.details)
     appendPublicPreview(manager, options.repository, { conversationId, branchId, threadId: targetThread, throughSequence })
     return manager
   }
@@ -184,6 +187,9 @@ export class BuddyConversationTreeCursor {
     const result = await session.navigateTree(target, { summarize: false })
     if (result.cancelled || result.aborted || this.manager.getLeafId() !== target)
       throw new BuddyAgentRunError('CONVERSATION_BINDING_MISMATCH')
+    const feedback = checkpointFailureMessage(this.manager, this.#options.repository, run.conversationId, run.threadId)
+    if (feedback)
+      await session.sendCustomMessage(feedback, { triggerTurn: false })
     {
       const work = this.#options.repository.findWork(run.id)
       await synchronizePublicContext(session, this.#options.repository, {
@@ -272,6 +278,22 @@ export class BuddyConversationTreeCursor {
     finally {
       this.#resolving.delete(key)
     }
+  }
+}
+
+function checkpointFailureMessage(manager: SessionManager, repository: ConversationTreeRepository, conversationId: string, threadId: string) {
+  const leaf = manager.getLeafEntry()
+  const checkpoint = leaf && readCheckpoint(leaf)
+  if (checkpoint?.position !== 'after')
+    return
+  const failure = repository.findModelFailure(checkpoint.runId, conversationId, checkpoint.branchId, threadId)
+  if (!failure)
+    return
+  return {
+    customType: 'lexora.model-failure.v1',
+    content: `Host record for the preceding failed model request (not an assistant reply): ${failure.summary} [${failure.code}]`,
+    display: false,
+    details: { runId: checkpoint.runId, failure },
   }
 }
 

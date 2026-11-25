@@ -27,6 +27,7 @@ import { createExecutionWorkRepository } from '../../../../storage/executionWork
 import { createMailboxRepository, hashExecutionMailboxMessage } from '../../../../storage/mailboxRepository'
 import { createRunInputRepository } from '../../../../storage/runInputRepository'
 import { createRunRepository } from '../../../../storage/runRepository'
+import { createSessionReferenceRepository } from '../../../../storage/sessionReferenceRepository'
 import { actorThreadId, createThreadBindingRepository } from '../../../../storage/threadBindingRepository'
 import { createUsageRepository } from '../../../../storage/usageRepository'
 import { createBuddyInputReferenceMessage } from '../../../context/BuddyInputReference'
@@ -162,6 +163,36 @@ describe('native conversation tree', () => {
     await fresh.session.shutdown('quit')
   })
 
+  it('delivers a host failure fact only after the failed checkpoint, without rewriting the failed answer', async () => {
+    const f = await createFixture()
+    const first = f.run('failed', 'b0', 'request')
+    const original = await f.open(first)
+    await original.cursor.begin(original.session.session, first.id)
+    original.cursor.manager.appendMessage(user('request', 'First request'))
+    original.cursor.finish()
+    const errorCode = 'MODEL_LAUNCH_QUOTA_EXCEEDED'
+    const location = '<profile>/cache/extensions/fixture.local/launches'
+    const launchFailure = { version: 1, code: errorCode, location }
+    new RunEventProjector(f.database).project([{ runId: first.id, sequence: 1, createdAt: new Date().toISOString(), type: 'run.failed', payload: { errorCode, launchFailure, errorMessage: 'PRIVATE_EXCEPTION_DETAIL' } }])
+    await original.session.shutdown('quit')
+
+    for (const position of ['after', 'before'] as const) {
+      const preview = await f.tree.snapshot(first.conversationId, first.branchId, f.root, first.id, position, first.threadId)
+      expect(JSON.stringify(preview.buildSessionContext().messages).includes('MODEL_LAUNCH_QUOTA_EXCEEDED')).toBe(position === 'after')
+      const next = f.run(`next-${position}`, 'b0', `question-${position}`)
+      f.source(next.id, first.id, position)
+      const opened = await f.open(next)
+      await opened.cursor.begin(opened.session.session, next.id)
+      await opened.session.session.prompt('What happened?')
+      const payload = f.requests.at(-1)!
+      expect(payload.includes('MODEL_LAUNCH_QUOTA_EXCEEDED')).toBe(position === 'after')
+      expect(payload.includes(location)).toBe(position === 'after')
+      expect(payload).not.toContain('PRIVATE_EXCEPTION_DETAIL')
+      await opened.session.shutdown('quit')
+    }
+    expect(f.conversations.listBranchMessages(first.conversationId, first.branchId).filter(message => message.role === 'assistant')).toEqual([])
+  })
+
   it('includes new publications in later previews without changing earlier snapshots', async () => {
     const f = await createFixture()
     const first = f.run('preview-first', 'b0', 'q1')
@@ -218,7 +249,8 @@ describe('native conversation tree', () => {
       runs: f.runs,
       usage: createUsageRepository(f.database),
     })
-    const materials = new SessionReferenceService({ conversations: f.conversations, publications: f.repository, attachments, artifacts: new ArtifactService({ repository: createArtifactRepository(f.database) }) })
+    const references = createSessionReferenceRepository(f.database)
+    const materials = new SessionReferenceService({ conversations: f.conversations, references, publications: f.repository, attachments, artifacts: new ArtifactService({ repository: createArtifactRepository(f.database) }) })
     const privateAnswer = 'PRIVATE_QUESTION_ANSWER_SENTINEL'
     const actorB = f.actor('Actor B')
     const a = f.run('actor-a-run', 'b0', 'q1')
@@ -265,7 +297,7 @@ describe('native conversation tree', () => {
     expect(f.repository.listPublications('conversation', 'b0')).toEqual(beforeReplay)
     expect(createMailboxRepository(f.database).findQuestion(question.questionId)?.answer?.text).toBe(privateAnswer)
     const materialTarget = materials.requireSession('conversation')
-    const materialSearch = await searchConversationHistory(f.conversations, materialTarget, { query: privateAnswer })
+    const materialSearch = await searchConversationHistory({ conversations: f.conversations, references }, materialTarget, { query: privateAnswer })
     expect(materialSearch.matches).toEqual([])
     const publicMaterial = materials.readMessage(materialTarget, { kind: 'message', messageId: 'a-answer' }, {})
     expect(publicMaterial.text).toBe('PUBLIC_A_ANSWER')

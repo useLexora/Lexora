@@ -1,5 +1,6 @@
+import type { modelFailureFeedback } from '../../../shared/providers/modelFailureFeedback'
 import type { ConversationRecord } from '../storage/conversationRecord'
-import type { ConversationRepository } from '../storage/conversationRepository'
+import type { SessionReferenceServices } from './SessionReferenceService'
 import { setImmediate } from 'node:timers/promises'
 import { createSessionQuery, sessionMessageReferences, sessionMessageText } from './sessionReferenceText'
 
@@ -9,13 +10,13 @@ const PAGE_SIZE = 50
 const EXCERPT_LENGTH = 1600
 
 export async function searchConversationHistory(
-  conversations: Pick<ConversationRepository, 'findById' | 'findMessageIdAtOffset' | 'listMessagePage'>,
+  { conversations, references }: Pick<SessionReferenceServices, 'conversations' | 'references'>,
   target: ConversationRecord,
   input: { query?: string, messageOffset?: number },
   signal?: AbortSignal,
 ) {
   const matchQuery = createSessionQuery(input.query)
-  const matches: Array<{ source: { kind: 'message', messageId: string }, messageId: string, role: string, createdAt: string, excerpt: string, offset: number, sessionReferences: ReturnType<typeof sessionMessageReferences> }> = []
+  const matches: Array<{ source: { kind: 'message', messageId: string }, messageId: string, role: string, createdAt: string, excerpt: string, offset: number, hostFailure?: ReturnType<typeof modelFailureFeedback>, sessionReferences: ReturnType<typeof sessionMessageReferences> }> = []
   const startOffset = input.messageOffset ?? 0
   let scanned = 0
   let boundary: string | undefined
@@ -42,22 +43,26 @@ export async function searchConversationHistory(
     }
     const page = conversations.listMessagePage(target.id, target.activeBranchId!, { beforeMessageId: boundary, limit: Math.min(PAGE_SIZE, MAX_SCANNED - scanned) })
     const items = page.items.toReversed()
+    const failures = references.listModelFailures(target.id, items)
     for (const [index, message] of items.entries()) {
       scanned += 1
       if (message.role !== 'user' && message.role !== 'assistant')
         continue
       const text = sessionMessageText(message.role, message.content)
-      if (!text)
+      const hostFailure = failures.get(message.id)
+      if (!text && !hostFailure)
         continue
-      const anchor = matchQuery(text)
+      const searchable = hostFailure ? [text, 'host failure failed error 失败 错误', ...Object.values(hostFailure)].join('\n') : text
+      const anchor = matchQuery(searchable)
       if (anchor < 0)
         continue
-      const start = Math.max(0, anchor - 300)
+      const start = anchor < text.length ? Math.max(0, anchor - 300) : 0
       matches.push({
         source: { kind: 'message', messageId: message.id },
         offset: start,
         messageId: message.id,
         role: message.role,
+        hostFailure,
         sessionReferences: sessionMessageReferences(message.role, message.content),
         createdAt: message.createdAt,
         excerpt: `${start ? '…' : ''}${text.slice(start, start + EXCERPT_LENGTH)}${text.length > start + EXCERPT_LENGTH ? '…' : ''}`,

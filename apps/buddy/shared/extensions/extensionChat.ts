@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import { BUDDY_THINKING_LEVELS } from '../conversation/modelSelection.ts'
+import { inferenceDiagnosticCodeSchema } from '../diagnostics/inferenceDiagnostic'
 import { inferenceHashSchema, inferenceModelSchema, inferenceProviderNameSchema } from './extensionInference'
+import { launchLocationExtensionId } from './extensionLaunchLocation'
 import { extensionIdSchema } from './extensionManifest'
 
 export const extensionModelSchema = inferenceModelSchema.safeExtend({
@@ -17,6 +19,13 @@ export const pluginProviderPrefix = 'plugin:'
 export const pluginProviderId = (extensionId: string) => `${pluginProviderPrefix}${extensionId}`
 export const pluginChatApi = 'lexora-plugin-chat'
 export const extensionChatRpc = { list: 'extensions.models.list', changed: 'extensions.models.changed', invoke: 'extensions.models.invoke', event: 'extensions.models.event' } as const
+
+export const extensionChatLaunchErrorSchema = z.enum(['EXTENSION_INFERENCE_LAUNCH_NO_SPACE', 'EXTENSION_INFERENCE_LAUNCH_QUOTA_EXCEEDED'])
+export const extensionChatFailureSchema = z.union([
+  z.object({ error: inferenceDiagnosticCodeSchema }).strict(),
+  z.object({ error: extensionChatLaunchErrorSchema, location: z.string().refine(launchLocationExtensionId) }).strict(),
+])
+export type ExtensionChatFailure = z.infer<typeof extensionChatFailureSchema>
 
 const toolCallSchema = z.object({ id: z.string().min(1).max(200), name: z.string().min(1).max(128), arguments: z.record(z.string(), z.json()) }).strict()
 export const extensionChatMaxBytes = 32 * 1024 * 1024

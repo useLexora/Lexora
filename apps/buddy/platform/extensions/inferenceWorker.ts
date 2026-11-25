@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url'
 import { inferenceLimits } from '../../shared/extensions/extensionInference'
 import { readInferenceInitialization } from './inferenceInitialization'
 import { InferenceNetworkClient } from './inferenceNetworkClient'
+import { inferenceStorageFailure } from './inferenceStorageFailure'
 import { inferenceFrame, readInferenceFrames, writeInferenceFrame } from './inferenceWire'
 
 interface InputSession {
@@ -40,7 +41,9 @@ function failed() {
 }
 process.stdout.on('error', failed)
 process.stdin.on('error', failed)
-const errorCode = (error: unknown) => error instanceof Error && /^EXTENSION_INFERENCE_[A-Z_]+$/.test(error.message) ? error.message : 'EXTENSION_INFERENCE_BACKEND_FAILED'
+function errorCode(error: unknown) {
+  return inferenceStorageFailure(error) ?? (error instanceof Error && /^EXTENSION_INFERENCE_[A-Z_]{1,80}$/.test(error.message) ? error.message : 'EXTENSION_INFERENCE_BACKEND_FAILED')
+}
 async function terminal(id: string, session: Session, error?: unknown) {
   if (sessions.get(id) !== session)
     return

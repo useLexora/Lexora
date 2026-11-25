@@ -1,3 +1,4 @@
+import type { ModelLaunchFailureRecord } from '../../../../shared/providers/modelLaunchFailure'
 import type { RunRecord } from '../../storage/runRecord'
 import type { BuddySessionIdentity } from '../sessions/BuddySessionBlueprint'
 import type { ActiveRunSession } from './ActiveRunRegistry'
@@ -7,7 +8,7 @@ import type { StartBuddyCompactionInput, StartBuddyTurnInput } from './turnTypes
 export type RunExecutionOutcome = (
   | { status: 'completed' }
   | { errorCode: string | null, status: 'cancelled' }
-  | { errorCode: string, errorMessage?: string, status: 'failed' }
+  | { errorCode: string, errorMessage?: string, launchFailure?: ModelLaunchFailureRecord, status: 'failed' }
 ) & { closingGeneration?: number }
 
 interface RunExecutionContext {

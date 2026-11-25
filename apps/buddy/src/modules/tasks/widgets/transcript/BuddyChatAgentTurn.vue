@@ -49,6 +49,7 @@ const failurePresentation = computed(() => notice.value?.kind === 'failure'
   ? resolveChatAgentTurnFailurePresentation(
       props.turn.failureCode ?? null,
       notice.value.message,
+      props.turn.launchFailure,
     )
   : null)
 const resultNoticeText = computed(() => {

@@ -262,7 +262,7 @@ export class DesktopRuntimeHost {
         peer.onRequest(HOST_SPEECH_MODELS, () => this.speechModels?.() ?? []),
         registerExtensionImageReadingRpc(peer, () => this.extensionInference),
         registerExtensionImageRpc(peer, () => this.extensionInference),
-        registerExtensionModelRpc(peer, () => this.extensionInference),
+        registerExtensionModelRpc(peer, () => this.extensionInference, environment.events.publish),
         registerExtensionShellRpc(peer, () => this.extensionShells),
         peer.onRequest(extensionAgentRpc.list, () => this.extensionAgent?.list() ?? []),
         peer.onRequest(extensionAgentRpc.releaseRun, (input) => {

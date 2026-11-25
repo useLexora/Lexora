@@ -4,7 +4,8 @@ import type { ProviderService } from './ProviderService'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import { extensionChatEventSchema, extensionChatMaxBytes, extensionChatRpc, extensionModelSchema, pluginProviderId } from '../../../shared/extensions/extensionChat'
+import { extensionChatEventSchema, extensionChatFailureSchema, extensionChatMaxBytes, extensionChatRpc, extensionModelSchema, pluginProviderId } from '../../../shared/extensions/extensionChat'
+import { launchLocationExtensionId } from '../../../shared/extensions/extensionLaunchLocation'
 import { extensionInvocationContext } from '../plugins/extensionInvocationContext'
 import { createPluginProvider } from './createPluginProvider'
 import { refreshProviderImageModels } from './refreshProviderImageModels'
@@ -75,7 +76,7 @@ export class PluginModelRegistry {
     })().finally(() => { this.#refreshing = undefined })
   }
 
-  async #invoke(target: ExtensionModel, request: ExtensionChatRequest, signal: AbortSignal, event: (event: ExtensionChatEvent) => void, capabilities: ExtensionChatCapabilities): Promise<void> {
+  async #invoke(target: ExtensionModel, request: ExtensionChatRequest, signal: AbortSignal, event: (event: ExtensionChatEvent) => void, capabilities: ExtensionChatCapabilities) {
     if (Buffer.byteLength(JSON.stringify(request)) > extensionChatMaxBytes)
       throw new Error('EXTENSION_INFERENCE_CONTEXT_TOO_LARGE')
     const parent = extensionInvocationContext.getStore()
@@ -84,9 +85,10 @@ export class PluginModelRegistry {
     this.#events.set(id, event)
     try {
       const result = await this.rpc.request(extensionChatRpc.invoke, { id, target, capabilities, request, ...(parent ? { parentInvocationId: parent.invocationId } : {}) }, null, lifetime)
-      const failure = z.object({ error: z.string().regex(/^EXTENSION_INFERENCE_[A-Z_]{1,80}$/) }).strict().nullable().parse(result)
-      if (failure)
-        throw new Error(failure.error)
+      const failure = extensionChatFailureSchema.nullable().parse(result)
+      if (failure && 'location' in failure && launchLocationExtensionId(failure.location) !== target.extensionId)
+        throw new Error('EXTENSION_INFERENCE_OUTPUT_INVALID')
+      return failure ?? undefined
     }
     finally { this.#events.delete(id) }
   }

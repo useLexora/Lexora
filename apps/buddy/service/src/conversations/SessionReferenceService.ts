@@ -3,6 +3,7 @@ import type { AttachmentService } from '../attachments/AttachmentService'
 import type { ConversationRecord } from '../storage/conversationRecord'
 import type { ConversationRepository } from '../storage/conversationRepository'
 import type { ConversationTreeRepository } from '../storage/conversationTreeRepository'
+import type { SessionReferenceRepository } from '../storage/sessionReferenceRepository'
 import type { SessionReferenceSource } from './sessionReferenceToolContract'
 import { readBuddyUserMessageContent } from '../../../shared/conversation/buddyUserContent'
 import { historicalComposerSources } from '../attachments/historicalComposerSources'
@@ -14,6 +15,7 @@ export interface SessionReferenceServices {
   attachments: Pick<AttachmentService, 'listForConversation'>
   artifacts: Pick<ArtifactService, 'resolveConversationArtifactLocation'>
   publications: Pick<ConversationTreeRepository, 'listPublications'>
+  references: SessionReferenceRepository
 }
 
 interface SessionResource {
@@ -59,10 +61,14 @@ export class SessionReferenceService {
     const message = history[index]
     if (!message)
       throw new Error('SESSION_REFERENCE_SOURCE_UNAVAILABLE')
+    const before = history.slice(Math.max(0, index - 2), index)
+    const after = history.slice(index + 1, index + 3)
+    const failures = this.#services.references.listModelFailures(target.id, [...before, message, ...after])
     const neighbour = (item: typeof message) => ({
       source: { kind: 'message' as const, messageId: item.id },
       role: item.role,
       createdAt: item.createdAt,
+      hostFailure: failures.get(item.id),
       excerpt: sessionMessageText(item.role, item.content).slice(0, 800),
       sessionReferences: sessionMessageReferences(item.role, item.content),
     })
@@ -72,10 +78,11 @@ export class SessionReferenceService {
       runId: message.runId,
       authorActorId: this.#services.publications.listPublications(target.id, target.activeBranchId!).find(material => material.kind === 'message' && material.messageId === message.id)?.actorId ?? null,
       createdAt: message.createdAt,
+      hostFailure: failures.get(message.id),
       sessionReferences: sessionMessageReferences(message.role, message.content),
       ...readSessionText(sessionMessageText(message.role, message.content), input.offset, input.limit),
-      before: history.slice(Math.max(0, index - 2), index).map(neighbour),
-      after: history.slice(index + 1, index + 3).map(neighbour),
+      before: before.map(neighbour),
+      after: after.map(neighbour),
     }
   }
 

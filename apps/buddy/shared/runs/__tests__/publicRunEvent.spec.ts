@@ -2,6 +2,30 @@ import { describe, expect, it } from 'vitest'
 import { publicRunEventSchema, toPublicRunEvent } from '../publicRunEvent'
 
 describe('public run event projection', () => {
+  it('only publishes a matching, validated launch failure on a failed run', () => {
+    const diagnostics = { errorCode: 'MODEL_LAUNCH_NO_SPACE', errorMessage: 'EXTENSION_INFERENCE_LAUNCH_NO_SPACE' }
+    const launchFailure = { version: 1, code: diagnostics.errorCode, location: '<profile>/cache/extensions/fixture.local/launches' }
+    const failed = { ...diagnostics, launchFailure }
+    expect(project('run.failed', failed)).toEqual(failed)
+    expect(publicRunEventSchema.safeParse(event('run.failed', failed)).success).toBe(true)
+    expect(project('run.failed', diagnostics)).toEqual(diagnostics)
+    for (const invalid of [
+      { token: 'private' },
+      { ...launchFailure, token: 'private' },
+      { ...launchFailure, version: 2 },
+      { ...launchFailure, location: '/private/launches' },
+      { ...launchFailure, code: 'MODEL_LAUNCH_QUOTA_EXCEEDED' },
+    ]) {
+      const input = { ...diagnostics, launchFailure: invalid }
+      expect(project('run.failed', input)).toEqual(diagnostics)
+      expect(publicRunEventSchema.safeParse(event('run.failed', input)).success).toBe(false)
+    }
+    for (const type of ['run.completed', 'run.cancelled', 'tool.failed', 'message.completed']) {
+      expect(project(type, failed)).not.toHaveProperty('launchFailure')
+      expect(publicRunEventSchema.safeParse(event(type, { launchFailure })).success).toBe(false)
+    }
+  })
+
   it('publishes bounded panel operation records independently of tool presentations', () => {
     const published = toPublicRunEvent(event('desktop.panel.changed', { action: 'open', actor: 'harness', privateTarget: '/private/file' }))
     expect(published.payload).toEqual({ action: 'open', actor: 'harness' })

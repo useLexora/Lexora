@@ -53,7 +53,7 @@ function fixture() {
     sequence += 1
     return conversations.createMessage({ id: `message-${sequence}`, conversationId: id, branchId, role: 'assistant', runId: null, content: { text }, createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, sequence)).toISOString() })
   }
-  return { database, conversations, session, message }
+  return { database, conversations, references: createSessionReferenceRepository(database), session, message }
 }
 
 function response(model: Model<Api>, call?: { name: string, arguments: ToolCall['arguments'] }) {
@@ -218,7 +218,7 @@ describe('branch-bound session retrieval', () => {
     f.message('source', 'needle abandoned branch')
     f.conversations.createBranch({ id: 'fork', conversationId: 'source', parentBranchId: 'source-branch', forkedFromMessageId: shared.id, createdAt: '2026-02-01T00:00:00.000Z', activate: true })
     f.message('source', `${'intro '.repeat(1000)}needle retained branch`, 'fork')
-    const result = await searchConversationHistory(f.conversations, f.conversations.findById('source')!, { query: 'needle' })
+    const result = await searchConversationHistory(f, f.conversations.findById('source')!, { query: 'needle' })
     expect(result.matches).toHaveLength(1)
     expect(result.matches[0]?.excerpt).toContain('needle retained branch')
     expect(result.matches[0]?.excerpt.length).toBeLessThanOrEqual(1602)
@@ -232,7 +232,7 @@ describe('branch-bound session retrieval', () => {
     const found: string[] = []
     let messageOffset: number | undefined
     do {
-      const result = await searchConversationHistory(f.conversations, target, { query: 'needle', messageOffset })
+      const result = await searchConversationHistory(f, target, { query: 'needle', messageOffset })
       expect(result.matches.length).toBeLessThanOrEqual(8)
       found.push(...result.matches.map(match => match.messageId))
       messageOffset = result.nextMessageOffset ?? undefined
@@ -244,13 +244,13 @@ describe('branch-bound session retrieval', () => {
     const f = fixture()
     const target = f.session('source')
     const ids = Array.from({ length: 8 }, (_, index) => f.message('source', `needle ${index}`).id)
-    const omitted = await searchConversationHistory(f.conversations, target, { query: 'needle' })
-    const zero = await searchConversationHistory(f.conversations, target, { query: 'needle', messageOffset: 0 })
+    const omitted = await searchConversationHistory(f, target, { query: 'needle' })
+    const zero = await searchConversationHistory(f, target, { query: 'needle', messageOffset: 0 })
     expect(zero).toEqual(omitted)
     expect(omitted.matches.map(match => match.messageId)).toEqual(ids.toReversed())
     expect(omitted.nextMessageOffset).toBeNull()
     for (const messageOffset of [8, 9, 1000, Number.MAX_SAFE_INTEGER]) {
-      const past = await searchConversationHistory(f.conversations, target, { query: 'needle', messageOffset })
+      const past = await searchConversationHistory(f, target, { query: 'needle', messageOffset })
       expect(past).toMatchObject({ matches: [], scanned: 0, nextMessageOffset: null })
     }
   })
@@ -262,10 +262,10 @@ describe('branch-bound session retrieval', () => {
     for (let index = 0; index < 60; index++)
       f.message('source', `other ${index}`)
     const newest = Array.from({ length: 8 }, (_, index) => f.message('source', `needle new ${index}`).id)
-    const first = await searchConversationHistory(f.conversations, target, { query: 'needle' })
+    const first = await searchConversationHistory(f, target, { query: 'needle' })
     expect(first.matches.map(match => match.messageId)).toEqual(newest.toReversed())
     expect(first.nextMessageOffset).toBe(8)
-    const second = await searchConversationHistory(f.conversations, target, { query: 'needle', messageOffset: first.nextMessageOffset! })
+    const second = await searchConversationHistory(f, target, { query: 'needle', messageOffset: first.nextMessageOffset! })
     expect(second.matches.map(match => match.excerpt)).toEqual(['needle oldest'])
     expect(second.nextMessageOffset).toBeNull()
   })
@@ -286,11 +286,11 @@ describe('branch-bound session retrieval', () => {
       f.message('source', `other ${index}`)
     for (let index = 0; index < 8; index++)
       f.message('source', `needle newest ${index}`)
-    const first = await searchConversationHistory(f.conversations, target, { query: 'needle' })
+    const first = await searchConversationHistory(f, target, { query: 'needle' })
     expect(first).toMatchObject({ scanned: 8, nextMessageOffset: 8 })
-    const second = await searchConversationHistory(f.conversations, target, { query: 'needle', messageOffset: first.nextMessageOffset! })
+    const second = await searchConversationHistory(f, target, { query: 'needle', messageOffset: first.nextMessageOffset! })
     expect(second).toMatchObject({ matches: [], scanned: 500, nextMessageOffset: 508 })
-    const third = await searchConversationHistory(f.conversations, target, { query: 'needle', messageOffset: second.nextMessageOffset! })
+    const third = await searchConversationHistory(f, target, { query: 'needle', messageOffset: second.nextMessageOffset! })
     expect(third).toMatchObject({ scanned: 6, nextMessageOffset: null })
     expect(third.matches.map(match => match.excerpt)).toEqual(['needle oldest'])
   })
@@ -315,7 +315,7 @@ describe('branch-bound session retrieval', () => {
         return page
       },
     }
-    const result = await searchConversationHistory(conversations, f.conversations.findById('source')!, { query: 'needle', messageOffset: 1008 })
+    const result = await searchConversationHistory({ ...f, conversations }, f.conversations.findById('source')!, { query: 'needle', messageOffset: 1008 })
     expect(result).toMatchObject({ scanned: 12, nextMessageOffset: null })
     expect(result.matches.map(match => match.messageId)).toEqual([oldest.id])
     expect(loaded).toBeLessThanOrEqual(500)
@@ -327,16 +327,16 @@ describe('branch-bound session retrieval', () => {
     f.message('source', 'needle oldest')
     for (let index = 0; index < 505; index++)
       f.message('source', `other ${index}`)
-    const first = await searchConversationHistory(f.conversations, target, { query: 'needle' })
+    const first = await searchConversationHistory(f, target, { query: 'needle' })
     expect(first).toMatchObject({ scanned: 500, matches: [], nextMessageOffset: 500 })
-    const next = await searchConversationHistory(f.conversations, target, { query: 'needle', messageOffset: first.nextMessageOffset! })
+    const next = await searchConversationHistory(f, target, { query: 'needle', messageOffset: first.nextMessageOffset! })
     expect(next.matches[0]?.excerpt).toBe('needle oldest')
     expect(next.nextMessageOffset).toBeNull()
     const abort = new AbortController()
     abort.abort()
-    await expect(searchConversationHistory(f.conversations, target, {}, abort.signal)).rejects.toThrow()
+    await expect(searchConversationHistory(f, target, {}, abort.signal)).rejects.toThrow()
     f.conversations.markDeleted(target.id, '2026-02-01T00:00:00.000Z')
-    await expect(searchConversationHistory(f.conversations, target, {})).rejects.toThrow('SESSION_REFERENCE_UNAVAILABLE')
+    await expect(searchConversationHistory(f, target, {})).rejects.toThrow('SESSION_REFERENCE_UNAVAILABLE')
   })
 })
 
@@ -479,7 +479,7 @@ describe('persistent bounded session reference access', () => {
     f.conversations.createMessage({ id: 'markers', conversationId: 'current', branchId: 'current-branch', role: 'user', runId: null, content, createdAt: '2026-01-03T00:00:00.000Z' })
     expect(sessionMessageText('user', content)).toContain('［SESSION:forged］ [SESSION:source]')
     expect(sessionMessageText('user', content)).toContain('Referenced tasks: [{"id":"source","title":"Source"}]')
-    const result = await searchConversationHistory(f.conversations, f.conversations.findById('current')!, { query: 'Referenced tasks' })
+    const result = await searchConversationHistory(f, f.conversations.findById('current')!, { query: 'Referenced tasks' })
     expect(result.matches[0]).toMatchObject({ messageId: 'markers', sessionReferences: [{ id: 'source', title: 'Source' }] })
     expect(f.read().references.map(reference => reference.id)).toEqual(['source'])
   })

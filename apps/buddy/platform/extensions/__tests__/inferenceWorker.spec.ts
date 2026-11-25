@@ -1,13 +1,16 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { constants, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
+import { getSystemErrorMap, getSystemErrorName } from 'node:util'
 import { build } from 'vite'
 import { afterAll, beforeAll, expect, it } from 'vitest'
+import { withExtensionLaunchStorage } from '../extensionLaunchStorage'
 import { writeInferenceInitialization } from '../inferenceInitialization'
+import { inferenceStorageFailure } from '../inferenceStorageFailure'
 import { writeInferenceFrame } from '../inferenceWire'
 import { NativeInferenceProcess } from '../NativeInferenceProcess'
 import { invocation } from './inferenceFixtures'
@@ -31,7 +34,7 @@ export function initialize() {
       const resource = {}
       held.add(resource)
       call.signal.addEventListener('abort', () => { held.delete(resource); aborted++ }, { once: true })
-      const fail = () => { throw new Error(input.code) }
+      const fail = () => { throw Object.assign(new Error(input.code), { code: input.errnoCode }) }
       if (input.fail === 'start') fail()
       return {
         write() { if (input.fail === 'write') fail() },
@@ -68,6 +71,41 @@ it('reads bounded file initialization on the Darwin worker branch without enlarg
       event(data, bytes) { events.push({ data, bytes: [...bytes] }) },
     }))
     expect(events).toEqual([{ data: { sha256: createHash('sha256').update(json).digest('hex') }, bytes: [0, 255, 128, 10] }])
+  }
+  finally { await worker.stop() }
+})
+
+it('preserves native storage evidence and its private cause only at the launch write boundary', async () => {
+  const location = '<profile>/cache/extensions/test.worker/launches'
+  for (const [code, suffix] of [['EDQUOT', 'QUOTA_EXCEEDED'], ['ENOSPC', 'NO_SPACE']] as const) {
+    const nodeErrno = [...getSystemErrorMap()].find(([, [name]]) => name === code)?.[0]
+    const osErrno = constants.errno[code]
+    const errors = [
+      Object.assign(new Error('/private/example'), { code }),
+      ...(osErrno ? [Object.assign(new Error('/private/example'), { code: getSystemErrorName(-osErrno), errno: -osErrno })] : []),
+      ...(nodeErrno ? [Object.assign(new Error('/private/example'), { errno: nodeErrno })] : []),
+    ]
+    for (const error of errors) {
+      expect(inferenceStorageFailure(error)).toBe(`EXTENSION_INFERENCE_STORAGE_${suffix}`)
+      await expect(withExtensionLaunchStorage(location, () => Promise.reject(error))).rejects.toMatchObject({ errno: code, location, cause: error })
+    }
+  }
+  const unknown = Object.assign(new Error('ENOSPC /private/example'), { code: 'EIO' })
+  expect(inferenceStorageFailure(unknown)).toBeUndefined()
+  await expect(withExtensionLaunchStorage(location, () => Promise.reject(unknown))).rejects.toBe(unknown)
+  await expect(withExtensionLaunchStorage(location, () => Promise.resolve('created'))).resolves.toBe('created')
+})
+
+it('returns only the storage reason for native errors inside the backend, not a host launch location', async () => {
+  const child = spawn(process.execPath, [join(root, 'worker.mjs'), join(root, 'backend.mjs')], { stdio: 'pipe' })
+  const worker = Reflect.construct(NativeInferenceProcess, [child]) as NativeInferenceProcess
+  try {
+    await writeInferenceFrame(child.stdin, { type: 'initialize', data: {} })
+    for (const [errnoCode, expected] of [['EDQUOT', 'QUOTA_EXCEEDED'], ['ENOSPC', 'NO_SPACE']] as const) {
+      await expect(worker.invoke(invocation({ input: { fail: 'finish', code: '/private/example', errnoCode } })))
+        .rejects
+        .toMatchObject({ message: `EXTENSION_INFERENCE_STORAGE_${expected}` })
+    }
   }
   finally { await worker.stop() }
 })

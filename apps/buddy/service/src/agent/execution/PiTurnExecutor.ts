@@ -456,11 +456,11 @@ async function continueExecution(input: {
 }
 
 function readTurnOutcome(channel: PiTurnEventChannel, signal: AbortSignal): RunExecutionOutcome {
-  const { failureCode, failureMessage } = channel.outcome
+  const { failureCode, failureMessage, launchFailure } = channel.outcome
   if (signal.aborted || failureCode === 'MODEL_REQUEST_ABORTED')
     return { errorCode: null, status: 'cancelled' }
   if (failureCode)
-    return { errorCode: failureCode, errorMessage: failureMessage, status: 'failed' }
+    return { errorCode: failureCode, errorMessage: failureMessage, launchFailure, status: 'failed' }
   return { status: 'completed' }
 }
 

@@ -547,9 +547,30 @@ describe('buddyAgentRunner', () => {
     expect(prompt).not.toHaveBeenCalled()
   })
 
-  it('persists the redacted Pi model failure reason on the terminal run event', async () => {
+  it.each([
+    {
+      reason: 'redacted provider error',
+      diagnostics: undefined,
+      provider: 'provider-1',
+      api: 'openai-completions',
+      errorMessage: 'The configured model does not exist; api_key=private-key',
+      payload: { errorCode: 'MODEL_NOT_SUPPORTED', errorMessage: 'The configured model does not exist; api_key=[redacted]' },
+    },
+    {
+      reason: 'structured launch failure',
+      provider: 'plugin:fixture.local',
+      api: 'lexora-plugin-chat',
+      errorMessage: 'EXTENSION_INFERENCE_LAUNCH_NO_SPACE',
+      diagnostics: [{ type: 'plugin.launch-storage.failure', timestamp: 1, details: { error: 'EXTENSION_INFERENCE_LAUNCH_NO_SPACE', location: '<profile>/cache/extensions/fixture.local/launches' } }],
+      payload: {
+        errorCode: 'MODEL_LAUNCH_NO_SPACE',
+        errorMessage: 'EXTENSION_INFERENCE_LAUNCH_NO_SPACE',
+        launchFailure: { version: 1, code: 'MODEL_LAUNCH_NO_SPACE', location: '<profile>/cache/extensions/fixture.local/launches' },
+      },
+    },
+  ])('persists the $reason on the terminal run event', async ({ provider, api, errorMessage, diagnostics, payload }) => {
     const fixture = await createFixture()
-    const runner = fixture.createRunner(new ModelFailureSession())
+    const runner = fixture.createRunner(new ModelFailureSession({ api, provider, errorMessage, diagnostics }))
     const input = {
       branchId: 'branch-1',
       canonicalRoot: fixture.root,
@@ -558,23 +579,19 @@ describe('buddyAgentRunner', () => {
       model: 'model-1',
       spaceId: null,
       prompt: 'Fail with a visible reason',
-      provider: 'provider-1',
+      provider,
       resources: emptyResources(),
       runId: 'run-model-failed',
     }
     fixture.prepareTurn(input, 'message-user-model-failed')
 
     await expect(runner.startTurn(withSession(input)).completion).resolves.toMatchObject({
-      errorCode: 'MODEL_NOT_SUPPORTED',
+      errorCode: payload.errorCode,
       status: 'failed',
     })
-    expect((await fixture.eventLog.read(input.runId)).at(-1)).toMatchObject({
-      payload: {
-        errorCode: 'MODEL_NOT_SUPPORTED',
-        errorMessage: 'The configured model does not exist; api_key=[redacted]',
-      },
-      type: 'run.failed',
-    })
+    const terminal = (await fixture.eventLog.read(input.runId)).at(-1)
+    expect(terminal?.type).toBe('run.failed')
+    expect(terminal?.payload).toEqual(payload)
   })
 
   it('persists degraded cleanup after CodeMode quarantine without discarding session history', async () => {
@@ -1149,16 +1166,22 @@ class WaitingSession extends IdleSession {
   }
 }
 
+type ModelFailureDetails = Pick<AssistantMessage, 'api' | 'provider' | 'errorMessage' | 'diagnostics'>
+
 class ModelFailureSession extends IdleSession {
   readonly #listeners = new Set<(event: AgentSessionEvent) => void>()
+  readonly #failure: ModelFailureDetails
+
+  constructor(failure: ModelFailureDetails) {
+    super()
+    this.#failure = failure
+  }
 
   prompt(): Promise<void> {
     const message: AssistantMessage = {
-      api: 'openai-completions',
+      ...this.#failure,
       content: [],
-      errorMessage: 'The configured model does not exist; api_key=private-key',
       model: 'model-1',
-      provider: 'provider-1',
       role: 'assistant',
       stopReason: 'error',
       timestamp: Date.now(),

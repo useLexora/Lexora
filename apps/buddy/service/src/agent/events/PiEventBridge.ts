@@ -5,7 +5,7 @@ import type { RunEventWriter } from '../../events/RunEventPorts'
 import type { BuddyUsagePurpose } from '../../usage/recordPiUsage'
 import type { UsageService } from '../../usage/UsageService'
 import type { BuddySessionEventSource } from '../sessions/ReusableBuddySession'
-import type { BuddyProjectedEvent } from './projectPiEvent'
+import type { BuddyProjectedEvent, PiEventProjection } from './projectPiEvent'
 import { safeDiagnosticReporter } from '../../../../shared/diagnostics/applicationDiagnostic'
 import { RunEventLogUnavailableError } from '../../events/RunEventFailure'
 import { isShellToolName } from '../extensions/piBuiltinTools'
@@ -52,10 +52,7 @@ export interface PiEventBridgeSettlement {
   writerError: unknown | null
 }
 
-export interface PiTurnEventOutcome {
-  failureCode: string | undefined
-  failureMessage: string | undefined
-}
+export type PiTurnEventOutcome = Pick<PiEventProjection, 'failureCode' | 'failureMessage' | 'launchFailure'>
 
 interface PiEventChannel {
   flush: () => Promise<void>
@@ -137,8 +134,7 @@ class ActivePiEventChannel implements PiCompactionEventChannel, PiTurnEventChann
   readonly #usage: PiUsageService
   readonly #toolPhases = new Map<string, ToolExecutionTiming & { since: number }>()
   #eventTail = Promise.resolve()
-  #failureCode: string | undefined
-  #failureMessage: string | undefined
+  #outcome: PiTurnEventOutcome = {}
   #pendingTerminalToolUpdates = new Map<string, PiToolExecutionUpdateEvent>()
   #terminalToolUpdateTimer: NodeJS.Timeout | undefined
 
@@ -163,10 +159,7 @@ class ActivePiEventChannel implements PiCompactionEventChannel, PiTurnEventChann
   }
 
   get outcome(): PiTurnEventOutcome {
-    return {
-      failureCode: this.#failureCode,
-      failureMessage: this.#failureMessage,
-    }
+    return { ...this.#outcome }
   }
 
   async flush(): Promise<void> {
@@ -288,18 +281,14 @@ class ActivePiEventChannel implements PiCompactionEventChannel, PiTurnEventChann
   async #handleEvent(event: AgentSessionEvent, observedAt: number): Promise<void> {
     const projected = projectPiEvent(event, this.#projectionState, observedAt)
     if (projected.failureCode) {
-      this.#failureCode = projected.failureCode
-      this.#failureMessage = projected.failureMessage
+      const { failureCode, failureMessage, launchFailure } = projected
+      this.#outcome = { failureCode, failureMessage, launchFailure }
     }
-    if (event.type === 'auto_retry_end' && event.success) {
-      this.#failureCode = undefined
-      this.#failureMessage = undefined
+    else if ((event.type === 'message_end' && event.message.role === 'assistant') || (event.type === 'auto_retry_end' && event.success)) {
+      this.#outcome = {}
     }
-    if (event.type === 'message_end' && event.message.role === 'assistant') {
-      if (event.message.stopReason !== 'error' && event.message.stopReason !== 'aborted') {
-        this.#failureCode = undefined
-        this.#failureMessage = undefined
-      }
+    else if (event.type === 'auto_retry_start') {
+      delete this.#outcome.launchFailure
     }
     if (event.type === 'tool_execution_end')
       this.projectToolExecutionPhase({ toolCallId: event.toolCallId, toolName: event.toolName, phase: 'finished' })

@@ -1,3 +1,4 @@
+import type { ApplicationDiagnostic } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { ExtensionInferencePorts } from '../ExtensionInference'
 import type { InferenceResourceLease, InferenceResourceSource } from '../ExtensionInferenceResources'
 import type { InferenceInvocation } from '../NativeInferenceProcess'
@@ -18,7 +19,7 @@ afterEach(async () => {
   vi.useRealTimers()
 })
 
-async function fixture(options: { idleTimeoutMs?: number, admit?: ExtensionInferencePorts['admit'] } = {}) {
+async function fixture(options: { idleTimeoutMs?: number, admit?: ExtensionInferencePorts['admit'], record?: ExtensionInferencePorts['record'] } = {}) {
   const { root, store } = await createStore()
   cleanups.push(() => rm(root, { recursive: true, force: true }))
   const owner = 'tests.models'
@@ -60,7 +61,7 @@ async function fixture(options: { idleTimeoutMs?: number, admit?: ExtensionInfer
     delete: async (id) => { secrets.delete(id) },
   })
   await credentials.set(owner, { id: 'service', origin: 'https://service.invalid', token: 'synthetic-token' }, () => {})
-  const runtime = new ExtensionInference(store, pkg, { sandbox: '', executable: '', bootstrap: '', credentials, admit: options.admit ?? (async () => async () => {}) }, source, () => {})
+  const runtime = new ExtensionInference(store, pkg, { dataRoot: root, sandbox: '', executable: '', bootstrap: '', credentials, record: options.record, admit: options.admit ?? (async () => async () => {}) }, source, () => {})
   const pending: Promise<void>[] = []
   cleanups.push(async () => {
     for (const f of native) f.close()
@@ -81,8 +82,83 @@ async function fixture(options: { idleTimeoutMs?: number, admit?: ExtensionInfer
     void call.catch(() => {})
     return call
   }
-  return { runtime, native, leases, bindings, invoke, credentials, owner }
+  return { runtime, native, leases, bindings, invoke, credentials, owner, store }
 }
+
+it('correlates cold and reused workers without logging input or streamed content', async () => {
+  const records: ApplicationDiagnostic[] = []
+  const f = await fixture({ record: event => records.push(event) })
+  const first = randomUUID()
+  await f.invoke('local', { id: first, input: { text: 'private-content' } })
+  const workerId = f.native[0]!.worker.instanceId
+  const second = randomUUID()
+  const gate = Promise.withResolvers<void>()
+  const secondCall = f.invoke('local', { id: second, ready: () => gate.resolve(), input: { ignoreFinish: true } })
+  await gate.promise
+  const worker = f.native[0]!
+  await worker.received('finish', second)
+  for (let i = 0; i < 12; i++)
+    worker.send({ type: 'event', id: second, data: 'private-content' })
+  worker.send({ type: 'completed', id: second })
+  await secondCall
+  const events = (id: string) => records.filter(event => event.requestId === id).map(event => event.event)
+  expect(events(first)).toEqual(['inference.admission', 'inference.admitted', 'inference.resources', 'inference.worker.start', 'inference.worker.ready', 'inference.invoke.awaiting_event', 'inference.invoke.first_event'])
+  expect(events(second)).toEqual(['inference.admission', 'inference.admitted', 'inference.worker.ready', 'inference.invoke.awaiting_event', 'inference.invoke.first_event'])
+  expect(records.filter(event => event.event === 'inference.worker.ready').map(event => event.operationId)).toEqual([workerId, workerId])
+  expect(JSON.stringify(records)).not.toContain('private-content')
+})
+
+it('attributes shared startup failures to each waiting request without reporting a second launch', async () => {
+  const records: ApplicationDiagnostic[] = []
+  const waiting = Promise.withResolvers<void>()
+  const f = await fixture({ record: (event) => {
+    records.push(event)
+    if (event.event === 'inference.worker.wait')
+      waiting.resolve()
+  } })
+  const start = Promise.withResolvers<NativeInferenceProcess>()
+  const launching = Promise.withResolvers<void>()
+  vi.mocked(NativeInferenceProcess.start).mockImplementationOnce(() => {
+    launching.resolve()
+    return start.promise
+  })
+  const ids = [randomUUID(), randomUUID()]
+  const calls = ids.map(id => f.invoke('local', { id }))
+  await Promise.all([waiting.promise, launching.promise])
+  const error = new Error('EXTENSION_INFERENCE_STORAGE_FULL')
+  start.reject(error)
+  await Promise.all(calls.map(call => expect(call).rejects.toBe(error)))
+  expect(records.filter(event => event.event === 'inference.worker.start')).toHaveLength(1)
+  const failed = records.filter(event => event.event === 'inference.worker.start.failed' && event.errorCode === 'EXTENSION_INFERENCE_STORAGE_FULL')
+  expect(new Set(failed.map(event => event.requestId))).toEqual(new Set(ids))
+})
+
+it.each(['admission', 'resources', 'worker.start', 'invoke.awaiting_event', 'invoke.stream', 'cleanup'] as const)('attributes a failure in %s without changing or exposing the exception', async (stage) => {
+  const records: ApplicationDiagnostic[] = []
+  const error = Object.assign(new Error('/private/model.bin?key=fixture-secret'), { code: stage === 'worker.start' ? 'ENOENT' : 'FIXTURE_SECRET' })
+  const f = await fixture({ record: (event) => {
+    records.push(event)
+    throw new Error('recorder unavailable')
+  }, admit: async () => {
+    if (stage === 'admission')
+      throw error
+    return async () => {
+      if (stage === 'cleanup')
+        throw error
+    }
+  } })
+  if (stage === 'resources')
+    vi.spyOn(f.store.inference, 'acquire').mockRejectedValueOnce(error)
+  if (stage === 'worker.start')
+    vi.mocked(NativeInferenceProcess.start).mockRejectedValueOnce(error)
+  const id = randomUUID()
+  const fail = () => {
+    throw error
+  }
+  await expect(f.invoke('local', { id, ready: stage === 'invoke.awaiting_event' ? fail : undefined, event: stage === 'invoke.stream' ? fail : () => {} })).rejects.toBe(error)
+  expect(records.at(-1)).toMatchObject({ requestId: id, event: `inference.${stage}.failed`, level: 'error', errorCode: stage === 'worker.start' ? 'ENOENT' : 'EXTENSION_INFERENCE_BACKEND_FAILED' })
+  expect(JSON.stringify(records)).not.toMatch(/private|fixture-secret|FIXTURE_SECRET/)
+})
 
 it('does not install an idle timer across admission of a second active call', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })

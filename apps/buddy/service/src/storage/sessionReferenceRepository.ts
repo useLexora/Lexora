@@ -1,6 +1,9 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { MessageRecord } from './conversationHistoryRepository'
+import type { RunModelFailureRow } from './runModelFailure'
 import { buddySessionReferencesSchema } from '../../../shared/conversation/buddyUserContent'
 import { createConversationHistoryStore } from './conversationHistoryRepository'
+import { runModelFailureColumns, storedModelFailure } from './runModelFailure'
 
 export interface SessionReferenceScope {
   conversationId: string
@@ -10,7 +13,32 @@ export interface SessionReferenceScope {
 
 export function createSessionReferenceRepository(database: DatabaseSync) {
   const { lineage } = createConversationHistoryStore(database)
+  const failures = database.prepare(`SELECT messages.id AS messageId, ${runModelFailureColumns}
+    FROM messages
+    JOIN conversation_publications p ON p.message_id = messages.id AND p.run_id = messages.run_id
+      AND p.conversation_id = messages.conversation_id AND p.branch_id = messages.branch_id AND p.kind = 'message'
+    JOIN runs ON runs.id = p.run_id AND runs.conversation_id = p.conversation_id AND runs.branch_id = p.branch_id
+    JOIN run_events e ON e.run_id = p.run_id AND e.sequence = p.source_sequence
+    WHERE messages.conversation_id = ? AND messages.id IN (SELECT value FROM json_each(?))
+      AND messages.role = 'assistant' AND runs.status = 'failed' AND runs.execution_kind IN ('root', 'actor_child')
+      AND e.event_type = 'message.completed' AND json_extract(e.payload_json, '$.messageId') = messages.id
+      AND json_extract(e.payload_json, '$.stopReason') = 'failed'
+      AND NOT EXISTS (SELECT 1 FROM conversation_publications later WHERE later.run_id = p.run_id
+        AND later.source_sequence > p.source_sequence AND later.kind = 'message')`)
   return {
+    listModelFailures(conversationId: string, visibleMessages: readonly MessageRecord[]) {
+      const ids = visibleMessages.filter(message => message.role === 'assistant' && message.runId).map(message => message.id)
+      const result = new Map<string, NonNullable<ReturnType<typeof storedModelFailure>>>()
+      if (ids.length) {
+        const rows = failures.all(conversationId, JSON.stringify(ids)) as unknown as (RunModelFailureRow & { messageId: string })[]
+        for (const row of rows) {
+          const feedback = storedModelFailure(row)
+          if (feedback)
+            result.set(row.messageId, feedback)
+        }
+      }
+      return result
+    },
     findRunScope(runId: string): SessionReferenceScope | null {
       return database.prepare(`SELECT runs.conversation_id AS conversationId, runs.branch_id AS branchId,
         scopes.public_sequence AS throughSequence FROM run_session_reference_scopes scopes JOIN runs ON runs.id = scopes.run_id

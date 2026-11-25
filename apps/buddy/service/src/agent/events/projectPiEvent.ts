@@ -5,6 +5,7 @@ import type {
   ToolResultMessage,
 } from '@earendil-works/pi-ai'
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
+import type { ModelLaunchFailureRecord } from '../../../../shared/providers/modelLaunchFailure'
 import type { BuddyAssistantTextPhase } from '../../../../shared/runs/assistantTextPhase'
 import type { BuddyToolPresentation } from '../../../../shared/runs/runEventPresentation'
 import type { BuddyRunProgress, BuddyRunRetry } from '../../../../shared/runs/runProgress'
@@ -52,6 +53,7 @@ export interface PiEventProjection {
   events: BuddyProjectedEvent[]
   failureCode?: ModelRequestFailureCode | 'MODEL_REQUEST_ABORTED'
   failureMessage?: string
+  launchFailure?: ModelLaunchFailureRecord
   sourceMessageId?: string
 }
 
@@ -610,6 +612,7 @@ function projectAssistantMessageEnd(
     ],
     ...(failureCode ? { failureCode } : {}),
     ...(modelFailure?.message ? { failureMessage: modelFailure.message } : {}),
+    ...(modelFailure?.launchFailure ? { launchFailure: modelFailure.launchFailure } : {}),
     sourceMessageId: messageId,
   }
 }

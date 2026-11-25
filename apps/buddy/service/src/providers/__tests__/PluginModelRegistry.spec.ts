@@ -9,6 +9,7 @@ import { describe, expect, it, onTestFinished } from 'vitest'
 import { registerExtensionImageReadingRpc } from '../../../../electron/main/extensions/registerExtensionImageReadingRpc'
 import { registerExtensionImageRpc } from '../../../../electron/main/extensions/registerExtensionImageRpc'
 import { registerExtensionModelRpc } from '../../../../electron/main/extensions/registerExtensionModelRpc'
+import { withExtensionLaunchStorage } from '../../../../platform/extensions/extensionLaunchStorage'
 import { extensionChatRequestSchema, extensionChatRpc, pluginChatApi } from '../../../../shared/extensions/extensionChat'
 import { providersRpc } from '../../../../shared/providers/providerApi'
 import { isChatModel } from '../../../../shared/providers/providerModelType'
@@ -19,6 +20,7 @@ import { openBuddyDatabase } from '../../storage/database'
 import { createProviderRepository } from '../../storage/providerRepository'
 import { AuthInteractionService } from '../AuthInteractionService'
 import { createProviderModelRuntime } from '../createProviderModelRuntime'
+import { normalizeModelRequestFailure } from '../modelRequestFailure'
 import { PluginModelRegistry } from '../PluginModelRegistry'
 import { createProviderCredentialStatus } from '../ProviderCredentialStatus'
 import { ProviderModelSnapshotService } from '../ProviderModelSnapshotService'
@@ -364,6 +366,27 @@ describe('plugin model registry', () => {
     f.setModels([{ ...descriptor, generation: randomUUID() }])
     await f.registry.refresh()
     expect(await f.service.listModels(providerId)).toMatchObject([{ type: 'chat', toolCalling: true, capabilities: ['text', 'image'], capabilityOverrides: overrides }])
+  })
+
+  it('projects only the location of a host launch write for the invoked extension', async () => {
+    const f = await fixture()
+    await f.registry.refresh()
+    const model = await f.service.executionModels.resolveAvailable(selection)
+    let location = `<profile>/cache/extensions/${descriptor.extensionId}/launches`
+    f.inference.invoke = async () => withExtensionLaunchStorage(location, async () => {
+      throw Object.assign(new Error('/private/file?key=fixture'), { code: 'ENOSPC' })
+    })
+    const project = async () => {
+      const message = await f.runtime.completeSimple(model, { messages: [{ role: 'user', content: 'Hello', timestamp: 1 }] })
+      return normalizeModelRequestFailure(message)
+    }
+    const failure = await project()
+    expect(failure).toEqual({ code: 'MODEL_LAUNCH_NO_SPACE', message: 'EXTENSION_INFERENCE_LAUNCH_NO_SPACE', launchFailure: { version: 1, code: 'MODEL_LAUNCH_NO_SPACE', location } })
+    expect(JSON.stringify(failure)).not.toContain('/private')
+    location = '<profile>/cache/extensions/another.model/launches'
+    const mismatched = await project()
+    expect(mismatched.code).toBe('MODEL_REQUEST_FAILED')
+    expect(JSON.stringify(mismatched)).not.toContain(location)
   })
 
   it('enforces user-disabled tools and image input at the execution and RPC boundaries', async () => {

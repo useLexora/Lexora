@@ -1,13 +1,22 @@
+import type { ApplicationDiagnosticReporter } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
 import type { registerExtensionIpc } from './registerExtensionIpc'
 import { Buffer } from 'node:buffer'
-import { extensionChatEventSchema, extensionChatInvocationSchema, extensionChatMaxBytes, extensionChatRpc } from '../../../shared/extensions/extensionChat'
+import { ExtensionLaunchStorageError } from '../../../platform/extensions/extensionLaunchStorage'
+import { inferenceStorageFailure } from '../../../platform/extensions/inferenceStorageFailure'
+import { inferenceDiagnosticCodeSchema } from '../../../shared/diagnostics/inferenceDiagnostic'
+import { InferenceInvocationDiagnostic } from '../../../shared/diagnostics/inferenceInvocationDiagnostic'
+import { extensionChatEventSchema, extensionChatInvocationSchema, extensionChatLaunchErrorSchema, extensionChatMaxBytes, extensionChatRpc } from '../../../shared/extensions/extensionChat'
 import { inferenceLimits } from '../../../shared/extensions/extensionInference'
+import { launchLocationExtensionId } from '../../../shared/extensions/extensionLaunchLocation'
 
-export function registerExtensionModelRpc(peer: RuntimeRpcPeerContract, getInference: () => ReturnType<typeof registerExtensionIpc>['inference'] | null) {
+export function registerExtensionModelRpc(peer: RuntimeRpcPeerContract, getInference: () => ReturnType<typeof registerExtensionIpc>['inference'] | null, report?: ApplicationDiagnosticReporter) {
   const disposers = [
     peer.onRequest(extensionChatRpc.list, () => getInference()?.models() ?? []),
     peer.onRequest(extensionChatRpc.invoke, async (raw, signal = new AbortController().signal) => {
+      const diagnostic = new InferenceInvocationDiagnostic(report, raw && typeof raw === 'object' && 'id' in raw ? raw.id : undefined)
+      diagnostic.mark('host.received')
+      diagnostic.stage = 'host.validate'
       try {
         const { id, target, capabilities, request, parentInvocationId } = extensionChatInvocationSchema.parse(raw)
         const inference = getInference()
@@ -20,6 +29,7 @@ export function registerExtensionModelRpc(peer: RuntimeRpcPeerContract, getInfer
           throw new Error('EXTENSION_INFERENCE_INPUT_UNSUPPORTED')
         if (!capabilities.toolCall && request.tools.length)
           throw new Error('EXTENSION_INFERENCE_TOOL_INVALID')
+        diagnostic.stage = 'host.dispatch'
         await inference.invoke(target.extensionId, target.revision, {
           id,
           capability: target.capability,
@@ -44,7 +54,14 @@ export function registerExtensionModelRpc(peer: RuntimeRpcPeerContract, getInfer
         return null
       }
       catch (error) {
-        return { error: error instanceof Error && /^EXTENSION_INFERENCE_[A-Z_]{1,80}$/.test(error.message) ? error.message : 'EXTENSION_INFERENCE_BACKEND_FAILED' }
+        const storageCode = inferenceStorageFailure(error)
+        diagnostic.failed(error, storageCode)
+        if (storageCode) {
+          const location = error instanceof ExtensionLaunchStorageError ? error.location : undefined
+          return { error: storageCode, ...(launchLocationExtensionId(location) ? { location } : {}) }
+        }
+        const code = error instanceof Error ? inferenceDiagnosticCodeSchema.safeParse(error.message).data : undefined
+        return { error: code && !extensionChatLaunchErrorSchema.safeParse(code).success ? code : 'EXTENSION_INFERENCE_BACKEND_FAILED' }
       }
     }),
   ]

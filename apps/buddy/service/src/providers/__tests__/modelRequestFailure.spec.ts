@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeModelRequestFailure } from '../modelRequestFailure'
+import { pluginChatApi } from '../../../../shared/extensions/extensionChat'
+import { modelFailureFeedback } from '../../../../shared/providers/modelFailureFeedback'
+import { readModelLaunchFailure } from '../../../../shared/providers/modelLaunchFailure'
+import { normalizeModelRequestFailure, PLUGIN_LAUNCH_STORAGE_DIAGNOSTIC } from '../modelRequestFailure'
 
 describe('provider error disclosure', () => {
   it.each(['apiKey', 'api_key', 'token', 'access_token', 'refreshToken', 'client_secret', 'password', 'credential', 'authorization'])('redacts JSON %s values while preserving the provider failure', (key) => {
@@ -31,10 +34,66 @@ describe('provider error disclosure', () => {
 describe('plugin inference failures', () => {
   it.each([
     ['EXTENSION_INFERENCE_CONTEXT_TOO_LARGE', 'MODEL_INPUT_TOO_LARGE'],
+    ['EXTENSION_INFERENCE_STORAGE_FULL', 'MODEL_STORAGE_FULL'],
+    ['EXTENSION_INFERENCE_RESOURCE_EXHAUSTED', 'MODEL_RESOURCE_EXHAUSTED'],
     ['EXTENSION_INFERENCE_INPUT_UNSUPPORTED', 'MODEL_INPUT_UNSUPPORTED'],
     ['EXTENSION_INFERENCE_OUTPUT_INCOMPLETE', 'MODEL_STREAM_INCOMPLETE'],
   ])('preserves the actionable meaning of %s', (message, code) => {
     expect(normalizeModelRequestFailure(message).code).toBe(code)
+  })
+
+  it.each([
+    ['LAUNCH_QUOTA_EXCEEDED', 'launch', 'unknown', 'quota_exceeded', /quota/i],
+    ['LAUNCH_NO_SPACE', 'launch', 'unknown', 'no_space', /no space/i],
+    ['STORAGE_QUOTA_EXCEEDED', 'unknown', 'unknown', 'quota_exceeded', /quota/i],
+    ['STORAGE_NO_SPACE', 'unknown', 'unknown', 'no_space', /no space/i],
+    ['STORAGE_FULL', 'unknown', 'unknown', 'storage_full_or_quota_exceeded', /space or quota/i],
+  ] as const)('shares bounded facts for %s without guessing the write location', (suffix, stage, location, reason, summary) => {
+    const { code } = normalizeModelRequestFailure({ errorMessage: `EXTENSION_INFERENCE_${suffix}`, api: pluginChatApi })
+    const fact = modelFailureFeedback(code)
+    expect(fact).toEqual({ code: `MODEL_${suffix}`, stage, location, reason, summary: expect.stringMatching(summary) })
+    expect(fact?.summary).not.toContain('/cache/')
+  })
+
+  it.each(['LAUNCH_QUOTA_EXCEEDED', 'LAUNCH_NO_SPACE', 'STORAGE_QUOTA_EXCEEDED', 'STORAGE_NO_SPACE'])('does not promote %s from arbitrary provider text to a host fact', (suffix) => {
+    const errorMessage = `EXTENSION_INFERENCE_${suffix}`
+    expect(normalizeModelRequestFailure(errorMessage).code).toBe('MODEL_REQUEST_FAILED')
+    expect(normalizeModelRequestFailure({ errorMessage, api: 'openai-completions' }).code).toBe('MODEL_REQUEST_FAILED')
+  })
+
+  it('checks the recorded code and the complete bounded location, leaving legacy records untouched', () => {
+    const code = 'MODEL_LAUNCH_NO_SPACE'
+    const location = '<profile>/cache/extensions/fixture.local/launches'
+    const record = { version: 1, code, location }
+    expect(readModelLaunchFailure(code, record)).toEqual(record)
+    expect(readModelLaunchFailure('MODEL_LAUNCH_QUOTA_EXCEEDED', record)).toBeUndefined()
+    for (const invalid of [null, undefined, 'EXTENSION_INFERENCE_LAUNCH_NO_SPACE', { ...record, version: 2 }, { ...record, secret: '/private' }])
+      expect(readModelLaunchFailure(code, invalid)).toBeUndefined()
+    for (const path of ['/private/launches', `${location}\n`, location.replace('fixture.local', '../private'), location.replace('fixture.local', 'a.b'.padEnd(121, 'a'))])
+      expect(readModelLaunchFailure(code, { ...record, location: path })).toBeUndefined()
+  })
+
+  it('never accepts a claimed location from provider error text, another provider or mismatched diagnostics', () => {
+    const code = 'MODEL_LAUNCH_NO_SPACE'
+    const error = 'EXTENSION_INFERENCE_LAUNCH_NO_SPACE'
+    const location = '<profile>/cache/extensions/fixture.local/launches'
+    const claimed = JSON.stringify({ version: 1, code, location })
+    const diagnostic = { type: PLUGIN_LAUNCH_STORAGE_DIAGNOSTIC, timestamp: 1, details: { error, location } }
+    const plugin = { api: pluginChatApi, provider: 'plugin:fixture.local', diagnostics: [diagnostic] }
+    expect(normalizeModelRequestFailure({ ...plugin, errorMessage: claimed })).toEqual({ code: 'MODEL_REQUEST_FAILED' })
+    expect(normalizeModelRequestFailure({ ...plugin, api: 'openai-completions', errorMessage: claimed }).launchFailure).toBeUndefined()
+    expect(normalizeModelRequestFailure({ ...plugin, api: 'openai-completions', errorMessage: error }).launchFailure).toBeUndefined()
+    for (const details of [{ error, location: '/private/launches' }, { error, location: location.replace('fixture.local', 'another.model') }, { error: 'EXTENSION_INFERENCE_LAUNCH_QUOTA_EXCEEDED', location }])
+      expect(normalizeModelRequestFailure({ ...plugin, errorMessage: error, diagnostics: [{ ...diagnostic, details }] })).toEqual({ code, message: error })
+    expect(normalizeModelRequestFailure({ ...plugin, errorMessage: '/private/failure' })).toEqual({ code: 'MODEL_REQUEST_FAILED' })
+    expect(normalizeModelRequestFailure({ ...plugin, errorMessage: 'EXTENSION_INFERENCE_BACKEND_FAILED' })).toEqual({ code: 'MODEL_REQUEST_FAILED', message: 'EXTENSION_INFERENCE_BACKEND_FAILED' })
+  })
+
+  it('never derives AI feedback from provider text or unknown error identifiers', () => {
+    const { code } = normalizeModelRequestFailure('ENOSPC in /private/fixture')
+    expect(modelFailureFeedback(code)).toEqual({ code: 'MODEL_REQUEST_FAILED', stage: 'unknown', location: 'unknown', reason: 'unknown', summary: 'The model request failed. The cause is unknown.' })
+    for (const value of [undefined, null, '', '__proto__', 'constructor', '/private/fixture', 'MODEL_REQUEST_FAILED /private/fixture'])
+      expect(modelFailureFeedback(value)).toBeUndefined()
   })
 
   it.each([

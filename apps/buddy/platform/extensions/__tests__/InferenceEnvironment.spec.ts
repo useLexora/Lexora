@@ -22,7 +22,7 @@ async function fixture(permissions: { inference?: boolean, inferenceGpu?: boolea
     throw new Error('Not activated')
   }
   const service = new ExtensionService(store, {
-    inference: { hardware, executable: '', bootstrap: '', admit: async () => { throw new Error('Unexpected inference') } },
+    inference: { dataRoot: root, hardware, executable: '', bootstrap: '', admit: async () => { throw new Error('Unexpected inference') } },
     createHost: (_pkg, request) => {
       broker = request
       return { call: async () => null, dispose: async () => {}, devtools() {} }

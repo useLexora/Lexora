@@ -3,7 +3,7 @@ import type { NativeInferenceOptions } from '../../../apps/buddy/platform/extens
 import assert from 'node:assert/strict'
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ExtensionPackageStore } from '../../../apps/buddy/platform/extensions/ExtensionPackageStore'
@@ -11,12 +11,12 @@ import { NativeInferenceProcess } from '../../../apps/buddy/platform/extensions/
 import { inferenceBindingSchema, inferenceLimits } from '../../../apps/buddy/shared/extensions/extensionInference'
 import nativeEntry from './inference-smoke-native.mjs?raw'
 
-export async function checkInferenceSmoke(options: NativeInferenceOptions & { appVersion: string }): Promise<void> {
-  const root = await mkdtemp(join(tmpdir(), 'lexora-inference-smoke-'))
+export async function checkInferenceSmoke(options: Omit<NativeInferenceOptions, 'dataRoot'> & { appVersion: string }, profileParent = tmpdir()): Promise<void> {
+  const root = await mkdtemp(join(profileParent, 'lexora-inference-smoke-'))
   const signal = AbortSignal.timeout(15_000)
   const current = () => signal.throwIfAborted()
   const challenge = randomUUID()
-  const store = new ExtensionPackageStore(root, options.appVersion)
+  const store = new ExtensionPackageStore(join(root, 'buddy', 'extensions'), options.appVersion)
   const manifest = {
     schemaVersion: 1,
     id: 'smoke.inference',
@@ -34,6 +34,7 @@ export async function checkInferenceSmoke(options: NativeInferenceOptions & { ap
       },
     },
   }
+  const launches = join(root, 'cache', 'extensions', manifest.id, 'launches')
   const source: InferenceResourceSource = {
     response: async () => new Response(challenge),
     openReference: async () => { throw new Error('Smoke must not open external resources') },
@@ -55,7 +56,8 @@ export async function checkInferenceSmoke(options: NativeInferenceOptions & { ap
     }, source, signal, current)
     lease = await store.inference.acquire(manifest.id, resource, source, signal)
     const binding = inferenceBindingSchema.parse({ runtime: 'echo', resources: [{ mount: 'fixture', id: resource.id, revision: resource.revision }], configuration: { challenge } })
-    worker = await NativeInferenceProcess.start(options, store, pkg, pkg.manifest.contributes.inference!.runtimes[0]!, binding, [lease], signal)
+    worker = await NativeInferenceProcess.start({ ...options, dataRoot: root }, store, pkg, pkg.manifest.contributes.inference!.runtimes[0]!, binding, [lease], signal)
+    assert.equal((await readdir(launches, { withFileTypes: true })).filter(entry => entry.isDirectory()).length, 1)
     const chunks = [Buffer.from([0, 255, 13, 10, 128]), Buffer.from(`推理 ${challenge}`)]
     // Exercise large pipe writes without exceeding the concatenated echo frame or queue limits.
     const nearLimitChunk = Buffer.alloc(Math.min(inferenceLimits.chunkBytes, inferenceLimits.queuedBytes) - chunks.reduce((size, chunk) => size + chunk.length, 0))
@@ -74,6 +76,7 @@ export async function checkInferenceSmoke(options: NativeInferenceOptions & { ap
     assert.deepEqual(events, [{ data: { challenge, chunks: chunks.length }, bytes: Buffer.concat(chunks) }])
     await worker.stop()
     assert.equal(worker.stopped, true)
+    assert.deepEqual(await readdir(launches), [])
     await lease.release()
     lease = undefined
     await store.inference.remove(manifest.id, resource, current)

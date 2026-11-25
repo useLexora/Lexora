@@ -1,5 +1,6 @@
 import type { ContextPanelOperation } from '@buddy-shared/context-panel/contextPanel'
 import type { ExtensionActionTimelineItem } from '@buddy-shared/extensions/extensionActionApi'
+import type { ModelLaunchFailureRecord } from '@buddy-shared/providers/modelLaunchFailure'
 import type { LocalRun, LocalRunEvent } from '@buddy-shared/runs/runApi'
 import type { BuddyToolPresentation } from '@buddy-shared/runs/runEventPresentation'
 
@@ -11,6 +12,7 @@ import type { ChatAgentCompactionNode } from './chatRunCompaction'
 import type { ChatProjectionReducer } from './chatRunEventProjection'
 import { contextPanelOperationSchema } from '@buddy-shared/context-panel/contextPanel'
 import { approvalReviewPayloadSchema } from '@buddy-shared/permissions/approvalReviewPayload'
+import { readModelLaunchFailure } from '@buddy-shared/providers/modelLaunchFailure'
 import { buddyRunProgressSchema } from '@buddy-shared/runs/runProgress'
 import { toolExecutionTimingSchema } from '@buddy-shared/runs/toolExecutionPhase'
 import { isToolFailureCode } from '@buddy-shared/runs/toolFailure'
@@ -77,6 +79,7 @@ export interface ChatAgentTurn {
   completedAt: string | null
   failureCode?: string | null
   failureMessage?: string | null
+  launchFailure?: ModelLaunchFailureRecord
   finalMessageId: string | null
   nodes: ChatAgentTurnNode[]
   nodeStartedAt?: Readonly<Record<string, string>>
@@ -132,6 +135,7 @@ export function createChatAgentTurnReducer(
   const messageStartedAt = new Map<string, string>()
   const processMessageIds = new Set<string>()
   let failureMessage: string | null = null
+  let launchFailure: ModelLaunchFailureRecord | undefined
   let finalMessageId: string | null = null
   let progress: BuddyRunProgress | null = null
   let projection: ChatAgentTurn | null = null
@@ -177,6 +181,7 @@ export function createChatAgentTurnReducer(
     }
     if (event.type === 'run.failed') {
       failureMessage = readString(payload.errorMessage) || null
+      launchFailure = readModelLaunchFailure(payload.errorCode, payload.launchFailure)
       return
     }
     if (event.type === 'run.progress') {
@@ -536,7 +541,7 @@ export function createChatAgentTurnReducer(
       branchId: run.branchId,
       completedAt: run.completedAt,
       ...(run.status === 'failed'
-        ? { failureCode: run.errorCode, failureMessage }
+        ? { failureCode: run.errorCode, failureMessage, launchFailure }
         : {}),
       finalMessageId,
       nodes,

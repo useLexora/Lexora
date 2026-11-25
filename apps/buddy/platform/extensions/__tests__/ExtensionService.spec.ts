@@ -791,7 +791,7 @@ it('downloads files and saves standalone theme images using existing grants with
 
 async function inferenceResourceFixture(overrides: Partial<ExtensionServicePorts> = {}) {
   const f = await fixture({
-    inference: { sandbox: '', executable: '', bootstrap: '', admit: async () => async () => {} },
+    inference: { dataRoot: '', sandbox: '', executable: '', bootstrap: '', admit: async () => async () => {} },
     ...overrides,
   }, manifest({
     apiVersion: 4,
@@ -914,7 +914,7 @@ it.each(['ready', 'checksum'] as const)('delivers resource progress before %s se
 
 it('publishes deployment metadata without replacing the active model binding or rejecting its original invocation identity', async () => {
   vi.spyOn(inferencePlatform, 'supportsInferenceRuntime').mockReturnValue(true)
-  const f = await fixture({ inference: { bootstrap: '', executable: '', admit: async () => async () => {} } }, manifest({
+  const f = await fixture({ inference: { dataRoot: '', bootstrap: '', executable: '', admit: async () => async () => {} } }, manifest({
     id: 'fixture.inference',
     apiVersion: 3,
     permissions: { inference: true },

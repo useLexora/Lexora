@@ -1,9 +1,10 @@
 import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
 import inferenceBootstrap from 'virtual:extension-runtime/inference'
-import { describe, expect, it } from 'vitest'
-import { resolveBuddyProcessControl } from '../../../apps/buddy/platform/native/nativeHost.ts'
+import { describe, expect, it, vi } from 'vitest'
+import { resolveBuddyPrivateDirectories, resolveBuddyProcessControl } from '../../../apps/buddy/platform/native/nativeHost.ts'
 import { resolveInferenceEnvironment } from '../../../apps/buddy/shared/extensions/inferencePlatform.ts'
 import { runDesktopSmoke } from '../../../packaging/buddy/ci/run-gui-smoke.mjs'
 import { checkInferenceSmoke } from '../fixtures/inference-smoke.ts'
@@ -16,6 +17,7 @@ function inferenceOptions() {
   return {
     bootstrap: inferenceBootstrap,
     executable: require('electron'),
+    privateDirectoriesExecutable: resolveBuddyPrivateDirectories({ appPath, isPackaged: false, resourcesPath: appPath }),
     supervisor: resolveBuddyProcessControl({ appPath, isPackaged: false, resourcesPath: appPath }),
     sandbox: process.platform === 'linux' ? join(appPath, '.output/build/shell-sandbox/linux-x64/bwrap') : undefined,
     appVersion: require('./package.json').version,
@@ -24,7 +26,13 @@ function inferenceOptions() {
 
 describe.runIf(resolveInferenceEnvironment(process.platform, process.arch).platform !== null)('native inference smoke with source modules and prepared runtimes', () => {
   it('stages a plugin, handshakes with the native runtime, round-trips near-limit binary input and reclaims the process and resource lease', async () => {
-    await checkInferenceSmoke(inferenceOptions())
+    const profileParent = tmpdir()
+    if (process.platform === 'linux')
+      vi.stubEnv('TMPDIR', import.meta.filename)
+    try {
+      await checkInferenceSmoke(inferenceOptions(), profileParent)
+    }
+    finally { vi.unstubAllEnvs() }
   }, 30_000)
 
   it('rejects an embedded worker that exits before the handshake', async () => {

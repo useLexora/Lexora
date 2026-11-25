@@ -1,7 +1,9 @@
+import type { ApplicationDiagnostic } from '../../../../shared/diagnostics/applicationDiagnostic'
 import type { ExtensionModel } from '../../../../shared/extensions/extensionChat'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { expect, it, onTestFinished } from 'vitest'
+import { withExtensionLaunchStorage } from '../../../../platform/extensions/extensionLaunchStorage'
 import { inferenceHost, pngBytes, rpcPair } from '../../../../service/src/images/__tests__/pluginImageFixtures'
 import { extensionChatMaxBytes, extensionChatRpc } from '../../../../shared/extensions/extensionChat'
 import { inferenceLimits } from '../../../../shared/extensions/extensionInference'
@@ -68,6 +70,48 @@ it('refuses image requests when effective image support overrides the declared c
   const request = { model: target.id, tools: [], maxTokens: 512, messages: [{ role: 'user', content: [image()] }] }
   expect(await peers.service.request(extensionChatRpc.invoke, { id: randomUUID(), target, capabilities: { ...capabilities, image: false }, request }))
     .toEqual({ error: 'EXTENSION_INFERENCE_INPUT_UNSUPPORTED' })
+})
+
+it('correlates Host failures using only validated IDs and safe codes', async () => {
+  const peers = rpcPair()
+  const records: ApplicationDiagnostic[] = []
+  const request = { model: target.id, tools: [], maxTokens: 512, messages: [{ role: 'user', text: 'private-message' }] }
+  let failure = new Error('EXTENSION_INFERENCE_CUSTOM_SECRET')
+  onTestFinished(registerExtensionModelRpc(peers.host, () => inferenceHost(async () => {
+    throw failure
+  }), (event) => {
+    records.push(event)
+    throw new Error('recorder unavailable')
+  }))
+  const id = randomUUID()
+  const invoke = (id: string) => peers.service.request(extensionChatRpc.invoke, { id, target, capabilities, request })
+  expect(await invoke(id)).toEqual({ error: 'EXTENSION_INFERENCE_CUSTOM_SECRET' })
+  expect(records.map(event => [event.requestId, event.event, event.errorCode])).toEqual([
+    [id, 'inference.host.received', undefined],
+    [id, 'inference.host.dispatch.failed', 'EXTENSION_INFERENCE_BACKEND_FAILED'],
+  ])
+  for (const [nativeCode, reason] of [['EDQUOT', 'QUOTA_EXCEEDED'], ['ENOSPC', 'NO_SPACE']] as const) {
+    failure = Object.assign(new Error('/private/file?key=fixture-key'), { code: nativeCode })
+    const generic = `EXTENSION_INFERENCE_STORAGE_${reason}`
+    expect(await invoke(id)).toEqual({ error: generic })
+    expect(records.at(-1)?.errorCode).toBe(generic)
+
+    const native = failure
+    const location = `<profile>/cache/extensions/${target.extensionId}/launches`
+    failure = await withExtensionLaunchStorage(location, () => Promise.reject(native)).catch(error => error)
+    expect(failure.cause).toBe(native)
+    const launch = `EXTENSION_INFERENCE_LAUNCH_${reason}`
+    expect(await invoke(id)).toEqual({ error: launch, location })
+    expect(records.at(-1)?.errorCode).toBe(launch)
+
+    failure = Object.assign(new Error(launch), { location })
+    expect(await invoke(id)).toEqual({ error: 'EXTENSION_INFERENCE_BACKEND_FAILED' })
+    failure = await withExtensionLaunchStorage('/private/file', () => Promise.reject(native)).catch(error => error)
+    expect(await invoke(id)).toEqual({ error: launch })
+  }
+  expect(await invoke('/private/id')).toEqual({ error: 'EXTENSION_INFERENCE_BACKEND_FAILED' })
+  expect(records.at(-1)).toMatchObject({ event: 'inference.host.validate.failed', requestId: undefined })
+  expect(JSON.stringify(records)).not.toMatch(/private|fixture-key|CUSTOM_SECRET/)
 })
 
 it('enforces the existing aggregate request budget before invoking the native backend', async () => {
