@@ -13,6 +13,7 @@ import { networkStartupFailureSchema } from './networkStartupFailure'
 import { cpuProfileSummarySchema, performanceSampleSchema } from './performanceDiagnostic'
 import { privateDirectoryFailureSchema } from './privateDirectoryFailure'
 import { providerRequestDiagnosticSchema } from './providerRequestDiagnostic'
+import { storageHistoryFailureSchema } from './storageHistoryFailure'
 
 export const APPLICATION_DIAGNOSTIC_METHOD = 'application.diagnostic'
 export const diagnosticIdentitySchema = z.string().regex(/^\w[\w:.-]{0,191}$/)
@@ -50,7 +51,7 @@ export const applicationDiagnosticSchema = z.object({
   durationMs: z.number().finite().nonnegative().optional(),
   errorCode: diagnosticCodeSchema.optional(),
   errorType: z.string().regex(/^[a-z]\w{0,95}$/i).optional(),
-  failure: z.union([privateDirectoryFailureSchema, desktopBootstrapFailureSchema, networkStartupFailureSchema, credentialVaultFailureSchema]).optional(),
+  failure: z.union([privateDirectoryFailureSchema, desktopBootstrapFailureSchema, networkStartupFailureSchema, credentialVaultFailureSchema, storageHistoryFailureSchema]).optional(),
   providerRequest: providerRequestDiagnosticSchema.optional(),
   inference: inferenceDiagnosticSchema.optional(),
   imageGeneration: imageGenerationDiagnosticSchema.optional(),

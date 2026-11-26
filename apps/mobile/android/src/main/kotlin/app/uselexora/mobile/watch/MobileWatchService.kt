@@ -11,7 +11,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import app.uselexora.mobile.MainActivity
+import app.uselexora.mobile.ui.MainActivity
 import app.uselexora.mobile.R
 import app.uselexora.mobile.i18n.mobileText
 import app.uselexora.mobile.notifications.MobileNotifier

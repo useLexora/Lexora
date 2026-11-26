@@ -1,4 +1,3 @@
-import type { DiagnosticError } from '../../../shared/diagnostics/applicationDiagnostic'
 import type { StorageProgress } from '../../../shared/storage/storageApi'
 import type { DesktopDiagnosticEvent, DesktopDiagnosticLogger } from '../desktopDiagnostics'
 import type { DesktopStorage } from './storageBootstrap'
@@ -100,7 +99,7 @@ export async function showStorageMigration(storage: DesktopStorage, diagnostics:
     worker = new Worker(new URL('./storage-worker.js', import.meta.url), { workerData: { locationPath: storage.store.path, defaultRoot: storage.store.defaultRoot, legacySources: storage.legacySources, leaseDirectory: storage.leaseDirectory, privateDirectoriesExecutable: storage.privateDirectoriesExecutable } })
     starting = false
     let settled = false
-    worker.on('message', (message: { progress?: StorageProgress, done?: boolean, failure?: DiagnosticError }) => {
+    worker.on('message', (message: { progress?: StorageProgress, done?: boolean, failure?: Pick<DesktopDiagnosticEvent, 'errorCode' | 'errorType' | 'failure'> }) => {
       if (message.progress)
         void render(message.progress)
       if (message.done === undefined)

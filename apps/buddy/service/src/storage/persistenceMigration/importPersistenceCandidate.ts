@@ -85,7 +85,7 @@ async function importCandidate(input: PersistenceCandidateInput): Promise<{ prof
         runId: run.id,
         content: journal && (references.inPlace ? journal.content : mapEventContent(journal.content, manifest.sourceRoot, profileRoot)),
         sourceFingerprint: journal?.digest ?? 'missing',
-        ...checkpointEvidence(checkpoints.get(run.id), journal?.identity),
+        evidence: checkpointEvidence(checkpoints.get(run.id), journal?.identity),
       })
       await input.checkpoint?.('run')
     }

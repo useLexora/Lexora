@@ -3,11 +3,12 @@ import process from 'node:process'
 import { writeServiceStderr } from './writeServiceStderr'
 
 async function main() {
-  if (process.argv[2] === '--verify-install') {
+  if (process.argv[2] === '--verify-install' || process.argv[2]?.startsWith('--verify-install=')) {
     if (process.argv.length !== 3)
       throw new Error('SERVICE_INSTALL_ARGUMENTS_INVALID')
+    const full = process.argv[2] === '--verify-install=full'
     const { verifyInstalledRelease } = await import('./validateServiceRelease')
-    process.stdout.write(`${await verifyInstalledRelease()}\n`)
+    process.stdout.write(`${await verifyInstalledRelease({ inventory: full })}\n`)
     return
   }
   if (process.argv[2] === '--config' && process.argv.length !== 4)

@@ -10,9 +10,12 @@ import { assertStorageIdentity, STORAGE_IDENTITY_FILE, StorageLocationStore } fr
 import { ownedStorageStage, prepareStorageStage, restoreCredentialStage } from '../../../platform/storage/storageOperationFiles'
 import { acquireStorageRootLease } from '../../../platform/storage/StorageRootLease'
 import { copyStorageTree, planStorageCopy, syncStorageDirectories } from '../../../platform/storage/storageTree'
+import { readDiagnosticError } from '../../../shared/diagnostics/applicationDiagnostic'
+import { storageHistoryFailureSchema } from '../../../shared/diagnostics/storageHistoryFailure'
 import { storageIdentitySchema } from '../../../shared/storage/storageApi'
 import { commitBackupRestore, prepareRestoreCommit, restoreRetained, restoreStage } from './commitBackupRestore'
 import { activatePersistenceCandidate } from './persistenceMigration/activatePersistenceCandidate'
+import { PersistenceMigrationError } from './persistenceMigration/legacyRunHistory'
 import { relocateDatabaseReferences, relocateProfileJournals, relocateStructuredPaths, verifyProfileReferences } from './relocateProfileReferences'
 import { prepareBackupRestore } from './restoreBackup'
 import { rewriteIsolatedSnapshotDatabase } from './snapshotDatabase'
@@ -28,6 +31,17 @@ export interface StorageMigrationInput {
   privateDirectoriesExecutable?: string
   legacySources: LegacyStorageSource[]
 }
+
+export function readStorageMigrationDiagnostic(error: unknown) {
+  const cause = error instanceof Error ? error.cause : undefined
+  if (cause instanceof PersistenceMigrationError) {
+    const failure = storageHistoryFailureSchema.safeParse(cause.failure)
+    if (failure.success)
+      return { errorCode: cause.code, errorType: cause.name, failure: failure.data }
+  }
+  return readDiagnosticError(error)
+}
+
 export async function runStorageMigration(input: StorageMigrationInput, signal: AbortSignal, report: StorageReporter): Promise<void> {
   const store = new StorageLocationStore(input.locationPath, input.defaultRoot)
   const state = await store.read()
