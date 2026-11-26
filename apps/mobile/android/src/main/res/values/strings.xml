@@ -22,7 +22,7 @@
     <string name="file_copy_available">Verified phone copy · available offline</string>
     <string name="error_local_copy_unavailable">No verified copy of this file version is available on this phone. Connect to the original service to download it.</string>
     <string name="error_source_changed">The original task, branch or operation source has changed. Return to that source and review it again; your input is retained and will not be redirected automatically.</string>
-    <string name="mobile_queue_controls_upgrade">This service version only supports removal. Update the service to resume or supplement a run.</string>
+    <string name="mobile_queue_controls_upgrade">This service version only supports removing queued input. Update the service to resume or supplement a run.</string>
     <string name="mobile_queue_controls_refresh">The queue or run has changed. Refresh before choosing an action.</string>
     <string name="mobile_queue_delivery_current">Delivery: current run</string>
     <string name="mobile_queue_delivery_next">Delivery: next run</string>
@@ -69,10 +69,10 @@
     <string name="mobile_current_partner">Current lead</string>
     <string name="mobile_make_lead">Use as lead</string>
     <string name="mobile_add_partner">Add partner</string>
-    <string name="mobile_remove_partner">Remove member</string>
-    <string name="mobile_partner_disabled">Unavailable for new work</string>
-    <string name="mobile_partner_scope">Changes affect future input only, not past authors or accepted work.</string>
-    <string name="mobile_remove_partner_confirm">Remove this partner from the task? Existing history and accepted work are kept.</string>
+    <string name="mobile_remove_partner">Remove partner</string>
+    <string name="mobile_partner_disabled">Unavailable for new runs</string>
+    <string name="mobile_partner_scope">Changes affect future input only, not past authors or accepted runs.</string>
+    <string name="mobile_remove_partner_confirm">Remove this partner from the task? Existing history and accepted runs are kept.</string>
     <string name="mobile_pairing_title">Connect to a service</string>
     <string name="mobile_pairing_wait">Verifying the service identity and establishing a secure connection…</string>
     <string name="mobile_pairing_sync">Paired. Connecting and loading task information…</string>
@@ -154,7 +154,7 @@
     <string name="label_reasoning_effort">Reasoning effort</string>
     <string name="label_reconnect">Reconnect</string>
     <string name="label_my_services">My services</string>
-    <string name="label_permissions">Permissions</string>
+    <string name="label_permissions">Execution mode</string>
     <string name="label_scan_a_qr_code_to_connect_to_lexora">Scan a QR code to connect to Lexora</string>
     <string name="label_scan_to_add_service">Scan to add service</string>
     <string name="label_scan_to_connect">Scan to connect</string>
@@ -183,10 +183,10 @@
     <string name="label_unread">Unread</string>
     <string name="label_unread_tasks">Unread tasks</string>
     <string name="label_disconnected">Disconnected</string>
-    <string name="label_local_drafts">Local drafts</string>
+    <string name="label_local_drafts">Local inputs</string>
     <string name="label_read_only">Read only</string>
     <string name="label_the_reply_did_not_complete_try_another_model_and_resend">The reply did not complete. Try another model and resend.</string>
-    <string name="label_permissions_alternate">Permissions</string>
+    <string name="label_permissions_alternate">Execution mode</string>
     <string name="label_view">View</string>
     <string name="label_view_result">View result</string>
     <string name="label_view_history">View history</string>
@@ -229,7 +229,7 @@
     <string name="label_run_details">Run details</string>
     <string name="label_back">Back</string>
     <string name="label_back_to_task_settings">Back to task settings</string>
-    <string name="label_back_to_chat">Back to chat</string>
+    <string name="label_back_to_chat">Back to task</string>
     <string name="label_no_tasks_in_this_space_yet">No tasks in this space yet</string>
     <string name="label_progress_history">Progress &amp; history</string>
     <string name="label_in_progress">In progress</string>
@@ -343,7 +343,7 @@
     <string name="review_turn">Allow for this turn</string>
     <string name="review_deny">Deny</string>
     <string name="back_task_settings">Back to task settings</string>
-    <string name="back_conversation">Back to conversation</string>
+    <string name="back_conversation">Back to task</string>
     <string name="confirm_question">%1$s has a question</string>
     <string name="question_later">Answer later</string>
     <string name="question_submit">Submit answers</string>
@@ -411,7 +411,7 @@
     <string name="review_browser_interaction">Browser interaction</string>
     <string name="review_mcp_call">MCP call</string>
     <string name="permissions_not_selected">Not selected</string>
-    <string name="choose_task_permissions">Choose task permissions</string>
+    <string name="choose_task_permissions">Choose execution mode</string>
     <string name="new_task_defaults_retry">Could not read new task settings. Tap to retry.</string>
     <string name="execution_inherited">Keep service permissions</string>
     <string name="models_load_failed">Models could not load. Tap to retry.</string>
@@ -425,7 +425,7 @@
     <string name="local_files_storage">Local files and storage</string>
     <string name="more_options">More options</string>
     <string name="mobile_reading_previous_window">History was refreshed. You’re reading the previous view; return to the latest messages to load more.</string>
-    <string name="mobile_offline_conversation_snapshot">Offline · showing the last synced conversation</string>
+    <string name="mobile_offline_conversation_snapshot">Offline · showing the last synced task</string>
     <string name="send_offline">Offline. Connect to send.</string>
     <string name="send_review_text">This text was already sent. Send it again?</string>
     <string name="send_queue_accepted">Input accepted into the task queue.</string>
@@ -434,17 +434,17 @@
     <string name="send_again">Send again</string>
     <string name="send_review_missing">Check the original task to avoid submitting twice. Returning to the editor won\'t send anything.</string>
     <string name="send_check_status">Check status</string>
-    <string name="send_not_received">The computer did not receive this input. You can send it again.</string>
+    <string name="send_not_received">The service did not receive this input. You can send it again.</string>
     <string name="send_check_original">The result is unknown. Check the original task first.</string>
-    <string name="error_command_result_unknown">Waiting for confirmation from the computer.</string>
+    <string name="error_command_result_unknown">Waiting for confirmation from the service.</string>
     <string name="error_data_generation_changed">Service data has changed. Your input is retained; pair again.</string>
     <string name="service_reconnecting">Reconnecting</string>
     <string name="service_offline">Offline</string>
     <string name="service_restored">Connection restored</string>
-    <string name="mobile_task_update_failed">Task update failed</string>
+    <string name="mobile_task_update_failed">Task sync failed</string>
     <string name="mobile_previously_synced_tasks">Previously synced tasks</string>
     <string name="mobile_connect_to_view_tasks">Connect to view tasks</string>
-    <string name="mobile_connect_to_view_conversation">Connect to view this conversation</string>
+    <string name="mobile_connect_to_view_conversation">Connect to view this task</string>
     <string name="error_not_connected">No service connected</string>
     <string name="error_invalid_endpoint">Enter a valid HTTPS service address and port.</string>
     <string name="error_invalid_pairing_code">This QR code does not contain valid Lexora pairing information.</string>
@@ -457,7 +457,7 @@
     <string name="error_question_not_found">The question source has changed. Open the original task again.</string>
     <string name="error_question_answer_invalid">The answer is incomplete or options have changed. Open the question again.</string>
     <string name="error_queue_changed">The queue has changed. Open it again; the original action will not target another run.</string>
-    <string name="error_input_delivery_target_unavailable">The original run cannot receive this input. Your draft is retained; choose another action.</string>
+    <string name="error_input_delivery_target_unavailable">The original run cannot receive this input. Your input is retained; choose another action.</string>
     <string name="error_service_instance_changed">The service restarted. Review the original task and confirm your action again; it will not resend automatically.</string>
     <string name="error_local_draft_dirty">Newer changes are saved on this phone. Continue editing from drafts.</string>
     <string name="error_draft_conflict">The task settings or input version has changed. Reload the latest version and review it before trying again; your local input is retained.</string>
@@ -487,7 +487,7 @@
     <string name="mobile_network_permission">Network permission</string>
     <string name="mobile_unrecognized_field">Unrecognized field: %1$s</string>
     <string name="mobile_this_content_is_long_preview_save_or_share_it">This content is long. Preview, save or share it as a file.</string>
-    <string name="mobile_this_content_cannot_be_displayed_in_the_conversation_open">This content cannot be displayed in the conversation. Open or save the file instead.</string>
+    <string name="mobile_this_content_cannot_be_displayed_in_the_conversation_open">This content cannot be displayed in the task. Open or save the file instead.</string>
     <string name="mobile_read_content">Read content</string>
     <string name="mobile_write_files">Write files</string>
     <string name="mobile_edit_files">Edit files</string>
@@ -565,7 +565,7 @@
     <string name="mobile_help_me_review_the_mobile_redesign_especially_service_switching">Help me review the mobile redesign, especially service switching and task controls.</string>
     <string name="mobile_i_will_review_tasks_services_and_input_then_suggest">I will review tasks, services and input, then suggest specific improvements.</string>
     <string name="mobile_checked_the_task_page_and_service_list">Checked the task page and service list</string>
-    <string name="mobile_keep_common_actions_close_the_task_list_highlights_progress">Keep common actions close\n\nThe task list highlights progress, with service switching at the top. Conversations have room for reading.\n\nDrafts stay on the phone\n\nInputs are saved separately for each service and task. Switching services never moves your text to another service.\n\nExpand tool calls for details. Approvals are handled separately.</string>
+    <string name="mobile_keep_common_actions_close_the_task_list_highlights_progress">Keep common actions close\n\nThe task list highlights progress, with service switching at the top. Tasks have room for reading.\n\nInputs stay on the phone\n\nInputs are saved separately for each service and task. Switching services never moves your text to another service.\n\nExpand tool calls for details. Approvals are handled separately.</string>
     <string name="mobile_saved_on_phone">Saved on phone</string>
     <string name="mobile_save_failed_keep_this_input_open">Save failed. Keep this input open.</string>
     <string name="mobile_opening_draft">Opening draft…</string>
@@ -574,11 +574,11 @@
     <string name="mobile_editing_previous_input_sending_creates_a_new_branch">Editing previous input. Sending creates a new branch.</string>
     <string name="mobile_could_not_open_the_draft_please_retry">Could not open the draft. Please retry.</string>
     <string name="mobile_input_is_being_restored_or_requires_desktop_editing_the">Input is being restored or requires desktop editing. The original is retained.</string>
-    <string name="mobile_demo_accepted_no_service_task_will_run">Demo accepted. No service task will run.</string>
+    <string name="mobile_demo_accepted_no_service_task_will_run">Demo accepted. The service will not run a task.</string>
     <string name="mobile_added_to_the_send_queue">Added to the send queue</string>
     <string name="mobile_choose_an_existing_service_space">Choose an existing service space</string>
     <string name="mobile_the_service_restarted_and_has_no_receipt_for_this">The service restarted and has no receipt for this operation. Review the original task before confirming again. The previous operation will not be resent automatically.</string>
-    <string name="mobile_the_service_received_this_operation_open_the_task_to">The service received this operation. Open the task to check its progress.</string>
+    <string name="mobile_the_service_received_this_operation_open_the_task_to">The service received this operation. Check the progress inside the task.</string>
     <string name="mobile_this_operation_was_not_executed_your_input_is_retained">This operation was not executed. Your input is retained. Check the current task before retrying.</string>
     <string name="mobile_the_service_has_not_found_this_operation_retrying_checks">The service has not found this operation. Retrying checks the original operation without creating a duplicate task.</string>
     <string name="mobile_reload_approval">Reload approval</string>
@@ -615,14 +615,14 @@
     <string name="mobile_unpair_from_this_service">Unpair from this service</string>
     <string name="mobile_revoke_access_and_unpair">Revoke access and unpair?</string>
     <string name="mobile_remove_phone_connection_2">Remove phone connection?</string>
-    <string name="mobile_this_revokes_this_phone_s_access_to_the_service">This revokes this phone\'s access to the service. Local drafts and downloaded files are kept. Scan a QR code to connect again.</string>
+    <string name="mobile_this_revokes_this_phone_s_access_to_the_service">This revokes this phone\'s access to the service. Local inputs and downloaded files are kept. Scan a QR code to connect again.</string>
     <string name="mobile_this_deletes_the_local_connection_credentials_and_keeps_local">This deletes the local connection credentials and keeps local drafts and downloaded files. Service access is not revoked; remove it in the service\'s device settings.</string>
     <string name="mobile_revoke_and_unpair">Revoke and unpair</string>
     <string name="mobile_remove_connection">Remove connection</string>
     <string name="mobile_revoking_service_access">Revoking service access…</string>
     <string name="mobile_removing_phone_connection">Removing phone connection…</string>
     <string name="mobile_no_service_connected_scan_a_qr_code_to_connect">No service connected. Scan a QR code to connect.</string>
-    <string name="mobile_service_access_revoked_local_inputs_remain_available_in_draft">Service access revoked. Unsent input stays on this phone.</string>
+    <string name="mobile_service_access_revoked_local_inputs_remain_available_in_draft">Service access revoked. Local input stays on this phone.</string>
     <string name="mobile_phone_connection_removed_service_access_revocation_is_unconfirmed">Phone connection removed. Service access revocation is unconfirmed.</string>
     <string name="mobile_review_operation">Review operation</string>
     <string name="mobile_source_demo_task_operation_read_an_authorized_directory_scope">Source: Demo task\nOperation: Read an authorized directory\nScope: This run\nThis is a local test card and does not approve service operations.</string>
@@ -657,7 +657,7 @@
     <string name="mobile_upload_pending">Upload pending</string>
     <string name="mobile_attachment_ready">Attachment ready</string>
     <string name="mobile_submitted">Submitted</string>
-    <string name="mobile_cancelled">Cancelled</string>
+    <string name="mobile_cancelled">Stopped</string>
     <string name="mobile_unconfirmed">Unconfirmed</string>
     <string name="mobile_this_file_still_belongs_to_the_draft_selected_when">This file still belongs to the draft selected when it was added. Resuming the upload does not change its destination.</string>
     <string name="mobile_continue_adding_photo">Continue adding photo</string>
@@ -677,7 +677,7 @@
     <string name="mobile_upload_incomplete">Upload incomplete</string>
     <string name="mobile_this_file_is_saved_on_the_phone_and_will">This file is saved on the phone and will be attached to the original input when uploading finishes.</string>
     <string name="mobile_removed_from_input_the_phone_file_is_retained">Removed from input. The phone file is retained.</string>
-    <string name="mobile_attachment_operations_remain_unconfirmed_check_send_history_before_retrying">Waiting for the computer to confirm the attachment change.</string>
+    <string name="mobile_attachment_operations_remain_unconfirmed_check_send_history_before_retrying">Waiting for the service to confirm the attachment change.</string>
     <string name="mobile_no_attachments_in_the_current_input">No attachments in the current input</string>
     <string name="mobile_current_input_attachments">Current input attachments</string>
     <string name="mobile_no_file_saver_available_the_phone_copy_is_retained">No file saver available. The phone copy is retained.</string>
@@ -727,8 +727,8 @@
     <string name="mobile_size_pending">Size pending</string>
     <string name="mobile_temporarily_unavailable">Temporarily unavailable</string>
     <string name="mobile_file_prepared_when_opened">File prepared when opened</string>
-    <string name="mobile_execution_history_is_too_long_to_load_completely">Execution history is too long to load completely</string>
-    <string name="mobile_execution_history_unavailable_tap_to_retry">Execution history unavailable. Tap to retry.</string>
+    <string name="mobile_execution_history_is_too_long_to_load_completely">Execution details are too long to load completely</string>
+    <string name="mobile_execution_history_unavailable_tap_to_retry">Execution details are unavailable. Tap to retry.</string>
     <string name="mobile_showing_phone_content_updating">Showing phone content. Updating…</string>
     <string name="mobile_task_options">Task options</string>
     <plurals name="mobile_runs">
@@ -764,7 +764,7 @@
         <item quantity="one">%1$d operation result awaiting confirmation</item>
         <item quantity="other">%1$d operation results awaiting confirmation</item>
     </plurals>
-    <string name="mobile_connect_to_follow_task_progress_handle_confirmations_or_start">Connect to follow task progress, handle confirmations or start a task.</string>
+    <string name="mobile_connect_to_follow_task_progress_handle_confirmations_or_start">Connect to follow task progress, handle approvals or start a task.</string>
     <string name="mobile_open_a_previously_connected_service_to_view_tasks_and">Open a previously connected service to view tasks and spaces.</string>
     <string name="mobile_tasks_and_spaces_will_appear_when_the_connection_is">Tasks and spaces will appear when the connection is restored.</string>
     <string name="mobile_still_connected_retry_loading_tasks">Still connected. Retry loading tasks.</string>
@@ -818,7 +818,7 @@
     <string name="mobile_a_new_reply_will_be_generated_from_this_run">A new reply will be generated from this run\'s original input.</string>
     <string name="mobile_running_2">Running</string>
     <string name="mobile_completed">Completed</string>
-    <string name="mobile_execution_failed">Execution failed</string>
+    <string name="mobile_execution_failed">Run failed</string>
     <string name="mobile_unknown_status">Unknown status</string>
     <string name="mobile_this_task_has_unread_results">This task has unread results</string>
     <string name="mobile_this_task_has_been_read">This task has been read</string>
@@ -826,8 +826,8 @@
     <string name="mobile_mark_as_unread">Mark as unread</string>
     <string name="mobile_supplement_request_accepted">Supplement request accepted</string>
     <string name="mobile_the_supplement_request_for_this_run_was_recorded_check">The supplement request for this run was recorded. Check the task output for the result.</string>
-    <string name="mobile_conversation_display_unavailable_tap_to_retry">Conversation display unavailable. Tap to retry.</string>
-    <string name="mobile_opening_conversation">Opening conversation…</string>
+    <string name="mobile_conversation_display_unavailable_tap_to_retry">Task display unavailable. Tap to retry.</string>
+    <string name="mobile_opening_conversation">Opening task…</string>
     <string name="mobile_could_not_open_link">Could not open link</string>
     <string name="language_english" translatable="false">English</string>
     <plurals name="approval_tasks">
@@ -847,7 +847,7 @@
         <item quantity="other">%1$d marked tasks</item>
     </plurals>
     <string name="fast_mode" translatable="false">Fast</string>
-    <string name="permissions_summary">Permissions: %1$s</string>
+    <string name="permissions_summary">Execution mode: %1$s</string>
     <string name="mobile_about_lexora">About Lexora</string>
     <string name="mobile_about_tagline">Your ideas, put into action.</string>
     <string name="mobile_about_version">Version %1$s</string>
