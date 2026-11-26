@@ -654,12 +654,7 @@ private fun taskTime(task: JSONObject): String? {
 private fun modelLabel(state: MobileUiState) = state.modelLabel.takeUnless { it.isBlank() || it == mobileText(R.string.label_choose_model) } ?: mobileText(R.string.label_choose_model)
 internal fun activeRuns(state: MobileUiState) = state.runs.filter { it.optString("executionKind") != "maintenance" && it.optString("status") in setOf("queued", "running") }.sortedByDescending { it.optString("startedAt") }
 private fun runStartedLabel(run: JSONObject): String? {
-    val value = run.opt("startedAt")
-    val time = when (value) {
-        is Number -> value.toLong()
-        is String -> runCatching { Instant.parse(value).toEpochMilli() }.getOrNull()
-        else -> null
-    } ?: return null
+    val time = startedAtMillis(run.opt("startedAt")) ?: return null
     return mobileText(R.string.mobile_started, java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT, MobileStrings.locale).format(java.util.Date(time)))
 }
 
