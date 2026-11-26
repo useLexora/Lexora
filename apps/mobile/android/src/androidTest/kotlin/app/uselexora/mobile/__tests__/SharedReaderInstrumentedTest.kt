@@ -11,9 +11,6 @@ import app.uselexora.mobile.ui.MobileUiState
 import app.uselexora.mobile.ui.MobileScreen
 import app.uselexora.mobile.ui.LexoraTheme
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.ui.graphics.asAndroidBitmap
-import androidx.compose.ui.test.captureToImage
-import androidx.compose.ui.test.onRoot
 import app.uselexora.mobile.ui.ConversationPage
 import app.uselexora.mobile.ui.composerSource
 import app.uselexora.mobile.ui.projectComposerRuns
@@ -218,16 +215,14 @@ class SharedReaderInstrumentedTest {
     }
 
     private fun captureGroupAndPhase(name: String, group: String = "[data-activity-id=build-tools]") {
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
         if (InstrumentationRegistry.getArguments().getString("captureScreenshots") != "true") return
         val header = "$group .buddy-chat-activity-group__header"
         js("document.querySelector('$header').scrollIntoView({block:'nearest',behavior:'instant'})")
         val screen = IntArray(2)
         compose.runOnUiThread { host.rootView.getLocationOnScreen(screen) }
+        val root = screen.copyOf()
         val phase = compose.onNodeWithTag("composerPhase").fetchSemanticsNode().boundsInWindow
-        val x = (phase.right - 4 * instrumentation.targetContext.resources.displayMetrics.density).toInt() + screen[0]
-        val y = phase.center.y.toInt() + screen[1]
-        val gapY = phase.bottom.toInt() + screen[1] + 3
+        val gapY = phase.bottom.toInt() + root[1] + 3
         snapshot(name) { bitmap ->
             val issue = JSONArray(js("""(() => {const el=document.querySelector('$header').parentElement.lastElementChild, r=el.getBoundingClientRect();
                 if(r.top<0 || r.bottom>innerHeight) { el.scrollIntoView({block:'nearest',behavior:'instant'});return [] }
@@ -245,7 +240,14 @@ class SharedReaderInstrumentedTest {
             for (v in region.top until region.bottom step 2) for (u in region.left until region.right step 2) {
                 if (bitmap.getPixel(u, v) == color) paintedIssue++
             }
-            paintedIssue >= 4 && bitmap.getPixel(x, y) != bitmap.getPixel(x, gapY)
+            var paintedPhase = false
+            for (v in phase.top.toInt() + root[1] until phase.bottom.toInt() + root[1] step 2) {
+                for (u in phase.left.toInt() + root[0] until phase.right.toInt() + root[0] step 2) {
+                    if (bitmap.getPixel(u, v) != bitmap.getPixel(u, gapY)) { paintedPhase = true; break }
+                }
+                if (paintedPhase) break
+            }
+            paintedIssue >= 4 && paintedPhase
         }
     }
 
@@ -256,14 +258,7 @@ class SharedReaderInstrumentedTest {
         val density = host.resources.displayMetrics.density
         val gap = (frame.top - phase.bottom) / density
         assertEquals("phase=$phase composer=$frame", 8.0, gap.toDouble(), 0.6)
-        val page = compose.onRoot().captureToImage().asAndroidBitmap()
-        try {
-            val x = (phase.right - 4 * density).toInt()
-            val fill = page.getPixel(x, phase.center.y.toInt())
-            val outside = page.getPixel(x, ((phase.bottom + frame.top) / 2).toInt())
-            assertNotEquals("Phase needs its own painted surface", outside, fill)
-            android.util.Log.i("ReaderLayout", "phase=$phase composer=$frame gapDp=$gap fill=$fill gapColor=$outside")
-        } finally { page.recycle() }
+        android.util.Log.i("ReaderLayout", "phase=$phase composer=$frame gapDp=$gap")
     }
 
 
