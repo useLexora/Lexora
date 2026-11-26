@@ -166,9 +166,11 @@ private fun rememberActivityNow(startedAt: Long?): Long {
 @Composable
 private fun ComposerPhaseGlyph(active: Boolean, color: Color) {
     Crossfade(targetState = active, modifier = Modifier.size(15.dp), animationSpec = tween(180),
-        label = "composer-phase-glyph", contentAlignment = Alignment.Center) { running ->
-        if (running) AnimatedOrbitGlyph(color, Modifier.fillMaxSize())
-        else Icon(Icons.Outlined.Schedule, null, Modifier.size(14.dp), tint = color)
+        label = "composer-phase-glyph") { running ->
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            if (running) AnimatedOrbitGlyph(color, Modifier.fillMaxSize())
+            else Icon(Icons.Outlined.Schedule, null, Modifier.size(14.dp), tint = color)
+        }
     }
 }
 

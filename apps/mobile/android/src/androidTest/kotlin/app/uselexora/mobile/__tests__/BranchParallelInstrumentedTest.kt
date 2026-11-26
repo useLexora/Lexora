@@ -88,17 +88,26 @@ class BranchParallelInstrumentedTest {
                     return (0 until values.length()).map { values.getJSONObject(it) }
                 }
                 fun run(id: String) = client.call("runs.get", JSONObject().put("runId", id))
-                ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java)).use { scenario ->
+                val title = config.getString("title")
+                val baselineA = "Parallel baseline A $token"
+                val baselineB = "Parallel baseline B $token"
+                val launch = Intent(context, MainActivity::class.java)
+                ActivityScenario.launch<MainActivity>(launch).use { scenario ->
                     MobileUiTestDriver.awaitConnected()
-                    MobileUiTestDriver.openTask(config.getString("title"))
+                    MobileUiTestDriver.openTask(title)
+                    MobileUiTestDriver.selectBranch(scenario, baselineA, BranchStep.Next, baselineB, "")
+                }
+                ActivityScenario.launch<MainActivity>(launch).use { scenario ->
+                    MobileUiTestDriver.awaitConnected()
+                    MobileUiTestDriver.openTask(title)
+                    waitUntil { MobileUiTestDriver.contains(baselineB) }
+                    MobileUiTestDriver.selectBranch(scenario, baselineB, BranchStep.Previous, baselineA, "")
                     fun input(): String { var value = ""; scenario.onActivity { value = it.findViewById<EditText>(MainActivity.INPUT_ID)?.text?.toString().orEmpty() }; return value }
                     fun write(text: String, branch: String? = null) {
                         waitUntil { node { it.isVisibleToUser && it.isEnabled && it.className?.toString() == "android.widget.EditText" } != null }
                         scenario.onActivity { it.findViewById<EditText>(MainActivity.INPUT_ID).setText(text) }
                         waitUntil { input() == text && (branch == null || draft(branch) == text) }
                     }
-                    val baselineA = "Parallel baseline A $token"
-                    val baselineB = "Parallel baseline B $token"
                     fun select(from: String, step: BranchStep, to: String, draft: String) {
                         MobileUiTestDriver.selectBranch(scenario, from, step, to, draft)
                         assertEquals(0, store.outbox(identity.partition).count { it.method == "conversations.activateBranch" })

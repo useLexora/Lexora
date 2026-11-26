@@ -1009,19 +1009,22 @@ class MainActivity : ComponentActivity() {
         }
     }
     private fun loadBranches() {
-        val task = selectedTask ?: return
+        val target = conversationTarget ?: return
+        val task = selectedTask?.takeIf { it.getString("id") == target.conversationId } ?: return
         val current = client?.takeIf { it.isConnected } ?: return
-        val owner = partition; val topic = activeTopic
+        val owner = partition; val visit = navigation
         work {
-            val branches = readBranches(current, task.getString("id"))
-            readModel.rememberBranches(owner, task.getString("id"), branches)
-            onUi { if (client === current && partition == owner && activeTopic == topic) {
+            val branches = readBranches(current, target.conversationId)
+            readModel.rememberBranches(owner, target.conversationId, branches)
+            onUi {
+                if (client !== current || partition != owner || navigation != visit || conversationTarget != target) return@onUi
                 ui.branches = branches
-                if (branches.isNotEmpty() && branches.none { it.optString("id") == conversationTarget?.branchId }) {
-                    val fallback = branches.firstOrNull { it.optString("id") == taskItems.firstOrNull { value -> value.optString("id") == task.getString("id") }?.optString("activeBranchId") } ?: branches.first()
-                    showTask(task, branches, ConversationTarget(task.getString("id"), fallback.getString("id")))
+                if (branches.isNotEmpty() && branches.none { it.optString("id") == target.branchId }) {
+                    val activeBranch = taskItems.firstOrNull { it.optString("id") == target.conversationId }?.optString("activeBranchId")
+                    val fallback = branches.firstOrNull { it.optString("id") == activeBranch } ?: branches.first()
+                    showTask(task, branches, ConversationTarget(target.conversationId, fallback.getString("id")))
                 }
-            } }
+            }
         }
     }
     private fun selectBranch(branch: JSONObject) {
