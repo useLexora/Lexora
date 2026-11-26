@@ -32,6 +32,7 @@ internal class DownloadActions(
     @Volatile private var closed = false
     private var folder = restored?.getString("downloadFolderRequest")?.let(::JSONObject)
     private var export = restored?.getString("downloadExportRequest")?.let(::JSONObject)
+    private var pendingInstall: DownloadRecord? = null
     private val chooseFolder = activity.registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         val request = folder; folder = null
         if (uri != null && request != null && request.getString("owner") == partition) start(request.getJSONObject("resource"), uri)
@@ -47,6 +48,11 @@ internal class DownloadActions(
                 onCurrent(target) { notice(mobileText(R.string.file_saved)) }
             }
         }
+    }
+    private val chooseInstall = activity.registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        val record = pendingInstall; pendingInstall = null
+        if (record == null) return@registerForActivityResult
+        if (ApkInstall.allowed(activity)) install(record) else notice(mobileText(R.string.install_permission_required))
     }
     fun saveState(out: Bundle) {
         out.putString("downloadFolderRequest", folder?.toString()); out.putString("downloadExportRequest", export?.toString())
@@ -104,6 +110,7 @@ internal class DownloadActions(
             try { chooseDocument.launch(intent) } catch (_: android.content.ActivityNotFoundException) { export = null; notice(mobileText(R.string.error_document_save_failed)) }
             return
         }
+        if (action != R.string.share_file_title && ApkInstall.matches(record.name, record.mimeType)) { install(record); return }
         run(target, fileWork = true) {
             val uri = saved.verify(record)
             val mime = activity.contentResolver.downloadedMime(uri, record.name, record.mimeType)
@@ -116,6 +123,23 @@ internal class DownloadActions(
                     intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     activity.startActivity(if (sharing) Intent.createChooser(intent, mobileText(action)) else intent)
                 }
+                catch (_: android.content.ActivityNotFoundException) { notice(mobileText(R.string.mobile_no_compatible_app_available_save_to_a_file_instead)) }
+                catch (_: SecurityException) { notice(mobileText(R.string.mobile_could_not_grant_another_app_read_access_the_phone)) }
+            }
+        }
+    }
+    private fun install(record: DownloadRecord) {
+        if (!ApkInstall.allowed(activity)) {
+            pendingInstall = record
+            try { chooseInstall.launch(ApkInstall.settings(activity)) }
+            catch (_: android.content.ActivityNotFoundException) { pendingInstall = null; notice(mobileText(R.string.install_permission_required)) }
+            return
+        }
+        val target = owner()
+        run(target, fileWork = true) {
+            val uri = saved.verify(record)
+            onCurrent(target) {
+                try { activity.startActivity(ApkInstall.intent(uri, record.name)) }
                 catch (_: android.content.ActivityNotFoundException) { notice(mobileText(R.string.mobile_no_compatible_app_available_save_to_a_file_instead)) }
                 catch (_: SecurityException) { notice(mobileText(R.string.mobile_could_not_grant_another_app_read_access_the_phone)) }
             }

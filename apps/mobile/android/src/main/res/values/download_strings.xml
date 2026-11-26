@@ -19,6 +19,8 @@
     <string name="download_cancel_question">Cancel this download?</string>
     <string name="download_cancel_message">The unfinished copy of “%1$s” will be discarded. The original file is not affected.</string>
     <string name="download_open">Open downloaded file</string>
+    <string name="install_apk">Install app</string>
+    <string name="install_permission_required">Allow Lexora to install apps in system settings, then try again.</string>
     <string name="download_progress">%1$s of %2$s</string>
     <string name="download_file_type">File type</string>
     <string name="download_location">Save location</string>

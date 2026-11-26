@@ -196,7 +196,10 @@ private fun DownloadControls(record: DownloadRecord, onAction: ((DownloadUiActio
     val canCancel = record.state !in listOf(COMPLETED, CANCELLED)
     var confirming by remember(record.id, canCancel) { mutableStateOf(false) }
     val perform: (DownloadUiAction) -> Unit = { onAction(it, record.id) }
-    if (record.state == COMPLETED && record.uri != null) ActionRow(mobileText(R.string.open_other_app), Icons.Outlined.OpenInNew, tag = "download-open") { perform(DownloadUiAction.Open) }
+    if (record.state == COMPLETED && record.uri != null) {
+        val install = ApkInstall.matches(record.name, record.mimeType)
+        ActionRow(mobileText(if (install) R.string.install_apk else R.string.open_other_app), if (install) Icons.Outlined.InstallMobile else Icons.Outlined.OpenInNew, tag = "download-open") { perform(DownloadUiAction.Open) }
+    }
     if (canCancel) Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         val canPause = record.state in listOf(QUEUED, RUNNING, VERIFYING)
         val primary = if (canPause) DownloadUiAction.Pause else DownloadUiAction.Resume
@@ -228,6 +231,7 @@ internal fun ResourceActionsSheet(menu: ResourceMenuUi, records: List<DownloadRe
     val bytes = record?.totalBytes ?: resource.optLong("sizeBytes", -1L)
     val large = bytes > MobileFiles.MAX_BYTES
     val previewable = bytes <= PreviewPolicy.MAX_FILE_BYTES && PreviewPolicy.kind(name, mime) != null
+    val installable = ApkInstall.matches(name, mime)
     val select: (Int) -> Unit = { action -> close(); menu.onSelect(action) }
     ModalBottomSheet(onDismissRequest = close, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = MaterialTheme.colorScheme.surfaceContainerHigh) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 20.dp).testTag("resource-actions")) {
@@ -257,7 +261,10 @@ internal fun ResourceActionsSheet(menu: ResourceMenuUi, records: List<DownloadRe
                 DownloadControls(record, onAction)
                 return@Column
             }
-            if (completed) ActionRow(mobileText(R.string.open_other_app), Icons.Outlined.OpenInNew) { select(R.string.open_other_app) }
+            if (completed) {
+                if (installable) ActionRow(mobileText(R.string.install_apk), Icons.Outlined.InstallMobile, tag = "install-apk") { select(R.string.install_apk) }
+                else ActionRow(mobileText(R.string.open_other_app), Icons.Outlined.OpenInNew) { select(R.string.open_other_app) }
+            }
             if (previewable) ActionRow(mobileText(R.string.preview_action), Icons.Outlined.Visibility) { select(R.string.preview_action) }
             if (record == null) {
                 Button(onClick = { menu.onSelect(R.string.download_file) }, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).testTag("download-file"), shape = MaterialTheme.shapes.medium) {
