@@ -105,3 +105,38 @@ internal fun SettingsRow(
         }
     }
 }
+
+@Composable
+internal fun SettingsSwitchRow(
+    title: String,
+    description: String?,
+    icon: ImageVector,
+    checked: Boolean,
+    enabled: Boolean = true,
+    tag: String? = null,
+    divider: Boolean = true,
+    onChange: (Boolean) -> Unit,
+) {
+    Column {
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 56.dp)
+                .then(if (tag != null) Modifier.testTag(tag) else Modifier)
+                .clickable(enabled = enabled, role = Role.Switch) { onChange(!checked) }
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(icon, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge,
+                    color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+                if (!description.isNullOrBlank()) Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(checked = checked, onCheckedChange = { if (enabled) onChange(it) }, enabled = enabled)
+        }
+        if (divider) {
+            val dividerColor = MaterialTheme.colorScheme.outlineVariant
+            HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = dividerColor.copy(alpha = dividerColor.alpha * 0.7f))
+        }
+    }
+}
