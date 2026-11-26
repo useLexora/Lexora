@@ -2168,6 +2168,10 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         receiveMaterial(intent)
+        app.uselexora.mobile.notifications.NotificationTarget.read(intent)?.let { target ->
+            pendingNotification = target
+            openNotificationTarget()
+        }
     }
     private fun receiveMaterial(intent: Intent) {
         try {
@@ -2295,12 +2299,6 @@ class MainActivity : ComponentActivity() {
         session.stop()
         ui.connected = false; avatars.bind(partition, null)
         super.onStop()
-    }
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        pendingNotification = app.uselexora.mobile.notifications.NotificationTarget.read(intent) ?: return
-        openNotificationTarget()
     }
     override fun onDestroy() {
         taskFeed?.close(); taskFeed = null

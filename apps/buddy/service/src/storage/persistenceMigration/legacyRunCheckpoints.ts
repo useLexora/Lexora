@@ -1,6 +1,8 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { StorageReporter } from '../../../../platform/storage/storageTree'
+import type { LegacyCheckpointEvidence } from './legacyRunHistory'
 import type { MigrationReferences } from './migrationReferences'
+import { storageHistoryIdentityFieldSchema } from '../../../../shared/diagnostics/storageHistoryFailure'
 import { RunEventQueries } from '../../events/RunEventQueries'
 import { isTerminalRecoveryRun, RUN_EVENT_COMPACTION_VERSION, RUN_EVENT_PROJECTION_VERSION } from '../../events/RunEventRecovery'
 import { parseLegacyRunHistory, PersistenceMigrationError, reconcileLegacyRunHistory } from './legacyRunHistory'
@@ -37,20 +39,43 @@ export function readLegacyCheckpoints(database: DatabaseSync): Map<string, Legac
   return new Map(rows.map(row => [row.id, row]))
 }
 
-export function checkpointEvidence(checkpoint: LegacyCheckpoint | undefined, identity: string | undefined) {
-  const evidence: { certifiedThrough: number | null, compactedThrough: number | null } = { certifiedThrough: null, compactedThrough: null }
-  if (!identity || !checkpoint?.fingerprint || checkpoint.version !== RUN_EVENT_PROJECTION_VERSION || checkpoint.last !== checkpoint.projectedLast)
-    return evidence
-  if (checkpoint.fingerprint === identity) {
-    evidence.certifiedThrough = checkpoint.last
+const identityFields = storageHistoryIdentityFieldSchema.options
+const identityFormat = /^-?\d+(?::-?\d+){5}$/
+
+export function checkpointEvidence(checkpoint: LegacyCheckpoint | undefined, identity: string | undefined): LegacyCheckpointEvidence {
+  const details = {
+    checkpointVersion: checkpoint?.version ?? null,
+    checkpointLastSequence: checkpoint?.last ?? null,
+    identityChanges: [] as LegacyCheckpointEvidence['identityChanges'],
   }
-  else if (checkpoint.compacted && isTerminalRecoveryRun(checkpoint.status)) {
-    const previous = checkpoint.fingerprint.split(':')
-    const current = identity.split(':')
-    if (previous.length === 6 && /^\d+$/.test(previous[0]!) && previous.slice(1).join(':') === current.slice(1).join(':'))
-      evidence.compactedThrough = checkpoint.last
-  }
-  return evidence
+  const reject = (reason: NonNullable<LegacyCheckpointEvidence['reason']>): LegacyCheckpointEvidence => ({
+    ...details,
+    reason,
+    certifiedThrough: null,
+    compactedThrough: null,
+  })
+  if (!identity)
+    return reject('journal_missing')
+  if (!checkpoint?.fingerprint)
+    return reject('checkpoint_missing')
+  if (checkpoint.version !== RUN_EVENT_PROJECTION_VERSION)
+    return reject('projection_version')
+  if (checkpoint.last !== checkpoint.projectedLast)
+    return reject('checkpoint_watermark')
+  if (checkpoint.fingerprint === identity)
+    return { ...details, reason: null, certifiedThrough: checkpoint.last, compactedThrough: null }
+  if (!identityFormat.test(checkpoint.fingerprint) || !identityFormat.test(identity))
+    return reject('identity_format')
+  const previous = checkpoint.fingerprint.split(':')
+  const current = identity.split(':')
+  details.identityChanges = identityFields.filter((_, index) => previous[index] !== current[index])
+  if (details.identityChanges.includes('size'))
+    return reject('file_size')
+  if (!isTerminalRecoveryRun(checkpoint.status))
+    return reject('run_not_terminal')
+  if (!checkpoint.compacted)
+    return reject('maintenance_pending')
+  return { ...details, reason: null, certifiedThrough: null, compactedThrough: checkpoint.last }
 }
 
 export function legacyEventPath(conversation: string, run: string): string {
@@ -71,6 +96,6 @@ export async function verifySparseCheckpoints(database: DatabaseSync, checkpoint
       continue
     const journal = await references.readJournal(path)
     const { events } = parseLegacyRunHistory(journal?.content ?? '', checkpoint.id)
-    reconcileLegacyRunHistory({ events, projected: queries.read(checkpoint.id), hasProductFacts: true, ...evidence })
+    reconcileLegacyRunHistory({ events, projected: queries.read(checkpoint.id), hasProductFacts: true, ...evidence, diagnostics: { step: 'checkpoints', runId: checkpoint.id, evidence } })
   }
 }

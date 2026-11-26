@@ -105,7 +105,11 @@ export async function resolveReleaseResource(resourcesRoot: string, value: strin
   return location
 }
 
-export async function verifyReleaseSet(release: ReleaseIdentity, fileSystem: ReleaseFileSystem = fs) {
+export interface VerifyReleaseSetOptions {
+  inventory?: boolean
+}
+
+export async function verifyReleaseSet(release: ReleaseIdentity, fileSystem: ReleaseFileSystem = fs, options: VerifyReleaseSetOptions = {}) {
   const { manifest, coreEntry, nodeExecutable, coreManifest, hostArtifact } = release
   const { readFile } = fileSystem.promises
   const hash = (file: string) => hashReleaseFile(file, fileSystem)
@@ -123,9 +127,11 @@ export async function verifyReleaseSet(release: ReleaseIdentity, fileSystem: Rel
   const coreInventory = await resolveReleaseResource(dirname(coreManifest), resourcePath.parse(core.inventory.path), fileSystem)
   if (await hash(coreInventory) !== digestSchema.parse(core.inventory.sha256))
     throw new Error('SERVICE_RELEASE_CONTENT_CHANGED')
-  await verifyFileInventory(coreInventory, [coreManifest], fileSystem)
-  if (manifest.host.kind === 'inventory')
-    await verifyFileInventory(hostArtifact, [], fileSystem)
+  if (options.inventory ?? true) {
+    await verifyFileInventory(coreInventory, [coreManifest], fileSystem)
+    if (manifest.host.kind === 'inventory')
+      await verifyFileInventory(hostArtifact, [], fileSystem)
+  }
   await assertReleaseGeneration(release, fileSystem)
 }
 

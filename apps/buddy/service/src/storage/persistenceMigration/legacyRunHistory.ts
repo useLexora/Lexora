@@ -1,7 +1,9 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { StorageHistoryFailure } from '../../../../shared/diagnostics/storageHistoryFailure'
 import type { BuddyRunEvent } from '../../events/BuddyRunEvent'
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
+import { storageHistoryFailureSchema } from '../../../../shared/diagnostics/storageHistoryFailure'
 import { buddyRunEventSchema, terminalRunStatus } from '../../events/BuddyRunEvent'
 import { createRunEventCompactionPlan } from '../../events/RunEventCompaction'
 import { RunEventProjector } from '../../events/RunEventProjector'
@@ -10,13 +12,27 @@ import { withTransaction } from '../transaction'
 
 export const PERSISTENCE_MIGRATION_ID = 'legacy-jsonl-v1'
 
+export interface LegacyCheckpointEvidence extends Pick<StorageHistoryFailure, 'identityChanges' | 'checkpointVersion' | 'checkpointLastSequence'> {
+  reason: StorageHistoryFailure['reason'] | null
+  certifiedThrough: number | null
+  compactedThrough: number | null
+}
+
+interface LegacyHistoryDiagnostics {
+  step: StorageHistoryFailure['step']
+  runId: string
+  evidence: LegacyCheckpointEvidence
+}
+
 export class PersistenceMigrationError extends Error {
   readonly code: string
+  readonly failure?: StorageHistoryFailure
 
-  constructor(code: string, options?: ErrorOptions) {
+  constructor(code: string, options?: ErrorOptions & { failure?: StorageHistoryFailure }) {
     super(code, options)
     this.name = 'PersistenceMigrationError'
     this.code = code
+    this.failure = options?.failure
   }
 }
 
@@ -46,16 +62,38 @@ export function reconcileLegacyRunHistory(input: {
   compactedThrough?: number | null
   certifiedThrough: number | null
   hasProductFacts: boolean
+  diagnostics?: LegacyHistoryDiagnostics
 }): { events: BuddyRunEvent[], nextSequence: number, compacted: boolean } {
-  const { events, projected } = input
+  const { events, projected, diagnostics } = input
+  const failure = (code: string, reason: StorageHistoryFailure['reason'], firstUnverifiedSequence?: number) => {
+    if (!diagnostics)
+      return new PersistenceMigrationError(code)
+    const { step, runId, evidence } = diagnostics
+    return new PersistenceMigrationError(code, {
+      failure: {
+        kind: 'storage_history',
+        step,
+        reason,
+        runId: storageHistoryFailureSchema.shape.runId.safeParse(runId).data,
+        identityChanges: evidence.identityChanges,
+        checkpointVersion: evidence.checkpointVersion,
+        checkpointLastSequence: evidence.checkpointLastSequence,
+        sourceEventCount: events.length,
+        projectedEventCount: projected.length,
+        sourceLastSequence: events.at(-1)?.sequence ?? 0,
+        projectedLastSequence: projected.at(-1)?.sequence ?? 0,
+        firstUnverifiedSequence,
+      },
+    })
+  }
   if (!events.length && (projected.length || input.hasProductFacts))
-    throw new PersistenceMigrationError('MIGRATION_EVENT_SOURCE_MISSING')
+    throw failure('MIGRATION_EVENT_SOURCE_MISSING', 'journal_missing')
   const bySequence = new Map(events.map(event => [event.sequence, event]))
   const merged = new Map(projected.map(event => [event.sequence, event]))
   for (const event of events) {
     const existing = merged.get(event.sequence)
     if (existing && !isDeepStrictEqual(existing, event))
-      throw new PersistenceMigrationError('MIGRATION_EVENT_CONFLICT')
+      throw failure('MIGRATION_EVENT_CONFLICT', 'projection_mismatch', event.sequence)
     merged.set(event.sequence, event)
   }
   const all = [...merged.values()].sort((a, b) => a.sequence - b.sequence)
@@ -63,13 +101,19 @@ export function reconcileLegacyRunHistory(input: {
   const terminal = all.some(event => terminalRunStatus(event.type) !== null)
   const removable = new Set(terminal ? createRunEventCompactionPlan(all).removed.map(event => event.sequence) : [])
   const missing = projected.filter(event => !bySequence.has(event.sequence))
-  if (missing.some(event => !removable.has(event.sequence)))
-    throw new PersistenceMigrationError('MIGRATION_EVENT_SOURCE_BEHIND')
+  const missingRequired = missing.find(event => !removable.has(event.sequence))
+  if (missingRequired)
+    throw failure('MIGRATION_EVENT_SOURCE_BEHIND', 'projection_mismatch', missingRequired.sequence)
   const gaps = all.filter((event, index) => event.sequence !== (all[index - 1]?.sequence ?? 0) + 1)
   const hasGaps = gaps.length > 0
   const matchedCompaction = terminal && input.compactedThrough === last && events.length === projected.length && merged.size === events.length
-  if (!matchedCompaction && gaps.some(event => input.certifiedThrough === null || event.sequence > input.certifiedThrough))
-    throw new PersistenceMigrationError('MIGRATION_EVENT_GAP_UNVERIFIED')
+  if (!matchedCompaction) {
+    const unverified = gaps.find(event => input.certifiedThrough === null || event.sequence > input.certifiedThrough)
+    if (unverified) {
+      const reason = diagnostics?.evidence.reason ?? (input.compactedThrough != null ? 'projection_mismatch' : 'checkpoint_range')
+      throw failure('MIGRATION_EVENT_GAP_UNVERIFIED', reason, unverified.sequence)
+    }
+  }
   return { events: [...events], nextSequence: last + 1, compacted: hasGaps || missing.length > 0 }
 }
 
@@ -77,8 +121,7 @@ export function importLegacyRunHistory(database: DatabaseSync, input: {
   runId: string
   content: string | null
   sourceFingerprint: string
-  compactedThrough?: number | null
-  certifiedThrough: number | null
+  evidence: LegacyCheckpointEvidence
 }): { events: number, nextSequence: number } {
   const { runId, sourceFingerprint } = input
   const parsed = parseLegacyRunHistory(input.content ?? '', runId)
@@ -103,8 +146,8 @@ export function importLegacyRunHistory(database: DatabaseSync, input: {
     events: parsed.events,
     projected,
     hasProductFacts: !parsed.events.length && queries.hasProjectedEvents(runId),
-    certifiedThrough: input.certifiedThrough,
-    compactedThrough: input.compactedThrough,
+    ...input.evidence,
+    diagnostics: { step: 'runs', runId, evidence: input.evidence },
   })
   return withTransaction(database, () => {
     assertLegacyMessageProjection(database, runId, reconciled.events)

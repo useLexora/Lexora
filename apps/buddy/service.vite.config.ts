@@ -1,11 +1,10 @@
 import type { Plugin } from 'vite'
+import { existsSync, readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { isBuiltin } from 'node:module'
-import { basename, isAbsolute } from 'node:path'
+import { basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
-
-const bundledPackages = ['typebox', 'turndown', '@mixmark-io/domino']
 
 function packageName(id: string) {
   return id.startsWith('@') ? id.split('/').slice(0, 2).join('/') : id.split('/')[0]!
@@ -35,26 +34,45 @@ function serviceResources(): Plugin {
         }
       }
       this.emitFile({ type: 'asset', fileName: 'dependencies.json', source: `${JSON.stringify([...dependencies].sort(), null, 2)}\n` })
+
+      const bundled = new Map<string, { name: string, version: string, identifier?: string }>()
+      for (const moduleId of this.getModuleIds()) {
+        const match = moduleId.match(/node_modules\/(?:@[^/]+\/[^/]+|[^/]+)/)
+        if (!match)
+          continue
+        const pkgRel = match[0]
+        try {
+          const pkgJsonPath = fileURLToPath(new URL(`./${pkgRel}/package.json`, import.meta.url))
+          if (existsSync(pkgJsonPath)) {
+            const pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf8')) as { name?: string, version?: string, license?: string }
+            if (pkg.name && pkg.version && !dependencies.has(pkg.name) && !bundled.has(pkg.name))
+              bundled.set(pkg.name, { name: pkg.name, version: pkg.version, identifier: pkg.license })
+          }
+        }
+        catch {}
+      }
+      const bundledList = [...bundled.values()].sort((a, b) => a.name.localeCompare(b.name))
+      this.emitFile({ type: 'asset', fileName: 'third-party/service-bundled.json', source: `${JSON.stringify(bundledList, null, 2)}\n` })
     },
   }
 }
 
 export default defineConfig({
   plugins: [serviceResources()],
-  ssr: { noExternal: ['fflate', ...bundledPackages] },
+  ssr: { noExternal: true },
   build: {
     ssr: true,
     outDir: '.output/build/service',
     target: 'node26',
     minify: false,
-    license: { fileName: 'third-party/service-bundled.json' },
+    license: false,
     ssrEmitAssets: true,
     rolldownOptions: {
       input: {
         service: fileURLToPath(new URL('./service/src/entry.ts', import.meta.url)),
         utility: fileURLToPath(new URL('./electron/main/runtime/serviceProcess.ts', import.meta.url)),
       },
-      external: id => !id.startsWith('.') && !isAbsolute(id) && !id.startsWith('\0') && id !== 'fflate/browser' && !bundledPackages.includes(packageName(id)),
+      external: id => isBuiltin(id) || id.startsWith('node:'),
       output: { entryFileNames: '[name].mjs', format: 'es' },
     },
   },

@@ -17,9 +17,9 @@ async function currentRelease() {
   return release
 }
 
-export async function verifyInstalledRelease() {
+export async function verifyInstalledRelease(options: { inventory?: boolean } = { inventory: false }) {
   const release = await currentRelease()
-  await verifyReleaseSet(release)
+  await verifyReleaseSet(release, undefined, options)
   return release.manifest.buildId
 }
 

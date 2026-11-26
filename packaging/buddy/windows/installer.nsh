@@ -205,7 +205,7 @@ Var /GLOBAL BuddyInstallMutex
   Pop $0
   ${If} $0 == "User"
     DetailPrint "正在校验安装文件 / Verifying installed files..."
-    nsExec::Exec /TIMEOUT=300000 '"$INSTDIR\resources\lexora-runtime\node.exe" "$INSTDIR\resources\lexora-service\service.mjs" --verify-install'
+    nsExec::Exec /TIMEOUT=30000 '"$INSTDIR\resources\lexora-runtime\node.exe" "$INSTDIR\resources\lexora-service\service.mjs" --verify-install'
     Pop $0
     ${If} $0 != "0"
       Delete "$INSTDIR\resources\release-set.json"

@@ -3,7 +3,7 @@ package app.uselexora.mobile.notifications
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import app.uselexora.mobile.MainActivity
+import app.uselexora.mobile.ui.MainActivity
 import org.json.JSONObject
 
 internal object NotificationTarget {

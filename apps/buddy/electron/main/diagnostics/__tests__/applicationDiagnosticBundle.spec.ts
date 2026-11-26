@@ -129,6 +129,30 @@ describe('application diagnostic bundles', () => {
     expect(context.map(record => record.sequence)).toEqual([1, 2, 3])
     expect(context[0].failure).toEqual({ kind: 'network_startup', operation: 'listen', systemCode: 'UNKNOWN', errno: -4094 })
   })
+
+  it('keeps upgrade checkpoint evidence in the diagnostic export', async () => {
+    const failure = {
+      kind: 'storage_history',
+      step: 'checkpoints',
+      reason: 'maintenance_pending',
+      identityChanges: ['fileId', 'creationTime'],
+      runId: '09f11898-9ca1-402b-bd38-a71d5fa85cc8',
+      checkpointVersion: 3,
+      checkpointLastSequence: 5,
+      sourceEventCount: 4,
+      projectedEventCount: 4,
+      sourceLastSequence: 5,
+      projectedLastSequence: 5,
+      firstUnverifiedSequence: 3,
+    } as const satisfies NonNullable<ApplicationLogRecord['failure']>
+    const { reader } = await fixture([
+      record(1, { runId: undefined, scope: 'desktop', operationId: 'upgrade-fixture', event: 'storage.migration.worker_failed', errorCode: 'MIGRATION_EVENT_GAP_UNVERIFIED', failure: { ...failure, identityChanges: [...failure.identityChanges] } }),
+    ])
+    const { errors, context } = unpack((await createApplicationDiagnosticBundle(reader, 'current'))!.bytes)
+    expect(errors[0]).toMatchObject({ errorCode: 'MIGRATION_EVENT_GAP_UNVERIFIED', failure })
+    expect(context[0].failure).toEqual(failure)
+  })
+
   it('exports related activity before and after errors without free-form content or unrelated user files', async () => {
     const { reader } = await fixture([
       record(1, { launchId: 'launch-history' }),
