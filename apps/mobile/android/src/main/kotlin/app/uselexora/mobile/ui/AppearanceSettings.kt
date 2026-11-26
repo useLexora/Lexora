@@ -38,6 +38,11 @@ internal fun AppearanceSettings(openDownloads: (() -> Unit)? = null, close: () -
     var languagePicker by remember { mutableStateOf(false) }
     var aboutOpen by rememberSaveable { mutableStateOf(false) }
     var skinsOpen by rememberSaveable { mutableStateOf(false) }
+    var notificationsOpen by rememberSaveable { mutableStateOf(false) }
+    if (notificationsOpen) {
+        NotificationSettingsPage { notificationsOpen = false }
+        return
+    }
     if (skinsOpen) {
         BuiltinSkinSettings { skinsOpen = false }
         return
@@ -70,6 +75,10 @@ internal fun AppearanceSettings(openDownloads: (() -> Unit)? = null, close: () -
                         kind = SettingsRowKind.Selection, tag = "language-selector", divider = false) { languagePicker = true }
                 }
                 if (openDownloads != null) DownloadsSettingsRow(openDownloads)
+                Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                    SettingsRow(mobileText(R.string.settings_notifications_title), Icons.Outlined.Notifications,
+                        tag = "notification-settings", divider = false) { notificationsOpen = true }
+                }
                 Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
                     SettingsRow(mobileText(R.string.mobile_about_lexora), Icons.Outlined.Info, tag = "about-lexora", divider = false) { aboutOpen = true }
                 }

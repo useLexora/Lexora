@@ -114,6 +114,7 @@ class MobileUiState {
     var connectionPhase by mutableStateOf(app.uselexora.mobile.session.MobileConnectionPhase.Idle)
     var deviceLabel by mutableStateOf(mobileText(R.string.label_choose_service))
     var connected by mutableStateOf(false)
+    var partition by mutableStateOf("")
     var tasks by mutableStateOf<List<JSONObject>>(emptyList())
     var tasksLoaded by mutableStateOf(false)
     var tasksNeedRefresh by mutableStateOf(false)

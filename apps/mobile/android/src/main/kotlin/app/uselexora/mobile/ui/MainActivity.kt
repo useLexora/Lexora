@@ -62,6 +62,7 @@ import app.uselexora.mobile.protocol.MobileMessagePresentation
 import app.uselexora.mobile.protocol.ProductIdentity
 import app.uselexora.mobile.protocol.ProtocolFailure
 import app.uselexora.mobile.protocol.ProtocolSchemas
+import app.uselexora.mobile.protocol.ProductSubscription
 import app.uselexora.mobile.storage.PhotoStore
 import app.uselexora.mobile.storage.DocumentExport
 import app.uselexora.mobile.storage.LocalFiles
@@ -164,6 +165,9 @@ class MainActivity : ComponentActivity() {
     private var pendingSave: JSONObject? = null
     private var pendingPreview: JSONObject? = null
     private val incomingMaterials = ArrayDeque<IncomingMaterial>()
+    private var pendingNotification: JSONObject? = null
+    private var taskFeed: ProductSubscription? = null
+    private var notificationOpening = false
 
     override fun attachBaseContext(base: android.content.Context) {
         super.attachBaseContext(MobileStrings.localizedContext(base))
@@ -172,7 +176,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(state)
         MobileAppearance.load(this)
         store = LocalStore(this)
-        schemas = ProtocolSchemas(JSONObject(assets.open("protocol-schema.json").bufferedReader().use { it.readText() }))
+        schemas = app.uselexora.mobile.MobileApplication.schemas(this)
         avatars = ReaderAvatars(this, schemas)
         connection = MobileConnection(this, schemas, BuildConfig.VERSION_NAME)
         transfers = TransferStore(this)
@@ -219,6 +223,7 @@ class MainActivity : ComponentActivity() {
         session = MobileConnectionSession(connection, schemas, getSystemService(ConnectivityManager::class.java), streamHandler,
             enabled = { !demo && !disconnecting }, topic = { activeTopic }, work = ::work, onUi = ::onUi,
             released = {
+                taskFeed?.close(); taskFeed = null
                 ui.tasksNeedRefresh = ui.tasksLoaded
                 historyRequest++; reading.disconnected(); ui.historyLoading = false
                 if (ui.latestLoading) ui.latestError = MobileFailurePresentation.NETWORK_UNAVAILABLE_NOTICE
@@ -231,8 +236,10 @@ class MainActivity : ComponentActivity() {
                 partition = identity.partition; restoreInput(); restoreCachedCatalogs(); refreshDevices(); refreshSpaces(); refreshPendingOperations(); ui.connectionLabel = mobileText(R.string.connection_loading_tasks)
                 if (ui.notice == MobileFailurePresentation.NETWORK_UNAVAILABLE_NOTICE || ui.notice == mobileText(R.string.error_not_connected)) ui.notice = ""
                 subscription?.subscribe(activeTopic); bindQuestions(); if (selectedTask != null) loadBranches()
+                startTaskFeed(authenticated, identity.partition)
                 checkInputReceipts(authenticated)
                 if (activeTopic != "taskIndex") refreshTaskMarks()
+                openNotificationTarget()
                 if (incomingMaterials.isNotEmpty() && !ui.importingMaterial) ui.incomingMaterial = incomingMaterials.first()
                 syncUi()
             },
@@ -287,6 +294,7 @@ class MainActivity : ComponentActivity() {
             }
         } else if (selectedTask != null && activeTopic.startsWith("conversation:")) restoreCachedConversation()
         if (state == null) receiveMaterial(intent)
+        if (state == null) pendingNotification = app.uselexora.mobile.notifications.NotificationTarget.read(intent)
         else ui.incomingMaterial = incomingMaterials.firstOrNull()
     }
 
@@ -435,8 +443,50 @@ class MainActivity : ComponentActivity() {
     private var transcriptRecords by androidx.compose.runtime.mutableStateOf<Map<String, JSONObject>>(emptyMap())
     private val runTranscripts = MobileRunTranscripts { transcriptRecords = it }
 
+    private fun startTaskFeed(current: ProductClient, owner: String) {
+        taskFeed?.close(); taskFeed = null
+        if (demo || owner == "unpaired-local") return
+        val runtime = app.uselexora.mobile.watch.WatchRuntime.shared(this)
+        if (!runtime.isEnabled()) return
+        taskFeed = ProductSubscription(current, schemas,
+            snapshot = { topic, items -> if (topic == "taskIndex") runtime.feedSnapshot(owner, items) },
+            changes = { topic, changes -> if (topic == "taskIndex") runtime.feedChanges(owner, changes) },
+            state = {}).also { it.subscribe("taskIndex") }
+    }
+    private fun openNotificationTarget() {
+        val target = pendingNotification ?: return
+        val current = client?.takeIf { it.isConnected } ?: return
+        if (notificationOpening) return
+        val identity = current.identity ?: return
+        val expected = target.optString("partition")
+        if (expected.isNotEmpty() && expected != identity.partition) { pendingNotification = null; showNotice(mobileText(R.string.notification_other_service)); return }
+        val conversationId = target.optString("conversationId")
+        if (conversationId.isEmpty()) { pendingNotification = null; return }
+        val branchId = target.optString("branchId").takeIf { it.isNotEmpty() }
+        val kind = target.optString("kind")
+        pendingNotification = null
+        notificationOpening = true
+        val owner = partition
+        val generation = ++navigation
+        work {
+            val task = runCatching { current.callValue("conversations.get", JSONObject().put("conversationId", conversationId)) as? JSONObject }.getOrNull()
+            val branches = runCatching { readBranches(current, conversationId) }.getOrDefault(emptyList())
+            onUi {
+                notificationOpening = false
+                if (client !== current || partition != owner || navigation != generation) return@onUi
+                if (task == null) { showNotice(mobileText(R.string.notification_target_missing)); return@onUi }
+                val preferred = branchId ?: task.optString("resultBranchId").takeIf { it.isNotBlank() }
+                val chosen = branches.firstOrNull { it.optString("id") == preferred }
+                val destination = chosen?.let { ConversationTarget(conversationId, it.getString("id")) } ?: ConversationTarget.fromTask(task)
+                showTask(task, branches, destination)
+                if (kind == "Approval") operations.approvalsForTask(conversationId, destination.branchId)
+            }
+        }
+    }
     private fun syncUi() {
         ui.connected = demo || client?.isConnected == true
+        ui.partition = partition
+        app.uselexora.mobile.watch.WatchRuntime.existing()?.suppress(if (ui.screen == MobileScreen.Conversation) conversationTarget?.conversationId else null)
         avatars.bind(partition, client.takeIf { foreground })
         if (discoveryOwner != partition) { discoveryOwner = partition; ui.discovery = TaskDiscoveryState(); ui.membersOpen = false; ui.members = null }
         ui.discovery.supported = client?.supports("conversations.search") == true
@@ -614,6 +664,7 @@ class MainActivity : ComponentActivity() {
                 connection.selectDevice(id)
                 val description = connection.description() ?: throw ProtocolFailure("NOT_CONNECTED")
                 onUi {
+                    app.uselexora.mobile.notifications.MobileNotifier(this).clearAll()
                     restoreNavigation(ProductIdentity.partition(description))
                     activeTopic = "taskIndex"
                     screenHistory.clear(); ui.screen = MobileScreen.Workbench
@@ -1051,6 +1102,7 @@ class MainActivity : ComponentActivity() {
         val generation = ++navigation
         selectedTask = task
         conversationTarget = target
+        if (!demo && task != null) app.uselexora.mobile.notifications.MobileNotifier(this).clearConversation(target.conversationId)
         if (!demo) navigationStore.edit().putString(branchPreference(partition, target.conversationId), target.branchId).apply()
         messageItems = emptyList(); details = emptyMap(); navigate(MobileScreen.Conversation)
         scope = target.localKey
@@ -1514,6 +1566,7 @@ class MainActivity : ComponentActivity() {
                         try {
                             val revoked = if (revoke) connection.logout(expected!!) else { connection.forget(expected); false }
                             onUi {
+                                app.uselexora.mobile.notifications.MobileNotifier(this).clearAll()
                                 partition = "unpaired-local"; scope = "global"; selectedTask = null; activeTopic = "taskIndex"
                                 navigation++; acceptedEchoes.clear(); displayedMessages = null; taskItems = emptyList(); messageItems = emptyList()
                                 ui.tasksLoaded = false; ui.taskSyncFailed = false; ui.taskFilter = MobileTaskFilter.All; resetTaskMarks(); syncUi()
@@ -2233,8 +2286,24 @@ class MainActivity : ComponentActivity() {
     }
     private fun objects(array: JSONArray) = (0 until array.length()).map { array.getJSONObject(it) }
     private fun dp(value: Int) = (resources.displayMetrics.density * value).toInt()
-    override fun onStart() { super.onStart(); session.start(!demo) }
-    override fun onStop() { input.flush(); readerBenchmark?.close(); readModel.flush(); rememberNavigation(); super.onStop(); ui.connected = false; session.stop(); avatars.bind(partition, null) }
-    override fun onDestroy() { destroyed = true; downloadActions.close(); avatars.close(); input.close(); readerBenchmark?.close(); runTranscripts.close(); session.close(); streamHandler.removeCallbacksAndMessages(null); network.execute { disk.execute { store.close(); transfers.close() } }; network.shutdown(); readModel.close(); super.onDestroy() }
+    override fun onStart() {
+        super.onStart()
+        session.start(!demo)
+    }
+    override fun onStop() {
+        input.flush(); readerBenchmark?.close(); readModel.flush(); rememberNavigation()
+        session.stop()
+        ui.connected = false; avatars.bind(partition, null)
+        super.onStop()
+    }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingNotification = app.uselexora.mobile.notifications.NotificationTarget.read(intent) ?: return
+        openNotificationTarget()
+    }
+    override fun onDestroy() {
+        taskFeed?.close(); taskFeed = null
+        destroyed = true; downloadActions.close(); avatars.close(); input.close(); readerBenchmark?.close(); runTranscripts.close(); session.close(); streamHandler.removeCallbacksAndMessages(null); network.execute { disk.execute { store.close(); transfers.close() } }; network.shutdown(); readModel.close(); super.onDestroy() }
     companion object { private val disk = Executors.newSingleThreadExecutor(); const val INPUT_ID = 0x2101; const val EXECUTION_ID = 0x2102; const val SPACE_ID = 0x2103; const val SEND_ID = 0x2104; const val HISTORY_ID = 0x2105; const val FILE_REQUEST = 4001; const val CAMERA_REQUEST = 4002; const val PREVIEW_REQUEST = 4005; const val SAVE_REQUEST = 4003; const val CAMERA_PERMISSION = 4004 }
 }

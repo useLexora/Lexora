@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,6 +25,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.font.FontWeight
 import app.uselexora.mobile.protocol.ExecutionSettings
+import app.uselexora.mobile.notifications.MobileNotifier
+import app.uselexora.mobile.notifications.NotificationSettings
 import org.json.JSONObject
 
 @Composable
@@ -48,6 +51,21 @@ internal fun ConversationSettings(state: MobileUiState, onAction: (MobileAction,
                         SettingsRow(mobileText(R.string.label_permissions), executionIcon(state.executionSelection),
                             value = state.executionLabel, tag = "execution", divider = hasMembers) { onAction(MobileAction.ChooseExecution, null) }
                         if (hasMembers) SettingsRow(mobileText(R.string.mobile_task_members), desktopSymbol(DesktopSymbol.Partners), tag = "task-partners", divider = false) { onAction(MobileAction.ShowMembers, null) }
+                    }
+                }
+                val taskId = state.selectedTask?.optString("id").orEmpty()
+                if (taskId.isNotEmpty() && state.partition.isNotEmpty()) {
+                    val context = LocalContext.current
+                    val notifications = remember(state.partition, taskId) { NotificationSettings(context) }
+                    var muted by remember(state.partition, taskId) { mutableStateOf(notifications.isMuted(state.partition, taskId)) }
+                    Spacer(Modifier.height(16.dp))
+                    Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                        SettingsSwitchRow(mobileText(R.string.settings_notifications_mute_task),
+                            mobileText(R.string.settings_notifications_mute_task_description), Icons.Outlined.Inbox,
+                            checked = muted, tag = "task-notification-mute", divider = false) {
+                            notifications.setMuted(state.partition, taskId, it); muted = it
+                            if (it) MobileNotifier(context).clearConversation(taskId)
+                        }
                     }
                 }
                 if (openDownloads != null) {
