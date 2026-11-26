@@ -143,7 +143,7 @@ private fun ComposerPhaseRow(activity: ComposerActivity) {
     ) {
         ComposerPhaseGlyph(active = activity.active, color = tint)
         Text(activity.label, style = MaterialTheme.typography.labelMedium, color = tint, maxLines = 1,
-            overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
         if (elapsed != null) {
             Text(elapsed, style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"), maxLines = 1,
                 color = tint.copy(alpha = .72f), modifier = Modifier.clearAndSetSemantics {})

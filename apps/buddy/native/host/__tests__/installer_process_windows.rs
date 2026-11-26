@@ -48,7 +48,7 @@ fn start(executable: &Path) -> Running {
 }
 
 #[test]
-fn service_launcher_preserves_the_full_core_exit_status() {
+fn service_launcher_preserves_redirected_core_output_and_full_exit_status() {
     let root = tempfile::tempdir().unwrap();
     let node =
         Command::new(std::env::var_os("LEXORA_TEST_NODE").unwrap_or_else(|| "node.exe".into()))
@@ -69,13 +69,18 @@ fn service_launcher_preserves_the_full_core_exit_status() {
     .unwrap();
     let helper = process_control();
     for code in [0, 7, 0x1234, 0x8123_4567u32 as i32] {
-        std::fs::write(&script, format!("process.exit({code})")).unwrap();
+        std::fs::write(
+            &script,
+            format!("require('node:fs').writeSync(2, 'core diagnostic'); process.exit({code})"),
+        )
+        .unwrap();
         let result = Command::new(&helper)
             .arg("--launch-service")
             .arg(&config)
-            .status()
+            .output()
             .unwrap();
-        assert_eq!(result.code(), Some(code));
+        assert_eq!(result.status.code(), Some(code));
+        assert_eq!(result.stderr, b"core diagnostic");
     }
 }
 

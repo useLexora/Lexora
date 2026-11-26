@@ -163,6 +163,7 @@ class MainActivity : ComponentActivity() {
     private var pendingFileTarget: JSONObject? = null
     private var pendingCapturePath: String? = null
     private var pendingSave: JSONObject? = null
+    private var pendingInstall: JSONObject? = null
     private var pendingPreview: JSONObject? = null
     private val incomingMaterials = ArrayDeque<IncomingMaterial>()
     private var pendingNotification: JSONObject? = null
@@ -396,7 +397,7 @@ class MainActivity : ComponentActivity() {
             MobileAction.OpenResource -> payload?.let { value ->
                 val resource = value.optJSONObject("resource")
                 if (resource == null) openResource(value)
-                else value.optInt("fileAction").takeIf { it in setOf(R.string.preview_action, R.string.save_to_files, R.string.share_file_title, R.string.open_other_app) }?.let { downloadFile(resource, it) }
+                else value.optInt("fileAction").takeIf { it in setOf(R.string.preview_action, R.string.save_to_files, R.string.share_file_title, R.string.open_other_app, R.string.install_apk) }?.let { downloadFile(resource, it) }
             }
             MobileAction.ResourceActions -> payload?.let(::resourceActions)
             MobileAction.MoreFiles -> ui.taskFiles?.let { loadTaskFiles(it) }
@@ -1882,6 +1883,12 @@ class MainActivity : ComponentActivity() {
             }
             return
         }
+        if (requestCode == INSTALL_REQUEST) {
+            val pending = pendingInstall; pendingInstall = null
+            if (!ApkInstall.allowed(this)) { ui.notice = mobileText(R.string.install_permission_required); return }
+            pending?.let { useFile(File(it.getString("path")), it.getString("name"), ApkInstall.MIME, R.string.install_apk) }
+            return
+        }
         if (requestCode != FILE_REQUEST && requestCode != CAMERA_REQUEST) return
         val target = pendingFileTarget
         pendingFileTarget = null
@@ -2112,6 +2119,7 @@ class MainActivity : ComponentActivity() {
         }
     }
     private fun useFile(file: File, name: String, mime: String, action: Int, followup: JSONObject? = null) {
+        if (action != R.string.share_file_title && action != R.string.save_to_files && action != R.string.preview_action && ApkInstall.matches(name, mime)) { installFile(file, name); return }
         val uri = FileProvider.getUriForFile(this, "$packageName.files", file, name)
         when (action) {
             R.string.preview_action -> {
@@ -2137,6 +2145,18 @@ class MainActivity : ComponentActivity() {
                 catch (_: SecurityException) { ui.notice = mobileText(R.string.mobile_could_not_grant_another_app_read_access_the_phone) }
             }
         }
+    }
+    private fun installFile(file: File, name: String) {
+        if (!ApkInstall.allowed(this)) {
+            pendingInstall = JSONObject().put("path", file.absolutePath).put("name", name)
+            try { startActivityForResult(ApkInstall.settings(this), INSTALL_REQUEST) }
+            catch (_: android.content.ActivityNotFoundException) { pendingInstall = null; ui.notice = mobileText(R.string.install_permission_required) }
+            return
+        }
+        val uri = FileProvider.getUriForFile(this, "$packageName.files", file, name)
+        try { startActivity(ApkInstall.intent(uri, name)) }
+        catch (_: android.content.ActivityNotFoundException) { ui.notice = mobileText(R.string.mobile_no_compatible_app_available_save_to_a_file_instead) }
+        catch (_: SecurityException) { ui.notice = mobileText(R.string.mobile_could_not_grant_another_app_read_access_the_phone) }
     }
     private fun continueFromPreview(target: JSONObject, quote: String) {
         if (quote.length > 8000 || target.optString("partition") != partition) { showNotice(mobileText(R.string.preview_service_changed)); return }
@@ -2303,5 +2323,5 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         taskFeed?.close(); taskFeed = null
         destroyed = true; downloadActions.close(); avatars.close(); input.close(); readerBenchmark?.close(); runTranscripts.close(); session.close(); streamHandler.removeCallbacksAndMessages(null); network.execute { disk.execute { store.close(); transfers.close() } }; network.shutdown(); readModel.close(); super.onDestroy() }
-    companion object { private val disk = Executors.newSingleThreadExecutor(); const val INPUT_ID = 0x2101; const val EXECUTION_ID = 0x2102; const val SPACE_ID = 0x2103; const val SEND_ID = 0x2104; const val HISTORY_ID = 0x2105; const val FILE_REQUEST = 4001; const val CAMERA_REQUEST = 4002; const val PREVIEW_REQUEST = 4005; const val SAVE_REQUEST = 4003; const val CAMERA_PERMISSION = 4004 }
+    companion object { private val disk = Executors.newSingleThreadExecutor(); const val INPUT_ID = 0x2101; const val EXECUTION_ID = 0x2102; const val SPACE_ID = 0x2103; const val SEND_ID = 0x2104; const val HISTORY_ID = 0x2105; const val FILE_REQUEST = 4001; const val CAMERA_REQUEST = 4002; const val PREVIEW_REQUEST = 4005; const val SAVE_REQUEST = 4003; const val CAMERA_PERMISSION = 4004; const val INSTALL_REQUEST = 4006 }
 }

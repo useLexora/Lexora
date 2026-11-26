@@ -92,6 +92,10 @@ pub fn run(path: &Path) -> io::Result<std::convert::Infallible> {
     }
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Threading::DETACHED_PROCESS;
+
+        command.creation_flags(DETACHED_PROCESS);
         let _job = crate::runtime_guard::guard_current_process()
             .map_err(|_| io::ErrorKind::PermissionDenied)?;
         // Exit with the Core's full status while our kill-on-close Job is still held.
