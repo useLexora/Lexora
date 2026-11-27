@@ -15,6 +15,7 @@ import {
 
 const repoRoot = resolve(import.meta.dirname, '../..')
 const commitPattern = /^[a-f\d]{40}$/
+const androidVersionPath = 'apps/mobile/android/version.properties'
 
 export const lexoraReleaseTransitionPaths = Object.freeze([
   'package.json',
@@ -52,7 +53,7 @@ export function validateLexoraReleaseTransition({ before, after, changedPaths })
   const actualPaths = [...new Set(changedPaths.map(normalizePath))].sort()
   const expectedPaths = [...lexoraReleaseTransitionPaths].sort()
   const missingPaths = expectedPaths.filter(path => !actualPaths.includes(path))
-  const unexpectedPaths = actualPaths.filter(path => !expectedPaths.includes(path))
+  const unexpectedPaths = actualPaths.filter(path => path !== androidVersionPath && !expectedPaths.includes(path))
 
   if (actualPaths.length !== changedPaths.length)
     errors.push('release transition contains duplicate changed paths')

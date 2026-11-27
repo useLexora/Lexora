@@ -4,12 +4,12 @@ import { dirname, join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { writeError, writeOutput } from '../../shared/cli-output.mjs'
-import { readBuddyReleaseMetadata, releaseAssets } from './artifacts.mjs'
+import { readLexoraReleaseMetadata, releaseAssets } from './artifacts.mjs'
 
 const repoRoot = resolve(import.meta.dirname, '../../..')
 
-export function verifyBuddyReleaseArtifacts({ cwd = repoRoot, directory, verifyChecksum = false } = {}) {
-  const metadata = readBuddyReleaseMetadata(cwd)
+export function verifyLexoraReleaseArtifacts({ cwd = repoRoot, directory, verifyChecksum = false } = {}) {
+  const metadata = readLexoraReleaseMetadata(cwd)
   const artifacts = metadata.artifacts.map((artifact) => {
     const path = directory ? join(directory, artifact.name) : artifact.path
     return { ...artifact, path, hash: sha256(readFileSync(path)) }
@@ -81,7 +81,7 @@ function main() {
   const args = process.argv.slice(2)
   if (args.length && (args.length !== 2 || args[0] !== '--github-env' || !args[1]))
     throw new Error('Usage: verify-release-artifacts.mjs [--github-env <path>]')
-  const metadata = verifyBuddyReleaseArtifacts()
+  const metadata = verifyLexoraReleaseArtifacts()
   if (args.length)
     writeBuddyReleaseGithubEnv(args[1], metadata)
   writeOutput(`Release assets verified: ${metadata.artifacts.map(artifact => artifact.name).join(', ')}`)
