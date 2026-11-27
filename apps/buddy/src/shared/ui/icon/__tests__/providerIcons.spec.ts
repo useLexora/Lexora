@@ -22,6 +22,7 @@ describe('provider icons', () => {
     ['opencode', 'opencode-go'],
     ['qwen-token-plan', 'qwen-token-plan-cn'],
     ['qwen-token-plan', 'qwen-token-plan-individual'],
+    ['qwen-token-plan', 'qwen-token-plan-individual-cn'],
     ['xiaomi', 'xiaomi-token-plan-ams'],
     ['xiaomi', 'xiaomi-token-plan-cn'],
     ['xiaomi', 'xiaomi-token-plan-sgp'],

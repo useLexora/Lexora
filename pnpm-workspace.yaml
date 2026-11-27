@@ -27,7 +27,7 @@ overrides:
   monaco-editor>dompurify: 3.4.17
   prisma>mysql2: 3.24.4
   tar: 7.5.22
-  undici@>=8.0.0 <8.12.3: 8.12.3
+  undici@>=8.0.0 <8.12.4: 8.12.4
   vitepress>vite: 7.3.7
 allowBuilds:
   '@google/genai': false
@@ -49,9 +49,9 @@ allowBuilds:
   vue-demi: true
 patchedDependencies:
   '@anthropic-ai/sandbox-runtime@0.0.80': patches/@anthropic-ai__sandbox-runtime@0.0.80.patch
-  '@earendil-works/pi-ai@1.5.0': patches/@earendil-works__pi-ai@1.5.0.patch
-  '@earendil-works/pi-codemode@1.5.0': patches/@earendil-works__pi-codemode@1.5.0.patch
-  '@earendil-works/pi-coding-agent@1.5.0': patches/@earendil-works__pi-coding-agent@1.5.0.patch
+  '@earendil-works/pi-ai@1.6.1': patches/@earendil-works__pi-ai@1.6.1.patch
+  '@earendil-works/pi-codemode@1.6.1': patches/@earendil-works__pi-codemode@1.6.1.patch
+  '@earendil-works/pi-coding-agent@1.6.1': patches/@earendil-works__pi-coding-agent@1.6.1.patch
   monaco-editor@0.57.0: patches/monaco-editor@0.57.0.patch
 catalog:
   '@types/node': ^26.6.5
@@ -63,14 +63,14 @@ catalog:
   typescript: ^6.0.3
   zod: ^4.3.6
 minimumReleaseAgeExclude:
-  - '@earendil-works/pi-agent-core@1.5.0'
-  - '@earendil-works/pi-ai@1.5.0'
-  - '@earendil-works/pi-codemode@1.5.0'
-  - '@earendil-works/pi-coding-agent@1.5.0'
-  - '@earendil-works/pi-mcp@1.5.0'
-  - '@earendil-works/pi-schema@1.5.0'
-  - '@earendil-works/pi-telemetry@1.5.0'
-  - '@earendil-works/pi-tui@1.5.0'
+  - '@earendil-works/pi-agent-core@1.6.1'
+  - '@earendil-works/pi-ai@1.6.1'
+  - '@earendil-works/pi-codemode@1.6.1'
+  - '@earendil-works/pi-coding-agent@1.6.1'
+  - '@earendil-works/pi-mcp@1.6.1'
+  - '@earendil-works/pi-schema@1.6.1'
+  - '@earendil-works/pi-telemetry@1.6.1'
+  - '@earendil-works/pi-tui@1.6.1'
   - markstream-core@2.0.20
   - markstream-vue@2.0.20
   - stream-markdown-parser@1.2.21
