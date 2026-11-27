@@ -61,6 +61,43 @@ class TaskDiscoveryInstrumentedTest {
         compose.onNodeWithText(mobileText(R.string.mobile_connect_to_view_conversation)).assertDoesNotExist()
     }
 
+    @Test fun messageOnlyCacheWaitsForOnlineStructureButRemainsReadableOnFailure() {
+        val cacheDir = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext.cacheDir
+        val directory = java.nio.file.Files.createTempDirectory(cacheDir.toPath(), "cached-structure").toFile()
+        try {
+            val key = "conversation:task:branch"
+            val cache = app.uselexora.mobile.storage.ReadCache(directory)
+            val reply = JSONObject().put("role", "assistant").put("id", "answer").put("runId", "run").put("body", JSONObject().put("kind", "text").put("text", "Saved reply"))
+            cache.write("fixture", key, listOf(JSONObject().put("entity", "message").put("value", reply)))
+            val records = app.uselexora.mobile.storage.ReadCache(directory).read("fixture", key)!!
+            val state = MobileUiState().apply {
+                screen = MobileScreen.Conversation; selectedTask = JSONObject().put("title", "Cached task")
+                connected = true; readingCached = true
+                messages = records.map { it.getJSONObject("value") }
+                awaitingCachedStructure = needsFreshCachedStructure(false, messages) { it == "conversations.getTurnWindow" }
+            }
+            compose.setContent {
+                val context = androidx.compose.ui.platform.LocalContext.current
+                val input = androidx.compose.runtime.remember { android.widget.EditText(context) }
+                LexoraTheme { MobileShell(state, input, { _, _ -> }) { modifier ->
+                    androidx.compose.material3.Text(state.messages.single().getJSONObject("body").getString("text"), modifier)
+                } }
+            }
+            compose.onNodeWithText("Saved reply").assertDoesNotExist()
+            compose.runOnIdle { state.syncFailure = "Unavailable" }
+            compose.onNodeWithText("Saved reply").assertIsDisplayed()
+            compose.runOnIdle { state.syncFailure = ""; state.connected = false }
+            compose.onNodeWithText("Saved reply").assertIsDisplayed()
+            for (compact in listOf(false, true)) {
+                compose.runOnIdle {
+                    state.connected = true
+                    state.awaitingCachedStructure = needsFreshCachedStructure(compact, state.messages) { compact }
+                }
+                compose.onNodeWithText("Saved reply").assertIsDisplayed()
+            }
+        } finally { directory.deleteRecursively() }
+    }
+
     @Test fun dismissedUnknownSendCanBeCheckedFromTheInputWithoutSendingOrReplacingNewText() {
         val state = MobileUiState().apply {
             screen = MobileScreen.Conversation; selectedTask = JSONObject().put("id", "task").put("title", "Task")

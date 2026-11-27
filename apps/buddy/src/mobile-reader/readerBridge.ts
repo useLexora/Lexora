@@ -38,6 +38,7 @@ export function useReaderBridge() {
   const buddyNames = shallowRef(new Map<string, string>())
   const entries = shallowRef<ReaderEntry[]>([])
   const turnWindow = shallowRef(false)
+  const canLoadTranscript = shallowRef(false)
   provide(readerTurnWindowKey, turnWindow)
   const history = shallowRef<ReaderUpdate['history']>()
   const stepDetail = shallowRef<ReaderStepDetailReply>()
@@ -110,6 +111,8 @@ export function useReaderBridge() {
         composerActivity.value = update.composerActivity
       if (update.turnWindow !== undefined || next.reset)
         turnWindow.value = update.turnWindow === true
+      if (update.canLoadTranscript !== undefined || next.reset)
+        canLoadTranscript.value = update.canLoadTranscript === true
       if (update.history || next.reset)
         history.value = update.history
       if (update.bodyPage || next.reset)
@@ -149,5 +152,5 @@ export function useReaderBridge() {
     window.removeEventListener('message', connect)
     port?.close()
   })
-  return { entries, composerActivity, turnWindow, history, runs, buddyNames, transcripts, outputs, branches, selectedBranchId, topic, dark, fontScale, appearance, typography, language, resultRunId, anchor, hasLaterMessages, latestState, send }
+  return { entries, composerActivity, turnWindow, canLoadTranscript, history, runs, buddyNames, transcripts, outputs, branches, selectedBranchId, topic, dark, fontScale, appearance, typography, language, resultRunId, anchor, hasLaterMessages, latestState, send }
 }

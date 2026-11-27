@@ -97,6 +97,30 @@ it.each([180, 600])('uses one latest control for a previous window at height %i,
   expect(requests()).toHaveLength(2)
 })
 
+it.each(['unsupported', 'empty', 'error', 'disconnect', 'anchor'] as const)('opens a completed legacy reply without losing its %s fallback', async (outcome) => {
+  const root = mountReader()
+  bridge.turnWindow.value = false
+  bridge.runs.value = [{ ...run, status: 'completed' }]
+  bridge.canLoadTranscript.value = outcome !== 'unsupported'
+  if (outcome === 'anchor')
+    bridge.anchor.value = { topic: 'branch', messageId: 'answer', requestId: 'search' }
+  bridge.entries.value = [{ id: 'answer', continuation: false, messages: [message('answer', 'Saved reply', 'assistant')] }]
+  await nextTick()
+  if (outcome !== 'unsupported' && outcome !== 'anchor') {
+    expect(root.querySelector('.initial-progress [role=status]')).not.toBeNull()
+    expect(root.querySelector('[data-message-id="answer"]')).toBeNull()
+    expect(actions).toContainEqual({ action: 'transcript', runId: run.id })
+    if (outcome === 'disconnect')
+      bridge.canLoadTranscript.value = false
+    else
+      bridge.transcripts.value = { run: outcome === 'error' ? { events: [], error: 'unavailable' } : { events: [], loaded: true } }
+    await nextTick()
+  }
+  expect(root.querySelector('.initial-progress')).toBeNull()
+  expect(root.querySelector('[data-message-id="answer"]')?.textContent).toContain('Saved reply')
+  expect(Boolean(root.querySelector('.transcript-retry'))).toBe(outcome === 'error')
+})
+
 it('keeps author identity and tool records in the transcript without duplicating the composer phase', async () => {
   const root = mountReader(180)
   const user = { id: 'user', continuation: false, messages: [message('user', 'Build', 'user')] }

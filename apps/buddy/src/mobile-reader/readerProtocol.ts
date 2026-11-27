@@ -99,6 +99,7 @@ export const readerUpdateSchema = schema.object({
   latest: schema.object({ loading: schema.boolean(), error: schema.string().nullable() }).strict().optional(),
   composerActivity: composerActivity.nullable().optional(),
   turnWindow: schema.boolean().optional(),
+  canLoadTranscript: schema.boolean().optional(),
   history: schema.object({ page: schema.number().int().nonnegative().optional(), available: schema.boolean(), loading: schema.boolean(), error: schema.string().nullable() }).strict().optional(),
   bodyPage: schema.object({ id, revision: id, before: schema.number().int().positive().optional(), after: schema.number().int().nonnegative().optional(), page: productReadLiveTextResultSchema.nullable() }).strict().optional(),
   topic: schema.string(),

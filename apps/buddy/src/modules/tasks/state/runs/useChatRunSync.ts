@@ -121,11 +121,12 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
   async function loadEventWindows(page: LocalConversationTimelinePage, request: ProjectionRequest) {
     const read = options.api.conversations.readEventPage
     if (!page.eventWindows)
-      return
+      return true
+    let complete = true
     const windows = new Map(page.eventWindows.map(window => [window.runId, window]))
     for (const run of page.runs) {
       if (!isCurrent(request))
-        return
+        return false
       const window = windows.get(run.id) ?? { runId: run.id, count: 0, throughSequence: 0 }
       const prior = projection.loadedWindows.get(run.id)
       if (run.errorCode === 'EVENT_LOG_CORRUPTED') {
@@ -140,7 +141,7 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
       const afterSequence = append ? prior.throughSequence : 0
       const events = await readRunEventWindow(read, { conversationId: request.conversationId, runId: run.id, throughSequence: window.throughSequence, afterSequence }, () => isCurrent(request))
       if (!isCurrent(request))
-        return
+        return false
       if (projection.loadedWindows.get(run.id) !== prior)
         continue
       if (events.length !== window.count - (append ? prior.count : 0)) {
@@ -148,12 +149,14 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
         if (changedWindows.get(run.id) === version)
           throw Object.assign(new Error('SOURCE_CHANGED'), { code: 'SOURCE_CHANGED' })
         changedWindows.set(run.id, version)
+        complete = false
         scheduleRefresh()
         continue
       }
       changedWindows.delete(run.id)
       projection.commitWindow(window, events, append ? 'append' : 'replace')
     }
+    return complete
   }
 
   async function refreshSnapshot(flight: RefreshFlight): Promise<void> {
@@ -188,19 +191,19 @@ export function useChatRunSync(options: ChatRunSyncOptions): ChatRunSync {
       }
       if (isCurrent(request)) {
         projection.applySnapshot(page, approvals)
-        settledScopeKey.value = `${request.conversationId}:${request.branchId}`
         flight.snapshot.resolve()
-        await loadEventWindows(page, request)
+        if (await loadEventWindows(page, request) && isCurrent(request))
+          settledScopeKey.value = `${request.conversationId}:${request.branchId}`
       }
     }
     catch (error) {
-      if (isCurrent(request))
+      if (isCurrent(request)) {
+        settledScopeKey.value = `${request.conversationId}:${request.branchId}`
         options.onError(error)
+      }
     }
     finally {
       flight.snapshot.resolve()
-      if (isCurrent(request))
-        settledScopeKey.value = `${request.conversationId}:${request.branchId}`
     }
   }
 

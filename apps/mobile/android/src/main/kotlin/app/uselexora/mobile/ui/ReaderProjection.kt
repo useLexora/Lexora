@@ -143,6 +143,7 @@ internal class ReaderProjection {
         val anchor = anchorRequestId?.takeIf { it.isNotBlank() && anchorTopic == topic && !anchorMessageId.isNullOrBlank() }
         val update = JSONObject().put("topic", topic).put("reset", reset).put("dark", dark).put("fontScale", fontScale).put("language", language)
             .put("turnWindow", turn.enabled)
+            .put("canLoadTranscript", !turn.enabled && turn.client?.isConnected == true && turn.client.supports("runs.listTranscriptEvents"))
             .put("history", JSONObject().put("page", turn.historyPage).put("available", turn.historyAvailable).put("loading", turn.historyLoading).put("error", turn.historyError ?: JSONObject.NULL))
             .put("resultRunId", resultRunId ?: JSONObject.NULL)
             .put("latest", JSONObject().put("loading", turn.latestLoading).put("error", turn.latestError ?: JSONObject.NULL))

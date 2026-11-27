@@ -111,11 +111,12 @@ fun MobileShell(
             val connectionNotice = !state.connected && (state.notice == mobileText(R.string.error_not_connected) || state.notice == MobileFailurePresentation.NETWORK_UNAVAILABLE_NOTICE)
             if (!conversation && state.notice.isNotBlank() && !connectionNotice) Notice(state.notice) { act(MobileAction.DismissNotice) }
             val noTranscript = state.messages.isEmpty() && state.runs.isEmpty() && state.activityGroups.isEmpty()
+            val waitingForStructure = state.readingCached && state.awaitingCachedStructure && state.connected && state.syncFailure.isBlank() && !state.showingAcceptedInput
             val conversationStatus = when {
                 state.connected && state.syncFailure.isNotBlank() -> state.syncFailure
                 state.viewingArchived -> mobileText(R.string.mobile_archived_read_only)
                 !state.connected && !noTranscript && !state.showingAcceptedInput -> mobileText(R.string.mobile_offline_conversation_snapshot)
-                state.connected && state.readingCached && !noTranscript && !state.showingAcceptedInput -> mobileText(R.string.mobile_showing_phone_content_updating)
+                state.connected && state.readingCached && !waitingForStructure && !noTranscript && !state.showingAcceptedInput -> mobileText(R.string.mobile_showing_phone_content_updating)
                 else -> null
             }
             if (conversation && (state.viewBranchId != null || state.selectedTask != null) && conversationStatus != null) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -126,9 +127,9 @@ fun MobileShell(
                 if (conversation) {
                     if (isNewTask) NewTaskIntro(state, newTaskStyle) { act(MobileAction.ChooseSpace) }
                     else Column(Modifier.fillMaxSize()) {
-                        if (noTranscript && !state.conversationReady && !state.historyPinned && !state.historyDetached) {
+                        if ((noTranscript || waitingForStructure) && !state.conversationReady && !state.historyPinned && !state.historyDetached) {
                             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                if (conversationStatus == null) {
+                                if (waitingForStructure || conversationStatus == null) {
                                     if (state.connected) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
                                     else Text(mobileText(R.string.mobile_connect_to_view_conversation), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
