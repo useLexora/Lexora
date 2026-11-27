@@ -9,7 +9,6 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import app.uselexora.mobile.ui.MainActivity
 import app.uselexora.mobile.R
@@ -18,6 +17,7 @@ import app.uselexora.mobile.notifications.MobileNotifier
 import app.uselexora.mobile.notifications.NotificationSettings
 
 class MobileWatchService : Service() {
+    private val notifier by lazy { MobileNotifier(this) }
     private var runtime: WatchRuntime? = null
     private var started = false
 
@@ -32,7 +32,7 @@ class MobileWatchService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        MobileNotifier(this).ensureChannels()
+        notifier.ensureChannels()
         val runtime = runtime ?: return START_NOT_STICKY
         enterForeground(notification(WatchRuntime.display.status))
         started = true
@@ -59,7 +59,7 @@ class MobileWatchService : Service() {
 
     private fun update(status: WatchStatus) {
         if (!started) return
-        runCatching { NotificationManagerCompat.from(this).notify(WATCH_ID, notification(status)) }
+        runCatching { notifier.post(WATCH_ID, notification(status)) }
     }
 
     private fun notification(status: WatchStatus): Notification {

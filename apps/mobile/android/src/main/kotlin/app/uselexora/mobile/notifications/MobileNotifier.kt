@@ -1,10 +1,15 @@
 package app.uselexora.mobile.notifications
 
+import android.Manifest
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import app.uselexora.mobile.R
 import app.uselexora.mobile.i18n.mobileText
 
@@ -27,10 +32,14 @@ internal class MobileNotifier(private val context: Context) {
         })
     }
 
-    fun canNotify(): Boolean = manager.areNotificationsEnabled()
+    fun post(id: Int, notification: Notification, tag: String? = null) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+        manager.notify(tag, id, notification)
+    }
 
     fun show(partition: String, event: TaskNotificationEvent.Show, settings: NotificationSettingsSnapshot) {
-        if (!canNotify()) return
+        if (!manager.areNotificationsEnabled()) return
         val channel = if (event.kind == TaskNotificationKind.Result) CHANNEL_RESULT else CHANNEL_ACTION
         val title = if (settings.showTitle) event.title ?: mobileText(R.string.notification_untitled) else mobileText(R.string.notification_generic_title)
         val label = when (event.kind) {
@@ -59,7 +68,7 @@ internal class MobileNotifier(private val context: Context) {
             .setGroup(GROUP)
             .setContentIntent(NotificationTarget.pending(context, partition, event))
             .build()
-        manager.notify(tag(event.conversationId, event.kind), id(event.conversationId, event.kind), notification)
+        post(id(event.conversationId, event.kind), notification, tag(event.conversationId, event.kind))
     }
 
     fun retract(conversationId: String, kind: TaskNotificationKind) {

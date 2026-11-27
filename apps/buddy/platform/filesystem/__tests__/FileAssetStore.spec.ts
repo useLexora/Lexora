@@ -1,11 +1,11 @@
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
-import { linkSync, unlinkSync } from 'node:fs'
-import { open, readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { link, open, readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { FileAssetStore } from '../FileAssetStore'
+import * as fileResponse from '../fileResponse'
 
 const signal = () => new AbortController().signal
 function current() {}
@@ -44,21 +44,28 @@ it.each([false, true])('revalidates a completed hard-link view cycle with contin
   const bytes = 'synthetic'.repeat(20000)
   const asset = await put(store, bytes)
   const before = await stat(store.path(asset.key), { bigint: true })
-  let checks = 0
-  let changed = false
-  const publication = store.put(new Response(bytes).body!, signal(), () => {
-    if (++checks === 4 || (continuous && checks > 4)) {
-      const view = join(root, 'lease-view')
-      linkSync(store.path(asset.key), view)
-      unlinkSync(view)
-      changed = true
-    }
+  let cycles = 0
+  const verify = fileResponse.assertFileSnapshot
+  using checkpoint = vi.spyOn(fileResponse, 'assertFileSnapshot')
+  checkpoint.mockImplementation(async (handle, path, snapshot) => {
+    await verify(handle, path, snapshot)
+    if (cycles && !continuous)
+      return
+    const view = join(root, 'lease-view')
+    await link(path, view)
+    await unlink(view)
+    cycles++
+    // Model an observable ctime change even when a completed link cycle fits in one filesystem tick.
+    const after = await handle.stat({ bigint: true })
+    after.ctimeNs = snapshot.ctimeNs + 1n
+    vi.spyOn(handle, 'stat').mockResolvedValueOnce(after)
   })
+  const publication = put(store, bytes)
   if (continuous)
     await expect(publication).rejects.toThrow('RESOURCE_FILE_CHANGED')
   else
     expect(await publication).toEqual(asset)
-  expect(changed).toBe(true)
+  expect(cycles).toBe(continuous ? 2 : 1)
   const after = await stat(store.path(asset.key), { bigint: true })
   expect([after.dev, after.ino, after.nlink, after.mtimeNs]).toEqual([before.dev, before.ino, before.nlink, before.mtimeNs])
   expect(await readFile(store.path(asset.key), 'utf8')).toBe(bytes)

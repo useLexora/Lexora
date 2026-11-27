@@ -20,7 +20,7 @@ import { resolveBuildTarget } from './targets.mjs'
 
 const repoRoot = resolve(import.meta.dirname, '../../..')
 
-export function verifyDesktopResources(directory, targetId, cwd = repoRoot) {
+export function verifyDesktopResources(directory, targetId, cwd = repoRoot, verifyRelease = verifyInstalledRelease) {
   const platform = resolveBuildTarget(targetId)
   const platformId = platform.platform
   const executablePath = join(directory, platformId === OPERATING_SYSTEM.MacOS ? 'Contents/MacOS/lexora-buddy' : platformId === OPERATING_SYSTEM.Windows ? 'Lexora Buddy.exe' : 'lexora-buddy')
@@ -53,11 +53,11 @@ export function verifyDesktopResources(directory, targetId, cwd = repoRoot) {
   if (platformId === OPERATING_SYSTEM.Linux)
     checkServiceFileModes(join(resources, 'lexora-service'))
   const { version, prerelease } = readBuddyProductMetadata(cwd)
-  execFileSync(process.execPath, [join(repoRoot, 'packaging/buddy/release/product-release-set.mjs'), '--verify', join(resources, 'release-set.json'), platform.id, version], { stdio: 'pipe', timeout: 120_000 })
   if (!existsSync(join(resources, 'lexora-service/utility.mjs')))
     throw new Error('Missing packaged Core utility adapter')
   const node = join(resources, 'lexora-runtime', platformId === OPERATING_SYSTEM.Windows ? 'node.exe' : 'node')
   const core = join(resources, 'lexora-service')
+  verifyRelease({ manifest: join(resources, 'release-set.json'), targetId: platform.id, version, node, core })
   execFileSync(node, [join(core, 'service.mjs'), '--check-runtime'], { cwd: resources, stdio: 'pipe', timeout: 30_000 })
   // Resolve from the shipped service, not the checkout running this verifier.
   for (const check of ['check-codemode.mjs', 'check-image-resize.mjs'])
@@ -65,6 +65,19 @@ export function verifyDesktopResources(directory, targetId, cwd = repoRoot) {
   if (prerelease)
     verifyDesktopNativeVersion(directory, executablePath, platformId, version)
   return { executablePath, resources, serviceResources }
+}
+
+function verifyInstalledRelease({ manifest, targetId, version, node, core }) {
+  const release = JSON.parse(readFileSync(manifest, 'utf8'))
+  if (release.target !== targetId || release.productVersion !== version)
+    throw new Error('Release set target/version mismatch')
+  const buildId = execFileSync(node, [join(core, 'service.mjs'), '--verify-install=full'], { cwd: core, encoding: 'utf8', timeout: 120_000 }).trim()
+  if (!/^[a-f0-9]{64}$/.test(buildId) || buildId !== release.buildId)
+    throw new Error('Installed release verification returned the wrong build ID')
+}
+
+function verifyPackagedRelease({ manifest, targetId, version }) {
+  execFileSync(process.execPath, [join(repoRoot, 'packaging/buddy/release/product-release-set.mjs'), '--verify', manifest, targetId, version], { stdio: 'pipe', timeout: 120_000 })
 }
 
 function verifyDesktopNativeVersion(directory, executablePath, platform, version) {
@@ -91,7 +104,7 @@ function verifyDesktopNativeVersion(directory, executablePath, platform, version
 
 export function verifyDesktopDirectory(directory, targetId, cwd = repoRoot) {
   const platform = resolveBuildTarget(targetId)
-  const { executablePath, resources } = verifyDesktopResources(directory, targetId, cwd)
+  const { executablePath, resources } = verifyDesktopResources(directory, targetId, cwd, verifyPackagedRelease)
   const require = createRequire(join(cwd, 'apps/buddy/package.json'))
   const builder = createRequire(require.resolve('electron-builder'))
   const asar = createRequire(builder.resolve('app-builder-lib'))('@electron/asar')
