@@ -739,6 +739,36 @@ class SharedReaderInstrumentedTest {
         assertEquals("1", js("document.querySelectorAll('.message-author').length"))
     }
 
+    @Test fun completedTailOpensTogetherAndFailedTranscriptKeepsTheAnswerAfterSwitch() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val schemas = ProtocolSchemas(JSONObject(context.assets.open("protocol-schema.json").bufferedReader().use { it.readText() }))
+        SyntheticProductService(schemas, listOf("runs.listTranscriptEvents")) { error("Unexpected request: ${it.method}") }.use { service ->
+            val client = service.connect()
+            try {
+                turn = ReaderTurnContext(ConversationTarget("conversation", "branch"), client)
+                messages = (0 until 80).map { message("user-$it", "Earlier input $it", "user").put("runId", JSONObject.NULL) } + message("answer", "Saved reply")
+                runs = listOf(JSONObject().put("id", "stream-run").put("status", "completed"))
+                show()
+                val answer = "document.querySelector('[data-message-id=answer]')"
+                val activity = "document.querySelector('.reader-turn-flow > :first-child')"
+                val loading = "document.querySelector('.initial-progress [role=status]')"
+                until("!!$loading && !$answer")
+                compose.waitUntil(10_000) { "stream-run" in transcriptRequests }
+                assertEquals("true", js("!!$loading && !$answer"))
+                js("window.answerOnly=false; new MutationObserver(()=>{if($answer && !$activity)window.answerOnly=true}).observe(document.body,{childList:true,subtree:true})")
+                val events = JSONArray("""[{"runId":"stream-run","sequence":1,"createdAt":"2026-11-11T05:00:00Z","type":"message.block.completed","payload":{"messageId":"reason","contentIndex":0,"kind":"reasoning","content":"Checking"}}]""")
+                transcripts = mapOf("stream-run" to JSONObject().put("loaded", true).put("events", events)); update()
+                until("!!$answer && $activity?.textContent.includes('思考') && !$loading")
+                assertEquals("true", js("!window.answerOnly && !!($activity.compareDocumentPosition($answer) & Node.DOCUMENT_POSITION_FOLLOWING)"))
+                topic = "other-branch"; transcripts = emptyMap(); transcriptRequests.clear(); update()
+                until("!!$loading && !$answer")
+                compose.waitUntil(10_000) { "stream-run" in transcriptRequests }
+                transcripts = mapOf("stream-run" to JSONObject().put("error", "unavailable")); update()
+                until("!!$answer && !!document.querySelector('.transcript-retry') && !$loading")
+            } finally { client.close() }
+        }
+    }
+
     @Test fun desktopActivityGroupsRenderReasoningToolsIssuesAndCompaction() {
         val events = JSONArray()
         fun event(type: String, payload: String) { events.put(JSONObject().put("runId", "stream-run").put("sequence", events.length() + 1).put("createdAt", "2026-11-11T05:00:00Z").put("type", type).put("payload", JSONObject(payload))) }

@@ -218,7 +218,9 @@ class MainActivity : ComponentActivity() {
                 if (items != null && !ui.historyPinned && !ui.historyDetached && readyContext != liveContext()) {
                     projectedTurnWindow = items.any { it.optString("entity") in setOf("historyWindow", "activityGroup") }
                     ui.activityGroups = entities(items, "activityGroup")
-                    messageItems = visibleMessages(entities(items, "message")); ui.readingCached = true; syncUi()
+                    messageItems = visibleMessages(entities(items, "message"))
+                    ui.awaitingCachedStructure = needsFreshCachedStructure(projectedTurnWindow, messageItems) { client?.supports(it) == true }
+                    ui.readingCached = true; syncUi()
                 }
             })
         session = MobileConnectionSession(connection, schemas, getSystemService(ConnectivityManager::class.java), streamHandler,
@@ -486,6 +488,7 @@ class MainActivity : ComponentActivity() {
     }
     private fun syncUi() {
         ui.connected = demo || client?.isConnected == true
+        if (!ui.connected || ui.syncFailure.isNotBlank()) ui.awaitingCachedStructure = false
         ui.partition = partition
         app.uselexora.mobile.watch.WatchRuntime.existing()?.suppress(if (ui.screen == MobileScreen.Conversation) conversationTarget?.conversationId else null)
         avatars.bind(partition, client.takeIf { foreground })
@@ -1129,7 +1132,7 @@ class MainActivity : ComponentActivity() {
                 metadata?.let(::acceptTaskProjection)
                 acceptedEchoes.values.removeAll { it.isProjected(messages, emptyList()) }
                 if (!ui.historyPinned && !ui.historyDetached) {
-                    projectedTurnWindow = turn; reading.resume(readPage(result, messages)); displayReading()
+                    ui.readingCached = false; projectedTurnWindow = turn; reading.resume(readPage(result, messages)); displayReading()
                 }
                 renderRows(); ui.notice = ""
             }

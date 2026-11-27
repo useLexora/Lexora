@@ -6,6 +6,7 @@ import ReaderActivityGroup from './ReaderActivityGroup.vue'
 import { useReaderBridge } from './readerBridge'
 import ReaderHistoryState from './ReaderHistoryState.vue'
 import ReaderMessage from './ReaderMessage.vue'
+import ReaderProgress from './ReaderProgress.vue'
 import ReaderRunStatus from './ReaderRunStatus.vue'
 import { useReaderStrings } from './readerStrings'
 import ReaderToolCall from './ReaderToolCall.vue'
@@ -17,7 +18,7 @@ import { useReaderResultRead } from './useReaderResultRead'
 import { useReaderTurns } from './useReaderTurns'
 import { useReaderViewport } from './useReaderViewport'
 
-const { entries: messages, composerActivity, history, turnWindow, runs, buddyNames, transcripts, outputs, branches, selectedBranchId, topic, dark, fontScale, appearance, typography, language, resultRunId, anchor, hasLaterMessages, latestState, send } = useReaderBridge()
+const { entries: messages, composerActivity, history, turnWindow, canLoadTranscript, runs, buddyNames, transcripts, outputs, branches, selectedBranchId, topic, dark, fontScale, appearance, typography, language, resultRunId, anchor, hasLaterMessages, latestState, send } = useReaderBridge()
 provideReaderBranches(messages, runs, branches, selectedBranchId)
 const labels = useReaderStrings(language)
 const entries = useReaderTurns(messages, runs, transcripts, topic, anchor, turnWindow, outputs)
@@ -75,8 +76,27 @@ function click(event: MouseEvent) {
   event.stopPropagation()
   send({ action: 'link', href: link.getAttribute('href') ?? '' })
 }
-watch([rows, turnWindow], ([current, compact]) => {
-  const ids = new Set(current.flatMap(row => [row.entry.turn?.runId, row.entry.activityGroup?.runId, row.entry.runStatus?.run.id, ...row.entry.messages.map(message => message.runId)]).filter((id): id is string => !!id))
+const visibleRunIds = computed(() => new Set(rows.value.flatMap(row => [row.entry.turn?.runId, row.entry.activityGroup?.runId, row.entry.runStatus?.run.id, ...row.entry.messages.map(message => message.runId)]).filter((id): id is string => !!id)))
+const presentedTopic = shallowRef<string | null>(null)
+const locatingTail = computed(() => followsEnd.value && rows.value.at(-1)?.index !== entries.value.length - 1)
+const waitingForTranscript = computed(() => {
+  if (presentedTopic.value === topic.value || turnWindow.value || !canLoadTranscript.value || hasLaterMessages.value || anchor.value)
+    return false
+  return runs.value.some(run => run.status === 'completed' && (!run.executionKind || run.executionKind === 'root')
+    && (locatingTail.value || visibleRunIds.value.has(run.id)) && !transcripts.value[run.id]?.loaded && !transcripts.value[run.id]?.error)
+})
+watch(topic, () => {
+  presentedTopic.value = null
+})
+watch([rows, topic, waitingForTranscript], () => {
+  if (rows.value.length && !waitingForTranscript.value)
+    presentedTopic.value = topic.value
+}, { flush: 'post' })
+const presentedRows = computed(() => waitingForTranscript.value ? [] : rows.value)
+watch([rows, turnWindow, waitingForTranscript, locatingTail], ([current, compact, waiting, locating]) => {
+  if (waiting && locating)
+    return
+  const ids = new Set(visibleRunIds.value)
   if (compact) {
     const inputs = new Set(current.flatMap(row => row.entry.messages.filter(message => message.role === 'user').map(message => message.id)))
     for (const run of activeRuns.value) {
@@ -110,7 +130,7 @@ watch(topic, () => {
     </p>
     <div ref="viewport" class="reader-viewport" :aria-label="labels.messages" @scroll.passive="scroll" @touchstart.passive="touch(true)" @touchend.passive="touch(false)" @touchcancel.passive="touch(false)" @wheel.passive="touch(true); followsEnd = false; touch(false)">
       <div :key="topic" class="reader-content" :style="{ height: `${height}px` }" :data-message-count="entries.length" @click.capture="click">
-        <section v-for="row in rows" :key="row.entry.id" :ref="measure" class="reader-entry" :class="{ continuation: row.entry.continuation }" :data-entry-id="row.entry.id" :data-index="row.index" :style="{ transform: `translateY(${row.start}px)` }">
+        <section v-for="row in presentedRows" :key="row.entry.id" :ref="measure" class="reader-entry" :class="{ continuation: row.entry.continuation }" :data-entry-id="row.entry.id" :data-index="row.index" :style="{ transform: `translateY(${row.start}px)` }">
           <button v-if="row.entry.transcriptError" class="transcript-retry" @click="send({ action: 'transcript', runId: row.entry.turn?.runId ?? row.entry.messages[0]!.runId!, retry: 'true' })">
             {{ labels.retryTranscript }}
           </button>
@@ -127,6 +147,9 @@ watch(topic, () => {
         </p>
       </div>
     </div>
+    <div v-if="waitingForTranscript" class="initial-progress">
+      <ReaderProgress :label="labels.loadingLatest" />
+    </div>
     <ReaderHistoryState v-if="history && nearHistoryStart && anchorStatus !== 'missing'" :key="topic" :history="history" @retry="retryOlder" />
     <button v-if="hasLaterMessages || showLatest" type="button" class="latest-button" :class="{ 'latest-failed': latestError }" :disabled="loadingLatest" :aria-busy="loadingLatest" :aria-label="latestLabel" :title="latestLabel" @click="activateLatest">
       <span v-if="loadingLatest" class="latest-spinner" aria-hidden="true" />
@@ -137,6 +160,14 @@ watch(topic, () => {
 </template>
 
 <style scoped lang="scss">
+.initial-progress {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  color: var(--reader-muted);
+}
 .latest-failed { color: var(--reader-accent); }
 .latest-spinner {
   width: 18px;

@@ -510,6 +510,69 @@ describe('useChatRunSync', () => {
     }
   })
 
+  it('does not reveal the first page until its own event window is ready, even after a quick switch', async () => {
+    const activeConversationId = ref('a')
+    const activeBranchId = ref('branch-a')
+    const gates = { a: deferred<void>(), b: deferred<void>() }
+    const api = createApi({ listTimeline: async ({ conversationId: id }) => ({
+      ...timelinePage([timelineMessage(`answer-${id}`, id, `branch-${id}`, 2, 'assistant')], null, [run(id, id)]),
+      eventWindows: [{ runId: id, count: 1, throughSequence: 1 }],
+    }) })
+    api.conversations.readEventPage = async ({ runId }) => {
+      await gates[runId as keyof typeof gates].promise
+      return { events: [event(runId, 1)], nextSequence: null }
+    }
+    const onError = vi.fn()
+    const sync = useChatRunSync({ activeBranchId, activeConversationId, api, onError })
+    try {
+      const stale = sync.refreshActiveConversation()
+      await vi.waitUntil(() => sync.messages.value[0]?.id === 'answer-a')
+      expect(sync.isLoadingConversation.value).toBe(true)
+      activeConversationId.value = 'b'
+      activeBranchId.value = 'branch-b'
+      await sync.refreshActiveConversation({ waitForEvents: false })
+      gates.a.resolve()
+      await stale
+      expect(sync.messages.value[0]?.id).toBe('answer-b')
+      expect(sync.isLoadingConversation.value).toBe(true)
+      expect(sync.runEventBuckets.value.has('a')).toBe(false)
+      gates.b.resolve()
+      await vi.waitUntil(() => !sync.isLoadingConversation.value)
+      expect(sync.runEventBuckets.value.get('b')?.events).toEqual([event('b', 1)])
+      expect(onError).not.toHaveBeenCalled()
+    }
+    finally { sync.dispose() }
+  })
+
+  it.each([true, false])('keeps a changed first window covered until retry settles (recovered: %s)', async (recover) => {
+    vi.useFakeTimers()
+    stubAnimationFrameWindow()
+    const active = run('run-a', 'conversation-a')
+    const api = createApi({ listTimeline: async () => ({
+      ...timelinePage([timelineMessage('answer', active.conversationId, active.branchId, 2, 'assistant')], null, [active]),
+      eventWindows: [{ runId: active.id, count: 1, throughSequence: 1 }],
+    }) })
+    const events = [event(active.id, 1)]
+    api.conversations.readEventPage = vi.fn().mockResolvedValueOnce({ events: [], nextSequence: null }).mockResolvedValue({ events: recover ? events : [], nextSequence: null })
+    const onError = vi.fn()
+    const sync = useChatRunSync({ activeBranchId: ref(active.branchId), activeConversationId: ref(active.conversationId), api, onError })
+    try {
+      await sync.refreshActiveConversation()
+      expect(sync.isLoadingConversation.value).toBe(true)
+      await vi.runAllTimersAsync()
+      expect(sync.isLoadingConversation.value).toBe(false)
+      expect(sync.messages.value[0]?.id).toBe('answer')
+      if (recover)
+        expect(sync.runEventBuckets.value.get(active.id)?.events).toEqual(events)
+      else
+        expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'SOURCE_CHANGED' }))
+    }
+    finally {
+      sync.dispose()
+      vi.useRealTimers()
+    }
+  })
+
   it('loads only the missing suffix and retains a terminal run until its compacted page arrives', async () => {
     stubAnimationFrameWindow()
     const active = run('run-a', 'conversation-a')
@@ -544,6 +607,7 @@ describe('useChatRunSync', () => {
       sequences = [2, 4]
       const refresh = sync.refreshActiveConversation()
       await started.promise
+      expect(sync.isLoadingConversation.value).toBe(false)
       expect(sync.runEventBuckets.value.get(active.id)?.events.map(row => row.sequence)).toEqual([1, 2, 3])
       gate.resolve()
       await refresh

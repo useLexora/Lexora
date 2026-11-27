@@ -128,6 +128,7 @@ class MobileUiState {
     var selectedSpaceLabel by mutableStateOf(mobileText(R.string.label_all_spaces))
     var selectedTaskSpaceLabel by mutableStateOf(mobileText(R.string.label_no_space))
     var readingCached by mutableStateOf(false)
+    var awaitingCachedStructure by mutableStateOf(false)
     var messages by mutableStateOf<List<JSONObject>>(emptyList())
     var turnWindow by mutableStateOf(false)
     var activityGroups by mutableStateOf<List<JSONObject>>(emptyList())

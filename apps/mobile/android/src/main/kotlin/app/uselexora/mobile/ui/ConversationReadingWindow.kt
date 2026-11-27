@@ -2,6 +2,10 @@ package app.uselexora.mobile.ui
 
 import org.json.JSONObject
 
+internal fun needsFreshCachedStructure(hasTurnWindow: Boolean, messages: List<JSONObject>, supports: (String) -> Boolean) =
+    !hasTurnWindow && (supports("conversations.getTurnWindow") || supports("runs.listTranscriptEvents")) &&
+        messages.any { it.optString("role") == "assistant" && !it.isNull("runId") }
+
 internal data class ConversationPage(
     val messages: List<JSONObject> = emptyList(),
     val groups: List<JSONObject> = emptyList(),
