@@ -5,8 +5,14 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Next Lexora version (x.y.z or x.y.z-beta.N)
+        description: Next Lexora Desktop version (x.y.z or x.y.z-beta.N)
         required: true
+        type: string
+      android_version:
+        description: Android versionName (leave blank to keep the version on master)
+        type: string
+      android_version_code:
+        description: Android versionCode (leave blank to keep the code on master)
         type: string
 
 permissions:
@@ -79,6 +85,30 @@ jobs:
           require_missing tag "repos/$GITHUB_REPOSITORY/git/ref/tags/$release_tag"
           require_missing release "repos/$GITHUB_REPOSITORY/releases/tags/$release_tag"
 
+      - name: Prepare Android version
+        env:
+          ANDROID_VERSION: ${{ inputs.android_version }}
+          ANDROID_VERSION_CODE: ${{ inputs.android_version_code }}
+        run: |
+          version_file=apps/mobile/android/version.properties
+          current_version="$(sed -n 's/^versionName=//p' "$version_file")"
+          current_code="$(sed -n 's/^versionCode=//p' "$version_file")"
+          next_version="${ANDROID_VERSION:-$current_version}"
+          next_code="${ANDROID_VERSION_CODE:-$current_code}"
+          if [[ "$next_version$next_code" == *[$'\r\n']* ]]; then
+            echo "Android version inputs must be single-line values" >&2
+            exit 1
+          fi
+          if [[ "$next_version" != "$current_version" || "$next_code" != "$current_code" ]]; then
+            printf 'versionName=%s\nversionCode=%s\n' "$next_version" "$next_code" > "$version_file"
+          fi
+          {
+            printf '### Android version\n\n'
+            printf -- '- Current on master: `%s` (versionCode `%s`)\n' "$current_version" "$current_code"
+            printf -- '- Version in this PR: `%s` (versionCode `%s`)\n' "$next_version" "$next_code"
+          } > "$RUNNER_TEMP/lexora-android-version.md"
+          cat "$RUNNER_TEMP/lexora-android-version.md" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Create validated version commit
         id: version
         env:
@@ -98,7 +128,8 @@ jobs:
             apps/buddy/package.json \
             apps/buddy/buddy.version.json \
             apps/buddy/native/pet/Cargo.toml \
-            apps/buddy/native/Cargo.lock
+            apps/buddy/native/Cargo.lock \
+            apps/mobile/android/version.properties
 
           if git diff --cached --quiet; then
             echo "Version $VERSION must be greater than the current product version" >&2
@@ -136,7 +167,7 @@ jobs:
               --head "$RELEASE_BRANCH" \
               --title "chore(release): 准备 $RELEASE_TAG" \
               --label "skip-changelog" \
-              --body ""
+              --body-file "$RUNNER_TEMP/lexora-android-version.md"
           )"; then
             echo "Created $pull_request_url"
             exit 0

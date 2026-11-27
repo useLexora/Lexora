@@ -1,21 +1,31 @@
-name: Android package
+name: Mobile package
 
 on:
+  workflow_call:
+    secrets:
+      LEXORA_ANDROID_KEYSTORE_BASE64:
+        required: true
+      LEXORA_ANDROID_STORE_PASSWORD:
+        required: true
+      LEXORA_ANDROID_KEY_ALIAS:
+        required: true
+      LEXORA_ANDROID_KEY_PASSWORD:
+        required: true
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: android-package-${{ github.ref }}
+  group: mobile-package-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  build:
+  android:
     name: Signed Android APK
     runs-on: ubuntu-24.04
     environment: android-signing
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -44,6 +54,10 @@ jobs:
       - name: Prepare Android SDK
         run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
 
+      - name: Resolve Android release artifact
+        id: apk
+        run: node packaging/mobile/release/apk.mjs --github-output "$GITHUB_OUTPUT"
+
       - name: Verify Android client
         working-directory: apps/mobile
         run: ./gradlew --no-daemon :android:testDebugUnitTest :android:lintRelease
@@ -68,24 +82,53 @@ jobs:
           printf '%s' "$LEXORA_ANDROID_KEYSTORE_BASE64" | base64 --decode > "$LEXORA_ANDROID_KEYSTORE"
           unset LEXORA_ANDROID_KEYSTORE_BASE64
           ./gradlew --no-daemon :android:assembleRelease
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs android/build/outputs/apk/release/android-release.apk | tee android/build/outputs/apk/release/signature.txt
-          expected="$(cat android/release-certificate.sha256)"
-          grep -Fx "Signer #1 certificate SHA-256 digest: $expected" android/build/outputs/apk/release/signature.txt
-          cd android/build/outputs/apk/release
-          sha256sum android-release.apk > android-release.apk.sha256
 
       - name: Remove signing material
         if: always()
         run: rm -f "$RUNNER_TEMP/lexora-android-release.p12"
 
-      - name: Upload signed package
+      - name: Verify APK signature and manifest
+        env:
+          APK: ${{ steps.apk.outputs.path }}
+          GRADLE_APK: ${{ steps.apk.outputs.source-path }}
+          APPLICATION_ID: ${{ steps.apk.outputs.application-id }}
+          VERSION_NAME: ${{ steps.apk.outputs.version-name }}
+          VERSION_CODE: ${{ steps.apk.outputs.version-code }}
+        shell: bash
+        run: |
+          mv -- "$GRADLE_APK" "$APK"
+          build_tools="$ANDROID_HOME/build-tools/36.0.0"
+          signature="$(dirname "$APK")/signature.txt"
+          "$build_tools/apksigner" verify --verbose --print-certs "$APK" | tee "$signature"
+          expected="$(cat apps/mobile/android/release-certificate.sha256)"
+          grep -Fx "Signer #1 certificate SHA-256 digest: $expected" "$signature"
+          badging="$("$build_tools/aapt2" dump badging "$APK")"
+          package_line="${badging%%$'\n'*}"
+          if [[ "$package_line" != "package: name='$APPLICATION_ID' versionCode='$VERSION_CODE' versionName='$VERSION_NAME'"* ]]; then
+            echo "APK manifest does not match the Android release version: $package_line" >&2
+            exit 1
+          fi
+
+      - name: Install and launch signed APK
+        env:
+          APK: ${{ steps.apk.outputs.path }}
+          APPLICATION_ID: ${{ steps.apk.outputs.application-id }}
+        shell: bash
+        run: |
+          sudo chown "$(id -u)" /dev/kvm
+          sdkmanager 'emulator' 'system-images;android-36;google_apis;x86_64'
+          bash packaging/mobile/release/verify-install.sh "$APK" "$APPLICATION_ID"
+          cd "$(dirname "$APK")"
+          name="$(basename "$APK")"
+          sha256sum "$name" > "$name.sha256"
+
+      - name: Upload verified Android package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: lexora-android-apk
+          name: ${{ steps.apk.outputs.artifact }}
           path: |
-            apps/mobile/android/build/outputs/apk/release/android-release.apk
-            apps/mobile/android/build/outputs/apk/release/android-release.apk.sha256
-            apps/mobile/android/build/outputs/apk/release/output-metadata.json
+            ${{ steps.apk.outputs.path }}
+            ${{ steps.apk.outputs.path }}.sha256
             apps/mobile/android/build/outputs/apk/release/signature.txt
           if-no-files-found: error
           retention-days: 14

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 import { desktopUpdateArtifactName } from '../../../apps/buddy/electron/shared/desktopDistribution.ts'
 import { CPU_ARCHITECTURE } from '../../../apps/buddy/shared/platform/identifiers.ts'
+import { androidArtifact } from '../../mobile/release/apk.mjs'
 import { resolveBuddyOutputPaths } from './output-paths.mjs'
 import { readBuddyProductMetadata } from './release-metadata.mjs'
 import { requirePackageFormat, resolveBuildTarget } from './targets.mjs'
@@ -57,8 +58,14 @@ export function desktopArtifact(target, format, { cwd } = {}) {
 
 export function readBuddyReleaseMetadata(cwd) {
   const artifacts = releasePackages.map(({ targetId, format }) => desktopArtifact(resolveBuildTarget(targetId), format, { cwd }))
+  return { ...readBuddyProductMetadata(cwd), artifacts }
+}
+
+export function readLexoraReleaseMetadata(cwd) {
+  const desktop = readBuddyReleaseMetadata(cwd)
+  const artifacts = [...desktop.artifacts, androidArtifact(cwd)]
   return {
-    ...readBuddyProductMetadata(cwd),
+    ...desktop,
     artifacts,
     checksums: artifacts.map(({ name, path }) => ({ name: `${name}.sha256`, path: `${path}.sha256` })),
     checksum: { name: 'SHA256SUMS.txt', path: join(resolveBuddyOutputPaths(cwd).outputRoot, 'artifacts/SHA256SUMS.txt') },

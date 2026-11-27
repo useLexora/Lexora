@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 import { createReleaseNotesDraft, validateReleaseNotes } from '../../release/notes.mjs'
 import { writeError, writeOutput } from '../../shared/cli-output.mjs'
-import { readBuddyReleaseMetadata, releaseAssets } from './artifacts.mjs'
-import { verifyBuddyReleaseArtifacts, verifyPublicAssets } from './verify-release-artifacts.mjs'
+import { readLexoraReleaseMetadata, releaseAssets } from './artifacts.mjs'
+import { verifyLexoraReleaseArtifacts, verifyPublicAssets } from './verify-release-artifacts.mjs'
 
 const repoRoot = resolve(import.meta.dirname, '../../..')
 
@@ -114,7 +114,7 @@ function writeSummary(message) {
 }
 
 function stageRelease(commit) {
-  const metadata = verifyBuddyReleaseArtifacts()
+  const metadata = verifyLexoraReleaseArtifacts()
   const endpoint = `repos/${metadata.releaseRepo}`
   const tag = api(`${endpoint}/git/ref/tags/${metadata.releaseTag}`, { allowMissing: true })
   if (!tag) {
@@ -168,7 +168,7 @@ function stageRelease(commit) {
 }
 
 async function publishRelease(commit) {
-  const metadata = readBuddyReleaseMetadata()
+  const metadata = readLexoraReleaseMetadata()
   const endpoint = `repos/${metadata.releaseRepo}`
   requireReleaseTag(metadata, commit)
   const release = findRelease(metadata)
@@ -191,7 +191,7 @@ async function publishRelease(commit) {
       directory,
       ...artifacts.flatMap(artifact => ['--pattern', artifact.name]),
     ])
-    const verified = verifyBuddyReleaseArtifacts({ directory, verifyChecksum: true })
+    const verified = verifyLexoraReleaseArtifacts({ directory, verifyChecksum: true })
     verifyReleaseAssets(release, releaseAssets(verified))
     for (const artifact of releaseAssets(verified)) {
       gh([
@@ -236,7 +236,7 @@ async function main() {
   const [action, ...extra] = process.argv.slice(2)
   if (!['--stage', '--publish'].includes(action) || extra.length)
     throw new Error('Usage: github-release.mjs --stage | --publish')
-  const metadata = readBuddyReleaseMetadata()
+  const metadata = readLexoraReleaseMetadata()
   if (process.env.GITHUB_REPOSITORY !== metadata.releaseRepo)
     throw new Error('Release repository does not match the workflow repository')
   const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim()
