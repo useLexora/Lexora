@@ -33,7 +33,18 @@ timeout 180 bash -c 'until [[ $("$@" shell getprop sys.boot_completed) == 1 ]]; 
 "${adb[@]}" shell input keyevent KEYCODE_WAKEUP
 "${adb[@]}" shell wm dismiss-keyguard
 timeout 120 "${adb[@]}" install "$apk"
-launch=$(timeout 60 "${adb[@]}" shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p "$application_id")
+intent=(-a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p "$application_id")
+resolved=$("${adb[@]}" shell cmd package resolve-activity --brief "${intent[@]}")
+component=${resolved##*$'\n'}
+if [[ $component != "$application_id/"?* ]]; then
+  printf 'Expected launcher for %s, got: %s\n' "$application_id" "$resolved" >&2
+  exit 1
+fi
+launch=$(timeout 60 "${adb[@]}" shell am start -W "${intent[@]}" -n "$component" 2>&1) || {
+  status=$?
+  printf 'am start exited %d:\n%s\n' "$status" "$launch" >&2
+  exit "$status"
+}
 printf '%s\n' "$launch"
 grep -Fx 'Status: ok' <<< "$launch"
 "${adb[@]}" shell pidof "$application_id"
