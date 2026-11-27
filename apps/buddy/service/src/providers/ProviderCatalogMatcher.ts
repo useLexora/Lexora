@@ -22,6 +22,7 @@ interface CatalogMatchInput {
   api: string
   baseUrl: string
   modelId: string
+  catalogAlias?: string
   providerId?: string
   selection?: ModelCatalogReference | null
 }
@@ -57,7 +58,7 @@ export class ProviderCatalogMatcher {
   }
 
   getFingerprint(): string {
-    return modelResolutionFingerprint({ version: 2, catalog: this.#runtime.getFingerprint?.() ?? modelCatalogFingerprint(this.#runtime) })
+    return modelResolutionFingerprint({ version: 3, catalog: this.#runtime.getFingerprint?.() ?? modelCatalogFingerprint(this.#runtime) })
   }
 
   #index(): void {
@@ -105,9 +106,9 @@ export class ProviderCatalogMatcher {
     let identity = requested
     let matches = matchIdentity([...(this.#identities.get(catalogModelKey(identity)) ?? [])], identity)
     if (!matches.length) {
-      const thinkingAlias = catalogModelKey(requested).match(/^(gemini-\d[\w.-]*)-(?:minimal|low|medium|high)$/u)?.[1]
-      if (thinkingAlias) {
-        identity = thinkingAlias
+      const alias = input.catalogAlias ?? this.#geminiEffortAlias(requested)
+      if (alias) {
+        identity = alias
         matches = matchIdentity([...(this.#identities.get(catalogModelKey(identity)) ?? [])], identity)
       }
     }
@@ -145,6 +146,14 @@ export class ProviderCatalogMatcher {
     const highestRank = Math.max(...preferred.map(model => ranks.get(model)!))
     preferred = preferred.filter(model => ranks.get(model) === highestRank)
     return resolveCandidates(candidates, preferred)
+  }
+
+  #geminiEffortAlias(requested: string): string | undefined {
+    const match = catalogModelKey(requested).match(/^(gemini-\d[\w.-]*)-(minimal|low|medium|high|xhigh)$/u)
+    const base = match?.[1]
+    if (base && match?.[2] === 'xhigh' && this.#models.get(JSON.stringify(['google', base]))?.thinkingLevelMap?.xhigh !== 'xhigh')
+      return undefined
+    return base
   }
 
   matchReferences(references: readonly ModelCatalogReference[]): ProviderCatalogMatch {

@@ -16,6 +16,7 @@ export type DiscoveredModelMetadata = z.infer<typeof discoveredModelMetadataSche
 export const serviceModelMetadataSchema = z.object({
   api: z.string().min(1),
   baseUrl: z.url(),
+  catalogAlias: z.string().min(1).max(200).optional(),
   metadata: discoveredModelMetadataSchema,
 }).strict()
 export type ServiceModelMetadata = z.infer<typeof serviceModelMetadataSchema>

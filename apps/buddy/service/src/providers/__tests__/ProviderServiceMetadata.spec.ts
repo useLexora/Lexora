@@ -112,9 +112,12 @@ describe('service model metadata', () => {
   it.each([
     ['workbuddy/deepseek-v4.1-flash', 'deepseek', 'deepseek-flash'],
     ['gemini-3.8-flash-high', 'google', 'gemini-3.8-flash'],
-  ])('recovers %s from standard IDs and preserves its image payload and wire ID after restart', async (id, catalogProviderId, catalogModelId) => {
+    ['gemini-4-hydrogen-xhigh', 'google', 'gemini-4-hydrogen'],
+    ['gemini-4-neon-xhigh', 'google', 'gemini-4-neon'],
+    ['gemini-3.8-flash-tiered', 'google', 'gemini-3.8-flash', 'antigravity'],
+  ])('recovers %s from standard IDs and preserves its image payload and wire ID after restart', async (id, catalogProviderId, catalogModelId, owner?: string) => {
     const f = await fixture()
-    f.setBody({ data: [{ id }] })
+    f.setBody({ data: [{ id, owned_by: owner }] })
     expect((await f.service.syncModels(connection.id))[0]).toMatchObject({ id, sourceCapabilities: { image: true }, catalogMatch: 'matched', catalog: { source: { providerId: catalogProviderId, modelId: catalogModelId } } })
     await f.service.setModelEnabled(connection.id, id, true)
     await f.service.setProviderEnabled(connection.id, true)
@@ -137,6 +140,15 @@ describe('service model metadata', () => {
     })
     expect(result.stopReason, result.errorMessage).toBe('stop')
     expect(payload).toMatchObject({ model: id, messages: [{ role: 'user', content: [{ type: 'text', text: 'Describe this image.' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,fixture-image' } }] }] })
+  })
+
+  it('drops the Antigravity alias when discovery no longer identifies that channel', async () => {
+    const f = await fixture()
+    const id = 'gemini-3.8-flash-tiered'
+    f.setBody({ data: [{ id, owned_by: 'antigravity', input_modalities: ['text'], tool_call: false }] })
+    expect((await f.service.syncModels(connection.id))[0]).toMatchObject({ catalogMatch: 'matched', sourceCapabilities: { image: false, toolCall: false } })
+    f.setBody({ data: [{ id, owned_by: 'unrelated' }] })
+    expect((await f.service.syncModels(connection.id))[0]).toMatchObject({ catalogMatch: 'unmatched', catalog: { source: null }, metadataKnown: false, sourceCapabilities: { image: false } })
   })
 
   it('preserves the inferred catalog match while service declarations and user overrides take precedence across restart', async () => {

@@ -252,11 +252,12 @@ export class ProviderModelCatalog {
   reconcileSyncedModels(provider: ProviderConfigRecord, result: ProviderModelDiscoveryResult): void {
     const observations = result.models.map((definition) => {
       const current = this.#models.find(provider.id, definition.id)
-      const serviceMetadata = definition.metadata
+      const serviceMetadata = definition.metadata || definition.catalogAlias
         ? serviceModelMetadataSchema.parse({
             api: provider.api,
             baseUrl: modelDiscoveryBaseUrl(provider.baseUrl),
-            metadata: definition.metadata,
+            catalogAlias: definition.catalogAlias,
+            metadata: definition.metadata ?? {},
           })
         : null
       return {
@@ -387,6 +388,7 @@ export class ProviderModelCatalog {
       api: provider.api,
       baseUrl: provider.baseUrl,
       modelId,
+      catalogAlias: this.#serviceMetadata(provider, current)?.catalogAlias,
       selection,
     }).status !== 'matched') {
       throw new ProviderValidationError()
@@ -576,7 +578,7 @@ export class ProviderModelCatalog {
     if (model.resolution?.inputFingerprint === inputFingerprint)
       return model.resolution
     const match = model.source === 'synced' && model.api !== pluginChatApi
-      ? this.#catalogMatcher.match({ api, baseUrl, modelId: model.modelId, selection: model.catalogSelection })
+      ? this.#catalogMatcher.match({ api, baseUrl, modelId: model.modelId, catalogAlias: serviceMetadata?.catalogAlias, selection: model.catalogSelection })
       : null
     const metadata = match
       ? match.status === 'matched' ? match.model : match.status === 'ambiguous' ? match.defaults : undefined
@@ -732,6 +734,7 @@ export class ProviderModelCatalog {
       api: provider.api,
       baseUrl: provider.baseUrl,
       modelId: definition.id,
+      catalogAlias: serviceMetadata?.catalogAlias,
       selection: current?.catalogSelection,
     })
     if (match.status === 'matched') {
