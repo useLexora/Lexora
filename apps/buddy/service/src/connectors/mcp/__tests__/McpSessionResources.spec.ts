@@ -1,3 +1,4 @@
+import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import type { SessionResourceChange } from '../../../agent/resources/SessionResourceReconciler'
 import type { SkillEvent } from '../../../skills/skillEvents'
 import type { McpConnectionEvent } from '../mcpEvents'
@@ -14,8 +15,10 @@ import { McpSessionResourceConsumer } from '../McpSessionResourceConsumer'
 const identity = { approvalPolicy: 'policy' as const, branchId: 'branch', canonicalRoot: '/workspace', conversationId: 'conversation', executionProfile: 'workspace_write' as const, grantRevision: 'grant', resourceRevision: 'resources', skillRevision: 'skills', scratchRoot: '/scratch', sessionMode: 'interactive' as const, spaceId: null }
 const config = { id: 'fixture', name: 'Fixture', transport: 'streamable-http' as const, url: 'https://example.test/mcp', enabled: true, credentialRef: null }
 
+const catalog = [{ name: 'lookup', inputSchema: { type: 'object' as const } }]
+
 interface InstalledSession {
-  readonly toolNames: readonly string[]
+  readonly tools: readonly ToolDefinition[]
   closed: boolean
   shutdown: () => Promise<void>
 }
@@ -61,6 +64,55 @@ describe('mcpSessionResources', () => {
     }
   })
 
+  it('rejects an in-flight binding across a connection test and calls the unchanged tool in the next run of the same session identity', async () => {
+    const fixture = createFixture()
+    const { service, sessions, consumer } = fixture
+    const remoteCall = vi.spyOn(McpClientSession.prototype, 'callTool').mockResolvedValue({ content: [{ type: 'text', text: 'lookup result' }] })
+    try {
+      await service.upsert(config)
+      await service.prepareForRun(new AbortController().signal)
+      const changes: McpConnectionEvent[] = []
+      service.onDidChangeConnection(event => changes.push(event))
+      const first = await sessions.withConversationRun(identity, 'first', undefined, async () => {
+        const binding = await sessions.getOrCreate(identity, '/session', fixture.createSession)
+        const refreshEntered = Promise.withResolvers<void>()
+        const refreshReleased = Promise.withResolvers<typeof catalog>()
+        fixture.listTools.mockImplementationOnce(() => {
+          refreshEntered.resolve()
+          return refreshReleased.promise
+        })
+        const stale = binding.session.tools[0]!.execute('stale', {}, undefined, undefined, {} as never)
+        await refreshEntered.promise
+        const retest = service.test(config.id)
+        try {
+          await vi.waitFor(() => expect(changes.some(event => event.type === 'generation')).toBe(true))
+        }
+        finally {
+          refreshReleased.resolve(catalog)
+        }
+        expect(await retest).toMatchObject({ status: 'ready', toolCount: 1 })
+        expect(await stale).toMatchObject({ isError: true, details: { code: 'MCP_CONNECTOR_DISABLED' } })
+        expect(remoteCall).not.toHaveBeenCalled()
+        expect(changes.filter(event => event.type === 'catalog')).toEqual([])
+        await consumer.whenIdle()
+        expect(sessions.snapshot()[0]?.invalidationPending).toBe(true)
+        expect(binding.session.closed).toBe(false)
+        return binding
+      })
+      expect(first.session.closed).toBe(true)
+      await sessions.withConversationRun(identity, 'next', undefined, async () => {
+        const next = await sessions.getOrCreate(identity, '/session', fixture.createSession)
+        expect(next.resourceRevisions).not.toEqual(first.resourceRevisions)
+        expect(next.session.tools[0]!.name).toBe(first.session.tools[0]!.name)
+        const result = await next.session.tools[0]!.execute('next', {}, undefined, undefined, {} as never)
+        expect(result).toMatchObject({ isError: false, content: [{ type: 'text', text: 'lookup result' }] })
+      })
+    }
+    finally {
+      await fixture.dispose()
+    }
+  })
+
   it.each(['target change', 'failed reset', 'failed configuration write'] as const)('rebuilds a session prepared with a paused catalog after %s once its run is released', async (operation) => {
     const fixture = createFixture()
     const { service, sessions, consumer } = fixture
@@ -101,7 +153,7 @@ describe('mcpSessionResources', () => {
       await service.prepareForRun(new AbortController().signal)
       const first = await sessions.getOrCreate(identity, null, fixture.createSession)
       await consumer.whenIdle()
-      expect(first.session.toolNames).toEqual([])
+      expect(first.session.tools).toEqual([])
       expect(sessions.snapshot()[0]).toMatchObject({ resourceRevisions: [], invalidationPending: false })
       run = sessions.withConversationRun(identity, 'run', undefined, () => {
         runEntered.resolve()
@@ -124,7 +176,7 @@ describe('mcpSessionResources', () => {
       const next = await sessions.getOrCreate(identity, '/session', fixture.createSession)
       await consumer.whenIdle()
       expect(next).not.toBe(first)
-      expect(next.session.toolNames).toEqual(service.getTools().tools.map(tool => tool.name))
+      expect(next.session.tools.map(tool => tool.name)).toEqual(service.getTools().tools.map(tool => tool.name))
       expect(sessions.snapshot()[0]).toMatchObject({ resourceRevisions: service.resourceRevisions(), invalidationPending: false })
     }
     finally {
@@ -141,7 +193,7 @@ function createFixture() {
   const database = openBuddyDatabase({ databasePath: ':memory:' })
   const repository = createConnectorRepository(database)
   const service = new McpConnectorService({ connectors: repository, secrets: { read: async () => null, write: async () => {}, delete: async () => {} } })
-  vi.spyOn(McpClientSession.prototype, 'listTools').mockResolvedValue([{ name: 'lookup', inputSchema: { type: 'object' } }])
+  const listTools = vi.spyOn(McpClientSession.prototype, 'listTools').mockResolvedValue(catalog)
   const close = vi.spyOn(McpClientSession.prototype, 'close').mockResolvedValue()
   const source = new Emitter<SkillEvent>(() => {})
   const resolution = { revision: 'skills', skills: [], references: [], paths: [], readRoots: [], diagnostics: [] }
@@ -159,10 +211,11 @@ function createFixture() {
     sessions,
     consumer,
     applied,
+    listTools,
     close,
     createSession: async () => {
       const tools = service.getTools()
-      const session: InstalledSession = { toolNames: tools.tools.map(tool => tool.name), closed: false, shutdown: async () => {
+      const session: InstalledSession = { tools: tools.tools, closed: false, shutdown: async () => {
         session.closed = true
       } }
       return { piSessionFile: '/session', resourceRevisions: tools.resourceRevisions, session }

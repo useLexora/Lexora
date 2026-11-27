@@ -22,6 +22,14 @@ describe('safe diagnostic errors', () => {
       expect(applicationDiagnosticSchema.safeParse({ ...diagnostic, failure: { ...failure, acl: { ...acl, ...extra } } }).success).toBe(false)
   })
 
+  it('accepts only MCP methods, HTTP statuses and retry flags in MCP request evidence', () => {
+    const failure = { kind: 'mcp_request', method: 'tools/call', retrying: false }
+    const diagnostic = { event: 'connectors.request.failed', level: 'warn', errorCode: 'MCP_TOOL_FAILED', failure }
+    expect(applicationDiagnosticSchema.parse(diagnostic).failure).toEqual(failure)
+    for (const extra of [{ method: 'private-method' }, { httpStatus: 600 }, { httpStatus: 404.5 }, { retrying: 'false' }, { body: 'private-body' }, { sessionId: 'private-session' }])
+      expect(applicationDiagnosticSchema.safeParse({ ...diagnostic, failure: { ...failure, ...extra } }).success).toBe(false)
+  })
+
   it('retains a native failure through an error cause without copying private text', () => {
     const failure = { kind: 'private_directories', operation: 'validate_acl', directoryIndex: 1 } as const
     const cause = Object.assign(new Error('fixture-private-path'), { code: 'PRIVATE_DIRECTORIES_UNSAFE', failure })

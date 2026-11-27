@@ -1,17 +1,23 @@
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import type { DatabaseSync } from 'node:sqlite'
+import type { ConnectorChangeNotice } from '../../../../../shared/connectors/connectorApi'
 import type { ConnectorCredential } from '../../../../../shared/connectors/connectorCredentials'
+import type { ApplicationDiagnostic } from '../../../../../shared/diagnostics/applicationDiagnostic'
 import type { McpConnectionEvent, McpConnectorEvent } from '../mcpEvents'
 
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { Client, SdkErrorCode, SdkHttpError } from '@modelcontextprotocol/client'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+import { encodeDiagnosticRecord } from '../../../../../electron/main/diagnostics/diagnosticRecord'
+import { applicationDiagnosticSchema } from '../../../../../shared/diagnostics/applicationDiagnostic'
+import { applicationLogRecordSchema } from '../../../../../shared/diagnostics/applicationLog'
 import { createConnectorRepository } from '../../../storage/connectorRepository'
 import { openBuddyDatabase } from '../../../storage/database'
 import { McpConnectorService } from '../McpConnectorService'
 import { createMcpToolName } from '../mcpToolNames'
-import { observeMcpDiagnostics } from '../observeMcpEvents'
+import { observeMcpDiagnostics, observeMcpNotifications } from '../observeMcpEvents'
 
 const services: McpConnectorService[] = []
 const databases: DatabaseSync[] = []
@@ -89,6 +95,39 @@ describe('mcpConnectorService', () => {
     expect(facts.map(event => [event.type, event.type === 'credential' ? event.status : event.type])).toEqual([['credential', 'written'], ['credential', 'restored']])
     expect(JSON.stringify(diagnostics)).not.toContain('private-token')
     expect(JSON.stringify(diagnostics)).not.toContain('example.com')
+  })
+
+  it('records only bounded request failure evidence through recovery without notifying settings', async () => {
+    onTestFinished(() => {
+      vi.restoreAllMocks()
+    })
+    vi.spyOn(Client.prototype, 'connect').mockImplementation(async function (this: Client, transport) {
+      Object.defineProperty(transport, 'sessionId', { value: 'private-session-id' })
+      Object.defineProperty(this, 'transport', { value: transport })
+    })
+    const sdkFailure = (status: number) => new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, 'private-error-message', { status, text: 'private-response-body' })
+    vi.spyOn(Client.prototype, 'listTools').mockRejectedValueOnce(sdkFailure(404)).mockRejectedValueOnce(sdkFailure(503))
+    const { service } = await createFixture()
+    const diagnostics: ApplicationDiagnostic[] = []
+    const notices: ConnectorChangeNotice[] = []
+    observeMcpDiagnostics(service, event => diagnostics.push(event))
+    observeMcpNotifications(service, event => notices.push(event))
+    await service.upsert(httpConfig('https://private-endpoint.test/mcp?key=private-key'))
+    expect(await service.test('remote')).toMatchObject({ status: 'error', errorCode: 'MCP_SERVER_UNAVAILABLE' })
+
+    const failures = diagnostics.filter(event => event.event === 'connectors.request.failed').map(event => applicationDiagnosticSchema.parse(event))
+    const records = failures.map((event, index) => {
+      const line = encodeDiagnosticRecord({ ...event, scope: 'local-service' }, { appVersion: 'test', launchId: 'fixture', collectorPid: 1, platform: 'test' }, index + 1, 0, '')
+      return applicationLogRecordSchema.parse(JSON.parse(line!.toString()))
+    })
+    expect(records).toMatchObject([
+      { connectorId: 'remote', errorCode: 'MCP_SESSION_EXPIRED', failure: { kind: 'mcp_request', method: 'tools/list', httpStatus: 404, retrying: true } },
+      { connectorId: 'remote', errorCode: 'MCP_SERVER_UNAVAILABLE', failure: { kind: 'mcp_request', method: 'tools/list', httpStatus: 503, retrying: false } },
+    ])
+    expect(JSON.stringify([diagnostics, records, notices])).not.toContain('private-')
+    expect(notices.some(notice => notice.type === 'runtime')).toBe(true)
+    for (const failure of failures)
+      expect(notices).not.toContainEqual(expect.objectContaining({ sourceId: failure.producerInstanceId, revision: failure.sourceSequence }))
   })
 
   it('lists and executes a confirmed stdio server without credentials', async () => {

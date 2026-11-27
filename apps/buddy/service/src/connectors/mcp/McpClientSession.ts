@@ -1,8 +1,9 @@
 import type { CallToolResult, OAuthClientProvider, Progress, Tool } from '@modelcontextprotocol/client'
 import type { ConnectorCredential } from '../../../../shared/connectors/connectorCredentials'
 import type { ConnectorErrorCode, ConnectorRuntimeState } from '../../../../shared/connectors/connectorState'
+import type { McpRequestFailure } from './mcpEvents'
 import type { McpServerConfig } from './mcpSchemas'
-import { Client } from '@modelcontextprotocol/client'
+import { Client, SdkHttpError } from '@modelcontextprotocol/client'
 import { version } from '../../../../package.json'
 import { createMcpTransport } from './createMcpTransport'
 import { McpClientError, mcpErrorCode } from './mcpErrors'
@@ -19,6 +20,7 @@ export interface McpClientSessionOptions {
   assertAvailable?: () => void
   maxReconnectAttempts?: number
   onUnavailable?: (code: ConnectorErrorCode) => void
+  onRequestFailure?: (failure: McpRequestFailure) => void
   onToolsChanged?: () => void
   onAuthorization?: (kind: ConnectorRuntimeState['authorization']) => void
 }
@@ -77,7 +79,7 @@ export class McpClientSession {
     }
     client.onerror = (error) => {
       if (this.#client === client && !this.#lifetime.signal.aborted)
-        this.#options.onUnavailable?.(mcpErrorCode(error))
+        this.#options.onUnavailable?.(mcpErrorCode(error, 'MCP_SERVER_UNAVAILABLE', this.#connected && this.#hasHttpSession(client)))
     }
     this.#client = client
     const transport = createMcpTransport(this.#options.config, this.#options.credential, this.#options.authProvider, {
@@ -106,20 +108,43 @@ export class McpClientSession {
 
   async listTools(signal?: AbortSignal): Promise<McpRemoteTool[]> {
     const deadline = AbortSignal.any([this.#signal(signal), AbortSignal.timeout(30_000)])
-    await this.#waitForConnection(deadline)
-    const result = await this.#requireClient().listTools(undefined, {
-      signal: deadline,
-      timeout: 15_000,
-      maxTotalTimeout: 30_000,
-      cacheMode: 'refresh',
-    })
-    return result.tools
+    for (let attempt = 0; ; attempt++) {
+      await this.#waitForConnection(deadline)
+      const client = this.#requireClient()
+      const hasHttpSession = this.#hasHttpSession(client)
+      try {
+        const result = await client.listTools(undefined, {
+          signal: deadline,
+          timeout: 15_000,
+          maxTotalTimeout: 30_000,
+          cacheMode: 'refresh',
+        })
+        return result.tools
+      }
+      catch (error) {
+        deadline.throwIfAborted()
+        const code = mcpErrorCode(error, 'MCP_SERVER_UNAVAILABLE', hasHttpSession)
+        const retrying = code === 'MCP_SESSION_EXPIRED' && attempt === 0
+        this.#reportFailure('tools/list', error, code, retrying)
+        if (code !== 'MCP_SESSION_EXPIRED')
+          throw error
+        if (this.#client === client) {
+          this.#client = null
+          this.#connected = false
+          await client.close()
+        }
+        if (!retrying)
+          throw new McpClientError(code, { cause: error })
+      }
+    }
   }
 
   async callTool(name: string, arguments_: unknown, signal?: AbortSignal, onProgress?: (progress: Progress) => void): Promise<CallToolResult> {
     await this.#waitForConnection(signal)
+    const client = this.#requireClient()
+    const hasHttpSession = this.#hasHttpSession(client)
     try {
-      return await this.#requireClient().callTool({
+      return await client.callTool({
         name,
         arguments: isRecord(arguments_) ? arguments_ : {},
       }, {
@@ -133,7 +158,9 @@ export class McpClientSession {
     catch (error) {
       if (signal?.aborted)
         throw error
-      throw new McpClientError(mcpErrorCode(error, 'MCP_TOOL_FAILED'), { cause: error })
+      const code = mcpErrorCode(error, 'MCP_TOOL_FAILED', hasHttpSession)
+      this.#reportFailure('tools/call', error, code, false)
+      throw new McpClientError(code, { cause: error })
     }
   }
 
@@ -153,6 +180,14 @@ export class McpClientSession {
   async #waitForConnection(signal?: AbortSignal) {
     signal?.throwIfAborted()
     await waitForMcpOperation(this.connect(), signal)
+  }
+
+  #hasHttpSession(client: Client): boolean {
+    return this.#options.config.transport === 'streamable-http' && Boolean(client.transport?.sessionId)
+  }
+
+  #reportFailure(method: McpRequestFailure['method'], error: unknown, errorCode: ConnectorErrorCode, retrying: boolean): void {
+    this.#options.onRequestFailure?.({ method, errorCode, retrying, ...(error instanceof SdkHttpError ? { httpStatus: error.status } : {}) })
   }
 
   #signal(signal?: AbortSignal) {

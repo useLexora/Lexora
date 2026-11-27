@@ -17,8 +17,24 @@ afterEach(async () => {
     await close()
 })
 
-async function serverFixture(options: { modern?: boolean, oauth?: boolean, denied?: 401 | 403, toolNames?: string[], pageSize?: number } = {}) {
-  const requests: Array<{ method: string, toolName?: string, authorization?: string, version?: string }> = []
+interface FixtureRequest {
+  method: string
+  toolName?: string
+  authorization?: string
+  version?: string
+  sessionId?: string
+}
+
+interface HttpRpcError {
+  status: number
+  code: number
+  message: string
+}
+
+async function serverFixture(options: { modern?: boolean, oauth?: boolean, denied?: 401 | 403, toolNames?: string[], pageSize?: number, stateful?: boolean } = {}) {
+  const requests: FixtureRequest[] = []
+  let reject: ((request: FixtureRequest) => HttpRpcError | undefined) | undefined
+  let initialized = 0
   const registered: Record<string, unknown> = {}
   let annotations = { readOnlyHint: true, openWorldHint: false, destructiveHint: false }
   let toolNames = options.toolNames ?? ['echo']
@@ -67,7 +83,13 @@ async function serverFixture(options: { modern?: boolean, oauth?: boolean, denie
     if (request.method !== 'POST')
       return response.writeHead(405).end()
     const message = JSON.parse(body)
-    requests.push({ method: message.method, toolName: message.params?.name, authorization: request.headers.authorization, version: request.headers['mcp-protocol-version'] as string | undefined })
+    const rpc = { method: message.method, toolName: message.params?.name, authorization: request.headers.authorization, version: request.headers['mcp-protocol-version'] as string | undefined, sessionId: request.headers['mcp-session-id'] as string | undefined }
+    requests.push(rpc)
+    const error = reject?.(rpc)
+    if (error)
+      return json(response, { jsonrpc: '2.0', id: null, error: { code: error.code, message: error.message } }, error.status)
+    if (options.stateful && message.method === 'initialize')
+      response.setHeader('Mcp-Session-Id', `session-${++initialized}`)
     if (message.id === undefined)
       return response.writeHead(202).end()
     const pageStart = Number(message.params?.cursor ?? 0)
@@ -90,7 +112,13 @@ async function serverFixture(options: { modern?: boolean, oauth?: boolean, denie
     server.closeAllConnections()
     await new Promise<void>(resolve => server.close(() => resolve()))
   })
-  return { base, requests, registered, setTools: (names: string[]) => {
+  function sessionIds(method: string) {
+    return requests.filter(request => request.method === method).map(request => request.sessionId)
+  }
+  function rejectRequests(predicate?: typeof reject) {
+    reject = predicate
+  }
+  return { base, requests, registered, sessionIds, rejectRequests, setTools: (names: string[]) => {
     toolNames = names
   }, changeAnnotations: () => {
     annotations = { readOnlyHint: false, openWorldHint: true, destructiveHint: true }
@@ -107,6 +135,83 @@ function session(base: string, credential = { type: 'http' as const, bearerToken
   cleanup.push(() => client.close())
   return client
 }
+
+describe('mCP HTTP session expiry', () => {
+  const gone = { status: 404, code: -32001, message: 'Not found' }
+  const uninitialized = { status: 400, code: -32000, message: 'Bad Request: Server not initialized' }
+
+  async function bindHttpTool(base: string) {
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    const service = new McpConnectorService({ connectors: createConnectorRepository(database), secrets: { read: async () => null, write: async () => {}, delete: async () => {} } })
+    cleanup.push(async () => {
+      await service.close()
+      database.close()
+    })
+    await service.upsert({ id: 'http', name: 'HTTP', url: `${base}/mcp`, transport: 'streamable-http', enabled: true, credentialRef: null })
+    await vi.waitUntil(() => service.state('http').status === 'ready')
+    const tool = service.getTools().tools[0]!
+    return { service, execute: (value: string) => tool.execute(value, { value }, undefined, undefined, {} as never) }
+  }
+
+  it.each([gone, uninitialized])('preserves bound tools across a server-side HTTP $status session expiry', async (error) => {
+    const fixture = await serverFixture({ stateful: true })
+    const { service, execute } = await bindHttpTool(fixture.base)
+    fixture.rejectRequests(request => request.sessionId === 'session-1' ? error : undefined)
+    const results = await Promise.all(['one', 'two'].map(execute))
+    expect(results).toMatchObject(['one', 'two'].map(text => ({ content: [{ type: 'text', text }], isError: false })))
+    expect(fixture.sessionIds('initialize')).toEqual([undefined, undefined])
+    expect(fixture.sessionIds('tools/list')).toEqual(['session-1', 'session-1', 'session-2'])
+    expect(fixture.sessionIds('tools/call')).toEqual(['session-2', 'session-2'])
+    expect(service.state('http')).toMatchObject({ status: 'ready', errorCode: null })
+  })
+
+  it.each([gone, uninitialized])('does not replay a write when tools/call returns HTTP $status', async (error) => {
+    const fixture = await serverFixture({ stateful: true, toolNames: ['write'] })
+    fixture.changeAnnotations()
+    const { execute } = await bindHttpTool(fixture.base)
+    let expired = false
+    fixture.rejectRequests((request) => {
+      if (request.sessionId !== 'session-1')
+        return
+      if (request.method === 'tools/call')
+        expired = true
+      return expired ? error : undefined
+    })
+    expect(await execute('first')).toMatchObject({ isError: true, details: { code: 'MCP_SESSION_EXPIRED' } })
+    expect(fixture.sessionIds('tools/call')).toEqual(['session-1'])
+    expect(await execute('second')).toMatchObject({ isError: false, content: [{ type: 'text', text: 'second' }] })
+    expect(fixture.sessionIds('tools/call')).toEqual(['session-1', 'session-2'])
+    expect(fixture.sessionIds('initialize')).toEqual([undefined, undefined])
+  })
+
+  it.each([
+    { stateful: true, error: { ...uninitialized, code: -32602 } },
+    { stateful: true, error: { ...uninitialized, message: 'Bad Request: Invalid cursor' } },
+    { stateful: false, error: gone },
+    { stateful: false, error: uninitialized },
+  ])('does not reinitialize for $error.status/$error.code/$error.message with stateful=$stateful', async ({ stateful, error }) => {
+    const fixture = await serverFixture({ stateful })
+    const client = session(fixture.base)
+    await client.listTools()
+    fixture.rejectRequests(request => request.method === 'tools/list' ? error : undefined)
+    await expect(client.listTools()).rejects.toThrow()
+    fixture.rejectRequests()
+    expect(await client.listTools()).toMatchObject([{ name: 'echo' }])
+    expect(fixture.sessionIds('initialize')).toEqual([undefined])
+    const expectedId = stateful ? 'session-1' : undefined
+    expect(fixture.sessionIds('tools/list')).toEqual([expectedId, expectedId, expectedId])
+  })
+
+  it('stops after one replacement when the server also rejects the fresh session', async () => {
+    const fixture = await serverFixture({ stateful: true })
+    const client = session(fixture.base)
+    await client.listTools()
+    fixture.rejectRequests(request => request.method === 'tools/list' ? gone : undefined)
+    await expect(client.listTools()).rejects.toMatchObject({ code: 'MCP_SESSION_EXPIRED' })
+    expect(fixture.sessionIds('initialize')).toEqual([undefined, undefined])
+    expect(fixture.sessionIds('tools/list')).toEqual(['session-1', 'session-1', 'session-2'])
+  })
+})
 
 describe('mCP HTTP and authorization', () => {
   it.each([

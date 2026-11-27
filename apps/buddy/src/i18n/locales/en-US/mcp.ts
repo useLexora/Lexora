@@ -118,6 +118,7 @@ export default {
   'desktop.mcp.error.MCP_REQUEST_TIMEOUT': 'Server response timed out. Please retry.',
   'desktop.mcp.error.MCP_SERVER_DISCONNECTED': 'Server disconnected. Test the connection.',
   'desktop.mcp.error.MCP_SERVER_UNAVAILABLE': 'Cannot connect. Check the URL, command, and network.',
+  'desktop.mcp.error.MCP_SESSION_EXPIRED': 'The server session expired. Check the result before repeating an action.',
   'desktop.mcp.error.MCP_TOOL_CHANGED': 'Tool definition changed. It will update on the next turn.',
   'desktop.mcp.error.MCP_TOOL_FAILED': 'Tool execution failed.',
   'desktop.mcp.error.MCP_TOOL_INVALID': 'The server returned invalid tool definitions.',
