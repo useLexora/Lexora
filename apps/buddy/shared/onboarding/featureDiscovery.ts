@@ -12,6 +12,7 @@ export const FEATURE_GUIDES = [
   { id: 'codemode-concurrency', version: '0.18.0' },
   { id: 'task-archive', version: '0.22.0' },
   { id: 'chinese-input-triggers', version: '0.22.0' },
+  { id: 'mobile-connections', version: '0.23.0' },
 ] as const
 
 export type FeatureGuideId = typeof FEATURE_GUIDES[number]['id']
