@@ -38,7 +38,8 @@ async function main() {
   try {
     if (values.zip) {
       await mkdir(directory)
-      execFileSync(join(process.env.SystemRoot, 'System32/tar.exe'), ['-xf', source, '-C', directory], {
+      execFileSync(join(process.env.SystemRoot, 'System32/tar.exe'), ['-xf', source], {
+        cwd: directory,
         stdio: 'inherit',
         timeout: 120_000,
       })
