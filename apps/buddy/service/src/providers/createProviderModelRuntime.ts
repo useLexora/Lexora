@@ -16,6 +16,7 @@ export function createProviderModelRuntime(runtime: ModelRuntime, headers: Provi
     return result
   }
   return {
+    drainRefreshes: () => refreshing,
     getModels: runtime.getModels.bind(runtime),
     getProvider: runtime.getProvider.bind(runtime),
     getProviders: runtime.getProviders.bind(runtime),

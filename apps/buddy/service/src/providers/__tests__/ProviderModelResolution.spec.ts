@@ -1,6 +1,7 @@
+import { setImmediate } from 'node:timers/promises'
 import { getSupportedThinkingLevels, InMemoryCredentialStore, InMemoryModelsStore } from '@earendil-works/pi-ai'
 import { ModelRuntime } from '@earendil-works/pi-coding-agent'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { openBuddyDatabase } from '../../storage/database'
 import { createProviderRepository } from '../../storage/providerRepository'
 import { AuthInteractionService } from '../AuthInteractionService'
@@ -55,6 +56,48 @@ describe('provider model resolution', () => {
     }
     finally {
       database.close()
+    }
+  })
+
+  it('drains model cache access triggered by provider registration before shutting down', async () => {
+    const credentials = new InMemoryCredentialStore()
+    const modelsStore = new InMemoryModelsStore()
+    const reading = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const read = modelsStore.read.bind(modelsStore)
+    vi.spyOn(modelsStore, 'read').mockImplementation(async (id, options) => {
+      reading.resolve()
+      await release.promise
+      return read(id, options)
+    })
+    const runtime = await ModelRuntime.create({ credentials, modelsPath: null, modelsStore, refreshOnCreate: false })
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    const providers = createProviderRepository(database)
+    const service = new ProviderService({
+      authInteractions: new AuthInteractionService(),
+      credentialStatus: createProviderCredentialStatus(credentials),
+      modelDiscovery: { supports: () => false, discover: async () => ({ models: [], complete: true }) },
+      modelRuntime: createProviderModelRuntime(runtime, new ProviderRequestHeaders(providers.states)),
+      providers,
+    })
+    try {
+      await service.createCustomProvider({
+        id: 'fixture-relay',
+        displayName: 'Fixture relay',
+        authentication: 'none',
+        api: 'openai-completions',
+        baseUrl: 'https://relay.example.test/v1',
+        models: [{ id: 'relay-model' }],
+      })
+      await reading.promise
+      const disposed = service.dispose()
+      expect(await Promise.race([disposed.then(() => 'disposed'), setImmediate('pending')])).toBe('pending')
+      release.resolve()
+      await disposed
+    }
+    finally {
+      release.resolve()
+      await service.dispose().finally(() => database.close())
     }
   })
 
