@@ -52,7 +52,10 @@ jobs:
           packages: '@uselexora/lexora @uselexora/lexora-buddy...'
 
       - name: Prepare Android SDK
-        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+        run: |
+          tools="$ANDROID_HOME/cmdline-tools/latest/bin"
+          "$tools/sdkmanager" 'platforms;android-36' 'build-tools;36.0.0'
+          echo "$tools" >> "$GITHUB_PATH"
 
       - name: Resolve Android release artifact
         id: apk
