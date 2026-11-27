@@ -14,13 +14,28 @@ import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
 import app.uselexora.mobile.ui.*
 import org.json.JSONObject
+import org.junit.After
 import org.junit.Assert.*
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import java.io.File
 
 class PaperWorkbenchInstrumentedTest {
     @get:Rule val compose = createComposeRule()
+    private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
+    private lateinit var originalSkin: String
+
+    @Before fun usePaperSkin() {
+        compose.runOnUiThread {
+            originalSkin = MobileAppearance.skinId
+            MobileAppearance.selectSkin(context, "paper")
+        }
+    }
+
+    @After fun restoreSkin() {
+        compose.runOnUiThread { MobileAppearance.selectSkin(context, originalSkin) }
+    }
 
     private fun state() = MobileUiState().apply {
         connected = true; connectionLabel = "已连接服务"; deviceLabel = "工作室服务"

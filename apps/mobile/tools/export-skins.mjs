@@ -8,6 +8,8 @@ const root = fileURLToPath(new URL('../../..', import.meta.url))
 const defaultSource = resolve(root, 'apps/mobile/skins')
 const defaultOutput = resolve(root, 'apps/mobile/android/build/generated/skins')
 const skinIdPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
+const defaultSkinId = 'color-play'
+const skinOrder = new Map([[defaultSkinId, 0], ['paper', 1], ['mecha-armor', 2]])
 let compiler
 
 export function loadSkinCompiler() {
@@ -125,9 +127,10 @@ export async function exportBuiltinSkins({ sourceDirectory = defaultSource, outp
     validateAssetReferences(skin, assets)
     skins.push({ skin, directory, assets })
   }
-  if (!skins.some(({ skin }) => skin.id === 'paper'))
-    throw new Error('The default paper skin is required')
-  skins.sort((a, b) => a.skin.id === 'paper' ? -1 : b.skin.id === 'paper' ? 1 : a.skin.id.localeCompare(b.skin.id, 'en'))
+  if (!skins.some(({ skin }) => skin.id === defaultSkinId))
+    throw new Error(`The default ${defaultSkinId} skin is required`)
+  skins.sort(({ skin: a }, { skin: b }) =>
+    (skinOrder.get(a.id) ?? skinOrder.size) - (skinOrder.get(b.id) ?? skinOrder.size) || a.id.localeCompare(b.id, 'en'))
   const index = { schemaVersion: 1, skins: skins.map(({ skin }) => skin.id) }
   await rm(outputRoot, { recursive: true, force: true })
   await mkdir(resolve(outputRoot, 'skins'), { recursive: true })

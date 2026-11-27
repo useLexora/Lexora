@@ -67,10 +67,10 @@ internal data class BuiltinSkin(
 }
 
 internal class MobileSkinCatalog private constructor(val skins: List<BuiltinSkin>) {
-    fun get(id: String?): BuiltinSkin = skins.firstOrNull { it.id == id } ?: skins.first { it.id == DEFAULT_ID }
+    fun get(id: String?): BuiltinSkin = skins.firstOrNull { it.id == id } ?: skins.first()
 
     companion object {
-        const val DEFAULT_ID = "paper"
+        const val DEFAULT_ID = "color-play"
 
         fun load(readAsset: (String) -> String): MobileSkinCatalog {
             val index = JSONObject(readAsset("skins/index.json"))
@@ -81,7 +81,7 @@ internal class MobileSkinCatalog private constructor(val skins: List<BuiltinSkin
                 require(id is String && validSkinId(id)) { "Invalid skin index id" }
                 id
             }
-            require(ids.toSet().size == ids.size && DEFAULT_ID in ids) { "Skin index requires unique ids and paper" }
+            require(ids.toSet().size == ids.size && ids.firstOrNull() == DEFAULT_ID) { "Skin index requires unique ids with $DEFAULT_ID first" }
             return MobileSkinCatalog(ids.map { id ->
                 BuiltinSkin.parse(JSONObject(readAsset("skins/$id/skin.json"))).also {
                     require(it.id == id) { "Skin id does not match its index entry" }
