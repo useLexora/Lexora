@@ -4,10 +4,11 @@ import type { TaskCapability } from '@/modules/tasks'
 import type { WorkbenchView } from '@/workbench/common/workbench'
 import { Add20Regular } from '@vicons/fluent'
 import { useMessage } from 'naive-ui'
-import { computed, h, onScopeDispose, shallowRef, watch } from 'vue'
+import { computed, h, inject, onScopeDispose, shallowRef, watch } from 'vue'
 import { translateBuddy } from '@/i18n/buddyI18n'
 import { useTaskEnvironment } from '@/modules/tasks'
 import { DesktopTaskEditor, DesktopTaskViewProvider } from '@/modules/tasks/ui'
+import { runtimeAvailabilityKey } from '@/platform/runtime/runtimeAvailability'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
 import { useTaskErrorMessage } from '@/shared/ui/useTaskErrorMessage'
 import WorkbenchPaneActions from '@/workbench/browser/WorkbenchPaneActions.vue'
@@ -22,6 +23,10 @@ const workbench = useDesktopWorkbenchContext()
 const environment = useTaskEnvironment()
 const task = shallowRef<TaskCapability | null>(null)
 const failed = shallowRef(false)
+const editorReady = shallowRef(false)
+const runtime = inject(runtimeAvailabilityKey, null)
+// Keep the panel's maintenance and recovery UI reachable during the initial load.
+const editorTask = computed(() => editorReady.value || runtime?.loading.value || runtime?.failed.value ? task.value : null)
 const taskResource = computed(() => parseTaskResource(props.view.resource))
 const notificationTargetMessageId = computed(() => {
   const target = environment.notificationTarget.value
@@ -59,6 +64,10 @@ async function selectAction(key: string | number, fallback?: (key: string | numb
     message.error(translateBuddy(workbench.language.value, 'desktop.command.failed'))
   }
 }
+watch(() => task.value?.workspace.status.isLoading.value, (loading) => {
+  if (loading === false)
+    editorReady.value = true
+}, { flush: 'sync' })
 watch(() => task.value?.workspace.status.errorMessage.value, (error) => {
   if (error) {
     showTaskError(error)
@@ -72,12 +81,20 @@ watch(() => task.value?.session.spaceId.value, (spaceId) => {
 let loadVersion = 0
 onScopeDispose(() => loadVersion++)
 async function load() {
-  if (!taskResource.value)
+  const resource = taskResource.value
+  if (!resource)
     return
   const version = ++loadVersion
   failed.value = false
+  const matchesTask = task.value && resource.scheme === 'task'
+    && task.value.session.activeTaskId.value === resource.id
+    && (resource.data.branchId === undefined || task.value.workspace.session.activeBranchId.value === resource.data.branchId)
+  if (!matchesTask) {
+    task.value = null
+    editorReady.value = false
+  }
   try {
-    const loaded = await workbench.pool.open(props.view.resource)
+    const loaded = await workbench.pool.open(resource)
     if (version !== loadVersion)
       return
     task.value = loaded
@@ -97,22 +114,22 @@ watch(() => task.value?.session.currentTitle.value, (title) => {
 </script>
 
 <template>
-  <DesktopTaskViewProvider v-if="task" :context="context">
+  <DesktopTaskViewProvider v-if="editorTask" :context="context">
     <DesktopTaskEditor :active="visible" :reading-positions="workbench.readingPositions" @ready="workbench.controller.navigation.ready(view.id)">
       <template #title>
         <WorkbenchPaneTitle :view="view" />
       </template>
       <template #actions="{ options, select, label }">
-        <WorkbenchPaneActions :view-id="view.id" :actions="[...options, ...newTaskActions]" :label="label" @select="selectAction($event, select)" @split="workbench.newTask({ spaceId: task.session.spaceId.value, paneId: workbench.controller.owner(view.id)?.id, direction: $event })" />
+        <WorkbenchPaneActions :view-id="view.id" :actions="[...options, ...newTaskActions]" :label="label" @select="selectAction($event, select)" @split="workbench.newTask({ spaceId: editorTask.session.spaceId.value, paneId: workbench.controller.owner(view.id)?.id, direction: $event })" />
       </template>
     </DesktopTaskEditor>
   </DesktopTaskViewProvider>
-  <DesktopTaskLoading v-else :failed="failed" @retry="load">
+  <DesktopTaskLoading v-else :key="`${view.resource.scheme}:${view.resource.id}`" :failed="failed" @retry="load">
     <template #title>
       <WorkbenchPaneTitle :view="view" />
     </template>
     <template #actions>
-      <WorkbenchPaneActions :view-id="view.id" :actions="newTaskActions" @select="selectAction($event)" @split="workbench.newTask({ spaceId: taskResource?.scheme === 'draft' ? taskResource.data.spaceId : null, paneId: workbench.controller.owner(view.id)?.id, direction: $event })" />
+      <WorkbenchPaneActions :view-id="view.id" :actions="newTaskActions" @select="selectAction($event)" @split="workbench.newTask({ spaceId: task ? task.session.spaceId.value : taskResource?.scheme === 'draft' ? taskResource.data.spaceId : null, paneId: workbench.controller.owner(view.id)?.id, direction: $event })" />
     </template>
   </DesktopTaskLoading>
 </template>

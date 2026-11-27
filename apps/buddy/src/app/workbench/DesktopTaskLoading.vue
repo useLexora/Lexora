@@ -2,11 +2,13 @@
 import { ArrowClockwise20Regular, ErrorCircle20Regular } from '@vicons/fluent'
 import { NButton } from 'naive-ui'
 import DesktopIcon from '@/shared/ui/icon/DesktopIcon.vue'
+import { useDelayedLoading } from '@/shared/ui/loading/useDelayedLoading'
 import { useWorkbench } from '@/workbench/browser/workbenchContext'
 
-defineProps<{ failed: boolean }>()
+const props = defineProps<{ failed: boolean }>()
 defineEmits<{ retry: [] }>()
 const { labels } = useWorkbench()
+const showLoading = useDelayedLoading(() => !props.failed, 180)
 </script>
 
 <template>
@@ -44,7 +46,7 @@ const { labels } = useWorkbench()
       </NButton>
     </div>
 
-    <div v-else class="relative flex flex-1 min-w-0 min-h-0 flex-col">
+    <div v-else-if="showLoading" class="desktop-task-loading__body relative flex flex-1 min-w-0 min-h-0 flex-col">
       <div class="absolute top-0 left-0 right-0 h-[2px] overflow-hidden z-2" aria-hidden="true">
         <div class="desktop-task-loading__progress-bar h-full w-[40%]" />
       </div>
@@ -79,19 +81,13 @@ const { labels } = useWorkbench()
   }
 }
 
-.desktop-task-loading__status {
-  animation: task-status-appear 220ms ease-out 180ms backwards;
+.desktop-task-loading__body {
+  animation: task-loading-reveal 160ms ease-out both;
 }
 
-@keyframes task-status-appear {
-  from {
-    opacity: 0;
-    transform: scale(0.96) translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
+@keyframes task-loading-reveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .desktop-task-loading__spinner {
@@ -107,8 +103,8 @@ const { labels } = useWorkbench()
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .desktop-task-loading__body,
   .desktop-task-loading__progress-bar,
-  .desktop-task-loading__status,
   .desktop-task-loading__spinner {
     animation: none !important;
   }
