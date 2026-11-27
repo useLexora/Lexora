@@ -8,7 +8,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MobileSkinModelsTest {
@@ -18,10 +17,9 @@ class MobileSkinModelsTest {
     private fun paper() = JSONObject(readAsset("skins/paper/skin.json"))
     private fun keys(value: JSONObject) = value.keys().asSequence().toSet()
 
-    @Test fun generatedPackagesHaveBothCompletePalettesAndPreserveTheClassicDefault() {
+    @Test fun generatedPackagesHaveBothCompletePalettesAndPreserveThePaperPalette() {
         val skins = catalog().skins
-        assertEquals("paper", skins.first().id)
-        assertTrue(skins.map { it.id }.containsAll(listOf("paper", "color-play", "mecha-armor")))
+        assertEquals(listOf("color-play", "paper", "mecha-armor"), skins.take(3).map { it.id })
         val classic = JSONObject(File("build/generated/reader/reader/appearance.json").readText())
         for (skin in skins) {
             assertEquals(skin.name.getValue("zh"), skin.label("zh"))
@@ -40,17 +38,17 @@ class MobileSkinModelsTest {
                 assertEquals(palette.getJSONObject("colors").getString("link"), palette.getJSONObject("variables").getString("--link-color"))
             }
         }
-        assertNull(skins.first().variant(false).home)
+        assertNull(skins.single { it.id == "paper" }.variant(false).home)
         assertNotEquals(skins.first().variant(false).palette.toString(), skins.first().variant(true).palette.toString())
         assertEquals(15, classic.getJSONObject("typography").getInt("bodySize"))
         assertEquals(24, classic.getJSONObject("typography").getInt("bodyLineHeight"))
     }
 
-    @Test fun missingAndRemovedPreferencesRestorePaperWithoutChangingValidIds() {
+    @Test fun missingAndRemovedPreferencesRestoreColorPlayWithoutChangingValidIds() {
         val catalog = catalog()
-        assertEquals("paper", catalog.get(null).id)
-        assertEquals("paper", catalog.get("").id)
-        assertEquals("paper", catalog.get("removed-skin").id)
+        assertEquals("color-play", catalog.get(null).id)
+        assertEquals("color-play", catalog.get("").id)
+        assertEquals("color-play", catalog.get("removed-skin").id)
         for (skin in catalog.skins) assertEquals(skin.id, catalog.get(skin.id).id)
     }
 
@@ -61,7 +59,7 @@ class MobileSkinModelsTest {
         newSkin.getJSONObject("variants").getJSONObject("light").put("home", home)
         val catalog = MobileSkinCatalog.load { path ->
             when (path) {
-                "skins/index.json" -> """{"schemaVersion":1,"skins":["paper","aurora"]}"""
+                "skins/index.json" -> """{"schemaVersion":1,"skins":["color-play","aurora"]}"""
                 "skins/aurora/skin.json" -> newSkin.toString()
                 else -> readAsset(path)
             }
@@ -92,9 +90,10 @@ class MobileSkinModelsTest {
 
     @Test fun indexRejectsPathTraversalDuplicateIdsAndMissingDefaultBeforeReadingPackages() {
         for (index in listOf(
-            """{"schemaVersion":2,"skins":["paper"]}""",
-            """{"schemaVersion":1,"skins":["../paper","paper"]}""",
-            """{"schemaVersion":1,"skins":["paper","paper"]}""",
+            """{"schemaVersion":2,"skins":["color-play"]}""",
+            """{"schemaVersion":1,"skins":["color-play","../paper"]}""",
+            """{"schemaVersion":1,"skins":["color-play","color-play"]}""",
+            """{"schemaVersion":1,"skins":["paper","color-play"]}""",
             """{"schemaVersion":1,"skins":[]}""",
         )) {
             var packageRead = false
@@ -110,7 +109,7 @@ class MobileSkinModelsTest {
         }
         assertThrows(IllegalArgumentException::class.java) {
             MobileSkinCatalog.load { path ->
-                if (path == "skins/index.json") """{"schemaVersion":1,"skins":["paper"]}"""
+                if (path == "skins/index.json") """{"schemaVersion":1,"skins":["color-play"]}"""
                 else paper().put("id", "other").toString()
             }
         }

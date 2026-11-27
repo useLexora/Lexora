@@ -53,9 +53,7 @@ test('built-in packages contain complete native and reader palettes for both app
   const index = await exportBuiltinSkins({ sourceDirectory, outputDirectory })
   assert.deepEqual(await json(resolve(outputDirectory, 'skins/index.json')), index)
   assert.equal(index.schemaVersion, 1)
-  assert.equal(index.skins[0], 'paper')
-  for (const id of ['paper', 'color-play', 'mecha-armor'])
-    assert.ok(index.skins.includes(id), `Missing bundled skin ${id}`)
+  assert.deepEqual(index.skins.slice(0, 3), ['color-play', 'paper', 'mecha-armor'])
   for (const id of index.skins) {
     const input = await json(resolve(sourceDirectory, id, 'skin.json'))
     const output = await json(resolve(outputDirectory, 'skins', id, 'skin.json'))
@@ -122,6 +120,7 @@ test('new ids, opaque home data and local assets are discovered without code bra
   const source = resolve(path, 'source')
   const output = resolve(path, 'generated')
   await writeSkin(source, fixture())
+  await writeSkin(source, fixture('color-play'))
   const skin = fixture('aurora')
   skin.version = 2
   skin.variants.light.colors = { accent: '#123456', reading: '#faf0ee', link: '#345678', code: '#eeeaff' }
@@ -138,7 +137,7 @@ test('new ids, opaque home data and local assets are discovered without code bra
   await mkdir(output)
   await writeFile(resolve(output, 'stale.json'), 'stale')
   await writeFile(resolve(path, 'other-build-output'), 'keep')
-  assert.deepEqual(await exportBuiltinSkins({ sourceDirectory: source, outputDirectory: output }), { schemaVersion: 1, skins: ['paper', 'aurora', 'zebra'] })
+  assert.deepEqual(await exportBuiltinSkins({ sourceDirectory: source, outputDirectory: output }), { schemaVersion: 1, skins: ['color-play', 'paper', 'aurora', 'zebra'] })
   assert.deepEqual(await json(resolve(output, 'skins/aurora/skin.json')), compile(skin))
   assert.deepEqual(await readFile(resolve(output, 'skins/aurora/images/cover.png')), bytes)
   assert.deepEqual(await readFile(resolve(output, 'skins/aurora/fonts/display.ttf')), fontBytes)
@@ -181,7 +180,7 @@ test('invalid packages fail before replacing generated assets', async (t) => {
   await assert.rejects(run, /must match directory/)
   await rm(paperPath, { recursive: true })
   await writeSkin(source, fixture('aurora'))
-  await assert.rejects(run, /paper skin is required/)
+  await assert.rejects(run, /color-play skin is required/)
   assert.equal(await readFile(resolve(output, 'previous'), 'utf8'), 'keep')
   await assert.rejects(exportBuiltinSkins({ sourceDirectory: source, outputDirectory: path }), /must not overlap/)
 })
