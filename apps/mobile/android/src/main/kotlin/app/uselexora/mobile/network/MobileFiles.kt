@@ -33,8 +33,8 @@ class MobileFiles(private val context: Context, private val transfers: TransferS
             else -> throw ProtocolFailure("FILE_TYPE_UNSUPPORTED")
         }
     }
-    fun stage(uri: Uri, partition: String, scope: String, targetScope: JSONObject): JSONObject = synchronized(TransferStore.fileLock) {
-        try { stageLocked(uri, partition, scope, targetScope) }
+    fun stage(uri: Uri, partition: String, scope: String, targetScope: JSONObject, inputId: String? = null): JSONObject = synchronized(TransferStore.fileLock) {
+        try { stageLocked(uri, partition, scope, targetScope, inputId = inputId) }
         catch (error: IOException) { throw ProtocolFailure("LOCAL_FILE_FAILED", error) }
         catch (error: SecurityException) { throw ProtocolFailure("LOCAL_FILE_FAILED", error) }
     }

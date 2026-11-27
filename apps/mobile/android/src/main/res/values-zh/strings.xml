@@ -238,6 +238,7 @@
     <string name="label_connect_service">连接服务</string>
     <string name="label_connect_to_a_service_to_load_spaces">连接服务后获取空间。</string>
     <string name="label_choose_a_service">选择一个服务</string>
+    <string name="label_choose_images">选择图片</string>
     <string name="label_choose_file">选择文件</string>
     <string name="label_choose_service">选择服务</string>
     <string name="label_choose_model">选择模型</string>
@@ -648,6 +649,8 @@
     <string name="mobile_attachment_cancelled_your_input_is_retained">已取消添加附件 · 输入保留</string>
     <string name="mobile_selected_file_unavailable_select_it_again">未取得所选文件 · 请重新选择</string>
     <string name="mobile_uploading_attachment">正在上传附件…</string>
+    <string name="attachments_saved_offline">附件已保存在本机，连接服务后可点按附件重试。</string>
+    <string name="attachment_batch_result">附件就绪：%1$d/%2$d。%3$s</string>
     <string name="mobile_attachment_added">附件已添加</string>
     <string name="mobile_photo_saved_on_phone_ready_to_attach">照片保存在手机 · 待添加</string>
     <string name="mobile_saved_on_phone_2">保存在手机</string>

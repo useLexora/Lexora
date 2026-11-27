@@ -3,6 +3,7 @@ package app.uselexora.mobile
 import app.uselexora.mobile.protocol.MobileContentAdapter
 import android.app.Activity
 import android.app.Instrumentation
+import android.content.ClipData
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
@@ -97,6 +98,68 @@ class FileWorkflowInstrumentedTest {
                 assertTrue(transfers.list(owner).isEmpty())
             }
             assertEquals("拒绝附件仍保留输入", MobileContentAdapter.text(store.draft(owner, "global")!!.value.getJSONObject("content")))
+        } }
+    }
+    @Test @androidx.test.filters.SdkSuppress(minSdkVersion = 33)
+    fun photoActionOpensTheSystemImagePickerInMultiSelectMode() {
+        val launched = java.util.concurrent.CompletableFuture<Intent>()
+        val monitor = object : Instrumentation.ActivityMonitor() {
+            override fun onStartActivity(intent: Intent): Instrumentation.ActivityResult? {
+                if (intent.action == android.provider.MediaStore.ACTION_PICK_IMAGES) launched.complete(intent)
+                return null
+            }
+        }
+        try {
+            ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).putExtra("fixture", true)).use {
+                instrumentation.addMonitor(monitor)
+                click("新任务"); MobileUiTestDriver.setComposerText("保留图片输入")
+                click("添加附件"); click("选择图片")
+                val picker = launched.get(10, java.util.concurrent.TimeUnit.SECONDS)
+                assertEquals("image/*", picker.type)
+                assertTrue(picker.getIntExtra(android.provider.MediaStore.EXTRA_PICK_IMAGES_MAX, 1) > 1)
+                waitFor { instrumentation.uiAutomation.rootInActiveWindow?.packageName?.let { it != context.packageName } == true }
+                assertTrue(instrumentation.uiAutomation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK))
+                waitText("已取消添加附件")
+                assertEquals("保留图片输入", MobileUiTestDriver.composerText())
+            }
+        } finally { instrumentation.removeMonitor(monitor) }
+    }
+    @Test fun multiDocumentResultKeepsBothReadableFilesOnTheOriginalInput() {
+        val owner = "fixture:service:profile:generation:device"
+        val body = "多选保留输入 ${UUID.randomUUID()}"
+        context.contentResolver.call(uri("output"), "reset", null, null)
+        val clip = ClipData.newRawUri("files", uri("source")).apply {
+            addItem(ClipData.Item(uri("unknown"))); addItem(ClipData.Item(uri("output")))
+        }
+        val monitor = object : Instrumentation.ActivityMonitor() {
+            override fun onStartActivity(intent: Intent): Instrumentation.ActivityResult? {
+                if (intent.action != Intent.ACTION_OPEN_DOCUMENT || !intent.getBooleanExtra(Intent.EXTRA_ALLOW_MULTIPLE, false)) return null
+                return Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().setData(uri("source")).apply { clipData = clip })
+            }
+        }
+        TransferStore(context).use { transfers -> LocalStore(context).use { store ->
+            val before = transfers.list(owner).map { it.getString("id") }.toSet()
+            fun added() = transfers.list(owner).filter { it.getString("id") !in before }
+            try {
+                ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).putExtra("fixture", true)).use {
+                    instrumentation.addMonitor(monitor)
+                    click("新任务"); MobileUiTestDriver.setComposerText(body)
+                    click("添加附件"); click("选择文件")
+                    waitText("附件就绪：0/3")
+                    val records = added()
+                    assertEquals(2, records.size)
+                    assertEquals(setOf("原附件😀", "old content must be truncated".repeat(100)), records.map { File(it.getString("path")).readText() }.toSet())
+                    val draft = store.draft(owner, records.map { it.getString("scope") }.distinct().single())!!
+                    assertEquals(listOf(draft.value.getString("inputId")), records.map { it.getString("inputId") }.distinct())
+                    assertEquals(body, MobileContentAdapter.text(draft.value.getJSONObject("content")))
+                }
+            } finally {
+                instrumentation.removeMonitor(monitor)
+                for (record in added()) {
+                    transfers.writableDatabase.delete("transfers", "id=?", arrayOf(record.getString("id")))
+                    File(record.getString("path")).delete()
+                }
+            }
         } }
     }
     private fun withDownload(block: (File, JSONObject) -> Unit) {

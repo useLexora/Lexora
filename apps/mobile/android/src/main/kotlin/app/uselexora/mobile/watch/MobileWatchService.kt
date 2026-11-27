@@ -16,7 +16,6 @@ import app.uselexora.mobile.R
 import app.uselexora.mobile.i18n.mobileText
 import app.uselexora.mobile.notifications.MobileNotifier
 import app.uselexora.mobile.notifications.NotificationSettings
-import app.uselexora.mobile.session.MobileConnectionPhase
 
 class MobileWatchService : Service() {
     private var runtime: WatchRuntime? = null
@@ -24,7 +23,8 @@ class MobileWatchService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        runtime = WatchRuntime.shared(this).also { it.onStatus = { status -> update(status) } }
+        runtime = WatchRuntime.shared(this)
+        WatchRuntime.display.onChanged = ::update
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -34,11 +34,10 @@ class MobileWatchService : Service() {
         }
         MobileNotifier(this).ensureChannels()
         val runtime = runtime ?: return START_NOT_STICKY
-        enterForeground(notification(runtime.status))
+        enterForeground(notification(WatchRuntime.display.status))
         started = true
         val connect = intent == null || intent.getBooleanExtra(EXTRA_CONNECT, true)
         if (connect) runtime.resume() else runtime.pause()
-        update(runtime.status)
         return START_STICKY
     }
 
@@ -46,7 +45,7 @@ class MobileWatchService : Service() {
 
     override fun onDestroy() {
         started = false
-        runtime?.onStatus = null
+        WatchRuntime.display.onChanged = null
         WatchRuntime.existing()?.pause()
         super.onDestroy()
     }
@@ -64,24 +63,17 @@ class MobileWatchService : Service() {
     }
 
     private fun notification(status: WatchStatus): Notification {
-        val text = when {
-            status.paused -> mobileText(R.string.notification_watch_foreground)
-            status.phase == MobileConnectionPhase.Unavailable -> mobileText(R.string.notification_watch_unreachable)
-            status.synchronized -> mobileText(R.string.notification_watch_connected)
-            status.phase == MobileConnectionPhase.Connecting -> mobileText(R.string.notification_watch_connecting)
-            status.phase == MobileConnectionPhase.Retrying -> mobileText(R.string.notification_watch_retrying)
-            else -> mobileText(R.string.notification_watch_paused)
-        }
         val open = PendingIntent.getActivity(this, 0,
             Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         return NotificationCompat.Builder(this, MobileNotifier.CHANNEL_WATCH)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(mobileText(R.string.notification_watch_title))
-            .setContentText(text)
+            .setContentText(status.text())
+            .setOnlyAlertOnce(true)
             .setOngoing(true)
             .setShowWhen(false)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .setContentIntent(open)
             .build()

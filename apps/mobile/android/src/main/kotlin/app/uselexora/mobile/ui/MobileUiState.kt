@@ -18,7 +18,7 @@ enum class MobileAction {
     NewTask, OpenTask, OpenTaskQuestions, OpenRunningTask, OpenTaskResult, ShowTasks, ShowPending, ShowDevices,
     ShowWorkbench, ShowSpaces, OpenSpace, ChooseSpaceFilter, ShowTaskFilter, Back, ReviewTaskApproval,
     ScanDevice, SelectDevice, ManageDevice,
-    Approvals, InspectOrphanDownloads, RecoverDownloads, Files, DraftAttachments, LocalFileRecords, AttachFile, TakePhoto, OpenResource, ResourceActions, MoreFiles,
+    Approvals, InspectOrphanDownloads, RecoverDownloads, Files, DraftAttachments, LocalFileRecords, AttachImages, AttachFile, TakePhoto, OpenResource, ResourceActions, MoreFiles,
     ChooseModel, ToggleFast, ApplyModel, ChooseExecution, ApplyExecution, ChooseSpace, Send,
     MoreHistory, Refresh, Reconnect, TaskControls, TaskQueue,
     QueueInput, CheckInputReceipt, OpenOnDesktop, ReadState, Disconnect, MessageActions, DismissNotice,

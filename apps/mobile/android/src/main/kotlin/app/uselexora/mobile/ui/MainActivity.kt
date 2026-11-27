@@ -10,6 +10,10 @@ import android.content.pm.PackageManager
 import android.provider.MediaStore
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts.OpenMultipleDocuments
+import androidx.activity.result.contract.ActivityResultContracts.PickMultipleVisualMedia
+import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
 import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
@@ -20,6 +24,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.net.ConnectivityManager
+import android.net.Uri
 import android.text.Editable
 import android.text.TextWatcher
 import android.text.Spanned
@@ -71,6 +76,8 @@ import app.uselexora.mobile.storage.ComposerMemory
 import app.uselexora.mobile.storage.MaterialDrafts
 import app.uselexora.mobile.storage.LocalStore
 import app.uselexora.mobile.storage.ReadCache
+import app.uselexora.mobile.watch.WatchRuntime
+import app.uselexora.mobile.watch.WatchStatus
 import com.google.zxing.integration.android.IntentIntegrator
 import org.json.JSONArray
 import org.json.JSONObject
@@ -226,6 +233,7 @@ class MainActivity : ComponentActivity() {
         session = MobileConnectionSession(connection, schemas, getSystemService(ConnectivityManager::class.java), streamHandler,
             enabled = { !demo && !disconnecting }, topic = { activeTopic }, work = ::work, onUi = ::onUi,
             released = {
+                if (foreground && !demo) WatchRuntime.display.reportForeground(WatchStatus.Offline())
                 taskFeed?.close(); taskFeed = null
                 ui.tasksNeedRefresh = ui.tasksLoaded
                 historyRequest++; reading.disconnected(); ui.historyLoading = false
@@ -248,6 +256,7 @@ class MainActivity : ComponentActivity() {
             },
             status = { label, phase ->
                 ui.connectionLabel = label; ui.connectionPhase = phase
+                if (foreground && !demo) WatchRuntime.display.reportForeground(WatchStatus.Offline(phase))
                 if (client?.isConnected != true && ui.devices.any { it.connected }) ui.devices = ui.devices.map { it.copy(connected = false) }
                 if (ui.pairingPhase == "syncing") ui.pairingError = if (phase == app.uselexora.mobile.session.MobileConnectionPhase.Unavailable) label else ""
                 syncUi()
@@ -403,7 +412,8 @@ class MainActivity : ComponentActivity() {
             }
             MobileAction.ResourceActions -> payload?.let(::resourceActions)
             MobileAction.MoreFiles -> ui.taskFiles?.let { loadTaskFiles(it) }
-            MobileAction.AttachFile -> selectFile()
+            MobileAction.AttachFile -> selectAttachments(imagesOnly = false)
+            MobileAction.AttachImages -> selectAttachments(imagesOnly = true)
             MobileAction.TakePhoto -> capturePhoto()
             MobileAction.ChooseModel -> chooseModel()
             MobileAction.ToggleFast -> {
@@ -449,7 +459,7 @@ class MainActivity : ComponentActivity() {
     private fun startTaskFeed(current: ProductClient, owner: String) {
         taskFeed?.close(); taskFeed = null
         if (demo || owner == "unpaired-local") return
-        val runtime = app.uselexora.mobile.watch.WatchRuntime.shared(this)
+        val runtime = WatchRuntime.shared(this)
         if (!runtime.isEnabled()) return
         taskFeed = ProductSubscription(current, schemas,
             snapshot = { topic, items -> if (topic == "taskIndex") runtime.feedSnapshot(owner, items) },
@@ -490,7 +500,7 @@ class MainActivity : ComponentActivity() {
         ui.connected = demo || client?.isConnected == true
         if (!ui.connected || ui.syncFailure.isNotBlank()) ui.awaitingCachedStructure = false
         ui.partition = partition
-        app.uselexora.mobile.watch.WatchRuntime.existing()?.suppress(if (ui.screen == MobileScreen.Conversation) conversationTarget?.conversationId else null)
+        WatchRuntime.existing()?.suppress(if (ui.screen == MobileScreen.Conversation) conversationTarget?.conversationId else null)
         avatars.bind(partition, client.takeIf { foreground })
         if (discoveryOwner != partition) { discoveryOwner = partition; ui.discovery = TaskDiscoveryState(); ui.membersOpen = false; ui.members = null }
         ui.discovery.supported = client?.supports("conversations.search") == true
@@ -633,6 +643,7 @@ class MainActivity : ComponentActivity() {
         val selected = devices.firstOrNull { it.selected }
         ui.deviceLabel = selected?.name ?: mobileText(R.string.label_connect_service)
         ui.devicePlatform = selected?.platform
+        if (foreground && client?.isConnected == true) WatchRuntime.display.reportForeground(WatchStatus.Connected(selected?.name))
     }
     private fun rememberNavigation() {
         if (partition == "unpaired-local" || demo) return
@@ -1807,11 +1818,23 @@ class MainActivity : ComponentActivity() {
         pendingFileTarget = JSONObject().put("partition", partition).put("scope", scope).put("targetScope", target)
         return true
     }
-    private fun selectFile() {
+    private fun selectAttachments(imagesOnly: Boolean) {
         if (!captureFileTarget()) return
-        try { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE), FILE_REQUEST) }
-        catch (_: android.content.ActivityNotFoundException) { pendingFileTarget = null; ui.notice = mobileText(R.string.mobile_no_file_picker_available_your_input_is_retained) }
-        catch (_: SecurityException) { pendingFileTarget = null; ui.notice = mobileText(R.string.mobile_could_not_open_the_file_picker_check_system_permissions) }
+        val target = pendingFileTarget!!
+        val opening = input.scope
+        localWork {
+            val id = store.inputId(opening.partition, opening.target)
+            onUi {
+                if (pendingFileTarget !== target || input.scope != opening || ui.screen != MobileScreen.Conversation) return@onUi
+                target.put("inputId", id)
+                try {
+                    val picker = if (imagesOnly) PickMultipleVisualMedia(IncomingMaterial.MAX_FILES).createIntent(this, PickVisualMediaRequest(PickVisualMedia.ImageOnly))
+                        else OpenMultipleDocuments().createIntent(this, arrayOf("*/*")).addCategory(Intent.CATEGORY_OPENABLE)
+                    startActivityForResult(picker, FILE_REQUEST)
+                } catch (_: android.content.ActivityNotFoundException) { pendingFileTarget = null; ui.notice = mobileText(R.string.mobile_no_file_picker_available_your_input_is_retained) }
+                catch (_: SecurityException) { pendingFileTarget = null; ui.notice = mobileText(R.string.mobile_could_not_open_the_file_picker_check_system_permissions) }
+            }
+        }
     }
     private fun capturePhoto() {
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
@@ -1898,23 +1921,68 @@ class MainActivity : ComponentActivity() {
         val capture = if (requestCode == CAMERA_REQUEST) pendingCapturePath?.let { File(it) } else null
         if (requestCode == CAMERA_REQUEST) pendingCapturePath = null
         if (resultCode != RESULT_OK || target == null) { if (target?.optString("kind") == "capture") work { PhotoStore(this, transfers).discard(target) } else capture?.delete(); ui.notice = if (target == null && resultCode == RESULT_OK) mobileText(R.string.mobile_attachment_destination_not_found_select_it_again_your_input) else mobileText(R.string.mobile_attachment_cancelled_your_input_is_retained); return }
-        val uri = capture?.let { FileProvider.getUriForFile(this, "$packageName.files", it) } ?: data?.data ?: run { ui.notice = mobileText(R.string.mobile_selected_file_unavailable_select_it_again); return }
-        val persisted = disk.submit { }
-        work {
-            persisted.get()
-            val transfer = if (target.optString("kind") == "capture") files.stageCapture(target) else files.stage(uri, target.getString("partition"), target.getString("scope"), target.getJSONObject("targetScope"))
-            onUi { restoreInput(); saveFeedback(mobileText(R.string.mobile_uploading_attachment), false); uploadTransfer(transfer) }
+        if (requestCode == CAMERA_REQUEST) {
+            work {
+                val transfer = files.stageCapture(target)
+                onUi { restoreInput(); saveFeedback(mobileText(R.string.mobile_uploading_attachment), false); uploadTransfer(transfer) }
+            }
+            return
+        }
+        val uris = OpenMultipleDocuments().parseResult(resultCode, data)
+        when {
+            uris.isEmpty() -> ui.notice = mobileText(R.string.mobile_selected_file_unavailable_select_it_again)
+            uris.size > IncomingMaterial.MAX_FILES -> ui.notice = mobileText(R.string.incoming_file_limit)
+            else -> addPickedAttachments(target, uris)
         }
     }
-    private fun uploadTransfer(original: JSONObject) = work {
-        val current = connected()
+    private fun addPickedAttachments(target: JSONObject, uris: List<Uri>) {
+        val owner = target.getString("partition"); val slot = target.getString("scope")
+        val destination = target.getJSONObject("targetScope")
+        localWork {
+            val inputId = target.optString("inputId").ifEmpty { store.inputId(owner, slot) }
+            var firstFailure: MobileOperationFailure? = null
+            fun <T> attempt(action: () -> T): T? = try { action() } catch (error: Exception) {
+                if (firstFailure == null) firstFailure = MobileOperationFailure.from(error)
+                null
+            }
+            val staged = uris.mapNotNull { uri -> attempt {
+                if (uri.scheme != "content" || uri.authority == "$packageName.files") throw ProtocolFailure("LOCAL_FILE_FAILED")
+                files.stage(uri, owner, slot, destination, inputId)
+            } }
+            fun showingInput() = partition == owner && ui.screen == MobileScreen.Conversation &&
+                store.draft(owner, scope)?.value?.optString("inputId") == inputId
+            onUi {
+                if (staged.isNotEmpty() && showingInput()) {
+                    restoreInput(); saveFeedback(mobileText(R.string.mobile_uploading_attachment), false)
+                }
+                work {
+                    val ready = staged.count { transfer -> attempt { upload(connected(), transfer) } != null }
+                    onUi finished@{
+                        if (!showingInput()) return@finished
+                        restoreInput()
+                        val error = firstFailure
+                        when {
+                            error == null -> showNotice(mobileText(R.string.mobile_attachment_added))
+                            error.code == "NOT_CONNECTED" && staged.size == uris.size -> ui.notice = mobileText(R.string.attachments_saved_offline)
+                            else -> ui.notice = mobileText(R.string.attachment_batch_result, ready, uris.size, MobileFailurePresentation.message(error))
+                        }
+                    }
+                }
+            }
+        }
+    }
+    private fun upload(current: ProductClient, original: JSONObject) {
         val owner = original.getString("partition")
         if (current.identity?.partition != owner) throw ProtocolFailure("DATA_GENERATION_CHANGED")
         val transfer = transfers.list(owner).first { it.getString("id") == original.getString("id") }
         val target = JSONObject().put("inputId", transfer.optString("inputId").takeIf { it.isNotEmpty() } ?: store.inputId(owner, transfer.getString("scope")))
         files.upload(current, transfer, target)
+    }
+    private fun uploadTransfer(original: JSONObject) = work {
+        upload(connected(), original)
+        val owner = original.getString("partition")
         onUi {
-            if (partition == owner && ownsTransfer(transfer, store.draft(owner, scope))) {
+            if (partition == owner && ownsTransfer(original, store.draft(owner, scope))) {
                 restoreInput()
                 showNotice(mobileText(R.string.mobile_attachment_added))
             }
@@ -2319,6 +2387,7 @@ class MainActivity : ComponentActivity() {
     }
     override fun onStop() {
         input.flush(); readerBenchmark?.close(); readModel.flush(); rememberNavigation()
+        if (!demo) WatchRuntime.display.reportForeground(WatchStatus.Offline())
         session.stop()
         ui.connected = false; avatars.bind(partition, null)
         super.onStop()
