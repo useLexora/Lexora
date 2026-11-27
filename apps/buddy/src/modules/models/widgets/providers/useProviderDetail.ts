@@ -54,6 +54,13 @@ export function useProviderDetail(providerSettings: () => ModelProvidersStore, p
     showConnectionDialog.value = false
   }, { flush: 'sync' })
 
+  watch(() => provider.value?.credentialUnavailable, (unavailable) => {
+    if (unavailable) {
+      showManualModelDialog.value = false
+      showModelDetailDialog.value = false
+    }
+  }, { flush: 'sync' })
+
   onScopeDispose(() => {
     generation += 1
   })

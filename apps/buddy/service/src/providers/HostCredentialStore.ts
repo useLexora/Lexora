@@ -14,9 +14,10 @@ import {
   credentialMutationResultSchema,
   credentialProviderListResultSchema,
   credentialReadResultSchema,
+  credentialSchema,
 } from '../../../shared/runtime/credentialProtocol'
 
-import { credentialSchema } from './providerSchemas'
+import { createCredentialLookup } from './ProviderCredentialStatus'
 
 export class HostCredentialStoreError extends Error {
   readonly code: string
@@ -83,22 +84,26 @@ export class HostCredentialStore implements CredentialStore {
     }
   }
 
-  list(options?: AuthOperationOptions): Promise<readonly CredentialInfo[]> {
-    return this.#operations.track(() => this.#list(options))
+  async list(options?: AuthOperationOptions): Promise<readonly CredentialInfo[]> {
+    return (await this.scan(options)).providers
   }
 
-  async #list(options?: AuthOperationOptions): Promise<readonly CredentialInfo[]> {
+  scan(options?: AuthOperationOptions) {
+    return this.#operations.track(() => this.#scan(options))
+  }
+
+  async #scan(options?: AuthOperationOptions) {
     options?.signal?.throwIfAborted()
     const request = ++this.#request
     try {
       const response = credentialProviderListResultSchema.parse(await this.#peer.request('host.credentials.list', {}))
       assertSuccess(response)
-      const providers = new Map(response.providers.map(provider => [provider.providerId, provider.type]))
-      for (const providerId of new Set([...providers.keys(), ...this.#observations.keys()]))
-        this.#observe(providerId, providers.get(providerId) ?? null, request)
-      this.#observeAvailability('known', request)
       options?.signal?.throwIfAborted()
-      return copyEventSnapshot(response.providers)
+      const lookup = createCredentialLookup(response)
+      for (const providerId of new Set([...response.providers.map(item => item.providerId), ...this.#observations.keys()]))
+        this.#observe(providerId, lookup(providerId), request)
+      this.#observeAvailability('known', request)
+      return copyEventSnapshot({ providers: response.providers, unreadableProviderDigests: response.unreadableProviderDigests })
     }
     catch (error) {
       if (!options?.signal?.aborted)

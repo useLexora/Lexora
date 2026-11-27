@@ -30,8 +30,9 @@ export const providerSchema = z.object({
   modelCount: z.number().int().nonnegative(),
   setupComplete: z.boolean(),
   status: z.enum(['available', 'authentication_required', 'unavailable']),
+  credentialUnavailable: z.boolean().optional(),
   storedCredentialType: z.enum(['api_key', 'oauth']).nullable(),
-  syncUnavailableReason: z.enum(['authentication_required', 'unsupported_api']).nullable(),
+  syncUnavailableReason: z.enum(['authentication_required', 'credential_unavailable', 'unsupported_api']).nullable(),
 }).strict()
 
 export const builtinProviderPresetSchema = providerSchema.pick({

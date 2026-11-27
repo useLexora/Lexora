@@ -5,7 +5,7 @@ import { dirname, join, relative } from 'node:path'
 import process from 'node:process'
 import { z } from 'zod'
 import { ensurePrivateDirectories } from '../filesystem/privateDirectories'
-import { createBuddyNativeEnvironment, resolveBuddyPrivateDirectories, resolveBuddyProcessControl, resolveBuddyShellSandbox } from '../native/nativeHost'
+import { createBuddyNativeEnvironment, resolveBuddyPrivateDirectories, resolveBuddyProcessControl, resolveBuddyProviderCredential, resolveBuddyShellSandbox } from '../native/nativeHost'
 import searchTools from '../native/searchTools.json'
 import { storageBootstrapRoot } from '../storage/StorageLocationStore'
 import { ensureWindowsPrivateDirectories } from '../windows/privateDirectories'
@@ -24,7 +24,7 @@ export async function readRuntimeRelease(path: string, fileSystem: ReleaseFileSy
   const native = { serviceResourcesRoot: resourcesRoot }
   const privateDirectoriesExecutable = resolveBuddyPrivateDirectories(native)
   const search = Object.values(searchTools.tools).map(tool => join(resourcesRoot, searchTools.resource.to, tool.targets[release.manifest.target].binary))
-  const helpers = [...Object.values(createBuddyNativeEnvironment(native)), ...search, privateDirectoriesExecutable, resolveBuddyShellSandbox(native)].filter((file): file is string => !!file)
+  const helpers = [...Object.values(createBuddyNativeEnvironment(native)), ...search, privateDirectoriesExecutable, resolveBuddyProviderCredential(native), resolveBuddyShellSandbox(native)].filter((file): file is string => !!file)
   for (const helper of helpers)
     await resolveReleaseResource(resourcesRoot, relative(resourcesRoot, helper), fileSystem)
   const fingerprint = createHash('sha256')

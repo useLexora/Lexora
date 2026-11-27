@@ -26,6 +26,46 @@ describe('filterAvailableModels', () => {
 })
 
 describe('useModelProvidersStore', () => {
+  it('preserves a configured service when a stale form or confirmation submits after a failed credential read', async () => {
+    const configured = provider('existing', true, 'available')
+    const removed: string[] = []
+    const api = {
+      list: vi.fn().mockResolvedValue([configured]),
+      listBuiltinPresets: async () => [],
+      listModels: async () => [],
+      getDefaultModel: async () => null,
+      onAuthChallenge: () => () => {},
+      onChanged: () => () => {},
+      clearCredential: vi.fn(),
+      upsertCustom: vi.fn(),
+      remove: async (id: string) => removed.push(id),
+    } as unknown as LexoraDesktopApi['localChat']['providers']
+    const store = useModelProvidersStore({ api, language: shallowRef('zh-CN') })
+    await store.loadModelCatalog()
+    vi.mocked(api.list).mockResolvedValue([{ ...configured, credentialUnavailable: true }])
+    await store.loadModelCatalog(true)
+    await expect(store.removeProvider(configured.id)).resolves.toBe(false)
+    await expect(store.clearProviderCredential(configured.id)).resolves.toBe(false)
+    await expect(store.upsertCustomProvider({
+      id: configured.id,
+      displayName: 'Edit',
+      api: 'openai-responses',
+      authentication: 'api_key',
+      baseUrl: 'https://example.invalid/v1',
+      enabled: true,
+      requestHeaders: [],
+    })).resolves.toBe(false)
+    expect(removed).toEqual([])
+    expect(api.clearCredential).not.toHaveBeenCalled()
+    expect(api.upsertCustom).not.toHaveBeenCalled()
+
+    vi.mocked(api.list).mockResolvedValue([configured])
+    await store.loadModelCatalog(true)
+    await expect(store.removeProvider(configured.id)).resolves.toBe(true)
+    expect(removed).toEqual([configured.id])
+    store.dispose()
+  })
+
   it('reconciles a domain notification that arrives during an in-flight catalog read', async () => {
     const initial = deferred<LocalProvider[]>()
     let changed: () => void = () => {}

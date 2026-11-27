@@ -24,7 +24,7 @@ const selectedModelLabel = computed(() => {
   const provider = props.providers.providers.value.find(provider => provider.id === model.providerId)
   return `${model.displayName} · ${provider?.displayName ?? model.providerId}`
 })
-const authProviderName = computed(() => props.providers.providers.value.find(provider => provider.id === props.providers.authChallenge.value?.providerId)?.displayName ?? null)
+const authProvider = computed(() => props.providers.providers.value.find(provider => provider.id === props.providers.authChallenge.value?.providerId) ?? null)
 function add(providerId: string | null = null) {
   resumeId.value = providerId
   showAdd.value = true
@@ -59,12 +59,13 @@ async function selectModel(value: string) {
       <article v-for="provider in connected" :key="provider.id" class="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-solid border-border p-4">
         <div class="grid min-w-0 gap-1">
           <strong class="truncate text-[14px]">{{ provider.displayName }}</strong>
-          <span class="text-[12px] text-muted">{{ provider.setupComplete ? t('desktop.providers.enabledModelSummary', { enabled: provider.enabledModelCount, total: provider.modelCount }) : t('desktop.providers.continueSetup') }}</span>
+          <span v-if="provider.credentialUnavailable" class="text-[12px] text-warning">{{ t('desktop.providers.credentialUnavailable') }}</span>
+          <span v-else class="text-[12px] text-muted">{{ provider.setupComplete ? t('desktop.providers.enabledModelSummary', { enabled: provider.enabledModelCount, total: provider.modelCount }) : t('desktop.providers.continueSetup') }}</span>
         </div>
-        <NButton v-if="!provider.setupComplete" size="small" @click="add(provider.id)">
+        <NButton v-if="!provider.credentialUnavailable && !provider.setupComplete" size="small" @click="add(provider.id)">
           {{ t('desktop.providers.continueSetup') }}
         </NButton>
-        <span v-else class="flex-none text-[12px] text-accent-text">{{ t('onboarding.connected') }}</span>
+        <span v-else-if="!provider.credentialUnavailable" class="flex-none text-[12px] text-accent-text">{{ t('onboarding.connected') }}</span>
       </article>
       <NButton class="justify-self-start" secondary @click="add()">
         <template #icon>
@@ -89,7 +90,7 @@ async function selectModel(value: string) {
       {{ t(providers.models.value.length ? 'onboarding.modelReadyHint' : 'onboarding.modelHint') }}
     </p>
     <DesktopProviderAddDialog v-model:show="showAdd" :provider-settings="providers" :resume-provider-id="resumeId" />
-    <DesktopProviderAuthDialog :challenge="providers.authChallenge.value" :provider-name="authProviderName" :language="providers.language.value" @cancel="providers.cancelAuth" @submit="providers.respondToAuth" />
+    <DesktopProviderAuthDialog :challenge="providers.authChallenge.value" :provider="authProvider" :language="providers.language.value" @cancel="providers.cancelAuth" @submit="providers.respondToAuth" />
   </div>
 </template>
 

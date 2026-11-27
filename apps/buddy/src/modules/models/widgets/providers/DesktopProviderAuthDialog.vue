@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { LocalProviderAuthChallenge } from '@buddy-shared/providers/providerApi'
+import type { LocalProvider, LocalProviderAuthChallenge } from '@buddy-shared/providers/providerApi'
 
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { NButton, NInput, NModal, NSelect } from 'naive-ui'
@@ -9,7 +9,7 @@ import { useBuddyI18n } from '@/i18n/buddyI18n'
 const props = defineProps<{
   challenge: LocalProviderAuthChallenge | null
   language: BuddyLocale
-  providerName: string | null
+  provider: LocalProvider | null
 }>()
 const emit = defineEmits<{ cancel: [challengeId: string], submit: [challengeId: string, value: string] }>()
 const { t } = useBuddyI18n(() => props.language)
@@ -41,7 +41,7 @@ function cancel() {
 }
 
 function submit() {
-  if (props.challenge && value.value)
+  if (props.challenge && !props.provider?.credentialUnavailable && value.value)
     emit('submit', props.challenge.challengeId, value.value)
 }
 </script>
@@ -49,7 +49,14 @@ function submit() {
 <template>
   <NModal v-if="challenge" :show="true" :mask-closable="false" @esc="cancel">
     <div class="desktop-provider-auth w-[min(30rem,_calc(100vw_-_2rem))] rounded-4 bg-raised text-fg p-[1.35rem] shadow-window" role="dialog" aria-modal="true">
-      <form class="grid relative gap-[0.85rem]" @submit.prevent="submit">
+      <div v-if="provider?.credentialUnavailable" class="grid gap-3">
+        <strong>{{ provider.displayName }} · {{ t('desktop.providers.credentialUnavailable') }}</strong>
+        <p>{{ t('desktop.providers.credentialUnavailableHint') }}</p>
+        <NButton @click="cancel">
+          {{ t('common.cancel') }}
+        </NButton>
+      </div>
+      <form v-else class="grid relative gap-[0.85rem]" @submit.prevent="submit">
         <input
           v-if="challenge.type === 'secret'"
           aria-hidden="true"
@@ -60,7 +67,7 @@ function submit() {
           type="text"
           :value="challenge.providerId"
         >
-        <span class="text-accent-text text-[0.68rem] font-700">{{ providerName ?? challenge.providerId }}</span>
+        <span class="text-accent-text text-[0.68rem] font-700">{{ provider?.displayName ?? challenge.providerId }}</span>
         <h2>{{ title }}</h2>
         <p v-if="message">
           {{ message }}

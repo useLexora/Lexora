@@ -63,7 +63,7 @@ function managePlugin() {
         {{ t('desktop.providers.managePlugin') }}
       </NButton>
     </section>
-    <section v-else-if="!provider.setupComplete" class="desktop-provider-detail__notice flex items-center gap-[0.8rem] justify-between border-1 border-solid border-border-strong rounded-[0.65rem] bg-subtle py-[0.8rem] px-[0.9rem]">
+    <section v-else-if="!provider.setupComplete && !provider.credentialUnavailable" class="desktop-provider-detail__notice flex items-center gap-[0.8rem] justify-between border-1 border-solid border-border-strong rounded-[0.65rem] bg-subtle py-[0.8rem] px-[0.9rem]">
       <div class="grid min-w-0 flex-1 gap-[0.2rem]">
         <strong>{{ t('desktop.providers.setupIncomplete') }}</strong>
         <span>{{ t('desktop.providers.setupIncompleteDescription') }}</span>
@@ -79,21 +79,25 @@ function managePlugin() {
         <div class="desktop-provider-detail__row min-h-16 border-b-1 border-b-solid border-b-border py-[0.7rem] px-[0.9rem] last:border-b-0">
           <div class="desktop-provider-detail__row-copy grid min-w-0 flex-1 gap-[0.2rem]">
             <strong>{{ t('desktop.providers.authenticationStatus') }}</strong>
-            <small>{{ provider.authentication === 'none'
+            <template v-if="provider.credentialUnavailable">
+              <span class="text-warning">{{ t('desktop.providers.credentialUnavailable') }}</span>
+              <small>{{ t('desktop.providers.credentialUnavailableHint') }}</small>
+            </template>
+            <small v-else>{{ provider.authentication === 'none'
               ? t('desktop.providers.noAuthentication')
               : provider.storedCredentialType
                 ? (provider.storedCredentialType === 'api_key' ? 'API Key' : 'OAuth')
                 : t('desktop.providers.authenticationNotConfigured') }}</small>
           </div>
           <NButton
-            v-if="provider.custom"
+            v-if="!provider.credentialUnavailable && provider.custom"
             size="small"
             :disabled="provider.activeRunCount > 0 || providerSettings.isAuthenticating.value"
             @click="emit('continueSetup', provider.id, true)"
           >
             {{ t('desktop.providers.changeAuthentication') }}
           </NButton>
-          <NSpace v-else-if="!provider.storedCredentialType">
+          <NSpace v-else-if="!provider.credentialUnavailable && !provider.storedCredentialType">
             <NButton
               v-for="authType in provider.authTypes"
               :key="authType"
@@ -106,7 +110,7 @@ function managePlugin() {
             </NButton>
           </NSpace>
           <NPopconfirm
-            v-if="provider.storedCredentialType && provider.authentication !== 'none'"
+            v-if="!provider.credentialUnavailable && provider.storedCredentialType && provider.authentication !== 'none'"
             :negative-text="t('common.cancel')"
             :positive-text="t('common.confirm')"
             @positive-click="providerSettings.clearProviderCredential(provider.id)"
@@ -125,7 +129,7 @@ function managePlugin() {
             <small>{{ connectionSummary }}</small>
           </div>
           <NButton size="small" @click="showConnectionDialog = true">
-            {{ t('common.edit') }}
+            {{ t(provider.credentialUnavailable ? 'desktop.providers.viewConfiguration' : 'common.edit') }}
           </NButton>
         </div>
       </div>
@@ -137,7 +141,7 @@ function managePlugin() {
           <h3>{{ t('desktop.providers.models') }}</h3>
           <p>{{ t('desktop.providers.modelsDescription') }}</p>
         </div>
-        <div v-if="!provider.plugin" class="flex flex-none items-center gap-2">
+        <div v-if="!provider.plugin && !provider.credentialUnavailable" class="flex flex-none items-center gap-2">
           <NTooltip :disabled="provider.canSyncModels">
             <template #trigger>
               <span>
@@ -193,7 +197,7 @@ function managePlugin() {
             <small>{{ t(`desktop.providers.modelTypes.${model.type}`) }}</small>
             <DesktopModelCapabilityTags v-if="model.type === 'chat'" :language="language" :model="model" />
           </div>
-          <div class="flex flex-none items-center ml-auto gap-[0.4rem]">
+          <div v-if="!provider.credentialUnavailable" class="flex flex-none items-center ml-auto gap-[0.4rem]">
             <template v-if="model.available">
               <NButton size="small" @click="openModelDetail(model.modelId)">
                 {{ t('desktop.providers.manage') }}

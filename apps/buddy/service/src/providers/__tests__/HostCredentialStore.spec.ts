@@ -1,5 +1,6 @@
 import type { Credential } from '@earendil-works/pi-ai'
 import type { RuntimeRequestHandler, RuntimeRpcPeerContract } from '../../../../shared/runtime/rpcPeer'
+import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 
 import { HostCredentialStore } from '../HostCredentialStore'
@@ -65,6 +66,36 @@ describe('hostCredentialStore', () => {
     oldList.reject(new Error('fixture old list'))
     await listing
     expect(store.snapshot.availability).toBe('known')
+    await store.dispose()
+  })
+
+  it('changes only affected observations during partial failures and their recovery', async () => {
+    const peer = new CredentialHostPeer({})
+    const store = new HostCredentialStore(peer)
+    const subscription = { providerId: 'subscription', type: 'oauth' }
+    const legacy = { providerId: 'legacy', type: 'api_key' }
+    const digest = (id: string) => createHash('sha256').update(id).digest('hex')
+    let providers = [subscription, legacy]
+    let unreadableProviderDigests: string[] = []
+    peer.request = async () => ({ ok: true, providers, unreadableProviderDigests })
+    await store.list()
+    const events: string[] = []
+    store.onDidChange(event => events.push(event.kind === 'observation' ? `${event.current.providerId}:${event.current.presence}` : event.kind))
+    providers = [subscription]
+    unreadableProviderDigests = [digest('legacy')]
+    expect(await store.list()).toEqual([subscription])
+    await store.list()
+    expect(events).toEqual(['legacy:unknown'])
+    expect(store.snapshot.availability).toBe('known')
+    providers = []
+    unreadableProviderDigests.push(digest('subscription'))
+    expect(await store.list()).toEqual([])
+    expect(events).toEqual(['legacy:unknown', 'subscription:unknown'])
+    providers = [subscription, legacy]
+    unreadableProviderDigests = []
+    await store.list()
+    expect(events.slice(2)).toEqual(['subscription:present', 'legacy:present'])
+    expect(store.snapshot.providers.every(item => item.presence === 'present')).toBe(true)
     await store.dispose()
   })
 

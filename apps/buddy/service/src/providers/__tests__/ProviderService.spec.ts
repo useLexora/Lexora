@@ -10,12 +10,14 @@ import type { HostCredentialStore } from '../HostCredentialStore'
 import type { ProviderModelDefinition, ProviderModelDiscovery } from '../ProviderModelDiscovery'
 import type { ProviderServiceOptions } from '../ProviderService'
 import type { ProviderCommit } from '../ProviderState'
+import { createHash } from 'node:crypto'
 import { mkdtempSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai'
 import { afterEach, describe, expect, it } from 'vitest'
+import { providersRpc } from '../../../../shared/providers/providerApi'
 import { openBuddyDatabase } from '../../storage/database'
 
 import { createProviderRepository } from '../../storage/providerRepository'
@@ -207,6 +209,66 @@ describe('providerService', () => {
     }
   })
 
+  it('distinguishes unknown accounts, whole-store failure and absence without changing saved selections', async () => {
+    const database = openBuddyDatabase({ databasePath: ':memory:' })
+    const repository = createProviderRepository(database)
+    const runtime = new FakeModelRuntime()
+    const ids = ['subscription', 'legacy', 'missing']
+    runtime.providers = ids.map(provider)
+    runtime.models = ids.map(id => model(id, 'saved'))
+    const healthy: CredentialInfo[] = [{ providerId: 'legacy', type: 'api_key' }, { providerId: 'subscription', type: 'oauth' }]
+    runtime.credentials = healthy
+    let unreadableProviderDigests: string[] = []
+    const credentialStatus = createProviderCredentialStatus({ list: () => runtime.listCredentials(), scan: async () => ({ providers: await runtime.listCredentials(), unreadableProviderDigests }) })
+    const service = createProviderServiceForTest({ authInteractions: new AuthInteractionService(), modelRuntime: runtime, providers: repository, credentialStatus })
+    const saved = () => ({ legacyModels: repository.models.list('legacy'), toggles: repository.models.list().map(({ providerId, modelId, enabled }) => ({ providerId, modelId, enabled })), states: repository.states.list(), defaultModel: repository.defaultModel.find() })
+    const list = async () => providersRpc.list.response.parse(await service.listProviders())
+    try {
+      for (const id of ids)
+        repository.states.upsert({ providerId: id, enabled: true, createdAt: 'fixture', updatedAt: 'fixture' })
+      await service.initializeProviders()
+      await service.setModelEnabled('legacy', 'saved', true)
+      await service.setDefaultModel({ providerId: 'legacy', modelId: 'saved', reasoning: null })
+      const before = saved()
+      const getAvailable = runtime.getAvailable.bind(runtime)
+      runtime.getAvailable = async (id) => {
+        if (id === 'legacy')
+          throw new Error('fixture model auth failure', { cause: new HostCredentialStoreError('CREDENTIAL_STORE_FAILURE') })
+        return getAvailable(id)
+      }
+      await service.initializeProviders()
+      expect(saved()).toEqual(before)
+      runtime.getAvailable = getAvailable
+      runtime.credentials = healthy.filter(item => item.type === 'oauth')
+      unreadableProviderDigests = [createHash('sha256').update('legacy').digest('hex')]
+      await service.initializeProviders()
+      expect(await list()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'legacy', credentialUnavailable: true, status: 'unavailable', syncUnavailableReason: 'credential_unavailable', enabled: true }),
+        expect.objectContaining({ id: 'subscription', credentialUnavailable: false, status: 'available', storedCredentialType: 'oauth', setupComplete: true }),
+        expect.objectContaining({ id: 'missing', credentialUnavailable: false, status: 'authentication_required' }),
+      ]))
+      await expect(service.setProviderEnabled('legacy', true)).rejects.toMatchObject({ code: 'PROVIDER_UNAVAILABLE' })
+      expect(saved()).toEqual(before)
+      const modelsBeforeStoreFailure = repository.models.list()
+      runtime.credentialsError = new HostCredentialStoreError('CREDENTIAL_STORE_FAILURE')
+      await service.initializeProviders()
+      expect((await list()).every(item => item.credentialUnavailable && item.status === 'unavailable')).toBe(true)
+      expect(repository.models.list()).toEqual(modelsBeforeStoreFailure)
+      expect(saved()).toEqual(before)
+      runtime.credentialsError = new TypeError('fixture malformed response')
+      await expect(list()).rejects.toThrow('fixture malformed response')
+      runtime.credentialsError = null
+      runtime.credentials = healthy
+      unreadableProviderDigests = []
+      expect(await list()).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'legacy', credentialUnavailable: false, status: 'available', enabled: true })]))
+      expect(saved()).toEqual(before)
+    }
+    finally {
+      await service.dispose()
+      database.close()
+    }
+  })
+
   it('requires a currently authenticated and available provider before resolving a run model', async () => {
     const runtime = new FakeModelRuntime()
     runtime.providers = [{
@@ -245,6 +307,10 @@ describe('providerService', () => {
     await expect(service.executionModels.resolveAvailable(selection)).rejects.toMatchObject({
       code: 'CREDENTIAL_STORE_UNAVAILABLE',
     })
+    await expect(service.listProviders()).resolves.toEqual([
+      expect.objectContaining({ id: 'anthropic', status: 'unavailable' }),
+    ])
+    runtime.credentialsError = new HostCredentialStoreError('CREDENTIAL_STORE_FAILURE')
     await expect(service.listProviders()).resolves.toEqual([
       expect.objectContaining({ id: 'anthropic', status: 'unavailable' }),
     ])
@@ -1024,6 +1090,7 @@ describe('providerService', () => {
 type ProviderServiceTestOptions
   = Omit<ProviderServiceOptions, 'credentialStatus' | 'modelDiscovery' | 'modelRuntime'>
     & {
+      credentialStatus?: ProviderServiceOptions['credentialStatus']
       modelDiscovery?: ProviderModelDiscovery
       modelRuntime: FakeModelRuntime
     }
@@ -1045,7 +1112,7 @@ function createProviderServiceForTest(options: ProviderServiceTestOptions): Prov
       getStatus: status,
       refresh: status,
     },
-    credentialStatus: createProviderCredentialStatus({
+    credentialStatus: options.credentialStatus ?? createProviderCredentialStatus({
       list: () => modelRuntime.listCredentials(),
     }),
     modelDiscovery,

@@ -149,8 +149,12 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
     return catalogDirty ? loadModelCatalog(true) : Promise.resolve(catalogResult)
   }
 
+  function credentialUnavailable(providerId: string) {
+    return providers.value.some(provider => provider.id === providerId && provider.credentialUnavailable)
+  }
+
   async function loginProvider(providerId: string, authType: 'api_key' | 'oauth') {
-    if (isAuthenticating.value)
+    if (isAuthenticating.value || credentialUnavailable(providerId))
       return false
     isAuthenticating.value = true
     modelProviderError.value = null
@@ -172,6 +176,9 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
   }
 
   async function respondToAuth(challengeId: string, value: string) {
+    const challenge = authChallenge.value
+    if (challenge?.challengeId === challengeId && credentialUnavailable(challenge.providerId))
+      return false
     const previousChangeRevision = catalogChangeRevision
     try {
       await options.api.respondToAuth(challengeId, value)
@@ -192,6 +199,8 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
   }
 
   async function logoutProvider(providerId: string) {
+    if (credentialUnavailable(providerId))
+      return false
     const previousChangeRevision = catalogChangeRevision
     try {
       await options.api.logout(providerId)
@@ -219,6 +228,8 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
   }
 
   async function upsertCustomProvider(provider: LocalCustomProvider) {
+    if (credentialUnavailable(provider.id))
+      return false
     const previousChangeRevision = catalogChangeRevision
     try {
       await options.api.upsertCustom(provider)
@@ -333,7 +344,7 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
   }
 
   async function syncProviderModels(providerId: string) {
-    if (syncingProviderId.value)
+    if (syncingProviderId.value || credentialUnavailable(providerId))
       return false
     syncingProviderId.value = providerId
     modelProviderError.value = null
@@ -381,7 +392,7 @@ export function useModelProvidersStore(options: UseModelProvidersStoreOptions): 
   }
 
   async function mutateProvider(providerId: string, operation: () => Promise<unknown>) {
-    if (mutatingProviderId.value)
+    if (mutatingProviderId.value || credentialUnavailable(providerId))
       return false
     mutatingProviderId.value = providerId
     modelProviderError.value = null

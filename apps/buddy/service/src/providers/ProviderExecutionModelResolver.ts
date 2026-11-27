@@ -92,9 +92,9 @@ export class ProviderExecutionModelResolver {
         throw new ProviderUnavailableError()
     }
     else if (this.#configs?.findById(input.providerId)?.authentication !== 'none') {
-      const credentials = await this.#credentialStatus.list()
-      if (this.#configs?.findById(input.providerId)?.credentialRef === null || !credentials.some(credential => credential.providerId === input.providerId))
+      if (this.#configs?.findById(input.providerId)?.credentialRef === null)
         throw new ProviderAuthenticationRequiredError()
+      await this.#credentialStatus.requireType(input.providerId)
     }
     if (!this.#states.findByProviderId(input.providerId)?.enabled || !this.#modelCatalog.isEnabledAvailable(input.providerId, input.modelId))
       throw new ProviderUnavailableError()

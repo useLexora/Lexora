@@ -184,6 +184,7 @@ export class DesktopRuntimeHost {
       resourcesPath: process.resourcesPath,
     }
     const credentials = createCredentialVault({ buddyHome: environment.paths.buddyHome, reportDiagnostic: environment.events.publish })
+    await credentials.migrateWindowsProviders()
     this.#credentials = credentials
     const config = await initializeDesktopConfig(this.configStore, {
       configPath: environment.paths.configPath,
