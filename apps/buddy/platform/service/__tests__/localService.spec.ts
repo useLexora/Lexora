@@ -34,16 +34,22 @@ const identity: ServiceIdentity = { protocol: 1, profileId: randomUUID(), servic
 const secret = 'b'.repeat(64)
 
 it('verifies the complete release inventory across multiple batches', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'lexora-release-inventory-'))
-  cleanup.push(() => rm(directory, { recursive: true, force: true }))
+  const root = await mkdtemp(join(tmpdir(), 'lexora-release-inventory-'))
+  cleanup.push(() => rm(root, { recursive: true, force: true }))
+  const directory = join(root, 'core')
+  const alias = join(root, 'core-alias')
+  await mkdir(directory)
+  await symlink(directory, alias, 'junction')
   const sha256 = createHash('sha256').update('original').digest('hex')
   const files = Array.from({ length: 10 }, (_, index) => ({ path: `dependency-${index}.mjs`, size: 8, sha256 }))
   await Promise.all(files.map(file => writeFile(join(directory, file.path), 'original')))
-  const inventory = join(directory, 'inventory.json')
+  const inventory = join(alias, 'inventory.json')
+  const manifest = join(alias, 'resources.json')
+  await writeFile(manifest, '{}')
   await writeFile(inventory, JSON.stringify({ version: 1, files }))
-  await verifyFileInventory(inventory)
+  await verifyFileInventory(inventory, [manifest])
   await writeFile(join(directory, 'dependency-9.mjs'), 'modified')
-  await expect(verifyFileInventory(inventory)).rejects.toThrow('SERVICE_RELEASE_CONTENT_CHANGED')
+  await expect(verifyFileInventory(inventory, [manifest])).rejects.toThrow('SERVICE_RELEASE_CONTENT_CHANGED')
 })
 
 async function installedFixture() {

@@ -157,14 +157,16 @@ const inventoryVerificationBatchSize = 8
 export async function verifyFileInventory(inventoryPath: string, excluded: string[] = [], fileSystem: ReleaseFileSystem = fs) {
   const { lstat, readdir, readFile, readlink, realpath } = fileSystem.promises
   const root = await realpath(dirname(inventoryPath))
-  const inventory = z.object({ version: z.literal(1), files: z.array(inventoryEntrySchema).max(100_000) }).strict().parse(JSON.parse(await readFile(inventoryPath, 'utf8')))
+  const inventoryFile = join(root, basename(inventoryPath))
+  const excludedFiles = new Set(await Promise.all(excluded.map(async path => join(await realpath(dirname(path)), basename(path)))))
+  const inventory = z.object({ version: z.literal(1), files: z.array(inventoryEntrySchema).max(100_000) }).strict().parse(JSON.parse(await readFile(inventoryFile, 'utf8')))
   const expected = new Map(inventory.files.map(entry => [entry.path, entry]))
   if (expected.size !== inventory.files.length)
     throw new Error('SERVICE_RELEASE_CONTENT_CHANGED')
   async function* visit(directory: string): AsyncGenerator<Dirent> {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name)
-      if (path === inventoryPath || excluded.includes(path))
+      if (path === inventoryFile || excludedFiles.has(path))
         continue
       if (entry.isDirectory())
         yield* visit(path)
