@@ -1,4 +1,9 @@
 export default {
+  'discovery.mobile-connections.title': '连接 Android 设备',
+  'discovery.mobile-connections.description': '用 Lexora Android 扫码配对，在手机上继续处理电脑上的任务。',
+  'discovery.mobile-connections.hint': '让手机和电脑接入同一局域网或可信私网，再打开“允许移动设备连接”。还没安装 Lexora Android？点击下方的“前往下载移动端”获取对应版本。',
+  'discovery.mobile-pairing.title': '扫码配对',
+  'discovery.mobile-pairing.hint': '开启连接后，点击“配对新设备”，用 Lexora Android 扫描二维码。之后可以在“已配对设备”中查看设备详情或撤销访问。',
   'discovery.task-archive.title': '任务归档',
   'discovery.task-archive.description': '将暂时不需要的任务归档，让任务列表更清爽。在“设置 → 个人 → 任务归档”中查找、恢复或永久删除归档任务。',
   'discovery.task-archive.hint': '从任务菜单选择“归档”，之后可在这里按标题搜索、按空间筛选并恢复任务。手动删除归档任务时会要求确认，删除后不可恢复。',

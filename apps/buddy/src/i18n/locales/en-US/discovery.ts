@@ -1,4 +1,9 @@
 export default {
+  'discovery.mobile-connections.title': 'Connect an Android device',
+  'discovery.mobile-connections.description': 'Pair Lexora Android with a QR code to continue working on your desktop tasks from your phone.',
+  'discovery.mobile-connections.hint': 'Connect your phone and computer to the same local or trusted private network, then turn on “Allow mobile connections”. If you need Lexora Android, choose “Download mobile app” below for the matching release.',
+  'discovery.mobile-pairing.title': 'Pair with a QR code',
+  'discovery.mobile-pairing.hint': 'Once connections are enabled, choose “Pair a device” and scan the QR code with Lexora Android. You can review device details or revoke access under “Paired devices”.',
   'discovery.task-archive.title': 'Task archive',
   'discovery.task-archive.description': 'Archive tasks you do not currently need to keep your task list tidy. Find, restore, or permanently delete archived tasks in Settings → Personal → Task archive.',
   'discovery.task-archive.hint': 'Choose “Archive” from a task menu, then search by title, filter by Space, or restore tasks here. Manual deletion asks for confirmation and cannot be undone.',

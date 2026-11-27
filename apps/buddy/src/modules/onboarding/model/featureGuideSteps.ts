@@ -3,6 +3,10 @@ import type { FeatureGuideId } from '@buddy-shared/onboarding/featureDiscovery'
 const inlineBeacon = { side: 'right', align: 'center', offsetX: 12 } as const
 
 const targets = {
+  'mobile-connections': [
+    { id: 'mobile-connections', selector: '[data-testid="private-network-settings"] [role="switch"]', title: 'discovery.mobile-connections.title', description: 'discovery.mobile-connections.hint', beacon: { side: 'left', align: 'center', offsetX: -12 }, side: 'left', align: 'center' },
+    { id: 'mobile-pairing', selector: '[data-testid="pair-mobile-device"]', title: 'discovery.mobile-pairing.title', description: 'discovery.mobile-pairing.hint', beacon: { side: 'left', align: 'center', offsetX: -12 }, side: 'left', align: 'center' },
+  ],
   'task-archive': [
     { id: 'task-archive', selector: '.desktop-settings-page:has([data-testid="task-archive-manager"]) .desktop-settings-page__title', title: 'discovery.task-archive.title', description: 'discovery.task-archive.hint', beacon: inlineBeacon, side: 'bottom', align: 'start' },
     { id: 'task-archive-cleanup', selector: '#archive-cleanup-policy', title: 'discovery.task-archive-cleanup.title', description: 'discovery.task-archive-cleanup.hint', beacon: { side: 'left', align: 'center', offsetX: -12 }, side: 'bottom', align: 'end' },

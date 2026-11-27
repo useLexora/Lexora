@@ -48,7 +48,7 @@ const disabled = computed(() => busy.value || unavailable.value || !status.value
           </template>
           {{ t('desktop.settings.devices.resetConfirm') }}
         </NPopconfirm>
-        <NButton size="small" type="primary" :disabled="disabled || status?.state !== 'listening'" @click="issuePairing">
+        <NButton data-testid="pair-mobile-device" size="small" type="primary" :disabled="disabled || status?.state !== 'listening'" @click="issuePairing">
           {{ t('desktop.settings.devices.pair') }}
         </NButton>
       </div>

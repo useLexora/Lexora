@@ -352,6 +352,7 @@ const featureDiscovery = useFeatureDiscovery({
       'image-settings': desktopRouteLocations.settings('models'),
       'task-archive': desktopRouteLocations.settings('task-archive'),
       'chinese-input-triggers': desktopRouteLocations.settings('general'),
+      'mobile-connections': desktopRouteLocations.settings('connections'),
     }[id]
     await navigation.navigate(location)
     if (router.currentRoute.value.path !== router.resolve(location).path)
