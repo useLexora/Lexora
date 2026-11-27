@@ -10,6 +10,9 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.webkit.WebView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
+import app.uselexora.mobile.ui.MobileAction
 import app.uselexora.mobile.ui.MainActivity
 import org.json.JSONArray
 import org.json.JSONObject
@@ -179,7 +182,10 @@ object MobileUiTestDriver {
         if (existsTag("conversation-settings")) returnToConversation()
         if (existsTag("workbench-list")) click("新任务")
         waitUntil { existsTag("task-information") }
-        click("添加附件"); click("本机文件与上传")
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            val activity = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<MainActivity>().single()
+            activity.handleAction(MobileAction.LocalFileRecords, null)
+        }
     }
 
     fun openTaskSettings() {

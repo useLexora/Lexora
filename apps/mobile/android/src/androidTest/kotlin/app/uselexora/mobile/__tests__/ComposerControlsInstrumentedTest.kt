@@ -55,7 +55,7 @@ class ComposerControlsInstrumentedTest {
         compose.onNodeWithTag("composer-permission").assertIsDisplayed()
     }
 
-    @Test fun newTaskNamesLocalFilesAndPermissionSelectionWithoutSending() {
+    @Test fun newTaskOffersPhotoAndFilePickersWithoutSending() {
         val state = MobileUiState().apply {
             screen = MobileScreen.Conversation
             inputEnabled = true
@@ -69,9 +69,12 @@ class ComposerControlsInstrumentedTest {
         compose.onNodeWithText(app.uselexora.mobile.i18n.mobileText(R.string.choose_task_permissions)).assertIsDisplayed().performClick()
         compose.onNodeWithTag("composer-attach").performClick()
         compose.onNodeWithText(app.uselexora.mobile.i18n.mobileText(R.string.mobile_browse_task_files)).assertDoesNotExist()
-        compose.onNodeWithText(app.uselexora.mobile.i18n.mobileText(R.string.mobile_local_files_and_uploads)).performClick()
+        compose.onNodeWithText(app.uselexora.mobile.i18n.mobileText(R.string.mobile_local_files_and_uploads)).assertDoesNotExist()
+        compose.onNodeWithText(app.uselexora.mobile.i18n.mobileText(R.string.label_choose_file)).assertIsDisplayed()
+        compose.onNodeWithText(app.uselexora.mobile.i18n.mobileText(R.string.label_take_photo)).assertIsDisplayed()
+        compose.onNodeWithText(app.uselexora.mobile.i18n.mobileText(R.string.label_choose_images)).performClick()
         compose.runOnIdle {
-            assertEquals(listOf(MobileAction.ChooseExecution, MobileAction.LocalFileRecords), actions)
+            assertEquals(listOf(MobileAction.ChooseExecution, MobileAction.AttachImages), actions)
             assertEquals("Keep this draft", input.text.toString())
         }
     }
@@ -91,7 +94,7 @@ class ComposerControlsInstrumentedTest {
         compose.onNodeWithText(app.uselexora.mobile.i18n.mobileText(R.string.label_task_files)).assertDoesNotExist()
         compose.onNodeWithTag("composer-attach").assertIsDisplayed().performClick()
         compose.onNodeWithText(app.uselexora.mobile.i18n.mobileText(R.string.mobile_browse_task_files)).assertIsDisplayed()
-        compose.onNodeWithText(app.uselexora.mobile.i18n.mobileText(R.string.mobile_local_files_and_uploads)).assertIsDisplayed()
+        compose.onNodeWithText(app.uselexora.mobile.i18n.mobileText(R.string.mobile_local_files_and_uploads)).assertDoesNotExist()
     }
 
     @Test fun narrowLargeTextKeepsStopSeparateDuringTypingAndAttachmentOnlySend() {

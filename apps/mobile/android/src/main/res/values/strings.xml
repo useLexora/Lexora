@@ -239,7 +239,8 @@
     <string name="label_connect_service">Connect service</string>
     <string name="label_connect_to_a_service_to_load_spaces">Connect to a service to load spaces.</string>
     <string name="label_choose_a_service">Choose a service</string>
-    <string name="label_choose_file">Choose file</string>
+    <string name="label_choose_images">Choose photos</string>
+    <string name="label_choose_file">Choose files</string>
     <string name="label_choose_service">Choose service</string>
     <string name="label_choose_model">Choose model</string>
     <string name="label_choose_a_run_to_stop">Choose a run to stop</string>
@@ -651,6 +652,8 @@
     <string name="mobile_attachment_cancelled_your_input_is_retained">Attachment cancelled. Your input is retained.</string>
     <string name="mobile_selected_file_unavailable_select_it_again">Selected file unavailable. Select it again.</string>
     <string name="mobile_uploading_attachment">Uploading attachment…</string>
+    <string name="attachments_saved_offline">Saved on this phone. Once connected, tap the attachments to retry.</string>
+    <string name="attachment_batch_result">Attachments ready: %1$d/%2$d. %3$s</string>
     <string name="mobile_attachment_added">Attachment added</string>
     <string name="mobile_photo_saved_on_phone_ready_to_attach">Photo saved on phone. Ready to attach.</string>
     <string name="mobile_saved_on_phone_2">Saved on phone</string>

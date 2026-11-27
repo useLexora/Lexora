@@ -582,10 +582,10 @@ private data class SheetEntry(val title: String, val icon: ImageVector, val acti
 
 private fun sheetEntries(sheet: MobileSheet, state: MobileUiState): List<SheetEntry> = when (sheet) {
     MobileSheet.Attachments -> buildList {
-        add(SheetEntry(mobileText(R.string.label_choose_file), Icons.Outlined.AttachFile, MobileAction.AttachFile))
+        add(SheetEntry(mobileText(R.string.label_choose_images), Icons.Outlined.PhotoLibrary, MobileAction.AttachImages))
         add(SheetEntry(mobileText(R.string.label_take_photo), Icons.Outlined.PhotoCamera, MobileAction.TakePhoto))
+        add(SheetEntry(mobileText(R.string.label_choose_file), Icons.Outlined.AttachFile, MobileAction.AttachFile))
         if (state.selectedTask != null) add(SheetEntry(mobileText(R.string.mobile_browse_task_files), Icons.Outlined.FolderOpen, MobileAction.Files))
-        add(SheetEntry(mobileText(R.string.mobile_local_files_and_uploads), Icons.Outlined.History, MobileAction.LocalFileRecords))
     }
     MobileSheet.Task -> buildList {
         add(SheetEntry(mobileText(R.string.label_task_files), Icons.Outlined.FolderOpen, MobileAction.Files))
