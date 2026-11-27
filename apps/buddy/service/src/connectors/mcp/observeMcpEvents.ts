@@ -19,6 +19,8 @@ export function observeMcpDiagnostics(service: McpConnectorService, report: Appl
       const common = { component: 'runtime.connectors', connectorId: event.connectorId, producerInstanceId: event.sourceId, sourceSequence: event.revision, generation: String(event.generation) }
       if (event.type === 'state')
         record({ ...common, event: `connectors.connection.${event.snapshot.status}`, level: event.snapshot.errorCode ? 'warn' : 'debug', ...(event.snapshot.errorCode ? { errorCode: event.snapshot.errorCode } : {}) })
+      else if (event.type === 'request-failure')
+        record({ ...common, event: 'connectors.request.failed', level: 'warn', errorCode: event.errorCode, failure: { kind: 'mcp_request', method: event.method, httpStatus: event.httpStatus, retrying: event.retrying } })
       else if (event.type === 'catalog')
         record({ ...common, event: 'connectors.catalog.accepted', level: 'debug', count: event.tools.length })
       else if (event.type === 'cleanup')
@@ -36,7 +38,7 @@ export function observeMcpNotifications(service: McpConnectorService, notify: (e
   const subscriptions = [
     service.onDidChange(event => notify(Object.freeze({ sourceId: event.sourceId, revision: event.revision, generation: event.generation, connectorId: event.connectorId, type: event.type }))),
     service.onDidChangeConnection((event) => {
-      if (event.type === 'cleanup')
+      if (event.type === 'cleanup' || event.type === 'request-failure')
         return
       notify(Object.freeze({ sourceId: event.sourceId, revision: event.revision, generation: event.generation, connectorId: event.connectorId, type: event.type === 'catalog' ? 'catalog' : 'runtime' }))
     }),

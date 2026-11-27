@@ -22,7 +22,15 @@ export interface McpEventIdentity {
   readonly generation: number
 }
 
+export interface McpRequestFailure {
+  readonly method: 'tools/list' | 'tools/call'
+  readonly errorCode: ConnectorErrorCode
+  readonly httpStatus?: number
+  readonly retrying: boolean
+}
+
 export type McpConnectionDetails = (
+  | ({ readonly type: 'request-failure' } & McpRequestFailure)
   | { readonly type: 'generation', readonly previousGeneration: number }
   | { readonly type: 'availability', readonly available: boolean }
   | { readonly type: 'state', readonly snapshot: Readonly<ConnectorRuntimeState> }

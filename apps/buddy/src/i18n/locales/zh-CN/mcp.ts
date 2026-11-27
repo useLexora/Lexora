@@ -118,6 +118,7 @@ export default {
   'desktop.mcp.error.MCP_REQUEST_TIMEOUT': '服务响应超时，请重试。',
   'desktop.mcp.error.MCP_SERVER_DISCONNECTED': '服务已断开，请测试连接。',
   'desktop.mcp.error.MCP_SERVER_UNAVAILABLE': '无法连接服务，请检查地址、命令与网络。',
+  'desktop.mcp.error.MCP_SESSION_EXPIRED': '服务端会话已失效。如需重复执行操作，请先核实上一次的结果。',
   'desktop.mcp.error.MCP_TOOL_CHANGED': '工具定义已变更，将在下一轮对话更新。',
   'desktop.mcp.error.MCP_TOOL_FAILED': '工具执行失败。',
   'desktop.mcp.error.MCP_TOOL_INVALID': '服务返回了无效的工具定义。',

@@ -322,6 +322,10 @@ export class McpConnectionManager {
               this.setAuthorization(record.id, kind)
           },
           maxReconnectAttempts: this.#options.maxReconnectAttempts,
+          onRequestFailure: ({ method, errorCode, httpStatus, retrying }) => {
+            if (generation === this.generation(record.id) && !controller.signal.aborted)
+              this.#publish(record.id, { type: 'request-failure', method, errorCode, httpStatus, retrying })
+          },
           onToolsChanged: () => {
             if (generation === this.generation(record.id) && !this.#closed)
               this.#track(this.refresh(record.id).catch(() => {}))

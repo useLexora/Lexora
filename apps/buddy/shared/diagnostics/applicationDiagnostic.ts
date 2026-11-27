@@ -19,6 +19,13 @@ export const APPLICATION_DIAGNOSTIC_METHOD = 'application.diagnostic'
 export const diagnosticIdentitySchema = z.string().regex(/^\w[\w:.-]{0,191}$/)
 export const diagnosticCodeSchema = z.string().regex(/^[A-Z][A-Z0-9_]{0,95}$/)
 
+const mcpRequestFailureSchema = z.object({
+  kind: z.literal('mcp_request'),
+  method: z.enum(['tools/list', 'tools/call']),
+  httpStatus: z.number().int().min(100).max(599).optional(),
+  retrying: z.boolean(),
+}).strict()
+
 export const applicationDiagnosticSchema = z.object({
   event: z.string().regex(/^[a-z][a-z\d._-]{0,95}$/),
   component: z.string().regex(/^[a-z][a-z\d._-]{0,95}$/).optional(),
@@ -51,7 +58,7 @@ export const applicationDiagnosticSchema = z.object({
   durationMs: z.number().finite().nonnegative().optional(),
   errorCode: diagnosticCodeSchema.optional(),
   errorType: z.string().regex(/^[a-z]\w{0,95}$/i).optional(),
-  failure: z.union([privateDirectoryFailureSchema, desktopBootstrapFailureSchema, networkStartupFailureSchema, credentialVaultFailureSchema, storageHistoryFailureSchema]).optional(),
+  failure: z.union([privateDirectoryFailureSchema, desktopBootstrapFailureSchema, networkStartupFailureSchema, credentialVaultFailureSchema, storageHistoryFailureSchema, mcpRequestFailureSchema]).optional(),
   providerRequest: providerRequestDiagnosticSchema.optional(),
   inference: inferenceDiagnosticSchema.optional(),
   imageGeneration: imageGenerationDiagnosticSchema.optional(),

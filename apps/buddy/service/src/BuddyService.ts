@@ -919,7 +919,10 @@ export async function startBuddyService(
         void sync.refreshAvailability().catch(() => record({ event: 'extensions.capabilities.availability_failed', level: 'warn', errorCode: 'EXTENSION_CAPABILITY_FAILED' }))
       }
       const connectorChanges = connectorService.onDidChange(refreshAvailability)
-      const connectionChanges = connectorService.onDidChangeConnection(refreshAvailability)
+      const connectionChanges = connectorService.onDidChangeConnection((event) => {
+        if (event.type !== 'request-failure')
+          refreshAvailability()
+      })
       defer(options.platform.capabilities.subscribe(() => {
         void sync.schedule()
       }))
