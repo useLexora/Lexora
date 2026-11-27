@@ -388,7 +388,7 @@ class DesktopApplication {
   }
 }
 
-export async function startDesktopApplication(): Promise<void> {
+export async function startDesktopApplication(allowReady?: () => void, failure?: { cause: unknown }): Promise<void> {
   let environment: DesktopEnvironment | undefined
   let recoveryRecorded = false
   try {
@@ -396,9 +396,12 @@ export async function startDesktopApplication(): Promise<void> {
       app.quit()
       return
     }
+    if (failure)
+      throw failure.cause
     const platformHost = process.argv.includes('--lexora-platform-host') ? await connectPlatformHost() : undefined
     process.env.LEXORA_BUDDY_STORAGE_AUTHORITY ??= 'sqlite'
     environment = await prepareDesktopEnvironment(platformHost)
+    allowReady?.()
     if (environment.storage.state.pending) {
       await showStorageMigration(environment.storage, environment.diagnostics)
       return
@@ -425,6 +428,7 @@ export async function startDesktopApplication(): Promise<void> {
     void application.start().catch(error => application.handleStartupFailure(error))
   }
   catch (cause) {
+    allowReady?.()
     if (process.argv.includes('--lexora-platform-host')) {
       environment?.startup.failed(cause)
       if (environment)

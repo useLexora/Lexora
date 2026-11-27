@@ -6,24 +6,6 @@ import { modelCatalogResolutionSchema } from '../../../shared/providers/provider
 import { providerRequestHeadersSchema } from '../../../shared/providers/providerHeaders'
 import { providerModelTypeSchema } from '../../../shared/providers/providerModelType'
 
-export const apiKeyCredentialSchema = z.object({
-  type: z.literal('api_key'),
-  key: z.string().optional(),
-  env: z.record(z.string(), z.string()).optional(),
-}).strict()
-
-export const oauthCredentialSchema = z.object({
-  type: z.literal('oauth'),
-  access: z.string(),
-  refresh: z.string(),
-  expires: z.number(),
-}).loose()
-
-export const credentialSchema = z.union([
-  apiKeyCredentialSchema,
-  oauthCredentialSchema,
-])
-
 export const buddyProviderSchema = z.object({
   authentication: z.enum(['api_key', 'oauth', 'none']).default('api_key'),
   plugin: z.object({ id: z.string(), managementPage: z.boolean() }).strict().optional(),
@@ -38,6 +20,7 @@ export const buddyProviderSchema = z.object({
   builtinProviderId: z.string().nullable(),
   canSyncModels: z.boolean(),
   authTypes: z.array(z.enum(['api_key', 'oauth'])),
+  credentialUnavailable: z.boolean(),
   storedCredentialType: z.enum(['api_key', 'oauth']).nullable(),
   status: z.enum(['available', 'authentication_required', 'unavailable']),
   custom: z.boolean(),
@@ -45,7 +28,7 @@ export const buddyProviderSchema = z.object({
   enabledModelCount: z.number().int().nonnegative(),
   modelCount: z.number().int().nonnegative(),
   setupComplete: z.boolean(),
-  syncUnavailableReason: z.enum(['authentication_required', 'unsupported_api']).nullable(),
+  syncUnavailableReason: z.enum(['authentication_required', 'credential_unavailable', 'unsupported_api']).nullable(),
 }).strict()
 
 export const buddyModelSchema = z.object({

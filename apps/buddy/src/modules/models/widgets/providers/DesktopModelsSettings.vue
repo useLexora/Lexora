@@ -21,9 +21,9 @@ const showAddDialog = shallowRef(false)
 const resumeProviderId = shallowRef<string | null>(null)
 
 const addedProviders = computed(() => props.providerSettings.providers.value.filter(provider => provider.added))
-const authProviderName = computed(() => props.providerSettings.providers.value.find(
+const authProvider = computed(() => props.providerSettings.providers.value.find(
   provider => provider.id === props.providerSettings.authChallenge.value?.providerId,
-)?.displayName ?? null)
+) ?? null)
 
 function openAddDialog(providerId: string | null = null) {
   props.providerSettings.clearModelProviderError()
@@ -93,7 +93,13 @@ function providerAuthenticationLabel(provider: LocalProvider) {
               </template>
             </div>
           </div>
-          <template v-if="!provider.setupComplete && !provider.plugin">
+          <template v-if="provider.credentialUnavailable">
+            <span class="text-warning text-[0.72rem]">{{ t('desktop.providers.credentialUnavailable') }}</span>
+            <NButton size="small" @click="manageProvider(provider.id)">
+              {{ t('desktop.providers.viewConfiguration') }}
+            </NButton>
+          </template>
+          <template v-else-if="!provider.setupComplete && !provider.plugin">
             <NButton size="small" @click="openAddDialog(provider.id)">
               {{ t('desktop.providers.continueSetup') }}
             </NButton>
@@ -166,7 +172,7 @@ function providerAuthenticationLabel(provider: LocalProvider) {
     />
     <DesktopProviderAuthDialog
       :challenge="providerSettings.authChallenge.value"
-      :provider-name="authProviderName"
+      :provider="authProvider"
       :language="language"
       @cancel="providerSettings.cancelAuth"
       @submit="providerSettings.respondToAuth"

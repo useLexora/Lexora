@@ -23,6 +23,10 @@ name = "lexora-buddy-process-control"
 path = "src/bin/process_control.rs"
 
 [[bin]]
+name = "lexora-buddy-provider-credential"
+path = "src/bin/provider_credential.rs"
+
+[[bin]]
 name = "lexora-buddy-private-directories"
 path = "src/bin/private_directories.rs"
 
@@ -138,6 +142,7 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
 ] }
 
 [target.'cfg(windows)'.dependencies]
+zeroize = "1.9"
 windows-core = "0.62"
 cap-primitives = "4"
 windows = { version = "0.62", features = [

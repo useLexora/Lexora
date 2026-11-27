@@ -42,6 +42,7 @@ import { providerRequestHeadersSchema } from '../../../shared/providers/provider
 import { customProviderInputSchema, defaultModelSchema, providerDisplayNameSchema } from '../../../shared/providers/providerInput'
 import { createBuiltinProviderInstance } from './createBuiltinProviderInstance'
 import { MODEL_RESOLUTION_VERSION, modelResolutionFingerprint } from './modelResolution'
+import { isCredentialStoreFailure } from './ProviderCredentialStatus'
 import { ProviderExecutionModelResolver } from './ProviderExecutionModelResolver'
 import {
   ProviderAuthenticationRequiredError,
@@ -57,6 +58,10 @@ import { ProviderModelSnapshotService } from './ProviderModelSnapshotService'
 import { ProviderRequestHeaders } from './ProviderRequestHeaders'
 import { buddyProviderSchema } from './providerSchemas'
 import { ProviderState } from './ProviderState'
+
+function isModelCredentialFailure(error: unknown): boolean {
+  return isCredentialStoreFailure(error) || (error instanceof Error && isCredentialStoreFailure(error.cause))
+}
 
 export interface ProviderModelRuntime extends ProviderModelCatalogRuntime {
   getProvider: (providerId: string) => Provider | undefined
@@ -190,7 +195,7 @@ export class ProviderService {
         this.#modelCatalog.reconcileCapabilityModels([])
       })
       await this.#modelSnapshot.initialize()
-      const credentialProviderIds = new Set((await this.#credentialStatus.listOrEmpty()).map(credential => credential.providerId))
+      const credentials = await this.#credentialStatus.refresh()
       this.#assertOperationCurrent(generation)
       const customProviders = this.#configs.list()
       const customProviderIds = new Set(customProviders.map(provider => provider.id))
@@ -199,7 +204,7 @@ export class ProviderService {
         const ids = provider.id === 'azure' ? [provider.id, 'azure-openai-responses'] : [provider.id]
         for (const id of ids) {
           if (instances.has(id) || customProviderIds.has(id)
-            || (!this.#states.findByProviderId(id) && !credentialProviderIds.has(id))) {
+            || (!this.#states.findByProviderId(id) && (!credentials.storeKnown || credentials.lookup(id) === null))) {
             continue
           }
           const now = new Date().toISOString()
@@ -208,14 +213,23 @@ export class ProviderService {
       }
       for (const instance of instances.values())
         this.#registerBuiltinInstance(instance)
-      if (instances.size)
-        await this.#modelRuntime.refresh({ signal: this.#shutdown.signal, allowNetwork: false, providers: [...instances.keys()] })
+      const refreshable = [...instances.keys()].filter(id => credentials.lookup(id) !== 'unknown')
+      const refreshed = refreshable.length
+        ? await this.#modelRuntime.refresh({ signal: this.#shutdown.signal, allowNetwork: false, providers: refreshable })
+        : undefined
       const prepared = new Map<string, readonly Model<Api>[]>()
       for (const instance of instances.values()) {
-        if (this.#modelRuntime.getProvider(instance.id)) {
-          prepared.set(instance.id, credentialProviderIds.has(instance.id)
+        const credential = credentials.lookup(instance.id)
+        if (credential === 'unknown' || !this.#modelRuntime.getProvider(instance.id) || isModelCredentialFailure(refreshed?.errors.get(instance.id)))
+          continue
+        try {
+          prepared.set(instance.id, credential !== null
             ? await this.#modelRuntime.getAvailable(instance.id)
             : this.#modelRuntime.getModels(instance.id))
+        }
+        catch (error) {
+          if (!isModelCredentialFailure(error))
+            throw error
         }
       }
       this.#assertOperationCurrent(generation)
@@ -235,7 +249,7 @@ export class ProviderService {
           const models = prepared.get(instance.id)
           if (!models)
             continue
-          const authenticated = credentialProviderIds.has(instance.id)
+          const authenticated = credentials.lookup(instance.id) !== null
           this.#restoreResolution(instance.id, this.#builtinResolutionInput(instance, authenticated, models), () => this.#commitBuiltinModels(instance, authenticated, models, true))
         }
       })
@@ -297,9 +311,7 @@ export class ProviderService {
   }
 
   async listProviders(): Promise<readonly BuddyProvider[]> {
-    const credentialList = await this.#credentialStatus.listOrEmpty()
-    const credentials = new Map(credentialList
-      .map(credential => [credential.providerId, credential.type]))
+    const credentials = await this.#credentialStatus.refresh()
     const customProviders = new Map(this.#configs.list().map(provider => [provider.id, provider]))
     const providerStates = new Map(this.#states.list().map(state => [state.providerId, state]))
     const modelSummaries = this.#modelCatalog.summarize()
@@ -319,12 +331,14 @@ export class ProviderService {
       const custom = customProviders.get(id)
       const template = builtin ? this.#builtinTemplates.get(builtin.builtinProviderId) : undefined
       const state = providerStates.get(id)
-      const storedCredentialType = custom && !custom.credentialRef ? null : credentials.get(id) ?? null
       const unauthenticated = custom?.authentication === 'none'
+      const credential = plugin || unauthenticated || custom?.credentialRef === null ? null : credentials.lookup(id)
+      const credentialUnavailable = credential === 'unknown'
+      const storedCredentialType = credentialUnavailable ? null : credential
       const modelSummary = modelSummaries.get(id)
       const enabled = state?.enabled ?? custom?.enabled ?? Boolean(storedCredentialType)
       const enabledModelCount = modelSummary?.enabledModelCount ?? 0
-      const syncUnavailableReason = this.#syncUnavailableReason(custom, storedCredentialType, provider)
+      const syncUnavailableReason = this.#syncUnavailableReason(custom, storedCredentialType, provider, credentialUnavailable)
       return buddyProviderSchema.parse({
         plugin: plugin ? { id: plugin.id, managementPage: plugin.managementPage } : undefined,
         requestHeaders: this.#requestHeaders.list(id),
@@ -338,7 +352,8 @@ export class ProviderService {
         authTypes: plugin ? [] : provider ? providerAuthTypes(provider) : custom ? ['api_key'] : [],
         authentication: custom?.authentication ?? storedCredentialType ?? 'api_key',
         storedCredentialType,
-        status: plugin ? provider || capabilities.some(item => item.available) ? 'available' : 'unavailable' : !provider ? 'unavailable' : unauthenticated ? 'available' : this.#credentialStatus.availability === 'unknown' ? 'unavailable' : storedCredentialType ? 'available' : 'authentication_required',
+        credentialUnavailable,
+        status: plugin ? provider || capabilities.some(item => item.available) ? 'available' : 'unavailable' : !provider ? 'unavailable' : unauthenticated ? 'available' : credentialUnavailable ? 'unavailable' : storedCredentialType ? 'available' : 'authentication_required',
         custom: Boolean(custom),
         activeRunCount: this.#activeRunsForProvider(id).length,
         added: true,
@@ -362,7 +377,7 @@ export class ProviderService {
   }
 
   async listModels(providerId?: string): Promise<readonly BuddyModel[]> {
-    await this.#credentialStatus.listOrEmpty()
+    await this.#credentialStatus.refresh()
     return this.#modelCatalog.list(providerId)
   }
 
@@ -400,7 +415,7 @@ export class ProviderService {
   async refreshModelSnapshot(): Promise<ProviderModelSnapshotStatus> {
     return this.#operate('refreshModelSnapshot', async () => {
       await this.#modelSnapshot.refresh()
-      await this.#credentialStatus.listOrEmpty()
+      await this.#credentialStatus.refresh()
       for (const instance of this.#builtins.list()) {
         if (this.#modelRuntime.getProvider(instance.id))
           this.#state.commit('metadata', () => this.#modelCatalog.reconcileBuiltinModels(instance.id, instance.builtinProviderId, { metadataOnly: true }))
@@ -549,7 +564,7 @@ export class ProviderService {
 
   async setModelEnabled(providerId: string, modelId: string, enabled: boolean): Promise<BuddyModel> {
     return this.#operate('setModelEnabled', async () => {
-      await this.#credentialStatus.listOrEmpty()
+      await this.#credentialStatus.refresh()
       this.#modelCatalog.assertCanSetEnabled(providerId, modelId, enabled)
       if (!enabled)
         this.#assertModelIdle(providerId, modelId)
@@ -564,7 +579,7 @@ export class ProviderService {
 
   async setModelsEnabled(providerId: string, modelIds: readonly string[], enabled: boolean): Promise<BuddyModel[]> {
     return this.#operate('setModelsEnabled', async () => {
-      await this.#credentialStatus.listOrEmpty()
+      await this.#credentialStatus.refresh()
       const uniqueIds = [...new Set(modelIds)]
       if (!uniqueIds.length)
         return []
@@ -589,7 +604,7 @@ export class ProviderService {
 
   async removeModel(providerId: string, modelId: string): Promise<void> {
     return this.#operate('removeModel', async () => {
-      await this.#credentialStatus.listOrEmpty()
+      await this.#credentialStatus.refresh()
       this.#assertModelIdle(providerId, modelId)
       this.#state.commit('configuration', () => {
         this.#modelCatalog.removeUnavailableModel(providerId, modelId)
@@ -611,9 +626,9 @@ export class ProviderService {
       if (enabled) {
         const capabilities = this.#capabilityModels.filter(item => item.providerId === providerId && item.available)
         if (!this.#plugins.has(providerId) && !capabilities.some(item => item.plugin) && this.#configs.findById(providerId)?.authentication !== 'none') {
-          const credentials = await this.#credentialStatus.list()
-          if ((this.#configs.findById(providerId)?.credentialRef === null) || !credentials.some(credential => credential.providerId === providerId))
+          if (this.#configs.findById(providerId)?.credentialRef === null)
             throw new ProviderAuthenticationRequiredError()
+          await this.#credentialStatus.requireType(providerId)
         }
         if (!this.#modelCatalog.hasEnabledAvailableModel(providerId))
           throw new ProviderUnavailableError()
@@ -678,8 +693,7 @@ export class ProviderService {
         const provider = this.#modelRuntime.getProvider(providerId)
         if (!provider)
           throw new ProviderModelSyncUnsupportedError()
-        if (!(await this.#credentialStatus.list()).some(credential => credential.providerId === providerId))
-          throw new ProviderAuthenticationRequiredError()
+        await this.#credentialStatus.requireType(providerId)
         const result = await this.#modelRuntime.refresh({ signal: this.#shutdown.signal, allowNetwork: true, force: true, providers: [providerId] })
         if (result.aborted || result.errors.size)
           throw new ProviderModelSyncError()
@@ -887,7 +901,9 @@ export class ProviderService {
 
   async #reconcileBuiltinModels(instance: BuiltinProviderConfigRecord, authenticated: boolean): Promise<void> {
     const generation = this.#operationGeneration
-    await this.#credentialStatus.listOrEmpty()
+    const credentials = await this.#credentialStatus.refresh()
+    if (credentials.lookup(instance.id) === 'unknown')
+      return
     const models = authenticated
       ? await this.#modelRuntime.getAvailable(instance.id)
       : this.#modelRuntime.getModels(instance.id)
@@ -1060,12 +1076,13 @@ export class ProviderService {
     custom: ProviderConfigRecord | undefined,
     storedCredentialType: 'api_key' | 'oauth' | null,
     provider: Provider | undefined,
-  ): 'authentication_required' | 'unsupported_api' | null {
-    if (!custom)
-      return provider ? storedCredentialType ? null : 'authentication_required' : 'unsupported_api'
-    if (!this.#modelDiscovery.supports(custom.api))
+    credentialUnavailable: boolean,
+  ): BuddyProvider['syncUnavailableReason'] {
+    if (!provider || (custom && !this.#modelDiscovery.supports(custom.api)))
       return 'unsupported_api'
-    return custom.authentication === 'none' || storedCredentialType ? null : 'authentication_required'
+    if (credentialUnavailable)
+      return 'credential_unavailable'
+    return custom?.authentication === 'none' || storedCredentialType ? null : 'authentication_required'
   }
 
   async #requireListedProvider(providerId: string): Promise<BuddyProvider> {

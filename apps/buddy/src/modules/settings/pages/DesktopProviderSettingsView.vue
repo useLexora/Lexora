@@ -25,12 +25,12 @@ const providerSummary = computed(() => {
   const value = provider.value
   return value ? [value.builtinProviderId ?? value.id, value.description].filter(Boolean).join(' | ') : ''
 })
-const authProviderName = computed(() => providerSettings.providers.value.find(
+const authProvider = computed(() => providerSettings.providers.value.find(
   item => item.id === providerSettings.authChallenge.value?.providerId,
-)?.displayName ?? null)
+) ?? null)
 const removeDisabled = computed(() => {
   const value = provider.value
-  return !value || value.activeRunCount > 0 || providerSettings.mutatingProviderId.value === value.id
+  return !value || value.credentialUnavailable || value.activeRunCount > 0 || providerSettings.mutatingProviderId.value === value.id
 })
 watch(
   [() => props.providerId, provider],
@@ -60,7 +60,8 @@ function managePlugin() {
 }
 
 async function removeProvider() {
-  await providerSettings.removeProvider(props.providerId)
+  if (!removeDisabled.value)
+    await providerSettings.removeProvider(props.providerId)
 }
 
 async function leaveProvider() {
@@ -83,7 +84,7 @@ const { authChallenge, language } = providerSettings
     <template #description>
       {{ providerSummary }}
     </template>
-    <template v-if="provider" #actions>
+    <template v-if="provider && !provider.credentialUnavailable" #actions>
       <NTooltip v-if="!provider.plugin" :delay="350">
         <template #trigger>
           <span class="inline-flex">
@@ -135,7 +136,7 @@ const { authChallenge, language } = providerSettings
     />
     <DesktopProviderAuthDialog
       :challenge="authChallenge"
-      :provider-name="authProviderName"
+      :provider="authProvider"
       :language="language"
       @cancel="providerSettings.cancelAuth"
       @submit="providerSettings.respondToAuth"

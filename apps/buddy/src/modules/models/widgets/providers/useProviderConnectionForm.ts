@@ -48,7 +48,7 @@ export function useProviderConnectionForm(props: ProviderConnectionInput, show: 
   }
 
   async function save() {
-    if (saving.value || !canSave.value)
+    if (props.provider.credentialUnavailable || saving.value || !canSave.value)
       return
     saving.value = true
     try {

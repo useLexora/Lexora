@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, effectScope, h, nextTick, shallowReactive, shallowRef } from 'vue'
 import { translateBuddy } from '@/i18n/buddyI18n'
 import { useProviderSetupWizard } from '@/modules/models/state/useProviderSetupWizard'
+import OnboardingModelStep from '@/modules/onboarding/widgets/OnboardingModelStep.vue'
 import { resolveProviderIcon } from '@/shared/ui/icon/providerIcons'
 import DesktopModelsSettings from '../DesktopModelsSettings.vue'
 import DesktopProviderAddDialog from '../DesktopProviderAddDialog.vue'
@@ -481,6 +482,75 @@ describe('provider settings prop reactivity', () => {
     expect(switchEl?.classList.contains('n-switch--disabled')).toBe(true)
   })
 
+  it.each(['settings', 'onboarding'] as const)('keeps unreadable credentials distinct from incomplete setup in %s', async (surface) => {
+    const store = createStore('Configured')
+    const incomplete = { ...provider('New'), setupComplete: false, storedCredentialType: null }
+    store.providers.value = [
+      { ...incomplete, id: 'locked', displayName: 'Existing', credentialUnavailable: true },
+      incomplete,
+      { ...provider('Ready'), id: 'ready' },
+    ]
+    const manage = vi.fn()
+    const root = document.createElement('div')
+    const app = createApp({ setup: () => () => surface === 'settings'
+      ? h(DesktopModelsSettings, { providerSettings: store, onManageProvider: manage })
+      : h(OnboardingModelStep, { providers: store }) })
+    app.mount(root)
+    cleanups.push(() => app.unmount())
+    await nextTick()
+
+    const [locked, pending, ready] = root.querySelectorAll('article')
+    expect(locked?.textContent).toContain('凭据暂不可读取')
+    expect(locked?.textContent).not.toMatch(/继续配置|删除/)
+    expect(locked?.querySelector('[role="switch"]')).toBeNull()
+    expect(pending?.textContent).toContain('继续配置')
+    if (surface === 'settings') {
+      const view = locked?.querySelector('button')
+      expect(view?.textContent).toContain('查看配置')
+      view?.click()
+      expect(manage).toHaveBeenCalledWith('locked')
+      expect(ready?.querySelector('[role="switch"]')).not.toBeNull()
+    }
+    else {
+      expect(locked?.querySelector('button')).toBeNull()
+      expect(ready?.textContent).toContain(translateBuddy('zh-CN', 'onboarding.connected'))
+    }
+  })
+
+  it('keeps connection settings readable without save, login or model cleanup during credential failure', async () => {
+    const store = createStore('Configured')
+    const source: LocalProvider = { ...provider('Configured'), custom: true, api: 'openai-responses', baseUrl: 'https://example.invalid/v1' }
+    store.providers.value = [source]
+    store.registeredModels.value = [{ ...model('Existing model'), available: false }]
+    const root = document.createElement('div')
+    document.body.append(root)
+    const app = createApp({ setup: () => () => h(DesktopProviderDetail, { providerSettings: store, providerId: source.id }) })
+    app.mount(root)
+    cleanups.push(() => {
+      app.unmount()
+      root.remove()
+    })
+    Array.from(root.querySelectorAll('button')).find(button => button.textContent?.includes('编辑'))?.click()
+    await nextTick()
+    const dialog = document.querySelector('.desktop-provider-connection-dialog')
+    expect(dialog?.textContent).toContain('保存')
+
+    store.providers.value = [{ ...source, credentialUnavailable: true, setupComplete: false }]
+    await nextTick()
+    expect(root.textContent).toContain('凭据暂不可读取')
+    expect(root.textContent).toContain('Existing model')
+    expect(root.textContent).not.toMatch(/继续配置|清除认证|修改认证/)
+    expect(root.querySelector('[aria-label="清理不可用模型"]')).toBeNull()
+    expect(dialog?.textContent).not.toContain('保存')
+    const endpoint = Array.from(dialog!.querySelectorAll('input')).find(input => input.value === source.baseUrl)
+    expect(endpoint?.disabled).toBe(true)
+
+    store.providers.value = [source]
+    await nextTick()
+    expect(dialog?.textContent).toContain('保存')
+    expect(root.querySelector('[aria-label="清理不可用模型"]')).not.toBeNull()
+  })
+
   it('displays continue setup and delete buttons for incomplete providers', async () => {
     const store = createStore('Beta')
     store.providers.value = [{
@@ -570,6 +640,20 @@ describe('provider wizard ownership', () => {
     expect(wizard.step.value).toBe(2)
     expect(wizard.selectedProvider.value?.authentication).toBe('api_key')
     expect(wizard.connectionBusy.value).toBe(false)
+  })
+
+  it('closes a resumed wizard if its own credentials become unreadable', async () => {
+    const store = createStore('Configured')
+    const show = shallowRef(true)
+    const scope = effectScope()
+    cleanups.push(() => scope.stop())
+    scope.run(() => useProviderSetupWizard({ providerSettings: () => store, show, resumeProviderId: shallowRef('service') }))
+    store.providers.value = [provider('Configured'), { ...provider('Other'), id: 'other', credentialUnavailable: true }]
+    await nextTick()
+    expect(show.value).toBe(true)
+    store.providers.value = [{ ...provider('Configured'), credentialUnavailable: true }]
+    await nextTick()
+    expect(show.value).toBe(false)
   })
 
   it('only offers no-auth on supported custom APIs and resumes authentication edits at connection', () => {

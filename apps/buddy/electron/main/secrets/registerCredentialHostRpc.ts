@@ -1,5 +1,5 @@
 import type { RuntimeRpcPeerContract } from '../../../shared/runtime/rpcPeer'
-import type { CredentialVault } from './CredentialVault'
+import type { createCredentialVault } from './CredentialVault'
 import { shell } from 'electron'
 import {
   credentialMutationResultSchema,
@@ -21,7 +21,7 @@ export interface RegisterCredentialHostRpcOptions {
 
 export function registerCredentialHostRpc(
   peer: RuntimeRpcPeerContract,
-  vault: CredentialVault,
+  vault: ReturnType<typeof createCredentialVault>,
   options: RegisterCredentialHostRpcOptions = {},
 ): () => void {
   const openExternal = options.openExternal ?? (url => shell.openExternal(url))
@@ -36,8 +36,8 @@ export function registerCredentialHostRpc(
       )
     }),
     peer.onRequest('host.credentials.list', async () => runHostOperation(
-      () => vault.listProviders(),
-      providers => credentialProviderListResultSchema.parse({ ok: true, providers }),
+      () => vault.scanProviders(),
+      inventory => credentialProviderListResultSchema.parse({ ok: true, ...inventory }),
     )),
     peer.onRequest('host.credentials.write', async (params) => {
       const parsed = providerCredentialWriteParamsSchema.safeParse(params)

@@ -1,10 +1,9 @@
 import type { DesktopEnvironment } from './typing'
 import { mkdirSync, realpathSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { homedir } from 'node:os'
+import { dirname, join, relative } from 'node:path'
 import process from 'node:process'
 import { app, crashReporter, Menu } from 'electron'
-import buddyPackage from '../../../package.json'
 import { currentPlatform } from '../../../platform/currentPlatform'
 import { resolveBuddyPrivateDirectories } from '../../../platform/native/nativeHost'
 import { acquireStorageRootLease } from '../../../platform/storage/StorageRootLease'
@@ -12,44 +11,27 @@ import { readDiagnosticError } from '../../../shared/diagnostics/applicationDiag
 import { ApplicationEvents } from '../../../shared/observability/ApplicationEvents'
 import { OPERATING_SYSTEM } from '../../../shared/platform/identifiers'
 import { DesktopDiagnosticLogger } from '../desktopDiagnostics'
-import { resolveBuddyRuntimePaths } from '../paths'
 import { desktopHosts } from '../platform/desktopHost'
 import { resolveDesktopLaunchIntent } from '../startupIntent'
 import { requestPersistenceUpgrade } from '../storage/requestPersistenceUpgrade'
 import { prepareStorageBootstrap, readStorageBootstrap, unifiedStoragePaths } from '../storage/storageBootstrap'
 import { bootstrapStep } from './desktopBootstrap'
 import { desktopIcons } from './desktopIcons'
+import { resolveDesktopRuntimePaths } from './desktopRuntimePaths'
 import { DesktopStartup } from './DesktopStartup'
 import { checkDesktopDirectories, criticalDesktopDirectories, DesktopInstanceLockUnavailable, prepareDesktopPrivateStorage } from './desktopStorage'
 import { observeStartupDiagnostics } from './startupDiagnostics'
+import { bindWindowsChromiumSession } from './windowsChromiumSession'
 
 export async function prepareDesktopEnvironment(platformHost?: DesktopEnvironment['platformHost']): Promise<DesktopEnvironment> {
   if (currentPlatform.id === OPERATING_SYSTEM.Linux)
     app.commandLine.appendSwitch('enable-speech-dispatcher')
   const desktopHost = desktopHosts[currentPlatform.id]
   const isSmokeTest = process.env.LEXORA_DESKTOP_SMOKE_TEST === '1'
-  const legacyPaths = bootstrapStep('resolve_paths', () => resolveBuddyRuntimePaths({
-    defaultUserData: app.getPath('userData'),
-    desktopName: buddyPackage.desktopName,
-    isPackaged: app.isPackaged,
-    localAppData: process.env.LOCALAPPDATA,
-    lexoraHomeOverride: process.env.LEXORA_HOME,
-    nativePetSocketOverride: process.env.LEXORA_BUDDY_PET_SOCKET,
-    nativePetStateOverride: process.env.LEXORA_BUDDY_PET_STATE_PATH,
-    profileOverride: process.env.LEXORA_BUDDY_PROFILE,
-    smokeTest: isSmokeTest,
-    temporaryDirectory: tmpdir(),
-    userDataOverride: app.commandLine.hasSwitch('user-data-dir')
-      ? app.commandLine.getSwitchValue('user-data-dir')
-      : undefined,
-    userHome: homedir(),
-    userId: process.geteuid?.() ?? 0,
-    xdgCacheHome: process.env.XDG_CACHE_HOME,
-    xdgConfigHome: process.env.XDG_CONFIG_HOME,
-    xdgRuntimeDirectory: process.env.XDG_RUNTIME_DIR,
-    xdgStateHome: process.env.XDG_STATE_HOME,
-  }))
-  const { bootstrapRoot } = readStorageBootstrap(legacyPaths.lexoraHome)
+  const legacyPaths = bootstrapStep('resolve_paths', resolveDesktopRuntimePaths)
+  const { bootstrapRoot, state } = readStorageBootstrap(legacyPaths.lexoraHome)
+  if (platformHost && (platformHost.peer.closed || !state.identity || state.pending || relative(realpathSync(state.activeRoot), realpathSync(platformHost.bootstrap.profileRoot)) !== '' || legacyPaths.profile !== platformHost.bootstrap.profile))
+    throw new Error('PLATFORM_HOST_PROFILE_CHANGED')
   prepareDesktopPrivateStorage(bootstrapRoot, privateDirectoriesExecutable())
   mkdirSync(join(bootstrapRoot, 'migration-session'), { recursive: true, mode: 0o700 })
   app.setPath('sessionData', join(bootstrapRoot, 'migration-session'))
@@ -60,7 +42,7 @@ export async function prepareDesktopEnvironment(platformHost?: DesktopEnvironmen
     throw new DesktopInstanceLockUnavailable(legacyPaths.userData)
   const storage = prepareStorageBootstrap(legacyPaths, privateDirectoriesExecutable())
   if (platformHost) {
-    if (platformHost.peer.closed || storage.state.pending || realpathSync(storage.state.activeRoot) !== realpathSync(platformHost.bootstrap.profileRoot) || legacyPaths.profile !== platformHost.bootstrap.profile)
+    if (platformHost.peer.closed || storage.state.pending || relative(realpathSync(storage.state.activeRoot), realpathSync(platformHost.bootstrap.profileRoot)) !== '' || legacyPaths.profile !== platformHost.bootstrap.profile)
       throw new Error('PLATFORM_HOST_PROFILE_CHANGED')
   }
   else if (!storage.state.pending) {
@@ -83,12 +65,10 @@ export async function prepareDesktopEnvironment(platformHost?: DesktopEnvironmen
   const paths = unifiedStoragePaths(legacyPaths, storage.state.activeRoot)
   if (process.env.LEXORA_BUDDY_PET_STATE_PATH)
     paths.nativePetState = legacyPaths.nativePetState
+  if (currentPlatform.id === OPERATING_SYSTEM.Windows && !storage.state.pending && !process.argv.includes('--lexora-storage-maintenance'))
+    bindWindowsChromiumSession(legacyPaths, paths, privateDirectoriesExecutable())
   if (app.commandLine.hasSwitch('user-data-dir'))
     paths.userData = legacyPaths.userData
-  if (storage.state.pending) {
-    mkdirSync(join(bootstrapRoot, 'migration-session'), { recursive: true, mode: 0o700 })
-    app.setPath('sessionData', join(bootstrapRoot, 'migration-session'))
-  }
   const diagnostics = new DesktopDiagnosticLogger({
     directory: storage.state.pending ? join(bootstrapRoot, 'logs') : paths.logs,
     appVersion: app.getVersion(),
@@ -133,6 +113,8 @@ export function initializeDesktopEnvironment(environment: DesktopEnvironment): v
   catch (error) {
     environment.diagnostics.record({ scope: 'desktop', level: 'warn', event: 'crash_reporter.unavailable', ...readDiagnosticError(error) })
   }
+  if (currentPlatform.id === OPERATING_SYSTEM.Windows && relative(realpathSync(app.getPath('sessionData')), realpathSync(paths.sessionData)) !== '')
+    throw new Error('DESKTOP_SESSION_PROFILE_CHANGED')
   bootstrapStep('configure_paths', () => {
     app.setName(paths.appName)
     app.setPath('userData', paths.userData)

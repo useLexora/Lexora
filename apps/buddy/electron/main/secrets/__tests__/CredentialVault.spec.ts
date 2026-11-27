@@ -1,6 +1,7 @@
 import type { ApplicationDiagnostic } from '../../../../shared/diagnostics/applicationDiagnostic'
 import type { SecretCipher } from '../CredentialVault'
 import { Buffer } from 'node:buffer'
+import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -12,6 +13,7 @@ import { RuntimeRpcPeer } from '../../../../platform/ipc/runtimeRpcPeer'
 import { DesktopDiagnosticLogger } from '../../desktopDiagnostics'
 import { createApplicationDiagnosticBundle } from '../../diagnostics/applicationDiagnosticBundle'
 import { ApplicationLogReader } from '../../diagnostics/ApplicationLogReader'
+import { exportBackupCredentials } from '../../storage/backupCredentials'
 import {
   createCredentialVault,
   CredentialStoreUnavailableError,
@@ -20,13 +22,20 @@ import {
 } from '../CredentialVault'
 import { isAllowedExternalUrl, registerCredentialHostRpc } from '../registerCredentialHostRpc'
 
-vi.mock('electron', () => ({ safeStorage: {}, shell: {} }))
-
 const reversibleCipher: SecretCipher = {
   available: () => true,
   decrypt: value => Buffer.from([...value].map(byte => byte ^ 0xA5)).toString('utf8'),
   encrypt: value => Buffer.from([...Buffer.from(value, 'utf8')].map(byte => byte ^ 0xA5)),
 }
+
+vi.mock('electron', () => ({
+  safeStorage: {
+    isEncryptionAvailable: () => true,
+    getSelectedStorageBackend: () => 'fixture',
+    decryptString: (value: Buffer) => reversibleCipher.decrypt(value),
+  },
+  shell: {},
+}))
 
 describe('credentialVault', () => {
   it('atomically persists encrypted provider credentials with private permissions', async () => {
@@ -53,6 +62,36 @@ describe('credentialVault', () => {
     expect(persisted.includes(Buffer.from('sk-test-secret'))).toBe(false)
     expect((await stat(providerDirectory)).mode & 0o777).toBe(0o700)
     expect((await stat(join(providerDirectory, files[0]!))).mode & 0o777).toBe(0o600)
+  })
+
+  it('returns only healthy metadata and canonical digests, without changing unreadable files', async () => {
+    const buddyHome = await createTemporaryDirectory('lexora-buddy-vault-')
+    let available = true
+    const vault = createCredentialVault({ buddyHome, cipher: { ...reversibleCipher, available: () => available } })
+    const directory = join(buddyHome, 'secrets', 'providers')
+    const digest = (id: string) => createHash('sha256').update(id).digest('hex')
+    const path = (id: string) => join(directory, `${digest(id)}.credential`)
+    await vault.write('providers', 'subscription', { type: 'oauth', access: 'synthetic', refresh: 'synthetic', expires: 1 })
+    await vault.write('providers', 'legacy', { type: 'api_key', key: 'synthetic-key' })
+    const original = await readFile(path('legacy'))
+    const oldBytes = Buffer.from('fixture-unreadable')
+    await writeFile(path('legacy'), oldBytes)
+    await writeFile(path('misplaced'), await readFile(path('subscription')))
+    await writeFile(join(directory, 'fixture-private-name.credential'), oldBytes)
+    await vault.write('providers', 'invalid', { type: 'oauth' })
+    const files = (await readdir(directory)).sort()
+    const inventory = await vault.scanProviders()
+    expect(inventory).toEqual({ providers: [{ providerId: 'subscription', type: 'oauth' }], unreadableProviderDigests: ['legacy', 'misplaced', 'invalid'].map(digest).sort() })
+    expect(JSON.stringify(inventory)).not.toMatch(/fixture-private|synthetic/)
+    expect(await readFile(path('legacy'))).toEqual(oldBytes)
+    expect((await readdir(directory)).sort()).toEqual(files)
+    await expect(vault.listProviders()).rejects.toBeInstanceOf(CredentialVaultError)
+    await expect(exportBackupCredentials(buddyHome, ['providers'])).rejects.toThrow()
+    available = false
+    await expect(vault.scanProviders()).rejects.toBeInstanceOf(CredentialStoreUnavailableError)
+    available = true
+    await writeFile(path('legacy'), original)
+    expect((await vault.scanProviders()).providers).toEqual([{ providerId: 'legacy', type: 'api_key' }, { providerId: 'subscription', type: 'oauth' }])
   })
 
   it('keeps provider and connector namespaces isolated', async () => {

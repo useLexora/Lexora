@@ -143,6 +143,11 @@ export function useProviderSetupWizard(options: UseProviderSetupWizardOptions) {
       step.value = 2
   }, { flush: 'sync', immediate: true })
 
+  watch([show, () => selectedProvider.value?.credentialUnavailable], ([visible, unavailable]) => {
+    if (visible && unavailable)
+      closeDialog()
+  }, { immediate: true })
+
   watch(show, (visible, wasVisible) => {
     if (visible && !wasVisible)
       modelQuery.value = ''

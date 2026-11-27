@@ -3,6 +3,11 @@ import { z } from 'zod'
 export const credentialNamespaceSchema = z.enum(['providers', 'connectors', 'web', 'private-network'])
 export const credentialTypeSchema = z.enum(['api_key', 'oauth'])
 
+export const credentialSchema = z.union([
+  z.object({ type: z.literal('api_key'), key: z.string().optional(), env: z.record(z.string(), z.string()).optional() }).strict(),
+  z.object({ type: z.literal('oauth'), access: z.string(), refresh: z.string(), expires: z.number() }).loose(),
+])
+
 export const credentialHostErrorCodeSchema = z.enum([
   'CREDENTIAL_STORE_UNAVAILABLE',
   'CREDENTIAL_STORE_FAILURE',
@@ -46,14 +51,18 @@ export const credentialReadResultSchema = z.union([
   credentialHostFailureSchema,
 ])
 
+const providerCredentialInventorySchema = z.object({
+  providers: z.array(z.object({
+    providerId: z.string().min(1).max(256),
+    type: credentialTypeSchema,
+  }).strict()),
+  unreadableProviderDigests: z.array(z.string().regex(/^[a-f0-9]{64}$/)).default([]),
+}).strict()
+
+export type ProviderCredentialInventory = z.infer<typeof providerCredentialInventorySchema>
+
 export const credentialProviderListResultSchema = z.union([
-  z.object({
-    ok: z.literal(true),
-    providers: z.array(z.object({
-      providerId: z.string().min(1),
-      type: credentialTypeSchema,
-    }).strict()),
-  }).strict(),
+  providerCredentialInventorySchema.extend({ ok: z.literal(true) }),
   credentialHostFailureSchema,
 ])
 

@@ -27,6 +27,11 @@
       "binary": "lexora-buddy-process-control",
       "directory": "native-host"
     },
+    "providerCredential": {
+      "package": "lexora-buddy-host",
+      "binary": "lexora-buddy-provider-credential",
+      "directory": "native-host"
+    },
     "privateDirectories": {
       "package": "lexora-buddy-host",
       "binary": "lexora-buddy-private-directories",

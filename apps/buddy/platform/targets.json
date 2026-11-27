@@ -15,13 +15,13 @@
     "platform": "win32",
     "architecture": "x64",
     "rustTarget": "x86_64-pc-windows-msvc",
-    "nativeComponents": ["shellSandbox", "runtimeGuard", "fileReader", "serviceControl", "processControl", "privateDirectories", "imageTransform"]
+    "nativeComponents": ["shellSandbox", "runtimeGuard", "fileReader", "serviceControl", "processControl", "privateDirectories", "providerCredential", "imageTransform"]
   },
   "win32-arm64": {
     "platform": "win32",
     "architecture": "arm64",
     "rustTarget": "aarch64-pc-windows-msvc",
-    "nativeComponents": ["shellSandbox", "runtimeGuard", "fileReader", "serviceControl", "processControl", "privateDirectories", "imageTransform"]
+    "nativeComponents": ["shellSandbox", "runtimeGuard", "fileReader", "serviceControl", "processControl", "privateDirectories", "providerCredential", "imageTransform"]
   },
   "darwin-arm64": {
     "platform": "darwin",

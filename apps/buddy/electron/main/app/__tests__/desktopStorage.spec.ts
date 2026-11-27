@@ -5,6 +5,7 @@ import { createTemporaryDirectory } from '@buddy-tests/temporaryDirectories'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PrivateDirectoryError } from '../../../../platform/windows/privateDirectories'
 import { checkDesktopDirectories, prepareDesktopPrivateStorage } from '../desktopStorage'
+import { inheritMissingChromiumState } from '../windowsChromiumSession'
 
 const native = vi.hoisted(() => ({ failure: undefined as unknown }))
 vi.mock('../../../../platform/filesystem/privateDirectories', () => {
@@ -62,5 +63,40 @@ describe('startup data directory checks', () => {
     await writeFile(conflict, 'existing data')
     await expect(checkDesktopDirectories({ user_data: conflict })).rejects.toMatchObject({ code: 'DESKTOP_BOOTSTRAP_FAILED', failure: { kind: 'desktop_bootstrap', operation: 'create_directory', directoryRole: 'user_data', systemCode: 'EEXIST' } })
     expect(await readFile(conflict, 'utf8')).toBe('existing data')
+  })
+
+  it('does not guess a key when two historical states disagree', async () => {
+    const directory = await createTemporaryDirectory('buddy-ambiguous-state-')
+    const session = join(directory, 'chromium')
+    const candidates = ['one', 'two'].map(name => join(directory, name))
+    mkdirSync(session)
+    for (const [i, candidate] of candidates.entries()) {
+      mkdirSync(candidate)
+      await writeFile(join(candidate, 'Local State'), JSON.stringify({ os_crypt: { encrypted_key: `fixture-${i}` } }))
+    }
+    for (const order of [candidates, candidates.toReversed()])
+      expect(inheritMissingChromiumState(session, order)).toBe('conflict')
+    expect(await readdir(session)).toEqual([])
+    for (const [i, candidate] of candidates.entries())
+      expect(JSON.parse(await readFile(join(candidate, 'Local State'), 'utf8')).os_crypt.encrypted_key).toBe(`fixture-${i}`)
+  })
+
+  it('inherits a missing Chromium state once without overwriting or backfilling other profiles', async () => {
+    const directory = await createTemporaryDirectory('buddy-local-state-')
+    const session = join(directory, 'chromium')
+    const older = join(directory, 'old')
+    const missing = join(directory, 'never-used')
+    mkdirSync(session)
+    mkdirSync(older)
+    const original = JSON.stringify({ os_crypt: { encrypted_key: 'fixture-A' } })
+    const different = JSON.stringify({ os_crypt: { encrypted_key: 'fixture-B' } })
+    await writeFile(join(older, 'Local State'), original)
+    inheritMissingChromiumState(session, [missing, older])
+    expect(await readFile(join(session, 'Local State'), 'utf8')).toBe(original)
+    await writeFile(join(older, 'Local State'), different)
+    inheritMissingChromiumState(session, [older, missing])
+    expect(await readFile(join(session, 'Local State'), 'utf8')).toBe(original)
+    expect(await readFile(join(older, 'Local State'), 'utf8')).toBe(different)
+    await expect(readdir(missing)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })

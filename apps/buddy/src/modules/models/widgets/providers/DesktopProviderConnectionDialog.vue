@@ -30,7 +30,7 @@ watch(show, () => {
 })
 
 async function submit() {
-  if (saving.value)
+  if (saving.value || props.provider.credentialUnavailable)
     return
   try {
     if (!providerRequestHeadersSchema.safeParse(form.requestHeaders).success) {
@@ -58,7 +58,7 @@ async function submit() {
         {{ t('desktop.providers.connectionSettings') }}
       </template>
 
-      <NForm ref="formRef" :model="form" :rules="rules" :disabled="saving" class="desktop-provider-connection-dialog__form" @submit.prevent="submit">
+      <NForm ref="formRef" :model="form" :rules="rules" :disabled="saving || provider.credentialUnavailable" class="desktop-provider-connection-dialog__form" @submit.prevent="submit">
         <NFormItem path="displayName" :class="{ 'is-wide': !provider.custom }" :label="t('desktop.providers.displayName')">
           <NInput
             v-model:value="form.displayName"
@@ -90,7 +90,7 @@ async function submit() {
         </NFormItem>
         <NCollapse v-model:expanded-names="expanded" class="is-wide" arrow-placement="right">
           <NCollapseItem :title="t('desktop.providers.advancedSettings')" name="advanced" display-directive="show">
-            <DesktopProviderHeadersEditor v-model:value="form.requestHeaders" :language="language" :disabled="saving" />
+            <DesktopProviderHeadersEditor v-model:value="form.requestHeaders" :language="language" :disabled="saving || provider.credentialUnavailable" />
           </NCollapseItem>
         </NCollapse>
       </NForm>
@@ -98,9 +98,9 @@ async function submit() {
       <template #footer>
         <div class="flex justify-end gap-[0.6rem]">
           <NButton :disabled="saving" @click="close">
-            {{ t('common.cancel') }}
+            {{ t(provider.credentialUnavailable ? 'common.close' : 'common.cancel') }}
           </NButton>
-          <NButton type="primary" :disabled="saving" :loading="saving" @click="submit">
+          <NButton v-if="!provider.credentialUnavailable" type="primary" :disabled="saving" :loading="saving" @click="submit">
             {{ t('common.save') }}
           </NButton>
         </div>

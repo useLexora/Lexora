@@ -31,6 +31,10 @@ export function resolveBuddyProcessControl(options: ServiceResourceLocation): st
   return resolveNativeComponent('processControl', options)
 }
 
+export function resolveBuddyProviderCredential(options: ServiceResourceLocation): string | undefined {
+  return resolveNativeComponent('providerCredential', options)
+}
+
 export function resolveBuddyPrivateDirectories(options: ServiceResourceLocation): string | undefined {
   return resolveNativeComponent('privateDirectories', options)
 }
