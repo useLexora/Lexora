@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import process from 'node:process'
@@ -37,14 +37,8 @@ async function main() {
   const directory = values.zip ? join(smokeRoot, '免安装 App') : source
   try {
     if (values.zip) {
-      execFileSync('powershell.exe', [
-        '-NoLogo',
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        '$ErrorActionPreference = "Stop"; Expand-Archive -LiteralPath $env:LEXORA_VERIFY_ZIP -DestinationPath $env:LEXORA_VERIFY_DIRECTORY',
-      ], {
-        env: { ...process.env, LEXORA_VERIFY_ZIP: source, LEXORA_VERIFY_DIRECTORY: directory },
+      await mkdir(directory)
+      execFileSync(join(process.env.SystemRoot, 'System32/tar.exe'), ['-xf', source, '-C', directory], {
         stdio: 'inherit',
         timeout: 120_000,
       })
