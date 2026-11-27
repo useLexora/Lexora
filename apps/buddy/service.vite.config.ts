@@ -6,6 +6,8 @@ import { basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 
+const externalPackages = new Set(['@earendil-works/pi-codemode', '@silvia-odwyer/photon-node'])
+
 function packageName(id: string) {
   return id.startsWith('@') ? id.split('/').slice(0, 2).join('/') : id.split('/')[0]!
 }
@@ -14,6 +16,11 @@ function serviceResources(): Plugin {
   return {
     name: 'lexora-service-resources',
     enforce: 'pre',
+    buildStart() {
+      // Pi resolves the resize worker relative to the chunk containing resizeImage.
+      const worker = new URL('./utils/image-resize-worker.js', import.meta.resolve('@earendil-works/pi-coding-agent'))
+      this.emitFile({ type: 'chunk', id: fileURLToPath(worker), fileName: 'assets/image-resize-worker.js' })
+    },
     async load(id) {
       if (!id.endsWith('?asset'))
         return
@@ -23,7 +30,8 @@ function serviceResources(): Plugin {
     },
     resolveFileUrl({ relativePath }) { return `new URL(${JSON.stringify(relativePath)}, import.meta.url).href` },
     generateBundle(_options, bundle) {
-      const dependencies = new Set<string>()
+      // The bundled Pi SDK resolves quickjs-wasi/quickjs.wasm via createRequire, not an import.
+      const dependencies = new Set(['quickjs-wasi'])
       for (const file of Object.values(bundle)) {
         if (file.type !== 'chunk')
           continue
@@ -72,7 +80,8 @@ export default defineConfig({
         service: fileURLToPath(new URL('./service/src/entry.ts', import.meta.url)),
         utility: fileURLToPath(new URL('./electron/main/runtime/serviceProcess.ts', import.meta.url)),
       },
-      external: id => isBuiltin(id) || id.startsWith('node:'),
+      // Keep worker and WASM loaders next to their package-owned resources.
+      external: id => isBuiltin(id) || id.startsWith('node:') || externalPackages.has(packageName(id)),
       output: { entryFileNames: '[name].mjs', format: 'es' },
     },
   },

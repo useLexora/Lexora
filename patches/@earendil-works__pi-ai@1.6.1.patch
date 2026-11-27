@@ -1,8 +1,8 @@
 diff --git a/dist/api/openai-completions.js b/dist/api/openai-completions.js
-index 12ec37ea..1bbbbea7 100644
+index b3aa0a0..ab52693 100644
 --- a/dist/api/openai-completions.js
 +++ b/dist/api/openai-completions.js
-@@ -287,7 +287,9 @@ export const stream = (model, context, options) => {
+@@ -294,7 +294,9 @@ export const stream = (model, context, options) => {
                  const name = toolCall.function?.name ?? toolCall.custom?.name ?? "";
                  let block = streamIndex !== undefined ? toolCallBlocksByIndex.get(streamIndex) : undefined;
                  if (!block && toolCall.id) {
@@ -13,7 +13,7 @@ index 12ec37ea..1bbbbea7 100644
                  }
                  if (!block) {
                      // Note: the "input" fallback here should/must not be taken.  in case the LLM makes up
-@@ -1116,6 +1118,14 @@ export function convertMessages(model, context, compat, options) {
+@@ -1135,6 +1137,14 @@ export function convertMessages(model, context, compat, options) {
          }
          lastRole = msg.role;
      }
@@ -29,10 +29,10 @@ index 12ec37ea..1bbbbea7 100644
  }
  function convertTools(tools, compat) {
 diff --git a/dist/api/openai-responses-shared.js b/dist/api/openai-responses-shared.js
-index 3901bfc4..653abd58 100644
+index 7b58756..a7fdc15 100644
 --- a/dist/api/openai-responses-shared.js
 +++ b/dist/api/openai-responses-shared.js
-@@ -408,7 +408,11 @@ export async function processResponsesStream(openaiStream, output, stream, model
+@@ -434,7 +434,11 @@ export async function processResponsesStream(openaiStream, output, stream, model
          }
          if (item.type === "message") {
              applyMessagePhaseStopReason(item);
@@ -46,7 +46,7 @@ index 3901bfc4..653abd58 100644
              const slot = { type: "text", block, contentIndex: output.content.length - 1 };
              outputSlots.set(outputIndex, slot);
 diff --git a/dist/api/transform-messages.js b/dist/api/transform-messages.js
-index 6a364cbc..80404ccf 100644
+index 6a364cb..80404cc 100644
 --- a/dist/api/transform-messages.js
 +++ b/dist/api/transform-messages.js
 @@ -139,6 +139,7 @@ export function transformMessages(messages, model, normalizeToolCallId) {
@@ -102,10 +102,10 @@ index 6a364cbc..80404ccf 100644
              result.push(msg);
          }
 diff --git a/dist/utils/retry.js b/dist/utils/retry.js
-index d33b8069..7874f866 100644
+index a2b1fd3..90e1ba9 100644
 --- a/dist/utils/retry.js
 +++ b/dist/utils/retry.js
-@@ -206,6 +206,12 @@ export function isRetryableAssistantError(message) {
+@@ -255,6 +255,12 @@ export function isRetryableAssistantError(message) {
      if (message.stopReason !== "error" || !message.errorMessage)
          return false;
      const errorMessage = message.errorMessage;

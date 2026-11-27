@@ -63,6 +63,7 @@ const providerIconUrls = {
   'qwen-token-plan': qwen,
   'qwen-token-plan-cn': qwen,
   'qwen-token-plan-individual': qwen,
+  'qwen-token-plan-individual-cn': qwen,
   'together': together,
   'typesafe': typesafeai,
   'vercel-ai-gateway': vercel,

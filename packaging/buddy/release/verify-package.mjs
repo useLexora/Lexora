@@ -57,7 +57,11 @@ export function verifyDesktopResources(directory, targetId, cwd = repoRoot) {
   if (!existsSync(join(resources, 'lexora-service/utility.mjs')))
     throw new Error('Missing packaged Core utility adapter')
   const node = join(resources, 'lexora-runtime', platformId === OPERATING_SYSTEM.Windows ? 'node.exe' : 'node')
-  execFileSync(node, [join(resources, 'lexora-service/service.mjs'), '--check-runtime'], { cwd: resources, stdio: 'pipe', timeout: 30_000 })
+  const core = join(resources, 'lexora-service')
+  execFileSync(node, [join(core, 'service.mjs'), '--check-runtime'], { cwd: resources, stdio: 'pipe', timeout: 30_000 })
+  // Resolve from the shipped service, not the checkout running this verifier.
+  for (const check of ['check-codemode.mjs', 'check-image-resize.mjs'])
+    execFileSync(node, ['--no-global-search-paths', '-'], { cwd: core, input: readFileSync(new URL(check, import.meta.url)), timeout: 30_000 })
   if (prerelease)
     verifyDesktopNativeVersion(directory, executablePath, platformId, version)
   return { executablePath, resources, serviceResources }
