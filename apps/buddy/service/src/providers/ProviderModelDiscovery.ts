@@ -17,6 +17,7 @@ import {
 
 export interface ProviderModelDefinition {
   readonly id: string
+  readonly catalogAlias?: string
   readonly name?: string
   readonly metadata?: DiscoveredModelMetadata
 }
@@ -166,6 +167,7 @@ function parseModelDefinitions(value: unknown): readonly ProviderModelDefinition
     const metadata = parseServiceMetadata(item)
     return {
       id: item.id.trim(),
+      ...(item.owned_by === 'antigravity' && item.id.trim() === 'gemini-3.8-flash-tiered' ? { catalogAlias: 'gemini-3.8-flash' } : {}),
       ...(type.success || Object.keys(metadata).length ? { metadata: { ...metadata, ...(type.success ? { type: type.data } : {}) } } : {}),
       ...(name ? { name } : {}),
     }
