@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { LocalArtifact, LocalArtifactText } from '@buddy-shared/artifacts/artifactApi'
 import type { BuddyArtifactQuote } from '@buddy-shared/conversation/buddyUserContent'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
@@ -8,7 +9,7 @@ import { resolveBuiltinFileOpening } from '@buddy-shared/files/fileOpening'
 import { NButton, NSpin } from 'naive-ui'
 import { computed, useTemplateRef, watch } from 'vue'
 import { useBuddyI18n } from '@/i18n/buddyI18n'
-import { fileOpeningHandler, useFileOpening } from '@/modules/files'
+import { fileOpeningHandler, taskFileImageResolver, useFileOpening } from '@/modules/files'
 import { FileIcon, FolderIcon } from '@/shared/ui/file-icon'
 import DesktopDocumentContent from '@/shared/ui/files/DesktopDocumentContent.vue'
 import BuddyImagePreview from '@/shared/ui/media/BuddyImagePreview.vue'
@@ -27,6 +28,7 @@ const props = defineProps<{
   visible: boolean
   language: BuddyLocale
   readArtifactText: (artifactId: string) => Promise<LocalArtifactText>
+  resolveTaskFile?: LocalChatApi['taskFiles']['resolve']
   writeClipboardText: (text: string) => Promise<void>
 }>()
 const viewMode = defineModel<ArtifactViewMode>('viewMode', { required: true })
@@ -45,6 +47,9 @@ const markdown = computed(() => handler.value?.preview === 'markdown')
 const image = computed(() => handler.value?.preview === 'image')
 const mediaKind = computed(() => handler.value?.preview === 'media' ? artifactMediaKind(props.artifact) : null)
 const mediaUrl = computed(() => mediaKind.value ? `lexora-artifact://media/${encodeURIComponent(props.artifact.artifactId)}?v=${encodeURIComponent(props.artifact.updatedAt)}` : null)
+const imageResolver = computed(() => props.resolveTaskFile && props.artifact.kind === 'file'
+  ? taskFileImageResolver({ conversationId: props.artifact.conversationId, path: props.artifact.path }, props.resolveTaskFile)
+  : undefined)
 const quoteSource = computed<BuddyArtifactQuote['source']>(() => ({
   kind: 'artifact',
   artifactId: props.artifact.artifactId,
@@ -117,7 +122,7 @@ watch(textPreview, selection.close, { flush: 'sync' })
       </div>
       <DesktopDocumentContent
         v-else-if="textPreview && (!image || viewMode === 'source')"
-        ref="document" :mode="markdown ? viewMode : 'source'" :name="artifact.name" :text="textPreview.text" :language="language" :write-clipboard-text="writeClipboardText"
+        ref="document" :mode="markdown ? viewMode : 'source'" :name="artifact.name" :text="textPreview.text" :resolve-image="imageResolver" :language="language" :write-clipboard-text="writeClipboardText"
         :quote-source="selection.enabled ? quoteSource : undefined" :prepare-quote="selection.prepare"
       />
       <div v-else class="desktop-artifact-context-surface__fallback grid max-w-96 gap-2 text-muted text-center">

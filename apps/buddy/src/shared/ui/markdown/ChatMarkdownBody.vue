@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import type { NodeRendererProps, SmoothMarkdownStreamOptions } from 'markstream-vue'
+import type { MarkdownRemoteImagePolicy } from './markdownImage'
 import { usePreferredReducedMotion } from '@vueuse/core'
 import MarkdownRender from 'markstream-vue'
-import { computed } from 'vue'
+import { computed, provide } from 'vue'
+import { markdownHtmlContextKey } from './safeMarkdownHtml'
+import { safeMarkdownCustomId } from './safeMarkdownRenderers'
 import 'katex/dist/katex.min.css'
 import 'markstream-vue/index.css'
 
@@ -11,13 +14,15 @@ const props = withDefaults(defineProps<{
   content: string
   customId?: string
   allowImages?: boolean
+  remoteImages?: MarkdownRemoteImagePolicy
   codeOverflow?: 'wrap' | 'scroll'
   final?: boolean
   animate?: boolean
   isDark: boolean
   writeClipboardText: (text: string) => Promise<void>
-}>(), { allowImages: true, final: true, animate: true })
+}>(), { allowImages: true, remoteImages: 'block', final: true, animate: true })
 
+const resolvedCustomId = computed(() => props.customId ?? safeMarkdownCustomId)
 const disableImages: NonNullable<NodeRendererProps['customMarkdownIt']> = md => md.disable('image')
 const codeBlockProps = computed<NonNullable<NodeRendererProps['codeBlockProps']>>(() => ({
   clipboardWriter: props.writeClipboardText,
@@ -26,6 +31,27 @@ const mermaidProps = computed(() => ({
   fitPreviewHeight: true,
   clipboardWriter: props.writeClipboardText,
 }))
+const nestedRendererProps = computed<Partial<NodeRendererProps>>(() => ({
+  batchRendering: false,
+  codeBlockOptions: props.codeOverflow ? { overflow: props.codeOverflow } : undefined,
+  codeBlockProps: codeBlockProps.value,
+  customId: resolvedCustomId.value,
+  customMarkdownIt: props.allowImages ? undefined : disableImages,
+  fade: false,
+  final: props.final,
+  htmlPolicy: 'safe',
+  isDark: props.isDark,
+  mermaidProps: mermaidProps.value,
+  mode: 'chat',
+  renderCodeBlocksAsPre: true,
+  smoothStreaming: false,
+  typewriter: false,
+}))
+provide(markdownHtmlContextKey, {
+  allowImages: computed(() => props.allowImages),
+  remoteImages: computed(() => props.remoteImages),
+  nestedRendererProps,
+})
 
 const smoothStreamingOptions = {
   minCharsPerSecond: 30,
@@ -51,13 +77,13 @@ const animateStreaming = computed(() => (
       class="buddy-chat-markdown"
       :batch-rendering="animateStreaming"
       :content="content"
-      :custom-id="customId"
+      :custom-id="resolvedCustomId"
       :custom-markdown-it="allowImages ? undefined : disableImages"
       :code-block-options="codeOverflow ? { overflow: codeOverflow } : undefined"
       :code-block-props="codeBlockProps"
       :fade="false"
       :final="final"
-      html-policy="escape"
+      html-policy="safe"
       :is-dark="isDark"
       :max-live-nodes="animateStreaming ? 0 : undefined"
       :mermaid-props="mermaidProps"
@@ -155,6 +181,117 @@ const animateStreaming = computed(() => (
 
 .buddy-chat-markdown-host :deep(.table-node tbody tr:hover) {
   background-color: var(--buddy-table-hover);
+}
+
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-block) {
+  margin-block: var(--ms-flow-paragraph-y);
+  min-width: 0;
+}
+
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-block > :first-child) {
+  margin-top: 0;
+}
+
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-block > :last-child) {
+  margin-bottom: 0;
+}
+
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-block [align='center']),
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-block[align='center']) {
+  text-align: center;
+}
+
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-block [align='right']),
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-block[align='right']) {
+  text-align: right;
+}
+
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-block [align='left']),
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-block[align='left']) {
+  text-align: left;
+}
+
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-block img),
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-inline img) {
+  display: inline-block;
+  max-width: 100%;
+  height: auto;
+  vertical-align: middle;
+}
+
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-img-fallback),
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-img-blocked),
+.buddy-chat-markdown-host :deep(.desktop-markdown-image-blocked) {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border: 1px solid var(--buddy-border-subtle);
+  border-radius: 4px;
+  background-color: var(--code-bg);
+  color: var(--buddy-text-muted);
+  font-size: 0.85em;
+  line-height: 1.4;
+  vertical-align: middle;
+}
+
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-block table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin-block: var(--ms-flow-table-y);
+}
+
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-block th),
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-block td) {
+  padding: var(--ms-flow-table-cell);
+  border: 1px solid var(--buddy-border-subtle);
+  vertical-align: top;
+}
+
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-block [valign='middle']) {
+  vertical-align: middle;
+}
+
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-block [valign='bottom']) {
+  vertical-align: bottom;
+}
+
+.buddy-chat-markdown-host :deep(details.buddy-markdown-html-block),
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-block details) {
+  margin-block: var(--ms-flow-paragraph-y);
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--buddy-border-subtle);
+  border-radius: 6px;
+}
+
+.buddy-chat-markdown-host :deep(details.buddy-markdown-html-block > summary),
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-block details > summary) {
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.buddy-chat-markdown-host :deep(details.buddy-markdown-html-block[open] > summary),
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-block details[open] > summary) {
+  margin-bottom: 0.5rem;
+}
+
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-block kbd),
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-inline kbd) {
+  display: inline-block;
+  padding: 0.1em 0.4em;
+  border: 1px solid var(--buddy-border-subtle);
+  border-radius: 4px;
+  background-color: var(--code-bg);
+  font-family: var(--ms-font-mono);
+  font-size: 0.85em;
+  line-height: 1.25;
+}
+
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-block mark),
+.buddy-chat-markdown-host :deep(.buddy-markdown-html-inline mark) {
+  padding: 0 0.2em;
+  border-radius: 2px;
+  background-color: color-mix(in srgb, var(--buddy-accent-solid) 22%, transparent);
+  color: inherit;
 }
 
 :global(.buddy-chat-markdown > .node-slot:first-of-type .node-content > :first-child) {

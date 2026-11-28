@@ -1,6 +1,8 @@
 import type { ComputedRef, InjectionKey } from 'vue'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 
+export type MarkdownRemoteImagePolicy = 'block' | 'allow'
+
 export type MarkdownImageResolution
   = | { kind: 'default' }
     | { kind: 'local', src: string }
@@ -10,6 +12,7 @@ export type MarkdownImageResolver = (src: string) => MarkdownImageResolution | P
 
 interface MarkdownImageContext {
   resolve: ComputedRef<MarkdownImageResolver | undefined>
+  remoteImages: ComputedRef<MarkdownRemoteImagePolicy>
   language: ComputedRef<BuddyLocale>
 }
 

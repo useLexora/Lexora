@@ -103,7 +103,7 @@ async function followLink(event: MouseEvent) {
                 {{ t(skill.shadowedBy ? 'desktop.skills.overriddenByGroup' : 'desktop.skills.overridesGroup', { source: t(`desktop.skills.group.${item.source}`), name: item.name }) }}
               </button>
             </div>
-            <DesktopMarkdownContent :content="detail.body" :language="language" :write-clipboard-text="writeClipboardText" />
+            <DesktopMarkdownContent :content="detail.body" remote-images="allow" :language="language" :write-clipboard-text="writeClipboardText" />
           </div>
         </NScrollbar>
       </div>
