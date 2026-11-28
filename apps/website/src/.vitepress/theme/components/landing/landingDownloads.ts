@@ -1,6 +1,6 @@
-export type DownloadSystem = 'windows' | 'macos' | 'linux' | 'unknown'
-export type DownloadArchitecture = 'x64' | 'arm64'
-export type DownloadFormat = 'deb' | 'rpm' | 'pacman' | 'nsis' | 'windows-zip' | 'macos-zip' | 'dmg'
+export type DownloadSystem = 'windows' | 'macos' | 'linux' | 'android' | 'unknown'
+export type DownloadArchitecture = 'x64' | 'arm64' | 'universal'
+export type DownloadFormat = 'deb' | 'rpm' | 'pacman' | 'nsis' | 'windows-zip' | 'macos-zip' | 'dmg' | 'apk'
 
 export interface DownloadAsset {
   system: DownloadSystem
@@ -53,6 +53,8 @@ const recognizedSuffixes: Record<string, { system: DownloadSystem, architecture:
   'arch-aarch64.pkg.tar.zst': { system: 'linux', architecture: 'arm64', format: 'pacman' },
 }
 
+const androidPattern = /^Lexora-Android-((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-beta\.[1-9]\d*)?)\.apk$/
+
 export function detectDownloadSystem(browser?: BrowserEnvironment): DownloadSystem {
   if (!browser || typeof browser !== 'object')
     return 'unknown'
@@ -63,8 +65,11 @@ export function detectDownloadSystem(browser?: BrowserEnvironment): DownloadSyst
   const ua = browser.userAgent ?? ''
   const platform = browser.platform ?? ''
 
-  if (/Android|iPhone|iPad|iPod|CrOS/i.test(ua))
+  if (/iPhone|iPad|iPod|CrOS/i.test(ua))
     return 'unknown'
+
+  if (/Android/i.test(ua))
+    return 'android'
 
   if ((browser.maxTouchPoints ?? 0) > 0 && (platform === 'MacIntel' || /Macintosh/i.test(ua)))
     return 'unknown'
@@ -129,6 +134,13 @@ export function parseDownloadRelease(release: unknown): DownloadRelease | null {
       continue
     if (typeof asset.size !== 'number' || !Number.isFinite(asset.size) || asset.size <= 0)
       continue
+
+    const androidMatched = typeof asset.name === 'string' ? androidPattern.exec(asset.name) : null
+    if (androidMatched) {
+      if (matchAndroidAsset(asset, androidMatched[1], expectedDownloadBase, seenUrls, assets))
+        continue
+    }
+
     if (typeof asset.name !== 'string' || !asset.name.startsWith(prefix))
       continue
 
@@ -174,6 +186,39 @@ export function parseDownloadRelease(release: unknown): DownloadRelease | null {
     publishedAt,
     url: htmlUrl,
     assets,
+  }
+}
+
+function matchAndroidAsset(
+  asset: Record<string, unknown>,
+  androidVersion: string,
+  expectedDownloadBase: string,
+  seenUrls: Set<string>,
+  assets: DownloadAsset[],
+): boolean {
+  if (typeof asset.browser_download_url !== 'string')
+    return false
+
+  try {
+    const name = `Lexora-Android-${androidVersion}.apk`
+    const parsedUrl = new URL(asset.browser_download_url)
+    if (parsedUrl.protocol !== 'https:' || parsedUrl.hostname !== 'github.com')
+      return false
+    if (parsedUrl.username || parsedUrl.password || parsedUrl.port)
+      return false
+    if (parsedUrl.search || parsedUrl.hash)
+      return false
+    if (parsedUrl.href !== `${expectedDownloadBase}${name}`)
+      return false
+    if (seenUrls.has(parsedUrl.href))
+      return false
+
+    seenUrls.add(parsedUrl.href)
+    assets.push({ system: 'android', architecture: 'universal', format: 'apk', name, url: parsedUrl.href, size: asset.size as number })
+    return true
+  }
+  catch {
+    return false
   }
 }
 
