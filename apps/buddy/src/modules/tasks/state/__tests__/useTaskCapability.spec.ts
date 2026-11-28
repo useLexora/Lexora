@@ -1362,6 +1362,7 @@ function createDesktopApi() {
         onStateChanged: vi.fn(() => () => {}),
       },
       skills: { list: vi.fn(async () => ({ diagnostics: [], skills: [] })) },
+      taskFiles: { resolve: vi.fn<LexoraDesktopApi['localChat']['taskFiles']['resolve']>() },
       usage: { getSnapshot: vi.fn() },
       workspaceState: {
         read: vi.fn(async () => null),

@@ -191,12 +191,13 @@ describe('activity disclosure', () => {
     await vi.waitFor(() => expect(root.querySelector('.buddy-chat-reasoning-entry__body')).toBeNull())
   })
 
-  it('treats raw HTML in model narration as text', () => {
-    const text = 'Review complete. <img src="https://example.com/tracker.png">'
+  it('renders allowed HTML in model narration without loading remote images', async () => {
+    const text = 'Review <kbd>complete</kbd>. <img src="https://example.com/tracker.png">'
     const { root } = mountTurn([{ id: 'narration', kind: 'text', messageId: 'narration', text }], 'completed')
     const body = root.querySelector('.buddy-chat-narration-body')!
+    await vi.waitFor(() => expect(body.querySelector('kbd')?.textContent).toBe('complete'))
+    expect(body.querySelector('[role="status"]')?.textContent).toBe('外链图片')
     expect(body.querySelector('img')).toBeNull()
-    expect(body.textContent).toContain('<img src="https://example.com/tracker.png">')
   })
 
   it('retains open output through leading reasoning, group collapse and model completion', async () => {
