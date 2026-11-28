@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { MarkdownImageResolution, MarkdownImageResolver } from '../markdownImage'
+import type { MarkdownImageResolution, MarkdownImageResolver, MarkdownRemoteImagePolicy } from '../markdownImage'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, defineComponent, h, nextTick, shallowRef } from 'vue'
 import DesktopMarkdownContent from '../DesktopMarkdownContent.vue'
@@ -26,7 +26,7 @@ beforeEach(() => {
 const cleanups: (() => void)[] = []
 afterEach(() => cleanups.splice(0).forEach(cleanup => cleanup()))
 
-async function mount(content: string | (() => string), options: { resolveImage?: MarkdownImageResolver, allowImages?: boolean } = {}) {
+async function mount(content: string | (() => string), options: { resolveImage?: MarkdownImageResolver, allowImages?: boolean, remoteImages?: MarkdownRemoteImagePolicy } = {}) {
   const root = document.createElement('div')
   document.body.append(root)
   const app = createApp(defineComponent({
@@ -48,9 +48,10 @@ async function mount(content: string | (() => string), options: { resolveImage?:
 }
 
 describe('markdown local images', () => {
-  it('loads an image through the resolved address and leaves other images to the stock renderer', async () => {
+  it('loads local images through the resolver and allows https remote images only when remoteImages is allow', async () => {
     const seen: string[] = []
-    const root = await mount('![截图](截图/a.png)\n\n![远程](https://example.test/b.png)', {
+    const root = await mount('![截图](截图/a.png)\n\n![远程](https://example.test/b.png)\n\n![明文](http://example.test/c.png)', {
+      remoteImages: 'allow',
       resolveImage: (src) => {
         seen.push(src)
         return src.startsWith('http') ? { kind: 'default' } : { kind: 'local', src: 'lexora-file://media/?path=a.png' }
@@ -63,8 +64,20 @@ describe('markdown local images', () => {
     expect(local!.getAttribute('alt')).toBe('截图')
     expect(local!.classList.contains('desktop-markdown-image')).toBe(true)
     expect(remote!.getAttribute('src')).toBe('https://example.test/b.png')
-    expect(remote!.classList.contains('desktop-markdown-image')).toBe(false)
-    expect(seen).toContain('%E6%88%AA%E5%9B%BE/a.png')
+    expect(remote!.getAttribute('referrerpolicy')).toBe('no-referrer')
+    expect(root.querySelector('img[alt="明文"]')).toBeNull()
+    expect(root.querySelector('.desktop-markdown-image-blocked')?.textContent).toBe('明文')
+    expect(seen).toEqual(['%E6%88%AA%E5%9B%BE/a.png'])
+
+    remote!.dispatchEvent(new Event('error'))
+    await vi.waitFor(() => expect(root.querySelector('img[alt="远程"]')).toBeNull())
+    expect(root.textContent).toContain('远程')
+  })
+
+  it('blocks remote markdown images by default without issuing browser requests', async () => {
+    const root = await mount('![远程](https://example.test/leak?secret=1)')
+    await vi.waitFor(() => expect(root.querySelector('.desktop-markdown-image-blocked')?.textContent).toBe('远程'))
+    expect(root.querySelector('img')).toBeNull()
   })
 
   it('keeps failures local and retries without requesting the original relative URL', async () => {

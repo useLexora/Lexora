@@ -5,7 +5,7 @@ import type { MaybeRefOrGetter } from 'vue'
 import { DEFAULT_DESKTOP_CHAT_PREFERENCES } from '@buddy-electron/shared/desktopApi'
 import { taskFileMediaUrl } from '@buddy-shared/files/mediaPreview'
 import { describe, expect, it, vi } from 'vitest'
-import { computed, createSSRApp, h, shallowRef, toValue } from 'vue'
+import { computed, createApp, createSSRApp, h, shallowRef, toValue } from 'vue'
 import { renderToString } from 'vue/server-renderer'
 import { useProvideDesktopUi } from '@/shared/ui/desktopUiContext'
 import BuddyChatMessageContent from '../BuddyChatMessageContent.vue'
@@ -25,17 +25,23 @@ describe('buddyChatMessageContent', () => {
     expect(document.querySelector('a, strong')).toBeNull()
   })
 
-  it('renders assistant Markdown links while leaving raw HTML inert', async () => {
-    const html = await renderMessage('assistant', '参考 **说明** 和 [版本](https://example.com)，不要加载 <img src="https://example.com/pixel.png" alt="像素">')
-    const document = parseHtml(html)
-    const link = document.querySelector('a')
-
-    expect(document.querySelector('strong')?.textContent).toBe('说明')
-    expect(link?.textContent).toBe('版本')
-    expect(link?.getAttribute('href')).toBe('https://example.com')
-    expect(document.querySelector('img')).toBeNull()
-    expect(document.querySelector('.buddy-chat-user-bubble')).toBeNull()
-    expect(document.body.textContent).toContain('<img src="https://example.com/pixel.png" alt="像素">')
+  it('renders assistant Markdown links and substitutes alt text for remote HTML images', async () => {
+    const message = createMessage('assistant', '参考 **说明** 和 [版本](https://example.com)，不要加载 <img src="https://example.com/pixel.png" alt="像素">')
+    const root = document.createElement('div')
+    const app = createApp(messageComponent(message))
+    app.mount(root)
+    try {
+      await vi.waitFor(() => expect(root.querySelector('[role="status"]')?.textContent).toBe('像素'))
+      const link = root.querySelector('a')
+      expect(root.querySelector('strong')?.textContent).toBe('说明')
+      expect(link?.textContent).toBe('版本')
+      expect(link?.getAttribute('href')).toBe('https://example.com')
+      expect(root.querySelector('img')).toBeNull()
+      expect(root.querySelector('.buddy-chat-user-bubble')).toBeNull()
+    }
+    finally {
+      app.unmount()
+    }
   })
 
   it.each([
@@ -87,8 +93,12 @@ function parseHtml(html: string): Document {
   return new DOMParser().parseFromString(html, 'text/html')
 }
 
-async function renderMessage(role: LocalMessage['role'], text: string, runId: string | null = null): Promise<string> {
-  const message = {
+function renderMessage(role: LocalMessage['role'], text: string, runId: string | null = null): Promise<string> {
+  return renderContent(createMessage(role, text, runId))
+}
+
+function createMessage(role: LocalMessage['role'], text: string, runId: string | null = null) {
+  return {
     attachments: [],
     branchId: 'branch-1',
     content: text,
@@ -98,8 +108,6 @@ async function renderMessage(role: LocalMessage['role'], text: string, runId: st
     role,
     runId,
   } as LocalMessage
-
-  return renderContent(message)
 }
 
 async function renderStructuredUserMessage(panel: boolean): Promise<string> {
@@ -140,7 +148,11 @@ async function renderStructuredUserMessage(panel: boolean): Promise<string> {
 }
 
 function renderContent(message: LocalMessage) {
-  return renderToString(createSSRApp({
+  return renderToString(createSSRApp(messageComponent(message)))
+}
+
+function messageComponent(message: LocalMessage) {
+  return {
     setup() {
       provideChatBuddyIdentity(() => [{ id: 'run-1', buddyId: 'actor-1' }])
       useProvideDesktopUi({
@@ -156,5 +168,5 @@ function renderContent(message: LocalMessage) {
         writeClipboardText: async () => {},
       })
     },
-  }))
+  }
 }

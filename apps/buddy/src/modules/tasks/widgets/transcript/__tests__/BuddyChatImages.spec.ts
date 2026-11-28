@@ -108,16 +108,17 @@ it('keeps denied local images out of the browser and retries through the resolve
   await vi.waitFor(() => expect(f.root.querySelector('img')?.getAttribute('src')).toBe(taskFileMediaUrl(file('message-conversation').target)))
 })
 
-it('preserves encoded local paths and leaves remote images to the existing renderer', async () => {
+it('preserves encoded local paths and blocks remote images in chat by default', async () => {
   const requests: TaskFileLink[] = []
   const f = mount('message', async (link) => {
     requests.push(link)
     return file(link.conversationId)
   }, '![Local](%E7%8C%AB%20%231%20%2520.png)\n\n![Remote](https://example.test/cat.png)')
-  await vi.waitFor(() => expect(f.root.querySelectorAll('img')).toHaveLength(2))
+  await vi.waitFor(() => expect(f.root.querySelectorAll('img')).toHaveLength(1))
   expect(requests).toEqual([{ conversationId: 'message-conversation', href: '%E7%8C%AB%20%231%20%2520.png' }])
   expect(f.root.querySelector('img[alt="Local"]')?.getAttribute('src')).toBe(taskFileMediaUrl(file('message-conversation').target))
-  expect(f.root.querySelector('img[alt="Remote"]')?.getAttribute('src')).toBe('https://example.test/cat.png')
+  expect(f.root.querySelector('img[alt="Remote"]')).toBeNull()
+  expect(f.root.querySelector('.desktop-markdown-image-blocked')?.textContent).toBe('Remote')
 })
 
 it('loads a sent photo only near the viewport and retries inside the same slot without a caption', async () => {

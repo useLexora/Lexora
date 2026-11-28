@@ -43,7 +43,7 @@ function quoteText(event: MouseEvent) {
     <slot v-if="mode === 'preview' && $slots.preview" name="preview" />
     <DesktopMediaPreview v-else-if="mode === 'preview' && mediaKind && mediaUrl" :kind="mediaKind" :src="mediaUrl" :name="name" :language="language" :visible="visible" />
     <article v-else-if="mode === 'preview' && text != null" ref="markdown" class="desktop-document-content__markdown flex-1 min-h-0 overflow-auto pt-[20px] pr-[24px] pb-[32px] pl-[24px] text-fg font-sans [overflow-wrap:anywhere]" @contextmenu="quoteText">
-      <DesktopMarkdownContent :content="text" :resolve-image="resolveImage" code-overflow="scroll" :language="language" :write-clipboard-text="writeClipboardText" />
+      <DesktopMarkdownContent :content="text" :resolve-image="resolveImage" remote-images="allow" code-overflow="scroll" :language="language" :write-clipboard-text="writeClipboardText" />
     </article>
     <div v-else-if="mode === 'preview' && imageUrl" class="desktop-document-content__image grid flex-1 min-h-0 overflow-auto p-[16px] place-items-center">
       <img :key="imageUrl" :src="imageUrl" :alt="name" @error="$emit('previewError')">

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { DropdownOption } from 'naive-ui'
 import type { FileLinkMenuAction, FileLinkMenuProvider } from './fileLinkMenu'
-import type { MarkdownImageResolver } from './markdownImage'
+import type { MarkdownImageResolver, MarkdownRemoteImagePolicy } from './markdownImage'
 import type { BuddyLocale } from '@/i18n/buddyI18n'
 import { localFileLinkPath } from '@buddy-shared/files/fileLink'
 import { useEventListener } from '@vueuse/core'
@@ -20,6 +20,7 @@ const props = withDefaults(defineProps<{
   fileLinkMenu?: FileLinkMenuProvider
   onLinkError?: (error: unknown) => void
   allowImages?: boolean
+  remoteImages?: MarkdownRemoteImagePolicy
   resolveImage?: MarkdownImageResolver
   codeOverflow?: 'wrap' | 'scroll'
   final?: boolean
@@ -27,6 +28,7 @@ const props = withDefaults(defineProps<{
   writeClipboardText: (text: string) => Promise<void>
 }>(), {
   allowImages: true,
+  remoteImages: 'block',
   final: true,
 })
 
@@ -35,7 +37,11 @@ const emit = defineEmits<{
 }>()
 
 const { isDark } = useDesktopUi()
-provide(markdownImageContextKey, { resolve: computed(() => props.resolveImage), language: computed(() => props.language) })
+provide(markdownImageContextKey, {
+  resolve: computed(() => props.resolveImage),
+  remoteImages: computed(() => props.remoteImages),
+  language: computed(() => props.language),
+})
 const themeVariables = computed(() => markdownThemeVariables(desktopThemeSnapshot.value.active.colors))
 interface FileLinkMenu {
   x: number
@@ -209,6 +215,7 @@ function handleLinkClick(event: MouseEvent) {
       :content="content"
       :custom-id="markdownCustomId"
       :allow-images="allowImages"
+      :remote-images="remoteImages"
       :code-overflow="codeOverflow"
       :final="final"
       :is-dark="isDark"
