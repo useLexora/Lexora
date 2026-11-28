@@ -58,7 +58,8 @@ const fileLinkMenu = computed(() => {
   const source = fileLinkSource.value
   return provider ? (href: string) => provider(href, source) : undefined
 })
-const resolveImage = computed(() => chatContent?.createImageResolver?.(props.message.conversationId))
+const conversationId = computed(() => props.message.conversationId)
+const resolveImage = computed(() => chatContent?.createImageResolver?.(conversationId.value))
 const materialStrip = useTemplateRef('materialStrip')
 const text = computed(() => getChatMessageDisplayText(
   props.message,

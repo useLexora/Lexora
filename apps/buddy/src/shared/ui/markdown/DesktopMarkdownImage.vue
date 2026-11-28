@@ -31,7 +31,7 @@ const blockedLabel = computed(() => formatBlockedRemoteImageLabel(props.node.alt
 const unavailableLabel = computed(() => props.node.alt?.trim() || labels.value.failed)
 
 watch(
-  [() => props.node.src, () => props.node.loading, () => context?.resolve.value, () => context?.remoteImages.value, attempt],
+  [() => props.node.src, () => props.node.loading, () => context?.resolve.value, () => context?.remoteImages.value, () => attempt.value],
   async ([rawSrc, loading, resolve, remotePolicy], _, onCleanup) => {
     let active = true
     onCleanup(() => {
