@@ -94,6 +94,18 @@ it.each(['message', 'narration'] as const)('resolves %s images in their own task
   })
 })
 
+it('keeps a resolved image mounted while later message text grows', async () => {
+  const prefix = '![Cat](cat.png)\n\n'
+  const f = mount('message', async ({ conversationId }) => file(conversationId), prefix)
+  await vi.waitFor(() => expect(f.root.querySelector('img')?.getAttribute('src')).toBe(taskFileMediaUrl(file('message-conversation').target)))
+  const image = f.root.querySelector('img')
+  for (const tail of ['First paragraph.', 'First paragraph.\n\nSecond paragraph.']) {
+    f.message.value = { ...f.message.value, content: prefix + tail }
+    await vi.waitFor(() => expect(f.root.textContent).toContain(tail.split('\n\n').at(-1)))
+    expect(f.root.querySelector('img')).toBe(image)
+  }
+})
+
 it('keeps denied local images out of the browser and retries through the resolver', async () => {
   let denied = true
   const f = mount('message', async ({ conversationId }) => {
