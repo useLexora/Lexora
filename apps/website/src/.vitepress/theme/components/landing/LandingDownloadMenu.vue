@@ -22,6 +22,7 @@ const props = defineProps<{
     macOS: MenuItemConfig
     linuxDeb: MenuItemConfig
     linuxArch: MenuItemConfig
+    android: MenuItemConfig
   }
 }>()
 
@@ -35,42 +36,50 @@ const triggerRef = shallowRef<HTMLButtonElement | null>(null)
 const detectedSystem = shallowRef<DownloadSystem>('unknown')
 
 const fallbackRelease: DownloadRelease = {
-  tag: 'v0.20.0',
-  version: '0.20.0',
-  publishedAt: '2026-03-01T00:00:00Z',
-  url: `${repositoryUrl}/releases/tag/v0.20.0`,
+  tag: 'v0.23.0',
+  version: '0.23.0',
+  publishedAt: '2026-11-27T14:49:24Z',
+  url: `${repositoryUrl}/releases/tag/v0.23.0`,
   assets: [
     {
       system: 'windows',
       architecture: 'x64',
       format: 'nsis',
-      name: 'Lexora-Buddy-0.20.0-windows-x64.exe',
-      url: `${repositoryUrl}/releases/download/v0.20.0/Lexora-Buddy-0.20.0-windows-x64.exe`,
-      size: 158 * 1024 * 1024,
+      name: 'Lexora-Buddy-0.23.0-windows-x64.exe',
+      url: `${repositoryUrl}/releases/download/v0.23.0/Lexora-Buddy-0.23.0-windows-x64.exe`,
+      size: 184 * 1024 * 1024,
     },
     {
       system: 'macos',
       architecture: 'arm64',
       format: 'dmg',
-      name: 'Lexora-Buddy-0.20.0-macos-arm64.dmg',
-      url: `${repositoryUrl}/releases/download/v0.20.0/Lexora-Buddy-0.20.0-macos-arm64.dmg`,
-      size: 173 * 1024 * 1024,
+      name: 'Lexora-Buddy-0.23.0-macos-arm64.dmg',
+      url: `${repositoryUrl}/releases/download/v0.23.0/Lexora-Buddy-0.23.0-macos-arm64.dmg`,
+      size: 215 * 1024 * 1024,
     },
     {
       system: 'linux',
       architecture: 'x64',
       format: 'deb',
-      name: 'Lexora-Buddy-0.20.0-linux-amd64.deb',
-      url: `${repositoryUrl}/releases/download/v0.20.0/Lexora-Buddy-0.20.0-linux-amd64.deb`,
-      size: 137 * 1024 * 1024,
+      name: 'Lexora-Buddy-0.23.0-linux-amd64.deb',
+      url: `${repositoryUrl}/releases/download/v0.23.0/Lexora-Buddy-0.23.0-linux-amd64.deb`,
+      size: 171 * 1024 * 1024,
     },
     {
       system: 'linux',
       architecture: 'x64',
       format: 'pacman',
-      name: 'Lexora-Buddy-0.20.0-arch-x86_64.pkg.tar.zst',
-      url: `${repositoryUrl}/releases/download/v0.20.0/Lexora-Buddy-0.20.0-arch-x86_64.pkg.tar.zst`,
-      size: 162 * 1024 * 1024,
+      name: 'Lexora-Buddy-0.23.0-arch-x86_64.pkg.tar.zst',
+      url: `${repositoryUrl}/releases/download/v0.23.0/Lexora-Buddy-0.23.0-arch-x86_64.pkg.tar.zst`,
+      size: 206 * 1024 * 1024,
+    },
+    {
+      system: 'android',
+      architecture: 'universal',
+      format: 'apk',
+      name: 'Lexora-Android-0.1.0.apk',
+      url: `${repositoryUrl}/releases/download/v0.23.0/Lexora-Android-0.1.0.apk`,
+      size: 12 * 1024 * 1024,
     },
   ],
 }
@@ -120,8 +129,19 @@ const platformItems = computed(() => {
       system: 'linux' as DownloadSystem,
       architecture: 'x64' as DownloadArchitecture,
       format: 'pacman' as DownloadFormat,
-      fallbackUrl: `${repositoryUrl}/releases/download/v0.20.0/Lexora-Buddy-0.20.0-arch-x86_64.pkg.tar.zst`,
+      fallbackUrl: `${repositoryUrl}/releases/download/v0.23.0/Lexora-Buddy-0.23.0-arch-x86_64.pkg.tar.zst`,
       isRecommended: false,
+    },
+    {
+      id: 'android',
+      title: props.content.android.title,
+      desc: props.content.android.desc,
+      formatBadge: props.content.android.format,
+      system: 'android' as DownloadSystem,
+      architecture: 'universal' as DownloadArchitecture,
+      format: 'apk' as DownloadFormat,
+      fallbackUrl: `${repositoryUrl}/releases/download/v0.23.0/Lexora-Android-0.1.0.apk`,
+      isRecommended: detectedSystem.value === 'android',
     },
   ]
 
@@ -250,6 +270,13 @@ onUnmounted(() => {
                 <path d="M12 2C9.5 2 7.8 3.8 7.8 6.5c0 1.2.3 2.3.8 3.2C7.4 10.8 6.5 12.3 6.5 14c0 2.2 1.4 4 3.4 4.6-.2.6-.4 1.2-.4 1.9 0 .8.6 1.5 1.5 1.5h2c.9 0 1.5-.7 1.5-1.5 0-.7-.2-1.3-.4-1.9 2-.6 3.4-2.4 3.4-4.6 0-1.7-.8-3.2-2-4.3.5-.9.8-2 .8-3.2C16.2 3.8 14.5 2 12 2zm0 2.2c1.3 0 2.2 1.1 2.2 2.3 0 .7-.3 1.4-.8 1.8-.4.3-.9.5-1.4.5s-1-.2-1.4-.5c-.5-.4-.8-1.1-.8-1.8 0-1.2.9-2.3 2.2-2.3z" />
               </svg>
               <!-- Arch Linux -->
+              <svg v-else-if="item.id === 'linux-arch'" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 2L2 22h4.5l2.2-4.5c.8.6 1.8 1 3.3 1 1.4 0 2.4-.4 3.2-1l2.3 4.5H22L12 2zm0 6.5l3.2 6.8c-.8.5-1.9.7-3.2.7-1.3 0-2.3-.2-3.1-.7L12 8.5z" />
+              </svg>
+              <!-- Android -->
+              <svg v-else-if="item.id === 'android'" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M17.6 9.48l1.84-3.18c.16-.31.04-.69-.26-.85-.29-.15-.65-.06-.83.22l-1.88 3.24a11.46 11.46 0 00-8.94 0L5.65 5.67c-.19-.29-.58-.38-.87-.2-.28.18-.37.54-.22.83L6.4 9.48A10.81 10.81 0 001 17h22a10.81 10.81 0 00-5.4-7.52M7 15.25a1.25 1.25 0 110-2.5 1.25 1.25 0 010 2.5m10 0a1.25 1.25 0 110-2.5 1.25 1.25 0 010 2.5" />
+              </svg>
               <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M12 2L2 22h4.5l2.2-4.5c.8.6 1.8 1 3.3 1 1.4 0 2.4-.4 3.2-1l2.3 4.5H22L12 2zm0 6.5l3.2 6.8c-.8.5-1.9.7-3.2.7-1.3 0-2.3-.2-3.1-.7L12 8.5z" />
               </svg>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { LandingContent } from './landingContent'
 import type { DownloadSelection } from './landingDownloads'
-import { computed, useId, useTemplateRef } from 'vue'
+import { computed, onMounted, onUnmounted, shallowRef, useId, useTemplateRef } from 'vue'
 import LandingIcon from './LandingIcon.vue'
 
 const props = defineProps<{
@@ -11,6 +11,7 @@ const props = defineProps<{
 
 const dialog = useTemplateRef<HTMLDialogElement>('dialog')
 const id = useId()
+const autoOpenTimer = shallowRef<number>()
 const proxyHosts = ['ghfast.top', 'gh-proxy.com', 'gh.monlor.com']
 const proxies = computed(() => proxyHosts.map(host => ({ name: host, url: `https://${host}/${props.download.url}` })))
 
@@ -21,6 +22,21 @@ function closeBackdrop(event: MouseEvent) {
   const bounds = dialog.value.getBoundingClientRect()
   if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom)
     dialog.value.close()
+}
+
+onMounted(() => {
+  autoOpenTimer.value = window.setTimeout(() => {
+    if (!dialog.value?.open)
+      dialog.value?.showModal()
+  }, 6000)
+})
+
+onUnmounted(() => {
+  window.clearTimeout(autoOpenTimer.value)
+})
+
+function stopAutoOpen() {
+  window.clearTimeout(autoOpenTimer.value)
 }
 </script>
 
@@ -36,6 +52,7 @@ function closeBackdrop(event: MouseEvent) {
       :aria-labelledby="`${id}-title`"
       :aria-describedby="`${id}-description`"
       @click="closeBackdrop"
+      @close="stopAutoOpen"
     >
       <div class="proxy-body">
         <header class="proxy-header">
