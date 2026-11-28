@@ -35,7 +35,7 @@ async function fixture() {
     runs: storage.runs,
     executions: storage.executions,
     mailbox: createMailboxRepository(storage.database),
-    buddies: new BuddiesService(storage.buddies),
+    buddies: new BuddiesService(storage.buddies, { getModelType: () => null }),
     coordinator: {
       onDidChange: () => ({ dispose() {} }),
       answerQuestion: async () => {},

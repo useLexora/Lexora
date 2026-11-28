@@ -33,7 +33,7 @@ function setup(beforeResolve?: () => Promise<void>) {
   const database = openBuddyDatabase({ databasePath: ':memory:' })
   databases.push(database)
   const repository = createBuddyRepository(database)
-  const buddies = new BuddiesService(repository)
+  const buddies = new BuddiesService(repository, { getModelType: () => null })
   services.push(buddies)
   const members = createConversationMemberRepository(database)
   const conversations = createConversationRepository(database)

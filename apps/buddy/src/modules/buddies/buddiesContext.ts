@@ -1,11 +1,12 @@
 import type { LocalChatApi } from '@buddy-electron/shared/localChatApi'
 import type { Ref } from 'vue'
+import type { ModelProvidersStore } from '@/modules/models'
 import { createInjectionState } from '@vueuse/core'
 import { useBuddyDirectory } from './state/useBuddyDirectory'
 import { useBuddyList } from './state/useBuddyList'
 
 const [useProvideBuddiesContext, injectBuddiesContext] = createInjectionState(
-  (context: { api: LocalChatApi['buddies'], ready: Readonly<Ref<boolean>> }) => {
+  (context: { api: LocalChatApi['buddies'], ready: Readonly<Ref<boolean>>, modelCatalog: Pick<ModelProvidersStore, 'models' | 'providers'> }) => {
     const list = useBuddyList(context.api, context.ready)
     return { ...context, ...list, ...useBuddyDirectory(context.api, list.catalog, context.ready) }
   },

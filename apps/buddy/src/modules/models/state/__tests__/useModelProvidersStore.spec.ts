@@ -7,21 +7,24 @@ import { shallowRef } from 'vue'
 import { filterAvailableModels, useModelProvidersStore } from '../useModelProvidersStore'
 
 describe('filterAvailableModels', () => {
-  it('exposes models only for enabled and authenticated providers', () => {
+  it('exposes only available chat models from enabled and authenticated providers', () => {
     const providers = [
       provider('ready', true, 'available'),
       provider('login', true, 'authentication_required'),
       provider('disabled', false, 'available'),
     ]
-    const models = [
+    const models: LocalRuntimeModelOption[] = [
       model('ready'),
       model('login'),
       model('disabled'),
       { ...model('ready'), enabled: false, modelId: 'model-disabled' },
       { ...model('ready'), available: false, modelId: 'model-missing' },
+      { ...model('ready'), type: 'image-generation', modelId: 'image' },
+      { ...model('ready'), type: 'speech', modelId: 'speech' },
+      { ...model('ready'), type: 'transcription', modelId: 'transcription' },
     ]
 
-    expect(filterAvailableModels(providers, models).map(item => item.providerId)).toEqual(['ready'])
+    expect(filterAvailableModels(providers, models)).toEqual([models[0]])
   })
 })
 

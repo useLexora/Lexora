@@ -14,7 +14,7 @@ afterEach(() => cleanups.splice(0).reverse().forEach(cleanup => cleanup()))
 function fixture() {
   const database: DatabaseSync = openBuddyDatabase({ databasePath: ':memory:' })
   const repository = createBuddyRepository(database)
-  const service = new BuddiesService(repository)
+  const service = new BuddiesService(repository, { getModelType: () => null })
   cleanups.push(() => database.close(), () => service.dispose())
   const managed = managedBuddyFixture(database)
   const buddy = service.installManagedNpc(managed.input)

@@ -643,6 +643,37 @@ describe('buddy runtime cross-subsystem contract', () => {
     }
   }, 20_000)
 
+  it('validates an NPC model selection against the Provider catalog through RPC', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-buddy-model-selection-')))
+    directories.push(root)
+    const buddyHome = join(root, 'buddy')
+    const database = openTrackedDatabase(join(buddyHome, 'buddy.sqlite3'))
+    const eventLog = createRunEventLog({ conversationsDirectory: join(buddyHome, 'conversations'), database })
+    const harness = createRuntimeRpcHarness({ 'offline-provider': { type: 'api_key', key: 'test-api-key' } })
+    const runtime = await startBuddyService({ buddyHome, builtinSkillsDirectories: [], database, eventLog, rpc: harness.rpc })
+    try {
+      const config = offlineProviderConfig('http://127.0.0.1:1/v1')
+      await harness.invoke('providers.upsertCustom', config)
+      const selection = { providerId: config.id, modelId: config.models[0]!.id }
+      const npc = await harness.invoke('buddies.create', { kind: 'npc', name: 'Researcher' }) as LocalBuddy
+      const update = (expectedRevision: number) => harness.invoke('buddies.update', {
+        buddyId: npc.id,
+        expectedRevision,
+        settings: { ...npc.settings, model: { ...selection, reasoning: null, serviceTier: null } },
+      })
+
+      await harness.invoke('providers.setModelType', { ...selection, type: 'image-generation' })
+      await expect(update(npc.revision)).rejects.toMatchObject({ code: 'VALIDATION_FAILED' })
+      expect(await harness.invoke('buddies.get', { buddyId: npc.id })).toEqual(npc)
+      await harness.invoke('providers.setModelType', { ...selection, type: null })
+      await expect(update(npc.revision)).resolves.toMatchObject({ settings: { model: selection } })
+    }
+    finally {
+      await runtime.dispose()
+      await eventLog.close()
+    }
+  })
+
   it('delegates through real Pi tools and child sessions with request-bound models, independent Web scope and durable result continuation', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'lexora-buddy-delegation-')))
     directories.push(root)
